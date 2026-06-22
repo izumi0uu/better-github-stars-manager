@@ -51,15 +51,39 @@ function lastPage(linkHeader: string | null): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** Abort a request after 30s so a hung connection surfaces as an error, not a stuck UI. */
+function withTimeout(ms: number): { signal: AbortSignal; cancel: () => void } {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  return { signal: ctrl.signal, cancel: () => clearTimeout(t) };
+}
+
 async function fetchPage(page: number): Promise<{ items: StarredItem[]; link: string | null }> {
-  const res = await fetch(`${API}/user/starred?per_page=${PER_PAGE}&page=${page}`, {
-    headers: await authHeaders(),
-  });
+  const { signal, cancel } = withTimeout(30_000);
+  let res: Response;
+  try {
+    res = await fetch(`${API}/user/starred?per_page=${PER_PAGE}&page=${page}`, {
+      headers: await authHeaders(),
+      cache: 'no-store', // avoid 304s that can hang the SW fetch in some Chrome versions
+      signal,
+    });
+  } catch (e) {
+    cancel();
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error(`GitHub /user/starred page ${page} timed out after 30s.`);
+    }
+    throw new Error(`Network error fetching page ${page}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  cancel();
   if (res.status === 401) throw new Error('GitHub token rejected (401). Re-add it in options.');
   if (res.status === 403) {
     const remaining = res.headers.get('x-ratelimit-remaining');
     if (remaining === '0') throw new Error('GitHub rate limit hit. Wait and retry.');
-    throw new Error(`GitHub 403 (forbidden). Check token scopes.`);
+    throw new Error(`GitHub 403 (forbidden). Check token scopes / repository access.`);
+  }
+  if (res.status === 204 || res.status === 304) {
+    // 204 No Content / 304 Not Modified: no items this page. Treat as empty.
+    return { items: [], link: res.headers.get('link') };
   }
   if (!res.ok) throw new Error(`GitHub /user/starred page ${page} returned ${res.status}`);
   const items = (await res.json()) as StarredItem[];

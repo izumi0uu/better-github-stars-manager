@@ -27,12 +27,22 @@ export function ManagerPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Trigger incremental sync on mount (Q5 A2).
+  // On mount: read status first. Only auto-sync if a token is configured; if not,
+  // surface a clear "configure token" prompt instead of silently failing.
   useEffect(() => {
-    bgCall('syncIncremental').catch(() => {});
-    const off = onProgress(() => bgCall<SyncStatus>('getStatus').then(setStatus));
-    bgCall<SyncStatus>('getStatus').then(setStatus);
-    return off;
+    let off = () => {};
+    (async () => {
+      const st = await bgCall<SyncStatus>('getStatus').catch(() => null);
+      setStatus(st);
+      if (st?.hasToken) {
+        // Token present → kick incremental sync. Surface errors (don't swallow).
+        bgCall('syncIncremental').catch(
+          (e) => setInfo(`✗ sync: ${e instanceof Error ? e.message : String(e)}`),
+        );
+      }
+      off = onProgress(() => bgCall<SyncStatus>('getStatus').then(setStatus));
+    })();
+    return () => off();
   }, []);
 
   // Keyboard shortcut: / focus search.
@@ -129,6 +139,15 @@ export function ManagerPanel() {
           {loading ? '…' : `${total} / ${grandTotal}`}
         </span>
       </div>
+
+      {status && !status.hasToken && (
+        <div style={{ fontSize: 12, padding: '8px 12px', background: '#2d1b00', color: '#d29922', display: 'flex', gap: 12, alignItems: 'center' }}>
+          <span>⚠️ No GitHub token configured — no data will load.</span>
+          <button onClick={() => chrome.runtime.openOptionsPage()} style={{ ...btnStyle, background: '#238636', color: '#fff' }}>
+            Open Options to add a PAT
+          </button>
+        </div>
+      )}
 
       {status?.progress && status.progress.phase !== 'idle' && (
         <div style={{ fontSize: 11, padding: '2px 12px', background: '#161b22', color: '#79c0ff' }}>

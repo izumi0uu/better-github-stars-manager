@@ -27,7 +27,8 @@ type Req =
   | { type: 'acceptSuggestions'; full_name: string; toAdd: string[] }
   | { type: 'acceptSuggestionsBatch'; items: { full_name: string; toAdd: string[] }[] }
   | { type: 'suggestTags'; full_name: string }
-  | { type: 'getTag'; full_name: string };
+  | { type: 'getTag'; full_name: string }
+  | { type: 'testConnection' };
 
 type Res =
   | { ok: true; data?: unknown }
@@ -111,6 +112,34 @@ async function handle(req: Req): Promise<Res> {
       }
       case 'suggestTags': {
         return { ok: true };
+      }
+      case 'testConnection': {
+        // Diagnostic: fetch one page of /user/starred and return the raw HTTP
+        // status + key headers, so the UI can show EXACTLY what GitHub returned
+        // (instead of a stuck spinner). Never throws — returns ok:false with detail.
+        const token = await authStore.getToken();
+        if (!token) return { ok: false, error: 'No token configured' };
+        try {
+          const res = await fetch('https://api.github.com/user/starred?per_page=1&page=1', {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.star+json' },
+            cache: 'no-store',
+          });
+          const body = res.status === 200 ? await res.json() : null;
+          return {
+            ok: true,
+            data: {
+              status: res.status,
+              statusText: res.statusText,
+              remaining: res.headers.get('x-ratelimit-remaining'),
+              limit: res.headers.get('x-ratelimit-limit'),
+              scopes: res.headers.get('x-oauth-scopes'),
+              itemCount: Array.isArray(body) ? body.length : 0,
+              sample: Array.isArray(body) && body[0] ? body[0].full_name : null,
+            },
+          };
+        } catch (e) {
+          return { ok: false, error: `fetch failed: ${e instanceof Error ? e.message : String(e)}` };
+        }
       }
       case 'getTag': {
         return { ok: true, data: { tag: (await idbTagStore.get(req.full_name)) ?? null } };
