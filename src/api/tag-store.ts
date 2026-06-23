@@ -1,5 +1,7 @@
 import type { Tag, TagMeta } from '@/types';
 
+export type CountProgressCallback = (done: number, total: number | null) => void;
+
 /**
  * TagStore — abstraction over the user's annotation layer (tags + notes + tagMeta).
  *
@@ -32,7 +34,7 @@ export interface TagStore {
 
   // --- Gist sync (Q5 C2 per-repo LWW) ---
   /** Push local dirty tags/tagMeta to the Gist. */
-  syncPush(): Promise<{ pushed: number }>;
+  syncPush(onProgress?: CountProgressCallback): Promise<{ pushed: number; snapshot: number }>;
   /** Pull the Gist and merge per-repo by mtime into local IDB. */
-  syncPull(): Promise<{ merged: number }>;
+  syncPull(onProgress?: CountProgressCallback): Promise<{ merged: number; total: number }>;
 }

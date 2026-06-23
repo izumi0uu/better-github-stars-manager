@@ -1,4 +1,5 @@
 import type { GistPayload, Tag, TagMeta } from '@/types';
+import type { CountProgressCallback } from '@/api/tag-store';
 import { db } from '@/storage/db';
 import { authStore } from '@/auth/auth-store';
 import { clearDirty } from '@/storage/idb-tag-store';
@@ -74,18 +75,27 @@ async function readGist(id: string): Promise<GistPayload | null> {
   }
 }
 
-async function buildPayload(): Promise<GistPayload> {
+async function buildPayload(onProgress?: CountProgressCallback): Promise<{ payload: GistPayload; total: number }> {
+  const total = (await db.tags.count()) + (await db.tagMeta.count());
   const tags: GistPayload['tags'] = {};
+  let done = 0;
+  const tick = () => onProgress?.(done, total);
+  tick();
   await db.tags.each((t) => {
     const { full_name: _fn, ...rest } = t;
     tags[t.full_name] = rest;
+    done++;
+    if (done === total || done % 50 === 0) tick();
   });
   const tagMeta: GistPayload['tagMeta'] = {};
   await db.tagMeta.each((m) => {
     const { name: _n, ...rest } = m;
     tagMeta[m.name] = rest;
+    done++;
+    if (done === total || done % 50 === 0) tick();
   });
-  return { v: 1, tags, tagMeta, exportedAt: new Date().toISOString() };
+  tick();
+  return { payload: { v: 1, tags, tagMeta, exportedAt: new Date().toISOString() }, total };
 }
 
 export const gistTagStore = {
@@ -93,10 +103,11 @@ export const gistTagStore = {
    * Push: write the full local snapshot to the gist. Clears the dirty set after.
    * (Full-snapshot push is simpler than diffing and the payload is ~600KB < 1MB.)
    */
-  async push(dirtyNames: Set<string>, dirtyMeta: boolean): Promise<{ pushed: number }> {
-    if (dirtyNames.size === 0 && !dirtyMeta) return { pushed: 0 };
+  async push(dirtyNames: Set<string>, dirtyMeta: boolean, onProgress?: CountProgressCallback): Promise<{ pushed: number; snapshot: number }> {
+    if (dirtyNames.size === 0 && !dirtyMeta) return { pushed: 0, snapshot: 0 };
+    const pushed = dirtyNames.size + (dirtyMeta ? 1 : 0);
     const id = await findOrCreateGist();
-    const payload = await buildPayload();
+    const { payload, total } = await buildPayload(onProgress);
     const res = await fetch(`https://api.github.com/gists/${id}`, {
       method: 'PATCH',
       headers: await gistHeaders(),
@@ -108,23 +119,28 @@ export const gistTagStore = {
     if (!res.ok) throw new Error(`Gist push failed: ${res.status}`);
     clearDirty(dirtyNames, dirtyMeta);
     await authStore.update({ gistSyncCursor: payload.exportedAt });
-    return { pushed: dirtyNames.size };
+    onProgress?.(total, total);
+    return { pushed, snapshot: total };
   },
 
   /**
    * Pull: read the gist, merge per-repo by mtime (LWW). Returns count of records
    * that were updated locally from the remote.
    */
-  async pull(): Promise<{ merged: number }> {
+  async pull(onProgress?: CountProgressCallback): Promise<{ merged: number; total: number }> {
     const cfg = await authStore.getConfig();
     if (!cfg.gistId) {
       // No gist yet — nothing to pull. (First device to sync pushes first.)
-      return { merged: 0 };
+      return { merged: 0, total: 0 };
     }
     const remote = await readGist(cfg.gistId);
-    if (!remote) return { merged: 0 };
+    if (!remote) return { merged: 0, total: 0 };
+    const total = Object.keys(remote.tags).length + Object.keys(remote.tagMeta).length;
 
     let merged = 0;
+    let done = 0;
+    const tick = () => onProgress?.(done, total);
+    tick();
 
     // Merge tags per-repo by mtime.
     for (const [full_name, remoteTag] of Object.entries(remote.tags)) {
@@ -135,6 +151,8 @@ export const gistTagStore = {
         await db.tags.put(mergedTag);
         merged++;
       }
+      done++;
+      if (done === total || done % 50 === 0) tick();
     }
 
     // Merge tagMeta by mtime.
@@ -145,8 +163,11 @@ export const gistTagStore = {
         await db.tagMeta.put(mergedMeta);
         merged++;
       }
+      done++;
+      if (done === total || done % 50 === 0) tick();
     }
 
-    return { merged };
+    tick();
+    return { merged, total };
   },
 };

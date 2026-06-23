@@ -1,5 +1,6 @@
 import type { Tag } from '@/types';
-import type { TagStore } from '@/api/tag-store';
+import type { CountProgressCallback, TagStore } from '@/api/tag-store';
+import { gistTagStore } from '@/sync/gist-tag-store';
 import { db } from './db';
 
 /**
@@ -76,18 +77,15 @@ export const idbTagStore: TagStore = {
     dirtyMeta = true;
   },
 
-  async syncPush() {
-    // Delegated to the Gist transport (gist-tag-store.ts) which reads the dirty set.
-    const { gistTagStore } = await import('@/sync/gist-tag-store');
-    return gistTagStore.push(dirty, dirtyMeta);
+  async syncPush(onProgress?: CountProgressCallback) {
+    return gistTagStore.push(dirty, dirtyMeta, onProgress);
   },
 
-  async syncPull() {
-    const { gistTagStore } = await import('@/sync/gist-tag-store');
-    const { merged } = await gistTagStore.pull();
+  async syncPull(onProgress?: CountProgressCallback) {
+    const { merged, total } = await gistTagStore.pull(onProgress);
     // After a pull, clear local dirtiness for anything we just reconciled.
     // (Conservative: a real CRDT would diff; LWW post-pull we assume remote is merged.)
-    return { merged };
+    return { merged, total };
   },
 };
 

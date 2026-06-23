@@ -15,6 +15,26 @@ export interface SyncStatus {
   hasToken: boolean;
 }
 
+export function mergeProgressStatus(
+  current: SyncStatus | null,
+  progress: SyncStatus['progress'],
+  fallbackHasToken = true,
+): SyncStatus {
+  return {
+    progress,
+    hasToken: current?.hasToken ?? fallbackHasToken,
+  };
+}
+
+export function mergeStatusSnapshot(current: SyncStatus | null, snapshot: SyncStatus | null): SyncStatus | null {
+  if (!snapshot) return current;
+  const activeProgress = current?.progress;
+  if (activeProgress && activeProgress.phase !== 'idle' && snapshot.progress.phase === 'idle') {
+    return { ...snapshot, progress: activeProgress };
+  }
+  return snapshot;
+}
+
 export async function bgCall<T = unknown>(type: string, extra?: Record<string, unknown>): Promise<T> {
   const res = (await chrome.runtime.sendMessage({ type, ...extra })) as
     | { ok: true; data?: T }
