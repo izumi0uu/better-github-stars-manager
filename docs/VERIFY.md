@@ -47,8 +47,8 @@ correctness is covered by `tests/logic.test.ts` (run with `node --experimental-s
 ## 5. Rescan / unstar detection
 
 - [ ] Unstar a repo on github.com
-- [ ] Stars page → "⟲ Rescan" → that repo gets a ⊘ marker and dims (tombstone), its tags/notes preserved
-- [ ] Re-star it → "⟲ Rescan" → tombstone clears, tags/notes revived
+- [ ] Stars page → "⟲ Rescan" → local state refreshes cleanly with no console errors
+- [ ] Re-star the same repo later → "⟲ Rescan" → any earlier tags/notes revive on that repo
 
 ## 6. Gist cross-device sync
 

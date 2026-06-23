@@ -17,7 +17,7 @@ every `github.com/{owner}/{repo}` page.
 - **Incremental sync** on every visit to the stars page (1–2 requests, stops at the last-seen cursor).
 - **Full rescan** to detect unstars → soft-deleted (tombstoned) but your tags/notes are preserved.
 - **Virtualized table** of all stars (no pagination, scroll smoothly through thousands of rows).
-- **Filter**: by language, by tag (any/all), full-text over name/description/topics, "untagged only", "show unstarred".
+- **Filter**: by language, by tag (any/all), full-text over name/description/topics, "untagged only".
 - **Sort**: by starred date, repo update date, star count, or name.
 - **Tag + note** any repo inline; tags support soft dimension grouping.
 - **Auto-suggest tags** from each repo's `language` and `topics` (one-click or batch).
