@@ -43,8 +43,19 @@ export function RepoDetailPanel({
 }) {
   const myTags = tag?.tags ?? [];
   const notes = tag?.notes ?? '';
-  const suggestions = suggestTags(star, myTags);
   const { m } = useI18n();
+
+  // Deleted tags (tombstones) — fetched once per opened repo so suggestions don't
+  // re-offer a tag the user removed. suggestTags skips these (resurrection guard).
+  const [excluded, setExcluded] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    bgCall<string[]>('listExcluded')
+      .then((names) => { if (!cancelled) setExcluded(names ?? []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  const suggestions = suggestTags(star, myTags, excluded);
 
   const [draft, setDraft] = useState(notes);
   const [saved, setSaved] = useState(false);

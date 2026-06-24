@@ -1,30 +1,33 @@
-import type { Config } from '@/types';
-import { encrypt, decrypt } from './crypto';
+import type { Config } from "@/types";
+import { encrypt, decrypt } from "./crypto";
+import { TOKEN_EMPTY } from "@/api/errors";
+import { probeTokenCapabilities } from "./token-probe";
 
 /**
- * AuthStore — owns the fine-grained PAT lifecycle (Q4).
+ * Owns the fine-grained PAT lifecycle.
  *
- * Token flow: the options page collects a PAT, we call GET /user with it to (a)
- * verify it works and (b) capture the username (for /user/starred). We also probe
- * scope: a fine-grained PAT with Stars:Read + Gists:ReadWrite is what we expect.
- * The plaintext token lives only in memory after verification; on disk it's AES-GCM
- * encrypted in chrome.storage.local.
+ * The options page collects a token, verifies the GitHub capabilities this
+ * extension needs, captures account identity, and only then persists the token.
+ * Plaintext stays in memory; the stored copy is AES-GCM encrypted in
+ * `chrome.storage.local`.
  */
 
-export const CONFIG_STORAGE_KEY = 'gsm_config';
+export const CONFIG_STORAGE_KEY = "gsm_config";
 
 const DEFAULT_CONFIG: Config = {
   tokenEncrypted: null,
   tokenCryptoMeta: null,
-  theme: 'dark',
-  locale: 'en',
-  defaultView: 'table',
+  theme: "dark",
+  locale: "en",
+  defaultView: "table",
   lastSyncStarredAt: null,
   gistId: null,
   gistSyncCursor: null,
   username: null,
   avatarUrl: null,
   displayName: null,
+  seenOnboarding: false,
+  seenTooltips: 0,
 };
 
 let cache: Config | null = null;
@@ -51,9 +54,9 @@ async function readDecryptedToken(): Promise<string | null> {
   return plaintextToken;
 }
 
-if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
+if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== 'local') return;
+    if (areaName !== "local") return;
     const change = changes[CONFIG_STORAGE_KEY];
     if (!change) return;
 
@@ -63,7 +66,8 @@ if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
 
     const tokenChanged =
       prev?.tokenEncrypted !== cache.tokenEncrypted ||
-      JSON.stringify(prev?.tokenCryptoMeta ?? null) !== JSON.stringify(cache.tokenCryptoMeta ?? null);
+      JSON.stringify(prev?.tokenCryptoMeta ?? null) !==
+        JSON.stringify(cache.tokenCryptoMeta ?? null);
     if (tokenChanged) plaintextToken = null;
   });
 }
@@ -86,55 +90,64 @@ export const authStore = {
     return (await read()).username;
   },
 
-  /** Account identity for the top bar: username + avatar + display name. */
-  async getAccount(): Promise<{ username: string | null; avatarUrl: string | null; displayName: string | null }> {
+  /** Account identity + bound gist for the top bar. */
+  async getAccount(): Promise<{
+    username: string | null;
+    avatarUrl: string | null;
+    displayName: string | null;
+    gistId: string | null;
+  }> {
     const c = await read();
-    return { username: c.username, avatarUrl: c.avatarUrl, displayName: c.displayName };
+    return {
+      username: c.username,
+      avatarUrl: c.avatarUrl,
+      displayName: c.displayName,
+      gistId: c.gistId,
+    };
   },
 
-  async getTheme(): Promise<'dark' | 'light'> {
+  async getTheme(): Promise<"dark" | "light"> {
     return (await read()).theme;
   },
 
-  async getLocale(): Promise<'en' | 'zh-CN'> {
+  async getLocale(): Promise<"en" | "zh-CN"> {
     return (await read()).locale;
   },
 
-  async setTheme(theme: 'dark' | 'light'): Promise<void> {
+  async setTheme(theme: "dark" | "light"): Promise<void> {
     await write({ ...(await read()), theme });
   },
 
-  async setLocale(locale: 'en' | 'zh-CN'): Promise<void> {
+  async setLocale(locale: "en" | "zh-CN"): Promise<void> {
     await write({ ...(await read()), locale });
   },
 
   /**
-   * Verify a PAT against the GitHub API and persist it (encrypted) if valid.
-   * Returns the username on success or throws with a descriptive error.
+   * Verify a PAT and persist it (encrypted) only if it actually works for the
+   * operations the extension needs. Verification is THREE steps, not one:
+   *   1. GET /user — confirms the token authenticates; captures username/avatar.
+   *   2. GET /user/starred?per_page=1 — proves Stars:Read (the whole app is built
+   *      on this endpoint; a token that can read /user but not /user/starred is
+   *      useless and used to pass silently).
+   *   3. POST /gists + DELETE /gists/{id} — proves Gists:ReadWrite (the cross-device
+   *      sync channel). The throwaway probe gist is deleted immediately.
+   * Any step failing throws a stable code string (src/api/errors.ts) that the
+   * Options UI translates into a human message naming the missing permission.
+   * The token is NOT persisted on failure.
    */
   async setToken(token: string): Promise<{ username: string }> {
     const clean = token.trim();
-    if (!clean) throw new Error('Token is empty');
+    if (!clean) throw new Error(TOKEN_EMPTY);
 
-    // Verify + capture username + scope.
-    const res = await fetch('https://api.github.com/user', {
-      headers: { Authorization: `Bearer ${clean}`, Accept: 'application/vnd.github+json' },
-    });
-    if (res.status === 401) throw new Error('Token rejected by GitHub (401). Check the value.');
-    if (!res.ok) throw new Error(`GitHub /user returned ${res.status}`);
-
-    const scopes = (res.headers.get('x-oauth-scopes') ?? '').toLowerCase();
-    // fine-grained PATs report scopes differently; we accept either the classic
-    // 'public_repo'/'gist' or fine-grained (which returns no x-oauth-scopes but works).
-    const classicOk = scopes.includes('public_repo') && scopes.includes('gist');
-    // For fine-grained tokens, x-oauth-scopes is empty — we rely on the actual API
-    // calls to fail later if permissions are missing. Warn but don't block.
-    if (scopes && !classicOk) {
-      console.warn('[gsm] classic-token scopes may be insufficient:', scopes);
-    }
-
-    const body = (await res.json()) as { login?: string; avatar_url?: string; name?: string | null };
-    if (!body.login) throw new Error('Could not read username from /user');
+    const { login, avatarUrl, displayName, scopesHeader } =
+      await probeTokenCapabilities(clean);
+    const classicOk =
+      scopesHeader.includes("public_repo") && scopesHeader.includes("gist");
+    if (scopesHeader && !classicOk)
+      console.warn(
+        "[gsm] classic-token scopes may be insufficient:",
+        scopesHeader,
+      );
 
     const { cipher, meta } = await encrypt(clean);
     plaintextToken = clean;
@@ -142,11 +155,11 @@ export const authStore = {
       ...(await read()),
       tokenEncrypted: cipher,
       tokenCryptoMeta: meta,
-      username: body.login,
-      avatarUrl: body.avatar_url ?? null,
-      displayName: body.name ?? null,
+      username: login,
+      avatarUrl,
+      displayName,
     });
-    return { username: body.login };
+    return { username: login };
   },
 
   async clearToken(): Promise<void> {

@@ -119,4 +119,65 @@
   .filter-row-anim > * {
     overflow: hidden;
   }
+
+  /* Success checkmark drawn into a toolbar action button after it succeeds.
+     The path "draws" by animating stroke-dashoffset 40→0 (path length ≈ 40),
+     echoing the reference snippet but as a bare themed icon (no box/bg). */
+  .success-check-path {
+    stroke-dasharray: 40;
+    stroke-dashoffset: 40;
+    animation: draw-check 320ms cubic-bezier(0.4, 0, 0.2, 1) 60ms forwards;
+  }
+  @keyframes draw-check {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  /* Action-icon swap (toolbar action buttons idle → spinner → success check,
+     sort direction, theme toggle, delete confirm). ActionIcon remounts its
+     child on every phase change (key={phase}), so any mount-triggered animation
+     inside — notably SuccessCheck's stroke-draw (.success-check-path) — replays
+     each time. This single opacity fade is the ONLY transition layer; it never
+     fights the draw (the old crossfade did: it overlaid a second layer with a
+     different timeline and reused the node so the draw didn't replay). ~200ms
+     reads as a gentle transition.
+
+     We deliberately do NOT scale here. An earlier version faded opacity AND
+     scaled 0.6→1; on the 14px trash/check and the small sort/theme icons that
+     scale read as the icon being squeezed and stretched (different shapes
+     growing from a dot), which is exactly what the delete-confirm swap must
+     avoid. Opacity alone is enough — SuccessCheck's stroke draw and Spinner's
+     rotation carry the motion; static swaps (trash↔check, sort arrow, sun↔moon)
+     get a clean morph. */
+  .gsm-action-icon-in {
+    animation: gsm-action-icon-in 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  @keyframes gsm-action-icon-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* First-run step coachmark: a pulsing ring on the element the current step
+     points at (sync button / tags sidebar / repo list). Paired with the
+     spotlight dim in CoachOverlay — the target shows through the dim's cutout
+     and this ring frames it. outline (not border) so it doesn't shift layout. */
+  .gsm-coach-highlight {
+    outline: 2px solid hsl(var(--primary));
+    outline-offset: 2px;
+    animation: gsm-coach-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes gsm-coach-pulse {
+    0%,
+    100% {
+      outline-color: hsl(var(--primary));
+    }
+    50% {
+      outline-color: hsl(var(--primary) / 0.35);
+    }
+  }
 }

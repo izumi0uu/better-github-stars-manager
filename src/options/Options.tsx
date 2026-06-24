@@ -1,33 +1,40 @@
-import { useEffect, useState } from 'react';
-import { Sun, Moon, Star, Check, AlertTriangle } from 'lucide-react';
-import { authStore } from '@/auth/auth-store';
-import { bgCall, mergeProgressStatus, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
-import { Button } from '@/ui/shadcn/button';
-import { Progress } from '@/ui/shadcn/progress';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/shadcn/select';
-import { Spinner } from '@/ui/shadcn/spinner';
-import { Textarea } from '@/ui/shadcn/textarea';
-import { Separator } from '@/ui/shadcn/separator';
-import { cn } from '@/lib/utils';
-import { useI18n } from '@/i18n';
-import type { Locale } from '@/types';
+import { useEffect, useState } from "react";
+import { Sun, Moon, Star, Check, AlertTriangle } from "lucide-react";
+import { authStore } from "@/auth/auth-store";
+import {
+  bgCall,
+  mergeProgressStatus,
+  mergeStatusSnapshot,
+  onProgress,
+  type SyncStatus,
+} from "@/utils/messaging";
+import { translateError } from "@/api/errors";
+import { Button } from "@/ui/shadcn/button";
+import { Progress } from "@/ui/shadcn/progress";
+import { Spinner } from "@/ui/shadcn/spinner";
+import { Textarea } from "@/ui/shadcn/textarea";
+import { Separator } from "@/ui/shadcn/separator";
+import { cn } from "@/lib/utils";
+import { useI18n } from "@/i18n";
 
 export function Options() {
-  const [tokenInput, setTokenInput] = useState('');
+  const [tokenInput, setTokenInput] = useState("");
   const [username, setUsername] = useState<string | null>(null);
   const [hasUsableToken, setHasUsableToken] = useState(false);
   const [gistId, setGistId] = useState<string | null>(null);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [busy, setBusy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
-  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(
+    null,
+  );
   const { locale, setLocale, m } = useI18n();
 
   const refresh = async () => {
     const [c, hasToken, status] = await Promise.all([
       authStore.getConfig(),
       authStore.hasToken(),
-      bgCall<SyncStatus>('getStatus').catch(() => null),
+      bgCall<SyncStatus>("getStatus").catch(() => null),
     ]);
     setUsername(c.username);
     setHasUsableToken(hasToken);
@@ -38,7 +45,9 @@ export function Options() {
   useEffect(() => {
     void refresh();
     const off = onProgress((progress) => {
-      setSyncStatus((current) => mergeProgressStatus(current, progress, hasUsableToken));
+      setSyncStatus((current) =>
+        mergeProgressStatus(current, progress, hasUsableToken),
+      );
     });
     return off;
   }, [hasUsableToken]);
@@ -48,11 +57,11 @@ export function Options() {
     setMsg(null);
     try {
       const { username: u } = await authStore.setToken(tokenInput);
-      setMsg({ kind: 'ok', text: m.options.tokenVerified(u) });
-      setTokenInput('');
+      setMsg({ kind: "ok", text: m.options.tokenVerified(u) });
+      setTokenInput("");
       await refresh();
     } catch (e) {
-      setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+      setMsg({ kind: "err", text: translateError(e, m) });
     } finally {
       setBusy(false);
     }
@@ -61,39 +70,128 @@ export function Options() {
   const clear = async () => {
     await authStore.clearToken();
     await refresh();
-    setMsg({ kind: 'ok', text: m.options.tokenRemoved });
+    setMsg({ kind: "ok", text: m.options.tokenRemoved });
   };
 
   const toggleTheme = async () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
+    const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
     await authStore.setTheme(next);
-    document.documentElement.classList.toggle('dark', next === 'dark');
+    document.documentElement.classList.toggle("dark", next === "dark");
   };
 
-  const syncing = !!(syncStatus?.progress && syncStatus.progress.phase !== 'idle');
+  const syncing = !!(
+    syncStatus?.progress && syncStatus.progress.phase !== "idle"
+  );
   const progressValue = syncStatus?.progress.total
-    ? Math.max(1, Math.min(100, Math.round((syncStatus.progress.done / syncStatus.progress.total) * 100)))
+    ? Math.max(
+        1,
+        Math.min(
+          100,
+          Math.round(
+            (syncStatus.progress.done / syncStatus.progress.total) * 100,
+          ),
+        ),
+      )
     : null;
-  const progressCount = syncStatus?.progress.total ? `${syncStatus.progress.done}/${syncStatus.progress.total}` : null;
+  const progressCount = syncStatus?.progress.total
+    ? `${syncStatus.progress.done}/${syncStatus.progress.total}`
+    : null;
 
   return (
     <div className="mx-auto my-10 max-w-2xl rounded-lg bg-background p-7 font-sans text-foreground">
-      <h1 className="mt-0 inline-flex items-center gap-1.5 text-xl font-semibold">
-        <Star className="size-5 fill-current text-primary" />
-        {m.options.title}
-      </h1>
+      {/* Header: title on the left, Language + Theme controls on the right
+          (the old Language/Appearance sections collapsed into compact controls). */}
+      <div className="flex items-start justify-between gap-3">
+        <h1 className="mt-0 inline-flex items-center gap-1.5 text-xl font-semibold">
+          <Star className="size-5 fill-current text-primary" />
+          {m.options.title}
+        </h1>
+        <div className="flex items-center gap-2">
+          {/* Language: compact EN / 中文 segmented toggle */}
+          <div
+            className="inline-flex rounded-full bg-muted p-0.5"
+            role="group"
+            aria-label={m.options.languageLabel}
+          >
+            {(["en", "zh-CN"] as const).map((lng) => {
+              const active = locale === lng;
+              return (
+                <button
+                  key={lng}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => {
+                    if (!active) void setLocale(lng);
+                  }}
+                  className={cn(
+                    "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    active
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {lng === "en" ? "EN" : "中文"}
+                </button>
+              );
+            })}
+          </div>
+          {/* Theme: icon toggle */}
+          <Button
+            variant="outline"
+            size="icon"
+            className="size-9"
+            onClick={toggleTheme}
+            title={m.toolbar.themeTitle}
+          >
+            {theme === "dark" ? (
+              <Sun className="size-4" />
+            ) : (
+              <Moon className="size-4" />
+            )}
+          </Button>
+        </div>
+      </div>
 
+      {/* 1. Token */}
       <section className="mt-6">
         <h2 className="text-base font-medium">{m.options.tokenHeading}</h2>
         <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
-          {m.options.tokenIntroPrefix}{' '}
-          <a className="text-primary hover:underline" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">
+          {m.options.tokenIntroPrefix}{" "}
+          <a
+            className="text-primary hover:underline"
+            href="https://github.com/settings/personal-access-tokens/new"
+            target="_blank"
+            rel="noreferrer"
+          >
             {m.options.tokenLinkLabel}
           </a>
           . {m.options.tokenIntroSuffix}
         </p>
-        <ul className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+
+        {/* Detailed PAT walkthrough + screenshot placeholders.
+            Placeholders are dashed boxes the user will swap for <img src=…>
+            once they supply screenshots. Captions live in i18n. */}
+        <details className="mt-3 rounded-md border border-border bg-muted/20 p-3 text-[13px] text-muted-foreground">
+          <summary className="cursor-pointer font-medium text-foreground">
+            {m.options.tokenStepsTitle}
+          </summary>
+          <ol className="mt-2 list-decimal space-y-1.5 pl-5 leading-relaxed">
+            <li>{m.options.tokenStep1}</li>
+            <li>{m.options.tokenStep2}</li>
+            <li>{m.options.tokenStep3}</li>
+            <li>{m.options.tokenStep4}</li>
+            <li>{m.options.tokenStep5}</li>
+          </ol>
+          {/* Screenshot placeholders — replace the boxes with <img> when ready. */}
+          <div className="mt-3 grid gap-2">
+            <ScreenshotPlaceholder caption={m.options.shotNewToken} />
+            <ScreenshotPlaceholder caption={m.options.shotRepoAccess} />
+            <ScreenshotPlaceholder caption={m.options.shotPermissions} />
+          </div>
+        </details>
+
+        <ul className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
           <li>{m.options.tokenPublicRepos}</li>
           <li>{m.options.tokenGists}</li>
         </ul>
@@ -103,14 +201,18 @@ export function Options() {
           <div className="my-3 flex items-center gap-1.5 text-[13px] text-success">
             <Check className="size-4 shrink-0" />
             <span>{m.options.authenticatedAs(username)}</span>
-            <Button variant="ghost" size="sm" className="ml-2" onClick={clear}>{m.options.removeToken}</Button>
+            <Button variant="ghost" size="sm" className="ml-2" onClick={clear}>
+              {m.options.removeToken}
+            </Button>
           </div>
         )}
         {!hasUsableToken && username && (
           <div className="my-3 flex items-center gap-1.5 text-[13px] text-warning">
             <AlertTriangle className="size-4 shrink-0" />
             <span>{m.options.cachedAccountWarning(username)}</span>
-            <Button variant="ghost" size="sm" className="ml-2" onClick={clear}>{m.options.clearCachedAuth}</Button>
+            <Button variant="ghost" size="sm" className="ml-2" onClick={clear}>
+              {m.options.clearCachedAuth}
+            </Button>
           </div>
         )}
 
@@ -137,46 +239,18 @@ export function Options() {
 
       <Separator className="my-6" />
 
-      <section>
-        <h2 className="text-base font-medium">{m.options.languageHeading}</h2>
-        <p className="mt-1 text-[13px] text-muted-foreground">{m.options.languageBody}</p>
-        <div className="mt-2 flex items-center gap-3">
-          <label className="text-sm text-foreground">{m.options.languageLabel}</label>
-          <Select value={locale} onValueChange={(value) => void setLocale(value as Locale)}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder={m.options.languageLabel} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="en">English</SelectItem>
-              <SelectItem value="zh-CN">中文</SelectItem>
-            </SelectContent>
-          </Select>
-          <span className="text-xs text-muted-foreground">{m.common.current(m.localeName)}</span>
-        </div>
-      </section>
-
-      <Separator className="my-6" />
-
-      <section>
-        <h2 className="text-base font-medium">{m.options.appearanceHeading}</h2>
-        <p className="mt-1 text-[13px] text-muted-foreground">{m.options.appearanceBody}</p>
-        <div className="mt-2 flex items-center gap-3">
-          <Button variant="outline" onClick={toggleTheme}>
-            {theme === 'dark' ? <Sun data-icon="inline-start" /> : <Moon data-icon="inline-start" />}
-            {theme === 'dark' ? m.options.switchToLight : m.options.switchToDark}
-          </Button>
-          <span className="text-xs text-muted-foreground">{m.common.current(theme)}</span>
-        </div>
-      </section>
-
-      <Separator className="my-6" />
-
+      {/* 2. Gist */}
       <section>
         <h2 className="text-base font-medium">{m.options.gistHeading}</h2>
         <p className="mt-1 text-[13px] text-muted-foreground">
-          {gistId
-            ? <>{m.options.gistBoundPrefix} <code>{gistId}</code>. {m.options.gistBoundSuffix}</>
-            : <>{m.options.gistEmpty}</>}
+          {gistId ? (
+            <>
+              {m.options.gistBoundPrefix} <code>{gistId}</code>.{" "}
+              {m.options.gistBoundSuffix}
+            </>
+          ) : (
+            <>{m.options.gistEmpty}</>
+          )}
         </p>
         <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
           <div className="inline-flex items-center gap-2">
@@ -188,17 +262,33 @@ export function Options() {
           {syncing && progressValue != null && (
             <div className="mt-2 flex items-center gap-2">
               <Progress value={progressValue} className="h-2 flex-1" />
-              <span className="min-w-[48px] text-right tabular-nums text-foreground">{progressCount}</span>
+              <span className="min-w-[48px] text-right tabular-nums text-foreground">
+                {progressCount}
+              </span>
             </div>
           )}
         </div>
       </section>
 
       {msg && (
-        <div className={cn('mt-4 text-[13px]', msg.kind === 'ok' ? 'text-success' : 'text-destructive')}>
+        <div
+          className={cn(
+            "mt-4 text-[13px]",
+            msg.kind === "ok" ? "text-success" : "text-destructive",
+          )}
+        >
           {msg.text}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Dashed placeholder box for a tutorial screenshot. Swap for an <img> later. */
+function ScreenshotPlaceholder({ caption }: { caption: string }) {
+  return (
+    <div className="flex aspect-[16/9] items-center justify-center rounded-md border border-dashed border-border bg-muted/30 p-3 text-center text-[11px] text-muted-foreground">
+      <span>{caption}</span>
     </div>
   );
 }

@@ -3,18 +3,15 @@ import type { Tag, TagMeta } from '@/types';
 export type CountProgressCallback = (done: number, total: number | null) => void;
 
 /**
- * TagStore — abstraction over the user's annotation layer (tags + notes + tagMeta).
+ * Abstraction over the user's annotation layer (tags + notes + tag metadata).
  *
- * Q2 decision: UI depends only on this interface. The MVP composes two concrete
- * implementations:
- *   - IDBTagStore (src/storage/idb-tag-store.ts): local source of truth (IndexedDB)
- *   - GistTagStore (src/sync/gist-tag-store.ts): cross-device transport, per-repo
- *     field-level LWW merge (Q5 C2).
+ * The UI depends on this interface rather than a specific backend. The current
+ * implementation composes:
+ *   - `IDBTagStore`: local source of truth in IndexedDB
+ *   - `GistTagStore`: cross-device transport with timestamp-based conflict resolution
  *
- * Phase 2 evolution slot: a future implementation may add syncToGitHubLists() here
- * once the GitHub-native Lists reverse-engineering/DOM-automation work is done
- * (blueprint: partial feasibility, ToS medium, deferred). For now this method is
- * intentionally absent from the interface to keep the MVP contract clean.
+ * The interface intentionally omits any GitHub-native Lists sync so the current
+ * contract stays focused on local storage plus Gist transport.
  */
 export interface TagStore {
   // --- reads ---
@@ -24,6 +21,8 @@ export interface TagStore {
   listTagMeta(): Promise<TagMeta[]>;
   /** All tags for a set of repos, batched (avoids N queries when rendering rows). */
   getMany(full_names: string[]): Promise<Map<string, Tag>>;
+  /** Tag names currently tombstoned by delete (excluded). Auto-assign skips these. */
+  listExcluded(): Promise<string[]>;
 
   // --- writes (local; mark dirty for Gist sync) ---
   setTags(full_name: string, tags: string[]): Promise<void>;
@@ -31,8 +30,15 @@ export interface TagStore {
   /** Upsert a full Tag record (used by Gist merge-in). */
   upsert(tag: Tag): Promise<void>;
   upsertMeta(meta: TagMeta): Promise<void>;
+  /**
+   * Remove a tag name from every repo that has it. Returns how many repos
+   * were touched (all marked dirty for Gist sync). Leaves a tombstone
+   * (tagMeta.excluded) so auto-assign can't resurrect the tag; only a manual
+   * re-add (setTags) clears it. Used by the sidebar's per-tag delete button.
+   */
+  deleteTag(name: string): Promise<{ removed: number }>;
 
-  // --- Gist sync (Q5 C2 per-repo LWW) ---
+  // --- Gist sync (per-repo timestamp merge) ---
   /** Push local dirty tags/tagMeta to the Gist. */
   syncPush(onProgress?: CountProgressCallback): Promise<{ pushed: number; snapshot: number }>;
   /** Pull the Gist and merge per-repo by mtime into local IDB. */

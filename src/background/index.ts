@@ -5,22 +5,23 @@ import { idbTagStore } from '@/storage/idb-tag-store';
 import { db, liveStarCount } from '@/storage/db';
 import { queryStars, invalidateCache, type QueryParams, type QueryResult } from './query';
 import { suggestTags } from '@/ui/suggest';
-import type { SyncProgress } from '@/types';
+import { translateError } from '@/api/errors';
+import type { SyncProgress, Star } from '@/types';
 
 /**
  * Background service worker — the sync orchestrator AND the sole owner of the
  * IndexedDB (extension origin). Content scripts/popup/options talk to it via
  * messages; they never touch IDB directly (content scripts would hit the page's
  * origin IDB instead — a different database).
- *
- * Q5 A2: incremental sync is triggered when the stars-page UI mounts. No alarms.
+ * Incremental sync is kicked off when the stars-page UI mounts; there is no
+ * background polling or alarm-based sync loop.
  */
 
 type Req =
   | { type: 'syncIncremental' }
   | { type: 'syncFull' }
   | { type: 'syncRescan' }
-  | { type: 'refreshTags' }
+  | { type: 'autoAssignTags' }
   | { type: 'gistPush' }
   | { type: 'gistPull' }
   | { type: 'getStatus' }
@@ -31,10 +32,14 @@ type Req =
   | { type: 'query'; params: QueryParams }
   | { type: 'setTags'; full_name: string; tags: string[] }
   | { type: 'setNotes'; full_name: string; notes: string }
+  | { type: 'deleteTag'; name: string }
   | { type: 'acceptSuggestions'; full_name: string; toAdd: string[] }
   | { type: 'acceptSuggestionsBatch'; items: { full_name: string; toAdd: string[] }[] }
   | { type: 'suggestTags'; full_name: string }
   | { type: 'getTag'; full_name: string }
+  | { type: 'listExcluded' }
+  | { type: 'markOnboardingSeen' }
+  | { type: 'markTooltipSeen'; bit: number }
   | { type: 'testConnection' };
 
 type Res =
@@ -80,21 +85,68 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
  * only write when the merged set actually grew). Preserves notes (setTags
  * spreads existing). This runs automatically after every sync so tags are
  * always populated without a manual button press; the button is a manual refresh.
+ *
+ * Dimensions: each newly-suggested tag gets a tagMeta row with dimension
+ * 'language' (the repo's primary language) or 'topic' (a GitHub topic), so the
+ * sidebar groups tags into Language / Topic sections. We only CREATE meta — we
+ * never overwrite an existing row (a manual dimension or a delete-tombstone is
+ * preserved).
+ *
+ * Resurrection guard: names in the excluded set (tagMeta.excluded tombstones left
+ * by deleteTag) are passed to suggestTags and skipped, so deleting a tag actually
+ * sticks across syncs.
  */
 async function autoTagAll(): Promise<{ tagged: number }> {
   const stars = await db.stars.toArray();
+  const excluded = new Set(await idbTagStore.listExcluded());
+  // Names that already have a tagMeta row — load once so ensureDimensionMeta can
+  // skip them without a per-tag getMeta (autoTagAll runs after every sync).
+  const knownMeta = new Set((await idbTagStore.listTagMeta()).map((m) => m.name));
   let tagged = 0;
   for (const star of stars) {
     const existing = (await idbTagStore.get(star.full_name))?.tags ?? [];
-    const toAdd = suggestTags(star, existing);
-    if (toAdd.length === 0) continue;
-    const merged = Array.from(new Set([...existing, ...toAdd]));
-    if (merged.length !== existing.length) {
-      await idbTagStore.setTags(star.full_name, merged);
-      tagged++;
+    const toAdd = suggestTags(star, existing, excluded);
+    let merged = existing;
+    if (toAdd.length > 0) {
+      merged = Array.from(new Set([...existing, ...toAdd]));
+      if (merged.length !== existing.length) {
+        await idbTagStore.setTags(star.full_name, merged);
+        tagged++;
+      }
     }
+    // Ensure a dimension meta row for every language/topic-derived tag this repo
+    // carries (not just the ones added this pass — backfills existing tags too, so
+    // users who already had auto-tags before dimensions shipped get grouped). We
+    // only CREATE meta when none exists — never clobber a manual dimension or a
+    // delete-tombstone. Language (repo's single language) → 'language'; topics → 'topic'.
+    // Runs even when nothing new was added, so pre-existing tags get backfilled.
+    await ensureDimensionMeta(star, merged, knownMeta);
   }
   return { tagged };
+}
+
+/**
+ * For a repo's tag set, create tagMeta dimension rows for any language/topic tag
+ * that lacks one. Language → 'language', each GitHub topic → 'topic'. Skips names
+ * already in `knownMeta` (existing dimension OR a delete tombstone). Mutates
+ * `knownMeta` to include anything it creates, so later repos don't re-check them.
+ * Idempotent and cheap (no per-tag DB read).
+ */
+async function ensureDimensionMeta(star: Star, names: string[], knownMeta: Set<string>): Promise<void> {
+  const derived: { name: string; dimension: string }[] = [];
+  if (star.language && names.includes(star.language)) {
+    derived.push({ name: star.language, dimension: 'language' });
+  }
+  for (const t of star.topics) {
+    if (names.includes(t)) derived.push({ name: t, dimension: 'topic' });
+  }
+  if (derived.length === 0) return;
+  const ts = new Date().toISOString();
+  for (const { name, dimension } of derived) {
+    if (knownMeta.has(name)) continue;
+    await idbTagStore.upsertMeta({ name, dimension, color: null, excluded: false, mtime: ts });
+    knownMeta.add(name);
+  }
 }
 
 async function handle(req: Req): Promise<Res> {
@@ -128,11 +180,11 @@ async function handle(req: Req): Promise<Res> {
         setIdleMessage(m.background.rescanDone(t.tagged));
         return { ok: true, data: { ...r, autoTagged: t.tagged } };
       }
-      case 'refreshTags': {
+      case 'autoAssignTags': {
         const m = await getLocaleMessages();
         const t = await autoTagAll();
         broadcastDataChanged();
-        setIdleMessage(m.background.refreshTagsDone(t.tagged));
+        setIdleMessage(m.background.autoAssignDone(t.tagged));
         return { ok: true, data: t };
       }
       case 'gistPush': {
@@ -155,7 +207,7 @@ async function handle(req: Req): Promise<Res> {
         return { ok: true, data: r };
       }
       case 'getStatus':
-        return { ok: true, data: { progress: lastProgress, hasToken: await authStore.hasToken() } };
+        return { ok: true, data: { progress: lastProgress, hasToken: await authStore.hasToken(), seenOnboarding: (await authStore.getConfig()).seenOnboarding, seenTooltips: (await authStore.getConfig()).seenTooltips } };
       case 'getDebugStatus': {
         const cfg = await authStore.getConfig();
         const [hasToken, starCount, liveCount, sample] = await Promise.all([
@@ -218,6 +270,12 @@ async function handle(req: Req): Promise<Res> {
         await idbTagStore.setNotes(req.full_name, req.notes);
         broadcastDataChanged();
         return { ok: true };
+      case 'deleteTag': {
+        // Remove this tag from every repo that has it (+ drop its meta).
+        const r = await idbTagStore.deleteTag(req.name);
+        broadcastDataChanged();
+        return { ok: true, data: r };
+      }
       case 'acceptSuggestions': {
         const existing = (await idbTagStore.get(req.full_name))?.tags ?? [];
         const merged = Array.from(new Set([...existing, ...req.toAdd]));
@@ -259,6 +317,16 @@ async function handle(req: Req): Promise<Res> {
       case 'getTag': {
         return { ok: true, data: { tag: (await idbTagStore.get(req.full_name)) ?? null } };
       }
+      case 'listExcluded':
+        return { ok: true, data: await idbTagStore.listExcluded() };
+      case 'markOnboardingSeen':
+        await authStore.update({ seenOnboarding: true });
+        return { ok: true };
+      case 'markTooltipSeen': {
+        const cur = (await authStore.getConfig()).seenTooltips;
+        await authStore.update({ seenTooltips: cur | req.bit });
+        return { ok: true, data: { seenTooltips: cur | req.bit } };
+      }
       case 'acceptSuggestionsBatch': {
         let n = 0;
         for (const item of req.items) {
@@ -275,7 +343,7 @@ async function handle(req: Req): Promise<Res> {
       }
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = translateError(e, await getLocaleMessages());
     // Reset progress to idle on failure so the UI doesn't stay stuck on
     // "Fetching N pages…" when a sync throws (e.g. bad token, network).
     setProgress({ phase: 'idle', done: 0, total: null, message: `${msg}` });

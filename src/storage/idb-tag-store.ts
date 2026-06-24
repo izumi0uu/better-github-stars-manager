@@ -4,12 +4,11 @@ import { gistTagStore } from '@/sync/gist-tag-store';
 import { db } from './db';
 
 /**
- * IDBTagStore — local source of truth for the tag/notes layer (Q3).
+ * Local source of truth for the tag/notes layer.
  *
- * Every write updates mtime (the LWW arbitration key for Gist sync) and marks the
- * repo dirty so syncPush knows what to send. We track dirtiness with a lightweight
- * in-memory Set (persisted to chrome.storage would be overkill; if the SW dies we
- * just re-push the whole Gist, which is cheap at ~600KB).
+ * Every write updates `mtime` (the merge key for Gist sync) and marks the repo
+ * dirty so `syncPush()` knows what changed. Dirtiness is tracked with a lightweight
+ * in-memory set.
  */
 
 const dirty = new Set<string>(); // full_names with unsynced changes
@@ -55,6 +54,16 @@ export const idbTagStore: TagStore = {
       mtime: now(),
     };
     await db.tags.put({ ...existing, tags, mtime: touch(full_name) });
+    // If the user just (re)typed any tag that was previously deleted (excluded),
+    // clear its tombstone so auto-assign won't keep skipping it. This is the only
+    // path that un-excludes a name — manual intent overrides the auto-assign block.
+    const newlyAdded = tags.filter((t) => !existing.tags.includes(t));
+    for (const name of newlyAdded) {
+      const meta = await db.tagMeta.get(name);
+      if (meta?.excluded) {
+        await db.tagMeta.put({ ...meta, excluded: false, mtime: now() });
+      }
+    }
   },
 
   async setNotes(full_name, notes) {
@@ -75,6 +84,40 @@ export const idbTagStore: TagStore = {
   async upsertMeta(meta) {
     await db.tagMeta.put(meta);
     dirtyMeta = true;
+  },
+
+  async deleteTag(name) {
+    let removed = 0;
+    // Every repo currently carrying this tag — via the *tags multiEntry index.
+    const hits = await db.tags.where('tags').equals(name).toArray();
+    const ts = now();
+    await db.transaction('rw', db.tags, db.tagMeta, async () => {
+      for (const t of hits) {
+        const next = t.tags.filter((x) => x !== name);
+        if (next.length === t.tags.length) continue; // wasn't there (shouldn't happen)
+        await db.tags.put({ ...t, tags: next, mtime: touch(t.full_name) });
+        removed++;
+      }
+      // Persist a delete TOMBSTONE (not a hard delete) so auto-assign can't
+      // resurrect the tag on the next sync. The tombstone rides the same Gist-sync
+      // channel as the dimension (tagMeta, LWW by mtime) — no separate transport.
+      // Preserve any existing dimension/color; only flip excluded + bump mtime.
+      const prev = await db.tagMeta.get(name);
+      await db.tagMeta.put({
+        name,
+        dimension: prev?.dimension ?? null,
+        color: prev?.color ?? null,
+        excluded: true,
+        mtime: ts,
+      });
+    });
+    dirtyMeta = true;
+    return { removed };
+  },
+
+  async listExcluded(): Promise<string[]> {
+    const metas = await db.tagMeta.toArray();
+    return metas.filter((m) => m.excluded).map((m) => m.name);
   },
 
   async syncPush(onProgress?: CountProgressCallback) {

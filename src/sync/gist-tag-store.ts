@@ -3,23 +3,23 @@ import type { CountProgressCallback } from '@/api/tag-store';
 import { db } from '@/storage/db';
 import { authStore } from '@/auth/auth-store';
 import { clearDirty } from '@/storage/idb-tag-store';
+import { GIST_NO_TOKEN, GIST_CREATE_FAILED, GIST_PUSH_FAILED, GIST_PULL_FAILED } from '@/api/errors';
 
 /**
- * GistTagStore — cross-device transport for the tag layer (Q5 C2).
+ * Cross-device transport for the tag layer.
  *
- * Gist is the zero-server sync channel (Q2=C). We store ONE gist containing a
- * GistPayload: { v, tags: { [full_name]: {tags,notes,mtime} }, tagMeta, exportedAt }.
+ * Gist is the zero-server sync channel. We store one JSON payload containing the
+ * `tags`, `tagMeta`, and an export timestamp.
  *
- * Merge strategy = per-repo field-level LWW:
+ * Merge strategy = per-record last-write-wins by `mtime`:
  *  - PUSH: serialize the full local tags/tagMeta stores into the gist (the gist is
- *    a complete snapshot, not a diff — simplest correct option at ~600KB).
- *  - PULL: for each repo in the gist, compare its mtime to the local record's mtime;
- *    take whichever is newer. Same for tagMeta. This means two devices editing
- *    DIFFERENT repos never lose data; only same-repo same-instant edits collide
- *    (last writer wins), which is acceptable for this usage pattern.
+ *    a complete snapshot, not a diff).
+ *  - PULL: compare each remote record's `mtime` to the local record and keep the
+ *    newer one. Edits to different repos never conflict; same-repo collisions
+ *    resolve to the newer record.
  *
- * Fine-grained PAT caveat (Q4): gist scope is account-wide (no per-gist isolation).
- * We create a dedicated gist for sync to limit blast radius.
+ * Fine-grained PAT caveat: gist scope is account-wide (no per-gist isolation), so
+ * the extension binds to a dedicated secret gist for sync.
  */
 
 const GIST_FILENAME = 'better-github-stars-manager-tags.json';
@@ -27,7 +27,7 @@ const GIST_DESC = 'Better GitHub Stars Manager — tag sync (do not edit)';
 
 function gistHeaders(): Promise<HeadersInit> {
   return authStore.getToken().then((token) => {
-    if (!token) throw new Error('No token for Gist sync');
+    if (!token) throw new Error(GIST_NO_TOKEN);
     return {
       Authorization: `Bearer ${token}`,
       Accept: 'application/vnd.github+json',
@@ -56,7 +56,7 @@ async function findOrCreateGist(): Promise<string> {
       files: { [GIST_FILENAME]: { content: JSON.stringify({ v: 1, tags: {}, tagMeta: {}, exportedAt: new Date().toISOString() }) } },
     }),
   });
-  if (!res.ok) throw new Error(`Could not create Gist: ${res.status}`);
+  if (!res.ok) throw new Error(GIST_CREATE_FAILED);
   const body = (await res.json()) as { id: string };
   await authStore.update({ gistId: body.id });
   return body.id;
@@ -64,7 +64,10 @@ async function findOrCreateGist(): Promise<string> {
 
 async function readGist(id: string): Promise<GistPayload | null> {
   const res = await fetch(`https://api.github.com/gists/${id}`, { headers: await gistHeaders() });
-  if (!res.ok) return null;
+  // 404 = the gist was deleted; 401/403 = token lost Gist access. Surface these
+  // instead of silently returning null (which used to look like "0 merged" on Pull).
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(GIST_PULL_FAILED);
   const body = (await res.json()) as { files?: Record<string, { content?: string }> };
   const file = body.files?.[GIST_FILENAME];
   if (!file?.content) return null;
@@ -116,7 +119,7 @@ export const gistTagStore = {
         files: { [GIST_FILENAME]: { content: JSON.stringify(payload) } },
       }),
     });
-    if (!res.ok) throw new Error(`Gist push failed: ${res.status}`);
+    if (!res.ok) throw new Error(GIST_PUSH_FAILED);
     clearDirty(dirtyNames, dirtyMeta);
     await authStore.update({ gistSyncCursor: payload.exportedAt });
     onProgress?.(total, total);
@@ -124,7 +127,8 @@ export const gistTagStore = {
   },
 
   /**
-   * Pull: read the gist, merge per-repo by mtime (LWW). Returns count of records
+   * Pull: read the gist and merge each record by `mtime`. Returns the count of
+   * records
    * that were updated locally from the remote.
    */
   async pull(onProgress?: CountProgressCallback): Promise<{ merged: number; total: number }> {

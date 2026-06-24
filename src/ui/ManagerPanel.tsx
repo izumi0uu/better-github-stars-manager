@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
 import { StarRow } from '@/ui/components/StarRow';
@@ -10,31 +10,33 @@ import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { Button } from '@/ui/shadcn/button';
+import { Spinner } from '@/ui/shadcn/spinner';
 import { PortalProvider } from '@/ui/shadcn/portal-context';
+import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import { useTheme } from '@/ui/hooks/use-theme';
-import { bgCall, mergeProgressStatus, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
+import { bgCall, mergeProgressStatus, mergeStatusPatch, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 
-const ROW_HEIGHT = 64; // fixed; matches StarRow h-16 + virtualizer estimate
-// grid columns shared by the sticky header and each row — keep in sync with StarRow.
+const ROW_HEIGHT = 64;
 const GRID_COLS = 'grid-cols-[minmax(180px,1.4fr)_2fr_80px_64px_84px_1.6fr_20px]';
 
 export function ManagerPanel() {
-  const { rows, total, grandTotal, loading, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
+  const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
   const f = useFilterStore();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [successAction, setSuccessAction] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [coachStep, setCoachStep] = useState<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const { theme, themeClass, toggle: toggleTheme } = useTheme();
   const { m } = useI18n();
 
-  // Read initial tag filter from URL hash (D4 chip click → #gsm-tag=xxx).
   useEffect(() => {
     const m = location.hash.match(/gsm-tag=([^&]+)/);
     if (m) {
@@ -44,7 +46,6 @@ export function ManagerPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // On mount: read status, auto-sync if token present (full vs incremental by DB count).
   useEffect(() => {
     let off = () => {};
     (async () => {
@@ -67,7 +68,6 @@ export function ManagerPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keyboard: / focuses search. (Detail-panel nav keys are handled inside it.)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -88,13 +88,23 @@ export function ManagerPanel() {
     overscan: 12,
   });
 
+  const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashSuccess = (type: string) => {
+    if (successTimer.current) clearTimeout(successTimer.current);
+    setSuccessAction(type);
+    successTimer.current = setTimeout(() => setSuccessAction(null), 1300);
+  };
+  useEffect(() => () => { if (successTimer.current) clearTimeout(successTimer.current); }, []);
+
   const doSync = async (type: string, label: string) => {
     setBusy(true);
     setPendingAction(type);
+    setSuccessAction(null);
     setInfo(null);
     try {
       await bgCall(type);
       refreshStars();
+      flashSuccess(type);
     } catch (e) {
       setInfo(m.manager.syncFailed(label, e instanceof Error ? e.message : String(e)));
     } finally {
@@ -103,19 +113,41 @@ export function ManagerPanel() {
     }
   };
 
-  const refreshTags = async () => {
+  const autoAssignTags = async () => {
     setBusy(true);
-    setPendingAction('refreshTags');
+    setPendingAction('autoAssignTags');
+    setSuccessAction(null);
     setInfo(null);
     try {
-      await bgCall('refreshTags');
+      await bgCall('autoAssignTags');
       refreshStars();
+      flashSuccess('autoAssignTags');
     } catch (e) {
-      setInfo(m.manager.refreshTagsFailed(e instanceof Error ? e.message : String(e)));
+      setInfo(m.manager.autoAssignFailed(e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
-      setPendingAction((cur) => (cur === 'refreshTags' ? null : cur));
+      setPendingAction((cur) => (cur === 'autoAssignTags' ? null : cur));
     }
+  };
+
+  const dismissOnboarding = async () => {
+    setStatus((cur) => mergeStatusPatch(cur, { seenOnboarding: true }));
+    await bgCall('markOnboardingSeen').catch(() => {});
+  };
+
+  const syncingNow = !!pendingAction || (status?.progress.phase != null && status.progress.phase !== 'idle');
+  const coachReady = !status?.seenOnboarding && !!status?.hasToken && !syncingNow && !info && rows.length > 0;
+  useEffect(() => {
+    if (coachReady && coachStep === null) setCoachStep(0);
+  }, [coachReady, coachStep]);
+
+  const finishCoach = async () => {
+    setCoachStep(null);
+    await dismissOnboarding();
+  };
+  const skipCoach = async () => {
+    setCoachStep(null);
+    await dismissOnboarding();
   };
 
   const selectedIdx = useMemo(
@@ -129,13 +161,12 @@ export function ManagerPanel() {
     setSelected((cur) => (cur === full_name ? null : full_name));
   };
 
-  // Whether any filter is active — drives the animated filter-chips row.
-  // (showTombstone disabled for now — not included.)
   const hasActiveFilter =
     f.languages.length > 0 || f.tags.length > 0 || f.onlyUntagged;
 
   return (
     <PortalProvider containerRef={rootRef}>
+      <TooltipProvider delayDuration={300} skipDelayDuration={150}>
       <div
         ref={rootRef}
         className={cn('relative flex h-full flex-col bg-background text-foreground font-sans', themeClass)}
@@ -144,18 +175,21 @@ export function ManagerPanel() {
           f={f}
           status={status}
           loading={loading}
+          listPhase={phase}
           total={total}
           grandTotal={grandTotal}
           busy={busy}
           pendingAction={pendingAction}
+          successAction={successAction}
           onSync={doSync}
-          onRefreshTags={refreshTags}
+          onAutoAssignTags={autoAssignTags}
+          onStatusPatch={(patch) => setStatus((cur) => mergeStatusPatch(cur, patch))}
           onToggleTheme={toggleTheme}
           theme={theme}
           searchRef={searchRef}
         />
 
-        {status && !status.hasToken && (
+        {status && !status.hasToken && status.seenOnboarding && (
           <div className="flex items-center gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
             <AlertTriangle className="size-4 shrink-0" />
             <span>{m.manager.noTokenBanner}</span>
@@ -168,7 +202,6 @@ export function ManagerPanel() {
           </div>
         )}
 
-        {/* Animated active-filter row: grows/shrinks via grid-template-rows. */}
         <div className={cn('filter-row-anim border-b border-border', !hasActiveFilter && 'collapsed')}>
           <ActiveFilterChips f={f} count={total} />
         </div>
@@ -178,10 +211,34 @@ export function ManagerPanel() {
         )}
 
         <div className="flex min-h-0 flex-1">
-          <FilterSidebar f={f} languages={languages} tagTree={tagTree} />
+          <FilterSidebar
+            f={f}
+            languages={languages}
+            tagTree={tagTree}
+            onTagDeleted={(message) => {
+              refreshStars();
+              if (message) setInfo(message);
+            }}
+          />
 
-          {/* Virtual list */}
-          <div ref={listRef} className="no-scrollbar flex-1 overflow-auto">
+          <div ref={listRef} data-coach-target="repo" className="no-scrollbar flex-1 overflow-auto">
+            {!status?.seenOnboarding && (coachStep === null) ? (
+              <OnboardingCard
+                hasToken={!!status?.hasToken}
+                syncing={syncingNow}
+                failedInfo={info}
+                onOpenOptions={() => chrome.runtime.openOptionsPage()}
+                onRetry={() => void doSync('syncFull', m.popup.syncFull)}
+                onDismiss={() => void dismissOnboarding()}
+              />
+            ) : (
+              <>
+            <div
+              style={{
+                opacity: phase === 'fading-out' ? 0 : 1,
+                transition: `opacity ${phase === 'fading-out' ? 120 : 160}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+              }}
+            >
             <div
               className={cn(
                 'sticky top-0 z-10 grid gap-2 border-b border-border bg-background px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground',
@@ -222,11 +279,11 @@ export function ManagerPanel() {
                 })}
               </div>
             )}
+            </div>
+              </>
+            )}
           </div>
 
-          {/* Right detail drawer — always mounted so exit animation can play.
-              Width animates 0→340px; inner content renders only when a repo is
-              selected (so the panel isn't doing work while collapsed). */}
           <div className={cn('drawer-anim border-l border-border', selectedStar ? 'drawer-enter' : 'drawer-exit')}>
             {selectedStar && (
               <RepoDetailPanel
@@ -246,7 +303,20 @@ export function ManagerPanel() {
         </div>
 
         <FloatingLocaleToggle drawerOpen={!!selectedStar} />
+
+        {coachStep !== null && (
+          <CoachOverlay
+            step={coachStep}
+            total={3}
+            rootRef={rootRef}
+            onNext={() => setCoachStep((s) => (s === null ? s : Math.min(s + 1, 2)))}
+            onBack={() => setCoachStep((s) => (s === null ? s : Math.max(s - 1, 0)))}
+            onFinish={() => void finishCoach()}
+            onSkip={() => void skipCoach()}
+          />
+        )}
       </div>
+      </TooltipProvider>
     </PortalProvider>
   );
 }
@@ -262,4 +332,173 @@ function emptyFilter() {
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
   };
+}
+
+/** First-run onboarding card shown before the list. */
+function OnboardingCard({
+  hasToken,
+  syncing,
+  failedInfo,
+  onOpenOptions,
+  onRetry,
+  onDismiss,
+}: {
+  hasToken: boolean;
+  syncing: boolean;
+  failedInfo: string | null;
+  onOpenOptions: () => void;
+  onRetry: () => void;
+  onDismiss: () => void;
+}) {
+  const { m } = useI18n();
+
+  return (
+    <div className="flex h-full items-center justify-center p-8">
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-sm">
+        <div className="mb-3 flex items-center gap-2 text-foreground">
+          <Sparkles className="size-5 text-primary" />
+          <h2 className="text-base font-semibold">{m.onboarding.title}</h2>
+        </div>
+
+        {!hasToken ? (
+          <div className="space-y-3 text-muted-foreground">
+            <p>{m.onboarding.noTokenBody}</p>
+            <ol className="list-decimal space-y-1 pl-5">
+              <li>
+                <a
+                  className="text-primary hover:underline"
+                  href="https://github.com/settings/personal-access-tokens/new"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {m.onboarding.createPatLabel}
+                </a>
+              </li>
+              <li>{m.options.tokenPublicRepos}</li>
+              <li>{m.options.tokenGists}</li>
+            </ol>
+            <Button onClick={onOpenOptions} className="w-full">
+              {m.onboarding.openOptions}
+            </Button>
+          </div>
+        ) : failedInfo ? (
+          <div className="space-y-3 text-muted-foreground">
+            <p>
+              {m.onboarding.syncFailedBody} <span className="text-destructive">{failedInfo}</span>
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={onRetry}>
+                <RefreshCw className="size-4" data-icon="inline-start" />
+                {m.onboarding.retry}
+              </Button>
+            </div>
+          </div>
+        ) : syncing ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Spinner className="size-4" />
+            <span>{m.onboarding.syncingBody}</span>
+          </div>
+        ) : (
+          <p className="text-muted-foreground">{m.manager.emptyState}</p>
+        )}
+
+        <Button variant="ghost" size="sm" onClick={onDismiss} className="mt-4 w-full">
+          {m.onboarding.gotIt}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** First-run coach overlay that spotlights the sync button, tags sidebar, and list. */
+const COACH_TARGETS = ['sync', 'tags', 'repo'] as const;
+
+function CoachOverlay({
+  step,
+  total,
+  rootRef,
+  onNext,
+  onBack,
+  onFinish,
+  onSkip,
+}: {
+  step: number;
+  total: number;
+  rootRef: React.RefObject<HTMLDivElement>;
+  onNext: () => void;
+  onBack: () => void;
+  onFinish: () => void;
+  onSkip: () => void;
+}) {
+  const { m } = useI18n();
+  const targetSel = `[data-coach-target="${COACH_TARGETS[step]}"]`;
+
+  const [spot, setSpot] = useState<{ left: number; top: number; w: number; h: number } | null>(null);
+  const measure = () => {
+    const root = rootRef.current;
+    const el = root?.querySelector<HTMLElement>(targetSel);
+    if (!root || !el) return;
+    const r = el.getBoundingClientRect();
+    const rr = root.getBoundingClientRect();
+    setSpot({ left: r.left - rr.left, top: r.top - rr.top, w: r.width, h: r.height });
+  };
+
+  useEffect(() => {
+    const root = rootRef.current;
+    const el = root?.querySelector<HTMLElement>(targetSel);
+    if (el) {
+      el.classList.add('gsm-coach-highlight');
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+    measure();
+    const onResize = () => measure();
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      root?.querySelectorAll('.gsm-coach-highlight').forEach((n) => n.classList.remove('gsm-coach-highlight'));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, targetSel, rootRef]);
+
+  const titles = [m.onboarding.coachStep1Title, m.onboarding.coachStep2Title, m.onboarding.coachStep3Title];
+  const bodies = [m.onboarding.coachStep1Body, m.onboarding.coachStep2Body, m.onboarding.coachStep3Body];
+  const isLast = step === total - 1;
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-30">
+      {spot && (
+        <div
+          className="absolute"
+          style={{
+            left: spot.left - 10,
+            top: spot.top - 10,
+            width: spot.w + 20,
+            height: spot.h + 20,
+            borderRadius: 10,
+            boxShadow: '0 0 0 9999px hsl(var(--background) / 0.6)',
+          }}
+        />
+      )}
+
+      <div className="pointer-events-auto absolute bottom-6 left-1/2 w-[min(440px,90vw)] -translate-x-1/2 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl">
+        <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+          <span>{m.onboarding.coachTitle}</span>
+          <span>{m.onboarding.coachOf(step + 1, total)}</span>
+        </div>
+        <h3 className="text-sm font-semibold">{titles[step]}</h3>
+        <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{bodies[step]}</p>
+        {step === 0 && <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground/80">{m.onboarding.coachIntro}</p>}
+        <div className="mt-3 flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={onSkip}>{m.onboarding.coachSkip}</Button>
+          <span className="flex-1" />
+          {step > 0 && (
+            <Button variant="outline" size="sm" onClick={onBack}>{m.onboarding.coachBack}</Button>
+          )}
+          <Button size="sm" onClick={isLast ? onFinish : onNext}>
+            {isLast ? m.onboarding.coachDone : m.onboarding.coachNext}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }

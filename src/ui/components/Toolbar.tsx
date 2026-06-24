@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Sun, Moon, Search, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow,
-  Tags, Upload, Download, MoreHorizontal, AlertTriangle,
+  Tags, Upload, Download, AlertTriangle, ExternalLink,
 } from 'lucide-react';
 import type { FilterState } from '@/ui/filter-store';
 import type { SyncStatus } from '@/utils/messaging';
@@ -10,34 +10,74 @@ import { Button } from '@/ui/shadcn/button';
 import { Input } from '@/ui/shadcn/input';
 import { Progress } from '@/ui/shadcn/progress';
 import { Spinner } from '@/ui/shadcn/spinner';
-import { Popover, PopoverTrigger, PopoverContent } from '@/ui/shadcn/popover';
+import { SuccessCheck } from '@/ui/shadcn/success-check';
+import { ActionIcon } from '@/ui/shadcn/action-icon';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/ui/shadcn/tooltip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/shadcn/select';
-import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 
+/** Top toolbar for the stars page. */
+type Account = { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null };
+
 /**
- * Top toolbar.
- *  - Row 1 (main): search / sort / direction / primary sync / overflow menu / account chip / theme.
- *  - Row 2 (status): result count, loading, syncing phase + progress, no-token warning.
+ * A Button wrapped in a Tooltip. MUST live at module scope — not inside Toolbar.
  *
- * Secondary actions (Refresh tags / Push / Pull) live in an overflow menu (⋯) —
- * the old "数据"/Data group label is gone. The account chip (avatar + @username)
- * anchors the right side; clicking it opens the user's stars page. Account is
- * fetched once on mount (with a one-time backfill for users who verified before
- * avatar capture was added).
+ * When this component lived inside Toolbar, every Toolbar render created a new
+ * component identity, so the action buttons remounted and replayed their intro
+ * animation. Keeping it at module scope preserves identity and avoids that
+ * double-flash regression.
  */
-type Account = { username: string | null; avatarUrl: string | null; displayName: string | null };
+function TButton({
+  tip,
+  firstUseTip,
+  bit,
+  seenTooltips,
+  onStatusPatch,
+  children,
+  ...btnProps
+}: {
+  tip: string;
+  firstUseTip?: string;
+  bit?: number;
+  seenTooltips: number;
+  onStatusPatch?: (patch: Partial<SyncStatus>) => void;
+} & React.ComponentProps<typeof Button>) {
+  const showFirst = firstUseTip !== undefined && bit !== undefined && !(seenTooltips & bit);
+  const [open, setOpen] = useState(false);
+  return (
+    <Tooltip
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next && showFirst && bit !== undefined) {
+          onStatusPatch?.({ seenTooltips: seenTooltips | bit });
+          bgCall<{ seenTooltips: number }>('markTooltipSeen', { bit })
+            .then((data) => onStatusPatch?.({ seenTooltips: data.seenTooltips }))
+            .catch(() => {});
+        }
+      }}
+    >
+      <TooltipTrigger asChild>
+        <Button {...btnProps}>{children}</Button>
+      </TooltipTrigger>
+      <TooltipContent>{showFirst ? firstUseTip : tip}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 export function Toolbar({
   f,
   status,
   loading,
+  listPhase,
   total,
   grandTotal,
   busy,
   pendingAction,
+  successAction,
   onSync,
-  onRefreshTags,
+  onAutoAssignTags,
+  onStatusPatch,
   onToggleTheme,
   theme,
   searchRef,
@@ -45,12 +85,15 @@ export function Toolbar({
   f: FilterState;
   status: SyncStatus | null;
   loading: boolean;
+  listPhase: 'idle' | 'fading-out' | 'fading-in';
   total: number;
   grandTotal: number;
   busy: boolean;
   pendingAction: string | null;
+  successAction: string | null;
   onSync: (type: string, label: string) => void;
-  onRefreshTags: () => void;
+  onAutoAssignTags: () => void;
+  onStatusPatch?: (patch: Partial<SyncStatus>) => void;
   onToggleTheme: () => void;
   theme: 'dark' | 'light';
   searchRef: React.RefObject<HTMLInputElement>;
@@ -63,8 +106,6 @@ export function Toolbar({
   const progressValue = phase && phase.total ? Math.max(1, Math.min(100, Math.round((phase.done / phase.total) * 100))) : null;
   const progressCount = phase?.total ? `${phase.done}/${phase.total}` : null;
 
-  // Fetch account identity once. If avatar is missing (user verified before it
-  // was captured), trigger a one-time backfill via fetchAccount.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -79,27 +120,19 @@ export function Toolbar({
     return () => { cancelled = true; };
   }, []);
 
-  const openMyStars = () => {
-    const u = account?.username;
-    chrome.tabs.create({ url: u ? `https://github.com/${u}?tab=stars` : 'https://github.com/stars' });
-  };
+  const prevPending = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevPending.current === 'gistPush' && pendingAction === null) {
+      bgCall<Account>('getAccount').then((acc) => setAccount(acc)).catch(() => {});
+    }
+    prevPending.current = pendingAction;
+  }, [pendingAction]);
 
-  const buttonContent = (label: string, active: boolean) =>
-    active ? (
-      <>
-        <Spinner data-icon="inline-start" />
-        {label}
-        {progressCount && <span className="ml-1 tabular-nums text-[10px] opacity-80">{progressCount}</span>}
-      </>
-    ) : (
-      label
-    );
+  const seenTooltips = status?.seenTooltips ?? 0;
 
   return (
     <div className="border-b border-border bg-card">
-      {/* Row 1: main controls */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-        {/* Search */}
         <div className="relative min-w-[220px] flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -111,7 +144,6 @@ export function Toolbar({
           />
         </div>
 
-        {/* Sort + direction */}
         <Select value={f.sortKey} onValueChange={(value) => f.setSort(value as typeof f.sortKey)}>
           <SelectTrigger className="h-9 w-[170px]">
             <SelectValue placeholder={m.toolbar.sortName} />
@@ -123,100 +155,137 @@ export function Toolbar({
             <SelectItem value="name">{m.toolbar.sortName}</SelectItem>
           </SelectContent>
         </Select>
-        <Button
+        <TButton
           variant="outline"
           size="icon"
           className="h-9 w-9"
+          tip={m.toolbar.toggleSortDir}
+          seenTooltips={seenTooltips}
+          onStatusPatch={onStatusPatch}
           onClick={() => f.setSort(f.sortKey, f.sortDir === 'asc' ? 'desc' : 'asc')}
-          title={m.toolbar.toggleSortDir}
         >
-          {f.sortDir === 'asc' ? <ArrowUpNarrowWide className="size-4" /> : <ArrowDownWideNarrow className="size-4" />}
-        </Button>
+          <ActionIcon phase={f.sortDir}>
+            {f.sortDir === 'asc' ? <ArrowUpNarrowWide className="size-4" /> : <ArrowDownWideNarrow className="size-4" />}
+          </ActionIcon>
+        </TButton>
 
-        {/* Primary sync */}
-        <Button onClick={() => onSync('syncIncremental', m.toolbar.syncButton)} disabled={actionBusy} title={m.toolbar.syncTitle}>
-          {pendingAction === 'syncIncremental' ? (
-            buttonContent(m.toolbar.syncButton, true)
-          ) : (
-            <>
+        <TButton onClick={() => onSync('syncIncremental', m.toolbar.syncButton)} disabled={actionBusy} tip={m.toolbar.syncTitle} firstUseTip={m.onboarding.tooltipSyncFirst} bit={1} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch} data-coach-target="sync">
+          <ActionIcon phase={successAction === 'syncIncremental' ? 'ok' : pendingAction === 'syncIncremental' ? 'busy' : 'idle'}>
+            {successAction === 'syncIncremental' ? (
+              <SuccessCheck data-icon="inline-start" />
+            ) : pendingAction === 'syncIncremental' ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
               <RefreshCw className="size-4" data-icon="inline-start" />
-              {m.toolbar.syncButton}
-            </>
+            )}
+          </ActionIcon>
+          {m.toolbar.syncButton}
+          {pendingAction === 'syncIncremental' && progressCount && (
+            <span className="ml-1 tabular-nums text-[10px] opacity-80">{progressCount}</span>
           )}
-        </Button>
+        </TButton>
+
+        <TButton variant="ghost" size="sm" onClick={() => onAutoAssignTags()} disabled={actionBusy} tip={m.toolbar.autoAssignTitle} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
+          <ActionIcon phase={successAction === 'autoAssignTags' ? 'ok' : pendingAction === 'autoAssignTags' ? 'busy' : 'idle'}>
+            {successAction === 'autoAssignTags' ? (
+              <SuccessCheck data-icon="inline-start" />
+            ) : pendingAction === 'autoAssignTags' ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <Tags data-icon="inline-start" />
+            )}
+          </ActionIcon>
+          {m.toolbar.autoAssignButton}
+        </TButton>
+        <TButton variant="ghost" size="sm" onClick={() => onSync('gistPush', m.toolbar.gistPushButton)} disabled={actionBusy} tip={m.toolbar.gistPushTitle} firstUseTip={m.onboarding.tooltipPushFirst} bit={2} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
+          <ActionIcon phase={successAction === 'gistPush' ? 'ok' : pendingAction === 'gistPush' ? 'busy' : 'idle'}>
+            {successAction === 'gistPush' ? (
+              <SuccessCheck data-icon="inline-start" />
+            ) : pendingAction === 'gistPush' ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <Upload data-icon="inline-start" />
+            )}
+          </ActionIcon>
+          {m.toolbar.gistPushButton}
+        </TButton>
+        <TButton variant="ghost" size="sm" onClick={() => onSync('gistPull', m.toolbar.gistPullButton)} disabled={actionBusy} tip={m.toolbar.gistPullTitle} firstUseTip={m.onboarding.tooltipPullFirst} bit={4} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
+          <ActionIcon phase={successAction === 'gistPull' ? 'ok' : pendingAction === 'gistPull' ? 'busy' : 'idle'}>
+            {successAction === 'gistPull' ? (
+              <SuccessCheck data-icon="inline-start" />
+            ) : pendingAction === 'gistPull' ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <Download data-icon="inline-start" />
+            )}
+          </ActionIcon>
+          {m.toolbar.gistPullButton}
+        </TButton>
 
         <span className="flex-1" />
 
-        {/* Overflow menu: Refresh tags / Push / Pull (replaces the old "数据" group) */}
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-9 w-9" title={m.toolbar.moreTitle} disabled={actionBusy}>
-              <MoreHorizontal className="size-4" />
+        {account?.username && account?.gistId && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <a
+                href={`https://gist.github.com/${account.username}/${account.gistId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+              >
+                <ExternalLink className="size-3.5 shrink-0" />
+                <span className="max-w-[140px] truncate">gist/{account.gistId.slice(0, 8)}</span>
+              </a>
+            </TooltipTrigger>
+            <TooltipContent>{m.toolbar.gistLinkTitle}</TooltipContent>
+          </Tooltip>
+        )}
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggleTheme}>
+              <ActionIcon phase={theme}>
+                {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+              </ActionIcon>
             </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-52 p-1">
-            <OverflowItem
-              icon={<Tags className="size-4" />}
-              label={m.toolbar.refreshTagsButton}
-              active={pendingAction === 'refreshTags'}
-              progressCount={progressCount}
-              disabled={actionBusy}
-              onClick={() => onRefreshTags()}
-            />
-            <OverflowItem
-              icon={<Upload className="size-4" />}
-              label={m.toolbar.gistPushButton}
-              active={pendingAction === 'gistPush'}
-              progressCount={progressCount}
-              disabled={actionBusy}
-              onClick={() => onSync('gistPush', m.toolbar.gistPushButton)}
-            />
-            <OverflowItem
-              icon={<Download className="size-4" />}
-              label={m.toolbar.gistPullButton}
-              active={pendingAction === 'gistPull'}
-              progressCount={progressCount}
-              disabled={actionBusy}
-              onClick={() => onSync('gistPull', m.toolbar.gistPullButton)}
-            />
-          </PopoverContent>
-        </Popover>
+          </TooltipTrigger>
+          <TooltipContent>{m.toolbar.themeTitle}</TooltipContent>
+        </Tooltip>
 
-        {/* Theme toggle */}
-        <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggleTheme} title={m.toolbar.themeTitle}>
-          {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
-        </Button>
-
-        {/* Account chip */}
         {account?.username && (
-          <button
-            onClick={openMyStars}
-            title={m.toolbar.accountTitle(account.username)}
-            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background py-0.5 pl-0.5 pr-2.5 hover:bg-muted/40"
-          >
-            {account.avatarUrl ? (
-              <img
-                src={account.avatarUrl}
-                alt=""
-                className="size-6 rounded-full object-cover ring-1 ring-border"
-                // Refetch on error (avatar URL may have rotated) — best-effort.
-                onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
-              />
-            ) : (
-              <span className="grid size-6 place-items-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground ring-1 ring-border">
-                {account.username.slice(0, 2).toUpperCase()}
-              </span>
-            )}
-            <span className="max-w-[100px] truncate text-xs font-medium">@{account.username}</span>
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background py-0.5 pl-0.5 pr-2.5">
+                {account.avatarUrl ? (
+                  <img
+                    src={account.avatarUrl}
+                    alt=""
+                    className="size-6 rounded-full object-cover ring-1 ring-border"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
+                  />
+                ) : (
+                  <span className="grid size-6 place-items-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground ring-1 ring-border">
+                    {account.username.slice(0, 2).toUpperCase()}
+                  </span>
+                )}
+                <span className="max-w-[100px] truncate text-xs font-medium">@{account.username}</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>{m.toolbar.accountTitle(account.username)}</TooltipContent>
+          </Tooltip>
         )}
       </div>
 
-      {/* Row 2: status */}
       <div className="flex flex-col gap-1 border-t border-border/50 px-3 py-1 text-xs text-muted-foreground">
         <div className="flex items-center gap-4">
-          <span className={cn(loading && 'animate-pulse')}>
-            {loading ? (
+          <span
+            className="tabular-nums"
+            style={{
+              opacity: listPhase === 'fading-out' ? 0 : 1,
+              transition: `opacity ${listPhase === 'fading-out' ? 120 : 160}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+            }}
+          >
+            {loading && grandTotal === 0 ? (
               <span className="inline-flex items-center gap-2">
                 <Spinner className="size-3" />
                 {m.common.loading}
@@ -247,28 +316,5 @@ export function Toolbar({
         )}
       </div>
     </div>
-  );
-}
-
-function OverflowItem({
-  icon, label, active, progressCount, disabled, onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  active: boolean;
-  progressCount: string | null;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted/40 disabled:opacity-40"
-    >
-      {active ? <Spinner className="size-4" /> : icon}
-      <span className="flex-1">{label}</span>
-      {active && progressCount && <span className="tabular-nums text-[10px] opacity-70">{progressCount}</span>}
-    </button>
   );
 }

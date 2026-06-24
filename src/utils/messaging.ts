@@ -13,6 +13,10 @@ export interface SyncStatus {
     message: string;
   };
   hasToken: boolean;
+  /** Whether the first-run onboarding card has been dismissed. */
+  seenOnboarding: boolean;
+  /** Bitmask of one-time action-button coachmarks shown (bit0=Sync, 1=Push, 2=Pull). */
+  seenTooltips: number;
 }
 
 export function mergeProgressStatus(
@@ -23,16 +27,41 @@ export function mergeProgressStatus(
   return {
     progress,
     hasToken: current?.hasToken ?? fallbackHasToken,
+    seenOnboarding: current?.seenOnboarding ?? false,
+    seenTooltips: current?.seenTooltips ?? 0,
+  };
+}
+
+export function mergeStatusPatch(
+  current: SyncStatus | null,
+  patch: Partial<SyncStatus>,
+  fallbackHasToken = false,
+): SyncStatus {
+  const base: SyncStatus = current ?? {
+    progress: { phase: 'idle', done: 0, total: null, message: '' },
+    hasToken: fallbackHasToken,
+    seenOnboarding: false,
+    seenTooltips: 0,
+  };
+  return {
+    ...base,
+    ...patch,
+    progress: patch.progress ?? base.progress,
   };
 }
 
 export function mergeStatusSnapshot(current: SyncStatus | null, snapshot: SyncStatus | null): SyncStatus | null {
   if (!snapshot) return current;
   const activeProgress = current?.progress;
-  if (activeProgress && activeProgress.phase !== 'idle' && snapshot.progress.phase === 'idle') {
-    return { ...snapshot, progress: activeProgress };
-  }
-  return snapshot;
+  // Preserve the live progress (and seenOnboarding/seenTooltips) from `current`
+  // when the snapshot is idle — a fresh getStatus shouldn't clobber an in-flight phase.
+  const merged: SyncStatus = {
+    ...snapshot,
+    progress: activeProgress && activeProgress.phase !== 'idle' && snapshot.progress.phase === 'idle' ? activeProgress : snapshot.progress,
+    seenOnboarding: snapshot.seenOnboarding ?? current?.seenOnboarding ?? false,
+    seenTooltips: snapshot.seenTooltips ?? current?.seenTooltips ?? 0,
+  };
+  return merged;
 }
 
 export async function bgCall<T = unknown>(type: string, extra?: Record<string, unknown>): Promise<T> {

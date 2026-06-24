@@ -3,17 +3,30 @@ import { useFilterStore } from './filter-store';
 import type { Star, Tag } from '@/types';
 import type { QueryResult } from '@/background/query';
 
+// Transition timings for the list fade-out → swap → fade-in (see FADE_PHASE).
+const FADE_OUT_MS = 120;
+const FADE_IN_MS = 160;
+
 /**
- * Query stars from the background service worker (which owns the extension-origin
- * IndexedDB). Content scripts cannot share that IDB, so we never touch db directly.
+ * Query stars from the background service worker, which owns the
+ * extension-origin IndexedDB. Content scripts cannot share that database, so the
+ * hook never touches `db` directly.
  *
- * MVP strategy: request the entire filtered result set in one message (9900 rows
- * × ~400B ≈ 4MB, structuredClone in tens of ms — acceptable for a personal tool).
- * Re-requests on any filter change or on a `dataChanged` broadcast.
+ * On a filter change the list doesn't snap to the new result — it fades out
+ * (old rows stay mounted, opacity→0), the fresh query fires once the fade
+ * finishes, then the new rows fade in. This avoids the "data instantly swaps
+ * with no transition" jolt when toggling a language/tag label, while keeping
+ * the list mounted throughout (no scroll-position reset, no skeleton flash).
+ * The background query is fast, so the only added latency is the deliberate
+ * fade-out window — old content is shown during it, not a placeholder.
  */
 export function useStars() {
   const f = useFilterStore();
-  const [result, setResult] = useState<QueryResult | null>(null);
+  const [committed, setCommitted] = useState<QueryResult | null>(null);
+  // Transition phase drives the list opacity. 'fading-out' keeps the committed
+  // (old) rows visible while dimming; 'fading-in' shows the freshly committed
+  // rows brightening back up. 'idle' = fully visible.
+  const [phase, setPhase] = useState<'idle' | 'fading-out' | 'fading-in'>('idle');
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -27,34 +40,61 @@ export function useStars() {
     sortKey: f.sortKey,
     sortDir: f.sortDir,
   };
+  const filterKey = JSON.stringify(filter);
 
+  // A pending refresh (from refresh() or a dataChanged broadcast) bypasses the
+  // fade-out — it's a same-filter reload, so there's nothing to transition
+  // away from; we just refetch and fade the new rows in.
   const refresh = () => {
-    setLoading(true);
     setRefreshKey((key) => key + 1);
   };
 
+  // Fade out → query → fade in, driven by the filter signature changing.
+  // The query is deliberately delayed until the fade-out completes so the old
+  // rows remain on screen (dimming) instead of vanishing mid-fade.
   useEffect(() => {
     let cancelled = false;
+    let fadeOut: ReturnType<typeof setTimeout> | null = null;
+    let fadeIn: ReturnType<typeof setTimeout> | null = null;
+
     setLoading(true);
-    chrome.runtime
-      .sendMessage({ type: 'query', params: { filter, offset: 0, limit: Number.MAX_SAFE_INTEGER } })
-      .then((res: { ok: boolean; data?: QueryResult; error?: string }) => {
-        if (cancelled) return;
-        if (res?.ok && res.data) setResult(res.data);
-        setLoading(false);
-      })
-      .catch(() => !cancelled && setLoading(false));
+    setPhase('fading-out');
+
+    fadeOut = setTimeout(() => {
+      if (cancelled) return;
+      chrome.runtime
+        .sendMessage({ type: 'query', params: { filter, offset: 0, limit: Number.MAX_SAFE_INTEGER } })
+        .then((res: { ok: boolean; data?: QueryResult; error?: string }) => {
+          if (cancelled) return;
+          if (res?.ok && res.data) {
+            setCommitted(res.data); // swap to new rows under the dimmed list
+            setPhase('fading-in');
+            fadeIn = setTimeout(() => {
+              if (!cancelled) setPhase('idle');
+            }, FADE_IN_MS);
+          }
+          setLoading(false);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setLoading(false);
+            setPhase('idle');
+          }
+        });
+    }, FADE_OUT_MS);
+
     return () => {
       cancelled = true;
+      if (fadeOut) clearTimeout(fadeOut);
+      if (fadeIn) clearTimeout(fadeIn);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(filter), refreshKey]);
+  }, [filterKey, refreshKey]);
 
   // Live refresh when background signals data changed (sync/write).
   useEffect(() => {
     const listener = (msg: { type?: string }) => {
       if (msg.type === 'dataChanged') {
-        setLoading(true);
         setRefreshKey((key) => key + 1);
       }
     };
@@ -62,17 +102,17 @@ export function useStars() {
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
-  const rows: Star[] = result?.rows ?? [];
+  const rows: Star[] = committed?.rows ?? [];
   const tagsByFullName = new Map<string, Tag>();
-  if (result?.tagsForRows) {
-    for (const [name, tag] of Object.entries(result.tagsForRows)) {
+  if (committed?.tagsForRows) {
+    for (const [name, tag] of Object.entries(committed.tagsForRows)) {
       if (tag) tagsByFullName.set(name, tag);
     }
   }
 
   // Group tagTree by dimension for the sidebar.
   const tagTreeGrouped = new Map<string | null, { name: string; count: number }[]>();
-  for (const t of result?.tagTree ?? []) {
+  for (const t of committed?.tagTree ?? []) {
     const dim = t.dim;
     if (!tagTreeGrouped.has(dim)) tagTreeGrouped.set(dim, []);
     tagTreeGrouped.get(dim)!.push({ name: t.name, count: t.count });
@@ -80,11 +120,12 @@ export function useStars() {
 
   return {
     rows,
-    total: result?.total ?? 0,
-    grandTotal: result?.grandTotal ?? 0,
+    total: committed?.total ?? 0,
+    grandTotal: committed?.grandTotal ?? 0,
     loading,
-    languages: result?.languages ?? [],
-    tagTree: { grouped: tagTreeGrouped, total: result?.tagTotal ?? 0 },
+    phase,
+    languages: committed?.languages ?? [],
+    tagTree: { grouped: tagTreeGrouped, total: committed?.tagTotal ?? 0 },
     tagsByFullName,
     refresh,
   };

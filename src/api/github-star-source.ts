@@ -3,31 +3,34 @@ import type { StarSource } from './star-source';
 import { db } from '@/storage/db';
 import { authStore } from '@/auth/auth-store';
 import { getMessages } from '@/i18n';
+import { GH_NO_TOKEN, GH_TOKEN_REJECTED, GH_RATE_LIMIT, GH_FORBIDDEN, GH_TIMEOUT, GH_NETWORK, GH_PAGE_STATUS, GH_BAD_SHAPE } from './errors';
 
 /**
- * GitHubStarSource — MVP StarSource implementation backed by the authenticated
- * GET /user/starred endpoint (Q4: fine-grained PAT, public_repo scope).
+ * GitHub-backed `StarSource` implementation using the authenticated
+ * `GET /user/starred` endpoint.
  *
- * Endpoint facts (verified during grill):
- *  - GET /user/starred (authenticated) returns each item WITH a `starred_at` field,
- *    ordered by starred_at DESC. (The anonymous /users/{u}/starred omits it.)
- *  - 100/page max. ~99 pages for a 9900-star account.
- *  - Authenticated rate limit 5000/h — a full pull is ~99 requests, well within.
+ * Endpoint facts:
+ *  - `GET /user/starred` returns each item with `starred_at`, ordered by
+ *    `starred_at` descending. (The anonymous `/users/{u}/starred` endpoint omits it.)
+ *  - 100 items per page max. About 99 pages for a 9,900-star account.
+ *  - Authenticated rate limit is 5,000 requests/hour, so a full pull stays well within it.
  *
- * Three sync primitives (Q5):
- *  - syncFull:        pull all pages, upsert into stars store.
- *  - syncIncremental: pull pages until we hit the lastSyncStarredAt cursor (1–2 reqs).
- *  - syncRescan:      pull all, tombstone any local repo no longer present (B2 soft-delete).
+ * Sync primitives:
+ *  - `syncFull`: pull every page and upsert into the stars store.
+ *  - `syncIncremental`: pull until `lastSyncStarredAt` is reached.
+ *  - `syncRescan`: pull all pages and tombstone any local repo no longer present.
  */
 
 const PER_PAGE = 100;
 const API = 'https://api.github.com';
 
 /**
- * Response shape for GET /user/starred with Accept: application/vnd.github.star+json.
- * NOTE: this media type wraps each repo in a `repo` object alongside `starred_at`.
- * (The default Accept returns repos flat but WITHOUT starred_at, which we need as
- * the incremental-sync cursor — so we use the star+json media type and unwrap.)
+ * Response shape for `GET /user/starred` with
+ * `Accept: application/vnd.github.star+json`.
+ *
+ * This media type wraps each repo in a `repo` object alongside `starred_at`.
+ * The default JSON response is flatter, but it omits `starred_at`, which the
+ * incremental cursor depends on.
  */
 interface StarredRepoPayload {
   starred_at: string;
@@ -46,7 +49,7 @@ interface StarredRepoPayload {
 
 async function authHeaders(): Promise<HeadersInit> {
   const token = await authStore.getToken();
-  if (!token) throw new Error('No GitHub token configured. Open the extension options to add one.');
+  if (!token) throw new Error(GH_NO_TOKEN);
   return {
     Authorization: `Bearer ${token}`,
     Accept: 'application/vnd.github.star+json', // includes starred_at in each item
@@ -83,27 +86,27 @@ async function fetchPage(page: number): Promise<{ items: StarredRepoPayload[]; l
   } catch (e) {
     cancel();
     if (e instanceof Error && e.name === 'AbortError') {
-      throw new Error(`GitHub /user/starred page ${page} timed out after 30s.`);
+      throw new Error(`${GH_TIMEOUT}${page}`);
     }
-    throw new Error(`Network error fetching page ${page}: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(`${GH_NETWORK}${e instanceof Error ? e.message : String(e)}`);
   }
   cancel();
-  if (res.status === 401) throw new Error('GitHub token rejected (401). Re-add it in options.');
+  if (res.status === 401) throw new Error(GH_TOKEN_REJECTED);
   if (res.status === 403) {
     const remaining = res.headers.get('x-ratelimit-remaining');
-    if (remaining === '0') throw new Error('GitHub rate limit hit. Wait and retry.');
-    throw new Error(`GitHub 403 (forbidden). Check token scopes / repository access.`);
+    if (remaining === '0') throw new Error(GH_RATE_LIMIT);
+    throw new Error(GH_FORBIDDEN);
   }
   if (res.status === 204 || res.status === 304) {
     // 204 No Content / 304 Not Modified: no items this page. Treat as empty.
     return { items: [], link: res.headers.get('link') };
   }
-  if (!res.ok) throw new Error(`GitHub /user/starred page ${page} returned ${res.status}`);
+  if (!res.ok) throw new Error(`${GH_PAGE_STATUS}${res.status}`);
   const items = (await res.json()) as StarredRepoPayload[];
   // Guard against an unexpected flat shape (e.g. if GitHub changes media behavior):
   // if items have no nested `repo`, the put() below would fail with a bad key.
   if (items.length && !items[0].repo) {
-    throw new Error('Unexpected /user/starred shape: no nested `repo` object. Got: ' + JSON.stringify(Object.keys(items[0])));
+    throw new Error(GH_BAD_SHAPE);
   }
   return { items, link: res.headers.get('link') };
 }
