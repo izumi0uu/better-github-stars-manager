@@ -1,135 +1,130 @@
 # Better GitHub Stars Manager
 
-A Chrome extension (MV3) that turns your GitHub stars page into a searchable, taggable,
-filterable management surface — built for accounts with **thousands** of starred repos.
+Better GitHub Stars Manager is a Chrome extension for people who have outgrown GitHub's native stars page.
 
-It injects a full management UI into `github.com/{user}?tab=stars` (replacing the native
-paginated card list with a virtualized table of *all* your stars) and a tag chip into
-every `github.com/{owner}/{repo}` page.
+It turns `https://github.com/{user}?tab=stars` into a fast, local-first workspace where you can search, tag, filter, and annotate thousands of starred repositories without leaving GitHub.
 
-> Personal-first, zero-server. No backend, no OAuth. You bring a fine-grained PAT.
+> Personal-first, zero-server, and built for heavy GitHub stars users.
 
----
+## Why Better GitHub Stars Manager?
 
-## What it does
+GitHub Stars is useful for bookmarking, but weak for long-term organization.
 
-- **Pull all your stars** into a local IndexedDB (authenticated `/user/starred`, one request per ~100-star page).
-- **Incremental sync** on every visit to the stars page (1–2 requests, stops at the last-seen cursor).
-- **Full rescan** to detect unstars → soft-deleted (tombstoned) but your tags/notes are preserved.
-- **Virtualized table** of all stars (no pagination, scroll smoothly through thousands of rows).
-- **Filter**: by language, by tag (any/all), full-text over name/description/topics, "untagged only".
-- **Sort**: by starred date, repo update date, star count, or name.
-- **Tag + note** any repo inline. Tags auto-group in the sidebar by dimension — a repo's primary language lands under **Language**, its GitHub topics under **Topic**, manual tags stay ungrouped.
-- **Auto-suggest tags** from each repo's `language` and `topics` (one-click or batch).
-- **Persistent delete**: removing a tag drops it from every repo and keeps it gone across syncs (a tombstone blocks auto-suggest from resurrecting it) — re-add it manually to undo.
-- **Cross-device sync** of your tag/notes layer via a private GitHub Gist (per-repo last-write-wins merge).
-- **Tag chip** on every repo page: shows your tags, click to filter, pencil icon to edit inline.
+Once your stars grow into the hundreds or thousands, the default experience starts to hurt:
 
-## What it deliberately does NOT do yet
+- pagination slows everything down
+- there is no personal tagging system
+- there is no real notes layer
+- it becomes hard to revisit what you saved and why
 
-| Feature | Why deferred |
-|---|---|
-| **GitHub native "Lists" sync** | No public API; only DOM-automation or reverse-engineered internal endpoints (high fragility, ToS medium). Verified partial-feasible. Reserved: `Tag.gh_list_id` field + `TagStore.syncToGitHubLists()` slot. |
-| **OAuth + backend** | Conflicts with zero-server personal-first scope. |
-| **Star/unstar writes** | Unstar is destructive; out of scope for now. |
-| **Background polling sync** | MV3 alarms ≥30min; low value for an on-demand management tool. |
+Better GitHub Stars Manager adds the missing management layer on top of GitHub Stars.
 
----
+## Features
 
-## Install (dev / unpacked)
+- **All stars in one place**
+  Load your starred repositories into a virtualized table that stays usable even with very large collections.
+
+- **Fast search and filtering**
+  Search across repository name, description, topics, and notes. Filter by language, tags, and untagged items.
+
+- **Custom tags and notes**
+  Add your own labels and notes so your stars become a working library instead of a passive list.
+
+- **Auto-suggested tags**
+  Turn repository topics and language into suggested tags with one click or in bulk.
+
+- **Incremental sync and full rescan**
+  Pull in newly starred repositories quickly, and run a full rescan when you want to reconcile unstars while keeping your annotations.
+
+- **Repo-page tag chip**
+  See and edit your tags directly on individual GitHub repository pages.
+
+- **Cross-device annotation sync**
+  Push and pull your tags and notes through your own private GitHub Gist.
+
+- **Gist-backed storage layer**
+  Keep your annotation layer in a dedicated secret Gist so it is portable, recoverable, and easy to sync across devices without a backend.
+
+- **Local-first architecture**
+  Star metadata is stored locally for speed. Your personal annotation layer can be synced without needing a custom backend.
+
+## How to Use
+
+1. Install the extension in Chrome as an unpacked MV3 extension.
+2. Open the Options page and paste a GitHub personal access token.
+3. Visit your GitHub stars page: `https://github.com/{you}?tab=stars`.
+4. Run **Sync** to import your stars.
+5. Search, filter, tag, and add notes as you review repositories.
+6. Use **Push** and **Pull** if you want your annotations to travel across devices.
+
+## Install
 
 ```bash
 pnpm install
-pnpm build          # outputs dist/
+pnpm build
 ```
 
 Then in Chrome:
-1. `chrome://extensions` → enable **Developer mode**.
-2. **Load unpacked** → select the `dist/` folder.
-3. Click the extension icon → **Options** (or right-click → Options).
-4. Create a **fine-grained PAT** at <https://github.com/settings/personal-access-tokens/new>:
-   - Repository access: **All public repositories**
-   - Permissions: **Account → Public Repositories (read)**, **Account → Gists (read/write)**
-5. Paste the token in Options → **Save & verify**. You should see "Authenticated as @you".
 
-> Classic tokens also work if they have `public_repo` + `gist` scopes.
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked**
+4. Select the `dist/` folder
+5. Open the extension **Options** page
+6. Create a GitHub token with the permissions below
+7. Paste the token into Options and click **Save & verify**
 
-## Use
+Token setup:
 
-1. Open `https://github.com/{you}?tab=stars` — the management panel takes over.
-2. First visit: click **Sync** (or it auto-syncs incrementally). For a fresh account run **full sync** once via the popup.
-3. Search `/`, filter by language/tag, click a row's tags to edit, **Auto assign tags** to bulk-apply suggestions.
-4. Visit any `github.com/{owner}/{repo}` — your tag chip appears next to the repo name.
-5. Use **Push** / **Pull** to sync tags across devices via Gist (auto-created on first push).
+![Create a fine-grained token](assets/tutorial/img_01.png)
 
----
+Create a **fine-grained personal access token** and click **Generate new token**.
 
-## Architecture
+![Choose repository access](assets/tutorial/img_02.png)
 
-```
-UI (content scripts / popup / options)
-  └─ messages ──► background service worker (OWNS IndexedDB)
-                    ├─ StarSource  → GET /user/starred  (GitHub API)
-                    ├─ TagStore    → IndexedDB tags/tagMeta + Gist LWW sync
-                    └─ query engine → filter/sort/facet, returns windows to UI
-```
+Use **Public repositories** for repository access.
 
-**Critical design decision:** all IndexedDB access lives in the background (extension
-origin). Content scripts cannot share the extension's IDB (they'd see the page's origin
-IDB — a different database), so the UI never touches `db` directly; it queries via
-messages and the background broadcasts `dataChanged` to refresh.
+![Grant Gists permission](assets/tutorial/img_03.png)
 
-Data model: three IDB stores — `stars` (GitHub metadata, rebuildable, not synced),
-`tags` (your annotations, Gist-synced with per-repo timestamp conflict resolution),
-`tagMeta` (tag dimension/color). Light config (encrypted token, cursors) lives in
-`chrome.storage.local`.
+Add **Gists: read and write** so cross-device sync can work.
 
-## Verify it works
+Recommended GitHub token permissions:
 
-See [`docs/VERIFY.md`](docs/VERIFY.md) for the end-to-end verification checklist.
+- **Public Repositories (read)**
+- **Gists (read/write)**
 
-## CI/CD
+## Privacy and Storage
 
-GitHub Actions now covers three lanes:
+The extension is designed to keep the heavy data local and sync only the personal annotation layer.
 
-- **CI**: every PR and every push to `main` runs `pnpm typecheck`, `pnpm build`, and `pnpm test`, then uploads the built `dist/` artifact.
-- **Release**: every `v*` tag rebuilds the extension, reruns tests, packages `dist/` into a zip + SHA256 checksum, and attaches them to a GitHub Release.
-- **E2E Chrome verification**: a manual/weekly workflow runs the real extension in Puppeteer against GitHub using the existing first-run scenarios.
+- Star metadata is stored locally in IndexedDB.
+- Lightweight config lives in `chrome.storage.local`.
+- Tags, notes, and tag metadata can be stored in a dedicated secret Gist under your own GitHub account.
 
-Local release packaging:
+Push / Pull only sync your annotation layer:
 
-```bash
-pnpm build
-pnpm package:extension
-```
+- `Push` uploads tags, notes, and tag metadata to your private Gist.
+- `Pull` merges the latest tags, notes, and tag metadata back into the local database.
+- Star metadata itself stays local and is always reconstructed from GitHub.
 
-That writes:
+There is no custom backend and no separate app account.
 
-- `artifacts/better-github-stars-manager-<version>.zip`
-- `artifacts/better-github-stars-manager-<version>.zip.sha256`
+## Current Scope
 
-### Secrets / variables
+Better GitHub Stars Manager is intentionally focused.
 
-To enable the E2E workflow:
+It does **not** try to be:
 
-- repository secret `GH_TOKEN`
-- optional secrets `GH_TOKEN_NO_STARS`, `GH_TOKEN_NO_GISTS`
-- optional repository variable `GH_USER`
+- a GitHub replacement
+- a cloud-hosted bookmarking product
+- an automation tool that stars or unstars repositories for you
 
-To enable Chrome Web Store publish on release tags:
+The goal is narrower and more practical: make GitHub Stars genuinely manageable for heavy users.
 
-- repository variable `CWS_DEPLOY_ENABLED=true`
-- repository variables `CWS_EXTENSION_ID`, `CWS_PUBLISHER_ID`
-- optional repository variables `CWS_PUBLISH_TYPE`, `CWS_SKIP_REVIEW`
-- repository secrets `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, `CWS_REFRESH_TOKEN`
+## Development
 
-## Tech stack
+- Build: `pnpm build`
+- Test: `pnpm test`
+- Package release zip: `pnpm package:extension`
 
-Vite + CRXJS · React 18 + TypeScript · @tanstack/react-virtual · Dexie (IndexedDB) ·
-Zustand · Web Crypto (token encryption).
-
-## Run logic tests
-
-```bash
-node --experimental-strip-types tests/logic.test.ts
-```
+For a full manual verification checklist, see [`docs/VERIFY.md`](docs/VERIFY.md).
