@@ -125,10 +125,10 @@ export const idbTagStore: TagStore = {
   },
 
   async syncPull(onProgress?: CountProgressCallback) {
-    const { merged, total } = await gistTagStore.pull(onProgress);
+    const { merged, total, missing } = await gistTagStore.pull(onProgress);
     // After a pull, clear local dirtiness for anything we just reconciled.
     // (Conservative: a real CRDT would diff; LWW post-pull we assume remote is merged.)
-    return { merged, total };
+    return { merged, total, missing };
   },
 };
 

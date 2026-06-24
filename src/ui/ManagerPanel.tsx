@@ -102,9 +102,13 @@ export function ManagerPanel() {
     setSuccessAction(null);
     setInfo(null);
     try {
-      await bgCall(type);
+      const result = await bgCall<{ missing?: boolean }>(type);
       refreshStars();
-      flashSuccess(type);
+      if (type === 'gistPull' && result?.missing) {
+        setInfo(m.background.gistPullMissing);
+      } else {
+        flashSuccess(type);
+      }
     } catch (e) {
       setInfo(m.manager.syncFailed(label, e instanceof Error ? e.message : String(e)));
     } finally {

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Sun, Moon, Search, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow,
-  Tags, Upload, Download, AlertTriangle, ExternalLink,
+  Tags, Upload, Download, AlertTriangle, ExternalLink, Home,
 } from 'lucide-react';
+import { CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import type { FilterState } from '@/ui/filter-store';
 import type { SyncStatus } from '@/utils/messaging';
 import { bgCall } from '@/utils/messaging';
@@ -14,6 +15,7 @@ import { SuccessCheck } from '@/ui/shadcn/success-check';
 import { ActionIcon } from '@/ui/shadcn/action-icon';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/ui/shadcn/tooltip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/shadcn/select';
+import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { useI18n } from '@/i18n';
 
 /** Top toolbar for the stars page. */
@@ -105,24 +107,41 @@ export function Toolbar({
   const actionBusy = busy || syncing || pendingAction !== null;
   const progressValue = phase && phase.total ? Math.max(1, Math.min(100, Math.round((phase.done / phase.total) * 100))) : null;
   const progressCount = phase?.total ? `${phase.done}/${phase.total}` : null;
+  const searchInput = useImeBufferedInput(f.query, f.setQuery);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const refreshAccount = async () => {
       const acc = await bgCall<Account>('getAccount').catch(() => null);
-      if (cancelled || !acc) return;
+      if (cancelled || !acc) return null;
       setAccount(acc);
-      if (!acc.avatarUrl && acc.username) {
+      return acc;
+    };
+
+    (async () => {
+      const acc = await refreshAccount();
+      if (acc && !acc.avatarUrl && acc.username) {
         const backfilled = await bgCall<Account>('fetchAccount').catch(() => null);
         if (!cancelled && backfilled) setAccount(backfilled);
       }
     })();
-    return () => { cancelled = true; };
+
+    const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+      if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]) return;
+      void refreshAccount();
+    };
+
+    chrome.storage.onChanged.addListener(listener);
+
+    return () => {
+      cancelled = true;
+      chrome.storage.onChanged.removeListener(listener);
+    };
   }, []);
 
   const prevPending = useRef<string | null>(null);
   useEffect(() => {
-    if (prevPending.current === 'gistPush' && pendingAction === null) {
+    if ((prevPending.current === 'gistPush' || prevPending.current === 'gistPull') && pendingAction === null) {
       bgCall<Account>('getAccount').then((acc) => setAccount(acc)).catch(() => {});
     }
     prevPending.current = pendingAction;
@@ -137,9 +156,8 @@ export function Toolbar({
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={searchRef}
+            {...searchInput.inputProps}
             placeholder={m.toolbar.searchPlaceholder}
-            value={f.query}
-            onChange={(e) => f.setQuery(e.target.value)}
             className="h-9 pl-8"
           />
         </div>
@@ -250,6 +268,18 @@ export function Toolbar({
             </Button>
           </TooltipTrigger>
           <TooltipContent>{m.toolbar.themeTitle}</TooltipContent>
+        </Tooltip>
+
+        {/* GitHub home — same-tab jump back to github.com from the stars page. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-9 w-9" asChild>
+              <a href="https://github.com" title={m.toolbar.githubHomeTitle}>
+                <Home className="size-4" />
+              </a>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{m.toolbar.githubHomeTitle}</TooltipContent>
         </Tooltip>
 
         {account?.username && (

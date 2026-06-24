@@ -6,7 +6,7 @@ import { db, liveStarCount } from '@/storage/db';
 import { queryStars, invalidateCache, type QueryParams, type QueryResult } from './query';
 import { suggestTags } from '@/ui/suggest';
 import { translateError } from '@/api/errors';
-import type { SyncProgress, Star } from '@/types';
+import type { SyncProgress } from '@/types';
 
 /**
  * Background service worker — the sync orchestrator AND the sole owner of the
@@ -79,18 +79,14 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Auto-tag every star from its language + topics. Pure-local: no API calls —
- * it only reads star.language/star.topics (already in IDB from sync) and writes
- * the tags store. Idempotent (suggestTags dedupes against existing tags, and we
- * only write when the merged set actually grew). Preserves notes (setTags
- * spreads existing). This runs automatically after every sync so tags are
- * always populated without a manual button press; the button is a manual refresh.
- *
- * Dimensions: each newly-suggested tag gets a tagMeta row with dimension
- * 'language' (the repo's primary language) or 'topic' (a GitHub topic), so the
- * sidebar groups tags into Language / Topic sections. We only CREATE meta — we
- * never overwrite an existing row (a manual dimension or a delete-tombstone is
- * preserved).
+ * Auto-tag every star from its topics (NOT its language — language is a
+ * first-class filter in the sidebar, not a tag, so deriving it would duplicate it
+ * in two places). Pure-local: no API calls — it only reads star.topics (already in
+ * IDB from sync) and writes the tags store. Idempotent (suggestTags dedupes
+ * against existing tags, and we only write when the merged set actually grew).
+ * Preserves notes (setTags spreads existing). This runs automatically after every
+ * sync so tags are always populated without a manual button press; the button is a
+ * manual refresh.
  *
  * Resurrection guard: names in the excluded set (tagMeta.excluded tombstones left
  * by deleteTag) are passed to suggestTags and skipped, so deleting a tag actually
@@ -99,53 +95,69 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
 async function autoTagAll(): Promise<{ tagged: number }> {
   const stars = await db.stars.toArray();
   const excluded = new Set(await idbTagStore.listExcluded());
-  // Names that already have a tagMeta row — load once so ensureDimensionMeta can
-  // skip them without a per-tag getMeta (autoTagAll runs after every sync).
-  const knownMeta = new Set((await idbTagStore.listTagMeta()).map((m) => m.name));
   let tagged = 0;
   for (const star of stars) {
     const existing = (await idbTagStore.get(star.full_name))?.tags ?? [];
     const toAdd = suggestTags(star, existing, excluded);
-    let merged = existing;
     if (toAdd.length > 0) {
-      merged = Array.from(new Set([...existing, ...toAdd]));
+      const merged = Array.from(new Set([...existing, ...toAdd]));
       if (merged.length !== existing.length) {
         await idbTagStore.setTags(star.full_name, merged);
         tagged++;
       }
     }
-    // Ensure a dimension meta row for every language/topic-derived tag this repo
-    // carries (not just the ones added this pass — backfills existing tags too, so
-    // users who already had auto-tags before dimensions shipped get grouped). We
-    // only CREATE meta when none exists — never clobber a manual dimension or a
-    // delete-tombstone. Language (repo's single language) → 'language'; topics → 'topic'.
-    // Runs even when nothing new was added, so pre-existing tags get backfilled.
-    await ensureDimensionMeta(star, merged, knownMeta);
   }
   return { tagged };
 }
 
 /**
- * For a repo's tag set, create tagMeta dimension rows for any language/topic tag
- * that lacks one. Language → 'language', each GitHub topic → 'topic'. Skips names
- * already in `knownMeta` (existing dimension OR a delete tombstone). Mutates
- * `knownMeta` to include anything it creates, so later repos don't re-check them.
- * Idempotent and cheap (no per-tag DB read).
+ * One-shot migration: strip auto-derived `language` tags. Before this change,
+ * auto-assign derived a tag from `star.language` (e.g. "Python") AND the sidebar
+ * showed languages as a separate filter — so a language appeared in two places.
+ * Language is now filter-only, so existing language-derived tags must be removed
+ * from every repo that carries them. Uses `setTags` (which bumps `Tag.mtime` +
+ * marks the repo dirty) so the cleanup rides the next `gistPush` as a full
+ * snapshot to other devices. Deliberately does NOT write an `excluded` tombstone:
+ * a tombstone would forbid the user from ever manually re-adding "Python" as a
+ * tag, which is too strong — we only want to stop *auto*-deriving it.
+ *
+ * Idempotent + retry-safe: the source set comes from `tagMeta.dimension ===
+ * 'language'` (which this migration never mutates), and repos already cleaned are
+ * skipped (`next.length === t.tags.length`), so a crash mid-run just resumes on
+ * the next SW wakeup. The flag flips only after the full pass succeeds. Old
+ * `dimension='language'` tagMeta rows are left in place — nothing reads
+ * `dimension` anymore, and deleting them would bump tagMeta mtime and trigger a
+ * pointless full Gist re-push.
  */
-async function ensureDimensionMeta(star: Star, names: string[], knownMeta: Set<string>): Promise<void> {
-  const derived: { name: string; dimension: string }[] = [];
-  if (star.language && names.includes(star.language)) {
-    derived.push({ name: star.language, dimension: 'language' });
-  }
-  for (const t of star.topics) {
-    if (names.includes(t)) derived.push({ name: t, dimension: 'topic' });
-  }
-  if (derived.length === 0) return;
-  const ts = new Date().toISOString();
-  for (const { name, dimension } of derived) {
-    if (knownMeta.has(name)) continue;
-    await idbTagStore.upsertMeta({ name, dimension, color: null, excluded: false, mtime: ts });
-    knownMeta.add(name);
+async function migrateLanguageTags(): Promise<void> {
+  try {
+    const cfg = await authStore.getConfig();
+    if (cfg.langTagMigrationDone) return;
+    const langMetas = await db.tagMeta.where('dimension').equals('language').toArray();
+    const toRemove = new Set(langMetas.map((m) => m.name));
+    if (toRemove.size === 0) {
+      await authStore.update({ langTagMigrationDone: true });
+      return;
+    }
+    // Load all tag rows once, then iterate with awaited writes so each setTags
+    // (which awaits IDB) completes before the next. Yield to the event loop every
+    // 200 changed repos so the SW message channel / keepAlive can breathe on large
+    // libraries — a long unbroken write chain can starve the SW's 30s lifecycle.
+    const allTags = await db.tags.toArray();
+    let changed = 0;
+    for (const t of allTags) {
+      const next = t.tags.filter((x) => !toRemove.has(x));
+      if (next.length === t.tags.length) continue; // already clean
+      // setTags bumps mtime + marks dirty → next gistPush propagates the cleanup.
+      await idbTagStore.setTags(t.full_name, next);
+      if (++changed % 200 === 0) await Promise.resolve();
+    }
+    await authStore.update({ langTagMigrationDone: true });
+    invalidateCache();
+    broadcastDataChanged();
+  } catch (e) {
+    // Flag stays false → retries next SW wakeup. Never throw: must not block SW.
+    console.error('[GSM] language-tag migration failed (will retry):', e instanceof Error ? e.message : String(e));
   }
 }
 
@@ -193,7 +205,9 @@ async function handle(req: Req): Promise<Res> {
         const r = await idbTagStore.syncPush((done, total) => {
           setProgress({ phase: 'gist', done, total, message: m.background.pushingTags });
         });
-        setIdleMessage(r.pushed > 0 ? m.background.gistPushDone(r.pushed) : m.background.gistPushNoChanges);
+        if (r.pushed > 0) setIdleMessage(m.background.gistPushDone(r.pushed));
+        else if (r.recreated) setIdleMessage(m.background.gistPushRecreated);
+        else setIdleMessage(m.background.gistPushNoChanges);
         return { ok: true, data: r };
       }
       case 'gistPull': {
@@ -203,7 +217,8 @@ async function handle(req: Req): Promise<Res> {
           setProgress({ phase: 'gist', done, total, message: m.background.pullingTags });
         });
         broadcastDataChanged();
-        setIdleMessage(m.background.gistPullDone(r.merged, r.total));
+        if (r.missing) setIdleMessage(m.background.gistPullMissing);
+        else setIdleMessage(m.background.gistPullDone(r.merged, r.total));
         return { ok: true, data: r };
       }
       case 'getStatus':
@@ -394,3 +409,7 @@ async function selfCheck() {
   }
 }
 selfCheck();
+// One-shot migration: strip legacy auto-derived language tags (language is now a
+// filter, not a tag). Fire-and-forget; it self-guards via the Config flag and
+// retries on failure, so it never blocks SW startup.
+migrateLanguageTags();

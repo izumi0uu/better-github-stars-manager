@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Sun, Moon, Star, Check, AlertTriangle } from "lucide-react";
-import { authStore } from "@/auth/auth-store";
+import { Sun, Moon, Star, Check, AlertTriangle, ExternalLink } from "lucide-react";
+import { authStore, CONFIG_STORAGE_KEY } from "@/auth/auth-store";
 import {
   bgCall,
   mergeProgressStatus,
@@ -15,10 +15,10 @@ import { Spinner } from "@/ui/shadcn/spinner";
 import { Textarea } from "@/ui/shadcn/textarea";
 import { Separator } from "@/ui/shadcn/separator";
 import { cn } from "@/lib/utils";
+import { useImeBufferedInput } from "@/ui/hooks/use-ime-input";
 import { useI18n } from "@/i18n";
 
 export function Options() {
-  const [tokenInput, setTokenInput] = useState("");
   const [username, setUsername] = useState<string | null>(null);
   const [hasUsableToken, setHasUsableToken] = useState(false);
   const [gistId, setGistId] = useState<string | null>(null);
@@ -29,6 +29,7 @@ export function Options() {
     null,
   );
   const { locale, setLocale, m } = useI18n();
+  const tokenInput = useImeBufferedInput("");
 
   const refresh = async () => {
     const [c, hasToken, status] = await Promise.all([
@@ -56,9 +57,9 @@ export function Options() {
     setBusy(true);
     setMsg(null);
     try {
-      const { username: u } = await authStore.setToken(tokenInput);
+      const { username: u } = await authStore.setToken(tokenInput.value);
       setMsg({ kind: "ok", text: m.options.tokenVerified(u) });
-      setTokenInput("");
+      tokenInput.commit("");
       await refresh();
     } catch (e) {
       setMsg({ kind: "err", text: translateError(e, m) });
@@ -97,6 +98,21 @@ export function Options() {
   const progressCount = syncStatus?.progress.total
     ? `${syncStatus.progress.done}/${syncStatus.progress.total}`
     : null;
+  const gistUrl = gistId
+    ? `https://gist.github.com/${username ? `${username}/` : ""}${gistId}`
+    : null;
+
+  useEffect(() => {
+    const listener = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      if (areaName === "local" && changes[CONFIG_STORAGE_KEY]) void refresh();
+    };
+
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, []);
 
   return (
     <div className="mx-auto my-10 max-w-2xl rounded-lg bg-background p-7 font-sans text-foreground">
@@ -217,14 +233,13 @@ export function Options() {
         )}
 
         <Textarea
-          value={tokenInput}
-          onChange={(e) => setTokenInput(e.target.value)}
+          {...tokenInput.inputProps}
           placeholder="github_pat_..."
           rows={2}
           className="mt-1 font-mono"
         />
         <div className="mt-2">
-          <Button disabled={busy || !tokenInput.trim()} onClick={save}>
+          <Button disabled={busy || !tokenInput.value.trim()} onClick={save}>
             {busy ? (
               <>
                 <Spinner data-icon="inline-start" />
@@ -252,6 +267,17 @@ export function Options() {
             <>{m.options.gistEmpty}</>
           )}
         </p>
+        {gistUrl && (
+          <a
+            className="mt-2 inline-flex items-center gap-1 text-sm text-primary hover:underline"
+            href={gistUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {m.options.gistOpenLink}
+            <ExternalLink className="size-3.5" />
+          </a>
+        )}
         <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
           <div className="inline-flex items-center gap-2">
             {syncing && <Spinner className="size-3" />}

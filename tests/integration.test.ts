@@ -51,10 +51,11 @@ await new Promise<void>((resolve) => {
     eq(r.languages.find(([l]) => l === 'Python'), ['Python', 2], 'python count'); // 2 (incl tombstone)
   });
 
-  test('tag tree grouped by dimension', async () => {
+  test('tag tree is a flat list with counts (no dimension)', async () => {
     const r = await queryStars({ filter: defaultFilter(), offset: 0, limit: 100 });
     const ai = r.tagTree.find((t) => t.name === 'ai');
-    assert(ai && ai.dim === '领域' && ai.count === 1, `ai in 领域: ${JSON.stringify(ai)}`);
+    assert(ai && ai.count === 1, `ai count: ${JSON.stringify(ai)}`);
+    assert(!('dim' in ai), `tag tree must not carry dim: ${JSON.stringify(ai)}`);
   });
 
   test('filter by language', async () => {
@@ -65,6 +66,11 @@ await new Promise<void>((resolve) => {
   test('full-text search', async () => {
     const r = await queryStars({ filter: { ...defaultFilter(), query: 'AI' }, offset: 0, limit: 100 });
     eq(r.rows.map((s) => s.full_name), ['a/ai'], 'search AI');
+  });
+
+  test('full-text search includes notes', async () => {
+    const r = await queryStars({ filter: { ...defaultFilter(), query: 'fast' }, offset: 0, limit: 100 });
+    eq(r.rows.map((s) => s.full_name), ['b/rust'], 'search notes');
   });
 
   test('filter by tag', async () => {

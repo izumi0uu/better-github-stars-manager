@@ -59,6 +59,10 @@ export interface Config {
   seenOnboarding: boolean;
   /** Bitmask of one-time button coachmarks already shown. */
   seenTooltips: number;
+  /** One-shot migration flag: clear auto-derived `language` tags (now that
+   *  language is a first-class filter, not a tag). Set true after the migration
+   *  runs so it never repeats. */
+  langTagMigrationDone: boolean;
 }
 
 export interface CryptoMeta {
@@ -78,7 +82,7 @@ export interface GistPayload {
 export interface TagSuggestion {
   full_name: string;
   suggested: string[];
-  source: 'language' | 'topics';
+  source: 'topics';
 }
 
 /** Sync progress reported to the UI. */

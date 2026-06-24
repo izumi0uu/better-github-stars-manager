@@ -4,7 +4,7 @@ export type SortKey = 'starred_at' | 'pushed_at' | 'stargazers_count' | 'name';
 export type SortDir = 'asc' | 'desc';
 
 export interface FilterState {
-  query: string; // full-text over name/description/topics
+  query: string; // full-text over name/description/topics/notes
   languages: string[]; // empty = all
   tags: string[]; // AND across selected? No — OR within (show repos having any of these tags)
   tagMode: 'any' | 'all'; // any = OR, all = AND

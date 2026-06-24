@@ -63,7 +63,7 @@ test('remote-only repo → added to local', () => {
 });
 
 // --- Filter logic (mirrors query.ts filter) ---
-interface S { full_name: string; description: string; language: string | null; topics: string[]; tombstone: boolean; starred_at: string; pushed_at: string; stargazers_count: number; }
+interface S { full_name: string; description: string; language: string | null; topics: string[]; notes?: string; tombstone: boolean; starred_at: string; pushed_at: string; stargazers_count: number; }
 
 function filterStars(stars: S[], opts: { query?: string; languages?: string[]; tags?: string[]; showTombstone?: boolean; onlyUntagged?: boolean; tagsByRepo?: Map<string, string[]> }): S[] {
   const q = (opts.query ?? '').toLowerCase();
@@ -76,7 +76,7 @@ function filterStars(stars: S[], opts: { query?: string; languages?: string[]; t
     if (opts.onlyUntagged && myTags.length > 0) return false;
     if (tagSet && !myTags.some((t) => tagSet.has(t))) return false;
     if (q) {
-      const hay = `${s.full_name} ${s.description} ${s.topics.join(' ')}`.toLowerCase();
+      const hay = `${s.full_name} ${s.description} ${s.topics.join(' ')} ${s.notes ?? ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -85,9 +85,9 @@ function filterStars(stars: S[], opts: { query?: string; languages?: string[]; t
 
 console.log('\nFilter logic (query engine):');
 const sample: S[] = [
-  { full_name: 'a/ai-tool', description: 'AI helper', language: 'Python', topics: ['ai', 'agent'], tombstone: false, starred_at: '2026-06-20', pushed_at: '2026-06-19', stargazers_count: 100 },
-  { full_name: 'b/rust-lib', description: 'A rust lib', language: 'Rust', topics: [], tombstone: false, starred_at: '2026-06-21', pushed_at: '2026-06-22', stargazers_count: 50 },
-  { full_name: 'c/old', description: 'archived thing', language: 'Python', topics: [], tombstone: true, starred_at: '2026-01-01', pushed_at: '2025-01-01', stargazers_count: 5 },
+  { full_name: 'a/ai-tool', description: 'AI helper', language: 'Python', topics: ['ai', 'agent'], notes: '', tombstone: false, starred_at: '2026-06-20', pushed_at: '2026-06-19', stargazers_count: 100 },
+  { full_name: 'b/rust-lib', description: 'A rust lib', language: 'Rust', topics: [], notes: 'review later', tombstone: false, starred_at: '2026-06-21', pushed_at: '2026-06-22', stargazers_count: 50 },
+  { full_name: 'c/old', description: 'archived thing', language: 'Python', topics: [], notes: '', tombstone: true, starred_at: '2026-01-01', pushed_at: '2025-01-01', stargazers_count: 5 },
 ];
 const tagsByRepo = new Map([['a/ai-tool', ['ai']], ['b/rust-lib', ['rust']]]);
 
@@ -107,6 +107,11 @@ test('full-text search hits topics', () => {
   assert.equal(r.length, 1);
   assert.equal(r[0].full_name, 'a/ai-tool');
 });
+test('full-text search hits notes', () => {
+  const r = filterStars(sample, { query: 'review later' });
+  assert.equal(r.length, 1);
+  assert.equal(r[0].full_name, 'b/rust-lib');
+});
 test('filter by tag', () => {
   const r = filterStars(sample, { tags: ['rust'], tagsByRepo });
   assert.equal(r.length, 1);
@@ -118,19 +123,28 @@ test('onlyUntagged excludes tagged', () => {
 });
 
 console.log('\nAuto-suggest:');
-function suggestTags(star: S, existing: string[]): string[] {
+// Mirrors src/ui/suggest.ts — derives tags from topics only (NOT language; the
+// sidebar shows language as a separate filter, so deriving it would duplicate it).
+function suggestTags(star: S, existing: string[], excluded: Iterable<string> = []): string[] {
   const have = new Set(existing.map((t) => t.toLowerCase()));
+  const skip = new Set([...excluded].map((t) => t.toLowerCase()));
   const out: string[] = [];
-  if (star.language && !have.has(star.language.toLowerCase())) out.push(star.language);
-  for (const t of star.topics) if (!have.has(t.toLowerCase())) out.push(t);
+  for (const t of star.topics) {
+    if (have.has(t.toLowerCase()) || skip.has(t.toLowerCase())) continue;
+    out.push(t);
+  }
   return out.slice(0, 5);
 }
-test('suggests language + topics not already tagged', () => {
+test('suggests only topics not already tagged (no language)', () => {
   const s = suggestTags(sample[0], []);
-  assert.deepEqual(s, ['Python', 'ai', 'agent']);
+  assert.deepEqual(s, ['ai', 'agent']);
 });
 test('does not re-suggest already-applied (case-insensitive)', () => {
-  const s = suggestTags(sample[0], ['ai', 'python']);
+  const s = suggestTags(sample[0], ['ai', 'agent']);
+  assert.deepEqual(s, []);
+});
+test('excluded tombstones are not re-suggested', () => {
+  const s = suggestTags(sample[0], [], ['ai']);
   assert.deepEqual(s, ['agent']);
 });
 

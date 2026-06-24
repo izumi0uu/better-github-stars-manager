@@ -10,6 +10,11 @@ export interface MessageCatalog {
     remove: string;
     add: string;
     bulk: string;
+    save: string;
+    saved: string;
+    unsaved: string;
+    cancel: string;
+    apply: string;
     loading: string;
     none: string;
     close: string;
@@ -37,6 +42,8 @@ export interface MessageCatalog {
     syncTitle: string;
     syncButton: string;
     themeTitle: string;
+    /** Tooltip for the GitHub-home icon button (jump back to github.com). */
+    githubHomeTitle: string;
     autoAssignTitle: string;
     autoAssignButton: string;
     gistPushTitle: string;
@@ -75,6 +82,8 @@ export interface MessageCatalog {
     tagsSearch: string;
     tagsFilter: string;
     tagsEmpty: string;
+    /** "Show all (N)" — reveal the full tag list past the preview cap. */
+    tagsShowAll: (count: number) => string;
     tagsSelected: (count: number) => string;
     tagsMatchAny: string;
     tagsMatchAll: string;
@@ -85,9 +94,6 @@ export interface MessageCatalog {
     noTagsPrefix: string;
     noTagsEmphasis: string;
     noTagsSuffix: string;
-    /** Display label for a tag-dimension group header. Known dims (language/topic)
-     *  map to localized words; unknown/custom dims pass through unchanged. */
-    dimensionLabel: (dim: string) => string;
   };
   starRow: {
     archived: string;
@@ -185,6 +191,7 @@ export interface MessageCatalog {
     gistBoundPrefix: string;
     gistBoundSuffix: string;
     gistEmpty: string;
+    gistOpenLink: string;
   };
   repoChip: {
     untagged: string;
@@ -204,8 +211,10 @@ export interface MessageCatalog {
     pushingTags: string;
     pullingTags: string;
     gistPushDone: (count: number) => string;
+    gistPushRecreated: string;
     gistPushNoChanges: string;
     gistPullDone: (merged: number, total: number) => string;
+    gistPullMissing: string;
   };
   /** Humanized error strings. Keys are matched against stable error codes thrown
    *  across the codebase (see src/api/errors.ts). `unknown` is the passthrough —
@@ -288,6 +297,11 @@ const messages: Record<Locale, MessageCatalog> = {
       remove: "Remove",
       add: "Add",
       bulk: "Bulk",
+      save: "Save",
+      saved: "Saved",
+      unsaved: "Unsaved changes",
+      cancel: "Cancel",
+      apply: "Apply",
       loading: "Loading…",
       none: "—",
       close: "Close",
@@ -306,7 +320,7 @@ const messages: Record<Locale, MessageCatalog> = {
     manager: {
       syncFailed: (label, error) => `${label}: ${error}`,
       autoAssignDone: (count) =>
-        `Auto-assigned tags from language/topics for ${count} repos`,
+        `Auto-assigned tags from repo topics for ${count} repos`,
       autoAssignFailed: (error) => `auto-assign tags: ${error}`,
       deleteTagFailed: (error) => `delete tag: ${error}`,
       noTokenBanner: "No GitHub token configured — data cannot load.",
@@ -314,7 +328,7 @@ const messages: Record<Locale, MessageCatalog> = {
       emptyState: "No results. Adjust filters, or click Sync in the toolbar.",
     },
     toolbar: {
-      searchPlaceholder: "Search name / description / topics   (/ to focus)",
+      searchPlaceholder: "Search name / description / topics / notes   (/ to focus)",
       sortStarredAt: "Sort by starred date",
       sortPushedAt: "Sort by updated date",
       sortStars: "Sort by stars",
@@ -323,8 +337,8 @@ const messages: Record<Locale, MessageCatalog> = {
       syncTitle: "Incrementally sync new stars",
       syncButton: "Sync",
       themeTitle: "Toggle black/white theme",
-      autoAssignTitle:
-        "Auto-assign tags from each repo's language/topics (no network)",
+      githubHomeTitle: "GitHub home",
+      autoAssignTitle: "Auto-assign tags from each repo's topics (no network)",
       autoAssignButton: "Auto assign tags",
       gistPushTitle: "Push tags to your Gist backup",
       gistPushButton: "Push",
@@ -362,6 +376,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tagsSearch: "Filter tags…",
       tagsFilter: "Search tags…",
       tagsEmpty: "No tags match.",
+      tagsShowAll: (count) => `Show all ${count}`,
       tagsSelected: (count) => `${count} selected`,
       tagsMatchAny: "Any",
       tagsMatchAll: "All",
@@ -374,9 +389,7 @@ const messages: Record<Locale, MessageCatalog> = {
       deleteTagDone: (count) => `Deleted tag from ${count} repos`,
       noTagsPrefix: "No tags yet. Use toolbar",
       noTagsEmphasis: "Auto assign tags",
-      noTagsSuffix: "to generate them from language/topics.",
-      dimensionLabel: (dim) =>
-        dim === "language" ? "Language" : dim === "topic" ? "Topic" : dim,
+      noTagsSuffix: "to generate them from repo topics.",
     },
     starRow: {
       archived: "archived",
@@ -400,7 +413,7 @@ const messages: Record<Locale, MessageCatalog> = {
       notes: "Notes",
       notesPlaceholder: "Why did you star this repo?",
       notesSaved: "Saved",
-      notesUnsaved: "Unsaved (saved on blur)",
+      notesUnsaved: "Unsaved changes",
       language: "Language",
       stars: "Stars",
       updated: "Updated",
@@ -485,6 +498,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "Tags sync to and from this gist. If the same repo is edited in two places, the newer change wins.",
       gistEmpty:
         "No gist yet. One is created automatically on your first tag push.",
+      gistOpenLink: "Open this gist on GitHub",
     },
     repoChip: {
       untagged: "untagged",
@@ -505,9 +519,13 @@ const messages: Record<Locale, MessageCatalog> = {
       pushingTags: "Uploading tag snapshot to Gist…",
       pullingTags: "Pulling tags from Gist…",
       gistPushDone: (count) => `Pushed ${count} changed tag records to Gist`,
+      gistPushRecreated:
+        "Created a new sync Gist and uploaded your tag snapshot",
       gistPushNoChanges: "No local tag changes to push",
       gistPullDone: (merged, total) =>
         `Pulled ${merged} updates from ${total} remote tag records`,
+      gistPullMissing:
+        "The linked sync Gist was missing; the app unbound it on this device. Push to create a new one.",
     },
     errors: {
       tokenEmpty: "Please paste a token first.",
@@ -583,7 +601,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "The Sync button pulls in stars you've starred since your last visit. It runs automatically on first load; click it anytime to refresh.",
       coachStep2Title: "Filter by tags",
       coachStep2Body:
-        "The Tags sidebar groups your tags by Language / Topic. Click any tag (the whole row) to filter the list. Hover a tag for the delete button.",
+        "The Tags sidebar lists all your tags, sorted by how often they're used. Click any tag (the whole row) to filter the list. Hover a tag for the delete button.",
       coachStep3Title: "Open a repo",
       coachStep3Body:
         "Click any row to open the detail drawer — edit tags, write notes, and accept suggested tags there.",
@@ -601,6 +619,11 @@ const messages: Record<Locale, MessageCatalog> = {
       remove: "移除",
       add: "添加",
       bulk: "批量",
+      save: "保存",
+      saved: "已保存",
+      unsaved: "有未保存的更改",
+      cancel: "取消",
+      apply: "应用",
       loading: "加载中…",
       none: "—",
       close: "关闭",
@@ -619,7 +642,7 @@ const messages: Record<Locale, MessageCatalog> = {
     manager: {
       syncFailed: (label, error) => `${label}: ${error}`,
       autoAssignDone: (count) =>
-        `已从 language/topics 为 ${count} 个仓库自动分配标签`,
+        `已从仓库 topics 为 ${count} 个仓库自动分配标签`,
       autoAssignFailed: (error) => `自动分配标签失败: ${error}`,
       deleteTagFailed: (error) => `删除标签失败: ${error}`,
       noTokenBanner: "未配置 GitHub token — 无法加载数据。",
@@ -627,7 +650,7 @@ const messages: Record<Locale, MessageCatalog> = {
       emptyState: "无结果。调整筛选，或点击工具栏中的 Sync。",
     },
     toolbar: {
-      searchPlaceholder: "搜索 名称 / 描述 / topics   (按 / 聚焦)",
+      searchPlaceholder: "搜索 名称 / 描述 / topics / notes   (按 / 聚焦)",
       sortStarredAt: "按 star 时间",
       sortPushedAt: "按更新时间",
       sortStars: "按 star 数",
@@ -636,8 +659,8 @@ const messages: Record<Locale, MessageCatalog> = {
       syncTitle: "增量同步新的 stars",
       syncButton: "Sync",
       themeTitle: "切换黑白主题",
-      autoAssignTitle:
-        "根据每个仓库的 language/topics 自动分配标签（不请求网络）",
+      githubHomeTitle: "GitHub 首页",
+      autoAssignTitle: "根据每个仓库的 topics 自动分配标签（不请求网络）",
       autoAssignButton: "自动分配标签",
       gistPushTitle: "推送标签到你的 Gist 备份",
       gistPushButton: "Push",
@@ -675,6 +698,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tagsSearch: "筛选标签…",
       tagsFilter: "搜索标签…",
       tagsEmpty: "没有匹配的标签。",
+      tagsShowAll: (count) => `显示全部 ${count} 个`,
       tagsSelected: (count) => `已选 ${count} 个`,
       tagsMatchAny: "任一",
       tagsMatchAll: "全部",
@@ -687,9 +711,7 @@ const messages: Record<Locale, MessageCatalog> = {
       deleteTagDone: (count) => `已从 ${count} 个仓库删除标签`,
       noTagsPrefix: "暂无标签。点击工具栏",
       noTagsEmphasis: "自动分配标签",
-      noTagsSuffix: "从 language/topics 自动生成。",
-      dimensionLabel: (dim) =>
-        dim === "language" ? "语言" : dim === "topic" ? "Topic" : dim,
+      noTagsSuffix: "从仓库 topics 自动生成。",
     },
     starRow: {
       archived: "已归档",
@@ -713,7 +735,7 @@ const messages: Record<Locale, MessageCatalog> = {
       notes: "笔记",
       notesPlaceholder: "为什么会 star 这个仓库？",
       notesSaved: "已保存",
-      notesUnsaved: "未保存（失焦后保存）",
+      notesUnsaved: "有未保存的更改",
       language: "语言",
       stars: "Stars",
       updated: "更新",
@@ -794,6 +816,7 @@ const messages: Record<Locale, MessageCatalog> = {
       gistBoundSuffix:
         "标签会与该 gist 双向同步；如果同一仓库在两处被改动，较新的改动会生效。",
       gistEmpty: "尚未创建 gist。首次推送标签时会自动创建。",
+      gistOpenLink: "在 GitHub 打开这个 gist",
     },
     repoChip: {
       untagged: "未标注",
@@ -814,9 +837,12 @@ const messages: Record<Locale, MessageCatalog> = {
       pushingTags: "正在把标签快照上传到 Gist…",
       pullingTags: "正在从 Gist 拉取标签…",
       gistPushDone: (count) => `已向 Gist 推送 ${count} 条变更标签记录`,
+      gistPushRecreated: "已创建新的同步 Gist，并上传当前标签快照",
       gistPushNoChanges: "没有需要推送的本地标签变更",
       gistPullDone: (merged, total) =>
         `已从 ${total} 条远端标签记录中合并 ${merged} 条更新`,
+      gistPullMissing:
+        "已绑定的同步 Gist 不见了；本设备已解绑。你可以点 Push 重新创建。",
     },
     errors: {
       tokenEmpty: "请先粘贴 token。",
@@ -884,7 +910,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "Sync 按钮会拉取你自上次访问以来新 star 的仓库。首次加载会自动跑;想刷新随时点它。",
       coachStep2Title: "按标签筛选",
       coachStep2Body:
-        "Tags 侧栏按 Language / Topic 分组。点击任意标签(整行)即可筛选列表。鼠标悬停标签会出现删除按钮。",
+        "Tags 侧栏列出所有标签，按使用频次排序。点击任意标签(整行)即可筛选列表。鼠标悬停标签会出现删除按钮。",
       coachStep3Title: "打开某个仓库",
       coachStep3Body:
         "点击任意一行打开详情抽屉——在那里编辑标签、写笔记、接受建议标签。",

@@ -110,14 +110,6 @@ export function useStars() {
     }
   }
 
-  // Group tagTree by dimension for the sidebar.
-  const tagTreeGrouped = new Map<string | null, { name: string; count: number }[]>();
-  for (const t of committed?.tagTree ?? []) {
-    const dim = t.dim;
-    if (!tagTreeGrouped.has(dim)) tagTreeGrouped.set(dim, []);
-    tagTreeGrouped.get(dim)!.push({ name: t.name, count: t.count });
-  }
-
   return {
     rows,
     total: committed?.total ?? 0,
@@ -125,7 +117,7 @@ export function useStars() {
     loading,
     phase,
     languages: committed?.languages ?? [],
-    tagTree: { grouped: tagTreeGrouped, total: committed?.tagTotal ?? 0 },
+    tagTree: { tags: committed?.tagTree ?? [], total: committed?.tagTotal ?? 0 },
     tagsByFullName,
     refresh,
   };

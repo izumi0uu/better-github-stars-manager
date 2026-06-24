@@ -40,7 +40,7 @@ export interface TagStore {
 
   // --- Gist sync (per-repo timestamp merge) ---
   /** Push local dirty tags/tagMeta to the Gist. */
-  syncPush(onProgress?: CountProgressCallback): Promise<{ pushed: number; snapshot: number }>;
+  syncPush(onProgress?: CountProgressCallback): Promise<{ pushed: number; snapshot: number; recreated: boolean }>;
   /** Pull the Gist and merge per-repo by mtime into local IDB. */
-  syncPull(onProgress?: CountProgressCallback): Promise<{ merged: number; total: number }>;
+  syncPull(onProgress?: CountProgressCallback): Promise<{ merged: number; total: number; missing: boolean }>;
 }

@@ -28,6 +28,7 @@ const DEFAULT_CONFIG: Config = {
   displayName: null,
   seenOnboarding: false,
   seenTooltips: 0,
+  langTagMigrationDone: false,
 };
 
 let cache: Config | null = null;

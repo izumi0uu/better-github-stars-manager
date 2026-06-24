@@ -27,11 +27,11 @@ export interface QueryResult {
   grandTotal: number; // all stars in DB
   tagsForRows: Record<string, Tag | undefined>;
   languages: [string, number][]; // facet over ALL stars
-  tagTree: { dim: string | null; name: string; count: number }[];
+  tagTree: { name: string; count: number }[];
   tagTotal: number;
 }
 
-let cache: { stars: Star[]; tags: Map<string, Tag>; tagMeta: Map<string, string | null>; excluded: Set<string>; version: number } | null = null;
+let cache: { stars: Star[]; tags: Map<string, Tag>; excluded: Set<string>; version: number } | null = null;
 let cacheVersion = 0;
 
 /** Invalidate the in-memory cache (called after any sync/write). */
@@ -49,13 +49,11 @@ async function ensureCache() {
   ]);
   const tagMap = new Map<string, Tag>();
   for (const t of tags) tagMap.set(t.full_name, t);
-  const metaMap = new Map<string, string | null>();
   const excluded = new Set<string>();
   for (const m of tagMeta) {
-    metaMap.set(m.name, m.dimension);
     if (m.excluded) excluded.add(m.name);
   }
-  cache = { stars, tags: tagMap, tagMeta: metaMap, excluded, version: cacheVersion };
+  cache = { stars, tags: tagMap, excluded, version: cacheVersion };
   return cache;
 }
 
@@ -81,7 +79,7 @@ function sortRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Star[] {
 
 export async function queryStars(params: QueryParams): Promise<QueryResult> {
   const { filter, offset, limit } = params;
-  const { stars, tags, tagMeta, excluded } = await ensureCache();
+  const { stars, tags, excluded } = await ensureCache();
 
   const q = filter.query.trim().toLowerCase();
   const langSet = filter.languages.length ? new Set(filter.languages) : null;
@@ -98,7 +96,8 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
       } else if (!myTags.some((t) => tagSet.has(t))) return false;
     }
     if (q) {
-      const hay = `${s.full_name} ${s.description} ${s.topics.join(' ')}`.toLowerCase();
+      const notes = tags.get(s.full_name)?.notes ?? '';
+      const hay = `${s.full_name} ${s.description} ${s.topics.join(' ')} ${notes}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -114,15 +113,16 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
     .slice(0, 40);
 
   // Tag tree facet over ALL stars' tags. Excluded (deleted) tags are omitted from
-  // the sidebar tree — they're tombstones, not live filters — but their dimension
-  // metadata still flows here from tagMeta for any tag that is live.
+  // the sidebar tree — they're tombstones, not live filters. The tree is a flat
+  // list sorted by count (no dimension grouping); topic-derived and user-authored
+  // tags sit side by side.
   const tagCounts = new Map<string, number>();
   for (const t of tags.values()) for (const tag of t.tags) {
     if (excluded.has(tag)) continue;
     tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
   }
   const tagTree: QueryResult['tagTree'] = [...tagCounts.entries()]
-    .map(([name, count]) => ({ dim: tagMeta.get(name) ?? null, name, count }))
+    .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
   // Slice for the requested window.

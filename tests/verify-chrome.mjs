@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /** Real Chrome (MV3) end-to-end verification via Puppeteer. */
 import puppeteer from 'puppeteer';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { deleteSyncGists } from './gist-sync-admin.mjs';
 
 const TOKEN = process.env.GH_TOKEN;
 if (!TOKEN) {
@@ -18,6 +20,10 @@ if (!existsSync(path.join(DIST, 'manifest.json'))) {
 }
 
 const STARS_URL = `https://github.com/${process.env.GH_USER ?? 'YOUR_USERNAME'}?tab=stars`;
+const RESET_GIST = process.env.GSM_RESET_GIST === '1';
+const USER_DATA_DIR =
+  process.env.GSM_USER_DATA_DIR ||
+  mkdtempSync(path.join(os.tmpdir(), 'gsm-e2e-profile-'));
 const STEP = (n, s) => console.log(`${n}) ${s}`);
 
 function assert(cond, msg) {
@@ -32,6 +38,7 @@ const browser = await puppeteer.launch({
   executablePath:
     process.env.PUPPETEER_EXECUTABLE_PATH ||
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  userDataDir: USER_DATA_DIR,
   args: [
     `--disable-extensions-except=${DIST}`,
     `--load-extension=${DIST}`,
@@ -41,6 +48,13 @@ const browser = await puppeteer.launch({
 });
 
 try {
+  console.log(`   using Chrome profile: ${USER_DATA_DIR}`);
+  if (RESET_GIST) {
+    STEP(0, 'Resetting remote sync gist(s) …');
+    const removed = await deleteSyncGists(TOKEN, { log: (line) => console.log(line) });
+    console.log(`   ✓ removed ${removed.length} sync gist(s)`);
+  }
+
   STEP(1, 'Locating extension options page …');
   const page = await browser.newPage();
   const targets = await browser.waitForTarget(

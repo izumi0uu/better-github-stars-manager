@@ -1,7 +1,9 @@
 import type { Star } from '@/types';
 
 /**
- * Suggest tags for a repo based on its language and topics.
+ * Suggest tags for a repo based on its topics (NOT its language — language is
+ * surfaced separately as a first-class filter in the sidebar's Languages section,
+ * so deriving it as a tag would duplicate it across two places).
  * Pure function — no storage access. The actual write happens via the background
  * (`bgCall('acceptSuggestions' | 'acceptSuggestionsBatch')`), which owns the IDB.
  *
@@ -13,7 +15,6 @@ export function suggestTags(star: Star, existing: string[], excluded: Iterable<s
   const have = new Set(existing.map((t) => t.toLowerCase()));
   const skip = new Set([...excluded].map((t) => t.toLowerCase()));
   const out: string[] = [];
-  if (star.language && !have.has(star.language.toLowerCase()) && !skip.has(star.language.toLowerCase())) out.push(star.language);
   for (const t of star.topics) {
     const lc = t.toLowerCase();
     if (have.has(lc) || skip.has(lc)) continue;
