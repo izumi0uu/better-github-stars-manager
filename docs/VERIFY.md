@@ -57,9 +57,9 @@ correctness is covered by `tests/logic.test.ts` (run with `node --experimental-s
 
 - [ ] **Push** → a secret gist is created (check github.com/{you}?tab=gists); `gsm_config.gistId` set
 - [ ] On a second machine (or second Chrome profile) with the same PAT: configure, **Pull** → tags/notes from device 1 appear
-- [ ] Edit different repos on each device, push both, pull on the other → both edits merge (per-repo LWW; different repos never conflict)
+- [ ] Edit different repos on each device, push both, pull on the other → both edits merge (edits to different repos never conflict)
 
-## 7. Repo-page tag chip (D4)
+## 7. Repo-page tag chip
 
 - [ ] Navigate to `github.com/{owner}/{repo}` → tag chip appears next to the repo title (after the Public/Private label)
 - [ ] Chip shows the repo's tags (or "untagged")
@@ -80,4 +80,4 @@ correctness is covered by `tests/logic.test.ts` (run with `node --experimental-s
 
 - Gist scope on fine-grained PATs is account-wide (no per-gist isolation); we mitigate by using a dedicated secret gist.
 - The management panel is a full-screen overlay on the stars page (by design — replaces the native paginated UI).
-- `GitHub native Lists` sync is NOT in MVP (no public API; Phase 2 only).
+- `GitHub native Lists` sync is not implemented (no public API).

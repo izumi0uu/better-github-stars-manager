@@ -4,21 +4,22 @@ import { messageFor } from '@/i18n';
 import { bgCall } from '@/utils/messaging';
 
 /**
- * repo-chip content script (Task #8, decision D4).
+ * Repo-page content script.
  *
- * Injects a tag chip next to the repo title on github.com/{owner}/{repo}.
- * Anchors (verified during grill, in order of stability):
- *   1. strong[itemprop="name"] a[data-pjax]  — schema.org microdata (most stable)
- *   2. h1.sr-only whose text is "owner/repo" — semantic fallback
- *   3. [data-pjax="#repo-content-pjax-container"] — structural fallback
+ * Injects a tag chip next to the repo title on `github.com/{owner}/{repo}`.
+ * Anchor order, from most to least stable:
+ *   1. `strong[itemprop="name"] a[data-pjax]` — schema.org microdata
+ *   2. `h1.sr-only` whose text is `owner/repo` — semantic fallback
+ *   3. `[data-pjax="#repo-content-pjax-container"]` — structural fallback
  *
- * The title area is OUTSIDE the Turbo/PJAX swap frame, so we DON'T need a
- * MutationObserver; turbo:load / popstate are enough for re-injection.
+ * The title area sits outside the Turbo/PJAX swap frame, so a
+ * `MutationObserver` is unnecessary; `turbo:load`, `turbo:render`, and
+ * `popstate` are enough for re-injection.
  *
- * D4 interactions on the chip:
+ * Chip interactions:
  *   - label text = tags (read-only display)
  *   - click a tag label → open the stars management page filtered by that tag
- *   - ✎ button → inline edit (add/remove tags) writing to idbTagStore live
+ *   - ✎ button → inline edit (add/remove tags) via background calls
  */
 
 const injected = new Map<string, { el: HTMLElement; rerender: () => void }>(); // url → host element, for idempotency
@@ -143,7 +144,7 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
           c.textContent = t;
           c.title = m.repoChip.filterByTag(t);
           c.onclick = async () => {
-            // D4 click → open management page filtered by this tag.
+            // Open the management page filtered by this tag.
             const u = await bgCall<{ username: string | null }>('getUsername');
             const url = u.username
               ? `https://github.com/${u.username}?tab=stars#gsm-tag=${encodeURIComponent(t)}`
@@ -198,8 +199,8 @@ function cleanup() {
   }
 }
 
-// Initial + Turbo/PJAX re-injection. No MutationObserver (title area is outside
-// the swap frame, per grill findings).
+// Initial + Turbo/PJAX re-injection. No MutationObserver is needed because the
+// title area sits outside the swap frame.
 inject();
 document.addEventListener('turbo:load', inject);
 document.addEventListener('turbo:render', inject);

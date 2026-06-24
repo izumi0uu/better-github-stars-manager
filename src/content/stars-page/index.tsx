@@ -4,20 +4,19 @@ import { I18nProvider } from '@/i18n';
 import cssText from '@/ui/styles.css?inline';
 
 /**
- * stars-page content script (Task #7, Q6=B).
+ * Stars-page content script.
  *
  * Injects a full-screen management panel that replaces the native starred list
- * with a virtualized table. Mounted inside a SHADOW ROOT so the extension's
- * Tailwind/preflight CSS (loaded via `?inline` → adoptedStyleSheets) is fully
- * isolated from github.com's light DOM — GitHub's own styles never clash, and
- * our preflight never leaks onto the page.
+ * with a virtualized table. It mounts inside a shadow root so the extension's
+ * Tailwind/preflight CSS (loaded via `?inline` → `adoptedStyleSheets`) is fully
+ * isolated from `github.com`'s light DOM.
  *
- * `?inline` is critical: a normal `import './styles.css'` would be picked up
- * by CRXJS's content-script CSS plugin and injected into the page <head> (light
- * DOM), leaking preflight across github.com. `?inline` returns the CSS string
- * only, which we attach inside the shadow boundary.
+ * `?inline` is critical: a normal `import './styles.css'` would be picked up by
+ * CRXJS's content-script CSS plugin and injected into the page `<head>`, which
+ * would leak preflight across GitHub. `?inline` returns the CSS string only, so
+ * it can stay inside the shadow boundary.
  *
- * MV3 match patterns can't target query strings, so we gate on `?tab=stars`.
+ * MV3 match patterns cannot target query strings, so the script gates on `?tab=stars`.
  */
 function isStarsPage(): boolean {
   return new URLSearchParams(location.search).get('tab') === 'stars';

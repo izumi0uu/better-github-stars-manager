@@ -11,7 +11,7 @@ every `github.com/{owner}/{repo}` page.
 
 ---
 
-## What it does (MVP)
+## What it does
 
 - **Pull all your stars** into a local IndexedDB (authenticated `/user/starred`, one request per ~100-star page).
 - **Incremental sync** on every visit to the stars page (1–2 requests, stops at the last-seen cursor).
@@ -23,15 +23,15 @@ every `github.com/{owner}/{repo}` page.
 - **Auto-suggest tags** from each repo's `language` and `topics` (one-click or batch).
 - **Persistent delete**: removing a tag drops it from every repo and keeps it gone across syncs (a tombstone blocks auto-suggest from resurrecting it) — re-add it manually to undo.
 - **Cross-device sync** of your tag/notes layer via a private GitHub Gist (per-repo last-write-wins merge).
-- **Tag chip** on every repo page: shows your tags, click to filter, pencil icon to edit inline (D4).
+- **Tag chip** on every repo page: shows your tags, click to filter, pencil icon to edit inline.
 
-## What it deliberately does NOT do (Phase 2)
+## What it deliberately does NOT do yet
 
 | Feature | Why deferred |
 |---|---|
 | **GitHub native "Lists" sync** | No public API; only DOM-automation or reverse-engineered internal endpoints (high fragility, ToS medium). Verified partial-feasible. Reserved: `Tag.gh_list_id` field + `TagStore.syncToGitHubLists()` slot. |
 | **OAuth + backend** | Conflicts with zero-server personal-first scope. |
-| **Star/unstar writes** | Unstar is destructive; out of MVP scope. |
+| **Star/unstar writes** | Unstar is destructive; out of scope for now. |
 | **Background polling sync** | MV3 alarms ≥30min; low value for an on-demand management tool. |
 
 ---
@@ -80,8 +80,9 @@ IDB — a different database), so the UI never touches `db` directly; it queries
 messages and the background broadcasts `dataChanged` to refresh.
 
 Data model: three IDB stores — `stars` (GitHub metadata, rebuildable, not synced),
-`tags` (your annotations, Gist-synced per-repo LWW), `tagMeta` (tag dimension/color).
-Light config (encrypted token, cursors) lives in `chrome.storage.local`.
+`tags` (your annotations, Gist-synced with per-repo timestamp conflict resolution),
+`tagMeta` (tag dimension/color). Light config (encrypted token, cursors) lives in
+`chrome.storage.local`.
 
 ## Verify it works
 

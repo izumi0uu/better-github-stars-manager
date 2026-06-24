@@ -1,5 +1,5 @@
 // Pure-logic verification of the two correctness-critical algorithms:
-// 1. Per-repo field-level LWW merge (Gist sync) — Q5 C2.
+// 1. Per-repo timestamp merge used by Gist sync.
 // 2. Star filtering/sorting — query engine core.
 //
 // Run: node --experimental-strip-types tests/logic.test.ts
@@ -32,7 +32,7 @@ function test(name: string, fn: () => void) {
   }
 }
 
-console.log('LWW merge (Q5 C2):');
+console.log('Timestamp merge:');
 test('device A edits repo1, device B edits repo2 → both kept', () => {
   const local = new Map([
     ['a/repo1', { tags: ['x'], mtime: '2026-06-22T10:00:00Z' }],
@@ -117,7 +117,7 @@ test('onlyUntagged excludes tagged', () => {
   assert.equal(r.length, 0); // both live repos are tagged
 });
 
-console.log('\nAuto-suggest (Q7):');
+console.log('\nAuto-suggest:');
 function suggestTags(star: S, existing: string[]): string[] {
   const have = new Set(existing.map((t) => t.toLowerCase()));
   const out: string[] = [];
