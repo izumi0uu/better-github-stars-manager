@@ -1,15 +1,16 @@
-import { useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { MutableRefObject, ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, X, Archive, Star as StarIcon, Check } from 'lucide-react';
 import type { Star, Tag } from '@/types';
 import { suggestTags } from '@/ui/suggest';
 import { bgCall } from '@/utils/messaging';
 import { TagEditor } from './TagEditor';
+import { SaveActionButton, type SaveActionPhase } from './save-action-button';
+import { mergeTagNames, sameTagNames } from './tag-draft';
 import { Badge } from '@/ui/shadcn/badge';
 import { Button } from '@/ui/shadcn/button';
 import { Textarea } from '@/ui/shadcn/textarea';
 import { Separator } from '@/ui/shadcn/separator';
-import { Spinner } from '@/ui/shadcn/spinner';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 
@@ -45,56 +46,99 @@ export function RepoDetailPanel({
   const notes = tag?.notes ?? '';
   const { m } = useI18n();
 
-  // Deleted tags (tombstones) — fetched once per opened repo so suggestions don't
-  // re-offer a tag the user removed. suggestTags skips these (resurrection guard).
   const [excluded, setExcluded] = useState<string[]>([]);
+  const [draftTags, setDraftTags] = useState(myTags);
+  const [draftNotes, setDraftNotes] = useState(notes);
+  const [tagsSavePhase, setTagsSavePhase] = useState<SaveActionPhase>('idle');
+  const [notesSavePhase, setNotesSavePhase] = useState<SaveActionPhase>('idle');
+  const draftTagsRef = useRef(myTags);
+  const draftNotesRef = useRef(notes);
+  const tagsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     bgCall<string[]>('listExcluded')
-      .then((names) => { if (!cancelled) setExcluded(names ?? []); })
+      .then((names) => {
+        if (!cancelled) setExcluded(names ?? []);
+      })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
-  const suggestions = suggestTags(star, myTags, excluded);
 
-  const [draft, setDraft] = useState(notes);
-  const [saved, setSaved] = useState(false);
-  const [savingNotes, setSavingNotes] = useState(false);
-  const [accepting, setAccepting] = useState(false);
   useEffect(() => {
-    setDraft(notes);
-    setSaved(false);
-  }, [star.full_name, notes]);
+    draftTagsRef.current = myTags;
+    draftNotesRef.current = notes;
+    setDraftTags(myTags);
+    setDraftNotes(notes);
+    resetSavePhase(setTagsSavePhase, tagsTimerRef);
+    resetSavePhase(setNotesSavePhase, notesTimerRef);
+  }, [star.full_name, myTags, notes]);
+
+  useEffect(() => () => {
+    if (tagsTimerRef.current) clearTimeout(tagsTimerRef.current);
+    if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
+  }, []);
+
+  const suggestions = suggestTags(star, draftTags, excluded);
+  const tagsDirty = !sameTagNames(draftTags, myTags);
+  const notesDirty = draftNotes !== notes;
+
+  const updateDraftTags = (nextTags: string[]) => {
+    draftTagsRef.current = nextTags;
+    resetSavePhase(setTagsSavePhase, tagsTimerRef);
+    setDraftTags(nextTags);
+  };
+
+  const updateDraftNotes = (nextNotes: string) => {
+    draftNotesRef.current = nextNotes;
+    resetSavePhase(setNotesSavePhase, notesTimerRef);
+    setDraftNotes(nextNotes);
+  };
+
+  const saveTags = async () => {
+    const nextTags = draftTagsRef.current;
+    if (sameTagNames(nextTags, myTags)) return;
+
+    let ok = false;
+    setTagsSavePhase('busy');
+    try {
+      await bgCall('setTags', { full_name: star.full_name, tags: nextTags });
+      onDataChanged?.();
+      ok = true;
+      flashSaved(setTagsSavePhase, tagsTimerRef);
+    } finally {
+      if (!ok) setTagsSavePhase('idle');
+    }
+  };
 
   const saveNotes = async () => {
-    if (draft !== notes) {
-      setSavingNotes(true);
-      try {
-        await bgCall('setNotes', { full_name: star.full_name, notes: draft });
-        onDataChanged?.();
-        setSaved(true);
-      } finally {
-        setSavingNotes(false);
-      }
-    }
-  };
+    const nextNotes = draftNotesRef.current;
+    if (nextNotes === notes) return;
 
-  const acceptSuggestions = async () => {
-    if (suggestions.length === 0) return;
-    setAccepting(true);
+    let ok = false;
+    setNotesSavePhase('busy');
     try {
-      await bgCall('acceptSuggestions', { full_name: star.full_name, toAdd: suggestions });
+      await bgCall('setNotes', { full_name: star.full_name, notes: nextNotes });
       onDataChanged?.();
+      ok = true;
+      flashSaved(setNotesSavePhase, notesTimerRef);
     } finally {
-      setAccepting(false);
+      if (!ok) setNotesSavePhase('idle');
     }
   };
 
-  // Keyboard nav (Esc close, [ / ] prev/next) — ignored while typing in fields.
+  const acceptSuggestions = () => {
+    if (suggestions.length === 0) return;
+    updateDraftTags(mergeTagNames(draftTagsRef.current, suggestions));
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      const tagName = (e.target as HTMLElement)?.tagName;
+      if (tagName === 'INPUT' || tagName === 'TEXTAREA') return;
       if (e.key === 'Escape') onClose();
       else if (e.key === '[' && hasPrev) onPrev();
       else if (e.key === ']' && hasNext) onNext();
@@ -106,10 +150,7 @@ export function RepoDetailPanel({
   const selectedSet = new Set(selectedTags);
 
   return (
-    // Width/opacity animation is handled by the parent container in ManagerPanel
-    // (drawer-anim); this is just the inner content, full-height.
     <div className="flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card">
-      {/* Header */}
       <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
         <Button variant="ghost" size="icon" onClick={onPrev} disabled={!hasPrev} title={m.repoDetail.previousTitle} className={cn(!hasPrev && 'opacity-30')}><ChevronLeft className="size-4" /></Button>
         <Button variant="ghost" size="icon" onClick={onNext} disabled={!hasNext} title={m.repoDetail.nextTitle} className={cn(!hasNext && 'opacity-30')}><ChevronRight className="size-4" /></Button>
@@ -118,9 +159,8 @@ export function RepoDetailPanel({
       </div>
 
       <div className="flex flex-col gap-4 p-3">
-        {/* Title + link */}
         <div>
-          <a href={star.html_url} target="_blank" rel="noreferrer" className="break-all text-[13px] font-semibold text-primary no-underline hover:underline">
+          <a href={star.html_url} target="_blank" rel="noreferrer" className="break-all text-[13px] font-semibold text-primary underline underline-offset-2 hover:underline">
             {star.full_name}
           </a>
           <div className="mt-0.5 flex gap-2">
@@ -133,7 +173,6 @@ export function RepoDetailPanel({
           </div>
         </div>
 
-        {/* Meta grid */}
         <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
           <Meta label={m.repoDetail.language} value={star.language ?? m.common.none} />
           <Meta
@@ -163,9 +202,9 @@ export function RepoDetailPanel({
             <Separator />
             <Section title={m.repoDetail.topics(star.topics.length)}>
               <div className="flex flex-wrap gap-1">
-                {star.topics.map((t) => (
-                  <button key={t} onClick={() => onToggleTag(t)} title={m.repoDetail.filterTopic}>
-                    <Badge variant={selectedSet.has(t) ? 'tagActive' : 'tag'} className="cursor-pointer hover:opacity-80">{t}</Badge>
+                {star.topics.map((topic) => (
+                  <button key={topic} onClick={() => onToggleTag(topic)} title={m.repoDetail.filterTopic}>
+                    <Badge variant={selectedSet.has(topic) ? 'tagActive' : 'tag'} className="cursor-pointer hover:opacity-80">{topic}</Badge>
                   </button>
                 ))}
               </div>
@@ -178,18 +217,11 @@ export function RepoDetailPanel({
             <Separator />
             <Section title={m.repoDetail.suggestedTags}>
               <div className="flex flex-wrap items-center gap-1">
-                {suggestions.map((t) => (
-                  <Badge key={t} variant="outline" className="opacity-70 [border-style:dashed]">{t}</Badge>
+                {suggestions.map((name) => (
+                  <Badge key={name} variant="outline" className="opacity-70 [border-style:dashed]">{name}</Badge>
                 ))}
-                <Button variant="outline" size="sm" onClick={() => void acceptSuggestions()} title={m.repoDetail.acceptAllTitle} disabled={accepting}>
-                  {accepting ? (
-                    <>
-                      <Spinner data-icon="inline-start" />
-                      {m.repoDetail.acceptAll}
-                    </>
-                  ) : (
-                    m.repoDetail.acceptAll
-                  )}
+                <Button variant="outline" size="sm" onClick={acceptSuggestions} title={m.repoDetail.acceptAllTitle}>
+                  {m.repoDetail.acceptAll}
                 </Button>
               </div>
             </Section>
@@ -197,33 +229,39 @@ export function RepoDetailPanel({
         )}
 
         <Separator />
-        <Section title={m.repoDetail.tags(myTags.length)}>
-          <TagEditor full_name={star.full_name} tags={myTags} selectedTags={selectedTags} onToggleTag={onToggleTag} onDataChanged={onDataChanged} />
+        <Section title={m.repoDetail.tags(draftTags.length)}>
+          <TagEditor
+            tags={draftTags}
+            selectedTags={selectedTags}
+            onToggleTag={onToggleTag}
+            onChangeTags={updateDraftTags}
+          />
+          <SaveRow
+            dirty={tagsDirty}
+            phase={tagsSavePhase}
+            savedLabel={m.common.saved}
+            unsavedLabel={m.common.unsaved}
+            saveLabel={m.common.save}
+            onSave={() => void saveTags()}
+          />
         </Section>
 
         <Separator />
         <Section title={m.repoDetail.notes}>
           <Textarea
-            value={draft}
-            onChange={(e) => { setDraft(e.target.value); setSaved(false); }}
-            onBlur={saveNotes}
+            value={draftNotes}
+            onChange={(e) => updateDraftNotes(e.target.value)}
             placeholder={m.repoDetail.notesPlaceholder}
             rows={4}
-            disabled={savingNotes}
           />
-          <div className="mt-0.5 h-3 text-[10px] text-muted-foreground">
-            {savingNotes ? (
-              <span className="inline-flex items-center gap-1 text-muted-foreground">
-                <Spinner className="size-3" />
-                {m.common.loading}
-              </span>
-            ) : saved ? (
-              <span className="inline-flex items-center gap-1 text-success">
-                <Check className="size-3" />
-                {m.repoDetail.notesSaved}
-              </span>
-            ) : draft !== notes ? m.repoDetail.notesUnsaved : ''}
-          </div>
+          <SaveRow
+            dirty={notesDirty}
+            phase={notesSavePhase}
+            savedLabel={m.repoDetail.notesSaved}
+            unsavedLabel={m.repoDetail.notesUnsaved}
+            saveLabel={m.common.save}
+            onSave={() => void saveNotes()}
+          />
         </Section>
       </div>
     </div>
@@ -237,6 +275,69 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       {children}
     </div>
   );
+}
+
+function SaveRow({
+  dirty,
+  phase,
+  savedLabel,
+  unsavedLabel,
+  saveLabel,
+  onSave,
+}: {
+  dirty: boolean;
+  phase: SaveActionPhase;
+  savedLabel: string;
+  unsavedLabel: string;
+  saveLabel: string;
+  onSave: () => void;
+}) {
+  return (
+    <div className="mt-2 flex items-center justify-between gap-3">
+      <div className="min-h-[12px] text-[10px] text-muted-foreground">
+        {phase === 'ok' ? (
+          <span className="inline-flex items-center gap-1 text-success">
+            <Check className="size-3" />
+            {savedLabel}
+          </span>
+        ) : dirty ? (
+          unsavedLabel
+        ) : null}
+      </div>
+      <SaveActionButton
+        variant="outline"
+        size="sm"
+        phase={phase}
+        onClick={onSave}
+        disabled={!dirty || phase !== 'idle'}
+      >
+        {saveLabel}
+      </SaveActionButton>
+    </div>
+  );
+}
+
+function resetSavePhase(
+  setPhase: (phase: SaveActionPhase) => void,
+  timerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>,
+) {
+  if (timerRef.current) {
+    clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }
+  setPhase('idle');
+}
+
+function flashSaved(
+  setPhase: (phase: SaveActionPhase) => void,
+  timerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>,
+) {
+  if (timerRef.current) clearTimeout(timerRef.current);
+  setPhase('ok');
+  timerRef.current = setTimeout(() => {
+    setPhase('idle');
+    timerRef.current = null;
+  }, 1300);
 }
 
 function Meta({ label, value }: { label: string; value: ReactNode }) {
