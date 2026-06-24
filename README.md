@@ -19,10 +19,11 @@ every `github.com/{owner}/{repo}` page.
 - **Virtualized table** of all stars (no pagination, scroll smoothly through thousands of rows).
 - **Filter**: by language, by tag (any/all), full-text over name/description/topics, "untagged only".
 - **Sort**: by starred date, repo update date, star count, or name.
-- **Tag + note** any repo inline; tags support soft dimension grouping.
+- **Tag + note** any repo inline. Tags auto-group in the sidebar by dimension — a repo's primary language lands under **Language**, its GitHub topics under **Topic**, manual tags stay ungrouped.
 - **Auto-suggest tags** from each repo's `language` and `topics` (one-click or batch).
+- **Persistent delete**: removing a tag drops it from every repo and keeps it gone across syncs (a tombstone blocks auto-suggest from resurrecting it) — re-add it manually to undo.
 - **Cross-device sync** of your tag/notes layer via a private GitHub Gist (per-repo last-write-wins merge).
-- **Tag chip** on every repo page: shows your tags, click to filter, ✎ to edit inline (D4).
+- **Tag chip** on every repo page: shows your tags, click to filter, pencil icon to edit inline (D4).
 
 ## What it deliberately does NOT do (Phase 2)
 
@@ -56,10 +57,10 @@ Then in Chrome:
 ## Use
 
 1. Open `https://github.com/{you}?tab=stars` — the management panel takes over.
-2. First visit: click **↻ Sync** (or it auto-syncs incrementally). For a fresh account run **full sync** once via the popup.
-3. Search `/`, filter by language/tag, click a row's tags to edit, **⚡ Auto-tag** to bulk-apply suggestions.
+2. First visit: click **Sync** (or it auto-syncs incrementally). For a fresh account run **full sync** once via the popup.
+3. Search `/`, filter by language/tag, click a row's tags to edit, **Auto assign tags** to bulk-apply suggestions.
 4. Visit any `github.com/{owner}/{repo}` — your tag chip appears next to the repo name.
-5. Use **⬆ Push** / **⬇ Pull** to sync tags across devices via Gist (auto-created on first push).
+5. Use **Push** / **Pull** to sync tags across devices via Gist (auto-created on first push).
 
 ---
 

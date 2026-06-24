@@ -30,30 +30,33 @@ correctness is covered by `tests/logic.test.ts` (run with `node --experimental-s
 - [ ] Header shows "{filtered} / {total}" with total matching your star count
 - [ ] Scroll is smooth through all rows (virtualization: only ~20 DOM rows exist at a time)
 - [ ] `/` focuses the search box; typing filters name/desc/topics
-- [ ] Language checkboxes in sidebar filter the list
-- [ ] Sorting dropdown + ↑/↓ toggle reorders
+- [ ] Language checkboxes in sidebar filter the list (Languages section is collapsible, collapsed by default, unbounded — not capped at 30)
+- [ ] Sorting dropdown + direction toggle reorders
 - [ ] Click a row's tag area → inline editor → type "test, ai" → Enter → chips appear
 - [ ] "untagged" checkbox shows only repos with no tags
-- [ ] **⚡ Auto-tag** → applies language/topics as tags to filtered repos → chips appear
-- [ ] Notes (📝) button → write a note → save → reopen shows it
+- [ ] Tags sidebar groups tags by dimension (**Language** / **Topic** headers); inline search box filters tags across groups (unbounded — not capped at 50)
+- [ ] **Auto assign tags** → applies language/topics as tags to all repos → chips appear, and new tags land under their Language/Topic group
+- [ ] Notes affordance on a row → write a note → save → reopen shows it
 - [ ] A row's data persists after reload (reload stars page → tags/notes still there)
+- [ ] Hover a tag in the sidebar → trash icon → two-step confirm → tag removed from every repo and gone from the sidebar
+- [ ] After that delete, **Sync** then **Auto assign tags** again → the deleted tag does NOT reappear (tombstone blocks resurrection); re-adding it manually in a row's tag editor brings it back
 
 ## 4. Incremental sync
 
 - [ ] Star a new repo on github.com in another tab
-- [ ] Return to stars page → "↻ Sync" → new repo appears at top (sorted by starred desc)
+- [ ] Return to stars page → **Sync** → new repo appears at top (sorted by starred desc)
 - [ ] Only 1–2 API requests fired (check service worker network)
 
 ## 5. Rescan / unstar detection
 
 - [ ] Unstar a repo on github.com
-- [ ] Stars page → "⟲ Rescan" → local state refreshes cleanly with no console errors
-- [ ] Re-star the same repo later → "⟲ Rescan" → any earlier tags/notes revive on that repo
+- [ ] Popup → **Reconcile stars** → local state refreshes cleanly with no console errors
+- [ ] Re-star the same repo later → **Reconcile stars** → any earlier tags/notes revive on that repo
 
 ## 6. Gist cross-device sync
 
-- [ ] "⬆ Push" → a secret gist is created (check github.com/{you}?tab=gists); `gsm_config.gistId` set
-- [ ] On a second machine (or second Chrome profile) with the same PAT: configure, "⬇ Pull" → tags/notes from device 1 appear
+- [ ] **Push** → a secret gist is created (check github.com/{you}?tab=gists); `gsm_config.gistId` set
+- [ ] On a second machine (or second Chrome profile) with the same PAT: configure, **Pull** → tags/notes from device 1 appear
 - [ ] Edit different repos on each device, push both, pull on the other → both edits merge (per-repo LWW; different repos never conflict)
 
 ## 7. Repo-page tag chip (D4)
@@ -61,7 +64,7 @@ correctness is covered by `tests/logic.test.ts` (run with `node --experimental-s
 - [ ] Navigate to `github.com/{owner}/{repo}` → tag chip appears next to the repo title (after the Public/Private label)
 - [ ] Chip shows the repo's tags (or "untagged")
 - [ ] Click a tag chip → opens the stars management page filtered by that tag
-- [ ] ✎ button → inline edit tags on the repo page → save → chip updates; reload → persists
+- [ ] pencil icon button → inline edit tags on the repo page → save → chip updates; reload → persists
 - [ ] Navigate between repos via GitHub links (Turbo/PJAX) → chip re-injects, no duplicates
 - [ ] Navigate to a non-repo page (e.g. github.com/settings) → no chip
 
