@@ -58,7 +58,7 @@ The token tutorial images remain useful for README and onboarding, but they are 
 
 Chrome Web Store requires one small promotional image at `440x280`.
 
-Prepared promo assets derived from `public/poster/img.png`:
+Prepared promo assets derived from `public/poster/img_01.png`:
 
 - `public/store/promo/small-tile.png` (`440x280`)
 - `public/store/promo/marquee.png` (`1400x560`)

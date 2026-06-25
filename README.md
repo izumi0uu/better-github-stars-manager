@@ -7,9 +7,9 @@
 [![Latest release](https://img.shields.io/github/v/release/izumi0uu/better-github-stars-manager?logo=github&label=release)](https://github.com/izumi0uu/better-github-stars-manager/releases)
 [![License: MIT](https://img.shields.io/github/license/izumi0uu/better-github-stars-manager?logo=opensourceinitiative&logoColor=white)](./LICENSE)
 
-> A Chrome extension for people who have outgrown GitHub's native stars page — personal-first, zero-server, built for heavy GitHub stars users.
+> A Chrome extension for heavy GitHub users — local-first, zero-server, personal. It turns `https://github.com/{user}?tab=stars` into a fast, searchable, taggable, filterable, annotatable workspace so you can manage thousands of stars without leaving GitHub.
 
-![Better GitHub Stars Manager](public/poster/img.png)
+![Better GitHub Stars Manager](public/poster/img_01.png)
 
 ## Table of Contents
 
@@ -25,16 +25,16 @@
 
 ## Why Better GitHub Stars Manager?
 
-GitHub Stars is useful for bookmarking, but weak for long-term organization.
+GitHub Stars is good for bookmarking, but it does not hold up for long-term organization.
 
-Once your stars grow into the hundreds or thousands, the default experience starts to hurt:
+Once your stars grow into the hundreds or thousands, the native list becomes hard to manage. In the AI era, GitHub projects multiply exponentially — you star all kinds of things, then forget where you saved them or what they were called. The real pain points:
 
-- pagination slows everything down
-- there is no personal tagging system
-- there is no real notes layer
-- it becomes hard to revisit what you saved and why
+- pagination hides the full picture of your stars
+- no personal tagging system
+- no real notes layer
+- hard to revisit what you saved and why
 
-Better GitHub Stars Manager adds the missing management layer on top of GitHub Stars. It is intentionally focused — not a GitHub replacement, not a cloud-hosted bookmarking product, and it does not star/unstar repositories for you. The goal is narrower and more practical: make GitHub Stars genuinely manageable for heavy users.
+Better GitHub Stars Manager makes GitHub Stars genuinely manageable for heavy users.
 
 ## Features
 
@@ -43,6 +43,9 @@ Better GitHub Stars Manager adds the missing management layer on top of GitHub S
 
 - **Fast search and filtering**
   Search across repository name, description, topics, and notes. Filter by language, tags, and untagged items.
+
+- **Floating toggle button**
+  On your own GitHub stars page, a floating button switches to the management panel with one click.
 
 - **Custom tags and notes**
   Add your own labels and notes so your stars become a working library instead of a passive list.
@@ -62,16 +65,9 @@ Better GitHub Stars Manager adds the missing management layer on top of GitHub S
 - **Gist-backed storage layer**
   Keep your annotation layer in a dedicated secret Gist so it is portable, recoverable, and easy to sync across devices without a backend.
 
-- **Local-first architecture**
-  Star metadata is stored locally for speed. Your personal annotation layer can be synced without needing a custom backend.
-
 ## Screenshots
 
-### Preview
-
-<img src="public/poster/img.png" alt="Better GitHub Stars Manager preview" width="1672">
-
-> This preview also serves as the source for store promo images.
+<img src="public/poster/img_02.png" alt="Better GitHub Stars Manager screenshot" width="1672">
 
 ## How to Use
 
@@ -101,15 +97,15 @@ Then in Chrome:
 
 ### Token setup
 
-Create a **fine-grained personal access token** and click **Generate new token**.
+Step 1: Create a **fine-grained personal access token** and click **Generate new token**.
 
 ![Create a fine-grained token](public/tutorial/img_01.png)
 
-Use **Public repositories** for repository access.
+Step 2: For repository access, choose **Public repositories**.
 
 ![Choose repository access](public/tutorial/img_02.png)
 
-Add **Gists: read and write** so cross-device sync can work.
+Step 3: Add **Gists: read and write** so cross-device sync can work.
 
 ![Grant Gists permission](public/tutorial/img_03.png)
 
@@ -117,6 +113,8 @@ Recommended GitHub token permissions:
 
 - **Public Repositories (read)**
 - **Gists (read/write)**
+
+> Fine-grained token Gist permissions are account-level (they cannot be scoped per gist). The extension creates a dedicated secret gist for sync.
 
 ## Privacy and Storage
 
@@ -141,9 +139,6 @@ For a store-ready privacy statement, see [docs/privacy-policy.md](docs/privacy-p
 - Build: `pnpm build`
 - Test: `pnpm test`
 - Package release zip: `pnpm package:extension`
-
-For a full manual verification checklist, see [`docs/VERIFY.md`](docs/VERIFY.md).
-For Chrome Web Store listing copy and reviewer notes, see [`docs/chrome-web-store-submission.md`](docs/chrome-web-store-submission.md).
 
 ## License
 

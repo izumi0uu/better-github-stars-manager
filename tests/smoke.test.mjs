@@ -43,5 +43,5 @@ try {
 } catch (e) { log(false, 'crashed: '+(e?.message??e)); }
 await browser.close();
 fs.rmSync(profile,{recursive:true,force:true});
-if (envLimitation) { console.log('\n⚠️  Headless environment cannot load unpacked MV3 extension (Chrome limitation). See docs/VERIFY.md for GUI verification.'); process.exitCode = 0; }
+if (envLimitation) { console.log('\n⚠️  Headless environment cannot load unpacked MV3 extension (Chrome limitation). Run GUI verification in a real Chrome profile before release.'); process.exitCode = 0; }
 else console.log(errors.length ? `\n❌ ${errors.length} issues` : '\n✅ Smoke test passed');
