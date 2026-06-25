@@ -340,7 +340,6 @@ function emptyFilter() {
   };
 }
 
-/** First-run onboarding card shown before the list. */
 function OnboardingCard({
   hasToken,
   syncing,
@@ -416,7 +415,6 @@ function OnboardingCard({
   );
 }
 
-/** First-run coach overlay that spotlights the sync button, tags sidebar, and list. */
 const COACH_TARGETS = ['sync', 'tags', 'repo'] as const;
 
 function CoachOverlay({

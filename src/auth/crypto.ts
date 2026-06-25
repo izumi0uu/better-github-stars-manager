@@ -1,16 +1,9 @@
 import type { CryptoMeta } from '@/types';
 
 /**
- * Web Crypto symmetric encryption for the PAT.
- *
- * Threat model: defense in depth. MV3 content/background contexts are isolated per
- * extension, so another extension cannot read our `chrome.storage` directly. But
- * the token would otherwise sit as plaintext in JSON-backed storage, so encrypting
- * it means a disk dump or storage export does not immediately leak a live credential.
- *
- * The key is derived from a fixed app secret via PBKDF2. This is not OS keychain
- * security, but it raises the bar over plaintext and fits the current zero-server
- * extension model.
+ * Defense-in-depth: the PAT is AES-GCM encrypted in chrome.storage, not stored
+ * as plaintext. The key is PBKDF2-derived from a fixed app secret — this is not
+ * OS-keychain-grade, but raises the bar over plaintext in a zero-server model.
  */
 
 const APP_SECRET = 'better-github-stars-manager/v1/static-derivation-secret';

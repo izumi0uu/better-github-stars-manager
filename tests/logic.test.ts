@@ -125,8 +125,6 @@ test('onlyUntagged excludes tagged', () => {
 });
 
 console.log('\nAuto-suggest:');
-// Mirrors src/ui/suggest.ts — derives tags from topics only (NOT language; the
-// sidebar shows language as a separate filter, so deriving it would duplicate it).
 function suggestTags(star: S, existing: string[], excluded: Iterable<string> = []): string[] {
   const have = new Set(existing.map((t) => t.toLowerCase()));
   const skip = new Set([...excluded].map((t) => t.toLowerCase()));

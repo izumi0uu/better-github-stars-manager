@@ -3,13 +3,8 @@ import type { Star, Tag } from '@/types';
 import type { FilterState, SortKey } from '@/ui/filter-store';
 
 /**
- * Star query engine — runs in the background service worker, where the IndexedDB
- * (extension origin) lives. The content script can't share this IDB (content
- * scripts see the page's origin IDB), so ALL data access goes through here.
- *
- * Returns the filtered+sorted slice the UI asked for, plus facet counts for the
- * sidebar. We do NOT stream 9900 rows across the message boundary; the UI requests
- * a virtual window (offset/limit) and re-requests on scroll/filter change.
+ * Star query engine (runs in the SW, owns IDB); returns a filtered+sorted window
+ * + sidebar facet counts, never the full row set.
  */
 
 export interface QueryParams {

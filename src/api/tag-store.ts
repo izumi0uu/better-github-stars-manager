@@ -38,7 +38,7 @@ export interface TagStore {
    */
   deleteTag(name: string): Promise<{ removed: number }>;
 
-  // --- Gist sync (per-repo timestamp merge) ---
+  // --- Gist sync (per-repo mtime LWW merge) ---
   /** Push local dirty tags/tagMeta to the Gist. */
   syncPush(onProgress?: CountProgressCallback): Promise<{ pushed: number; snapshot: number; recreated: boolean }>;
   /** Pull the Gist and merge per-repo by mtime into local IDB. */

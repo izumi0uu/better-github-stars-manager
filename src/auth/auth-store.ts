@@ -124,17 +124,9 @@ export const authStore = {
   },
 
   /**
-   * Verify a PAT and persist it (encrypted) only if it actually works for the
-   * operations the extension needs. Verification is THREE steps, not one:
-   *   1. GET /user — confirms the token authenticates; captures username/avatar.
-   *   2. GET /user/starred?per_page=1 — proves Stars:Read (the whole app is built
-   *      on this endpoint; a token that can read /user but not /user/starred is
-   *      useless and used to pass silently).
-   *   3. POST /gists + DELETE /gists/{id} — proves Gists:ReadWrite (the cross-device
-   *      sync channel). The throwaway probe gist is deleted immediately.
-   * Any step failing throws a stable code string (src/api/errors.ts) that the
-   * Options UI translates into a human message naming the missing permission.
-   * The token is NOT persisted on failure.
+   * Verify the PAT has the permissions we need (probeTokenCapabilities), then
+   * encrypt+persist. Failure throws an errors.ts code; the token is never
+   * persisted on failure.
    */
   async setToken(token: string): Promise<{ username: string }> {
     const clean = token.trim();

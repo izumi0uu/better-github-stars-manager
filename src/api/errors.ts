@@ -1,15 +1,9 @@
 import type { MessageCatalog } from '@/i18n';
 
 /**
- * Humanized error translation.
- *
- * Errors are thrown at their origin as stable code strings, not user-facing
- * prose. The background service worker catch path and the Options save flow
- * both run through `translateError`, which maps those codes to localized
- * messages from the i18n `errors` catalog.
- *
- * `unknown(raw)` is the passthrough: unexpected errors are still surfaced, just
- * wrapped so they read less like raw stack traces.
+ * Errors are thrown at their origin as stable code strings; `translateError`
+ * maps those codes to localized i18n copy, and `unknown(raw)` passes the
+ * original through so nothing is silently lost.
  */
 
 // Auth / token-probe codes (thrown by auth-store.setToken).

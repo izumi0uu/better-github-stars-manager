@@ -6,20 +6,9 @@ import { clearDirty } from '@/storage/idb-tag-store';
 import { GIST_NO_TOKEN, GIST_CREATE_FAILED, GIST_PUSH_FAILED, GIST_PULL_FAILED } from '@/api/errors';
 
 /**
- * Cross-device transport for the tag layer.
- *
- * Gist is the zero-server sync channel. We store one JSON payload containing the
- * `tags`, `tagMeta`, and an export timestamp.
- *
- * Merge strategy = per-record last-write-wins by `mtime`:
- *  - PUSH: serialize the full local tags/tagMeta stores into the gist (the gist is
- *    a complete snapshot, not a diff).
- *  - PULL: compare each remote record's `mtime` to the local record and keep the
- *    newer one. Edits to different repos never conflict; same-repo collisions
- *    resolve to the newer record.
- *
- * Fine-grained PAT caveat: gist scope is account-wide (no per-gist isolation), so
- * the extension binds to a dedicated secret gist for sync.
+ * Gist as a zero-server cross-device sync channel, storing one tags+tagMeta
+ * JSON snapshot. push writes the full snapshot; pull merges per-repo by mtime
+ * LWW (newer wins).
  */
 
 const GIST_FILENAME = 'better-github-stars-manager-tags.json';

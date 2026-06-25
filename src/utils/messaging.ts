@@ -1,10 +1,5 @@
-/**
- * Typed message bridge between UI surfaces (popup/options/content) and the
- * background service worker, which owns sync orchestration AND the IDB.
- *
- * bgCall sends an arbitrary message object (must include a `type` field the
- * background switches on) and unwraps the { ok, data | error } envelope.
- */
+/** Typed message bridge between UI surfaces and the background SW; bgCall
+ * unwraps the { ok, data | error } envelope. */
 export interface SyncStatus {
   progress: {
     phase: 'idle' | 'full' | 'incremental' | 'rescan' | 'gist';

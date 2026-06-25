@@ -1,13 +1,8 @@
 import { cn } from '@/lib/utils';
 
 /**
- * Success checkmark shown briefly inside a toolbar action button after it
- * succeeds (spinner → ✓ → fallback). A bare themed icon: the path "draws" via
- * the .success-check-path stroke-dashoffset animation (see styles.css), so the
- * tick appears to be drawn rather than just fading in. Uses currentColor (no
- * forced text-* class) so it inherits the button's contrasting text color:
- * primary-foreground on the primary Sync button, foreground on ghost buttons.
- * Forcing text-primary collided with bg-primary and made the tick invisible.
+ * Success checkmark: path stroke-dashoffset draw animation; uses currentColor to
+ * inherit the button text color (a forced text-* would clash with the bg and hide the tick).
  */
 function SuccessCheck({ className, ...props }: React.ComponentProps<'svg'>) {
   return (

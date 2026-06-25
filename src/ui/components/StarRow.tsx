@@ -6,13 +6,8 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 
 /**
- * Compact scan-optimized list row. Fixed height h-16 (64px) — MUST stay 64 to
- * match the virtualizer's estimateSize, or scroll math drifts at 10k+ rows.
- *
- * Interaction: click row → open detail panel. Click a tag chip → toggle that
- * tag as a filter (stopPropagation). No inline editors — deep editing is in the
- * detail panel. Only the first COMPACT_VISIBLE tags show; "+N" opens nothing in
- * the row (the full list is in the detail panel).
+ * virtualized-list row. Fixed h-16 (64px) MUST match the virtualizer
+ * estimateSize, else 10k+ row scroll math drifts.
  */
 const COMPACT_VISIBLE = 2;
 

@@ -1,6 +1,5 @@
-// Integration test: exercises the REAL background query engine + Dexie DB against
-// fake-indexeddb (a faithful IndexedDB polyfill). This verifies the actual code
-// paths in src/background/query.ts and src/storage/db.ts — not a mirrored copy.
+// Integration test: runs the real query engine + Dexie against fake-indexeddb
+// (exercises src code paths, not a mirror copy).
 //
 // Run: pnpm exec tsx tests/integration.test.ts
 import 'fake-indexeddb/auto';

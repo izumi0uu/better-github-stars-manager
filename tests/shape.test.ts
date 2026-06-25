@@ -1,7 +1,5 @@
-// Regression test for the nested-payload bug: GET /user/starred with
-// Accept: application/vnd.github.star+json returns { starred_at, repo: {...} },
-// NOT a flat object. The old code read item.full_name (undefined) and Dexie
-// put() failed with "key path yielded a value that is not a valid key".
+// Regression: the star+json response nests repo in a .repo object; old code read
+// item.full_name (undefined) and produced broken IDB keys.
 //
 // Run: pnpm exec tsx tests/shape.test.ts
 import { toStar } from '../src/api/github-star-source';

@@ -20,11 +20,7 @@ import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 
-/**
- * Right-side detail drawer for a single repo. Deep editing (tags + notes +
- * suggestions) lives here so list rows stay compact. Aside in the flex layout —
- * no portal, no reflow of the virtual list. Prev/next + Esc/[/] navigation.
- */
+/** single-repo detail drawer (tag/note/suggest deep-edit lives here so rows stay compact); flex aside, no portal. */
 export function RepoDetailPanel({
   star,
   tag,

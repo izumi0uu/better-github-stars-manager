@@ -4,11 +4,8 @@ import { gistTagStore } from '@/sync/gist-tag-store';
 import { db } from './db';
 
 /**
- * Local source of truth for the tag/notes layer.
- *
- * Every write updates `mtime` (the merge key for Gist sync) and marks the repo
- * dirty so `syncPush()` knows what changed. Dirtiness is tracked with a lightweight
- * in-memory set.
+ * Local source of truth for the tag/notes layer. Every write updates mtime +
+ * marks dirty for syncPush.
  */
 
 const dirty = new Set<string>(); // full_names with unsynced changes
@@ -54,9 +51,7 @@ export const idbTagStore: TagStore = {
       mtime: now(),
     };
     await db.tags.put({ ...existing, tags, mtime: touch(full_name) });
-    // If the user just (re)typed any tag that was previously deleted (excluded),
-    // clear its tombstone so auto-assign won't keep skipping it. This is the only
-    // path that un-excludes a name — manual intent overrides the auto-assign block.
+    // (Re)typing a previously-deleted (excluded) tag clears its tombstone so auto-assign stops skipping it.
     const newlyAdded = tags.filter((t) => !existing.tags.includes(t));
     for (const name of newlyAdded) {
       const meta = await db.tagMeta.get(name);
@@ -98,10 +93,7 @@ export const idbTagStore: TagStore = {
         await db.tags.put({ ...t, tags: next, mtime: touch(t.full_name) });
         removed++;
       }
-      // Persist a delete TOMBSTONE (not a hard delete) so auto-assign can't
-      // resurrect the tag on the next sync. The tombstone rides the same Gist-sync
-      // channel as the dimension (tagMeta, LWW by mtime) — no separate transport.
-      // Preserve any existing dimension/color; only flip excluded + bump mtime.
+      // Persist a delete tombstone (not a hard delete) so auto-assign can't resurrect the tag on the next sync; preserve any existing dimension/color.
       const prev = await db.tagMeta.get(name);
       await db.tagMeta.put({
         name,
@@ -126,8 +118,6 @@ export const idbTagStore: TagStore = {
 
   async syncPull(onProgress?: CountProgressCallback) {
     const { merged, total, missing } = await gistTagStore.pull(onProgress);
-    // After a pull, clear local dirtiness for anything we just reconciled.
-    // (Conservative: a real CRDT would diff; LWW post-pull we assume remote is merged.)
     return { merged, total, missing };
   },
 };
