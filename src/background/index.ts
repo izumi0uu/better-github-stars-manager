@@ -40,7 +40,8 @@ type Req =
   | { type: 'listExcluded' }
   | { type: 'markOnboardingSeen' }
   | { type: 'markTooltipSeen'; bit: number }
-  | { type: 'testConnection' };
+  | { type: 'testConnection' }
+  | { type: 'openOptions' };
 
 type Res =
   | { ok: true; data?: unknown }
@@ -328,6 +329,11 @@ async function handle(req: Req): Promise<Res> {
         } catch (e) {
           return { ok: false, error: `fetch failed: ${e instanceof Error ? e.message : String(e)}` };
         }
+      }
+      case 'openOptions': {
+        // Content scripts have a restricted chrome.runtime without openOptionsPage, so they ask the background.
+        await chrome.runtime.openOptionsPage();
+        return { ok: true };
       }
       case 'getTag': {
         return { ok: true, data: { tag: (await idbTagStore.get(req.full_name)) ?? null } };

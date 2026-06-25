@@ -201,7 +201,7 @@ export function ManagerPanel() {
             <span>{m.manager.noTokenBanner}</span>
             <Button
               size="sm"
-              onClick={() => chrome.runtime.openOptionsPage()}
+              onClick={() => bgCall('openOptions').catch(() => {})}
             >
               {m.manager.addPat}
             </Button>
@@ -233,7 +233,7 @@ export function ManagerPanel() {
                 hasToken={!!status?.hasToken}
                 syncing={syncingNow}
                 failedInfo={info}
-                onOpenOptions={() => chrome.runtime.openOptionsPage()}
+                onOpenOptions={() => bgCall('openOptions').catch(() => {})}
                 onRetry={() => void doSync('syncFull', m.popup.syncFull)}
                 onDismiss={() => void dismissOnboarding()}
               />
