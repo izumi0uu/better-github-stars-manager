@@ -2,7 +2,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { ManagerPanel } from '@/ui/ManagerPanel';
 import { I18nProvider, messageFor } from '@/i18n';
 import { authStore } from '@/auth/auth-store';
-import { mountState } from '@/content/stars-page/mount-state';
+import { mountState, pageOwner } from '@/content/stars-page/mount-state';
 import { isPanelEnabled, onPanelToggle, showPanel } from '@/content/stars-page/panel-toggle';
 import cssText from '@/ui/styles.css?inline';
 
@@ -30,8 +30,19 @@ import cssText from '@/ui/styles.css?inline';
  * stuck hidden state. (We deliberately do NOT persist it: a persisted "hidden"
  * would make the extension appear missing on next visit.)
  */
+// Cheap URL pre-filter; the full owner==me check is in isOwnStars().
 function isStarsPage(): boolean {
   return new URLSearchParams(location.search).get('tab') === 'stars';
+}
+
+// tab=stars AND owner==me. No token → false: the panel is useless without one,
+// and a logged-out browser must not overlay a stranger's stars page.
+async function isOwnStars(): Promise<boolean> {
+  if (!isStarsPage()) return false;
+  const owner = pageOwner(location.pathname);
+  if (!owner) return false;
+  const me = (await authStore.getUsername())?.toLowerCase();
+  return !!me && me === owner;
 }
 
 // --- Page scroll lock ---
@@ -203,11 +214,14 @@ function ejectFab(): void {
 }
 
 // --- Sync ---
-// GitHub uses Turbo/PJAX; re-evaluate on navigation. Synchronous because the
-// decision inputs (`isStarsPage()` + the in-memory panel flag) are both
-// available immediately — no `await`, so no generation/race guard is needed.
-function sync(): void {
-  const state = mountState(isStarsPage(), isPanelEnabled());
+// Async because isOwnStars() awaits getUsername(); a generation counter drops
+// stale resolutions across rapid PJAX navigations (turbo:load→render→popstate).
+let syncGen = 0;
+async function sync(): Promise<void> {
+  const gen = ++syncGen;
+  const isOwn = await isOwnStars();
+  if (gen !== syncGen) return; // superseded by a newer navigation
+  const state = mountState(isOwn, isPanelEnabled());
   if (state === 'panel') {
     injectPanel();
     ejectFab();
@@ -215,7 +229,7 @@ function sync(): void {
     ejectPanel();
     injectFab();
   } else {
-    // Not on the stars page: retract both.
+    // Not own stars page: retract both.
     ejectPanel();
     ejectFab();
   }

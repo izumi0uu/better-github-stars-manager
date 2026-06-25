@@ -7,7 +7,7 @@
 
 import assert from 'node:assert';
 import { hidePanel, isPanelEnabled, onPanelToggle, showPanel } from '../src/content/stars-page/panel-toggle.ts';
-import { mountState } from '../src/content/stars-page/mount-state.ts';
+import { mountState, pageOwner } from '../src/content/stars-page/mount-state.ts';
 
 // --- LWW merge logic (mirrors src/sync/gist-tag-store.ts pull()) ---
 // Two devices edited DIFFERENT repos; merge must keep both, taking newer mtime per repo.
@@ -194,22 +194,45 @@ test('latest registered callback wins', () => {
   assert.equal(newCalls, 1);
 });
 
-// --- Stars-page mount decision (mirrors src/content/stars-page/mount-state.ts) ---
-// Decides what the stars-page content script shows based on (on stars page?, panel enabled?):
-//   panel | fab | none. Kept as a pure module separate from the content-script
-//   entry (which drags in React + inline CSS) so this test stays a clean import.
+// --- Stars-page mount decision (mirrors mount-state.ts) ---
+// mountState(isOwnStars, enabled): isOwnStars = tab=stars AND owner==me, so the
+// manager never overlays someone else's ?tab=stars page.
 console.log('\nStars-page mount state:');
-test('on stars page + enabled → panel', () => {
+test('on OWN stars page + enabled → panel', () => {
   assert.equal(mountState(true, true), 'panel');
 });
-test('on stars page + disabled → fab (floating re-mount button)', () => {
+test('on OWN stars page + disabled → fab (floating re-mount button)', () => {
   assert.equal(mountState(true, false), 'fab');
 });
-test('off stars page + enabled → none', () => {
+test('on SOMEONE ELSE\'S stars page (or not a stars page) + enabled → none', () => {
   assert.equal(mountState(false, true), 'none');
 });
-test('off stars page + disabled → none', () => {
+test('on SOMEONE ELSE\'S stars page (or not a stars page) + disabled → none', () => {
   assert.equal(mountState(false, false), 'none');
+});
+
+// --- pageOwner: decode the owner login from a github.com stars URL ---
+// `?tab=stars` is the same for everyone; the OWNER distinguishes "my stars" from
+// "their stars". The manager must only mount when owner == me.
+console.log('\nStars-page owner decode:');
+test('profile tab form: /<login> → login', () => {
+  assert.equal(pageOwner('/izumi0uu'), 'izumi0uu');
+  assert.equal(pageOwner('/Izumi0UU/'), 'izumi0uu'); // trailing slash + case-folded
+});
+test('canonical users form: /users/<login> → login', () => {
+  assert.equal(pageOwner('/users/octocat'), 'octocat');
+  assert.equal(pageOwner('/users/Torvalds'), 'torvalds');
+});
+test('reserved/app routes are not owners → null', () => {
+  assert.equal(pageOwner('/stars'), null);       // GitHub's aggregate stars landing
+  assert.equal(pageOwner('/orgs/acme'), null);   // org page, not a user
+  assert.equal(pageOwner('/settings'), null);
+  assert.equal(pageOwner('/search'), null);
+});
+test('non-owner multi-segment paths → null', () => {
+  assert.equal(pageOwner('/octocat/Hello-World'), null); // a repo, not a profile
+  assert.equal(pageOwner('/'), null);
+  assert.equal(pageOwner(''), null);
 });
 
 console.log(process.exitCode ? '\n❌ SOME TESTS FAILED' : '\n✅ All logic tests passed');

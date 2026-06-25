@@ -1,25 +1,45 @@
 /**
- * Pure decision function for the stars-page content script.
- *
- * Lives in its own module (no React / `?inline` CSS / DOM imports) so the test
- * suite can import it without pulling the content-script bundle — which would
- * otherwise drag in React and the inline CSS string and dirty the test
- * environment. The content script imports this and feeds it the live inputs
- * (`isStarsPage()` + the in-memory panel-visibility flag, see panel-toggle.ts).
+ * Pure decision function for the stars-page content script. Kept in its own
+ * module (no React/CSS/DOM imports) so tests can import it cleanly.
  */
 
 export type MountState = 'panel' | 'fab' | 'none';
 
 /**
- * Decide what the stars-page content script should show.
- *   - `panel`: on the stars page AND the panel is enabled → mount ManagerPanel.
- *   - `fab`:   on the stars page AND the panel is disabled → show the floating
- *     "show panel" button so the user can re-mount it (the native list is the
- *     actual page content under the overlay, so disabling just retracts the
- *     overlay; a re-mount entry point must remain).
- *   - `none`:  not on the stars page → retract everything.
+ * Lowercased owner login from a stars URL — `/<login>` (profile tab) or
+ * `/users/<login>` (canonical) — or null for non-owner paths (`/stars`,
+ * `/orgs`, repo paths, …). Caller compares to the authenticated user.
  */
-export function mountState(isStars: boolean, enabled: boolean): MountState {
-  if (!isStars) return 'none';
+export function pageOwner(pathname: string): string | null {
+  const users = pathname.match(/^\/users\/([^/]+)/i);
+  if (users) {
+    const login = users[1].toLowerCase();
+    return RESERVED.has(login) ? null : login;
+  }
+  const profile = pathname.match(/^\/([^/]+)\/?$/i);
+  if (profile) {
+    const login = profile[1].toLowerCase();
+    return RESERVED.has(login) ? null : login;
+  }
+  return null;
+}
+
+// App routes that look like a login but aren't.
+const RESERVED = new Set([
+  'stars', 'orgs', 'settings', 'notifications', 'search', 'explore',
+  'login', 'signup', 'sessions', 'marketplace', 'trending', 'collections',
+  'topics', 'events', 'about', 'pricing', 'security', 'contact', 'customer-stories',
+]);
+
+/**
+ * panel: own stars page + enabled → mount.
+ * fab:   own stars page + disabled → floating re-mount button (native list shows underneath).
+ * none:  not own stars page (someone else's, or not a stars page) → retract.
+ *
+ * `isOwnStars` = tab=stars AND owner==me, precomputed by the async caller so
+ * this stays pure/synchronous/testable.
+ */
+export function mountState(isOwnStars: boolean, enabled: boolean): MountState {
+  if (!isOwnStars) return 'none';
   return enabled ? 'panel' : 'fab';
 }
