@@ -404,9 +404,9 @@ export function ManagerPanel() {
         {statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
           <CoachOverlay
             step={coachStep}
-            total={3}
+            total={4}
             rootRef={rootRef}
-            onNext={() => setCoachStep((s) => (s === null ? s : Math.min(s + 1, 2)))}
+            onNext={() => setCoachStep((s) => (s === null ? s : Math.min(s + 1, 3)))}
             onBack={() => setCoachStep((s) => (s === null ? s : Math.max(s - 1, 0)))}
             onFinish={() => void finishCoach()}
             onSkip={() => void skipCoach()}
@@ -507,7 +507,13 @@ function OnboardingCard({
   );
 }
 
-const COACH_TARGETS = ['sync', 'tags', 'repo'] as const;
+const COACH_TARGETS = ['sync', 'tags', 'repo', 'hide-panel'] as const;
+const COACH_SPOT_PADDING: Record<(typeof COACH_TARGETS)[number], number> = {
+  sync: 4,
+  tags: 10,
+  repo: 10,
+  'hide-panel': 4,
+};
 
 function CoachOverlay({
   step,
@@ -527,7 +533,9 @@ function CoachOverlay({
   onSkip: () => void;
 }) {
   const { m } = useI18n();
-  const targetSel = `[data-coach-target="${COACH_TARGETS[step]}"]`;
+  const target = COACH_TARGETS[step];
+  const targetSel = `[data-coach-target="${target}"]`;
+  const padding = COACH_SPOT_PADDING[target];
 
   const [spot, setSpot] = useState<{ left: number; top: number; w: number; h: number } | null>(null);
   const measure = () => {

@@ -162,22 +162,19 @@
     }
   }
 
-  /* First-run step coachmark: a pulsing ring on the element the current step
-     points at (sync button / tags sidebar / repo list). Paired with the
-     spotlight dim in CoachOverlay — the target shows through the dim's cutout
-     and this ring frames it. outline (not border) so it doesn't shift layout. */
-  .gsm-coach-highlight {
-    outline: 2px solid hsl(var(--primary));
-    outline-offset: 2px;
+  /* First-run step coachmark: the overlay renders the ring itself, above the
+     sticky repo header and adjacent panes. This avoids target-side outlines
+     being visually clipped where the sidebar meets the table header. */
+  .gsm-coach-spotlight {
     animation: gsm-coach-pulse 1.8s ease-in-out infinite;
   }
   @keyframes gsm-coach-pulse {
     0%,
     100% {
-      outline-color: hsl(var(--primary));
+      border-color: hsl(var(--primary));
     }
     50% {
-      outline-color: hsl(var(--primary) / 0.35);
+      border-color: hsl(var(--primary) / 0.35);
     }
   }
 }

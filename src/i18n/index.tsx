@@ -307,6 +307,8 @@ export interface MessageCatalog {
     coachStep2Body: string;
     coachStep3Title: string;
     coachStep3Body: string;
+    coachStep4Title: string;
+    coachStep4Body: string;
     coachNext: string;
     coachBack: string;
     coachSkip: string;
@@ -646,7 +648,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "Pull merges tags + notes from your Gist into this device (per-repo, last-write-wins). Use after editing on another device.",
       coachTitle: "Quick tour",
       coachIntro:
-        "Here are the three things you'll use most. Follow along — this shows only once.",
+        "Here are the four things you'll use most. Follow along — this shows only once.",
       coachStep1Title: "Sync your stars",
       coachStep1Body:
         "Sync pulls in newly starred repos since your last visit. It runs automatically on first load; click it anytime to refresh.",
@@ -656,6 +658,9 @@ const messages: Record<Locale, MessageCatalog> = {
       coachStep3Title: "Open a repo",
       coachStep3Body:
         "Click any row to open the detail drawer — edit tags, write notes, and accept suggested tags there.",
+      coachStep4Title: "Hide the panel",
+      coachStep4Body:
+        "Want GitHub's native stars list for a moment? Click here to retract the overlay — a floating button stays on screen to bring the panel back.",
       coachNext: "Next",
       coachBack: "Back",
       coachSkip: "Skip tour",
@@ -978,7 +983,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tooltipPullFirst:
         "Pull 会把 Gist 中的标签和笔记合并到本设备(按仓库、后写覆盖)。在另一台设备编辑后使用。",
       coachTitle: "快速上手",
-      coachIntro: "下面是最常用的三处。跟着看一遍——本引导只显示一次。",
+      coachIntro: "下面是最常用的四处。跟着看一遍——本引导只显示一次。",
       coachStep1Title: "同步你的 stars",
       coachStep1Body:
         "Sync 按钮会拉取你自上次访问以来新 star 的仓库。首次加载会自动跑;想刷新随时点它。",
@@ -988,6 +993,9 @@ const messages: Record<Locale, MessageCatalog> = {
       coachStep3Title: "打开某个仓库",
       coachStep3Body:
         "点击任意一行打开详情抽屉——在那里编辑标签、写笔记、接受建议标签。",
+      coachStep4Title: "隐藏面板",
+      coachStep4Body:
+        "想暂时用 GitHub 原生 stars 列表?点这里收起悬浮面板——屏幕上会留一个浮动按钮,随时能把面板调回来。",
       coachNext: "下一步",
       coachBack: "上一步",
       coachSkip: "跳过引导",

@@ -326,7 +326,7 @@ export function Toolbar({
             "show panel" button then appears so it can be re-mounted). */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => onTogglePanel?.()}>
+            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => onTogglePanel?.()} data-coach-target="hide-panel">
               <EyeOff className="size-4" />
             </Button>
           </TooltipTrigger>
