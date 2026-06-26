@@ -218,9 +218,9 @@ export interface MessageCatalog {
   background: {
     noToken: string;
     incrementalSyncing: string;
-    incrementalDone: (added: number, autoTagged: number) => string;
-    fullDone: (autoTagged: number) => string;
-    rescanDone: (autoTagged: number) => string;
+    incrementalDone: (added: number) => string;
+    fullDone: (count: number) => string;
+    rescanDone: (tombstoned: number, revived: number) => string;
     autoAssignTagging: string;
     autoAssignDone: (tagged: number) => string;
     fetchingPages: (total: number) => string;
@@ -544,10 +544,9 @@ const messages: Record<Locale, MessageCatalog> = {
     background: {
       noToken: "No token configured",
       incrementalSyncing: "Checking for newly starred repos…",
-      incrementalDone: (added, autoTagged) =>
-        `+${added} new · ${autoTagged} auto-tagged`,
-      fullDone: (autoTagged) => `Full sync done · ${autoTagged} auto-tagged`,
-      rescanDone: (autoTagged) => `Rescan done · ${autoTagged} auto-tagged`,
+      incrementalDone: (added) => `+${added} new`,
+      fullDone: (count) => `Full sync done · ${count} repos refreshed`,
+      rescanDone: (tombstoned, revived) => `Rescan done · ${tombstoned} removed, ${revived} restored`,
       autoAssignTagging: "Auto-tagging repos from topics…",
       autoAssignDone: (tagged) => `Auto-assigned · ${tagged} tagged`,
       fetchingPages: (total) => `Fetching ${total} pages…`,
@@ -879,10 +878,9 @@ const messages: Record<Locale, MessageCatalog> = {
     background: {
       noToken: "未配置 token",
       incrementalSyncing: "正在检查新 star 的仓库…",
-      incrementalDone: (added, autoTagged) =>
-        `新增 ${added} 个 · 自动打标 ${autoTagged} 个`,
-      fullDone: (autoTagged) => `全量同步完成 · 自动打标 ${autoTagged} 个`,
-      rescanDone: (autoTagged) => `重扫完成 · 自动打标 ${autoTagged} 个`,
+      incrementalDone: (added) => `新增 ${added} 个`,
+      fullDone: (count) => `全量同步完成 · 刷新 ${count} 个仓库`,
+      rescanDone: (tombstoned, revived) => `重扫完成 · 移出 ${tombstoned} 个，恢复 ${revived} 个`,
       autoAssignTagging: "正在根据 topics 自动打标签…",
       autoAssignDone: (tagged) => `已自动分配 · 打标 ${tagged} 个`,
       fetchingPages: (total) => `正在获取 ${total} 页…`,

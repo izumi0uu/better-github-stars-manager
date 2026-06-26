@@ -209,10 +209,9 @@ async function handle(req: Req): Promise<Res> {
           setProgress({ phase: 'incremental', done: 0, total: null, message: m.background.incrementalSyncing });
           return githubStarSource.syncIncremental();
         });
-        const t = await autoTagAll(m.background.autoAssignTagging);
         broadcastDataChanged();
-        setIdleMessage(m.background.incrementalDone(r.added, t.tagged));
-        return { ok: true, data: { ...r, autoTagged: t.tagged } };
+        setIdleMessage(m.background.incrementalDone(r.added));
+        return { ok: true, data: r };
       }
       case 'syncFull': {
         const m = await getLocaleMessages();
@@ -221,10 +220,9 @@ async function handle(req: Req): Promise<Res> {
           setProgress({ phase: 'full', done: 0, total: null, message: m.background.fetchingPages(1) });
           return githubStarSource.syncFull((p) => setProgress(p));
         });
-        const t = await autoTagAll(m.background.autoAssignTagging);
         broadcastDataChanged();
-        setIdleMessage(m.background.fullDone(t.tagged));
-        return { ok: true, data: { ...r, autoTagged: t.tagged } };
+        setIdleMessage(m.background.fullDone(r.added));
+        return { ok: true, data: r };
       }
       case 'syncRescan': {
         const m = await getLocaleMessages();
@@ -233,10 +231,9 @@ async function handle(req: Req): Promise<Res> {
           setProgress({ phase: 'rescan', done: 0, total: null, message: m.background.rescanningPages(1) });
           return githubStarSource.syncRescan((p) => setProgress(p));
         });
-        const t = await autoTagAll(m.background.autoAssignTagging);
         broadcastDataChanged();
-        setIdleMessage(m.background.rescanDone(t.tagged));
-        return { ok: true, data: { ...r, autoTagged: t.tagged } };
+        setIdleMessage(m.background.rescanDone(r.tombstoned, r.revived));
+        return { ok: true, data: r };
       }
       case 'autoAssignTags': {
         const m = await getLocaleMessages();
