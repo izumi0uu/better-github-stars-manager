@@ -1,6 +1,6 @@
 {
   "name": "better-github-stars-manager",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Manage your GitHub starred repos: tag, note, filter, search across thousands of stars. UI injected into the stars page.",
   "packageManager": "pnpm@10.33.2",
   "type": "module",
