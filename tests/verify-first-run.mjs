@@ -57,8 +57,8 @@ const scenarios = [
     title: 'first visit without a token routes from popup to Options',
     run: async ({ browser, extId }) => {
       const popup = await openPopup(browser, extId);
-      await waitForText(popup, 'No token configured');
-      await waitForText(popup, 'Add PAT');
+      await waitForButtonByText(popup, /^Add PAT$/i);
+      await waitForBodyText(popup, 'No token configured');
 
       const optionsTargetPromise = browser.waitForTarget(
         (target) => target.url() === `chrome-extension://${extId}${OPTIONS_PATH}`,
@@ -70,7 +70,8 @@ const scenarios = [
       const optionsPage = await optionsTarget.page();
       if (!optionsPage) throw new Error('Options page target opened but no page handle was available');
       await optionsPage.waitForSelector('textarea', { timeout: 10_000 });
-      await waitForText(optionsPage, 'Paste a GitHub Personal Access Token');
+      await waitForBodyText(optionsPage, 'GitHub Token');
+      await waitForButtonByText(optionsPage, /save|verify/i);
     },
   },
   {
@@ -80,7 +81,7 @@ const scenarios = [
     run: async ({ browser, extId, starsUrl }) => {
       const page = await openOptions(browser, extId);
       await saveToken(page, INVALID_TOKEN);
-      await waitForText(page, 'GitHub rejected this token. Check that you copied the whole value.');
+      await waitForBodyText(page, 'GitHub rejected this token. Check that you copied the whole value.');
       await expectNoAuthenticatedBanner(page);
       const stars = await openStars(browser, starsUrl);
       await expectManagerAbsent(stars);
@@ -94,7 +95,7 @@ const scenarios = [
     run: async ({ browser, extId, starsUrl, token }) => {
       const page = await openOptions(browser, extId);
       await saveToken(page, token);
-      await waitForText(page, 'Gists (read/write)');
+      await waitForBodyText(page, 'Gists (read/write)');
       await expectNoAuthenticatedBanner(page);
       const stars = await openStars(browser, starsUrl);
       await expectManagerAbsent(stars);
@@ -115,8 +116,8 @@ const scenarios = [
 
       const page = await openOptions(browser, extId);
       await saveToken(page, token);
-      await waitForText(page, 'Authenticated as @');
-      await waitForText(page, 'Token verified. Logged in as');
+      await waitForBodyText(page, 'Authenticated as @');
+      await waitForBodyText(page, 'Token verified. Logged in as');
 
       const stars = await openStars(browser, starsUrl);
       await waitForManagerRoot(stars);
@@ -291,7 +292,10 @@ async function openStars(browser, url) {
 }
 
 async function waitForManagerRoot(page) {
-  await page.waitForSelector('#gsm-manager-root', { timeout: 20_000 });
+  await page.waitForFunction(
+    () => !!document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root'),
+    { timeout: 20_000 },
+  );
 }
 
 async function expectManagerAbsent(page) {
@@ -300,7 +304,7 @@ async function expectManagerAbsent(page) {
     { timeout: 20_000 },
   );
   await page.waitForFunction(
-    () => !document.getElementById('gsm-manager-root'),
+    () => !document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root'),
     { timeout: 20_000 },
   );
 }
@@ -308,7 +312,7 @@ async function expectManagerAbsent(page) {
 async function waitForRows(page) {
   await page.waitForFunction(
     () => {
-      const root = document.getElementById('gsm-manager-root');
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
       if (!root) return false;
       const links = root.querySelectorAll(
         'a[href^="https://github.com/"][href*="/"][target="_blank"]',
@@ -319,7 +323,7 @@ async function waitForRows(page) {
   );
 
   return page.evaluate(() => {
-    const root = document.getElementById('gsm-manager-root');
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
     const links = root?.querySelectorAll(
       'a[href^="https://github.com/"][href*="/"][target="_blank"]',
     );
@@ -329,17 +333,30 @@ async function waitForRows(page) {
 
 async function readCounter(page) {
   return page.evaluate(() => {
-    const root = document.getElementById('gsm-manager-root');
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
     const match = root?.innerText?.match(/(\d+)\s*\/\s*(\d+)/);
     return match ? { filtered: match[1], total: match[2] } : null;
   });
 }
 
-async function waitForText(page, text, timeout = 20_000) {
+async function waitForBodyText(page, text, timeout = 20_000) {
   await page.waitForFunction(
     (expected) => document.body.innerText.includes(expected),
     { timeout },
     text,
+  );
+}
+
+async function waitForButtonByText(page, matcher, timeout = 20_000) {
+  await page.waitForFunction(
+    (source) => {
+      const regex = new RegExp(source.pattern, source.flags);
+      return [...document.querySelectorAll('button')].some((node) =>
+        regex.test((node.textContent || '').trim()),
+      );
+    },
+    { timeout },
+    { pattern: matcher.source, flags: matcher.flags },
   );
 }
 
@@ -374,5 +391,10 @@ function hookPageDiagnostics(page, label) {
   });
   page.on('pageerror', (error) => {
     console.error(`   [${label} pageerror] ${error.message}`);
+  });
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) {
+      console.log(`   [${label} url] ${frame.url()}`);
+    }
   });
 }

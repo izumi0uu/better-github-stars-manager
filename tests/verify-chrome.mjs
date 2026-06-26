@@ -26,6 +26,11 @@ const USER_DATA_DIR =
   mkdtempSync(path.join(os.tmpdir(), 'gsm-e2e-profile-'));
 const STEP = (n, s) => console.log(`${n}) ${s}`);
 
+function panelRootHandleScript() {
+  const host = document.getElementById('gsm-manager-host');
+  return host?.shadowRoot?.getElementById('gsm-manager-root') ?? null;
+}
+
 function assert(cond, msg) {
   if (!cond) {
     console.error(`\n❌ ASSERT FAILED: ${msg}`);
@@ -89,14 +94,17 @@ try {
   stars.on('pageerror', (e) => console.error(`   [stars pageerror] ${e.message}`));
   await stars.goto(STARS_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
 
-  STEP(4, 'Waiting for injected #gsm-manager-root overlay …');
-  await stars.waitForSelector('#gsm-manager-root', { timeout: 20_000 });
+  STEP(4, 'Waiting for injected stars overlay inside shadow root …');
+  await stars.waitForFunction(
+    panelRootHandleScript,
+    { timeout: 20_000 },
+  );
   console.log('   ✓ ManagerPanel injected into stars page');
 
   STEP(5, 'Waiting for star rows to render after auto-sync …');
   await stars.waitForFunction(
     () => {
-      const root = document.getElementById('gsm-manager-root');
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
       if (!root) return false;
       const links = root.querySelectorAll('a[href^="https://github.com/"][href*="/"][target="_blank"]');
       return links.length > 0;
@@ -104,7 +112,7 @@ try {
     { timeout: 60_000 },
   );
   const rowCount = await stars.evaluate(() => {
-    const root = document.getElementById('gsm-manager-root');
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
     const links = root.querySelectorAll('a[href^="https://github.com/"][href*="/"][target="_blank"]');
     return links.length;
   });
@@ -112,14 +120,14 @@ try {
   console.log(`   ✓ ${rowCount} star row(s) visible in the panel (virtual viewport)`);
 
   const sampleNames = await stars.evaluate(() => {
-    const root = document.getElementById('gsm-manager-root');
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
     const links = [...root.querySelectorAll('a[href^="https://github.com/"][href*="/"][target="_blank"]')];
     return links.slice(0, 5).map((a) => a.textContent.trim());
   });
 
   STEP(6, 'Reading the panel header counter …');
   const counter = await stars.evaluate(() => {
-    const root = document.getElementById('gsm-manager-root');
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
     const m = (root.innerText || '').match(/(\d+)\s*\/\s*(\d+)/);
     return m ? { filtered: m[1], total: m[2] } : null;
   });
@@ -142,6 +150,16 @@ try {
       const url = p.url();
       const text = await p.evaluate(() => document.body?.innerText?.slice(0, 300)).catch(() => null);
       if (text) console.error(`   [page ${url}]: ${text.replace(/\n/g, ' ').slice(0, 200)}`);
+      const panelDebug = await p.evaluate(() => {
+        const host = document.getElementById('gsm-manager-host');
+        const root = host?.shadowRoot?.getElementById('gsm-manager-root');
+        return {
+          hasHost: !!host,
+          hasShadowRoot: !!host?.shadowRoot,
+          hasPanelRoot: !!root,
+        };
+      }).catch(() => null);
+      if (panelDebug) console.error(`   [panel ${url}]: ${JSON.stringify(panelDebug)}`);
     }
   } catch {}
   process.exit(1);
