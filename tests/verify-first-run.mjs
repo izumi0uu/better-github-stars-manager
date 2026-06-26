@@ -122,7 +122,7 @@ const scenarios = [
       const stars = await openStars(browser, starsUrl);
       await waitForManagerRoot(stars);
       const rowCount = await waitForRows(stars);
-      const counter = await readCounter(stars);
+      const counter = await waitForCounter(stars);
 
       if (!counter) throw new Error('could not find the header counter after first sync');
       console.log(`   rows in viewport: ${rowCount}`);
@@ -334,9 +334,38 @@ async function waitForRows(page) {
 async function readCounter(page) {
   return page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-    const match = root?.innerText?.match(/(\d+)\s*\/\s*(\d+)/);
-    return match ? { filtered: match[1], total: match[2] } : null;
+    if (!root) return null;
+
+    const statusText =
+      root.querySelector('div.border-t span.tabular-nums')?.textContent?.trim() ?? '';
+    const localizedMatch =
+      statusText.match(/(\d+)\s*(?:shown|已显示)\s*\/\s*(\d+)\s*(?:total|总计)/i) ??
+      statusText.match(/(\d+)\D+\/\D+(\d+)/);
+    if (localizedMatch) {
+      return { filtered: localizedMatch[1], total: localizedMatch[2] };
+    }
+
+    const allNumbers = [...statusText.matchAll(/\d+/g)].map((m) => m[0]);
+    if (allNumbers.length >= 2) {
+      return { filtered: allNumbers[0], total: allNumbers[1] };
+    }
+
+    return null;
   });
+}
+
+async function waitForCounter(page, timeout = 20_000) {
+  await page.waitForFunction(
+    () => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      if (!root) return false;
+      const statusText =
+        root.querySelector('div.border-t span.tabular-nums')?.textContent?.trim() ?? '';
+      return /\d/.test(statusText);
+    },
+    { timeout },
+  );
+  return readCounter(page);
 }
 
 async function waitForBodyText(page, text, timeout = 20_000) {

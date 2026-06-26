@@ -38,6 +38,27 @@ function assert(cond, msg) {
   }
 }
 
+function parseCounterScript() {
+  const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+  if (!root) return null;
+
+  const statusText =
+    root.querySelector('div.border-t span.tabular-nums')?.textContent?.trim() ?? '';
+  const localizedMatch =
+    statusText.match(/(\d+)\s*(?:shown|已显示)\s*\/\s*(\d+)\s*(?:total|总计)/i) ??
+    statusText.match(/(\d+)\D+\/\D+(\d+)/);
+  if (localizedMatch) {
+    return { filtered: localizedMatch[1], total: localizedMatch[2] };
+  }
+
+  const allNumbers = [...statusText.matchAll(/\d+/g)].map((m) => m[0]);
+  if (allNumbers.length >= 2) {
+    return { filtered: allNumbers[0], total: allNumbers[1] };
+  }
+
+  return null;
+}
+
 const browser = await launchExtensionBrowser({ dist: DIST, userDataDir: USER_DATA_DIR });
 
 try {
@@ -126,12 +147,12 @@ try {
   });
 
   STEP(6, 'Reading the panel header counter …');
-  const counter = await stars.evaluate(() => {
-    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-    const m = (root.innerText || '').match(/(\d+)\s*\/\s*(\d+)/);
-    return m ? { filtered: m[1], total: m[2] } : null;
-  });
-  assert(counter, 'could not find the N / M counter in the panel');
+  await stars.waitForFunction(
+    parseCounterScript,
+    { timeout: 20_000 },
+  );
+  const counter = await stars.evaluate(parseCounterScript);
+  assert(counter, 'could not find the panel counter after first sync');
   console.log(`   ✓ header shows ${counter.filtered} / ${counter.total} (filtered / grandTotal)`);
 
   console.log('\n✅ CHROME END-TO-END VERIFIED:');
