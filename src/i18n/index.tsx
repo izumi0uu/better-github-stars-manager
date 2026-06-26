@@ -312,7 +312,6 @@ export interface MessageCatalog {
     coachNext: string;
     coachBack: string;
     coachSkip: string;
-    coachDone: string;
     coachOf: (current: number, total: number) => string;
   };
 }
@@ -664,7 +663,6 @@ const messages: Record<Locale, MessageCatalog> = {
       coachNext: "Next",
       coachBack: "Back",
       coachSkip: "Skip tour",
-      coachDone: "Start using",
       coachOf: (current, total) => `Step ${current} of ${total}`,
     },
   },
@@ -999,7 +997,6 @@ const messages: Record<Locale, MessageCatalog> = {
       coachNext: "下一步",
       coachBack: "上一步",
       coachSkip: "跳过引导",
-      coachDone: "开始使用",
       coachOf: (current, total) => `第 ${current} 步,共 ${total} 步`,
     },
   },

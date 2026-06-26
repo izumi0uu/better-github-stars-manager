@@ -5,7 +5,12 @@ export function isOnboardingComplete(stage: OnboardingStage): boolean {
 }
 
 export function isOnboardingCardStage(stage: OnboardingStage): boolean {
-  return stage !== 'coach' && stage !== 'done';
+  return (
+    stage === 'needs_token' ||
+    stage === 'awaiting_sync' ||
+    stage === 'syncing' ||
+    stage === 'sync_failed'
+  );
 }
 
 export function normalizeOnboardingStage(
