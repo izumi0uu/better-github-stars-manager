@@ -177,6 +177,11 @@ export interface MessageCatalog {
     title: string;
     /** Label for the prominent "Star the project" CTA button. */
     starRepoButton: string;
+    behaviorHeading: string;
+    autoTagLimitLabel: string;
+    autoTagLimitHint: string;
+    starsPanelDefaultLabel: string;
+    starsPanelDefaultHint: string;
     tokenHeading: string;
     tokenIntroPrefix: string;
     tokenLinkLabel: string;
@@ -493,6 +498,13 @@ const messages: Record<Locale, MessageCatalog> = {
     options: {
       title: "Better GitHub Stars Manager — Options",
       starRepoButton: "Like the project? Leave a star:)",
+      behaviorHeading: "3. Preference",
+      autoTagLimitLabel: "Auto-tag limit per repo",
+      autoTagLimitHint:
+        "How many topic-derived tags can be auto-added to one repo during Sync / Full Sync / Auto-tag.",
+      starsPanelDefaultLabel: "Open my stars page with the manager panel by default",
+      starsPanelDefaultHint:
+        "Turn this off if you prefer to land on GitHub's native stars list and open the overlay manually.",
       tokenHeading: "1. GitHub Token",
       tokenIntroPrefix: "Create a fine-grained PAT at",
       tokenLinkLabel: "github.com/settings/tokens",
@@ -830,6 +842,13 @@ const messages: Record<Locale, MessageCatalog> = {
     options: {
       title: "Better GitHub Stars Manager — 选项",
       starRepoButton: "点个Star~",
+      behaviorHeading: "3. 偏好",
+      autoTagLimitLabel: "每个仓库的自动打标数量上限",
+      autoTagLimitHint:
+        "控制 Sync / Full Sync / 自动打标时，单个仓库最多自动添加多少个 topic 标签。",
+      starsPanelDefaultLabel: "默认打开自己的 stars 页面时显示管理面板",
+      starsPanelDefaultHint:
+        "关闭后会优先显示 GitHub 原生 stars 列表，需要时再手动打开悬浮面板。",
       tokenHeading: "1. GitHub Token",
       tokenIntroPrefix: "在这里创建细粒度 PAT：",
       tokenLinkLabel: "github.com/settings/tokens",

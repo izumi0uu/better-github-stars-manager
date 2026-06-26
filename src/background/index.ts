@@ -151,16 +151,17 @@ async function autoTagAll(
   onProgress?: (p: SyncProgress) => void,
   phase: SyncProgress['phase'] = 'incremental',
 ): Promise<{ tagged: number }> {
+  const cfg = await authStore.getConfig();
   const stars = await db.stars.toArray();
   const excluded = new Set(await idbTagStore.listExcluded());
   const existingTags = await idbTagStore.getMany(stars.map((star) => star.full_name));
   let tagged = 0;
   const total = stars.length;
-  console.log('[GSM] autoTag START | stars:', total, '| excluded:', excluded.size, '| phase:', phase);
+  console.log('[GSM] autoTag START | stars:', total, '| excluded:', excluded.size, '| phase:', phase, '| limit:', cfg.autoTagLimit);
   for (let i = 0; i < stars.length; i++) {
     const star = stars[i];
     const existing = existingTags.get(star.full_name)?.tags ?? [];
-    const toAdd = suggestTags(star, existing, excluded);
+    const toAdd = suggestTags(star, existing, excluded, cfg.autoTagLimit);
     if (toAdd.length > 0) {
       const merged = Array.from(new Set([...existing, ...toAdd]));
       if (merged.length !== existing.length) {

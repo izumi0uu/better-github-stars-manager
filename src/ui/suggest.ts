@@ -1,4 +1,5 @@
 import type { Star } from '@/types';
+import { DEFAULT_AUTO_TAG_LIMIT, normalizeAutoTagLimit } from '@/preferences';
 
 /**
  * Suggest tags derived from a repo's topics — NOT its language (language is a
@@ -6,7 +7,12 @@ import type { Star } from '@/types';
  * Pure function — the actual write happens via the background (`bgCall('acceptSuggestions' | 'acceptSuggestionsBatch')`), which owns the IDB.
  * Skips tags already applied and excluded (deleted tombstones); caps at 5.
  */
-export function suggestTags(star: Star, existing: string[], excluded: Iterable<string> = []): string[] {
+export function suggestTags(
+  star: Star,
+  existing: string[],
+  excluded: Iterable<string> = [],
+  limit = DEFAULT_AUTO_TAG_LIMIT,
+): string[] {
   const have = new Set(existing.map((t) => t.toLowerCase()));
   const skip = new Set([...excluded].map((t) => t.toLowerCase()));
   const out: string[] = [];
@@ -15,5 +21,5 @@ export function suggestTags(star: Star, existing: string[], excluded: Iterable<s
     if (have.has(lc) || skip.has(lc)) continue;
     out.push(t);
   }
-  return out.slice(0, 5);
+  return out.slice(0, normalizeAutoTagLimit(limit));
 }

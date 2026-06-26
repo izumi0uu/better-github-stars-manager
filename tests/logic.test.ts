@@ -6,7 +6,13 @@
 // (Node 24 strips types natively.)
 
 import assert from 'node:assert';
-import { hidePanel, isPanelEnabled, onPanelToggle, showPanel } from '../src/content/stars-page/panel-toggle.ts';
+import {
+  hidePanel,
+  isPanelEnabled,
+  onPanelToggle,
+  resetPanelToggle,
+  showPanel,
+} from '../src/content/stars-page/panel-toggle.ts';
 import {
   isOnboardingCardStage,
   normalizeOnboardingStage,
@@ -17,6 +23,7 @@ import { mountState, pageOwner } from '../src/content/stars-page/mount-state.ts'
 import { pruneFavoriteOverrides, resolveFavoriteState } from '../src/ui/favorite-state.ts';
 import { pickInitialSyncAction } from '../src/ui/initial-sync.ts';
 import { classifyStarsQueryTrigger } from '../src/ui/stars-refresh.ts';
+import { normalizeAutoTagLimit } from '../src/preferences.ts';
 
 // --- LWW merge logic (mirrors src/sync/gist-tag-store.ts pull()) ---
 // Two devices edited DIFFERENT repos; merge must keep both, taking newer mtime per repo.
@@ -221,7 +228,12 @@ test('rescan does not auto-tag', () => {
 });
 
 console.log('\nAuto-suggest:');
-function suggestTags(star: S, existing: string[], excluded: Iterable<string> = []): string[] {
+function suggestTags(
+  star: S,
+  existing: string[],
+  excluded: Iterable<string> = [],
+  limit = 5,
+): string[] {
   const have = new Set(existing.map((t) => t.toLowerCase()));
   const skip = new Set([...excluded].map((t) => t.toLowerCase()));
   const out: string[] = [];
@@ -229,7 +241,7 @@ function suggestTags(star: S, existing: string[], excluded: Iterable<string> = [
     if (have.has(t.toLowerCase()) || skip.has(t.toLowerCase())) continue;
     out.push(t);
   }
-  return out.slice(0, 5);
+  return out.slice(0, normalizeAutoTagLimit(limit));
 }
 test('suggests only topics not already tagged (no language)', () => {
   const s = suggestTags(sample[0], []);
@@ -243,27 +255,51 @@ test('excluded tombstones are not re-suggested', () => {
   const s = suggestTags(sample[0], [], ['ai']);
   assert.deepEqual(s, ['agent']);
 });
+test('custom limit expands auto-suggest batch size', () => {
+  const s = suggestTags(
+    {
+      ...sample[0],
+      topics: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+    },
+    [],
+    [],
+    7,
+  );
+  assert.deepEqual(s, ['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+});
+test('auto-suggest limit normalizes invalid values back to default', () => {
+  const s = suggestTags(
+    {
+      ...sample[0],
+      topics: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+    },
+    [],
+    [],
+    Number.NaN,
+  );
+  assert.deepEqual(s, ['a', 'b', 'c', 'd', 'e']);
+});
 
 // --- Stars-page panel toggle state (mirrors src/content/stars-page/panel-toggle.ts) ---
 // Keeps the session-local enable/disable switch honest without exercising the
 // content-script DOM side effects, so this stays fast and isolated.
-function resetPanelToggle(): void {
+function resetPanelState(): void {
   onPanelToggle(() => {});
-  showPanel();
+  resetPanelToggle();
 }
 
 console.log('\nStars-page panel toggle state:');
 test('panel starts enabled', () => {
-  resetPanelToggle();
+  resetPanelState();
   assert.equal(isPanelEnabled(), true);
 });
 test('hidePanel disables the panel', () => {
-  resetPanelToggle();
+  resetPanelState();
   hidePanel();
   assert.equal(isPanelEnabled(), false);
 });
 test('hidePanel and showPanel both dispatch the registered callback', () => {
-  resetPanelToggle();
+  resetPanelState();
   let calls = 0;
   onPanelToggle(() => {
     calls++;
@@ -274,7 +310,7 @@ test('hidePanel and showPanel both dispatch the registered callback', () => {
   assert.equal(calls, 2);
 });
 test('latest registered callback wins', () => {
-  resetPanelToggle();
+  resetPanelState();
   let oldCalls = 0;
   let newCalls = 0;
   onPanelToggle(() => {
@@ -286,6 +322,20 @@ test('latest registered callback wins', () => {
   hidePanel();
   assert.equal(oldCalls, 0);
   assert.equal(newCalls, 1);
+});
+test('default-enabled false keeps the panel hidden until a session override shows it', () => {
+  resetPanelState();
+  assert.equal(isPanelEnabled(false), false);
+  showPanel();
+  assert.equal(isPanelEnabled(false), true);
+});
+test('resetPanelToggle drops the session override and falls back to the configured default', () => {
+  resetPanelState();
+  hidePanel();
+  assert.equal(isPanelEnabled(true), false);
+  resetPanelToggle();
+  assert.equal(isPanelEnabled(true), true);
+  assert.equal(isPanelEnabled(false), false);
 });
 
 // --- Stars-page mount decision (mirrors mount-state.ts) ---

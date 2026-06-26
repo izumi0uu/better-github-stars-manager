@@ -6,6 +6,11 @@ import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
 } from "@/onboarding/state";
+import {
+  DEFAULT_AUTO_TAG_LIMIT,
+  normalizeAutoTagLimit,
+  normalizeStarsPanelDefaultEnabled,
+} from "@/preferences";
 
 /**
  * Owns the fine-grained PAT lifecycle.
@@ -33,6 +38,8 @@ const DEFAULT_CONFIG: Config = {
   onboardingStage: "needs_token",
   seenOnboarding: false,
   seenTooltips: 0,
+  autoTagLimit: DEFAULT_AUTO_TAG_LIMIT,
+  starsPanelDefaultEnabled: true,
   langTagMigrationDone: false,
   lastSyncProgress: { phase: "idle", done: 0, total: null, message: "" },
 };
@@ -49,6 +56,10 @@ function withNormalizedOnboarding(config: Config): Config {
   );
   return {
     ...config,
+    autoTagLimit: normalizeAutoTagLimit(config.autoTagLimit),
+    starsPanelDefaultEnabled: normalizeStarsPanelDefaultEnabled(
+      config.starsPanelDefaultEnabled,
+    ),
     onboardingStage,
     seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
   };

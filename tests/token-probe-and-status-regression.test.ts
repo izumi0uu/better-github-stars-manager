@@ -205,6 +205,33 @@ test('authStore.setToken does not persist anything when probe cleanup fails', as
   assert.equal(await authStore.getToken(), null);
 });
 
+test('authStore normalizes new behavior defaults for legacy configs', async () => {
+  await chromeMock.api.storage.local.set({
+    gsm_config: {
+      tokenEncrypted: null,
+      tokenCryptoMeta: null,
+      theme: 'dark',
+      locale: 'en',
+      defaultView: 'table',
+      lastSyncStarredAt: null,
+      gistId: null,
+      gistSyncCursor: null,
+      username: null,
+      avatarUrl: null,
+      displayName: null,
+      onboardingStage: 'needs_token',
+      seenOnboarding: false,
+      seenTooltips: 0,
+      langTagMigrationDone: false,
+      lastSyncProgress: { phase: 'idle', done: 0, total: null, message: '' },
+    },
+  });
+
+  const cfg = await authStore.getConfig();
+  assert.equal(cfg.autoTagLimit, 5);
+  assert.equal(cfg.starsPanelDefaultEnabled, true);
+});
+
 await new Promise((resolve) => setTimeout(resolve, 100));
 globalThis.fetch = originalFetch;
 

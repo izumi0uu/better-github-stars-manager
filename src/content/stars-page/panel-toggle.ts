@@ -14,11 +14,11 @@
  * The flag is NOT persisted (see the content-script header): refresh / re-entry
  * always lands on the panel.
  */
-let enabled = true;
+let enabledOverride: boolean | null = null;
 let dispatch = (): void => {};
 
-export function isPanelEnabled(): boolean {
-  return enabled;
+export function isPanelEnabled(defaultEnabled = true): boolean {
+  return enabledOverride ?? defaultEnabled;
 }
 
 /** Register the effect that actually re-evaluates panel/fab visibility. */
@@ -28,12 +28,16 @@ export function onPanelToggle(fn: () => void): void {
 
 /** Retract the panel overlay (toolbar "hide panel"). Session-local. */
 export function hidePanel(): void {
-  enabled = false;
+  enabledOverride = false;
   dispatch();
 }
 
 /** Re-mount the panel overlay (FAB "show panel"). Session-local. */
 export function showPanel(): void {
-  enabled = true;
+  enabledOverride = true;
   dispatch();
+}
+
+export function resetPanelToggle(): void {
+  enabledOverride = null;
 }

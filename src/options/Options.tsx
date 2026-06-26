@@ -21,10 +21,17 @@ import { Progress } from "@/ui/shadcn/progress";
 import { Spinner } from "@/ui/shadcn/spinner";
 import { Textarea } from "@/ui/shadcn/textarea";
 import { Separator } from "@/ui/shadcn/separator";
+import { Input } from "@/ui/shadcn/input";
+import { Checkbox } from "@/ui/shadcn/checkbox";
 import { cn } from "@/lib/utils";
 import { REPO_URL } from "@/lib/links";
 import { useImeBufferedInput } from "@/ui/hooks/use-ime-input";
 import { useI18n } from "@/i18n";
+import {
+  MAX_AUTO_TAG_LIMIT,
+  MIN_AUTO_TAG_LIMIT,
+  normalizeAutoTagLimit,
+} from "@/preferences";
 
 const tutorialNewToken = "/tutorial/img_01.png";
 const tutorialRepoAccess = "/tutorial/img_02.png";
@@ -35,6 +42,8 @@ export function Options() {
   const [hasUsableToken, setHasUsableToken] = useState(false);
   const [gistId, setGistId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [autoTagLimit, setAutoTagLimit] = useState<string>("5");
+  const [starsPanelDefaultEnabled, setStarsPanelDefaultEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(
@@ -53,6 +62,8 @@ export function Options() {
     setHasUsableToken(hasToken);
     setGistId(c.gistId);
     setTheme(c.theme);
+    setAutoTagLimit(String(c.autoTagLimit));
+    setStarsPanelDefaultEnabled(c.starsPanelDefaultEnabled);
     setSyncStatus((current) => mergeStatusSnapshot(current, status));
   };
   useEffect(() => {
@@ -91,6 +102,17 @@ export function Options() {
     setTheme(next);
     await authStore.setTheme(next);
     document.documentElement.classList.toggle("dark", next === "dark");
+  };
+
+  const saveAutoTagLimit = async (raw: string) => {
+    const next = normalizeAutoTagLimit(raw);
+    setAutoTagLimit(String(next)); // clamp the field back to a legal value
+    await authStore.update({ autoTagLimit: next });
+  };
+
+  const toggleStarsPanelDefaultEnabled = async (checked: boolean) => {
+    setStarsPanelDefaultEnabled(checked);
+    await authStore.update({ starsPanelDefaultEnabled: checked });
   };
 
   const syncing = !!(
@@ -332,6 +354,74 @@ export function Options() {
               </span>
             </div>
           )}
+        </div>
+      </section>
+
+      {/* 3. Preference */}
+      <section className="mt-6">
+        <h2 className="text-base font-medium">{m.options.behaviorHeading}</h2>
+        <div className="mt-3 grid gap-4 rounded-lg border border-border bg-muted/20 p-4">
+          <div className="grid gap-1.5">
+            <label
+              htmlFor="auto-tag-limit"
+              className="text-sm font-medium text-foreground"
+            >
+              {m.options.autoTagLimitLabel}
+            </label>
+            <p
+              id="auto-tag-limit-hint"
+              className="text-[13px] leading-relaxed text-muted-foreground"
+            >
+              {m.options.autoTagLimitHint}
+            </p>
+            <div className="flex items-center gap-3">
+              <Input
+                id="auto-tag-limit"
+                type="number"
+                min={MIN_AUTO_TAG_LIMIT}
+                max={MAX_AUTO_TAG_LIMIT}
+                step={1}
+                value={autoTagLimit}
+                aria-describedby="auto-tag-limit-hint"
+                onChange={(e) => setAutoTagLimit(e.currentTarget.value)}
+                onBlur={(e) => void saveAutoTagLimit(e.currentTarget.value)}
+                className="w-24"
+              />
+              <span
+                id="auto-tag-limit-range"
+                className="text-xs text-muted-foreground"
+                aria-hidden="true"
+              >
+                {MIN_AUTO_TAG_LIMIT}–{MAX_AUTO_TAG_LIMIT}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id="stars-panel-default"
+              checked={starsPanelDefaultEnabled}
+              onCheckedChange={(checked) =>
+                void toggleStarsPanelDefaultEnabled(checked === true)
+              }
+              aria-describedby="stars-panel-default-hint"
+              className="mt-0.5"
+            />
+            <label
+              htmlFor="stars-panel-default"
+              className="grid cursor-pointer gap-1"
+            >
+              <span className="text-sm font-medium text-foreground">
+                {m.options.starsPanelDefaultLabel}
+              </span>
+              <span
+                id="stars-panel-default-hint"
+                className="text-[13px] leading-relaxed text-muted-foreground"
+              >
+                {m.options.starsPanelDefaultHint}
+              </span>
+            </label>
+          </div>
         </div>
       </section>
 

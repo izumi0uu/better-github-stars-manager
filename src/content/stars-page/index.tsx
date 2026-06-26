@@ -1,9 +1,14 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { ManagerPanel } from '@/ui/ManagerPanel';
 import { I18nProvider, messageFor } from '@/i18n';
-import { authStore } from '@/auth/auth-store';
+import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { mountState, pageOwner } from '@/content/stars-page/mount-state';
-import { isPanelEnabled, onPanelToggle, showPanel } from '@/content/stars-page/panel-toggle';
+import {
+  isPanelEnabled,
+  onPanelToggle,
+  resetPanelToggle,
+  showPanel,
+} from '@/content/stars-page/panel-toggle';
 import cssText from '@/ui/styles.css?inline';
 
 /**
@@ -230,9 +235,12 @@ function ejectFab(): void {
 let syncGen = 0;
 async function sync(): Promise<void> {
   const gen = ++syncGen;
-  const isOwn = await isOwnStars();
+  const [isOwn, config] = await Promise.all([isOwnStars(), authStore.getConfig()]);
   if (gen !== syncGen) return; // superseded by a newer navigation
-  const state = mountState(isOwn, isPanelEnabled());
+  const state = mountState(
+    isOwn,
+    isPanelEnabled(config.starsPanelDefaultEnabled),
+  );
   if (state === 'panel') {
     injectPanel();
     ejectFab();
@@ -255,3 +263,16 @@ sync();
 document.addEventListener('turbo:load', sync);
 document.addEventListener('turbo:render', sync);
 window.addEventListener('popstate', sync);
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]) return;
+  const oldCfg = changes[CONFIG_STORAGE_KEY].oldValue as
+    | { starsPanelDefaultEnabled?: boolean }
+    | undefined;
+  const newCfg = changes[CONFIG_STORAGE_KEY].newValue as
+    | { starsPanelDefaultEnabled?: boolean }
+    | undefined;
+  if (oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled) return;
+  resetPanelToggle();
+  void sync();
+});
