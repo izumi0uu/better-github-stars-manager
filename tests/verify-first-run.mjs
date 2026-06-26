@@ -8,6 +8,7 @@ import { launchExtensionBrowser } from './puppeteer-runtime.mjs';
 const DIST = path.resolve(process.cwd(), 'dist');
 const RESET_GIST = process.env.GSM_RESET_GIST === '1';
 const OPTIONS_PATH = '/src/options/index.html';
+const POPUP_PATH = '/src/popup/index.html';
 const INVALID_TOKEN =
   process.env.GH_TOKEN_INVALID ||
   'github_pat_invalid_test_value_for_first_run_matrix';
@@ -53,56 +54,50 @@ const starsUser = await resolveGitHubUser();
 const scenarios = [
   {
     id: 'no-token',
-    title: 'first visit without a token shows onboarding and opens Options',
-    needsStarsUser: true,
-    run: async ({ browser, extId, starsUrl }) => {
-      const stars = await openStars(browser, starsUrl);
-      await waitForManagerRoot(stars);
-      await waitForText(stars, 'Welcome to Better GitHub Stars Manager');
-      await waitForText(stars, 'To manage your stars, add a GitHub token first:');
-      await waitForText(stars, 'Open Options');
+    title: 'first visit without a token routes from popup to Options',
+    run: async ({ browser, extId }) => {
+      const popup = await openPopup(browser, extId);
+      await waitForText(popup, 'No token configured');
+      await waitForText(popup, 'Add PAT');
 
       const optionsTargetPromise = browser.waitForTarget(
         (target) => target.url() === `chrome-extension://${extId}${OPTIONS_PATH}`,
         { timeout: 10_000 },
       );
 
-      await clickButtonByText(stars, /^Open Options$/i);
+      await clickButtonByText(popup, /^Add PAT$/i);
       const optionsTarget = await optionsTargetPromise;
       const optionsPage = await optionsTarget.page();
       if (!optionsPage) throw new Error('Options page target opened but no page handle was available');
       await optionsPage.waitForSelector('textarea', { timeout: 10_000 });
+      await waitForText(optionsPage, 'Paste a GitHub Personal Access Token');
     },
   },
   {
     id: 'invalid-token',
-    title: 'invalid token is rejected and first-run remains blocked',
+    title: 'invalid token is rejected on the Options page',
     needsStarsUser: true,
     run: async ({ browser, extId, starsUrl }) => {
       const page = await openOptions(browser, extId);
       await saveToken(page, INVALID_TOKEN);
       await waitForText(page, 'GitHub rejected this token. Check that you copied the whole value.');
       await expectNoAuthenticatedBanner(page);
-
       const stars = await openStars(browser, starsUrl);
-      await waitForManagerRoot(stars);
-      await waitForText(stars, 'To manage your stars, add a GitHub token first:');
+      await expectManagerAbsent(stars);
     },
   },
   {
     id: 'no-gists-token',
-    title: 'token without Gists permission is explained clearly',
-    needsStarsUser: true,
+    title: 'token without Gists permission is explained clearly on the Options page',
     token: process.env.GH_TOKEN_NO_GISTS || null,
+    needsStarsUser: true,
     run: async ({ browser, extId, starsUrl, token }) => {
       const page = await openOptions(browser, extId);
       await saveToken(page, token);
       await waitForText(page, 'Gists (read/write)');
       await expectNoAuthenticatedBanner(page);
-
       const stars = await openStars(browser, starsUrl);
-      await waitForManagerRoot(stars);
-      await waitForText(stars, 'To manage your stars, add a GitHub token first:');
+      await expectManagerAbsent(stars);
     },
   },
   {
@@ -235,21 +230,31 @@ async function launchBrowser(userDataDir) {
 }
 
 async function detectExtensionId(browser) {
-  const target =
-    (await browser.waitForTarget(
-      (t) =>
-        t.type() === 'service_worker' &&
-        t.url().startsWith('chrome-extension://'),
-      { timeout: 10_000 },
-    ).catch(() => null)) ||
-    (await browser.waitForTarget(
-      (t) => t.url().startsWith('chrome-extension://'),
-      { timeout: 10_000 },
-    ).catch(() => null));
+  const deadline = Date.now() + 20_000;
 
-  const extId = target?.url().match(/chrome-extension:\/\/([a-z]+)/i)?.[1];
-  if (!extId) throw new Error('could not determine extension ID');
-  return extId;
+  while (Date.now() < deadline) {
+    const extensions = await browser.extensions().catch(() => null);
+    const installed = extensions?.values().next().value;
+    if (installed?.id) {
+      return installed.id;
+    }
+
+    const target = browser
+      .targets()
+      .find(
+        (t) =>
+          (t.type() === 'service_worker' || t.type() === 'page') &&
+          t.url().startsWith('chrome-extension://'),
+      );
+    const extId = target?.url().match(/chrome-extension:\/\/([a-z]+)/i)?.[1];
+    if (extId) {
+      return extId;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  throw new Error('could not determine extension ID after waiting for the MV3 extension to load');
 }
 
 async function openOptions(browser, extId) {
@@ -259,6 +264,15 @@ async function openOptions(browser, extId) {
     waitUntil: 'networkidle0',
   });
   await page.waitForSelector('textarea', { timeout: 10_000 });
+  return page;
+}
+
+async function openPopup(browser, extId) {
+  const page = await browser.newPage();
+  hookPageDiagnostics(page, 'popup');
+  await page.goto(`chrome-extension://${extId}${POPUP_PATH}`, {
+    waitUntil: 'networkidle0',
+  });
   return page;
 }
 
@@ -278,6 +292,17 @@ async function openStars(browser, url) {
 
 async function waitForManagerRoot(page) {
   await page.waitForSelector('#gsm-manager-root', { timeout: 20_000 });
+}
+
+async function expectManagerAbsent(page) {
+  await page.waitForFunction(
+    () => document.readyState === 'interactive' || document.readyState === 'complete',
+    { timeout: 20_000 },
+  );
+  await page.waitForFunction(
+    () => !document.getElementById('gsm-manager-root'),
+    { timeout: 20_000 },
+  );
 }
 
 async function waitForRows(page) {
