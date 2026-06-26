@@ -66,8 +66,10 @@ export interface MessageCatalog {
     columnStars: string;
     columnUpdated: string;
     columnTags: string;
+    columnFavorite: string;
   };
   activeFilters: {
+    onlyFavorite: string;
     onlyUntagged: string;
     summary: (count: number) => string;
     clearOne: string;
@@ -75,6 +77,8 @@ export interface MessageCatalog {
   };
   filterSidebar: {
     specialFilters: string;
+    onlyFavoriteLabel: string;
+    onlyFavoriteHint: string;
     onlyUntaggedLabel: string;
     onlyUntaggedHint: string;
     showTombstoneLabel: string;
@@ -107,6 +111,8 @@ export interface MessageCatalog {
     moreHidden: (count: number) => string;
     hasNotes: string;
     noNotes: string;
+    markFavorite: string;
+    removeFavorite: string;
   };
   repoDetail: {
     previousTitle: string;
@@ -367,8 +373,10 @@ const messages: Record<Locale, MessageCatalog> = {
       columnStars: "Stars",
       columnUpdated: "Updated",
       columnTags: "Tags",
+      columnFavorite: "Favorite",
     },
     activeFilters: {
+      onlyFavorite: "Favorites",
       onlyUntagged: "Untagged only",
       summary: (count) => `${count} results · filtered`,
       clearOne: "Remove this filter",
@@ -376,6 +384,8 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     filterSidebar: {
       specialFilters: "Special Filters",
+      onlyFavoriteLabel: "Favorites",
+      onlyFavoriteHint: "",
       onlyUntaggedLabel: "Untagged only",
       onlyUntaggedHint: "",
       showTombstoneLabel: "Show unstarred",
@@ -410,6 +420,8 @@ const messages: Record<Locale, MessageCatalog> = {
       moreHidden: (count) => `${count} more — see the detail panel`,
       hasNotes: "Has notes (view in details)",
       noNotes: "No notes",
+      markFavorite: "Mark as favorite",
+      removeFavorite: "Remove favorite",
     },
     repoDetail: {
       previousTitle: "Previous ([)",
@@ -693,8 +705,10 @@ const messages: Record<Locale, MessageCatalog> = {
       columnStars: "Stars",
       columnUpdated: "更新",
       columnTags: "标签",
+      columnFavorite: "收藏",
     },
     activeFilters: {
+      onlyFavorite: "收藏",
       onlyUntagged: "仅未标注",
       summary: (count) => `${count} 个结果 · 已筛选`,
       clearOne: "移除该筛选",
@@ -702,6 +716,8 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     filterSidebar: {
       specialFilters: "特殊筛选",
+      onlyFavoriteLabel: "收藏",
+      onlyFavoriteHint: "",
       onlyUntaggedLabel: "仅未标注",
       onlyUntaggedHint: "",
       showTombstoneLabel: "显示已 unstar",
@@ -736,6 +752,8 @@ const messages: Record<Locale, MessageCatalog> = {
       moreHidden: (count) => `还有 ${count} 个，在详情中查看`,
       hasNotes: "有笔记（在详情中查看）",
       noNotes: "无笔记",
+      markFavorite: "收藏该仓库",
+      removeFavorite: "取消收藏",
     },
     repoDetail: {
       previousTitle: "上一个 ([)",

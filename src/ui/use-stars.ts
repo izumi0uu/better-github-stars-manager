@@ -8,17 +8,9 @@ const FADE_OUT_MS = 120;
 const FADE_IN_MS = 160;
 
 /**
- * Query stars from the background service worker, which owns the
- * extension-origin IndexedDB. Content scripts cannot share that database, so the
- * hook never touches `db` directly.
- *
- * On a filter change the list doesn't snap to the new result — it fades out
- * (old rows stay mounted, opacity→0), the fresh query fires once the fade
- * finishes, then the new rows fade in. This avoids the "data instantly swaps
- * with no transition" jolt when toggling a language/tag label, while keeping
- * the list mounted throughout (no scroll-position reset, no skeleton flash).
- * The background query is fast, so the only added latency is the deliberate
- * fade-out window — old content is shown during it, not a placeholder.
+ * Queries stars from the background service worker. On a filter change, fades
+ * old rows out, fetches, then fades new rows in — avoiding a swap jolt and
+ * keeping the list mounted so scroll position is preserved.
  */
 export function useStars() {
   const f = useFilterStore();
@@ -36,6 +28,7 @@ export function useStars() {
     tags: f.tags,
     tagMode: f.tagMode,
     showTombstone: f.showTombstone,
+    onlyFavorite: f.onlyFavorite,
     onlyUntagged: f.onlyUntagged,
     sortKey: f.sortKey,
     sortDir: f.sortDir,

@@ -24,6 +24,7 @@ export interface Tag {
   full_name: string;
   tags: string[];
   notes: string;
+  favorite?: boolean;
   mtime: string;
   /** Reserved for a possible future GitHub-native Lists integration. */
   gh_list_id?: number | null;

@@ -7,7 +7,7 @@
 
 import assert from 'node:assert';
 import { hidePanel, isPanelEnabled, onPanelToggle, showPanel } from '../src/content/stars-page/panel-toggle.ts';
-import { mountState } from '../src/content/stars-page/mount-state.ts';
+import { mountState, pageOwner } from '../src/content/stars-page/mount-state.ts';
 
 // --- LWW merge logic (mirrors src/sync/gist-tag-store.ts pull()) ---
 // Two devices edited DIFFERENT repos; merge must keep both, taking newer mtime per repo.
@@ -67,7 +67,7 @@ test('remote-only repo → added to local', () => {
 // --- Filter logic (mirrors query.ts filter) ---
 interface S { full_name: string; description: string; language: string | null; topics: string[]; notes?: string; tombstone: boolean; starred_at: string; pushed_at: string; stargazers_count: number; }
 
-function filterStars(stars: S[], opts: { query?: string; languages?: string[]; tags?: string[]; showTombstone?: boolean; onlyUntagged?: boolean; tagsByRepo?: Map<string, string[]> }): S[] {
+function filterStars(stars: S[], opts: { query?: string; languages?: string[]; tags?: string[]; showTombstone?: boolean; onlyFavorite?: boolean; onlyUntagged?: boolean; tagsByRepo?: Map<string, string[]>; favoritesByRepo?: Map<string, boolean> }): S[] {
   const q = (opts.query ?? '').toLowerCase();
   const langSet = opts.languages?.length ? new Set(opts.languages) : null;
   const tagSet = opts.tags?.length ? new Set(opts.tags) : null;
@@ -75,6 +75,7 @@ function filterStars(stars: S[], opts: { query?: string; languages?: string[]; t
     if (!opts.showTombstone && s.tombstone) return false;
     if (langSet && (s.language === null || !langSet.has(s.language))) return false;
     const myTags = opts.tagsByRepo?.get(s.full_name) ?? [];
+    if (opts.onlyFavorite && !opts.favoritesByRepo?.get(s.full_name)) return false;
     if (opts.onlyUntagged && myTags.length > 0) return false;
     if (tagSet && !myTags.some((t) => tagSet.has(t))) return false;
     if (q) {
@@ -92,6 +93,7 @@ const sample: S[] = [
   { full_name: 'c/old', description: 'archived thing', language: 'Python', topics: [], notes: '', tombstone: true, starred_at: '2026-01-01', pushed_at: '2025-01-01', stargazers_count: 5 },
 ];
 const tagsByRepo = new Map([['a/ai-tool', ['ai']], ['b/rust-lib', ['rust']]]);
+const favoritesByRepo = new Map([['b/rust-lib', true]]);
 
 test('hide tombstone by default', () => {
   assert.equal(filterStars(sample, {}).length, 2);
@@ -119,14 +121,17 @@ test('filter by tag', () => {
   assert.equal(r.length, 1);
   assert.equal(r[0].full_name, 'b/rust-lib');
 });
+test('onlyFavorite keeps favorited repos only', () => {
+  const r = filterStars(sample, { onlyFavorite: true, favoritesByRepo, tagsByRepo });
+  assert.equal(r.length, 1);
+  assert.equal(r[0].full_name, 'b/rust-lib');
+});
 test('onlyUntagged excludes tagged', () => {
   const r = filterStars(sample, { onlyUntagged: true, tagsByRepo });
   assert.equal(r.length, 0); // both live repos are tagged
 });
 
 console.log('\nAuto-suggest:');
-// Mirrors src/ui/suggest.ts — derives tags from topics only (NOT language; the
-// sidebar shows language as a separate filter, so deriving it would duplicate it).
 function suggestTags(star: S, existing: string[], excluded: Iterable<string> = []): string[] {
   const have = new Set(existing.map((t) => t.toLowerCase()));
   const skip = new Set([...excluded].map((t) => t.toLowerCase()));
@@ -194,22 +199,45 @@ test('latest registered callback wins', () => {
   assert.equal(newCalls, 1);
 });
 
-// --- Stars-page mount decision (mirrors src/content/stars-page/mount-state.ts) ---
-// Decides what the stars-page content script shows based on (on stars page?, panel enabled?):
-//   panel | fab | none. Kept as a pure module separate from the content-script
-//   entry (which drags in React + inline CSS) so this test stays a clean import.
+// --- Stars-page mount decision (mirrors mount-state.ts) ---
+// mountState(isOwnStars, enabled): isOwnStars = tab=stars AND owner==me, so the
+// manager never overlays someone else's ?tab=stars page.
 console.log('\nStars-page mount state:');
-test('on stars page + enabled → panel', () => {
+test('on OWN stars page + enabled → panel', () => {
   assert.equal(mountState(true, true), 'panel');
 });
-test('on stars page + disabled → fab (floating re-mount button)', () => {
+test('on OWN stars page + disabled → fab (floating re-mount button)', () => {
   assert.equal(mountState(true, false), 'fab');
 });
-test('off stars page + enabled → none', () => {
+test('on SOMEONE ELSE\'S stars page (or not a stars page) + enabled → none', () => {
   assert.equal(mountState(false, true), 'none');
 });
-test('off stars page + disabled → none', () => {
+test('on SOMEONE ELSE\'S stars page (or not a stars page) + disabled → none', () => {
   assert.equal(mountState(false, false), 'none');
+});
+
+// --- pageOwner: decode the owner login from a github.com stars URL ---
+// `?tab=stars` is the same for everyone; the OWNER distinguishes "my stars" from
+// "their stars". The manager must only mount when owner == me.
+console.log('\nStars-page owner decode:');
+test('profile tab form: /<login> → login', () => {
+  assert.equal(pageOwner('/izumi0uu'), 'izumi0uu');
+  assert.equal(pageOwner('/Izumi0UU/'), 'izumi0uu'); // trailing slash + case-folded
+});
+test('canonical users form: /users/<login> → login', () => {
+  assert.equal(pageOwner('/users/octocat'), 'octocat');
+  assert.equal(pageOwner('/users/Torvalds'), 'torvalds');
+});
+test('reserved/app routes are not owners → null', () => {
+  assert.equal(pageOwner('/stars'), null);       // GitHub's aggregate stars landing
+  assert.equal(pageOwner('/orgs/acme'), null);   // org page, not a user
+  assert.equal(pageOwner('/settings'), null);
+  assert.equal(pageOwner('/search'), null);
+});
+test('non-owner multi-segment paths → null', () => {
+  assert.equal(pageOwner('/octocat/Hello-World'), null); // a repo, not a profile
+  assert.equal(pageOwner('/'), null);
+  assert.equal(pageOwner(''), null);
 });
 
 console.log(process.exitCode ? '\n❌ SOME TESTS FAILED' : '\n✅ All logic tests passed');

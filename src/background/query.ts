@@ -3,19 +3,14 @@ import type { Star, Tag } from '@/types';
 import type { FilterState, SortKey } from '@/ui/filter-store';
 
 /**
- * Star query engine — runs in the background service worker, where the IndexedDB
- * (extension origin) lives. The content script can't share this IDB (content
- * scripts see the page's origin IDB), so ALL data access goes through here.
- *
- * Returns the filtered+sorted slice the UI asked for, plus facet counts for the
- * sidebar. We do NOT stream 9900 rows across the message boundary; the UI requests
- * a virtual window (offset/limit) and re-requests on scroll/filter change.
+ * Star query engine (runs in the SW, owns IDB); returns a filtered+sorted window
+ * + sidebar facet counts, never the full row set.
  */
 
 export interface QueryParams {
   filter: Pick<
     FilterState,
-    'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyUntagged' | 'sortKey' | 'sortDir'
+    'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyFavorite' | 'onlyUntagged' | 'sortKey' | 'sortDir'
   >;
   offset: number;
   limit: number;
@@ -88,7 +83,9 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
   const filtered = stars.filter((s) => {
     if (!filter.showTombstone && s.tombstone) return false;
     if (langSet && (s.language === null || !langSet.has(s.language))) return false;
-    const myTags = tags.get(s.full_name)?.tags ?? [];
+    const tagRecord = tags.get(s.full_name);
+    const myTags = tagRecord?.tags ?? [];
+    if (filter.onlyFavorite && !tagRecord?.favorite) return false;
     if (filter.onlyUntagged && myTags.length > 0) return false;
     if (tagSet) {
       if (filter.tagMode === 'all') {
@@ -96,7 +93,7 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
       } else if (!myTags.some((t) => tagSet.has(t))) return false;
     }
     if (q) {
-      const notes = tags.get(s.full_name)?.notes ?? '';
+      const notes = tagRecord?.notes ?? '';
       const hay = `${s.full_name} ${s.description} ${s.topics.join(' ')} ${notes}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertTriangle, Heart, RefreshCw, Sparkles } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
 import { StarRow } from '@/ui/components/StarRow';
@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 
 const ROW_HEIGHT = 64;
-const GRID_COLS = 'grid-cols-[minmax(180px,1.4fr)_2fr_80px_64px_84px_1.6fr_20px]';
+const GRID_COLS = 'grid-cols-[minmax(180px,1.4fr)_2fr_80px_64px_84px_1.6fr_28px_20px]';
 
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
@@ -166,8 +166,18 @@ export function ManagerPanel() {
     setSelected((cur) => (cur === full_name ? null : full_name));
   };
 
+  const handleToggleFavorite = async (full_name: string, favorite: boolean) => {
+    try {
+      await bgCall('setFavorite', { full_name, favorite });
+      setInfo(null);
+    } catch (e) {
+      setInfo(m.manager.syncFailed(m.toolbar.columnFavorite, e instanceof Error ? e.message : String(e)));
+      throw e;
+    }
+  };
+
   const hasActiveFilter =
-    f.languages.length > 0 || f.tags.length > 0 || f.onlyUntagged;
+    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged;
 
   return (
     <PortalProvider containerRef={rootRef}>
@@ -201,7 +211,7 @@ export function ManagerPanel() {
             <span>{m.manager.noTokenBanner}</span>
             <Button
               size="sm"
-              onClick={() => chrome.runtime.openOptionsPage()}
+              onClick={() => bgCall('openOptions').catch(() => {})}
             >
               {m.manager.addPat}
             </Button>
@@ -233,7 +243,7 @@ export function ManagerPanel() {
                 hasToken={!!status?.hasToken}
                 syncing={syncingNow}
                 failedInfo={info}
-                onOpenOptions={() => chrome.runtime.openOptionsPage()}
+                onOpenOptions={() => bgCall('openOptions').catch(() => {})}
                 onRetry={() => void doSync('syncFull', m.popup.syncFull)}
                 onDismiss={() => void dismissOnboarding()}
               />
@@ -257,6 +267,9 @@ export function ManagerPanel() {
               <span className="text-right">{m.toolbar.columnStars}</span>
               <span>{m.toolbar.columnUpdated}</span>
               <span>{m.toolbar.columnTags}</span>
+              <span className="flex justify-center" title={m.toolbar.columnFavorite}>
+                <Heart className="size-3" aria-label={m.toolbar.columnFavorite} />
+              </span>
               <span />
             </div>
             {rows.length === 0 ? (
@@ -277,6 +290,7 @@ export function ManagerPanel() {
                         tag={tagsByFullName.get(star.full_name)}
                         selectedTags={f.tags}
                         onToggleTag={f.toggleTag}
+                        onToggleFavorite={handleToggleFavorite}
                         selected={selected === star.full_name}
                         onSelect={handleSelect}
                       />
@@ -334,13 +348,13 @@ function emptyFilter() {
     tags: [],
     tagMode: 'any' as const,
     showTombstone: false,
+    onlyFavorite: false,
     onlyUntagged: false,
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
   };
 }
 
-/** First-run onboarding card shown before the list. */
 function OnboardingCard({
   hasToken,
   syncing,
@@ -416,7 +430,6 @@ function OnboardingCard({
   );
 }
 
-/** First-run coach overlay that spotlights the sync button, tags sidebar, and list. */
 const COACH_TARGETS = ['sync', 'tags', 'repo'] as const;
 
 function CoachOverlay({

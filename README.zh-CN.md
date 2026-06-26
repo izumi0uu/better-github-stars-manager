@@ -2,12 +2,16 @@
 
 # Better GitHub Stars Manager
 
+[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-立即安装-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa?authuser=0&hl=zh-CN)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Latest release](https://img.shields.io/github/v/release/izumi0uu/better-github-stars-manager?logo=github&label=release)](https://github.com/izumi0uu/better-github-stars-manager/releases)
 [![License: MIT](https://img.shields.io/github/license/izumi0uu/better-github-stars-manager?logo=opensourceinitiative&logoColor=white)](./LICENSE)
 
 > 一个为重度 GitHub 用户打造的 Chrome 扩展 —— 本地优先、零服务端、个人专属。它把 `https://github.com/{user}?tab=stars` 变成一个可搜索、可打标签、可筛选、可批注的快速工作台,管理成千上万个 star，而不必离开 GitHub。
+
+Chrome 商店安装地址:
+https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa?authuser=0&hl=zh-CN
 
 ![Better GitHub Stars Manager](public/poster/img_01.png)
 
@@ -67,12 +71,15 @@ Better GitHub Stars Manager 让 GitHub Stars 对重度用户真正可管理。
 
 ## 截图
 
-<img src="public/poster/img_02.png" alt="Better GitHub Stars Manager 截图" width="1672">
+<p align="center">
+  <img src="public/store/screenshots/screenshot-plugin.png" alt="Better GitHub Stars Manager Plugin" width="300">
+  <img src="public/poster/img_02.png" alt="Better GitHub Stars Manager 在 GitHub Stars Main page" width="920">
+</p>
 
 ## 如何使用
 
-1. 在 Chrome 中以未打包 MV3 扩展方式安装。
-2. 打开 Options 页,粘贴一个 GitHub personal access token。
+1. 先从 Chrome Web Store 安装扩展。
+2. 打开插件，点击跳转 Options 页,粘贴一个 GitHub personal access token 并验证。
 3. 访问你的 GitHub stars 页:`https://github.com/{you}?tab=stars`。
 4. 运行 **Sync** 导入你的 star。
 5. 边浏览仓库边搜索、筛选、打标签、加笔记。
@@ -80,20 +87,20 @@ Better GitHub Stars Manager 让 GitHub Stars 对重度用户真正可管理。
 
 ## 安装
 
-```bash
-pnpm install
-pnpm build
-```
+Chrome 商店安装地址:
 
-然后在 Chrome 中:
+https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa
 
-1. 打开 `chrome://extensions`
-2. 开启 **开发者模式**
-3. 点 **加载已解压的扩展程序**
-4. 选择 `dist/` 文件夹
-5. 打开扩展的 **Options** 页
-6. 按下方权限创建一个 GitHub token
-7. 把 token 粘贴到 Options 并点 **Save & verify**
+然后:
+
+1. 点击 **添加至 Chrome**
+2. 打开扩展的 **Options** 页
+3. 按下方权限创建一个 GitHub token
+4. 把 token 粘贴到 Options 并点 **Save & verify**
+5. 访问 `https://github.com/{you}?tab=stars`
+6. 运行 **Sync** 导入你的 star
+
+通过商店安装后，Chrome 会自动处理后续更新。
 
 ### Token 配置
 
@@ -116,6 +123,21 @@ Step 3: 加上 **Gists: read and write**,以便跨设备同步可用。
 
 > 细粒度 token 的 Gist 权限是账号级的(不能按 gist 隔离)。扩展会为同步创建一个专用 secret gist。
 
+### 另一种方式 --> 本地开发安装
+
+```bash
+pnpm install
+pnpm build
+```
+
+然后在 Chrome 中:
+
+1. 打开 `chrome://extensions`
+2. 开启 **开发者模式**
+3. 点 **加载已解压的扩展程序**
+4. 选择 `dist/` 文件夹
+5. 打开扩展的 **Options** 页，并继续按上方 Token 配置完成设置
+
 ## 隐私与存储
 
 扩展的设计是:重数据本地保存,只同步个人批注层。
@@ -133,12 +155,6 @@ Push / Pull 只同步批注层:
 没有自建后端,也没有独立的应用账号。
 
 面向商店的隐私声明 [docs/privacy-policy.md](docs/privacy-policy.md)。
-
-## 开发
-
-- 构建:`pnpm build`
-- 测试:`pnpm test`
-- 打包发布 zip:`pnpm package:extension`
 
 ## 许可证
 

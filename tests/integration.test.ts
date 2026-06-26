@@ -1,6 +1,5 @@
-// Integration test: exercises the REAL background query engine + Dexie DB against
-// fake-indexeddb (a faithful IndexedDB polyfill). This verifies the actual code
-// paths in src/background/query.ts and src/storage/db.ts — not a mirrored copy.
+// Integration test: runs the real query engine + Dexie against fake-indexeddb
+// (exercises src code paths, not a mirror copy).
 //
 // Run: pnpm exec tsx tests/integration.test.ts
 import 'fake-indexeddb/auto';
@@ -31,7 +30,7 @@ await db.stars.bulkPut([
 ] as Star[]);
 await db.tags.bulkPut([
   { full_name: 'a/ai', tags: ['ai'], notes: '', mtime: '2026-06-22T10:00:00Z' },
-  { full_name: 'b/rust', tags: ['rust'], notes: 'fast', mtime: '2026-06-22T10:00:00Z' },
+  { full_name: 'b/rust', tags: ['rust'], notes: 'fast', favorite: true, mtime: '2026-06-22T10:00:00Z' },
 ] as Tag[]);
 await db.tagMeta.bulkPut([
   { name: 'ai', dimension: '领域', color: null, mtime: '2026-06-22T10:00:00Z' },
@@ -78,6 +77,12 @@ await new Promise<void>((resolve) => {
     eq(r.rows.map((s) => s.full_name), ['b/rust'], 'tag rust');
   });
 
+  test('onlyFavorite keeps favorited repos only', async () => {
+    const r = await queryStars({ filter: { ...defaultFilter(), onlyFavorite: true }, offset: 0, limit: 100 });
+    eq(r.rows.map((s) => s.full_name), ['b/rust'], 'favorite only');
+    assert(r.tagsForRows['b/rust']?.favorite === true, 'favorite carried through');
+  });
+
   test('sort by stargazers desc', async () => {
     const r = await queryStars({ filter: { ...defaultFilter(), sortKey: 'stargazers_count', sortDir: 'desc' }, offset: 0, limit: 100 });
     eq(r.rows.map((s) => s.stargazers_count), [100, 50], 'desc stars');
@@ -115,5 +120,5 @@ console.log(fail.length ? `\n❌ ${fail.length} FAILED` : '\n✅ All integration
 process.exit(fail.length ? 1 : 0);
 
 function defaultFilter() {
-  return { query: '', languages: [], tags: [], tagMode: 'any' as const, showTombstone: false, onlyUntagged: false, sortKey: 'starred_at' as const, sortDir: 'desc' as const };
+  return { query: '', languages: [], tags: [], tagMode: 'any' as const, showTombstone: false, onlyFavorite: false, onlyUntagged: false, sortKey: 'starred_at' as const, sortDir: 'desc' as const };
 }

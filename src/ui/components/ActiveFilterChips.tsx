@@ -4,10 +4,6 @@ import { Badge } from '@/ui/shadcn/badge';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 
-/**
- * Active filter chips row: shows WHY the current result set is filtered, with a
- * one-click clear per chip and a "Clear all". Lives below the toolbar.
- */
 export function ActiveFilterChips({
   f,
   count,
@@ -23,13 +19,12 @@ export function ActiveFilterChips({
   for (const tag of f.tags) {
     active.push({ label: tag, clear: () => f.toggleTag(tag), kind: 'tag' });
   }
+  if (f.onlyFavorite) active.push({ label: m.activeFilters.onlyFavorite, clear: () => f.setOnlyFavorite(false), kind: 'special' });
   if (f.onlyUntagged) active.push({ label: m.activeFilters.onlyUntagged, clear: () => f.setOnlyUntagged(false), kind: 'special' });
   // "Show unstarred" (tombstone) chip — disabled for now.
   // if (f.showTombstone) active.push({ label: m.filterSidebar.showTombstoneLabel, clear: () => f.setShowTombstone(false), kind: 'special' });
 
-  // No early return — the container in ManagerPanel animates height, so this
-  // component always renders its inner content (which collapses to 0 height
-  // when there are no active filters, via the parent's grid-template-rows: 0fr).
+  // no early return: the parent container animates its grid-rows height to collapse.
 
   return (
     <div className="flex flex-wrap items-center gap-1 bg-muted/30 px-3 py-1">

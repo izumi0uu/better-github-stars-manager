@@ -12,12 +12,8 @@ import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { useI18n } from '@/i18n';
 
 /**
- * Left filter sidebar. Special toggles up top; Languages is a collapsible
- * section (collapsed by default); Tags is a flat list sorted by use count, with a
- * per-tag hover delete (removes the tag from every repo). tagMode (any/all) sits
- * in the Tags header. A small search box filters the inline tag list. Language is
- * filter-only here (it is NOT auto-derived as a tag), so it never duplicates into
- * the Tags list.
+ * Left filter rail: special toggles up top + collapsible Languages + flat Tags
+ * (sorted by use count, hover to delete). tagMode (any/all) sits in Tags header.
  */
 export function FilterSidebar({
   f,
@@ -38,6 +34,12 @@ export function FilterSidebar({
     <div data-coach-target="tags" className="flex w-52 shrink-0 flex-col gap-3 overflow-auto border-r border-border bg-card p-2 text-sm">
       {/* Special filters */}
       <Section title={m.filterSidebar.specialFilters}>
+        <FilterToggle
+          checked={f.onlyFavorite}
+          onChange={() => f.setOnlyFavorite(!f.onlyFavorite)}
+          label={m.filterSidebar.onlyFavoriteLabel}
+          hint={m.filterSidebar.onlyFavoriteHint}
+        />
         <FilterToggle
           checked={f.onlyUntagged}
           onChange={() => f.setOnlyUntagged(!f.onlyUntagged)}
@@ -123,11 +125,7 @@ function LanguagesSection({ f, languages }: { f: FilterState; languages: [string
   );
 }
 
-// Tags list is flat (no dimension grouping): topic-derived and user-authored
-// tags sit side by side, sorted by use count. The whole section is collapsible
-// (header chevron); within it, a long list previews the top TAG_PREVIEW and
-// reveals the rest via a "show all" button. Search overrides the preview (shows
-// all matches).
+// Flat tag list (topic-derived + user-authored), sorted by count; previews top TAG_PREVIEW with a "show all" button, search overrides the preview.
 const TAG_PREVIEW = 50;
 
 function TagsSection({
@@ -256,13 +254,9 @@ function TagsSection({
                   <Checkbox checked={on} className="pointer-events-none" />
                   <span className="flex-1 truncate">{name}</span>
                   <span className="tabular-nums text-[10px] text-muted-foreground/70">{count}</span>
-                  {/* Delete: hover reveals a trash icon → click morphs to a red CHECK
-                      confirm button (the transition state) → click the check to commit.
-                      Auto-reverts after 3s (see the pendingDelete effect). One stable
-                      button throughout: the icon swaps (Trash2 ↔ Check via ActionIcon,
-                      key remount + fade-in) and the color crossfades (muted ↔
-                      destructive via transition-colors) so the morph reads as a smooth
-                      transition, not a hard swap. */}
+                  {/* Delete: hover shows trash → click turns red check to confirm →
+                      click again submits; 3s auto-revert. Icon via ActionIcon
+                      remount + color crossfade. */}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button

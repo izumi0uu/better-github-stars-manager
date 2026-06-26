@@ -2,12 +2,16 @@
 
 # Better GitHub Stars Manager
 
+[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Install%20Now-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa?hl=en)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Latest release](https://img.shields.io/github/v/release/izumi0uu/better-github-stars-manager?logo=github&label=release)](https://github.com/izumi0uu/better-github-stars-manager/releases)
 [![License: MIT](https://img.shields.io/github/license/izumi0uu/better-github-stars-manager?logo=opensourceinitiative&logoColor=white)](./LICENSE)
 
 > A Chrome extension for heavy GitHub users — local-first, zero-server, personal. It turns `https://github.com/{user}?tab=stars` into a fast, searchable, taggable, filterable, annotatable workspace so you can manage thousands of stars without leaving GitHub.
+
+Install from the Chrome Web Store:
+https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa?hl=en
 
 ![Better GitHub Stars Manager](public/poster/img_01.png)
 
@@ -67,12 +71,15 @@ Better GitHub Stars Manager makes GitHub Stars genuinely manageable for heavy us
 
 ## Screenshots
 
-<img src="public/poster/img_02.png" alt="Better GitHub Stars Manager screenshot" width="1672">
+<p align="center">
+  <img src="public/store/screenshots/screenshot-plugin.png" alt="Better GitHub Stars Manager Plugin" width="300">
+  <img src="public/poster/img_02.png" alt="Better GitHub Stars Manager running on GitHub Stars" width="920">
+</p>
 
 ## How to Use
 
-1. Install the extension in Chrome as an unpacked MV3 extension.
-2. Open the Options page and paste a GitHub personal access token.
+1. Install the extension from the Chrome Web Store.
+2. Open the extension, jump to the Options page, and paste a GitHub personal access token.
 3. Visit your GitHub stars page: `https://github.com/{you}?tab=stars`.
 4. Run **Sync** to import your stars.
 5. Search, filter, tag, and add notes as you review repositories.
@@ -80,20 +87,20 @@ Better GitHub Stars Manager makes GitHub Stars genuinely manageable for heavy us
 
 ## Install
 
-```bash
-pnpm install
-pnpm build
-```
+Install Better GitHub Stars Manager from the Chrome Web Store:
 
-Then in Chrome:
+https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa
 
-1. Open `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked**
-4. Select the `dist/` folder
-5. Open the extension **Options** page
-6. Create a GitHub token with the permissions below
-7. Paste the token into Options and click **Save & verify**
+Then:
+
+1. Click **Add to Chrome**
+2. Open the extension **Options** page
+3. Create a GitHub token with the permissions below
+4. Paste the token into Options and click **Save & verify**
+5. Visit `https://github.com/{you}?tab=stars`
+6. Run **Sync** to import your stars
+
+Chrome will handle updates automatically after installation from the store.
 
 ### Token setup
 
@@ -116,6 +123,21 @@ Recommended GitHub token permissions:
 
 > Fine-grained token Gist permissions are account-level (they cannot be scoped per gist). The extension creates a dedicated secret gist for sync.
 
+### Another way --> Local development install
+
+```bash
+pnpm install
+pnpm build
+```
+
+Then in Chrome:
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked**
+4. Select the `dist/` folder
+5. Open the extension **Options** page and continue with the token setup above
+
 ## Privacy and Storage
 
 The extension is designed to keep the heavy data local and sync only the personal annotation layer.
@@ -133,12 +155,6 @@ Push / Pull only sync your annotation layer:
 There is no custom backend and no separate app account.
 
 For a store-ready privacy statement, see [docs/privacy-policy.md](docs/privacy-policy.md).
-
-## Development
-
-- Build: `pnpm build`
-- Test: `pnpm test`
-- Package release zip: `pnpm package:extension`
 
 ## License
 

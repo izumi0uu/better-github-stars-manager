@@ -9,12 +9,9 @@ import { translateError } from '@/api/errors';
 import type { SyncProgress } from '@/types';
 
 /**
- * Background service worker — the sync orchestrator AND the sole owner of the
- * IndexedDB (extension origin). Content scripts/popup/options talk to it via
- * messages; they never touch IDB directly (content scripts would hit the page's
- * origin IDB instead — a different database).
- * Incremental sync is kicked off when the stars-page UI mounts; there is no
- * background polling or alarm-based sync loop.
+ * Background SW — sync orchestrator and sole owner of the extension-origin
+ * IndexedDB. Content scripts/popup/options talk via messages; they never touch
+ * IDB directly (content scripts would hit the page's origin DB instead).
  */
 
 type Req =
@@ -32,6 +29,7 @@ type Req =
   | { type: 'query'; params: QueryParams }
   | { type: 'setTags'; full_name: string; tags: string[] }
   | { type: 'setNotes'; full_name: string; notes: string }
+  | { type: 'setFavorite'; full_name: string; favorite: boolean }
   | { type: 'deleteTag'; name: string }
   | { type: 'acceptSuggestions'; full_name: string; toAdd: string[] }
   | { type: 'acceptSuggestionsBatch'; items: { full_name: string; toAdd: string[] }[] }
@@ -40,7 +38,8 @@ type Req =
   | { type: 'listExcluded' }
   | { type: 'markOnboardingSeen' }
   | { type: 'markTooltipSeen'; bit: number }
-  | { type: 'testConnection' };
+  | { type: 'testConnection' }
+  | { type: 'openOptions' };
 
 type Res =
   | { ok: true; data?: unknown }
@@ -79,18 +78,10 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Auto-tag every star from its topics (NOT its language — language is a
- * first-class filter in the sidebar, not a tag, so deriving it would duplicate it
- * in two places). Pure-local: no API calls — it only reads star.topics (already in
- * IDB from sync) and writes the tags store. Idempotent (suggestTags dedupes
- * against existing tags, and we only write when the merged set actually grew).
- * Preserves notes (setTags spreads existing). This runs automatically after every
- * sync so tags are always populated without a manual button press; the button is a
- * manual refresh.
- *
- * Resurrection guard: names in the excluded set (tagMeta.excluded tombstones left
- * by deleteTag) are passed to suggestTags and skipped, so deleting a tag actually
- * sticks across syncs.
+ * Auto-tag every star from its topics (NOT language — language is a sidebar
+ * filter, not a tag; full rationale in suggest.ts). Pure-local, idempotent,
+ * preserves notes. Runs after each sync; excluded names are skipped so deleted
+ * tags don't resurrect.
  */
 async function autoTagAll(): Promise<{ tagged: number }> {
   const stars = await db.stars.toArray();
@@ -111,23 +102,11 @@ async function autoTagAll(): Promise<{ tagged: number }> {
 }
 
 /**
- * One-shot migration: strip auto-derived `language` tags. Before this change,
- * auto-assign derived a tag from `star.language` (e.g. "Python") AND the sidebar
- * showed languages as a separate filter — so a language appeared in two places.
- * Language is now filter-only, so existing language-derived tags must be removed
- * from every repo that carries them. Uses `setTags` (which bumps `Tag.mtime` +
- * marks the repo dirty) so the cleanup rides the next `gistPush` as a full
- * snapshot to other devices. Deliberately does NOT write an `excluded` tombstone:
- * a tombstone would forbid the user from ever manually re-adding "Python" as a
- * tag, which is too strong — we only want to stop *auto*-deriving it.
- *
- * Idempotent + retry-safe: the source set comes from `tagMeta.dimension ===
- * 'language'` (which this migration never mutates), and repos already cleaned are
- * skipped (`next.length === t.tags.length`), so a crash mid-run just resumes on
- * the next SW wakeup. The flag flips only after the full pass succeeds. Old
- * `dimension='language'` tagMeta rows are left in place — nothing reads
- * `dimension` anymore, and deleting them would bump tagMeta mtime and trigger a
- * pointless full Gist re-push.
+ * One-shot migration: strip auto-derived `language` tags (language is now a
+ * filter, not a tag). Uses setTags (bumps mtime → rides next gistPush) and
+ * deliberately writes NO excluded tombstone — that would forbid manual re-adding;
+ * we only want to stop auto-deriving. Flag + skip-already-cleaned → idempotent
+ * and re-runnable; the flag flips only after the full pass succeeds.
  */
 async function migrateLanguageTags(): Promise<void> {
   try {
@@ -252,10 +231,7 @@ async function handle(req: Req): Promise<Res> {
       case 'getAccount':
         return { ok: true, data: await authStore.getAccount() };
       case 'fetchAccount': {
-        // Backfill account identity (avatar/displayName) for users who verified
-        // before those fields were captured. One authenticated GET /user; the
-        // result is persisted so it never refetches. No-op + returns cached
-        // account if there's no usable token.
+        // Backfill avatar/displayName; no-op without token.
         const token = await authStore.getToken();
         if (!token) return { ok: true, data: await authStore.getAccount() };
         try {
@@ -285,6 +261,10 @@ async function handle(req: Req): Promise<Res> {
         await idbTagStore.setNotes(req.full_name, req.notes);
         broadcastDataChanged();
         return { ok: true };
+      case 'setFavorite':
+        await idbTagStore.setFavorite(req.full_name, req.favorite);
+        broadcastDataChanged();
+        return { ok: true, data: { favorite: req.favorite } };
       case 'deleteTag': {
         // Remove this tag from every repo that has it (+ drop its meta).
         const r = await idbTagStore.deleteTag(req.name);
@@ -302,9 +282,7 @@ async function handle(req: Req): Promise<Res> {
         return { ok: true };
       }
       case 'testConnection': {
-        // Diagnostic: fetch one page of /user/starred and return the raw HTTP
-        // status + key headers, so the UI can show EXACTLY what GitHub returned
-        // (instead of a stuck spinner). Never throws — returns ok:false with detail.
+        // Diagnostic: pull one page of /user/starred, return raw status+headers, never throws.
         const token = await authStore.getToken();
         if (!token) return { ok: false, error: (await getLocaleMessages()).background.noToken };
         try {
@@ -328,6 +306,11 @@ async function handle(req: Req): Promise<Res> {
         } catch (e) {
           return { ok: false, error: `fetch failed: ${e instanceof Error ? e.message : String(e)}` };
         }
+      }
+      case 'openOptions': {
+        // Content scripts have a restricted chrome.runtime without openOptionsPage, so they ask the background.
+        await chrome.runtime.openOptionsPage();
+        return { ok: true };
       }
       case 'getTag': {
         return { ok: true, data: { tag: (await idbTagStore.get(req.full_name)) ?? null } };
@@ -359,8 +342,6 @@ async function handle(req: Req): Promise<Res> {
     }
   } catch (e) {
     const msg = translateError(e, await getLocaleMessages());
-    // Reset progress to idle on failure so the UI doesn't stay stuck on
-    // "Fetching N pages…" when a sync throws (e.g. bad token, network).
     setProgress({ phase: 'idle', done: 0, total: null, message: `${msg}` });
     return { ok: false, error: msg };
   }
@@ -376,11 +357,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 /**
- * Startup self-check: runs whenever the service worker wakes. Prints a single
- * diagnostic line to the SW console so the user (opening "Inspect views:
- * service worker") immediately sees token presence, GitHub HTTP status, and the
- * live row count in the DB — without clicking anything. Throttled to once per
- * 30s to avoid spamming on frequent SW wakeups.
+ * Connection self-check on SW wake (30s throttle to avoid wake-spam).
  */
 let lastSelfCheck = 0;
 async function selfCheck() {
@@ -409,7 +386,4 @@ async function selfCheck() {
   }
 }
 selfCheck();
-// One-shot migration: strip legacy auto-derived language tags (language is now a
-// filter, not a tag). Fire-and-forget; it self-guards via the Config flag and
-// retries on failure, so it never blocks SW startup.
 migrateLanguageTags();

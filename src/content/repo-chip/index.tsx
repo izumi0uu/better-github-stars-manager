@@ -4,30 +4,16 @@ import { messageFor } from '@/i18n';
 import { bgCall } from '@/utils/messaging';
 
 /**
- * Repo-page content script.
- *
- * Injects a tag chip next to the repo title on `github.com/{owner}/{repo}`.
- * Anchor order, from most to least stable:
- *   1. `strong[itemprop="name"] a[data-pjax]` — schema.org microdata
- *   2. `h1.sr-only` whose text is `owner/repo` — semantic fallback
- *   3. `[data-pjax="#repo-content-pjax-container"]` — structural fallback
- *
- * The title area sits outside the Turbo/PJAX swap frame, so a
- * `MutationObserver` is unnecessary; `turbo:load`, `turbo:render`, and
- * `popstate` are enough for re-injection.
- *
- * Chip interactions:
- *   - label text = tags (read-only display)
- *   - click a tag label → open the stars management page filtered by that tag
- *   - ✎ button → inline edit (add/remove tags) via background calls
+ * Repo-page content script. Injects a tag chip beside a repo title on
+ * `github.com/{owner}/{repo}`. The title region sits outside the PJAX swap
+ * frame, so turbo:load/render + popstate are enough (no MutationObserver).
  */
 
 const injected = new Map<string, { el: HTMLElement; rerender: () => void }>(); // url → host element, for idempotency
 
 /**
- * Inline-SVG line icons for the chip (vanilla DOM, closed shadow root — no React,
- * so lucide-react components can't be used). 24×24 viewBox, 2px stroke, currentColor
- * — matches the lucide icon set used in the React UI for visual consistency.
+ * Inline SVG (shadow root has no React, so lucide-react isn't available);
+ * sized/styled to match the lucide set.
  */
 function iconSvg(name: 'check' | 'pencil'): string {
   const common = 'width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';

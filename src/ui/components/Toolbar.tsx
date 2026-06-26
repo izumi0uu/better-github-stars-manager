@@ -23,12 +23,8 @@ import { useI18n } from '@/i18n';
 type Account = { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null };
 
 /**
- * A Button wrapped in a Tooltip. MUST live at module scope — not inside Toolbar.
- *
- * When this component lived inside Toolbar, every Toolbar render created a new
- * component identity, so the action buttons remounted and replayed their intro
- * animation. Keeping it at module scope preserves identity and avoids that
- * double-flash regression.
+ * Button+Tooltip wrapper; MUST be module-scope — defining it inside Toolbar
+ * re-creates its identity every render, remounting buttons and replaying animations (double-flash).
  */
 function TButton({
   tip,

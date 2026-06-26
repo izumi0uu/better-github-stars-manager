@@ -3,7 +3,7 @@ import type { Tag, TagMeta } from '@/types';
 export type CountProgressCallback = (done: number, total: number | null) => void;
 
 /**
- * Abstraction over the user's annotation layer (tags + notes + tag metadata).
+ * Abstraction over the user's annotation layer (tags + notes + favorites + tag metadata).
  *
  * The UI depends on this interface rather than a specific backend. The current
  * implementation composes:
@@ -27,6 +27,7 @@ export interface TagStore {
   // --- writes (local; mark dirty for Gist sync) ---
   setTags(full_name: string, tags: string[]): Promise<void>;
   setNotes(full_name: string, notes: string): Promise<void>;
+  setFavorite(full_name: string, favorite: boolean): Promise<void>;
   /** Upsert a full Tag record (used by Gist merge-in). */
   upsert(tag: Tag): Promise<void>;
   upsertMeta(meta: TagMeta): Promise<void>;
@@ -38,7 +39,7 @@ export interface TagStore {
    */
   deleteTag(name: string): Promise<{ removed: number }>;
 
-  // --- Gist sync (per-repo timestamp merge) ---
+  // --- Gist sync (per-repo mtime LWW merge) ---
   /** Push local dirty tags/tagMeta to the Gist. */
   syncPush(onProgress?: CountProgressCallback): Promise<{ pushed: number; snapshot: number; recreated: boolean }>;
   /** Pull the Gist and merge per-repo by mtime into local IDB. */

@@ -2,18 +2,9 @@ import Dexie, { type Table } from 'dexie';
 import type { Star, Tag, TagMeta } from '@/types';
 
 /**
- * IndexedDB schema (via Dexie).
- *
- * IndexedDB is the source of truth for the heavier GitHub metadata (`stars`) and
- * the user's annotation layer (`tags` / `tagMeta`). `chrome.storage.local` holds
- * only lighter config such as the encrypted token and sync cursors.
- *
- * Index choices follow the UI's filter and sort paths:
- *  - `language`: filter by language
- *  - `starred_at`: incremental cursor + "recently starred" sort
- *  - `pushed_at`: "recently updated" sort
- *  - `tombstone`: hide/gray unstarred rows
- *  - `*tags`: multi-entry index for "show all repos with tag X"
+ * IndexedDB schema (via Dexie). IDB is the source of truth for stars/tags/tagMeta;
+ * chrome.storage.local holds only lightweight config (encrypted token, theme,
+ * locale). Indexes back the UI filter/sort paths.
  */
 export class StarsDB extends Dexie {
   stars!: Table<Star, string>;

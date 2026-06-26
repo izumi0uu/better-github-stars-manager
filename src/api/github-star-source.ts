@@ -6,32 +6,15 @@ import { getMessages } from '@/i18n';
 import { GH_NO_TOKEN, GH_TOKEN_REJECTED, GH_RATE_LIMIT, GH_FORBIDDEN, GH_TIMEOUT, GH_NETWORK, GH_PAGE_STATUS, GH_BAD_SHAPE } from './errors';
 
 /**
- * GitHub-backed `StarSource` implementation using the authenticated
- * `GET /user/starred` endpoint.
- *
- * Endpoint facts:
- *  - `GET /user/starred` returns each item with `starred_at`, ordered by
- *    `starred_at` descending. (The anonymous `/users/{u}/starred` endpoint omits it.)
- *  - 100 items per page max. About 99 pages for a 9,900-star account.
- *  - Authenticated rate limit is 5,000 requests/hour, so a full pull stays well within it.
- *
- * Sync primitives:
- *  - `syncFull`: pull every page and upsert into the stars store.
- *  - `syncIncremental`: pull until `lastSyncStarredAt` is reached.
- *  - `syncRescan`: pull all pages and tombstone any local repo no longer present.
+ * GitHub-backed `StarSource` using the authenticated `GET /user/starred`
+ * with `star+json` media (which surfaces `starred_at`); pages are pulled
+ * concurrently. See `StarSource` for the sync job contract.
  */
 
 const PER_PAGE = 100;
 const API = 'https://api.github.com';
 
-/**
- * Response shape for `GET /user/starred` with
- * `Accept: application/vnd.github.star+json`.
- *
- * This media type wraps each repo in a `repo` object alongside `starred_at`.
- * The default JSON response is flatter, but it omits `starred_at`, which the
- * incremental cursor depends on.
- */
+/** Response shape for `star+json` media (starred_at at top level, repo nested — incremental cursor depends on it). */
 interface StarredRepoPayload {
   starred_at: string;
   repo: {
@@ -129,9 +112,7 @@ export function toStar(it: StarredRepoPayload): Star {
   };
 }
 
-/** Concurrently fetch a range of pages, bounded to avoid hammering the API.
- *  Results are returned in INPUT order (by page number), not completion order,
- *  so callers that depend on ordering (e.g. newest-first cursor) stay correct. */
+/** Concurrently fetch a range of pages; returns in page-number order, not completion order. */
 async function fetchPages(pages: number[], onPageDone?: () => void, concurrency = 6): Promise<StarredRepoPayload[][]> {
   const out: StarredRepoPayload[][] = new Array(pages.length);
   let idx = 0;
@@ -189,13 +170,10 @@ export const githubStarSource: StarSource = {
     let page = 1;
     let stop = false;
     let newestStarredAt: string | null = null;
-    // Walk pages in starred_at-desc order; stop when we see a repo at/before the cursor.
+    // Walk pages in starred_at-desc order; page 1 holds the newest (captured as the next cursor). Cap at 5 pages.
     while (!stop && page <= 5) {
-      // Cap at 5 pages: if more than ~500 new stars since last sync, the user can run full.
       const { items } = await fetchPage(page);
       if (items.length === 0) break;
-      // Page 1 (first iteration) holds the newest starred_at — capture it as the
-      // next cursor WITHOUT a redundant extra fetch.
       if (page === 1) newestStarredAt = items[0]?.starred_at ?? newestStarredAt;
       const fresh = cursor ? items.filter((it) => it.starred_at > cursor) : items;
       if (fresh.length > 0) {
@@ -203,7 +181,6 @@ export const githubStarSource: StarSource = {
         added += fresh.length;
       }
       if (cursor && items.some((it) => it.starred_at <= cursor)) stop = true;
-      // If the whole page was fresh, there may be more — keep paging (up to the cap).
       if (fresh.length < items.length) stop = true;
       page++;
     }
