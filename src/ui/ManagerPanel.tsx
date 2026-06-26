@@ -9,6 +9,7 @@ import { FilterSidebar } from '@/ui/components/FilterSidebar';
 import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
+import { pruneFavoriteOverrides, resolveFavoriteState, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { PortalProvider } from '@/ui/shadcn/portal-context';
@@ -32,6 +33,7 @@ export function ManagerPanel() {
   const [info, setInfo] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [coachStep, setCoachStep] = useState<number | null>(null);
+  const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -162,15 +164,33 @@ export function ManagerPanel() {
   const selectedStar = selectedIdx >= 0 ? rows[selectedIdx] : null;
   const selectedTag = selectedStar ? tagsByFullName.get(selectedStar.full_name) : undefined;
 
+  useEffect(() => {
+    setFavoriteOverrides((current) => pruneFavoriteOverrides(current, tagsByFullName, rows));
+  }, [rows, tagsByFullName]);
+
   const handleSelect = (full_name: string) => {
     setSelected((cur) => (cur === full_name ? null : full_name));
   };
 
   const handleToggleFavorite = async (full_name: string, favorite: boolean) => {
+    setFavoriteOverrides((current) => ({
+      ...current,
+      [full_name]: { value: favorite, pending: true },
+    }));
     try {
       await bgCall('setFavorite', { full_name, favorite });
+      setFavoriteOverrides((current) => ({
+        ...current,
+        [full_name]: { value: favorite, pending: false },
+      }));
       setInfo(null);
     } catch (e) {
+      setFavoriteOverrides((current) => {
+        if (!(full_name in current)) return current;
+        const next = { ...current };
+        delete next[full_name];
+        return next;
+      });
       setInfo(m.manager.syncFailed(m.toolbar.columnFavorite, e instanceof Error ? e.message : String(e)));
       throw e;
     }
@@ -280,6 +300,11 @@ export function ManagerPanel() {
               <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
                 {rowVirtualizer.getVirtualItems().map((vi) => {
                   const star = rows[vi.index];
+                  const tag = tagsByFullName.get(star.full_name);
+                  const { favorite, busy: favoriteBusy } = resolveFavoriteState(
+                    tag,
+                    favoriteOverrides[star.full_name],
+                  );
                   return (
                     <div
                       key={star.full_name}
@@ -287,7 +312,10 @@ export function ManagerPanel() {
                     >
                       <StarRow
                         star={star}
-                        tag={tagsByFullName.get(star.full_name)}
+                        tags={tag?.tags ?? []}
+                        hasNotes={!!(tag?.notes && tag.notes.trim())}
+                        favorite={favorite}
+                        favoriteBusy={favoriteBusy}
                         selectedTags={f.tags}
                         onToggleTag={f.toggleTag}
                         onToggleFavorite={handleToggleFavorite}

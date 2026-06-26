@@ -8,6 +8,8 @@
 import assert from 'node:assert';
 import { hidePanel, isPanelEnabled, onPanelToggle, showPanel } from '../src/content/stars-page/panel-toggle.ts';
 import { mountState, pageOwner } from '../src/content/stars-page/mount-state.ts';
+import { pruneFavoriteOverrides, resolveFavoriteState } from '../src/ui/favorite-state.ts';
+import { classifyStarsQueryTrigger } from '../src/ui/stars-refresh.ts';
 
 // --- LWW merge logic (mirrors src/sync/gist-tag-store.ts pull()) ---
 // Two devices edited DIFFERENT repos; merge must keep both, taking newer mtime per repo.
@@ -129,6 +131,38 @@ test('onlyFavorite keeps favorited repos only', () => {
 test('onlyUntagged excludes tagged', () => {
   const r = filterStars(sample, { onlyUntagged: true, tagsByRepo });
   assert.equal(r.length, 0); // both live repos are tagged
+});
+
+console.log('\nFavorite UI state:');
+test('row keeps optimistic favorite until committed data catches up', () => {
+  const state = resolveFavoriteState(undefined, { value: true, pending: false });
+  assert.equal(state.favorite, true);
+  assert.equal(state.busy, false);
+});
+test('matching committed favorite clears the parent override', () => {
+  const overrides = { 'a/ai-tool': { value: true, pending: false } };
+  const tags = new Map([
+    ['a/ai-tool', { full_name: 'a/ai-tool', tags: [], notes: '', favorite: true, mtime: '2026-06-26T00:00:00Z' }],
+  ]);
+  const pruned = pruneFavoriteOverrides(overrides, tags, [{ full_name: 'a/ai-tool' }]);
+  assert.deepEqual(pruned, {});
+});
+test('rows filtered out after a favorite change also clear stale overrides', () => {
+  const overrides = { 'b/rust-lib': { value: false, pending: false } };
+  const tags = new Map([
+    ['b/rust-lib', { full_name: 'b/rust-lib', tags: ['rust'], notes: '', favorite: false, mtime: '2026-06-26T00:00:00Z' }],
+  ]);
+  const pruned = pruneFavoriteOverrides(overrides, tags, [{ full_name: 'a/ai-tool' }]);
+  assert.deepEqual(pruned, {});
+});
+
+console.log('\nStars refresh policy:');
+test('initial load and dataChanged reloads are silent', () => {
+  assert.equal(classifyStarsQueryTrigger(null, 'query-a'), 'initial-load');
+  assert.equal(classifyStarsQueryTrigger('query-a', 'query-a'), 'data-change');
+});
+test('filter changes still use the fading transition', () => {
+  assert.equal(classifyStarsQueryTrigger('query-a', 'query-b'), 'filter-change');
 });
 
 console.log('\nAuto-suggest:');

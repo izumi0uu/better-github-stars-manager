@@ -1,6 +1,6 @@
-import { memo, useEffect, useState } from 'react';
+import { memo } from 'react';
 import { Archive, Heart, Star as StarIcon, StickyNote } from 'lucide-react';
-import type { Star, Tag } from '@/types';
+import type { Star } from '@/types';
 import { Badge } from '@/ui/shadcn/badge';
 import { ActionIcon } from '@/ui/shadcn/action-icon';
 import { cn } from '@/lib/utils';
@@ -14,7 +14,10 @@ const COMPACT_VISIBLE = 2;
 
 export const StarRow = memo(function StarRow({
   star,
-  tag,
+  tags,
+  hasNotes,
+  favorite,
+  favoriteBusy,
   selectedTags,
   onToggleTag,
   onToggleFavorite,
@@ -22,29 +25,21 @@ export const StarRow = memo(function StarRow({
   onSelect,
 }: {
   star: Star;
-  tag: Tag | undefined;
+  tags: string[];
+  hasNotes: boolean;
+  favorite: boolean;
+  favoriteBusy: boolean;
   selectedTags: string[];
   onToggleTag: (tag: string) => void;
   onToggleFavorite: (full_name: string, favorite: boolean) => Promise<void>;
   selected: boolean;
   onSelect: (full_name: string) => void;
 }) {
-  const myTags = tag?.tags ?? [];
-  const persistedFavorite = !!tag?.favorite;
-  const [optimisticFavorite, setOptimisticFavorite] = useState<boolean | null>(null);
-  const [favoriteBusy, setFavoriteBusy] = useState(false);
-  const hasNotes = !!(tag?.notes && tag.notes.trim());
   const selectedSet = new Set(selectedTags);
-  const overflow = myTags.length > COMPACT_VISIBLE;
-  const visible = overflow ? myTags.slice(0, COMPACT_VISIBLE) : myTags;
-  const hiddenCount = myTags.length - visible.length;
+  const overflow = tags.length > COMPACT_VISIBLE;
+  const visible = overflow ? tags.slice(0, COMPACT_VISIBLE) : tags;
+  const hiddenCount = tags.length - visible.length;
   const { m } = useI18n();
-  const favorite = optimisticFavorite ?? persistedFavorite;
-
-  useEffect(() => {
-    setOptimisticFavorite(null);
-    setFavoriteBusy(false);
-  }, [star.full_name, persistedFavorite]);
 
   return (
     <div
@@ -88,7 +83,7 @@ export const StarRow = memo(function StarRow({
         onClick={(e) => e.stopPropagation()}
         className="flex flex-wrap items-center gap-1 overflow-hidden"
       >
-        {myTags.length === 0 ? (
+        {tags.length === 0 ? (
           <span className="text-xs italic text-muted-foreground/50">{m.common.none}</span>
         ) : (
           <>
@@ -114,14 +109,8 @@ export const StarRow = memo(function StarRow({
             e.stopPropagation();
             if (favoriteBusy) return;
             const next = !favorite;
-            setFavoriteBusy(true);
-            setOptimisticFavorite(next);
             onToggleFavorite(star.full_name, next)
-              .then(() => setFavoriteBusy(false))
-              .catch(() => {
-                setOptimisticFavorite(null);
-                setFavoriteBusy(false);
-              });
+              .catch(() => {});
           }}
           disabled={favoriteBusy}
           className={cn(

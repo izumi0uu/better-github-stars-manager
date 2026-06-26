@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useFilterStore } from './filter-store';
 import type { Star, Tag } from '@/types';
 import type { QueryResult } from '@/background/query';
+import { classifyStarsQueryTrigger } from './stars-refresh';
 
 // Transition timings for the list fade-out → swap → fade-in (see FADE_PHASE).
 const FADE_OUT_MS = 120;
@@ -21,6 +22,7 @@ export function useStars() {
   const [phase, setPhase] = useState<'idle' | 'fading-out' | 'fading-in'>('idle');
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [lastQueriedFilterKey, setLastQueriedFilterKey] = useState<string | null>(null);
 
   const filter = {
     query: f.query,
@@ -42,39 +44,52 @@ export function useStars() {
     setRefreshKey((key) => key + 1);
   };
 
-  // Fade out → query → fade in, driven by the filter signature changing.
-  // The query is deliberately delayed until the fade-out completes so the old
-  // rows remain on screen (dimming) instead of vanishing mid-fade.
+  // Filter changes still use the fade-out → query → fade-in transition.
+  // Same-filter reloads (dataChanged broadcasts or explicit refresh()) update
+  // the committed rows in place so the list does not flash.
   useEffect(() => {
     let cancelled = false;
     let fadeOut: ReturnType<typeof setTimeout> | null = null;
     let fadeIn: ReturnType<typeof setTimeout> | null = null;
+    const trigger = classifyStarsQueryTrigger(lastQueriedFilterKey, filterKey);
+    const shouldFade = trigger === 'filter-change';
+    setLastQueriedFilterKey(filterKey);
 
     setLoading(true);
-    setPhase('fading-out');
+    if (shouldFade) setPhase('fading-out');
 
-    fadeOut = setTimeout(() => {
+    const runQuery = () => {
       if (cancelled) return;
       chrome.runtime
         .sendMessage({ type: 'query', params: { filter, offset: 0, limit: Number.MAX_SAFE_INTEGER } })
         .then((res: { ok: boolean; data?: QueryResult; error?: string }) => {
           if (cancelled) return;
           if (res?.ok && res.data) {
-            setCommitted(res.data); // swap to new rows under the dimmed list
-            setPhase('fading-in');
-            fadeIn = setTimeout(() => {
-              if (!cancelled) setPhase('idle');
-            }, FADE_IN_MS);
+            setCommitted(res.data);
+            if (shouldFade) {
+              setPhase('fading-in');
+              fadeIn = setTimeout(() => {
+                if (!cancelled) setPhase('idle');
+              }, FADE_IN_MS);
+            } else {
+              setPhase('idle');
+            }
           }
           setLoading(false);
         })
         .catch(() => {
           if (!cancelled) {
             setLoading(false);
-            setPhase('idle');
+            if (!shouldFade) setPhase('idle');
           }
         });
-    }, FADE_OUT_MS);
+    };
+
+    if (shouldFade) {
+      fadeOut = setTimeout(runQuery, FADE_OUT_MS);
+    } else {
+      runQuery();
+    }
 
     return () => {
       cancelled = true;
