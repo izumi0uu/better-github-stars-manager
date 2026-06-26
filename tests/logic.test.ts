@@ -7,6 +7,11 @@
 
 import assert from 'node:assert';
 import { hidePanel, isPanelEnabled, onPanelToggle, showPanel } from '../src/content/stars-page/panel-toggle.ts';
+import {
+  isOnboardingCardStage,
+  normalizeOnboardingStage,
+  resolveOnboardingStageAfterSync,
+} from '../src/onboarding/state.ts';
 import { mountState, pageOwner } from '../src/content/stars-page/mount-state.ts';
 import { pruneFavoriteOverrides, resolveFavoriteState } from '../src/ui/favorite-state.ts';
 import { pickInitialSyncAction } from '../src/ui/initial-sync.ts';
@@ -178,6 +183,29 @@ test('existing in-flight job blocks duplicate auto-sync on reopen', () => {
 });
 test('no token blocks auto-sync', () => {
   assert.equal(pickInitialSyncAction({ hasToken: false, inFlight: false }, 12), null);
+});
+
+console.log('\nOnboarding state machine:');
+test('no token always normalizes to needs_token', () => {
+  assert.equal(normalizeOnboardingStage('coach', false, false), 'needs_token');
+});
+test('legacy config with token normalizes to awaiting_sync', () => {
+  assert.equal(normalizeOnboardingStage(undefined, false, true), 'awaiting_sync');
+});
+test('seenOnboarding forces done stage', () => {
+  assert.equal(normalizeOnboardingStage('sync_failed', true, true), 'done');
+});
+test('first sync with data advances to coach', () => {
+  assert.equal(resolveOnboardingStageAfterSync(true, 12), 'coach');
+});
+test('first sync with empty library advances to empty_library', () => {
+  assert.equal(resolveOnboardingStageAfterSync(true, 0), 'empty_library');
+});
+test('only non-coach, non-done stages render the onboarding card', () => {
+  assert.equal(isOnboardingCardStage('needs_token'), true);
+  assert.equal(isOnboardingCardStage('syncing'), true);
+  assert.equal(isOnboardingCardStage('coach'), false);
+  assert.equal(isOnboardingCardStage('done'), false);
 });
 
 console.log('\nAuto-suggest:');

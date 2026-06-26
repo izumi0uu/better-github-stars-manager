@@ -6,7 +6,11 @@ import { db, liveStarCount } from '@/storage/db';
 import { queryStars, invalidateCache, type QueryParams, type QueryResult } from './query';
 import { suggestTags } from '@/ui/suggest';
 import { translateError } from '@/api/errors';
-import type { SyncProgress } from '@/types';
+import type { OnboardingStage, SyncProgress } from '@/types';
+import {
+  normalizeOnboardingStage,
+  stageMarksOnboardingSeen,
+} from '@/onboarding/state';
 
 /**
  * Background SW — sync orchestrator and sole owner of the extension-origin
@@ -37,6 +41,7 @@ type Req =
   | { type: 'getTag'; full_name: string }
   | { type: 'listExcluded' }
   | { type: 'markOnboardingSeen' }
+  | { type: 'setOnboardingStage'; stage: OnboardingStage }
   | { type: 'markTooltipSeen'; bit: number }
   | { type: 'testConnection' }
   | { type: 'openOptions' };
@@ -110,10 +115,26 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
 
 async function getStatusPayload() {
   const cfg = await authStore.getConfig();
+  const hasToken = await authStore.hasToken();
+  const onboardingStage = normalizeOnboardingStage(
+    cfg.onboardingStage,
+    cfg.seenOnboarding,
+    hasToken,
+  );
+  if (
+    onboardingStage !== cfg.onboardingStage ||
+    stageMarksOnboardingSeen(onboardingStage) !== cfg.seenOnboarding
+  ) {
+    await authStore.update({
+      onboardingStage,
+      seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
+    });
+  }
   return {
     progress: lastProgress.phase === 'idle' && !lastProgress.message ? cfg.lastSyncProgress : lastProgress,
-    hasToken: await authStore.hasToken(),
-    seenOnboarding: cfg.seenOnboarding,
+    hasToken,
+    onboardingStage,
+    seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
     seenTooltips: cfg.seenTooltips,
     inFlight: !!inFlight,
   };
@@ -197,6 +218,13 @@ async function migrateLanguageTags(): Promise<void> {
     // Flag stays false → retries next SW wakeup. Never throw: must not block SW.
     console.error('[GSM] language-tag migration failed (will retry):', e instanceof Error ? e.message : String(e));
   }
+}
+
+async function setStoredOnboardingStage(stage: OnboardingStage): Promise<void> {
+  await authStore.update({
+    onboardingStage: stage,
+    seenOnboarding: stageMarksOnboardingSeen(stage),
+  });
 }
 
 async function handle(req: Req): Promise<Res> {
@@ -390,7 +418,10 @@ async function handle(req: Req): Promise<Res> {
       case 'listExcluded':
         return { ok: true, data: await idbTagStore.listExcluded() };
       case 'markOnboardingSeen':
-        await authStore.update({ seenOnboarding: true });
+        await setStoredOnboardingStage('done');
+        return { ok: true };
+      case 'setOnboardingStage':
+        await setStoredOnboardingStage(req.stage);
         return { ok: true };
       case 'markTooltipSeen': {
         const cur = (await authStore.getConfig()).seenTooltips;

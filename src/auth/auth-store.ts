@@ -2,6 +2,10 @@ import type { Config } from "@/types";
 import { encrypt, decrypt } from "./crypto";
 import { TOKEN_EMPTY } from "@/api/errors";
 import { probeTokenCapabilities } from "./token-probe";
+import {
+  normalizeOnboardingStage,
+  stageMarksOnboardingSeen,
+} from "@/onboarding/state";
 
 /**
  * Owns the fine-grained PAT lifecycle.
@@ -26,6 +30,7 @@ const DEFAULT_CONFIG: Config = {
   username: null,
   avatarUrl: null,
   displayName: null,
+  onboardingStage: "needs_token",
   seenOnboarding: false,
   seenTooltips: 0,
   langTagMigrationDone: false,
@@ -35,17 +40,32 @@ const DEFAULT_CONFIG: Config = {
 let cache: Config | null = null;
 let plaintextToken: string | null = null; // in-memory only
 
+function withNormalizedOnboarding(config: Config): Config {
+  const hasTokenHint = !!(plaintextToken || config.tokenEncrypted);
+  const onboardingStage = normalizeOnboardingStage(
+    config.onboardingStage,
+    config.seenOnboarding,
+    hasTokenHint,
+  );
+  return {
+    ...config,
+    onboardingStage,
+    seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
+  };
+}
+
 async function read(): Promise<Config> {
   if (cache) return cache;
   const raw = await chrome.storage.local.get(CONFIG_STORAGE_KEY);
   const stored = (raw[CONFIG_STORAGE_KEY] ?? {}) as Partial<Config>;
-  cache = { ...DEFAULT_CONFIG, ...stored };
+  cache = withNormalizedOnboarding({ ...DEFAULT_CONFIG, ...stored });
   return cache;
 }
 
 async function write(next: Config): Promise<void> {
-  cache = next;
-  await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: next });
+  const normalized = withNormalizedOnboarding(next);
+  cache = normalized;
+  await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: normalized });
 }
 
 async function readDecryptedToken(): Promise<string | null> {
@@ -64,7 +84,7 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
 
     const prev = cache;
     const stored = (change.newValue ?? {}) as Partial<Config>;
-    cache = { ...DEFAULT_CONFIG, ...stored };
+    cache = withNormalizedOnboarding({ ...DEFAULT_CONFIG, ...stored });
 
     const tokenChanged =
       prev?.tokenEncrypted !== cache.tokenEncrypted ||
@@ -145,26 +165,34 @@ export const authStore = {
 
     const { cipher, meta } = await encrypt(clean);
     plaintextToken = clean;
+    const current = await read();
+    const onboardingStage =
+      current.onboardingStage === "done" ? "done" : "awaiting_sync";
     await write({
-      ...(await read()),
+      ...current,
       tokenEncrypted: cipher,
       tokenCryptoMeta: meta,
       username: login,
       avatarUrl,
       displayName,
+      onboardingStage,
     });
     return { username: login };
   },
 
   async clearToken(): Promise<void> {
     plaintextToken = null;
+    const current = await read();
+    const onboardingStage =
+      current.onboardingStage === "done" ? "done" : "needs_token";
     await write({
-      ...(await read()),
+      ...current,
       tokenEncrypted: null,
       tokenCryptoMeta: null,
       username: null,
       avatarUrl: null,
       displayName: null,
+      onboardingStage,
     });
   },
 

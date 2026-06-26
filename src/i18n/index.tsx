@@ -637,7 +637,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "Here are the three things you'll use most. Follow along — this shows only once.",
       coachStep1Title: "Sync your stars",
       coachStep1Body:
-        "The Sync button pulls in stars you've starred since your last visit. It runs automatically on first load; click it anytime to refresh.",
+        "Sync pulls in newly starred repos since your last visit. It runs automatically on first load; click it anytime to refresh.",
       coachStep2Title: "Filter by tags",
       coachStep2Body:
         "The Tags sidebar lists all your tags, sorted by how often they're used. Click any tag (the whole row) to filter the list. Hover a tag for the delete button.",

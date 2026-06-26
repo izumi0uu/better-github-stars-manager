@@ -2,6 +2,15 @@
 
 export type Locale = 'en' | 'zh-CN';
 
+export type OnboardingStage =
+  | 'needs_token'
+  | 'awaiting_sync'
+  | 'syncing'
+  | 'sync_failed'
+  | 'empty_library'
+  | 'coach'
+  | 'done';
+
 /** Star metadata stored locally. */
 export interface Star {
   full_name: string;
@@ -56,6 +65,8 @@ export interface Config {
   username: string | null;
   avatarUrl: string | null;
   displayName: string | null;
+  /** Explicit first-run onboarding stage. */
+  onboardingStage: OnboardingStage;
   /** Hides first-run onboarding once the user dismisses it. */
   seenOnboarding: boolean;
   /** Bitmask of one-time button coachmarks already shown. */

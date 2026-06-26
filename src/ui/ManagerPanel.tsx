@@ -18,6 +18,7 @@ import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import { useTheme } from '@/ui/hooks/use-theme';
 import { bgCall, mergeProgressStatus, mergeStatusPatch, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
 import { hidePanel } from '@/content/stars-page/panel-toggle';
+import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnboardingSync } from '@/onboarding/state';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 
@@ -28,6 +29,7 @@ export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
   const f = useFilterStore();
   const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [statusLoaded, setStatusLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [successAction, setSuccessAction] = useState<string | null>(null);
@@ -40,6 +42,19 @@ export function ManagerPanel() {
   const rootRef = useRef<HTMLDivElement>(null);
   const { theme, themeClass, toggle: toggleTheme } = useTheme();
   const { m } = useI18n();
+
+  const setOnboardingStage = async (stage: SyncStatus['onboardingStage']) => {
+    setStatus((cur) => mergeStatusPatch(cur, { onboardingStage: stage }));
+    await bgCall('setOnboardingStage', { stage }).catch(() => {});
+  };
+
+  const finalizeOnboardingAfterSync = async (hasToken: boolean) => {
+    const q = await bgCall<{ grandTotal: number }>('query', {
+      params: { filter: emptyFilter(), offset: 0, limit: 1 },
+    }).catch(() => null);
+    if (!q) return;
+    await setOnboardingStage(resolveOnboardingStageAfterSync(hasToken, q.grandTotal));
+  };
 
   useEffect(() => {
     const m = location.hash.match(/gsm-tag=([^&]+)/);
@@ -56,6 +71,7 @@ export function ManagerPanel() {
       off = onProgress((progress) => setStatus((current) => mergeProgressStatus(current, progress)));
       const st = await bgCall<SyncStatus>('getStatus').catch(() => null);
       setStatus((current) => mergeStatusSnapshot(current, st));
+      setStatusLoaded(true);
       if (st?.hasToken) {
         const q = await bgCall<{ grandTotal: number }>('query', {
           params: { filter: emptyFilter(), offset: 0, limit: 1 },
@@ -63,12 +79,21 @@ export function ManagerPanel() {
         const syncType = pickInitialSyncAction(st, q?.grandTotal ?? 0);
         if (!syncType) return;
         const syncLabel = syncType === 'syncIncremental' ? m.popup.syncIncremental : m.popup.syncFull;
+        const tracksOnboarding = shouldTrackOnboardingSync(st.onboardingStage);
         setPendingAction(syncType);
+        if (tracksOnboarding) await setOnboardingStage('syncing');
         bgCall(syncType)
-          .catch((e) => setInfo(m.manager.syncFailed(syncLabel, e instanceof Error ? e.message : String(e))))
+          .then(async () => {
+            refreshStars();
+            if (tracksOnboarding) await finalizeOnboardingAfterSync(true);
+          })
+          .catch(async (e) => {
+            if (tracksOnboarding) await setOnboardingStage('sync_failed');
+            setInfo(m.manager.syncFailed(syncLabel, e instanceof Error ? e.message : String(e)));
+          })
           .finally(() => setPendingAction((cur) => (cur === syncType ? null : cur)));
       }
-    })();
+    })().finally(() => setStatusLoaded(true));
     return () => off();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -106,15 +131,22 @@ export function ManagerPanel() {
     setPendingAction(type);
     setSuccessAction(null);
     setInfo(null);
+    const tracksOnboarding =
+      (type === 'syncIncremental' || type === 'syncFull') &&
+      !!status &&
+      shouldTrackOnboardingSync(status.onboardingStage);
     try {
+      if (tracksOnboarding) await setOnboardingStage('syncing');
       const result = await bgCall<{ missing?: boolean }>(type);
       refreshStars();
+      if (tracksOnboarding) await finalizeOnboardingAfterSync(!!status?.hasToken);
       if (type === 'gistPull' && result?.missing) {
         setInfo(m.background.gistPullMissing);
       } else {
         flashSuccess(type);
       }
     } catch (e) {
+      if (tracksOnboarding) await setOnboardingStage('sync_failed');
       setInfo(m.manager.syncFailed(label, e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
@@ -140,16 +172,27 @@ export function ManagerPanel() {
   };
 
   const dismissOnboarding = async () => {
-    setStatus((cur) => mergeStatusPatch(cur, { seenOnboarding: true }));
-    await bgCall('markOnboardingSeen').catch(() => {});
+    setCoachStep(null);
+    await setOnboardingStage('done');
   };
 
   const progressActive = !!status?.inFlight && status.progress.phase !== 'idle';
   const syncingNow = !!pendingAction || progressActive;
-  const coachReady = !status?.seenOnboarding && !!status?.hasToken && !syncingNow && !info && rows.length > 0;
   useEffect(() => {
-    if (coachReady && coachStep === null) setCoachStep(0);
-  }, [coachReady, coachStep]);
+    if (!statusLoaded || !status) return;
+    if (status.onboardingStage === 'coach') {
+      if (coachStep === null) setCoachStep(0);
+      return;
+    }
+    if (coachStep !== null) setCoachStep(null);
+  }, [coachStep, status, statusLoaded]);
+
+  useEffect(() => {
+    if (!statusLoaded || !status) return;
+    if (status.onboardingStage !== 'syncing' || syncingNow) return;
+    void finalizeOnboardingAfterSync(status.hasToken);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusLoaded, status?.onboardingStage, status?.hasToken, syncingNow]);
 
   const finishCoach = async () => {
     setCoachStep(null);
@@ -228,7 +271,7 @@ export function ManagerPanel() {
           searchRef={searchRef}
         />
 
-        {status && !status.hasToken && status.seenOnboarding && (
+        {statusLoaded && status && !status.hasToken && status.onboardingStage === 'done' && (
           <div className="flex items-center gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
             <AlertTriangle className="size-4 shrink-0" />
             <span>{m.manager.noTokenBanner}</span>
@@ -261,10 +304,13 @@ export function ManagerPanel() {
           />
 
           <div ref={listRef} data-coach-target="repo" className="no-scrollbar flex-1 overflow-auto">
-            {!status?.seenOnboarding && (coachStep === null) ? (
+            {!statusLoaded || !status ? (
+              <div className="p-10 text-center text-sm text-muted-foreground">
+                {m.common.loading}
+              </div>
+            ) : isOnboardingCardStage(status.onboardingStage) && coachStep === null ? (
               <OnboardingCard
-                hasToken={!!status?.hasToken}
-                syncing={progressActive}
+                stage={status.onboardingStage}
                 failedInfo={info}
                 onOpenOptions={() => bgCall('openOptions').catch(() => {})}
                 onRetry={() => void doSync('syncFull', m.popup.syncFull)}
@@ -355,7 +401,7 @@ export function ManagerPanel() {
 
         <FloatingLocaleToggle drawerOpen={!!selectedStar} />
 
-        {coachStep !== null && (
+        {statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
           <CoachOverlay
             step={coachStep}
             total={3}
@@ -387,15 +433,13 @@ function emptyFilter() {
 }
 
 function OnboardingCard({
-  hasToken,
-  syncing,
+  stage,
   failedInfo,
   onOpenOptions,
   onRetry,
   onDismiss,
 }: {
-  hasToken: boolean;
-  syncing: boolean;
+  stage: SyncStatus['onboardingStage'];
   failedInfo: string | null;
   onOpenOptions: () => void;
   onRetry: () => void;
@@ -411,7 +455,7 @@ function OnboardingCard({
           <h2 className="text-base font-semibold">{m.onboarding.title}</h2>
         </div>
 
-        {!hasToken ? (
+        {stage === 'needs_token' ? (
           <div className="space-y-3 text-muted-foreground">
             <p>{m.onboarding.noTokenBody}</p>
             <ol className="list-decimal space-y-1 pl-5">
@@ -432,7 +476,7 @@ function OnboardingCard({
               {m.onboarding.openOptions}
             </Button>
           </div>
-        ) : failedInfo ? (
+        ) : stage === 'sync_failed' ? (
           <div className="space-y-3 text-muted-foreground">
             <p>
               {m.onboarding.syncFailedBody} <span className="text-destructive">{failedInfo}</span>
@@ -444,11 +488,13 @@ function OnboardingCard({
               </Button>
             </div>
           </div>
-        ) : syncing ? (
+        ) : stage === 'syncing' || stage === 'awaiting_sync' ? (
           <div className="flex items-center gap-2 text-muted-foreground">
             <Spinner className="size-4" />
             <span>{m.onboarding.syncingBody}</span>
           </div>
+        ) : stage === 'empty_library' ? (
+          <p className="text-muted-foreground">{m.manager.emptyState}</p>
         ) : (
           <p className="text-muted-foreground">{m.manager.emptyState}</p>
         )}
