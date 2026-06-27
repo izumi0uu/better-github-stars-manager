@@ -19,18 +19,18 @@ export function resolveFavoriteState(
 export function pruneFavoriteOverrides<T extends { full_name: string }>(
   overrides: Record<string, FavoriteOverrideState>,
   tagsByFullName: Map<string, Tag>,
-  rows: T[],
+  rows?: T[],
 ): Record<string, FavoriteOverrideState> {
   const names = Object.keys(overrides);
   if (names.length === 0) return overrides;
 
-  const rowSet = new Set(rows.map((row) => row.full_name));
+  const rowSet = rows ? new Set(rows.map((row) => row.full_name)) : null;
   let next: Record<string, FavoriteOverrideState> | null = null;
 
   for (const name of names) {
     const state = overrides[name];
     const persisted = !!tagsByFullName.get(name)?.favorite;
-    const shouldDrop = !state.pending && (persisted === state.value || !rowSet.has(name));
+    const shouldDrop = !state.pending && (persisted === state.value || (rowSet ? !rowSet.has(name) : false));
     if (!shouldDrop) continue;
     if (!next) next = { ...overrides };
     delete next[name];

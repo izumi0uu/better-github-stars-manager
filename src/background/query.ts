@@ -2,40 +2,59 @@ import { db } from '@/storage/db';
 import type { Star, Tag } from '@/types';
 import type { FilterState, SortKey } from '@/ui/filter-store';
 
-/**
- * Star query engine (runs in the SW, owns IDB); returns a filtered+sorted window
- * + sidebar facet counts, never the full row set.
- */
+export type StarFilter = Pick<
+  FilterState,
+  'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyFavorite' | 'onlyUntagged' | 'onlyArchived' | 'sortKey' | 'sortDir'
+>;
 
 export interface QueryParams {
-  filter: Pick<
-    FilterState,
-    'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyFavorite' | 'onlyUntagged' | 'sortKey' | 'sortDir'
-  >;
+  filter: StarFilter;
   offset: number;
   limit: number;
 }
 
-export interface QueryResult {
-  rows: Star[];
-  total: number; // filtered total
-  grandTotal: number; // all stars in DB
-  tagsForRows: Record<string, Tag | undefined>;
-  languages: [string, number][]; // facet over ALL stars
+export interface QueryMetaResult {
+  total: number;
+  grandTotal: number;
+  languages: [string, number][];
   tagTree: { name: string; count: number }[];
   tagTotal: number;
 }
 
-let cache: { stars: Star[]; tags: Map<string, Tag>; excluded: Set<string>; version: number } | null = null;
+export interface QueryPageResult {
+  offset: number;
+  limit: number;
+  rows: Star[];
+  tagsForRows: Record<string, Tag | undefined>;
+}
+
+export interface QueryResult extends QueryMetaResult, Omit<QueryPageResult, 'offset' | 'limit'> {}
+
+interface BaseCache {
+  stars: Star[];
+  tags: Map<string, Tag>;
+  excluded: Set<string>;
+  version: number;
+}
+
+interface FilteredCache {
+  key: string;
+  baseVersion: number;
+  filtered: Star[];
+  meta: QueryMetaResult;
+}
+
+let cache: BaseCache | null = null;
+let filteredCache: FilteredCache | null = null;
 let cacheVersion = 0;
 
-/** Invalidate the in-memory cache (called after any sync/write). */
 export function invalidateCache() {
   cacheVersion++;
   cache = null;
+  filteredCache = null;
 }
 
-async function ensureCache() {
+async function ensureCache(): Promise<BaseCache> {
   if (cache && cache.version === cacheVersion) return cache;
   const [stars, tags, tagMeta] = await Promise.all([
     db.stars.toArray(),
@@ -43,10 +62,10 @@ async function ensureCache() {
     db.tagMeta.toArray(),
   ]);
   const tagMap = new Map<string, Tag>();
-  for (const t of tags) tagMap.set(t.full_name, t);
+  for (const tag of tags) tagMap.set(tag.full_name, tag);
   const excluded = new Set<string>();
-  for (const m of tagMeta) {
-    if (m.excluded) excluded.add(m.name);
+  for (const meta of tagMeta) {
+    if (meta.excluded) excluded.add(meta.name);
   }
   cache = { stars, tags: tagMap, excluded, version: cacheVersion };
   return cache;
@@ -72,68 +91,116 @@ function sortRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Star[] {
   });
 }
 
-export async function queryStars(params: QueryParams): Promise<QueryResult> {
-  const { filter, offset, limit } = params;
-  const { stars, tags, excluded } = await ensureCache();
+function buildFilterKey(filter: StarFilter): string {
+  return JSON.stringify(filter);
+}
 
+function filterRows(stars: Star[], tags: Map<string, Tag>, filter: StarFilter): Star[] {
   const q = filter.query.trim().toLowerCase();
   const langSet = filter.languages.length ? new Set(filter.languages) : null;
   const tagSet = filter.tags.length ? new Set(filter.tags) : null;
 
-  const filtered = stars.filter((s) => {
-    if (!filter.showTombstone && s.tombstone) return false;
-    if (langSet && (s.language === null || !langSet.has(s.language))) return false;
-    const tagRecord = tags.get(s.full_name);
+  return stars.filter((star) => {
+    if (!filter.showTombstone && star.tombstone) return false;
+    if (filter.onlyArchived && !star.archived) return false;
+    if (langSet && (star.language === null || !langSet.has(star.language))) return false;
+    const tagRecord = tags.get(star.full_name);
     const myTags = tagRecord?.tags ?? [];
     if (filter.onlyFavorite && !tagRecord?.favorite) return false;
     if (filter.onlyUntagged && myTags.length > 0) return false;
     if (tagSet) {
       if (filter.tagMode === 'all') {
-        if (!filter.tags.every((t) => myTags.includes(t))) return false;
-      } else if (!myTags.some((t) => tagSet.has(t))) return false;
+        if (!filter.tags.every((tag) => myTags.includes(tag))) return false;
+      } else if (!myTags.some((tag) => tagSet.has(tag))) return false;
     }
     if (q) {
       const notes = tagRecord?.notes ?? '';
-      const hay = `${s.full_name} ${s.description} ${s.topics.join(' ')} ${notes}`.toLowerCase();
+      const hay = `${star.full_name} ${star.description} ${star.topics.join(' ')} ${notes}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
+}
 
-  sortRows(filtered, filter.sortKey, filter.sortDir);
-
-  // Languages facet over ALL stars (stable sidebar regardless of filter).
+function buildMeta(stars: Star[], tags: Map<string, Tag>, excluded: Set<string>, total: number): QueryMetaResult {
   const langCounts = new Map<string, number>();
-  for (const s of stars) if (s.language) langCounts.set(s.language, (langCounts.get(s.language) ?? 0) + 1);
+  for (const star of stars) {
+    if (!star.language) continue;
+    langCounts.set(star.language, (langCounts.get(star.language) ?? 0) + 1);
+  }
   const languages: [string, number][] = [...langCounts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 40);
 
-  // Tag tree facet over ALL stars' tags. Excluded (deleted) tags are omitted from
-  // the sidebar tree — they're tombstones, not live filters. The tree is a flat
-  // list sorted by count (no dimension grouping); topic-derived and user-authored
-  // tags sit side by side.
   const tagCounts = new Map<string, number>();
-  for (const t of tags.values()) for (const tag of t.tags) {
-    if (excluded.has(tag)) continue;
-    tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+  for (const tagRecord of tags.values()) {
+    for (const tag of tagRecord.tags) {
+      if (excluded.has(tag)) continue;
+      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+    }
   }
-  const tagTree: QueryResult['tagTree'] = [...tagCounts.entries()]
+  const tagTree = [...tagCounts.entries()]
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
-  // Slice for the requested window.
-  const rows = filtered.slice(offset, offset + limit);
-  const tagsForRows: Record<string, Tag | undefined> = {};
-  for (const r of rows) tagsForRows[r.full_name] = tags.get(r.full_name);
-
   return {
-    rows,
-    total: filtered.length,
+    total,
     grandTotal: stars.length,
-    tagsForRows,
     languages,
     tagTree,
     tagTotal: tagCounts.size,
+  };
+}
+
+async function ensureFilteredCache(filter: StarFilter): Promise<FilteredCache> {
+  const base = await ensureCache();
+  const key = buildFilterKey(filter);
+  if (filteredCache && filteredCache.key === key && filteredCache.baseVersion === base.version) {
+    return filteredCache;
+  }
+
+  const filtered = sortRows(filterRows(base.stars, base.tags, filter), filter.sortKey, filter.sortDir);
+  const meta = buildMeta(base.stars, base.tags, base.excluded, filtered.length);
+  filteredCache = {
+    key,
+    baseVersion: base.version,
+    filtered,
+    meta,
+  };
+  return filteredCache;
+}
+
+export async function queryMeta(filter: StarFilter): Promise<QueryMetaResult> {
+  return (await ensureFilteredCache(filter)).meta;
+}
+
+export async function queryPage(params: QueryParams): Promise<QueryPageResult> {
+  const { filter, offset, limit } = params;
+  const [{ filtered }, { tags }] = await Promise.all([
+    ensureFilteredCache(filter),
+    ensureCache(),
+  ]);
+  const safeOffset = Math.max(0, offset);
+  const safeLimit = Math.max(0, limit);
+  const rows = filtered.slice(safeOffset, safeOffset + safeLimit);
+  const tagsForRows: Record<string, Tag | undefined> = {};
+  for (const row of rows) tagsForRows[row.full_name] = tags.get(row.full_name);
+  return {
+    offset: safeOffset,
+    limit: safeLimit,
+    rows,
+    tagsForRows,
+  };
+}
+
+export async function queryStars(params: QueryParams): Promise<QueryResult> {
+  const [meta, page] = await Promise.all([
+    queryMeta(params.filter),
+    queryPage(params),
+  ]);
+  return {
+    ...meta,
+    rows: page.rows,
+    tagsForRows: page.tagsForRows,
   };
 }

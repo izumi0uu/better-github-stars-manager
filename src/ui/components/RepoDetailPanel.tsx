@@ -20,6 +20,8 @@ import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 
+type DetailTagPatch = Partial<Tag> | null;
+
 /** single-repo detail drawer (tag/note/suggest deep-edit lives here so rows stay compact); flex aside, no portal. */
 export function RepoDetailPanel({
   star,
@@ -27,6 +29,7 @@ export function RepoDetailPanel({
   selectedTags,
   onToggleTag,
   onDataChanged,
+  onLocalTagPatched,
   onClose,
   onPrev,
   onNext,
@@ -38,6 +41,7 @@ export function RepoDetailPanel({
   selectedTags: string[];
   onToggleTag: (tag: string) => void;
   onDataChanged?: () => void;
+  onLocalTagPatched?: (patch: DetailTagPatch) => void;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -136,6 +140,7 @@ export function RepoDetailPanel({
     let ok = false;
     setTagsSavePhase('busy');
     try {
+      onLocalTagPatched?.({ tags: nextTags, mtime: new Date().toISOString() });
       await bgCall('setTags', { full_name: star.full_name, tags: nextTags });
       onDataChanged?.();
       ok = true;
@@ -152,6 +157,7 @@ export function RepoDetailPanel({
     let ok = false;
     setNotesSavePhase('busy');
     try {
+      onLocalTagPatched?.({ notes: nextNotes, mtime: new Date().toISOString() });
       await bgCall('setNotes', { full_name: star.full_name, notes: nextNotes });
       onDataChanged?.();
       ok = true;

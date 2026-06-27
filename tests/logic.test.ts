@@ -81,14 +81,15 @@ test('remote-only repo → added to local', () => {
 });
 
 // --- Filter logic (mirrors query.ts filter) ---
-interface S { full_name: string; description: string; language: string | null; topics: string[]; notes?: string; tombstone: boolean; starred_at: string; pushed_at: string; stargazers_count: number; }
+interface S { full_name: string; description: string; language: string | null; topics: string[]; notes?: string; archived: boolean; tombstone: boolean; starred_at: string; pushed_at: string; stargazers_count: number; }
 
-function filterStars(stars: S[], opts: { query?: string; languages?: string[]; tags?: string[]; showTombstone?: boolean; onlyFavorite?: boolean; onlyUntagged?: boolean; tagsByRepo?: Map<string, string[]>; favoritesByRepo?: Map<string, boolean> }): S[] {
+function filterStars(stars: S[], opts: { query?: string; languages?: string[]; tags?: string[]; showTombstone?: boolean; onlyFavorite?: boolean; onlyUntagged?: boolean; onlyArchived?: boolean; tagsByRepo?: Map<string, string[]>; favoritesByRepo?: Map<string, boolean> }): S[] {
   const q = (opts.query ?? '').toLowerCase();
   const langSet = opts.languages?.length ? new Set(opts.languages) : null;
   const tagSet = opts.tags?.length ? new Set(opts.tags) : null;
   return stars.filter((s) => {
     if (!opts.showTombstone && s.tombstone) return false;
+    if (opts.onlyArchived && !s.archived) return false;
     if (langSet && (s.language === null || !langSet.has(s.language))) return false;
     const myTags = opts.tagsByRepo?.get(s.full_name) ?? [];
     if (opts.onlyFavorite && !opts.favoritesByRepo?.get(s.full_name)) return false;
@@ -104,9 +105,9 @@ function filterStars(stars: S[], opts: { query?: string; languages?: string[]; t
 
 console.log('\nFilter logic (query engine):');
 const sample: S[] = [
-  { full_name: 'a/ai-tool', description: 'AI helper', language: 'Python', topics: ['ai', 'agent'], notes: '', tombstone: false, starred_at: '2026-06-20', pushed_at: '2026-06-19', stargazers_count: 100 },
-  { full_name: 'b/rust-lib', description: 'A rust lib', language: 'Rust', topics: [], notes: 'review later', tombstone: false, starred_at: '2026-06-21', pushed_at: '2026-06-22', stargazers_count: 50 },
-  { full_name: 'c/old', description: 'archived thing', language: 'Python', topics: [], notes: '', tombstone: true, starred_at: '2026-01-01', pushed_at: '2025-01-01', stargazers_count: 5 },
+  { full_name: 'a/ai-tool', description: 'AI helper', language: 'Python', topics: ['ai', 'agent'], notes: '', archived: false, tombstone: false, starred_at: '2026-06-20', pushed_at: '2026-06-19', stargazers_count: 100 },
+  { full_name: 'b/rust-lib', description: 'A rust lib', language: 'Rust', topics: [], notes: 'review later', archived: true, tombstone: false, starred_at: '2026-06-21', pushed_at: '2026-06-22', stargazers_count: 50 },
+  { full_name: 'c/old', description: 'archived thing', language: 'Python', topics: [], notes: '', archived: false, tombstone: true, starred_at: '2026-01-01', pushed_at: '2025-01-01', stargazers_count: 5 },
 ];
 const tagsByRepo = new Map([['a/ai-tool', ['ai']], ['b/rust-lib', ['rust']]]);
 const favoritesByRepo = new Map([['b/rust-lib', true]]);
@@ -139,6 +140,11 @@ test('filter by tag', () => {
 });
 test('onlyFavorite keeps favorited repos only', () => {
   const r = filterStars(sample, { onlyFavorite: true, favoritesByRepo, tagsByRepo });
+  assert.equal(r.length, 1);
+  assert.equal(r[0].full_name, 'b/rust-lib');
+});
+test('onlyArchived keeps archived repos only', () => {
+  const r = filterStars(sample, { onlyArchived: true, favoritesByRepo, tagsByRepo });
   assert.equal(r.length, 1);
   assert.equal(r[0].full_name, 'b/rust-lib');
 });
