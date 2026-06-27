@@ -162,6 +162,10 @@ MIT 许可证 —— 见 [LICENSE](./LICENSE)。
 
 Copyright (c) 2026 izumi0uu.
 
+## Friendly Links
+
+- [Linux.do](https://linux.do/)
+
 ## 参与贡献
 
 欢迎在[仓库](https://github.com/izumi0uu/better-github-stars-manager/issues)提 issue 和 PR。

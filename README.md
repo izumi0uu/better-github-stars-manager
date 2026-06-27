@@ -162,6 +162,10 @@ MIT — see [LICENSE](./LICENSE).
 
 Copyright (c) 2026 izumi0uu.
 
+## Friendly Links
+
+- [Linux.do](https://linux.do/)
+
 ## Contributing
 
 Issues and PRs are welcome at [the repository](https://github.com/izumi0uu/better-github-stars-manager/issues).
