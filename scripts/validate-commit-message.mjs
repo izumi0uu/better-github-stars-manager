@@ -12,14 +12,14 @@ const REQUIRED_TRAILERS = [
 
 const CONVENTIONAL_PREFIX =
   /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?:\s/i;
-const CHORE_PREFIX = /^chore(\([^)]+\))?!?:\s/i;
+const SINGLE_LINE_PREFIX = /^(chore|docs)(\([^)]+\))?!?:\s/i;
 
 export function validateCommitMessage(message) {
   const normalized = message.replace(/\r\n/g, "\n").trimEnd();
   const lines = normalized.split("\n");
   const subject = (lines[0] ?? "").trim();
   const errors = [];
-  const isChore = CHORE_PREFIX.test(subject);
+  const allowsSingleLine = SINGLE_LINE_PREFIX.test(subject);
 
   if (!subject) {
     errors.push("Commit title is required.");
@@ -39,11 +39,11 @@ export function validateCommitMessage(message) {
     }
   }
 
-  if (!isChore && (lines.length < 3 || lines[1].trim() !== "")) {
+  if (!allowsSingleLine && (lines.length < 3 || lines[1].trim() !== "")) {
     errors.push("Commit title must be followed by a blank line.");
   }
 
-  if (!isChore) {
+  if (!allowsSingleLine) {
     for (const trailer of REQUIRED_TRAILERS) {
       if (!lines.some((line) => line.startsWith(`${trailer}: `))) {
         errors.push(`Missing Lore trailer: ${trailer}:`);
@@ -72,6 +72,7 @@ function main() {
   console.error("");
   console.error("Expected shape:");
   console.error("  <type(scope): summary, <=72 chars>");
+  console.error("  Single-line commits are allowed for docs: and chore:");
   console.error("");
   console.error("  Constraint: ...");
   console.error("  Rejected: ...");

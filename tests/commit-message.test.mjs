@@ -41,6 +41,10 @@ test("accepts single-line chore commits without Lore trailers", () => {
   expectValid(`chore(store): update marquee promo asset`);
 });
 
+test("accepts single-line docs commits without Lore trailers", () => {
+  expectValid(`docs(sync): align verification docs`);
+});
+
 test("rejects titles without a conventional commit prefix", () => {
   expectError(`Keep verification docs aligned
 
@@ -65,8 +69,8 @@ Tested: none
 Not-tested: none`, "72 characters or fewer");
 });
 
-test("rejects messages that skip required Lore trailers", () => {
-  expectError(`docs(sync): align verification docs
+test("rejects non-exempt messages that skip required Lore trailers", () => {
+  expectError(`feat(sync): align verification docs
 
 Constraint: docs only`, "Missing Lore trailer: Rejected:");
 });

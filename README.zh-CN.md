@@ -164,7 +164,8 @@ Copyright (c) 2026 izumi0uu.
 
 ## Friendly Links
 
-- [Linux.do](https://linux.do/)
+- [Linux.do](https://linux.do/) [nodeseek](https://www.nodeseek.com/)
+- [xiaoheihe](https://xiaoheihe.cn) [v2ex](https://www.v2ex.com/)
 
 ## 参与贡献
 
