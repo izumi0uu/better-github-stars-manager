@@ -31,12 +31,20 @@ export interface MessageCatalog {
     noTokenBanner: string;
     addPat: string;
     emptyState: string;
+    backfillReleaseTitle: string;
+    backfillReleaseBody: string;
+    backfillReleaseAction: string;
+    backfillReleaseRetry: string;
+    backfillReleaseLater: string;
+    backfillReleaseRunning: string;
+    backfillReleaseFailed: (error: string) => string;
   };
   toolbar: {
     searchPlaceholder: string;
     searchClearTitle: string;
     sortStarredAt: string;
     sortPushedAt: string;
+    sortLatestRelease: string;
     sortStars: string;
     sortName: string;
     toggleSortDir: string;
@@ -356,6 +364,14 @@ const messages: Record<Locale, MessageCatalog> = {
       noTokenBanner: "No GitHub token configured — data cannot load.",
       addPat: "Open options and add a PAT",
       emptyState: "No results. Adjust filters, or click Sync in the toolbar.",
+      backfillReleaseTitle: "Finish release-date metadata",
+      backfillReleaseBody:
+        "This version can sort by latest release time. Run one full sync to backfill release metadata for your existing starred repos.",
+      backfillReleaseAction: "Backfill with Full Sync",
+      backfillReleaseRetry: "Retry full sync",
+      backfillReleaseLater: "Later",
+      backfillReleaseRunning: "Refreshing starred repos and release metadata…",
+      backfillReleaseFailed: (error) => `Backfill failed: ${error}`,
     },
     toolbar: {
       searchPlaceholder:
@@ -363,6 +379,7 @@ const messages: Record<Locale, MessageCatalog> = {
       searchClearTitle: "Clear search",
       sortStarredAt: "Sort by starred date",
       sortPushedAt: "Sort by updated date",
+      sortLatestRelease: "Sort by release date",
       sortStars: "Sort by stars",
       sortName: "Sort by name",
       toggleSortDir: "Toggle sort direction",
@@ -708,12 +725,21 @@ const messages: Record<Locale, MessageCatalog> = {
       noTokenBanner: "未配置 GitHub token — 无法加载数据。",
       addPat: "打开选项页并添加 PAT",
       emptyState: "无结果。调整筛选，或点击工具栏中的 Sync。",
+      backfillReleaseTitle: "补齐 Release 时间数据",
+      backfillReleaseBody:
+        "这个版本新增了按最新 Release 时间排序。跑一次 Full Sync，就能为你现有的 starred 仓库补齐 release 元数据。",
+      backfillReleaseAction: "用 Full Sync 补齐",
+      backfillReleaseRetry: "重试 Full Sync",
+      backfillReleaseLater: "稍后再说",
+      backfillReleaseRunning: "正在刷新 starred 仓库和 release 元数据…",
+      backfillReleaseFailed: (error) => `补齐失败: ${error}`,
     },
     toolbar: {
       searchPlaceholder: "搜索 名称 / 描述 / topics / notes   (按 / 聚焦)",
       searchClearTitle: "清空搜索",
       sortStarredAt: "按 star 时间",
       sortPushedAt: "按更新时间",
+      sortLatestRelease: "按 Release 时间",
       sortStars: "按 star 数",
       sortName: "按名称",
       toggleSortDir: "切换排序方向",

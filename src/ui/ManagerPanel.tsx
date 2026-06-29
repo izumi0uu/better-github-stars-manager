@@ -21,6 +21,7 @@ import { hidePanel } from '@/content/stars-page/panel-toggle';
 import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnboardingSync } from '@/onboarding/state';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
+import type { BackfillId, BackfillState } from '@/types';
 
 const ROW_HEIGHT = 64;
 const GRID_COLS = 'grid-cols-[minmax(180px,1.4fr)_2fr_80px_64px_84px_1.6fr_28px_20px]';
@@ -42,6 +43,12 @@ export function ManagerPanel() {
   const rootRef = useRef<HTMLDivElement>(null);
   const { theme, themeClass, toggle: toggleTheme } = useTheme();
   const { m } = useI18n();
+
+  const refreshStatus = async () => {
+    const next = await bgCall<SyncStatus>('getStatus').catch(() => null);
+    setStatus((current) => mergeStatusSnapshot(current, next));
+    return next;
+  };
 
   const setOnboardingStage = async (stage: SyncStatus['onboardingStage']) => {
     setStatus((cur) => mergeStatusPatch(cur, { onboardingStage: stage }));
@@ -69,8 +76,7 @@ export function ManagerPanel() {
     let off = () => {};
     (async () => {
       off = onProgress((progress) => setStatus((current) => mergeProgressStatus(current, progress)));
-      const st = await bgCall<SyncStatus>('getStatus').catch(() => null);
-      setStatus((current) => mergeStatusSnapshot(current, st));
+      const st = await refreshStatus();
       setStatusLoaded(true);
       if (st?.hasToken) {
         const q = await bgCall<{ grandTotal: number }>('query', {
@@ -85,9 +91,11 @@ export function ManagerPanel() {
         bgCall(syncType)
           .then(async () => {
             refreshStars();
+            await refreshStatus();
             if (tracksOnboarding) await finalizeOnboardingAfterSync(true);
           })
           .catch(async (e) => {
+            await refreshStatus();
             if (tracksOnboarding) await setOnboardingStage('sync_failed');
             setInfo(m.manager.syncFailed(syncLabel, e instanceof Error ? e.message : String(e)));
           })
@@ -139,6 +147,7 @@ export function ManagerPanel() {
       if (tracksOnboarding) await setOnboardingStage('syncing');
       const result = await bgCall<{ missing?: boolean }>(type);
       refreshStars();
+      await refreshStatus();
       if (tracksOnboarding) await finalizeOnboardingAfterSync(!!status?.hasToken);
       if (type === 'gistPull' && result?.missing) {
         setInfo(m.background.gistPullMissing);
@@ -162,6 +171,7 @@ export function ManagerPanel() {
     try {
       await bgCall('autoAssignTags');
       refreshStars();
+      await refreshStatus();
       flashSuccess('autoAssignTags');
     } catch (e) {
       setInfo(m.manager.autoAssignFailed(e instanceof Error ? e.message : String(e)));
@@ -244,6 +254,32 @@ export function ManagerPanel() {
 
   const hasActiveFilter =
     f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged || f.onlyArchived;
+  const activeBackfillId = status?.activeBackfillId ?? null;
+  const activeBackfillState = activeBackfillId ? status?.backfills[activeBackfillId] ?? null : null;
+
+  const runBackfill = async (id: BackfillId) => {
+    setBusy(true);
+    setPendingAction(`backfill:${id}`);
+    setSuccessAction(null);
+    setInfo(null);
+    try {
+      await bgCall('runBackfill', { id });
+      refreshStars();
+      await refreshStatus();
+      flashSuccess(`backfill:${id}`);
+    } catch (e) {
+      await refreshStatus();
+      setInfo(m.manager.syncFailed(m.manager.backfillReleaseAction, e instanceof Error ? e.message : String(e)));
+    } finally {
+      setBusy(false);
+      setPendingAction((cur) => (cur === `backfill:${id}` ? null : cur));
+    }
+  };
+
+  const deferBackfill = async (id: BackfillId) => {
+    await bgCall('deferBackfill', { id }).catch(() => {});
+    await refreshStatus();
+  };
 
   return (
     <PortalProvider containerRef={rootRef}>
@@ -314,6 +350,15 @@ export function ManagerPanel() {
                 failedInfo={info}
                 onOpenOptions={() => bgCall('openOptions').catch(() => {})}
                 onRetry={() => void doSync('syncFull', m.popup.syncFull)}
+              />
+            ) : status.hasToken && activeBackfillId && activeBackfillState && coachStep === null ? (
+              <BackfillCard
+                id={activeBackfillId}
+                state={activeBackfillState}
+                progress={status.progress}
+                actionBusy={busy || !!pendingAction}
+                onRun={() => void runBackfill(activeBackfillId)}
+                onDefer={() => void deferBackfill(activeBackfillId)}
               />
             ) : (
               <>
@@ -493,6 +538,70 @@ function OnboardingCard({
           </div>
         ) : (
           <p className="text-muted-foreground">{m.manager.emptyState}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BackfillCard({
+  id,
+  state,
+  progress,
+  actionBusy,
+  onRun,
+  onDefer,
+}: {
+  id: BackfillId;
+  state: BackfillState;
+  progress: SyncStatus['progress'];
+  actionBusy: boolean;
+  onRun: () => void;
+  onDefer: () => void;
+}) {
+  const { m } = useI18n();
+  const busy = state.status === 'running' || (actionBusy && progress.phase === 'full');
+
+  if (id !== 'release_metadata_v1') return null;
+
+  return (
+    <div className="flex h-full items-center justify-center p-8">
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-sm">
+        <div className="mb-3 flex items-center gap-2 text-foreground">
+          <Sparkles className="size-5 text-primary" />
+          <h2 className="text-base font-semibold">{m.manager.backfillReleaseTitle}</h2>
+        </div>
+
+        {busy ? (
+          <div className="space-y-3 text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Spinner className="size-4" />
+              <span>{progress.message || m.manager.backfillReleaseRunning}</span>
+            </div>
+            <p>{m.manager.backfillReleaseBody}</p>
+          </div>
+        ) : (
+          <div className="space-y-3 text-muted-foreground">
+            <p>{m.manager.backfillReleaseBody}</p>
+            {state.status === 'failed' && state.error && (
+              <p className="text-destructive">{m.manager.backfillReleaseFailed(state.error)}</p>
+            )}
+            <div className="flex gap-2">
+              <Button onClick={onRun} disabled={actionBusy}>
+                {state.status === 'failed' ? (
+                  <>
+                    <RefreshCw className="size-4" data-icon="inline-start" />
+                    {m.manager.backfillReleaseRetry}
+                  </>
+                ) : (
+                  m.manager.backfillReleaseAction
+                )}
+              </Button>
+              <Button variant="ghost" onClick={onDefer} disabled={actionBusy}>
+                {m.manager.backfillReleaseLater}
+              </Button>
+            </div>
+          </div>
         )}
       </div>
     </div>

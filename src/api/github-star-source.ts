@@ -6,14 +6,68 @@ import { getMessages } from '@/i18n';
 import { GH_NO_TOKEN, GH_TOKEN_REJECTED, GH_RATE_LIMIT, GH_FORBIDDEN, GH_TIMEOUT, GH_NETWORK, GH_PAGE_STATUS, GH_BAD_SHAPE } from './errors';
 
 /**
- * GitHub-backed `StarSource` using the authenticated `GET /user/starred`
- * with `star+json` media (which surfaces `starred_at`); pages are pulled
- * concurrently. See `StarSource` for the sync job contract.
+ * GitHub-backed `StarSource`.
+ * - Incremental / rescan keep using authenticated `GET /user/starred`
+ *   with `star+json` media (needed for the existing cursor + tombstone flow).
+ * - Full sync uses GraphQL so release metadata can be hydrated in the same
+ *   page request instead of doing one extra REST call per repo.
+ * See `StarSource` for the sync job contract.
  */
 
 const PER_PAGE = 100;
 const API = 'https://api.github.com';
+const GRAPHQL_API = `${API}/graphql`;
 const WRITE_CHUNK = 500;
+// GitHub GraphQL lets us fetch starred repos and `latestRelease` together,
+// which keeps full sync to one request per page instead of one extra REST
+// request per repo. One boundary to remember: the official docs say
+// `StarredRepositoryConnection.isOverLimit` becomes true when a user's stars
+// list is truncated for very large libraries, so this path should grow an
+// explicit completeness check before we rely on it for huge accounts.
+// Docs: https://docs.github.com/en/graphql/reference/repos#starredrepositoryconnection
+const STARRED_REPOS_WITH_RELEASE_QUERY = `
+  query StarredReposWithRelease($first: Int!, $after: String) {
+    viewer {
+      starredRepositories(
+        first: $first
+        after: $after
+        orderBy: { field: STARRED_AT, direction: DESC }
+      ) {
+        totalCount
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        edges {
+          starredAt
+          node {
+            nameWithOwner
+            url
+            description
+            primaryLanguage {
+              name
+            }
+            stargazerCount
+            repositoryTopics(first: 100) {
+              nodes {
+                topic {
+                  name
+                }
+              }
+            }
+            pushedAt
+            isFork
+            isArchived
+            latestRelease {
+              publishedAt
+              createdAt
+            }
+          }
+        }
+      }
+    }
+  }
+`;
 
 /** Response shape for `star+json` media (starred_at at top level, repo nested — incremental cursor depends on it). */
 interface StarredRepoPayload {
@@ -31,12 +85,67 @@ interface StarredRepoPayload {
   };
 }
 
+interface LatestReleasePayload {
+  published_at?: string | null;
+  created_at?: string | null;
+  publishedAt?: string | null;
+  createdAt?: string | null;
+}
+
+interface GraphQlStarredRepoPayload {
+  starredAt: string;
+  node: {
+    nameWithOwner: string;
+    url: string;
+    description: string | null;
+    primaryLanguage: { name: string } | null;
+    stargazerCount: number;
+    repositoryTopics: {
+      nodes: Array<{
+        topic: { name: string } | null;
+      } | null>;
+    };
+    pushedAt: string | null;
+    isFork: boolean;
+    isArchived: boolean;
+    latestRelease: LatestReleasePayload | null;
+  } | null;
+}
+
+interface GraphQlStarredPagePayload {
+  totalCount: number;
+  pageInfo: {
+    hasNextPage: boolean;
+    endCursor: string | null;
+  };
+  edges: GraphQlStarredRepoPayload[];
+}
+
+interface GraphQlEnvelope {
+  data?: {
+    viewer?: {
+      starredRepositories?: GraphQlStarredPagePayload;
+    };
+  };
+  errors?: Array<{ message?: string }>;
+}
+
 async function authHeaders(): Promise<HeadersInit> {
   const token = await authStore.getToken();
   if (!token) throw new Error(GH_NO_TOKEN);
   return {
     Authorization: `Bearer ${token}`,
     Accept: 'application/vnd.github.star+json', // includes starred_at in each item
+  };
+}
+
+async function graphQlHeaders(): Promise<HeadersInit> {
+  const token = await authStore.getToken();
+  if (!token) throw new Error(GH_NO_TOKEN);
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github+json',
+    'Content-Type': 'application/json',
   };
 }
 
@@ -95,6 +204,47 @@ async function fetchPage(page: number): Promise<{ items: StarredRepoPayload[]; l
   return { items, link: res.headers.get('link') };
 }
 
+async function fetchGraphQlPage(after: string | null): Promise<GraphQlStarredPagePayload> {
+  const { signal, cancel } = withTimeout(30_000);
+  let res: Response;
+  try {
+    res = await fetch(GRAPHQL_API, {
+      method: 'POST',
+      headers: await graphQlHeaders(),
+      body: JSON.stringify({
+        query: STARRED_REPOS_WITH_RELEASE_QUERY,
+        variables: {
+          first: PER_PAGE,
+          after,
+        },
+      }),
+      cache: 'no-store',
+      signal,
+    });
+  } catch (e) {
+    cancel();
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error(`${GH_TIMEOUT}graphql`);
+    }
+    throw new Error(`${GH_NETWORK}${e instanceof Error ? e.message : String(e)}`);
+  }
+  cancel();
+  if (res.status === 401) throw new Error(GH_TOKEN_REJECTED);
+  if (res.status === 403) {
+    const remaining = res.headers.get('x-ratelimit-remaining');
+    if (remaining === '0') throw new Error(GH_RATE_LIMIT);
+    throw new Error(GH_FORBIDDEN);
+  }
+  if (!res.ok) throw new Error(`${GH_PAGE_STATUS}${res.status}`);
+  const body = (await res.json()) as GraphQlEnvelope;
+  if (body.errors?.length) {
+    throw new Error(body.errors.map((err) => err.message || 'Unknown GraphQL error').join('; '));
+  }
+  const page = body.data?.viewer?.starredRepositories;
+  if (!page) throw new Error(GH_BAD_SHAPE);
+  return page;
+}
+
 function retryableErrorCode(raw: string): boolean {
   if (raw.startsWith(GH_TIMEOUT) || raw.startsWith(GH_NETWORK)) return true;
   if (!raw.startsWith(GH_PAGE_STATUS)) return false;
@@ -120,6 +270,24 @@ async function fetchPageWithRetry(
   throw new Error(`${GH_TIMEOUT}${page}`);
 }
 
+async function fetchGraphQlPageWithRetry(
+  after: string | null,
+  onRetry?: (attempt: number) => void,
+  maxAttempts = 3,
+): Promise<GraphQlStarredPagePayload> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fetchGraphQlPage(after);
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      if (!retryableErrorCode(raw) || attempt === maxAttempts) throw e;
+      onRetry?.(attempt + 1);
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw new Error(`${GH_TIMEOUT}graphql`);
+}
+
 export function toStar(it: StarredRepoPayload): Star {
   const r = it.repo;
   return {
@@ -133,6 +301,8 @@ export function toStar(it: StarredRepoPayload): Star {
     fork: r.fork,
     archived: r.archived,
     starred_at: it.starred_at,
+    latest_release_at: null,
+    latest_release_synced_at: null,
     tombstone: false,
     synced_at: new Date().toISOString(),
   };
@@ -162,10 +332,107 @@ async function fetchPages(
 }
 
 async function bulkPutStars(stars: Star[]): Promise<void> {
-  for (let i = 0; i < stars.length; i += WRITE_CHUNK) {
-    await db.stars.bulkPut(stars.slice(i, i + WRITE_CHUNK));
+  const existing = await db.stars.bulkGet(stars.map((star) => star.full_name));
+  const merged = stars.map((star, index) => {
+    const prev = existing[index];
+    if (!prev || star.latest_release_at !== null || star.latest_release_synced_at !== null) return star;
+    return {
+      ...star,
+      latest_release_at: prev.latest_release_at,
+      latest_release_synced_at: prev.latest_release_synced_at,
+    };
+  });
+  for (let i = 0; i < merged.length; i += WRITE_CHUNK) {
+    await db.stars.bulkPut(merged.slice(i, i + WRITE_CHUNK));
     if (i + WRITE_CHUNK < stars.length) await Promise.resolve();
   }
+}
+
+function parseReleaseTimestamp(body: LatestReleasePayload): string | null {
+  return body.published_at ?? body.publishedAt ?? body.created_at ?? body.createdAt ?? null;
+}
+
+function toStarFromGraphQl(it: GraphQlStarredRepoPayload, latestReleaseSyncedAt: string): Star {
+  const repo = it.node;
+  if (!repo) throw new Error(GH_BAD_SHAPE);
+  return {
+    full_name: repo.nameWithOwner,
+    html_url: repo.url,
+    description: repo.description ?? '',
+    language: repo.primaryLanguage?.name ?? null,
+    stargazers_count: repo.stargazerCount,
+    topics: repo.repositoryTopics.nodes.flatMap((node) => node?.topic?.name ? [node.topic.name] : []),
+    pushed_at: repo.pushedAt ?? it.starredAt,
+    fork: repo.isFork,
+    archived: repo.isArchived,
+    starred_at: it.starredAt,
+    latest_release_at: parseReleaseTimestamp(repo.latestRelease ?? {}),
+    latest_release_synced_at: latestReleaseSyncedAt,
+    tombstone: false,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+async function fetchLatestReleaseAt(
+  fullName: string,
+  headers: HeadersInit,
+): Promise<string | null> {
+  const { signal, cancel } = withTimeout(15_000);
+  try {
+    const res = await fetch(`${API}/repos/${fullName}/releases/latest`, {
+      headers: {
+        ...headers,
+        Accept: 'application/vnd.github+json',
+      },
+      cache: 'no-store',
+      signal,
+    });
+    if (res.status === 404) return null;
+    if (res.status === 401) throw new Error(GH_TOKEN_REJECTED);
+    if (res.status === 403) {
+      const remaining = res.headers.get('x-ratelimit-remaining');
+      if (remaining === '0') throw new Error(GH_RATE_LIMIT);
+      throw new Error(GH_FORBIDDEN);
+    }
+    if (!res.ok) throw new Error(`${GH_PAGE_STATUS}${res.status}`);
+    return parseReleaseTimestamp((await res.json()) as LatestReleasePayload);
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error(`${GH_TIMEOUT}release:${fullName}`);
+    }
+    throw e;
+  } finally {
+    cancel();
+  }
+}
+
+export async function hydrateLatestReleaseDates(fullNames: string[]): Promise<{ updated: number }> {
+  const unique = [...new Set(fullNames)].filter(Boolean);
+  if (unique.length === 0) return { updated: 0 };
+  const headers = await authHeaders();
+  const existing = await db.stars.bulkGet(unique);
+  const updates: Star[] = [];
+  let idx = 0;
+  const workerCount = Math.min(6, unique.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (idx < unique.length) {
+      const current = idx;
+      idx++;
+      const fullName = unique[current];
+      const row = existing[current];
+      if (!row) continue;
+      const checkedAt = new Date().toISOString();
+      const latestReleaseAt = await fetchLatestReleaseAt(fullName, headers);
+      updates.push({
+        ...row,
+        latest_release_at: latestReleaseAt,
+        latest_release_synced_at: checkedAt,
+      });
+    }
+  });
+  await Promise.all(workers);
+  if (updates.length > 0) await bulkPutStars(updates);
+  return { updated: updates.length };
 }
 
 export const githubStarSource: StarSource = {
@@ -177,33 +444,36 @@ export const githubStarSource: StarSource = {
 
   async syncFull(onProgress) {
     const m = await getLocaleMessages();
-    const first = await fetchPageWithRetry(1, (attempt) => {
+    const checkedAt = new Date().toISOString();
+    const first = await fetchGraphQlPageWithRetry(null, (attempt) => {
       onProgress?.({ phase: 'full', done: 0, total: null, message: m.background.fetchingPageRetry(1, attempt) });
     });
-    const total = lastPage(first.link) ?? 1;
+    const total = Math.max(1, Math.ceil(first.totalCount / PER_PAGE));
     onProgress?.({ phase: 'full', done: 1, total, message: m.background.fetchingPages(total) });
 
-    // We already have page 1; fetch the rest concurrently.
-    const restPages = total > 1 ? Array.from({ length: total - 1 }, (_, i) => i + 2) : [];
+    const edges: GraphQlStarredRepoPayload[] = [...first.edges];
     let fetched = 1;
-    const rest = await fetchPages(
-      restPages,
-      () => {
-        fetched++;
-        onProgress?.({ phase: 'full', done: fetched, total, message: m.background.fetchingPages(total) });
-      },
-      (page, attempt) => {
-        onProgress?.({ phase: 'full', done: fetched, total, message: m.background.fetchingPageRetry(page, attempt) });
-      },
-    );
-    const all = [...first.items, ...rest.flat()];
+    let cursor = first.pageInfo.endCursor;
+    while (first.totalCount > 0 && cursor && fetched < total) {
+      const nextPageNumber = fetched + 1;
+      const page = await fetchGraphQlPageWithRetry(cursor, (attempt) => {
+        onProgress?.({ phase: 'full', done: fetched, total, message: m.background.fetchingPageRetry(nextPageNumber, attempt) });
+      });
+      edges.push(...page.edges);
+      fetched++;
+      cursor = page.pageInfo.endCursor;
+      onProgress?.({ phase: 'full', done: fetched, total, message: m.background.fetchingPages(total) });
+      if (!page.pageInfo.hasNextPage) break;
+    }
 
     // Bulk upsert. Dexie bulkPut is the fastest path.
-    const stars = all.map(toStar);
+    const stars = edges
+      .filter((edge) => edge.node)
+      .map((edge) => toStarFromGraphQl(edge, checkedAt));
     await bulkPutStars(stars);
 
     // Advance the incremental cursor to the newest starred_at.
-    const newest = all[0]?.starred_at ?? new Date().toISOString();
+    const newest = edges[0]?.starredAt ?? new Date().toISOString();
     await authStore.update({ lastSyncStarredAt: newest });
 
     onProgress?.({ phase: 'full', done: total, total, message: m.background.syncedRepos(stars.length) });

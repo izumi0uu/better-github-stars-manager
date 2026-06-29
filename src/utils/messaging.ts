@@ -4,7 +4,8 @@ import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
 } from '@/onboarding/state';
-import type { OnboardingStage } from '@/types';
+import { normalizeBackfillMap, selectActiveBackfillId } from '@/upgrades/backfill-state';
+import type { BackfillId, BackfillMap, OnboardingStage } from '@/types';
 
 export interface SyncStatus {
   progress: {
@@ -19,6 +20,10 @@ export interface SyncStatus {
   seenOnboarding: boolean;
   /** Bitmask of one-time action-button coachmarks shown (bit0=Sync, 1=Push, 2=Pull). */
   seenTooltips: number;
+  /** One-shot data backfills keyed by feature, not app version. */
+  backfills: BackfillMap;
+  /** Highest-priority backfill that still needs user attention. */
+  activeBackfillId: BackfillId | null;
   /** True while the background is still holding an active serialized job. */
   inFlight: boolean;
 }
@@ -34,12 +39,15 @@ export function mergeProgressStatus(
     current?.seenOnboarding,
     hasToken,
   );
+  const backfills = normalizeBackfillMap(current?.backfills);
   return {
     progress,
     hasToken,
     onboardingStage,
     seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
     seenTooltips: current?.seenTooltips ?? 0,
+    backfills,
+    activeBackfillId: selectActiveBackfillId(backfills),
     inFlight: progress.phase !== 'idle',
   };
 }
@@ -55,6 +63,8 @@ export function mergeStatusPatch(
     onboardingStage: fallbackHasToken ? 'awaiting_sync' : 'needs_token',
     seenOnboarding: false,
     seenTooltips: 0,
+    backfills: {},
+    activeBackfillId: null,
     inFlight: false,
   };
   const hasToken = patch.hasToken ?? base.hasToken;
@@ -63,12 +73,15 @@ export function mergeStatusPatch(
     patch.seenOnboarding ?? base.seenOnboarding,
     hasToken,
   );
+  const backfills = normalizeBackfillMap(patch.backfills ?? base.backfills);
   return {
     ...base,
     ...patch,
     hasToken,
     onboardingStage,
     seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
+    backfills,
+    activeBackfillId: selectActiveBackfillId(patch.backfills ?? base.backfills),
     progress: patch.progress ?? base.progress,
   };
 }
@@ -93,6 +106,8 @@ export function mergeStatusSnapshot(current: SyncStatus | null, snapshot: SyncSt
     ),
     seenOnboarding: false,
     seenTooltips: snapshot.seenTooltips ?? current?.seenTooltips ?? 0,
+    backfills: normalizeBackfillMap(snapshot.backfills ?? current?.backfills),
+    activeBackfillId: selectActiveBackfillId(snapshot.backfills ?? current?.backfills),
     inFlight: keepLiveProgress ? true : snapshot.inFlight ?? current?.inFlight ?? snapshot.progress.phase !== 'idle',
   };
   merged.seenOnboarding = stageMarksOnboardingSeen(merged.onboardingStage);

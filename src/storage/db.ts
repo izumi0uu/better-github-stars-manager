@@ -27,6 +27,12 @@ export class StarsDB extends Dexie {
       tags: 'full_name, *tags, mtime',
       tagMeta: 'name, dimension, mtime',
     });
+    // v3: stars gained latest-release metadata for release-date sorting.
+    this.version(3).stores({
+      stars: 'full_name, language, starred_at, pushed_at, latest_release_at, tombstone',
+      tags: 'full_name, *tags, mtime',
+      tagMeta: 'name, dimension, mtime',
+    });
   }
 }
 
