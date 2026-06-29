@@ -2,8 +2,8 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { deleteSyncGists } from './gist-sync-admin.mjs';
-import { launchExtensionBrowser } from './puppeteer-runtime.mjs';
+import { deleteSyncGists } from '../ops/gist-sync-admin.mjs';
+import { launchExtensionBrowser } from '../../runtime/puppeteer-runtime.mjs';
 
 const DIST = path.resolve(process.cwd(), 'dist');
 const RESET_GIST = process.env.GSM_RESET_GIST === '1';

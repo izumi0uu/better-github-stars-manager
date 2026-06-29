@@ -5,9 +5,9 @@ import {
   TOKEN_PROFILE_STATUS,
   TOKEN_STARS_STATUS,
   translateError,
-} from '../src/api/errors';
-import { probeTokenCapabilities } from '../src/auth/token-probe';
-import { mergeStatusPatch, mergeStatusSnapshot, type SyncStatus } from '../src/utils/messaging';
+} from '../../../src/api/errors';
+import { probeTokenCapabilities } from '../../../src/auth/token-probe';
+import { mergeStatusPatch, mergeStatusSnapshot, type SyncStatus } from '../../../src/utils/messaging';
 
 function response(status: number, body?: unknown, headers?: Record<string, string>): Response {
   return new Response(body === undefined ? null : JSON.stringify(body), { status, headers });
@@ -84,7 +84,7 @@ function fakeMessages() {
 const chromeMock = createChromeMock();
 (globalThis as { chrome?: unknown }).chrome = chromeMock.api;
 const originalFetch = globalThis.fetch;
-const { authStore } = await import('../src/auth/auth-store');
+const { authStore } = await import('../../../src/auth/auth-store');
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -102,6 +102,8 @@ describe('Status/token regressions', () => {
       onboardingStage: 'syncing',
       seenOnboarding: false,
       seenTooltips: 0,
+      backfills: {},
+      activeBackfillId: null,
       inFlight: true,
     };
     const next = mergeStatusPatch(current, { seenTooltips: 2 });
@@ -118,6 +120,8 @@ describe('Status/token regressions', () => {
       onboardingStage: 'syncing',
       seenOnboarding: true,
       seenTooltips: 3,
+      backfills: {},
+      activeBackfillId: null,
       inFlight: true,
     };
     const snapshot: SyncStatus = {
@@ -126,6 +130,8 @@ describe('Status/token regressions', () => {
       onboardingStage: 'coach',
       seenOnboarding: true,
       seenTooltips: 3,
+      backfills: {},
+      activeBackfillId: null,
       inFlight: false,
     };
     const merged = mergeStatusSnapshot(current, snapshot);
@@ -228,5 +234,6 @@ describe('Status/token regressions', () => {
     const cfg = await authStore.getConfig();
     assert.equal(cfg.autoTagLimit, 5);
     assert.equal(cfg.starsPanelDefaultEnabled, true);
+    assert.deepEqual(cfg.backfills, {});
   });
 });

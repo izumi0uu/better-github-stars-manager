@@ -3,13 +3,13 @@
 import { existsSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { deleteSyncGists } from './gist-sync-admin.mjs';
-import { launchExtensionBrowser } from './puppeteer-runtime.mjs';
+import { deleteSyncGists } from '../ops/gist-sync-admin.mjs';
+import { launchExtensionBrowser } from '../../runtime/puppeteer-runtime.mjs';
 
 const TOKEN = process.env.GH_TOKEN;
 if (!TOKEN) {
   console.error('❌ Set GH_TOKEN env var (do NOT pass it on the command line):');
-  console.error('   GH_TOKEN=<pat> node tests/verify-chrome.mjs');
+  console.error('   GH_TOKEN=<pat> node tests/manual/e2e/verify-chrome.mjs');
   process.exit(1);
 }
 

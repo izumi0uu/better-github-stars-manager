@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
-import { runSyncActionWithAutoTag } from '../src/background/sync-flow.ts';
+import { runSyncActionWithAutoTag } from '../../src/background/sync-flow.ts';
 
 describe('Sync flow orchestration', () => {
   it('syncIncremental runs sync first, then auto-tag', async () => {

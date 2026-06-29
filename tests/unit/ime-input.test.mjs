@@ -3,7 +3,7 @@ import { describe, it } from 'vitest';
 import {
   isImeComposing,
   shouldIgnoreImeAction,
-} from '../src/ui/hooks/use-ime-input.ts';
+} from '../../src/ui/hooks/use-ime-input.ts';
 
 describe('IME helpers', () => {
   it('detects the native composition flag', () => {
