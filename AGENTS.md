@@ -28,6 +28,7 @@ Keep this file short and practical. Add rules here only when they are core to th
 ## Data Rules
 
 - UI-only behavior changes do not need a storage upgrade.
+- Unless `package.json` version has already changed in the current worktree, treat new feature work as unreleased. Do not add compatibility code for hypothetical previously shipped users unless the user explicitly says the behavior has already been released.
 - A new lightweight preference in `Config` should be added with a safe default and normalized on read. This usually does not need a DB bump.
 - A new persisted field on `Star`, `Tag`, or `TagMeta` requires:
   - updating `src/types/index.ts`

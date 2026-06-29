@@ -9,7 +9,12 @@ export interface BackfillTaskDef {
   detectNeed: () => Promise<boolean>;
 }
 
-async function needsReleaseMetadataBackfill(): Promise<boolean> {
+/**
+ * The current completeness marker is `latest_release_synced_at`. If it is
+ * missing on live rows, the library predates the newer repo-metadata sync path
+ * and needs one full refresh to normalize local data.
+ */
+async function needsRepoDataSyncBackfill(): Promise<boolean> {
   const firstMissing = await db.stars
     .toCollection()
     .filter((star) => !star.tombstone && star.latest_release_synced_at == null)
@@ -18,11 +23,11 @@ async function needsReleaseMetadataBackfill(): Promise<boolean> {
 }
 
 export const backfillTasks: Record<BackfillId, BackfillTaskDef> = {
-  release_metadata_v1: {
-    id: 'release_metadata_v1',
-    kind: 'lazy_remote',
+  repo_data_sync_v1: {
+    id: 'repo_data_sync_v1',
+    kind: 'full_sync',
     severity: 'notice',
-    detectNeed: needsReleaseMetadataBackfill,
+    detectNeed: needsRepoDataSyncBackfill,
   },
 };
 

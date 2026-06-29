@@ -29,7 +29,7 @@ afterAll(async () => {
 });
 
 describe('Backfill regressions', () => {
-  it('marks release backfill pending when legacy live rows are missing sync metadata', async () => {
+  it('marks repo data sync backfill pending when legacy live rows are missing sync metadata', async () => {
     await db.stars.put({
       ...base,
       full_name: 'legacy/repo',
@@ -39,11 +39,11 @@ describe('Backfill regressions', () => {
     } as unknown as Star);
 
     const next = await reconcileBackfillMap({});
-    assert.equal(next.release_metadata_v1?.status, 'pending');
-    assert.equal(selectActiveBackfillId(next), 'release_metadata_v1');
+    assert.equal(next.repo_data_sync_v1?.status, 'pending');
+    assert.equal(selectActiveBackfillId(next), 'repo_data_sync_v1');
   });
 
-  it('keeps release backfill done after later rows arrive without release metadata', async () => {
+  it('keeps repo data sync backfill done after later rows arrive without release metadata', async () => {
     await db.stars.put({
       ...base,
       full_name: 'new/repo',
@@ -53,7 +53,7 @@ describe('Backfill regressions', () => {
     } as Star);
 
     const next = await reconcileBackfillMap({
-      release_metadata_v1: {
+      repo_data_sync_v1: {
         status: 'done',
         queuedAt: '2026-06-22T00:00:00Z',
         lastAttemptAt: '2026-06-22T00:00:00Z',
@@ -61,13 +61,13 @@ describe('Backfill regressions', () => {
         error: null,
       },
     });
-    assert.equal(next.release_metadata_v1?.status, 'done');
+    assert.equal(next.repo_data_sync_v1?.status, 'done');
     assert.equal(selectActiveBackfillId(next), null);
   });
 
   it('does not surface deferred backfills as active cards', async () => {
     const active = selectActiveBackfillId({
-      release_metadata_v1: {
+      repo_data_sync_v1: {
         status: 'deferred',
         queuedAt: '2026-06-22T00:00:00Z',
         lastAttemptAt: null,
