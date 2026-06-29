@@ -205,6 +205,7 @@ export function Toolbar({
           <SelectContent>
             <SelectItem value="starred_at">{m.toolbar.sortStarredAt}</SelectItem>
             <SelectItem value="pushed_at">{m.toolbar.sortPushedAt}</SelectItem>
+            <SelectItem value="latest_release_at">{m.toolbar.sortLatestRelease}</SelectItem>
             <SelectItem value="stargazers_count">{m.toolbar.sortStars}</SelectItem>
             <SelectItem value="name">{m.toolbar.sortName}</SelectItem>
           </SelectContent>

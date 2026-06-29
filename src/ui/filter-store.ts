@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type SortKey = 'starred_at' | 'pushed_at' | 'stargazers_count' | 'name';
+export type SortKey = 'starred_at' | 'pushed_at' | 'latest_release_at' | 'stargazers_count' | 'name';
 export type SortDir = 'asc' | 'desc';
 
 export interface FilterState {

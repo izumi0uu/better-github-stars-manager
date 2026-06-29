@@ -11,6 +11,7 @@ import {
   normalizeAutoTagLimit,
   normalizeStarsPanelDefaultEnabled,
 } from "@/preferences";
+import { normalizeBackfillMap } from "@/upgrades/backfill-state";
 
 /**
  * Owns the fine-grained PAT lifecycle.
@@ -42,6 +43,7 @@ const DEFAULT_CONFIG: Config = {
   starsPanelDefaultEnabled: true,
   langTagMigrationDone: false,
   lastSyncProgress: { phase: "idle", done: 0, total: null, message: "" },
+  backfills: {},
 };
 
 let cache: Config | null = null;
@@ -60,6 +62,7 @@ function withNormalizedOnboarding(config: Config): Config {
     starsPanelDefaultEnabled: normalizeStarsPanelDefaultEnabled(
       config.starsPanelDefaultEnabled,
     ),
+    backfills: normalizeBackfillMap(config.backfills),
     onboardingStage,
     seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
   };

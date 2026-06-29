@@ -11,6 +11,25 @@ export type OnboardingStage =
   | 'coach'
   | 'done';
 
+export type BackfillId = 'release_metadata_v1';
+
+export type BackfillStatus =
+  | 'pending'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'deferred';
+
+export interface BackfillState {
+  status: BackfillStatus;
+  queuedAt: string | null;
+  lastAttemptAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+}
+
+export type BackfillMap = Partial<Record<BackfillId, BackfillState>>;
+
 /** Star metadata stored locally. */
 export interface Star {
   full_name: string;
@@ -23,6 +42,10 @@ export interface Star {
   fork: boolean;
   archived: boolean;
   starred_at: string;
+  /** Latest known release date for the repo (published_at preferred, created_at fallback). */
+  latest_release_at: string | null;
+  /** Timestamp of the last attempt to hydrate latest_release_at. */
+  latest_release_synced_at: string | null;
   /** True once a full rescan no longer sees this repo in /user/starred. */
   tombstone: boolean;
   synced_at: string;
@@ -82,6 +105,8 @@ export interface Config {
   /** Last sync snapshot mirrored from the background so reopened surfaces can
    *  still show progress/error context after a long-running job or SW wake. */
   lastSyncProgress: SyncProgress;
+  /** One-shot data-capability backfills keyed by feature, not app version. */
+  backfills: BackfillMap;
 }
 
 export interface CryptoMeta {
