@@ -1,18 +1,7 @@
-// Regression: the star+json response nests repo in a .repo object; old code read
-// item.full_name (undefined) and produced broken IDB keys.
-//
-// Run: pnpm exec tsx tests/shape.test.ts
+import assert from 'node:assert/strict';
+import { describe, it } from 'vitest';
 import { toStar } from '../src/api/github-star-source';
 
-const pass: string[] = [];
-const fail: string[] = [];
-function test(name: string, fn: () => void) {
-  try { fn(); pass.push(name); console.log(`  ✓ ${name}`); }
-  catch (e) { fail.push(name); console.log(`  ✗ ${name}\n    ${(e as Error).message}`); }
-}
-function assert(c: unknown, msg: string) { if (!c) throw new Error(msg); }
-
-// Real shape from the GitHub API (captured via curl).
 const payload = {
   starred_at: '2026-06-22T03:21:01Z',
   repo: {
@@ -28,27 +17,30 @@ const payload = {
   },
 };
 
-console.log('Payload shape regression (nested repo):');
-test('toStar extracts full_name from nested repo (not undefined)', () => {
-  const star = toStar(payload as never);
-  assert(star.full_name === 'alchaincyf/loop-engineering-orange-book', `full_name was: ${star.full_name}`);
-});
-test('toStar extracts starred_at from the top level', () => {
-  const star = toStar(payload as never);
-  assert(star.starred_at === '2026-06-22T03:21:01Z', `starred_at was: ${star.starred_at}`);
-});
-test('toStar maps all repo fields + sets tombstone=false', () => {
-  const star = toStar(payload as never);
-  assert(star.language === 'TypeScript', 'language');
-  assert(star.stargazers_count === 42, 'stars');
-  assert(star.topics.length === 2, 'topics');
-  assert(star.tombstone === false, 'tombstone default');
-  assert(typeof star.synced_at === 'string' && star.synced_at.length > 0, 'synced_at set');
-});
-test('full_name is a valid IDB key (string, non-empty)', () => {
-  const star = toStar(payload as never);
-  assert(typeof star.full_name === 'string' && star.full_name.length > 0, 'not a valid key');
-});
+describe('Payload shape regression', () => {
+  it('toStar extracts full_name from nested repo (not undefined)', () => {
+    const star = toStar(payload as never);
+    assert.equal(star.full_name, 'alchaincyf/loop-engineering-orange-book');
+  });
 
-console.log(fail.length ? `\n❌ ${fail.length} FAILED` : '\n✅ All shape tests passed');
-process.exit(fail.length ? 1 : 0);
+  it('toStar extracts starred_at from the top level', () => {
+    const star = toStar(payload as never);
+    assert.equal(star.starred_at, '2026-06-22T03:21:01Z');
+  });
+
+  it('toStar maps all repo fields + sets tombstone=false', () => {
+    const star = toStar(payload as never);
+    assert.equal(star.language, 'TypeScript');
+    assert.equal(star.stargazers_count, 42);
+    assert.equal(star.topics.length, 2);
+    assert.equal(star.tombstone, false);
+    assert.equal(typeof star.synced_at, 'string');
+    assert.ok(star.synced_at.length > 0);
+  });
+
+  it('full_name is a valid IDB key (string, non-empty)', () => {
+    const star = toStar(payload as never);
+    assert.equal(typeof star.full_name, 'string');
+    assert.ok(star.full_name.length > 0);
+  });
+});
