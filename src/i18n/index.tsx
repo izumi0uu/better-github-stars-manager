@@ -31,13 +31,13 @@ export interface MessageCatalog {
     noTokenBanner: string;
     addPat: string;
     emptyState: string;
-    backfillReleaseTitle: string;
-    backfillReleaseBody: string;
-    backfillReleaseAction: string;
-    backfillReleaseRetry: string;
-    backfillReleaseLater: string;
-    backfillReleaseRunning: string;
-    backfillReleaseFailed: (error: string) => string;
+    backfillSyncTitle: string;
+    backfillSyncBody: string;
+    backfillSyncAction: string;
+    backfillSyncRetry: string;
+    backfillSyncLater: string;
+    backfillSyncRunning: string;
+    backfillSyncFailed: (error: string) => string;
   };
   toolbar: {
     searchPlaceholder: string;
@@ -364,14 +364,14 @@ const messages: Record<Locale, MessageCatalog> = {
       noTokenBanner: "No GitHub token configured — data cannot load.",
       addPat: "Open options and add a PAT",
       emptyState: "No results. Adjust filters, or click Sync in the toolbar.",
-      backfillReleaseTitle: "Finish release-date metadata",
-      backfillReleaseBody:
-        "This version can sort by latest release time. Run one full sync to backfill release metadata for your existing starred repos.",
-      backfillReleaseAction: "Backfill with Full Sync",
-      backfillReleaseRetry: "Retry full sync",
-      backfillReleaseLater: "Later",
-      backfillReleaseRunning: "Refreshing starred repos and release metadata…",
-      backfillReleaseFailed: (error) => `Backfill failed: ${error}`,
+      backfillSyncTitle: "Sync your data",
+      backfillSyncBody:
+        "This update needs one full sync for your existing starred repos before everything is fully up to date.",
+      backfillSyncAction: "Run Full Sync",
+      backfillSyncRetry: "Retry sync",
+      backfillSyncLater: "Later",
+      backfillSyncRunning: "Syncing your data…",
+      backfillSyncFailed: (error) => `Sync failed: ${error}`,
     },
     toolbar: {
       searchPlaceholder:
@@ -725,14 +725,14 @@ const messages: Record<Locale, MessageCatalog> = {
       noTokenBanner: "未配置 GitHub token — 无法加载数据。",
       addPat: "打开选项页并添加 PAT",
       emptyState: "无结果。调整筛选，或点击工具栏中的 Sync。",
-      backfillReleaseTitle: "补齐 Release 时间数据",
-      backfillReleaseBody:
-        "这个版本新增了按最新 Release 时间排序。跑一次 Full Sync，就能为你现有的 starred 仓库补齐 release 元数据。",
-      backfillReleaseAction: "用 Full Sync 补齐",
-      backfillReleaseRetry: "重试 Full Sync",
-      backfillReleaseLater: "稍后再说",
-      backfillReleaseRunning: "正在刷新 starred 仓库和 release 元数据…",
-      backfillReleaseFailed: (error) => `补齐失败: ${error}`,
+      backfillSyncTitle: "需要同步数据",
+      backfillSyncBody:
+        "这个版本需要为你现有的 starred 仓库同步一次数据，跑一次 Full Sync 就可以了。",
+      backfillSyncAction: "立即同步",
+      backfillSyncRetry: "重试同步",
+      backfillSyncLater: "稍后再说",
+      backfillSyncRunning: "正在同步数据…",
+      backfillSyncFailed: (error) => `同步失败: ${error}`,
     },
     toolbar: {
       searchPlaceholder: "搜索 名称 / 描述 / topics / notes   (按 / 聚焦)",

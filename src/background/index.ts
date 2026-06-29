@@ -7,7 +7,7 @@ import { queryStars, invalidateCache, type QueryParams, type QueryResult } from 
 import { suggestTags } from '@/ui/suggest';
 import { translateError } from '@/api/errors';
 import { normalizeBackfillMap, selectActiveBackfillId } from '@/upgrades/backfill-state';
-import { reconcileBackfillMap } from '@/upgrades/tasks';
+import { backfillTasks, reconcileBackfillMap } from '@/upgrades/tasks';
 import type { BackfillId, BackfillMap, BackfillState, OnboardingStage, SyncProgress } from '@/types';
 import {
   normalizeOnboardingStage,
@@ -423,7 +423,9 @@ async function handle(req: Req): Promise<Res> {
       }
       case 'runBackfill': {
         const m = await getLocaleMessages();
-        if (req.id !== 'release_metadata_v1') return { ok: false, error: `Unknown backfill: ${req.id}` };
+        const task = backfillTasks[req.id];
+        if (!task) return { ok: false, error: `Unknown backfill: ${req.id}` };
+        if (task.kind !== 'full_sync') return { ok: false, error: `Unsupported backfill kind: ${task.kind}` };
         if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
         await setBackfillState(req.id, (current, now) => ({
           status: 'running',

@@ -269,7 +269,7 @@ export function ManagerPanel() {
       flashSuccess(`backfill:${id}`);
     } catch (e) {
       await refreshStatus();
-      setInfo(m.manager.syncFailed(m.manager.backfillReleaseAction, e instanceof Error ? e.message : String(e)));
+      setInfo(m.manager.syncFailed(m.manager.backfillSyncAction, e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
       setPendingAction((cur) => (cur === `backfill:${id}` ? null : cur));
@@ -353,7 +353,6 @@ export function ManagerPanel() {
               />
             ) : status.hasToken && activeBackfillId && activeBackfillState && coachStep === null ? (
               <BackfillCard
-                id={activeBackfillId}
                 state={activeBackfillState}
                 progress={status.progress}
                 actionBusy={busy || !!pendingAction}
@@ -545,14 +544,12 @@ function OnboardingCard({
 }
 
 function BackfillCard({
-  id,
   state,
   progress,
   actionBusy,
   onRun,
   onDefer,
 }: {
-  id: BackfillId;
   state: BackfillState;
   progress: SyncStatus['progress'];
   actionBusy: boolean;
@@ -562,43 +559,41 @@ function BackfillCard({
   const { m } = useI18n();
   const busy = state.status === 'running' || (actionBusy && progress.phase === 'full');
 
-  if (id !== 'release_metadata_v1') return null;
-
   return (
     <div className="flex h-full items-center justify-center p-8">
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-sm">
         <div className="mb-3 flex items-center gap-2 text-foreground">
           <Sparkles className="size-5 text-primary" />
-          <h2 className="text-base font-semibold">{m.manager.backfillReleaseTitle}</h2>
+          <h2 className="text-base font-semibold">{m.manager.backfillSyncTitle}</h2>
         </div>
 
         {busy ? (
           <div className="space-y-3 text-muted-foreground">
             <div className="flex items-center gap-2">
               <Spinner className="size-4" />
-              <span>{progress.message || m.manager.backfillReleaseRunning}</span>
+              <span>{progress.message || m.manager.backfillSyncRunning}</span>
             </div>
-            <p>{m.manager.backfillReleaseBody}</p>
+            <p>{m.manager.backfillSyncBody}</p>
           </div>
         ) : (
           <div className="space-y-3 text-muted-foreground">
-            <p>{m.manager.backfillReleaseBody}</p>
+            <p>{m.manager.backfillSyncBody}</p>
             {state.status === 'failed' && state.error && (
-              <p className="text-destructive">{m.manager.backfillReleaseFailed(state.error)}</p>
+              <p className="text-destructive">{m.manager.backfillSyncFailed(state.error)}</p>
             )}
             <div className="flex gap-2">
               <Button onClick={onRun} disabled={actionBusy}>
                 {state.status === 'failed' ? (
                   <>
                     <RefreshCw className="size-4" data-icon="inline-start" />
-                    {m.manager.backfillReleaseRetry}
+                    {m.manager.backfillSyncRetry}
                   </>
                 ) : (
-                  m.manager.backfillReleaseAction
+                  m.manager.backfillSyncAction
                 )}
               </Button>
               <Button variant="ghost" onClick={onDefer} disabled={actionBusy}>
-                {m.manager.backfillReleaseLater}
+                {m.manager.backfillSyncLater}
               </Button>
             </div>
           </div>

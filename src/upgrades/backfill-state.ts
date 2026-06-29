@@ -1,6 +1,6 @@
 import type { BackfillId, BackfillMap, BackfillState } from '@/types';
 
-export const BACKFILL_IDS: BackfillId[] = ['release_metadata_v1'];
+export const BACKFILL_IDS: BackfillId[] = ['repo_data_sync_v1'];
 
 export function normalizeBackfillState(input: BackfillState | null | undefined): BackfillState {
   return {
