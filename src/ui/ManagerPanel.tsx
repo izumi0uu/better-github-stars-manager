@@ -243,7 +243,7 @@ export function ManagerPanel() {
   };
 
   const hasActiveFilter =
-    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged;
+    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged || f.onlyArchived;
 
   return (
     <PortalProvider containerRef={rootRef}>
@@ -426,6 +426,7 @@ function emptyFilter() {
     showTombstone: false,
     onlyFavorite: false,
     onlyUntagged: false,
+    onlyArchived: false,
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
   };

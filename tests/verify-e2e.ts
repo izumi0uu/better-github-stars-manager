@@ -37,8 +37,6 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-const PER_PAGE = 100;
-
 console.log('1) Verifying token via real authStore.setToken() (exercises AES-GCM) …');
 import { authStore } from '../src/auth/auth-store';
 try {
@@ -77,7 +75,7 @@ console.log(`   ✓ syncFull returned ${JSON.stringify(syncResult)} | DB now hol
 
 invalidateCache();
 const result = await queryStars({
-  filter: { query: '', languages: [], tags: [], tagMode: 'any', showTombstone: false, onlyFavorite: false, onlyUntagged: false, sortKey: 'starred_at', sortDir: 'desc' },
+  filter: { query: '', languages: [], tags: [], tagMode: 'any', showTombstone: false, onlyFavorite: false, onlyUntagged: false, onlyArchived: false, sortKey: 'starred_at', sortDir: 'desc' },
   offset: 0,
   limit: 5,
 });
