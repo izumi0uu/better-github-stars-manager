@@ -46,6 +46,12 @@ export function FilterSidebar({
           label={m.filterSidebar.onlyUntaggedLabel}
           hint={m.filterSidebar.onlyUntaggedHint}
         />
+        <FilterToggle
+          checked={f.onlyArchived}
+          onChange={() => f.setOnlyArchived(!f.onlyArchived)}
+          label={m.filterSidebar.onlyArchivedLabel}
+          hint={m.filterSidebar.onlyArchivedHint}
+        />
         {/* "Show unstarred" (tombstone) — disabled for now; keep commented to re-enable later.
         <FilterToggle
           checked={f.showTombstone}

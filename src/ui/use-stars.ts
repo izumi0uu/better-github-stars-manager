@@ -32,6 +32,7 @@ export function useStars() {
     showTombstone: f.showTombstone,
     onlyFavorite: f.onlyFavorite,
     onlyUntagged: f.onlyUntagged,
+    onlyArchived: f.onlyArchived,
     sortKey: f.sortKey,
     sortDir: f.sortDir,
   };

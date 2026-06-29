@@ -10,7 +10,7 @@ import type { FilterState, SortKey } from '@/ui/filter-store';
 export interface QueryParams {
   filter: Pick<
     FilterState,
-    'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyFavorite' | 'onlyUntagged' | 'sortKey' | 'sortDir'
+    'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyFavorite' | 'onlyUntagged' | 'onlyArchived' | 'sortKey' | 'sortDir'
   >;
   offset: number;
   limit: number;
@@ -82,6 +82,7 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
 
   const filtered = stars.filter((s) => {
     if (!filter.showTombstone && s.tombstone) return false;
+    if (filter.onlyArchived && !s.archived) return false;
     if (langSet && (s.language === null || !langSet.has(s.language))) return false;
     const tagRecord = tags.get(s.full_name);
     const myTags = tagRecord?.tags ?? [];
