@@ -45,9 +45,9 @@ const chromeMock = createChromeMock();
 
 const originalFetch = globalThis.fetch;
 
-const { authStore } = await import('../src/auth/auth-store');
-const { gistTagStore } = await import('../src/sync/gist-tag-store');
-const { db } = await import('../src/storage/db');
+const { authStore } = await import('../../../src/auth/auth-store');
+const { gistTagStore } = await import('../../../src/sync/gist-tag-store');
+const { db } = await import('../../../src/storage/db');
 
 async function resetState() {
   await db.delete();

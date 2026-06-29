@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
-import { toStar } from '../src/api/github-star-source';
+import { toStar } from '../../src/api/github-star-source';
 
 const payload = {
   starred_at: '2026-06-22T03:21:01Z',
@@ -33,6 +33,8 @@ describe('Payload shape regression', () => {
     assert.equal(star.language, 'TypeScript');
     assert.equal(star.stargazers_count, 42);
     assert.equal(star.topics.length, 2);
+    assert.equal(star.latest_release_at, null);
+    assert.equal(star.latest_release_synced_at, null);
     assert.equal(star.tombstone, false);
     assert.equal(typeof star.synced_at, 'string');
     assert.ok(star.synced_at.length > 0);

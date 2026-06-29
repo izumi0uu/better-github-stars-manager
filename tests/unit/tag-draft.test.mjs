@@ -6,7 +6,7 @@ import {
   sameTagNames,
   shouldAdoptIncomingTagDraft,
   shouldAdoptIncomingTextDraft,
-} from '../src/ui/components/tag-draft.ts';
+} from '../../src/ui/components/tag-draft.ts';
 
 describe('Tag draft helpers', () => {
   it('normalize trims blanks and dedupes case-insensitively', () => {

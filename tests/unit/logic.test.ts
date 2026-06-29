@@ -6,18 +6,18 @@ import {
   onPanelToggle,
   resetPanelToggle,
   showPanel,
-} from '../src/content/stars-page/panel-toggle.ts';
+} from '../../src/content/stars-page/panel-toggle.ts';
 import {
   isOnboardingCardStage,
   normalizeOnboardingStage,
   resolveOnboardingStageAfterSync,
-} from '../src/onboarding/state.ts';
-import { autoTagPhaseForSync } from '../src/background/sync-flow.ts';
-import { mountState, pageOwner } from '../src/content/stars-page/mount-state.ts';
-import { pruneFavoriteOverrides, resolveFavoriteState } from '../src/ui/favorite-state.ts';
-import { pickInitialSyncAction } from '../src/ui/initial-sync.ts';
-import { classifyStarsQueryTrigger } from '../src/ui/stars-refresh.ts';
-import { normalizeAutoTagLimit } from '../src/preferences.ts';
+} from '../../src/onboarding/state.ts';
+import { autoTagPhaseForSync } from '../../src/background/sync-flow.ts';
+import { mountState, pageOwner } from '../../src/content/stars-page/mount-state.ts';
+import { pruneFavoriteOverrides, resolveFavoriteState } from '../../src/ui/favorite-state.ts';
+import { pickInitialSyncAction } from '../../src/ui/initial-sync.ts';
+import { classifyStarsQueryTrigger } from '../../src/ui/stars-refresh.ts';
+import { normalizeAutoTagLimit } from '../../src/preferences.ts';
 
 function lwwMerge(
   local: Map<string, { tags: string[]; mtime: string }>,

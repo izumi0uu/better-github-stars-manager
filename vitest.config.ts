@@ -11,9 +11,9 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts', 'tests/**/*.test.mjs'],
     exclude: [
-      'tests/verify-*.ts',
-      'tests/puppeteer-runtime.test.mjs',
-      'tests/smoke.test.mjs',
+      'tests/manual/verify-*.ts',
+      'tests/runtime/puppeteer-runtime.test.mjs',
+      'tests/runtime/smoke.test.mjs',
     ],
     restoreMocks: true,
     clearMocks: true,

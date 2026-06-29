@@ -1,11 +1,11 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, afterEach, describe, it } from 'vitest';
-import { db } from '../src/storage/db';
-import { authStore, CONFIG_STORAGE_KEY } from '../src/auth/auth-store';
-import { githubStarSource } from '../src/api/github-star-source';
-import { invalidateCache, queryStars } from '../src/background/query';
-import type { Star } from '../src/types';
+import { db } from '../../../src/storage/db';
+import { authStore, CONFIG_STORAGE_KEY } from '../../../src/auth/auth-store';
+import { githubStarSource } from '../../../src/api/github-star-source';
+import { invalidateCache, queryStars } from '../../../src/background/query';
+import type { Star } from '../../../src/types';
 
 function createChromeMock() {
   const state: Record<string, unknown> = {};
@@ -52,6 +52,8 @@ const base = {
   pushed_at: '',
   fork: false,
   archived: false,
+  latest_release_at: null as string | null,
+  latest_release_synced_at: null as string | null,
   synced_at: '',
 };
 

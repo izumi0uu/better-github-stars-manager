@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
-import { validateCommitMessage } from '../scripts/validate-commit-message.mjs';
+import { validateCommitMessage } from '../../scripts/validate-commit-message.mjs';
 
 function expectValid(message) {
   assert.deepEqual(validateCommitMessage(message), []);
