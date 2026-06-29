@@ -1,12 +1,14 @@
 import { authStore } from '@/auth/auth-store';
-import { githubStarSource } from '@/api/github-star-source';
+import { githubStarSource, hydrateLatestReleaseDates } from '@/api/github-star-source';
 import { getMessages } from '@/i18n';
 import { idbTagStore } from '@/storage/idb-tag-store';
 import { db, liveStarCount } from '@/storage/db';
 import { queryStars, invalidateCache, type QueryParams, type QueryResult } from './query';
 import { suggestTags } from '@/ui/suggest';
 import { translateError } from '@/api/errors';
-import type { OnboardingStage, SyncProgress } from '@/types';
+import { normalizeBackfillMap, selectActiveBackfillId } from '@/upgrades/backfill-state';
+import { backfillTasks, reconcileBackfillMap } from '@/upgrades/tasks';
+import type { BackfillId, BackfillMap, BackfillState, OnboardingStage, SyncProgress } from '@/types';
 import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
@@ -45,7 +47,10 @@ type Req =
   | { type: 'setOnboardingStage'; stage: OnboardingStage }
   | { type: 'markTooltipSeen'; bit: number }
   | { type: 'testConnection' }
-  | { type: 'openOptions' };
+  | { type: 'openOptions' }
+  | { type: 'hydrateLatestReleaseDates'; fullNames: string[] }
+  | { type: 'runBackfill'; id: BackfillId }
+  | { type: 'deferBackfill'; id: BackfillId };
 
 type Res =
   | { ok: true; data?: unknown }
@@ -103,6 +108,32 @@ async function getLocaleMessages() {
   return getMessages(await authStore.getLocale());
 }
 
+function backfillsEqual(a: BackfillMap | null | undefined, b: BackfillMap | null | undefined): boolean {
+  return JSON.stringify(normalizeBackfillMap(a)) === JSON.stringify(normalizeBackfillMap(b));
+}
+
+async function reconcileStoredBackfills(): Promise<BackfillMap> {
+  const cfg = await authStore.getConfig();
+  const next = await reconcileBackfillMap(cfg.backfills, { keepRunning: !!inFlight });
+  if (!backfillsEqual(cfg.backfills, next)) {
+    await authStore.update({ backfills: next });
+  }
+  return next;
+}
+
+async function setBackfillState(
+  id: BackfillId,
+  mutate: (current: BackfillState | undefined, now: string) => BackfillState,
+): Promise<BackfillState> {
+  const cfg = await authStore.getConfig();
+  const backfills = normalizeBackfillMap(cfg.backfills);
+  const now = new Date().toISOString();
+  const next = mutate(backfills[id], now);
+  backfills[id] = next;
+  await authStore.update({ backfills });
+  return next;
+}
+
 async function run<T>(fn: () => Promise<T>): Promise<T> {
   if (inFlight) await inFlight.catch(() => {});
   const p = fn();
@@ -115,6 +146,7 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function getStatusPayload() {
+  const backfills = await reconcileStoredBackfills();
   const cfg = await authStore.getConfig();
   const hasToken = await authStore.hasToken();
   const onboardingStage = normalizeOnboardingStage(
@@ -137,6 +169,8 @@ async function getStatusPayload() {
     onboardingStage,
     seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
     seenTooltips: cfg.seenTooltips,
+    backfills,
+    activeBackfillId: selectActiveBackfillId(backfills),
     inFlight: !!inFlight,
   };
 }
@@ -182,6 +216,24 @@ async function autoTagAll(
   }
   console.log('[GSM] autoTag END | newly tagged:', tagged, 'of', total);
   return { tagged };
+}
+
+async function performFullSync() {
+  const m = await getLocaleMessages();
+  const result = await run(async () => {
+    setProgress({ phase: 'full', done: 0, total: null, message: m.background.fetchingPages(1) });
+    return runSyncActionWithAutoTag(
+      'syncFull',
+      () => githubStarSource.syncFull((p) => setProgress(p)),
+      (phase) => autoTagAll(m.background.autoAssignTagging, (p) => setProgress(p), phase),
+    );
+  });
+  broadcastDataChanged();
+  const idle = result.autoTag?.tagged
+    ? `${m.background.fullDone(result.sync.added)} · ${m.background.autoAssignDone(result.autoTag.tagged)}`
+    : m.background.fullDone(result.sync.added);
+  setIdleMessage(idle);
+  return result;
 }
 
 /**
@@ -254,19 +306,7 @@ async function handle(req: Req): Promise<Res> {
       case 'syncFull': {
         const m = await getLocaleMessages();
         if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
-        const result = await run(async () => {
-          setProgress({ phase: 'full', done: 0, total: null, message: m.background.fetchingPages(1) });
-          return runSyncActionWithAutoTag(
-            'syncFull',
-            () => githubStarSource.syncFull((p) => setProgress(p)),
-            (phase) => autoTagAll(m.background.autoAssignTagging, (p) => setProgress(p), phase),
-          );
-        });
-        broadcastDataChanged();
-        const idle = result.autoTag?.tagged
-          ? `${m.background.fullDone(result.sync.added)} · ${m.background.autoAssignDone(result.autoTag.tagged)}`
-          : m.background.fullDone(result.sync.added);
-        setIdleMessage(idle);
+        const result = await performFullSync();
         return { ok: true, data: { ...result.sync, tagged: result.autoTag?.tagged ?? 0 } };
       }
       case 'syncRescan': {
@@ -374,6 +414,58 @@ async function handle(req: Req): Promise<Res> {
       }
       case 'query':
         return { ok: true, data: await queryStars(req.params) as QueryResult };
+      case 'hydrateLatestReleaseDates': {
+        const m = await getLocaleMessages();
+        if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
+        const result = await run(async () => hydrateLatestReleaseDates(req.fullNames));
+        broadcastDataChanged();
+        return { ok: true, data: result };
+      }
+      case 'runBackfill': {
+        const m = await getLocaleMessages();
+        const task = backfillTasks[req.id];
+        if (!task) return { ok: false, error: `Unknown backfill: ${req.id}` };
+        if (task.kind !== 'full_sync') return { ok: false, error: `Unsupported backfill kind: ${task.kind}` };
+        if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
+        await setBackfillState(req.id, (current, now) => ({
+          status: 'running',
+          queuedAt: current?.queuedAt ?? now,
+          lastAttemptAt: now,
+          completedAt: null,
+          error: null,
+        }));
+        try {
+          const result = await performFullSync();
+          await setBackfillState(req.id, (current, now) => ({
+            status: 'done',
+            queuedAt: current?.queuedAt ?? now,
+            lastAttemptAt: current?.lastAttemptAt ?? now,
+            completedAt: now,
+            error: null,
+          }));
+          return { ok: true, data: { id: req.id, ...result.sync, tagged: result.autoTag?.tagged ?? 0 } };
+        } catch (e) {
+          const msg = translateError(e, m);
+          await setBackfillState(req.id, (current, now) => ({
+            status: 'failed',
+            queuedAt: current?.queuedAt ?? now,
+            lastAttemptAt: now,
+            completedAt: null,
+            error: msg,
+          }));
+          throw e;
+        }
+      }
+      case 'deferBackfill': {
+        await setBackfillState(req.id, (current, now) => ({
+          status: 'deferred',
+          queuedAt: current?.queuedAt ?? now,
+          lastAttemptAt: current?.lastAttemptAt ?? null,
+          completedAt: null,
+          error: current?.error ?? null,
+        }));
+        return { ok: true, data: { id: req.id } };
+      }
       case 'setTags':
         await idbTagStore.setTags(req.full_name, req.tags);
         broadcastDataChanged();
@@ -478,6 +570,7 @@ chrome.runtime.onMessage.addListener((req: Req, _sender, sendResponse) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   setProgress({ phase: 'idle', done: 0, total: null, message: '' });
+  void reconcileStoredBackfills().catch(() => {});
 });
 
 /**
@@ -510,6 +603,7 @@ async function selfCheck() {
   }
 }
 selfCheck();
+void reconcileStoredBackfills().catch(() => {});
 migrateLanguageTags();
 void authStore.getConfig().then((cfg) => {
   if (!inFlight && lastProgress.phase === 'idle' && !lastProgress.message) {

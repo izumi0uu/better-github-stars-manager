@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /** End-to-end verification outside the Chrome runtime. */
 import 'fake-indexeddb/auto';
-import { db } from '../src/storage/db';
-import { queryStars, invalidateCache } from '../src/background/query';
+import { db } from '../../../src/storage/db';
+import { queryStars, invalidateCache } from '../../../src/background/query';
 
 const storageBacking: Record<string, unknown> = {};
 (globalThis as any).chrome = {
@@ -37,10 +37,8 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-const PER_PAGE = 100;
-
 console.log('1) Verifying token via real authStore.setToken() (exercises AES-GCM) …');
-import { authStore } from '../src/auth/auth-store';
+import { authStore } from '../../../src/auth/auth-store';
 try {
   const { username } = await authStore.setToken(TOKEN);
   console.log(`   ✓ authenticated as @${username} (token AES-GCM encrypted in storage)`);
@@ -67,7 +65,7 @@ if (!page1.length || !page1[0].repo) {
 console.log(`   ✓ nested repo.full_name = "${page1[0].repo.full_name}"`);
 
 console.log('3) Running real syncFull() orchestrator (concurrent pages → toStar → bulkPut) …');
-import { githubStarSource } from '../src/api/github-star-source';
+import { githubStarSource } from '../../../src/api/github-star-source';
 let progressLines = 0;
 const syncResult = await githubStarSource.syncFull((p) => {
   if (progressLines++ < 3) console.log(`   progress: ${p.phase} ${p.done}/${p.total ?? '?'} — ${p.message}`);
@@ -77,7 +75,7 @@ console.log(`   ✓ syncFull returned ${JSON.stringify(syncResult)} | DB now hol
 
 invalidateCache();
 const result = await queryStars({
-  filter: { query: '', languages: [], tags: [], tagMode: 'any', showTombstone: false, onlyFavorite: false, onlyUntagged: false, sortKey: 'starred_at', sortDir: 'desc' },
+  filter: { query: '', languages: [], tags: [], tagMode: 'any', showTombstone: false, onlyFavorite: false, onlyUntagged: false, onlyArchived: false, sortKey: 'starred_at', sortDir: 'desc' },
   offset: 0,
   limit: 5,
 });

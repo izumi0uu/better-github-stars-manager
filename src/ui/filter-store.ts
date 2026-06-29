@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type SortKey = 'starred_at' | 'pushed_at' | 'stargazers_count' | 'name';
+export type SortKey = 'starred_at' | 'pushed_at' | 'latest_release_at' | 'stargazers_count' | 'name';
 export type SortDir = 'asc' | 'desc';
 
 export interface FilterState {
@@ -11,6 +11,7 @@ export interface FilterState {
   showTombstone: boolean;
   onlyFavorite: boolean;
   onlyUntagged: boolean;
+  onlyArchived: boolean;
   sortKey: SortKey;
   sortDir: SortDir;
   setQuery: (q: string) => void;
@@ -20,6 +21,7 @@ export interface FilterState {
   setShowTombstone: (v: boolean) => void;
   setOnlyFavorite: (v: boolean) => void;
   setOnlyUntagged: (v: boolean) => void;
+  setOnlyArchived: (v: boolean) => void;
   setSort: (k: SortKey, d?: SortDir) => void;
   resetFilters: () => void;
 }
@@ -32,6 +34,7 @@ export const useFilterStore = create<FilterState>((set) => ({
   showTombstone: false,
   onlyFavorite: false,
   onlyUntagged: false,
+  onlyArchived: false,
   sortKey: 'starred_at',
   sortDir: 'desc',
   setQuery: (query) => set({ query }),
@@ -49,7 +52,8 @@ export const useFilterStore = create<FilterState>((set) => ({
   setShowTombstone: (showTombstone) => set({ showTombstone }),
   setOnlyFavorite: (onlyFavorite) => set({ onlyFavorite }),
   setOnlyUntagged: (onlyUntagged) => set({ onlyUntagged }),
+  setOnlyArchived: (onlyArchived) => set({ onlyArchived }),
   setSort: (sortKey, sortDir) => set((s) => ({ sortKey, sortDir: sortDir ?? s.sortDir })),
   resetFilters: () =>
-    set({ query: '', languages: [], tags: [], showTombstone: false, onlyFavorite: false, onlyUntagged: false }),
+    set({ query: '', languages: [], tags: [], showTombstone: false, onlyFavorite: false, onlyUntagged: false, onlyArchived: false }),
 }));

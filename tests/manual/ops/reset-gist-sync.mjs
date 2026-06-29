@@ -3,7 +3,7 @@ import { deleteSyncGists, listSyncGists } from './gist-sync-admin.mjs';
 
 const token = process.env.GH_TOKEN;
 if (!token) {
-  console.error('❌ Set GH_TOKEN first: GH_TOKEN=<pat> node tests/reset-gist-sync.mjs');
+  console.error('❌ Set GH_TOKEN first: GH_TOKEN=<pat> node tests/manual/ops/reset-gist-sync.mjs');
   process.exit(1);
 }
 

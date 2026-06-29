@@ -10,18 +10,20 @@
     "package:extension": "node scripts/package-extension.mjs",
     "prepare": "node scripts/setup-hooks.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/commit-message.test.mjs && node tests/puppeteer-runtime.test.mjs && node --experimental-strip-types tests/ime-input.test.mjs && node --experimental-strip-types tests/tag-draft.test.mjs && node --experimental-strip-types tests/logic.test.ts && tsx tests/sync-flow.test.ts && tsx tests/integration.test.ts && tsx tests/shape.test.ts && tsx tests/token-probe-and-status-regression.test.ts && tsx tests/rescan-regression.test.ts",
-    "test:logic": "node --experimental-strip-types tests/logic.test.ts",
-    "test:commit-message": "node tests/commit-message.test.mjs",
-    "test:ime": "node --experimental-strip-types tests/ime-input.test.mjs",
-    "test:tag-draft": "node --experimental-strip-types tests/tag-draft.test.mjs",
-    "test:integration": "tsx tests/integration.test.ts",
-    "test:shape": "tsx tests/shape.test.ts",
-    "test:regressions": "tsx tests/token-probe-and-status-regression.test.ts",
-    "test:smoke": "node tests/smoke.test.mjs",
-    "test:verify-chrome": "node tests/verify-chrome.mjs",
-    "test:verify-first-run": "node tests/verify-first-run.mjs",
-    "test:reset-gist": "node tests/reset-gist-sync.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "test:vitest": "vitest run",
+    "test:logic": "vitest run tests/unit/logic.test.ts tests/unit/sync-flow.test.ts tests/unit/shape.test.ts tests/unit/ime-input.test.mjs tests/unit/tag-draft.test.mjs tests/unit/commit-message.test.mjs",
+    "test:commit-message": "vitest run tests/unit/commit-message.test.mjs",
+    "test:ime": "vitest run tests/unit/ime-input.test.mjs",
+    "test:tag-draft": "vitest run tests/unit/tag-draft.test.mjs",
+    "test:integration": "vitest run tests/integration/integration.test.ts",
+    "test:shape": "vitest run tests/unit/shape.test.ts",
+    "test:regressions": "vitest run tests/regressions/auth/token-probe-and-status-regression.test.ts tests/regressions/sync/rescan-regression.test.ts tests/regressions/sync/incremental-archived-regression.test.ts tests/regressions/sync/gist-recovery-regression.test.ts tests/regressions/storage/backfill-regression.test.ts tests/regressions/sync/full-sync-release-regression.test.ts",
+    "test:runtime": "node tests/runtime/puppeteer-runtime.test.mjs",
+    "test:smoke": "node tests/runtime/smoke.test.mjs",
+    "test:verify-chrome": "node tests/manual/e2e/verify-chrome.mjs",
+    "test:verify-first-run": "node tests/manual/e2e/verify-first-run.mjs",
+    "test:reset-gist": "node tests/manual/ops/reset-gist-sync.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -61,6 +63,7 @@
     "tailwindcss": "^3.4.15",
     "tsx": "^4.22.4",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "3.2.4"
   }
 }

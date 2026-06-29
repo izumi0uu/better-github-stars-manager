@@ -31,12 +31,20 @@ export interface MessageCatalog {
     noTokenBanner: string;
     addPat: string;
     emptyState: string;
+    backfillSyncTitle: string;
+    backfillSyncBody: string;
+    backfillSyncAction: string;
+    backfillSyncRetry: string;
+    backfillSyncLater: string;
+    backfillSyncRunning: string;
+    backfillSyncFailed: (error: string) => string;
   };
   toolbar: {
     searchPlaceholder: string;
     searchClearTitle: string;
     sortStarredAt: string;
     sortPushedAt: string;
+    sortLatestRelease: string;
     sortStars: string;
     sortName: string;
     toggleSortDir: string;
@@ -73,6 +81,7 @@ export interface MessageCatalog {
   activeFilters: {
     onlyFavorite: string;
     onlyUntagged: string;
+    onlyArchived: string;
     summary: (count: number) => string;
     clearOne: string;
     clearAll: string;
@@ -83,6 +92,8 @@ export interface MessageCatalog {
     onlyFavoriteHint: string;
     onlyUntaggedLabel: string;
     onlyUntaggedHint: string;
+    onlyArchivedLabel: string;
+    onlyArchivedHint: string;
     showTombstoneLabel: string;
     showTombstoneHint: string;
     languages: (count: number) => string;
@@ -353,6 +364,14 @@ const messages: Record<Locale, MessageCatalog> = {
       noTokenBanner: "No GitHub token configured — data cannot load.",
       addPat: "Open options and add a PAT",
       emptyState: "No results. Adjust filters, or click Sync in the toolbar.",
+      backfillSyncTitle: "Sync your data",
+      backfillSyncBody:
+        "This update needs one full sync for your existing starred repos before everything is fully up to date.",
+      backfillSyncAction: "Run Full Sync",
+      backfillSyncRetry: "Retry sync",
+      backfillSyncLater: "Later",
+      backfillSyncRunning: "Syncing your data…",
+      backfillSyncFailed: (error) => `Sync failed: ${error}`,
     },
     toolbar: {
       searchPlaceholder:
@@ -360,6 +379,7 @@ const messages: Record<Locale, MessageCatalog> = {
       searchClearTitle: "Clear search",
       sortStarredAt: "Sort by starred date",
       sortPushedAt: "Sort by updated date",
+      sortLatestRelease: "Sort by release date",
       sortStars: "Sort by stars",
       sortName: "Sort by name",
       toggleSortDir: "Toggle sort direction",
@@ -394,6 +414,7 @@ const messages: Record<Locale, MessageCatalog> = {
     activeFilters: {
       onlyFavorite: "Favorites",
       onlyUntagged: "Untagged only",
+      onlyArchived: "Archived",
       summary: (count) => `${count} results · filtered`,
       clearOne: "Remove this filter",
       clearAll: "Clear all filters",
@@ -404,6 +425,8 @@ const messages: Record<Locale, MessageCatalog> = {
       onlyFavoriteHint: "",
       onlyUntaggedLabel: "Untagged only",
       onlyUntaggedHint: "",
+      onlyArchivedLabel: "Archived",
+      onlyArchivedHint: "",
       showTombstoneLabel: "Show unstarred",
       showTombstoneHint: "tombstoned repos",
       languages: (count) => `Languages${count > 0 ? ` · ${count}` : ""}`,
@@ -702,12 +725,21 @@ const messages: Record<Locale, MessageCatalog> = {
       noTokenBanner: "未配置 GitHub token — 无法加载数据。",
       addPat: "打开选项页并添加 PAT",
       emptyState: "无结果。调整筛选，或点击工具栏中的 Sync。",
+      backfillSyncTitle: "需要同步数据",
+      backfillSyncBody:
+        "这个版本需要为你现有的 starred 仓库同步一次数据，跑一次 Full Sync 就可以了。",
+      backfillSyncAction: "立即同步",
+      backfillSyncRetry: "重试同步",
+      backfillSyncLater: "稍后再说",
+      backfillSyncRunning: "正在同步数据…",
+      backfillSyncFailed: (error) => `同步失败: ${error}`,
     },
     toolbar: {
       searchPlaceholder: "搜索 名称 / 描述 / topics / notes   (按 / 聚焦)",
       searchClearTitle: "清空搜索",
       sortStarredAt: "按 star 时间",
       sortPushedAt: "按更新时间",
+      sortLatestRelease: "按 Release 时间",
       sortStars: "按 star 数",
       sortName: "按名称",
       toggleSortDir: "切换排序方向",
@@ -741,6 +773,7 @@ const messages: Record<Locale, MessageCatalog> = {
     activeFilters: {
       onlyFavorite: "收藏",
       onlyUntagged: "仅未标注",
+      onlyArchived: "已归档",
       summary: (count) => `${count} 个结果 · 已筛选`,
       clearOne: "移除该筛选",
       clearAll: "清除全部筛选",
@@ -751,6 +784,8 @@ const messages: Record<Locale, MessageCatalog> = {
       onlyFavoriteHint: "",
       onlyUntaggedLabel: "仅未标注",
       onlyUntaggedHint: "",
+      onlyArchivedLabel: "已归档",
+      onlyArchivedHint: "",
       showTombstoneLabel: "显示已 unstar",
       showTombstoneHint: "tombstoned repos",
       languages: (count) => `Languages${count > 0 ? ` · ${count}` : ""}`,
