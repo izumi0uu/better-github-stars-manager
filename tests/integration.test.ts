@@ -4,7 +4,7 @@
 // Run: pnpm exec tsx tests/integration.test.ts
 import 'fake-indexeddb/auto';
 import { db } from '../src/storage/db';
-import { queryStars, invalidateCache } from '../src/background/query';
+import { queryMeta, queryPage, queryStars, invalidateCache } from '../src/background/query';
 import type { Star, Tag, TagMeta } from '../src/types';
 
 const pass: string[] = [];
@@ -25,7 +25,7 @@ const base = {
 
 await db.stars.bulkPut([
   { ...base, full_name: 'a/ai', description: 'AI tool', language: 'Python', topics: ['ai'], starred_at: '2026-06-20', stargazers_count: 100, pushed_at: '2026-06-19' },
-  { ...base, full_name: 'b/rust', description: 'Rust lib', language: 'Rust', topics: [], starred_at: '2026-06-21', stargazers_count: 50, pushed_at: '2026-06-22' },
+  { ...base, full_name: 'b/rust', description: 'Rust lib', language: 'Rust', topics: [], starred_at: '2026-06-21', stargazers_count: 50, pushed_at: '2026-06-22', archived: true },
   { ...base, full_name: 'c/gone', description: 'unstarred', language: 'Python', topics: [], starred_at: '2026-01-01', stargazers_count: 5, pushed_at: '2025-01-01', tombstone: true },
 ] as Star[]);
 await db.tags.bulkPut([
@@ -43,6 +43,14 @@ await new Promise<void>((resolve) => {
     const r = await queryStars({ filter: defaultFilter(), offset: 0, limit: 100 });
     assert(r.grandTotal === 3, `grandTotal ${r.grandTotal}`);
     assert(r.total === 2, `total (excl tombstone) ${r.total}`); // tombstone hidden
+  });
+
+  test('queryMeta returns totals and stable facets without row payload', async () => {
+    const r = await queryMeta(defaultFilter());
+    assert(r.grandTotal === 3, `grandTotal ${r.grandTotal}`);
+    assert(r.total === 2, `filtered total ${r.total}`);
+    assert(Array.isArray(r.languages), 'languages facet missing');
+    assert(Array.isArray(r.tagTree), 'tag tree missing');
   });
 
   test('language facet computed over all stars', async () => {
@@ -83,6 +91,12 @@ await new Promise<void>((resolve) => {
     assert(r.tagsForRows['b/rust']?.favorite === true, 'favorite carried through');
   });
 
+  test('onlyArchived keeps archived repos only', async () => {
+    const r = await queryStars({ filter: { ...defaultFilter(), onlyArchived: true }, offset: 0, limit: 100 });
+    eq(r.rows.map((s) => s.full_name), ['b/rust'], 'archived only');
+    assert(r.rows[0]?.archived === true, 'archived flag carried through');
+  });
+
   test('sort by stargazers desc', async () => {
     const r = await queryStars({ filter: { ...defaultFilter(), sortKey: 'stargazers_count', sortDir: 'desc' }, offset: 0, limit: 100 });
     eq(r.rows.map((s) => s.stargazers_count), [100, 50], 'desc stars');
@@ -92,6 +106,14 @@ await new Promise<void>((resolve) => {
     const r = await queryStars({ filter: { ...defaultFilter(), sortKey: 'stargazers_count', sortDir: 'asc' }, offset: 0, limit: 1 });
     eq(r.rows.map((s) => s.full_name), ['b/rust'], 'first window');
     eq(r.total, 2, 'total still full');
+  });
+
+  test('queryPage returns only the requested slice with matching offset/limit', async () => {
+    const r = await queryPage({ filter: { ...defaultFilter(), sortKey: 'stargazers_count', sortDir: 'desc' }, offset: 1, limit: 1 });
+    eq(r.offset, 1, 'offset preserved');
+    eq(r.limit, 1, 'limit preserved');
+    eq(r.rows.map((s) => s.full_name), ['b/rust'], 'paged rows');
+    assert(!!r.tagsForRows['b/rust'], 'page tags returned');
   });
 
   test('showTombstone includes unstarred', async () => {
@@ -120,5 +142,5 @@ console.log(fail.length ? `\n❌ ${fail.length} FAILED` : '\n✅ All integration
 process.exit(fail.length ? 1 : 0);
 
 function defaultFilter() {
-  return { query: '', languages: [], tags: [], tagMode: 'any' as const, showTombstone: false, onlyFavorite: false, onlyUntagged: false, sortKey: 'starred_at' as const, sortDir: 'desc' as const };
+  return { query: '', languages: [], tags: [], tagMode: 'any' as const, showTombstone: false, onlyFavorite: false, onlyUntagged: false, onlyArchived: false, sortKey: 'starred_at' as const, sortDir: 'desc' as const };
 }

@@ -3,7 +3,17 @@ import { githubStarSource } from '@/api/github-star-source';
 import { getMessages } from '@/i18n';
 import { idbTagStore } from '@/storage/idb-tag-store';
 import { db, liveStarCount } from '@/storage/db';
-import { queryStars, invalidateCache, type QueryParams, type QueryResult } from './query';
+import {
+  queryMeta,
+  queryPage,
+  queryStars,
+  invalidateCache,
+  type QueryMetaResult,
+  type QueryPageResult,
+  type QueryParams,
+  type QueryResult,
+  type StarFilter,
+} from './query';
 import { suggestTags } from '@/ui/suggest';
 import { translateError } from '@/api/errors';
 import type { OnboardingStage, SyncProgress } from '@/types';
@@ -31,6 +41,8 @@ type Req =
   | { type: 'getUsername' }
   | { type: 'getAccount' }
   | { type: 'fetchAccount' }
+  | { type: 'queryMeta'; filter: StarFilter }
+  | { type: 'queryPage'; params: QueryParams }
   | { type: 'query'; params: QueryParams }
   | { type: 'setTags'; full_name: string; tags: string[] }
   | { type: 'setNotes'; full_name: string; notes: string }
@@ -372,6 +384,10 @@ async function handle(req: Req): Promise<Res> {
           return { ok: true, data: await authStore.getAccount() };
         }
       }
+      case 'queryMeta':
+        return { ok: true, data: await queryMeta(req.filter) as QueryMetaResult };
+      case 'queryPage':
+        return { ok: true, data: await queryPage(req.params) as QueryPageResult };
       case 'query':
         return { ok: true, data: await queryStars(req.params) as QueryResult };
       case 'setTags':

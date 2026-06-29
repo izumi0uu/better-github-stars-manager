@@ -21,6 +21,7 @@ export function ActiveFilterChips({
   }
   if (f.onlyFavorite) active.push({ label: m.activeFilters.onlyFavorite, clear: () => f.setOnlyFavorite(false), kind: 'special' });
   if (f.onlyUntagged) active.push({ label: m.activeFilters.onlyUntagged, clear: () => f.setOnlyUntagged(false), kind: 'special' });
+  if (f.onlyArchived) active.push({ label: m.activeFilters.onlyArchived, clear: () => f.setOnlyArchived(false), kind: 'special' });
   // "Show unstarred" (tombstone) chip — disabled for now.
   // if (f.showTombstone) active.push({ label: m.filterSidebar.showTombstoneLabel, clear: () => f.setShowTombstone(false), kind: 'special' });
 

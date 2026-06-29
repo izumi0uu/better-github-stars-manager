@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertTriangle, Heart, RefreshCw, Sparkles } from 'lucide-react';
+import type { Tag } from '@/types';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
 import { StarRow } from '@/ui/components/StarRow';
@@ -26,7 +27,23 @@ const ROW_HEIGHT = 64;
 const GRID_COLS = 'grid-cols-[minmax(180px,1.4fr)_2fr_80px_64px_84px_1.6fr_28px_20px]';
 
 export function ManagerPanel() {
-  const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
+  const {
+    total,
+    grandTotal,
+    loading,
+    loadingMore,
+    phase,
+    languages,
+    tagTree,
+    tagsByFullName,
+    refresh: refreshStars,
+    getRow,
+    getTagForRow,
+    ensureRange,
+    ensureIndex,
+    updateCachedRowTag,
+    loadedIndexByFullName,
+  } = useStars();
   const f = useFilterStore();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [statusLoaded, setStatusLoaded] = useState(false);
@@ -34,7 +51,8 @@ export function ManagerPanel() {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [successAction, setSuccessAction] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{ fullName: string; indexHint: number | null } | null>(null);
+  const [pendingSelectionIndex, setPendingSelectionIndex] = useState<number | null>(null);
   const [coachStep, setCoachStep] = useState<number | null>(null);
   const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
   const searchRef = useRef<HTMLInputElement>(null);
@@ -49,8 +67,8 @@ export function ManagerPanel() {
   };
 
   const finalizeOnboardingAfterSync = async (hasToken: boolean) => {
-    const q = await bgCall<{ grandTotal: number }>('query', {
-      params: { filter: emptyFilter(), offset: 0, limit: 1 },
+    const q = await bgCall<{ grandTotal: number }>('queryMeta', {
+      filter: emptyFilter(),
     }).catch(() => null);
     if (!q) return;
     await setOnboardingStage(resolveOnboardingStageAfterSync(hasToken, q.grandTotal));
@@ -73,8 +91,8 @@ export function ManagerPanel() {
       setStatus((current) => mergeStatusSnapshot(current, st));
       setStatusLoaded(true);
       if (st?.hasToken) {
-        const q = await bgCall<{ grandTotal: number }>('query', {
-          params: { filter: emptyFilter(), offset: 0, limit: 1 },
+        const q = await bgCall<{ grandTotal: number }>('queryMeta', {
+          filter: emptyFilter(),
         }).catch(() => null);
         const syncType = pickInitialSyncAction(st, q?.grandTotal ?? 0);
         if (!syncType) return;
@@ -112,11 +130,19 @@ export function ManagerPanel() {
   }, []);
 
   const rowVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: total,
     getScrollElement: () => listRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
+  const virtualItems = rowVirtualizer.getVirtualItems();
+
+  useEffect(() => {
+    if (virtualItems.length === 0) return;
+    const start = virtualItems[0].index;
+    const end = virtualItems[virtualItems.length - 1].index + 24;
+    ensureRange(start, end);
+  }, [ensureRange, total, virtualItems]);
 
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashSuccess = (type: string) => {
@@ -203,19 +229,51 @@ export function ManagerPanel() {
     await dismissOnboarding();
   };
 
-  const selectedIdx = useMemo(
-    () => (selected ? rows.findIndex((r) => r.full_name === selected) : -1),
-    [selected, rows],
-  );
-  const selectedStar = selectedIdx >= 0 ? rows[selectedIdx] : null;
-  const selectedTag = selectedStar ? tagsByFullName.get(selectedStar.full_name) : undefined;
+  const selectedIdx = useMemo(() => {
+    if (!selected) return -1;
+    if (selected.indexHint !== null) {
+      const hinted = getRow(selected.indexHint);
+      if (hinted?.full_name === selected.fullName) return selected.indexHint;
+    }
+    return loadedIndexByFullName.get(selected.fullName) ?? -1;
+  }, [getRow, loadedIndexByFullName, selected]);
+  const selectedStar = selectedIdx >= 0 ? getRow(selectedIdx) : null;
+  const selectedTag = selectedStar ? getTagForRow(selectedStar.full_name) : undefined;
 
   useEffect(() => {
-    setFavoriteOverrides((current) => pruneFavoriteOverrides(current, tagsByFullName, rows));
-  }, [rows, tagsByFullName]);
+    setFavoriteOverrides((current) => pruneFavoriteOverrides(current, tagsByFullName));
+  }, [tagsByFullName]);
 
-  const handleSelect = (full_name: string) => {
-    setSelected((cur) => (cur === full_name ? null : full_name));
+  useEffect(() => {
+    if (!selected) return;
+    if (selectedIdx >= 0) {
+      setSelected((current) => {
+        if (!current || current.fullName !== selected.fullName || current.indexHint === selectedIdx) return current;
+        return { ...current, indexHint: selectedIdx };
+      });
+      return;
+    }
+    if (selected.indexHint !== null) ensureIndex(selected.indexHint);
+  }, [ensureIndex, selected, selectedIdx]);
+
+  useEffect(() => {
+    if (pendingSelectionIndex === null) return;
+    if (pendingSelectionIndex < 0 || pendingSelectionIndex >= total) {
+      setPendingSelectionIndex(null);
+      return;
+    }
+    const row = getRow(pendingSelectionIndex);
+    if (!row) {
+      ensureIndex(pendingSelectionIndex);
+      return;
+    }
+    setSelected({ fullName: row.full_name, indexHint: pendingSelectionIndex });
+    setPendingSelectionIndex(null);
+  }, [ensureIndex, getRow, pendingSelectionIndex, total]);
+
+  const handleSelect = (full_name: string, index: number) => {
+    setPendingSelectionIndex(null);
+    setSelected((cur) => (cur?.fullName === full_name ? null : { fullName: full_name, indexHint: index }));
   };
 
   const handleToggleFavorite = async (full_name: string, favorite: boolean) => {
@@ -225,6 +283,7 @@ export function ManagerPanel() {
     }));
     try {
       await bgCall('setFavorite', { full_name, favorite });
+      updateCachedRowTag(full_name, { favorite, mtime: new Date().toISOString() });
       setFavoriteOverrides((current) => ({
         ...current,
         [full_name]: { value: favorite, pending: false },
@@ -243,7 +302,7 @@ export function ManagerPanel() {
   };
 
   const hasActiveFilter =
-    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged;
+    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged || f.onlyArchived;
 
   return (
     <PortalProvider containerRef={rootRef}>
@@ -340,15 +399,25 @@ export function ManagerPanel() {
               </span>
               <span />
             </div>
-            {rows.length === 0 ? (
+            {total === 0 ? (
               <div className="p-10 text-center text-sm text-muted-foreground">
                 {loading ? m.common.loading : m.manager.emptyState}
               </div>
             ) : (
               <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
                 {rowVirtualizer.getVirtualItems().map((vi) => {
-                  const star = rows[vi.index];
-                  const tag = tagsByFullName.get(star.full_name);
+                  const star = getRow(vi.index);
+                  if (!star) {
+                    return (
+                      <div
+                        key={`skeleton-${vi.index}`}
+                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: ROW_HEIGHT, transform: `translateY(${vi.start}px)` }}
+                      >
+                        <RowSkeleton />
+                      </div>
+                    );
+                  }
+                  const tag = getTagForRow(star.full_name);
                   const { favorite, busy: favoriteBusy } = resolveFavoriteState(
                     tag,
                     favoriteOverrides[star.full_name],
@@ -367,12 +436,20 @@ export function ManagerPanel() {
                         selectedTags={f.tags}
                         onToggleTag={f.toggleTag}
                         onToggleFavorite={handleToggleFavorite}
-                        selected={selected === star.full_name}
-                        onSelect={handleSelect}
+                        selected={selected?.fullName === star.full_name}
+                        onSelect={(fullName) => handleSelect(fullName, vi.index)}
                       />
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {loadingMore && (
+              <div className="border-t border-border bg-card px-3 py-2 text-center text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-2">
+                  <Spinner className="size-3" />
+                  {m.common.loading}
+                </span>
               </div>
             )}
             </div>
@@ -388,11 +465,40 @@ export function ManagerPanel() {
                 selectedTags={f.tags}
                 onToggleTag={f.toggleTag}
                 onDataChanged={refreshStars}
-                onClose={() => setSelected(null)}
-                onPrev={() => selectedIdx > 0 && setSelected(rows[selectedIdx - 1].full_name)}
-                onNext={() => selectedIdx >= 0 && selectedIdx < rows.length - 1 && setSelected(rows[selectedIdx + 1].full_name)}
+                onLocalTagPatched={(patch: DetailTagPatch) => {
+                  if (!selectedStar) return;
+                  updateCachedRowTag(selectedStar.full_name, patch);
+                }}
+                onClose={() => {
+                  setPendingSelectionIndex(null);
+                  setSelected(null);
+                }}
+                onPrev={() => {
+                  if (selectedIdx <= 0) return;
+                  const nextIndex = selectedIdx - 1;
+                  const prevRow = getRow(nextIndex);
+                  if (prevRow) {
+                    setPendingSelectionIndex(null);
+                    setSelected({ fullName: prevRow.full_name, indexHint: nextIndex });
+                  } else {
+                    setPendingSelectionIndex(nextIndex);
+                    ensureIndex(nextIndex);
+                  }
+                }}
+                onNext={() => {
+                  if (selectedIdx < 0 || selectedIdx >= total - 1) return;
+                  const nextIndex = selectedIdx + 1;
+                  const nextRow = getRow(nextIndex);
+                  if (nextRow) {
+                    setPendingSelectionIndex(null);
+                    setSelected({ fullName: nextRow.full_name, indexHint: nextIndex });
+                  } else {
+                    setPendingSelectionIndex(nextIndex);
+                    ensureIndex(nextIndex);
+                  }
+                }}
                 hasPrev={selectedIdx > 0}
-                hasNext={selectedIdx >= 0 && selectedIdx < rows.length - 1}
+                hasNext={selectedIdx >= 0 && selectedIdx < total - 1}
               />
             )}
           </div>
@@ -417,6 +523,31 @@ export function ManagerPanel() {
   );
 }
 
+function RowSkeleton() {
+  return (
+    <div
+      className={cn(
+        'grid h-16 animate-pulse items-center gap-2 border-b border-border px-3',
+        GRID_COLS,
+      )}
+    >
+      <div className="h-4 rounded bg-muted/70" />
+      <div className="h-3 rounded bg-muted/50" />
+      <div className="h-3 rounded bg-muted/40" />
+      <div className="ml-auto h-3 w-10 rounded bg-muted/40" />
+      <div className="h-3 rounded bg-muted/40" />
+      <div className="flex gap-1">
+        <span className="h-5 w-12 rounded-full bg-muted/50" />
+        <span className="h-5 w-10 rounded-full bg-muted/40" />
+      </div>
+      <div className="mx-auto h-4 w-4 rounded-full bg-muted/40" />
+      <div className="mx-auto h-3 w-3 rounded bg-muted/40" />
+    </div>
+  );
+}
+
+type DetailTagPatch = Partial<Tag> | null;
+
 function emptyFilter() {
   return {
     query: '',
@@ -426,6 +557,7 @@ function emptyFilter() {
     showTombstone: false,
     onlyFavorite: false,
     onlyUntagged: false,
+    onlyArchived: false,
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
   };
