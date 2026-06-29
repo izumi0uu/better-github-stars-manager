@@ -225,10 +225,10 @@ export const githubStarSource: StarSource = {
       if (page === 1) newestStarredAt = items[0]?.starred_at ?? newestStarredAt;
       const fresh = cursor ? items.filter((it) => it.starred_at > cursor) : items;
       console.log(`[GSM] incremental page ${page} | items=${items.length} fresh=${fresh.length}`);
-      if (fresh.length > 0) {
-        await db.stars.bulkPut(fresh.map(toStar));
-        added += fresh.length;
-      }
+      // Upsert every repo we touch so repo metadata like `archived` stays fresh
+      // even for rows that are older than the incremental cursor.
+      await bulkPutStars(items.map(toStar));
+      added += fresh.length;
       if (cursor && items.some((it) => it.starred_at <= cursor)) { stop = true; stopReason = `hit old data on page ${page}`; }
       if (fresh.length < items.length) { stop = true; stopReason = stopReason || `mixed page ${page} (fresh<items)`; }
       page++;

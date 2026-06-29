@@ -18,7 +18,7 @@
     "test:tag-draft": "vitest run tests/tag-draft.test.mjs",
     "test:integration": "vitest run tests/integration.test.ts",
     "test:shape": "vitest run tests/shape.test.ts",
-    "test:regressions": "vitest run tests/token-probe-and-status-regression.test.ts tests/rescan-regression.test.ts tests/gist-recovery-regression.test.ts",
+    "test:regressions": "vitest run tests/token-probe-and-status-regression.test.ts tests/rescan-regression.test.ts tests/incremental-archived-regression.test.ts tests/gist-recovery-regression.test.ts",
     "test:runtime": "node tests/puppeteer-runtime.test.mjs",
     "test:smoke": "node tests/smoke.test.mjs",
     "test:verify-chrome": "node tests/verify-chrome.mjs",
