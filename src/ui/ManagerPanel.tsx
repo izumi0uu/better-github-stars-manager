@@ -573,7 +573,7 @@ function CoachOverlay({
   return (
     // Full-screen click shield: blocks pointer events from reaching the page beneath
     // (toolbar buttons can't be clicked OR hovered). Several highlights are destructive
-    // if clicked 鈥?step 1 would start a real sync, step 4 would unmount the panel and
+    // if clicked — step 1 would start a real sync, step 4 would unmount the panel and
     // kill the tour. The card below opts back into pointer-events-auto.
     <div className="pointer-events-auto absolute inset-0 z-50">
       {spot && (
