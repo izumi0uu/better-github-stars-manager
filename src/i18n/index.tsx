@@ -23,6 +23,12 @@ export interface MessageCatalog {
     current: (value: string) => string;
     phase: (phase: SyncProgress["phase"]) => string;
   };
+  dev: {
+    version: (hash: string) => string;
+    clearLocalData: string;
+    confirmClearLocalData: string;
+    clearingLocalData: string;
+  };
   manager: {
     syncFailed: (label: string, error: string) => string;
     autoAssignDone: (count: number) => string;
@@ -354,6 +360,12 @@ const messages: Record<Locale, MessageCatalog> = {
           rescan: "Rescan",
           gist: "Gist",
         })[phase],
+    },
+    dev: {
+      version: (hash) => `DEV ${hash}`,
+      clearLocalData: "Clear local",
+      confirmClearLocalData: "Confirm clear",
+      clearingLocalData: "Clearing…",
     },
     manager: {
       syncFailed: (label, error) => `${label}: ${error}`,
@@ -715,6 +727,12 @@ const messages: Record<Locale, MessageCatalog> = {
           rescan: "重扫",
           gist: "Gist",
         })[phase],
+    },
+    dev: {
+      version: (hash) => `DEV ${hash}`,
+      clearLocalData: "清本地",
+      confirmClearLocalData: "确认清除",
+      clearingLocalData: "清除中…",
     },
     manager: {
       syncFailed: (label, error) => `${label}: ${error}`,
