@@ -1,8 +1,9 @@
 import { authStore } from '@/auth/auth-store';
 import { githubStarSource, hydrateLatestReleaseDates } from '@/api/github-star-source';
 import { getMessages } from '@/i18n';
-import { idbTagStore } from '@/storage/idb-tag-store';
+import { idbTagStore, resetDirtyForDev } from '@/storage/idb-tag-store';
 import { db, liveStarCount } from '@/storage/db';
+import { DEV } from '@/dev';
 import { queryStars, invalidateCache, type QueryParams, type QueryResult } from './query';
 import { suggestTags } from '@/ui/suggest';
 import { translateError } from '@/api/errors';
@@ -49,6 +50,7 @@ type Req =
   | { type: 'testConnection' }
   | { type: 'openOptions' }
   | { type: 'hydrateLatestReleaseDates'; fullNames: string[] }
+  | { type: 'devClearLocalData' }
   | { type: 'runBackfill'; id: BackfillId }
   | { type: 'deferBackfill'; id: BackfillId };
 
@@ -102,6 +104,24 @@ function setIdleMessage(message: string) {
 function broadcastDataChanged() {
   invalidateCache();
   chrome.runtime.sendMessage({ type: 'dataChanged' }).catch(() => {});
+}
+
+async function clearLocalDataForDev() {
+  if (!DEV) throw new Error('DEV_ONLY');
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  lastProgress = { phase: 'idle', done: 0, total: null, message: '' };
+  resetDirtyForDev();
+  await db.delete();
+  await db.open();
+  await chrome.storage.local.clear();
+  invalidateCache();
+  broadcastDataChanged();
+  return {
+    cleared: ['IndexedDB:better-github-stars-manager', 'chrome.storage.local'],
+  };
 }
 
 async function getLocaleMessages() {
@@ -524,6 +544,10 @@ async function handle(req: Req): Promise<Res> {
         // Content scripts have a restricted chrome.runtime without openOptionsPage, so they ask the background.
         await chrome.runtime.openOptionsPage();
         return { ok: true };
+      }
+      case 'devClearLocalData': {
+        const result = await run(clearLocalDataForDev);
+        return { ok: true, data: result };
       }
       case 'getTag': {
         return { ok: true, data: { tag: (await idbTagStore.get(req.full_name)) ?? null } };
