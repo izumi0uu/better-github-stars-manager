@@ -1,0 +1,82 @@
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .gsm-favorite-action {
+    @apply inline-flex items-center justify-center rounded p-1 transition-colors disabled:opacity-70;
+    color: hsl(var(--muted-foreground) / 0.45);
+    transition-duration: 200ms;
+  }
+
+  .gsm-favorite-action:not(:disabled):hover {
+    color: hsl(var(--favorite-muted-hover));
+  }
+
+  .gsm-favorite-action[data-active='true'] {
+    color: hsl(var(--favorite));
+  }
+
+  .gsm-favorite-action[data-active='true']:not(:disabled):hover {
+    color: hsl(var(--favorite-hover));
+  }
+
+  .gsm-z-sticky {
+    z-index: var(--gsm-z-sticky);
+  }
+
+  .gsm-z-floating {
+    z-index: var(--gsm-z-floating);
+  }
+
+  .gsm-z-preview {
+    z-index: var(--gsm-z-preview);
+  }
+
+  .gsm-z-overlay {
+    z-index: var(--gsm-z-overlay);
+  }
+
+  .gsm-z-popover {
+    z-index: var(--gsm-z-popover);
+  }
+
+  .gsm-z-layout-popover {
+    z-index: var(--gsm-z-layout-popover);
+  }
+
+  .gsm-meta-label {
+    @apply text-[10px] uppercase tracking-wide text-muted-foreground;
+  }
+
+  .gsm-helper-text {
+    @apply text-[11px] text-muted-foreground;
+  }
+
+  .gsm-muted-count {
+    @apply text-[10px] text-muted-foreground;
+  }
+
+  .gsm-muted-count-soft {
+    @apply text-[10px] text-muted-foreground/70;
+  }
+
+  .gsm-progress-count {
+    @apply min-w-[48px] text-right tabular-nums text-foreground;
+  }
+
+  .gsm-inline-progress-count {
+    @apply ml-1 tabular-nums text-[10px] opacity-80;
+  }
+
+  @media (pointer: coarse) {
+    .gsm-touch-target {
+      min-height: 32px;
+      min-width: 32px;
+    }
+  }
+}

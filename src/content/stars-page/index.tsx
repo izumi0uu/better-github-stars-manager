@@ -9,7 +9,7 @@ import {
   resetPanelToggle,
   showPanel,
 } from '@/content/stars-page/panel-toggle';
-import cssText from '@/ui/styles.css?inline';
+import cssText from '@/ui/styles/index.css?inline';
 
 /**
  * Stars-page content script.
@@ -19,7 +19,7 @@ import cssText from '@/ui/styles.css?inline';
  * Tailwind/preflight CSS (loaded via `?inline` → `adoptedStyleSheets`) is fully
  * isolated from `github.com`'s light DOM.
  *
- * `?inline` is critical: a normal `import './styles.css'` would be picked up by
+ * `?inline` is critical: a normal `import './styles/index.css'` would be picked up by
  * CRXJS's content-script CSS plugin and injected into the page `<head>`, which
  * would leak preflight across GitHub. `?inline` returns the CSS string only, so
  * it can stay inside the shadow boundary.

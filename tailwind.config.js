@@ -48,6 +48,11 @@ export default {
         },
         success: 'hsl(var(--success))',
         warning: 'hsl(var(--warning))',
+        favorite: {
+          DEFAULT: 'hsl(var(--favorite))',
+          hover: 'hsl(var(--favorite-hover))',
+          'muted-hover': 'hsl(var(--favorite-muted-hover))',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',
