@@ -38,6 +38,12 @@ export default {
           DEFAULT: 'hsl(var(--accent))',
           foreground: 'hsl(var(--accent-foreground))',
         },
+        'layout-edit': {
+          DEFAULT: 'hsl(var(--layout-edit))',
+          foreground: 'hsl(var(--layout-edit-foreground))',
+          border: 'hsl(var(--layout-edit-border))',
+          accent: 'hsl(var(--layout-edit-accent))',
+        },
         popover: {
           DEFAULT: 'hsl(var(--popover))',
           foreground: 'hsl(var(--popover-foreground))',

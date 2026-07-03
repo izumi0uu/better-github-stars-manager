@@ -3,6 +3,7 @@ import { getMessages, useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { bgCall } from '@/utils/messaging';
 import { DEV, VERSION_HASH } from '@/dev';
+import { getLockedRegionProps } from '@/ui/interaction-lock';
 import type { Locale } from '@/types';
 
 const LOCALES: { value: Locale; short: string; name: string }[] = [
@@ -10,7 +11,13 @@ const LOCALES: { value: Locale; short: string; name: string }[] = [
   { value: 'zh-CN', short: '中文', name: getMessages('zh-CN').localeName },
 ];
 
-export function FloatingLocaleToggle({ drawerOpen }: { drawerOpen: boolean }) {
+export function FloatingLocaleToggle({
+  drawerOpen,
+  interactionLocked = false,
+}: {
+  drawerOpen: boolean;
+  interactionLocked?: boolean;
+}) {
   const { locale, setLocale, m } = useI18n();
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -22,6 +29,7 @@ export function FloatingLocaleToggle({ drawerOpen }: { drawerOpen: boolean }) {
   }, [confirmClear]);
 
   const clearLocalData = async () => {
+    if (interactionLocked) return;
     if (!confirmClear) {
       setConfirmClear(true);
       return;
@@ -43,8 +51,10 @@ export function FloatingLocaleToggle({ drawerOpen }: { drawerOpen: boolean }) {
         {
           'right-4 md:right-[356px]': drawerOpen,
           'right-4': !drawerOpen,
+          'opacity-55': interactionLocked,
         },
       )}
+      {...getLockedRegionProps(interactionLocked)}
     >
       <div className="flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-1.5 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <span className="rounded-full bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] text-warning">
@@ -53,7 +63,7 @@ export function FloatingLocaleToggle({ drawerOpen }: { drawerOpen: boolean }) {
         {DEV && (
           <button
             type="button"
-            disabled={clearing}
+            disabled={clearing || interactionLocked}
             onClick={() => void clearLocalData()}
             className={cn(
               'rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-60',
@@ -88,8 +98,10 @@ export function FloatingLocaleToggle({ drawerOpen }: { drawerOpen: boolean }) {
                 aria-pressed={active}
                 title={active ? m.common.current(entry.name) : entry.name}
                 onClick={() => {
+                  if (interactionLocked) return;
                   if (!active) void setLocale(entry.value);
                 }}
+                disabled={interactionLocked}
                 className={cn(
                   'rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors',
                   {

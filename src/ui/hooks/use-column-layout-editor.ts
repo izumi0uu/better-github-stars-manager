@@ -73,6 +73,34 @@ type LayoutDrag =
       y: number;
     };
 
+export function isInsideLayoutColumnMenuPath(path: readonly EventTarget[]) {
+  return path.some((node) => (
+    node instanceof Element &&
+    node.closest('[data-layout-column-menu]') !== null
+  ));
+}
+
+export function bindLayoutColumnMenuDismissal(
+  target: Pick<Window, 'addEventListener' | 'removeEventListener'>,
+  onDismiss: () => void,
+) {
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') onDismiss();
+  };
+  const onPointerDown = (e: PointerEvent) => {
+    if (isInsideLayoutColumnMenuPath(e.composedPath())) return;
+    onDismiss();
+  };
+
+  target.addEventListener('keydown', onKey);
+  target.addEventListener('pointerdown', onPointerDown);
+
+  return () => {
+    target.removeEventListener('keydown', onKey);
+    target.removeEventListener('pointerdown', onPointerDown);
+  };
+}
+
 export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>) {
   const { m } = useI18n();
   const [layoutMode, setLayoutMode] = useState<ColumnLayoutMode>('default');
@@ -169,25 +197,7 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
 
   useEffect(() => {
     if (!columnMenuOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setColumnMenuOpen(false);
-    };
-    const onPointerDown = (e: PointerEvent) => {
-      const path = e.composedPath();
-      if (
-        path.some((node) => (
-          node instanceof HTMLElement &&
-          (node.dataset.layoutColumnMenu !== undefined || node.closest('[data-layout-column-menu]'))
-        ))
-      ) return;
-      setColumnMenuOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('pointerdown', onPointerDown);
-    };
+    return bindLayoutColumnMenuDismissal(window, () => setColumnMenuOpen(false));
   }, [columnMenuOpen]);
 
   useLayoutEffect(() => {
@@ -564,6 +574,5 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     beginTrayDrag,
     restoreHiddenColumn,
     toggleColumnMenu: () => setColumnMenuOpen((open) => !open),
-    closeColumnMenu: () => setColumnMenuOpen(false),
   };
 }

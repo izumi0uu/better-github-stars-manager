@@ -27,7 +27,6 @@ export function LayoutColumnMenu({
   position,
   draftLayout,
   onSetColumnHidden,
-  onClose,
 }: {
   container: HTMLElement | null;
   editing: boolean;
@@ -35,7 +34,6 @@ export function LayoutColumnMenu({
   position: { left: number; top: number } | null;
   draftLayout: ColumnLayout;
   onSetColumnHidden: (id: ColumnId, hidden: boolean) => void;
-  onClose: () => void;
 }) {
   const { m } = useI18n();
   if (!editing || !open || !position || !container) return null;
@@ -64,7 +62,6 @@ export function LayoutColumnMenu({
             disabled={def.locked}
             onClick={() => {
               onSetColumnHidden(id, checked);
-              onClose();
             }}
             className={cn(
               'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent disabled:cursor-default disabled:opacity-55',
@@ -121,9 +118,9 @@ export function LayoutEditChrome({
       aria-hidden={!editing}
     >
       <div>
-        <div className="flex flex-wrap items-center gap-2 border-b border-primary bg-primary/10 px-3 py-1.5 text-xs">
-          <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-            <span className="gsm-edit-dot size-2 rounded-full bg-primary" />
+        <div className="flex flex-wrap items-center gap-2 border-b border-layout-edit-border bg-layout-edit px-3 py-1.5 text-xs text-layout-edit-foreground">
+          <span className="inline-flex items-center gap-1.5 font-medium text-layout-edit-foreground">
+            <span className="gsm-edit-dot size-2 rounded-full bg-layout-edit-accent" />
             {m.toolbar.editingLayout}
           </span>
           <div className="relative" data-layout-column-menu>

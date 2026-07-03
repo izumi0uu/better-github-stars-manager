@@ -19,6 +19,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/ui/shadcn/tooltip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/shadcn/select';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { useDelayedHoverIntent } from '@/ui/hooks/use-delayed-hover-intent';
+import { getLockedAnchorProps } from '@/ui/interaction-lock';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { LAYOUT_PREVIEW_HOVER_DELAY_MS } from '@/ui/layout-edit-constants';
@@ -196,8 +197,19 @@ export function Toolbar({
             panel). Opens in a new tab so the manager panel stays mounted. */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-9 gap-1 px-2" asChild>
-              <a href={REPO_URL} target="_blank" rel="noreferrer" title={m.toolbar.starRepoTitle}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn('h-9 gap-1 px-2', { 'pointer-events-none opacity-50': layoutEditing })}
+              asChild
+            >
+              <a
+                href={REPO_URL}
+                target="_blank"
+                rel="noreferrer"
+                title={m.toolbar.starRepoTitle}
+                {...getLockedAnchorProps(layoutEditing)}
+              >
                 <Star className="size-4" data-icon="inline-start" />
                 <span className="text-xs">Star</span>
               </a>
@@ -212,26 +224,32 @@ export function Toolbar({
             ref={searchRef}
             {...searchInput.inputProps}
             placeholder={m.toolbar.searchPlaceholder}
+            disabled={layoutEditing}
             className="h-9 pl-8 pr-8"
           />
           {searchInput.value && (
             <button
               type="button"
+              disabled={layoutEditing}
               title={m.toolbar.searchClearTitle}
               aria-label={m.toolbar.searchClearTitle}
               onClick={() => {
+                if (layoutEditing) return;
                 searchInput.commit('');
                 searchRef.current?.focus();
               }}
-              className="absolute right-1.5 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 hover:bg-muted/60 hover:text-foreground"
+              className="absolute right-1.5 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
             >
               <X className="size-3.5" />
             </button>
           )}
         </div>
 
-        <Select value={f.sortKey} onValueChange={(value) => f.setSort(value as typeof f.sortKey)}>
-          <SelectTrigger className="h-9 w-[170px]">
+        <Select value={f.sortKey} disabled={layoutEditing} onValueChange={(value) => {
+          if (layoutEditing) return;
+          f.setSort(value as typeof f.sortKey);
+        }}>
+          <SelectTrigger disabled={layoutEditing} className="h-9 w-[170px]">
             <SelectValue placeholder={m.toolbar.sortName} />
           </SelectTrigger>
           <SelectContent>
@@ -249,6 +267,7 @@ export function Toolbar({
           tip={m.toolbar.toggleSortDir}
           seenTooltips={seenTooltips}
           onStatusPatch={onStatusPatch}
+          disabled={layoutEditing}
           onClick={() => f.setSort(f.sortKey, f.sortDir === 'asc' ? 'desc' : 'asc')}
         >
           <ActionIcon phase={f.sortDir}>
@@ -256,7 +275,7 @@ export function Toolbar({
           </ActionIcon>
         </TButton>
 
-        <TButton onClick={() => onSync('syncIncremental', m.toolbar.syncButton)} disabled={actionBusy} tip={m.toolbar.syncTitle} firstUseTip={m.onboarding.tooltipSyncFirst} bit={1} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch} data-coach-target="sync">
+        <TButton onClick={() => onSync('syncIncremental', m.toolbar.syncButton)} disabled={actionBusy || layoutEditing} tip={m.toolbar.syncTitle} firstUseTip={m.onboarding.tooltipSyncFirst} bit={1} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch} data-coach-target="sync">
           <ActionIcon phase={successAction === 'syncIncremental' ? 'ok' : pendingAction === 'syncIncremental' ? 'busy' : 'idle'}>
             {successAction === 'syncIncremental' ? (
               <SuccessCheck data-icon="inline-start" />
@@ -272,7 +291,7 @@ export function Toolbar({
           )}
         </TButton>
 
-        <TButton onClick={() => onSync('syncFull', m.toolbar.fullSyncButton)} disabled={actionBusy} tip={m.toolbar.fullSyncTitle} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch} data-coach-target="full-sync">
+        <TButton onClick={() => onSync('syncFull', m.toolbar.fullSyncButton)} disabled={actionBusy || layoutEditing} tip={m.toolbar.fullSyncTitle} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch} data-coach-target="full-sync">
           <ActionIcon phase={successAction === 'syncFull' ? 'ok' : pendingAction === 'syncFull' ? 'busy' : 'idle'}>
             {successAction === 'syncFull' ? (
               <SuccessCheck data-icon="inline-start" />
@@ -288,7 +307,7 @@ export function Toolbar({
           )}
         </TButton>
 
-        <TButton variant="ghost" size="sm" onClick={() => onAutoAssignTags()} disabled={actionBusy} tip={m.toolbar.autoAssignTitle} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
+        <TButton variant="ghost" size="sm" onClick={() => onAutoAssignTags()} disabled={actionBusy || layoutEditing} tip={m.toolbar.autoAssignTitle} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
           <ActionIcon phase={successAction === 'autoAssignTags' ? 'ok' : pendingAction === 'autoAssignTags' ? 'busy' : 'idle'}>
             {successAction === 'autoAssignTags' ? (
               <SuccessCheck data-icon="inline-start" />
@@ -300,7 +319,7 @@ export function Toolbar({
           </ActionIcon>
           {m.toolbar.autoAssignButton}
         </TButton>
-        <TButton variant="ghost" size="sm" onClick={() => onSync('gistPush', m.toolbar.gistPushButton)} disabled={actionBusy} tip={m.toolbar.gistPushTitle} firstUseTip={m.onboarding.tooltipPushFirst} bit={2} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
+        <TButton variant="ghost" size="sm" onClick={() => onSync('gistPush', m.toolbar.gistPushButton)} disabled={actionBusy || layoutEditing} tip={m.toolbar.gistPushTitle} firstUseTip={m.onboarding.tooltipPushFirst} bit={2} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
           <ActionIcon phase={successAction === 'gistPush' ? 'ok' : pendingAction === 'gistPush' ? 'busy' : 'idle'}>
             {successAction === 'gistPush' ? (
               <SuccessCheck data-icon="inline-start" />
@@ -312,7 +331,7 @@ export function Toolbar({
           </ActionIcon>
           {m.toolbar.gistPushButton}
         </TButton>
-        <TButton variant="ghost" size="sm" onClick={() => onSync('gistPull', m.toolbar.gistPullButton)} disabled={actionBusy} tip={m.toolbar.gistPullTitle} firstUseTip={m.onboarding.tooltipPullFirst} bit={4} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
+        <TButton variant="ghost" size="sm" onClick={() => onSync('gistPull', m.toolbar.gistPullButton)} disabled={actionBusy || layoutEditing} tip={m.toolbar.gistPullTitle} firstUseTip={m.onboarding.tooltipPullFirst} bit={4} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
           <ActionIcon phase={successAction === 'gistPull' ? 'ok' : pendingAction === 'gistPull' ? 'busy' : 'idle'}>
             {successAction === 'gistPull' ? (
               <SuccessCheck data-icon="inline-start" />
@@ -334,7 +353,11 @@ export function Toolbar({
                 href={`https://gist.github.com/${account.username}/${account.gistId}`}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                className={cn(
+                  'inline-flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                  { 'pointer-events-none opacity-50': layoutEditing },
+                )}
+                {...getLockedAnchorProps(layoutEditing)}
               >
                 <ExternalLink className="size-3.5 shrink-0" />
                 <span className="max-w-[140px] truncate">gist/{account.gistId.slice(0, 8)}</span>
@@ -346,7 +369,7 @@ export function Toolbar({
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onToggleTheme}>
+            <Button variant="ghost" size="icon" className="h-9 w-9" disabled={layoutEditing} onClick={onToggleTheme}>
               <ActionIcon phase={theme}>
                 {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
               </ActionIcon>
@@ -376,8 +399,13 @@ export function Toolbar({
         {/* GitHub home — same-tab jump back to github.com from the stars page. */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-9 w-9" asChild>
-              <a href="https://github.com" title={m.toolbar.githubHomeTitle}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn('h-9 w-9', { 'pointer-events-none opacity-50': layoutEditing })}
+              asChild
+            >
+              <a href="https://github.com" title={m.toolbar.githubHomeTitle} {...getLockedAnchorProps(layoutEditing)}>
                 <Home className="size-4" />
               </a>
             </Button>
