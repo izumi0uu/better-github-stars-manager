@@ -3,11 +3,19 @@
   "version": "1.0.8",
   "description": "Manage your GitHub starred repos: tag, note, filter, search across thousands of stars. UI injected into the stars page.",
   "packageManager": "pnpm@10.33.2",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "10.33.2",
+      "onFail": "error"
+    }
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "package:extension": "node scripts/package-extension.mjs",
+    "preinstall": "node scripts/enforce-package-manager.mjs",
     "prepare": "node scripts/setup-hooks.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
