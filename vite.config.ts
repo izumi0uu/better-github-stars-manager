@@ -18,20 +18,30 @@ function versionHash(): string {
   if (process.env.GSM_VERSION_HASH) return process.env.GSM_VERSION_HASH;
   const commit = git(['rev-parse', '--short=8', 'HEAD'], 'unknown');
   const dirty = git(['status', '--short']);
-  if (!dirty) return commit;
   const diff = git(['diff', '--binary', 'HEAD']);
-  const suffix = createHash('sha1').update(`${diff}\n${dirty}`).digest('hex').slice(0, 8);
-  return `${commit}-${suffix}`;
+  const stateHash = dirty ? createHash('sha1').update(`${diff}\n${dirty}`).digest('hex').slice(0, 6) : 'clean';
+  const buildHash = createHash('sha1').update(new Date().toISOString()).digest('hex').slice(0, 6);
+  return `${commit}-${stateHash}-${buildHash}`;
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const DEV = mode !== 'production' || process.env.GSM_DEV === 'true';
+  const VERSION_HASH = versionHash();
 
   return {
-    plugins: [react(), crx({ manifest })],
+    plugins: [
+      react(),
+      crx({ manifest }),
+      {
+        name: 'gsm-build-info',
+        closeBundle() {
+          if (command === 'build') console.log(`✅ DEV ${VERSION_HASH}`);
+        },
+      },
+    ],
     define: {
       __GSM_DEV__: JSON.stringify(DEV),
-      __GSM_VERSION_HASH__: JSON.stringify(versionHash()),
+      __GSM_VERSION_HASH__: JSON.stringify(VERSION_HASH),
     },
     resolve: {
       alias: {
