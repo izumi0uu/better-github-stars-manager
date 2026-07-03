@@ -61,7 +61,7 @@ Apply this repo's frontend conventions before changing UI code. Keep changes sco
 ## React Rules
 
 - Keep helper components at module scope when identity matters; do not define child components inside render if remounts would replay animations or reset state.
-- Use `cn()` for class merging.
+- Use `cn()` for class merging. Any boolean-driven class inclusion in `cn()`/clsx or `className` must use object syntax, e.g. `cn('base', { 'opacity-50': disabled })`, not `disabled && 'opacity-50'`, `disabled ? 'opacity-50' : ''`, or `active ? 'text-foreground' : 'text-muted-foreground'`.
 - Use lucide icons for button affordances when an icon exists.
 - Keep buttons icon-led when the action is compact or tool-like.
 - Derive render data with `useMemo` only where it prevents meaningful recomputation or stabilizes layout behavior.
