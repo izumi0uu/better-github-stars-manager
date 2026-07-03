@@ -234,6 +234,27 @@ describe('Status/token regressions', () => {
     const cfg = await authStore.getConfig();
     assert.equal(cfg.autoTagLimit, 5);
     assert.equal(cfg.starsPanelDefaultEnabled, true);
+    assert.equal(cfg.columnLayoutMode, 'default');
+    assert.equal(cfg.customColumnLayout, null);
     assert.deepEqual(cfg.backfills, {});
+  });
+
+  it('authStore normalizes stored column layout preferences', async () => {
+    await chromeMock.api.storage.local.set({
+      gsm_config: {
+        columnLayoutMode: 'custom',
+        customColumnLayout: {
+          order: ['tags', 'repository', 'unknown', 'tags'],
+          hidden: ['favorite', 'description', 'description'],
+        },
+      },
+    });
+
+    const cfg = await authStore.getConfig();
+    assert.equal(cfg.columnLayoutMode, 'custom');
+    assert.deepEqual(cfg.customColumnLayout, {
+      order: ['tags', 'repository', 'description', 'language', 'stars', 'updated', 'favorite', 'notes'],
+      hidden: ['description'],
+    });
   });
 });
