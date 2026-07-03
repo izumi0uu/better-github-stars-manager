@@ -22,13 +22,14 @@ Keep this file short and practical. Add rules here only when they are core to th
 
 - IndexedDB is the source of truth for bulk repo data and annotations: `stars`, `tags`, `tagMeta`.
 - `chrome.storage.local` is only for lightweight config and UI state: token metadata, locale, theme, onboarding, sync progress, backfill state, and user preferences.
-- GitHub is the source of truth for repository metadata such as `archived`, `fork`, `pushed_at`, `starred_at`, and release metadata.
+- GitHub is the source of truth for repository metadata such as `archived`, `fork`, `pushed_at`, `created_at`, and `starred_at`.
 - Do not infer remote repo state in the UI when the sync layer can persist the canonical field.
 
 ## Data Rules
 
 - UI-only behavior changes do not need a storage upgrade.
 - Unless `package.json` version has already changed in the current worktree, treat new feature work as unreleased. Do not add compatibility code for hypothetical previously shipped users unless the user explicitly says the behavior has already been released.
+- Local dev builds and feature-branch experiments are not releases. If an unreleased migration, backfill, or schema change is revised before shipping, edit the existing unreleased upgrade/backfill in place instead of inventing a new version/id just to support local development data.
 - A new lightweight preference in `Config` should be added with a safe default and normalized on read. This usually does not need a DB bump.
 - A new persisted field on `Star`, `Tag`, or `TagMeta` requires:
   - updating `src/types/index.ts`
@@ -49,22 +50,15 @@ Keep this file short and practical. Add rules here only when they are core to th
 ## Sync And GitHub API Rules
 
 - Keep incremental sync and rescan aligned with authenticated REST `GET /user/starred`; that endpoint matches the current cursor and tombstone model.
-- Use GraphQL full sync when one query can hydrate multiple required fields together across the whole library. Current example: `viewer.starredRepositories` plus `latestRelease`.
+- Keep full sync, incremental sync, and rescan aligned with authenticated REST `GET /user/starred` whenever the required metadata already exists there.
 - `archived` must come from GitHub metadata (`repo.archived` or GraphQL `isArchived`) and be stored locally; never guess it from UI state.
-- Release-date semantics are:
-  - prefer release `publishedAt` / `published_at`
-  - fall back to `createdAt` / `created_at`
-  - do not substitute Git tag time for release time
+- Repository creation time should come from GitHub repo metadata (`created_at` / `createdAt`), not from releases, tags, or first-star heuristics.
 - Preserve tombstone semantics. By default the product operates on currently starred repos, not historical unstarred rows.
-- Keep `StarredRepositoryConnection.isOverLimit` in mind for very large accounts. If completeness matters for a new feature, handle or surface that boundary explicitly.
 
 ## GitHub Docs To Trust
 
-- GraphQL overview: `https://docs.github.com/en/graphql`
-- GraphQL repositories reference: `https://docs.github.com/en/graphql/reference/repos`
 - REST starring endpoints: `https://docs.github.com/v3/activity/starring`
-- REST releases endpoints: `https://docs.github.com/rest/releases/releases`
-- About releases: `https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases`
+- REST repositories endpoints: `https://docs.github.com/rest/repos/repos`
 
 ## Testing And Done Criteria
 
@@ -76,6 +70,15 @@ Keep this file short and practical. Add rules here only when they are core to th
   - `pnpm test:runtime` for extension runtime smoke coverage
 - Add a regression test when changing sync semantics, storage compatibility, migration/backfill logic, or GitHub data mapping.
 - For docs-only changes, code tests are optional.
+
+## Comment Rules
+
+- Write comments when they materially improve maintainability.
+- Good comments briefly explain what a function or module does, what problem it solves, or the key constraint/invariant behind it.
+- Comments should focus on intent, purpose, boundaries, and `why`; avoid line-by-line narration of `what` the next lines already say.
+- Prefer one short block comment above the tricky code. Do not add multi-paragraph, sectioned, or doc-style comments inside product code.
+- If a comment starts carrying design history, tradeoff analysis, or workflow notes, move that material to tests or docs and leave at most a short pointer.
+- During refactors, update or delete stale comments aggressively. A partly true comment is worse than no comment.
 
 ## Maintenance Of This File
 
