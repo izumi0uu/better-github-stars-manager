@@ -83,6 +83,10 @@
     transition: opacity var(--gsm-table-opacity-duration, var(--gsm-duration-table)) var(--gsm-ease-standard);
   }
 
+  .gsm-table-head-stuck {
+    box-shadow: 0 6px 16px hsl(0 0% 0% / 0.08);
+  }
+
   .gsm-edit-chrome-wrap,
   .gsm-tray-zone {
     display: grid;

@@ -44,6 +44,8 @@ export function ManagerPanel() {
   const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const headerSentinelRef = useRef<HTMLDivElement>(null);
+  const [headerStuck, setHeaderStuck] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const { theme, themeClass, toggle: toggleTheme } = useTheme();
   const { m } = useI18n();
@@ -165,6 +167,19 @@ export function ManagerPanel() {
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
+
+  useEffect(() => {
+    const root = listRef.current;
+    const sentinel = headerSentinelRef.current;
+    if (!root || !sentinel || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setHeaderStuck(!entry.isIntersecting),
+      { root, threshold: 0 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
 
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashSuccess = (type: string) => {
@@ -452,13 +467,17 @@ export function ManagerPanel() {
                 '--gsm-table-opacity-duration': `${phase === 'fading-out' ? 120 : BROWSE_LAYOUT_TABLE_OPACITY_MS}ms`,
               } as CSSProperties & Record<'--gsm-table-opacity-duration', string>}
             >
+            <div ref={headerSentinelRef} data-table-head-sentinel className="h-px" aria-hidden="true" />
             <div
               ref={headerRef}
+              data-table-head
+              data-stuck={headerStuck ? 'true' : 'false'}
               className={cn(
-                'gsm-layout-grid gsm-meta-label gsm-z-sticky sticky top-0 grid gap-2 border-b bg-background px-3 py-1.5 relative',
+                'gsm-layout-grid gsm-meta-label gsm-z-sticky sticky top-0 grid gap-2 border-b bg-background px-3 py-1.5',
                 {
                   'border-primary': editingLayout,
                   'border-border': !editingLayout,
+                  'gsm-table-head-stuck': headerStuck,
                 },
               )}
               style={{ gridTemplateColumns }}
