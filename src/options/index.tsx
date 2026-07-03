@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import { authStore } from '@/auth/auth-store';
 import { I18nProvider } from '@/i18n';
-import '@/ui/styles.css';
+import '@/ui/styles/index.css';
 import { Options } from './Options';
 
 const root = document.getElementById('root')!;

@@ -119,7 +119,7 @@ export function Popup() {
       <>
         <Spinner data-icon="inline-start" />
         {label}
-        {progressCount && <span className="ml-1 tabular-nums text-[10px] opacity-80">{progressCount}</span>}
+        {progressCount && <span className="gsm-inline-progress-count">{progressCount}</span>}
       </>
     ) : (
       <>
@@ -159,7 +159,7 @@ export function Popup() {
         {syncing && progressValue != null && (
           <div className="flex items-center gap-2">
             <Progress value={progressValue} className="h-2 flex-1" />
-            <span className="min-w-[48px] text-right tabular-nums text-foreground">{progressCount}</span>
+            <span className="gsm-progress-count">{progressCount}</span>
           </div>
         )}
       </div>

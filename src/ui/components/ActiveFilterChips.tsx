@@ -29,14 +29,14 @@ export function ActiveFilterChips({
 
   return (
     <div className="flex flex-wrap items-center gap-1 bg-muted/30 px-3 py-1">
-      <span className="mr-1 text-[10px] text-muted-foreground">{m.activeFilters.summary(count)}</span>
+      <span className="gsm-muted-count mr-1">{m.activeFilters.summary(count)}</span>
       {active.map((a, i) => (
         <button key={`${a.label}-${i}`} onClick={a.clear} title={m.activeFilters.clearOne}>
           <Badge
             variant={a.kind === 'tag' ? 'default' : 'secondary'}
             className={cn(
               'cursor-pointer gap-1 hover:opacity-80',
-              a.kind === 'special' && 'border-warning/40 bg-warning/10 text-warning',
+              { 'border-warning/40 bg-warning/10 text-warning': a.kind === 'special' },
             )}
           >
             {a.label}
@@ -46,7 +46,7 @@ export function ActiveFilterChips({
       ))}
       <button
         onClick={() => f.resetFilters()}
-        className="ml-1 text-[11px] text-muted-foreground underline hover:text-foreground"
+        className="gsm-helper-text ml-1 underline hover:text-foreground"
         title={m.activeFilters.clearAll}
       >
         {m.activeFilters.clearAll}

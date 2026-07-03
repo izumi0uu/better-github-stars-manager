@@ -183,8 +183,8 @@ export function RepoDetailPanel({
   return (
     <div className="flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card">
       <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
-        <Button variant="ghost" size="icon" onClick={onPrev} disabled={!hasPrev} title={m.repoDetail.previousTitle} className={cn(!hasPrev && 'opacity-30')}><ChevronLeft className="size-4" /></Button>
-        <Button variant="ghost" size="icon" onClick={onNext} disabled={!hasNext} title={m.repoDetail.nextTitle} className={cn(!hasNext && 'opacity-30')}><ChevronRight className="size-4" /></Button>
+        <Button variant="ghost" size="icon" onClick={onPrev} disabled={!hasPrev} title={m.repoDetail.previousTitle} className={cn({ 'opacity-30': !hasPrev })}><ChevronLeft className="size-4" /></Button>
+        <Button variant="ghost" size="icon" onClick={onNext} disabled={!hasNext} title={m.repoDetail.nextTitle} className={cn({ 'opacity-30': !hasNext })}><ChevronRight className="size-4" /></Button>
         <span className="flex-1" />
         <Button variant="ghost" size="icon" onClick={onClose} title={m.repoDetail.closeTitle}><X className="size-4" /></Button>
       </div>
@@ -301,7 +301,7 @@ export function RepoDetailPanel({
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
-      <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div className="gsm-meta-label mb-1">{title}</div>
       {children}
     </div>
   );
@@ -324,7 +324,7 @@ function SaveRow({
 }) {
   return (
     <div className="mt-2 flex items-center justify-between gap-3">
-      <div className="min-h-[12px] text-[10px] text-muted-foreground">
+      <div className="gsm-muted-count min-h-[12px]">
         {phase === 'ok' ? (
           <span className="inline-flex items-center gap-1 text-success">
             <Check className="size-3" />
@@ -373,7 +373,7 @@ function flashSaved(
 function Meta({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] text-muted-foreground/70">{label}</div>
+      <div className="gsm-muted-count-soft">{label}</div>
       <div className="text-foreground">{value}</div>
     </div>
   );

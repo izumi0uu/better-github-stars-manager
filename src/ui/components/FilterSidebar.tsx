@@ -117,10 +117,16 @@ function LanguagesSection({ f, languages }: { f: FilterState; languages: [string
             list.map(([lang, count]) => {
               const on = f.languages.includes(lang);
               return (
-                <label key={lang} className={cn('flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-muted/40', on ? 'text-foreground' : 'text-muted-foreground')}>
+                <label
+                  key={lang}
+                  className={cn('flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-muted/40', {
+                    'text-foreground': on,
+                    'text-muted-foreground': !on,
+                  })}
+                >
                   <Checkbox checked={on} onCheckedChange={() => f.toggleLanguage(lang)} />
                   <span className="flex-1 truncate">{lang}</span>
-                  <span className="tabular-nums text-[10px] text-muted-foreground/70">{count}</span>
+                  <span className="gsm-muted-count-soft tabular-nums">{count}</span>
                 </label>
               );
             })
@@ -192,7 +198,7 @@ function TagsSection({
       <div className="mb-1.5 flex items-center gap-1">
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+          className="gsm-meta-label flex items-center gap-1 hover:text-foreground"
         >
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
           <span>{m.filterSidebar.tags(tagTree.total)}</span>
@@ -204,7 +210,10 @@ function TagsSection({
               onClick={() => f.setTagMode(mode)}
               className={cn(
                 'rounded px-1.5 py-0.5 text-[10px] font-medium',
-                f.tagMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted/40',
+                {
+                  'bg-primary text-primary-foreground': f.tagMode === mode,
+                  'text-muted-foreground hover:bg-muted/40': f.tagMode !== mode,
+                },
               )}
               title={mode === 'any' ? m.filterSidebar.tagsMatchAny : m.filterSidebar.tagsMatchAll}
             >
@@ -251,15 +260,18 @@ function TagsSection({
                   onClick={() => f.toggleTag(name)}
                   className={cn(
                     'group/tag flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-muted/40',
-                    on ? 'text-foreground' : 'text-muted-foreground',
-                    isPending && 'bg-destructive/10 ring-1 ring-inset ring-destructive/30',
+                    {
+                      'text-foreground': on,
+                      'text-muted-foreground': !on,
+                      'bg-destructive/10 ring-1 ring-inset ring-destructive/30': isPending,
+                    },
                   )}
                 >
                   {/* Visual-only checkbox: pointer-events-none so clicks fall through
                       to the row (avoids a double-toggle when clicking the box itself). */}
                   <Checkbox checked={on} className="pointer-events-none" />
                   <span className="flex-1 truncate">{name}</span>
-                  <span className="tabular-nums text-[10px] text-muted-foreground/70">{count}</span>
+                  <span className="gsm-muted-count-soft tabular-nums">{count}</span>
                   {/* Delete: hover shows trash → click turns red check to confirm →
                       click again submits; 3s auto-revert. Icon via ActionIcon
                       remount + color crossfade. */}
@@ -274,9 +286,10 @@ function TagsSection({
                         }}
                         className={cn(
                           'inline-flex shrink-0 items-center justify-center rounded p-0.5 leading-none transition-colors duration-150 disabled:opacity-50',
-                          isPending
-                            ? 'text-destructive hover:bg-destructive/15'
-                            : 'text-muted-foreground/0 hover:text-destructive hover:bg-destructive/10 group-hover/tag:text-muted-foreground/40',
+                          {
+                            'text-destructive hover:bg-destructive/15': isPending,
+                            'text-muted-foreground/0 hover:text-destructive hover:bg-destructive/10 group-hover/tag:text-muted-foreground/40': !isPending,
+                          },
                         )}
                         title={isPending ? m.filterSidebar.deleteTagConfirm(name, count) : m.filterSidebar.deleteTagTitle}
                       >
@@ -294,7 +307,7 @@ function TagsSection({
             {!q && !showAll && list.length > TAG_PREVIEW && (
               <button
                 onClick={() => setShowAll(true)}
-                className="mt-0.5 text-center text-[10px] text-muted-foreground hover:text-foreground"
+                className="gsm-muted-count mt-0.5 text-center hover:text-foreground"
               >
                 {m.filterSidebar.tagsShowAll(list.length)}
               </button>
@@ -315,7 +328,7 @@ function SectionTitle({ title, open, onToggle }: { title: string; open: boolean;
   return (
     <button
       onClick={onToggle}
-      className="mb-1.5 flex w-full items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+      className="gsm-meta-label mb-1.5 flex w-full items-center gap-1 hover:text-foreground"
     >
       {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
       <span>{title}</span>
@@ -326,7 +339,7 @@ function SectionTitle({ title, open, onToggle }: { title: string; open: boolean;
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
-      <div className="mb-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div className="gsm-meta-label mb-1.5">{title}</div>
       <div className="flex flex-col gap-1">{children}</div>
     </div>
   );
@@ -334,10 +347,15 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function FilterToggle({ checked, onChange, label, hint }: { checked: boolean; onChange: () => void; label: string; hint: string }) {
   return (
-    <label className={cn('flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 hover:bg-muted/40', checked ? 'text-foreground' : 'text-muted-foreground')}>
+    <label
+      className={cn('flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 hover:bg-muted/40', {
+        'text-foreground': checked,
+        'text-muted-foreground': !checked,
+      })}
+    >
       <Checkbox checked={checked} onCheckedChange={onChange} />
       <span className="whitespace-nowrap">{label}</span>
-      {hint && <span className="ml-auto whitespace-nowrap text-[10px] text-muted-foreground/70">{hint}</span>}
+      {hint && <span className="gsm-muted-count-soft ml-auto whitespace-nowrap">{hint}</span>}
     </label>
   );
 }

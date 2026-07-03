@@ -39,8 +39,11 @@ export function FloatingLocaleToggle({ drawerOpen }: { drawerOpen: boolean }) {
   return (
     <div
       className={cn(
-        'absolute bottom-4 z-20 transition-[right] duration-200',
-        drawerOpen ? 'right-4 md:right-[356px]' : 'right-4',
+        'gsm-z-floating absolute bottom-4 transition-[right] duration-200',
+        {
+          'right-4 md:right-[356px]': drawerOpen,
+          'right-4': !drawerOpen,
+        },
       )}
     >
       <div className="flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-1.5 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -54,9 +57,10 @@ export function FloatingLocaleToggle({ drawerOpen }: { drawerOpen: boolean }) {
             onClick={() => void clearLocalData()}
             className={cn(
               'rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-60',
-              confirmClear
-                ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
-                : 'text-muted-foreground hover:bg-destructive/10 hover:text-destructive',
+              {
+                'bg-destructive text-destructive-foreground hover:bg-destructive/90': confirmClear,
+                'text-muted-foreground hover:bg-destructive/10 hover:text-destructive': !confirmClear,
+              },
             )}
             title={confirmClear ? m.dev.confirmClearLocalData : m.dev.clearLocalData}
           >
@@ -88,9 +92,10 @@ export function FloatingLocaleToggle({ drawerOpen }: { drawerOpen: boolean }) {
                 }}
                 className={cn(
                   'rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors',
-                  active
-                    ? 'bg-primary text-primary-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background hover:text-foreground',
+                  {
+                    'bg-primary text-primary-foreground shadow-sm': active,
+                    'text-muted-foreground hover:bg-background hover:text-foreground': !active,
+                  },
                 )}
               >
                 {entry.short}
