@@ -5,6 +5,7 @@ import {
   COLUMN_DEFS,
   DEFAULT_COLUMN_LAYOUT,
   INITIAL_CUSTOM_COLUMN_LAYOUT,
+  beginCustomLayoutEditTransition,
   browseLayoutTransition,
   cloneColumnLayout,
   columnShiftTransforms,
@@ -112,11 +113,16 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [renderedBrowseLayout, setRenderedBrowseLayout] = useState<ColumnLayout>(() => cloneColumnLayout(DEFAULT_COLUMN_LAYOUT));
   const [layoutFaded, setLayoutFaded] = useState(false);
+  const [layoutConfigReady, setLayoutConfigReady] = useState(false);
+  const [layoutEditReady, setLayoutEditReady] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [flashedColumn, setFlashedColumn] = useState<ColumnId | null>(null);
   const [columnMenuPosition, setColumnMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingBrowseLayout = useRef<ColumnLayout | null>(null);
+  const configSynced = useRef(false);
+  const configLoaded = useRef(false);
   const preEditMode = useRef<ColumnLayoutMode>('default');
   const headerRef = useRef<HTMLDivElement>(null);
   const editColumnsButtonRef = useRef<HTMLButtonElement>(null);
@@ -165,28 +171,45 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
 
   useEffect(() => {
     let cancelled = false;
-    const applyConfig = (config: Awaited<ReturnType<typeof authStore.getConfig>>) => {
+    const applyConfig = (
+      config: Awaited<ReturnType<typeof authStore.getConfig>>,
+      options: { hydrate: boolean },
+    ) => {
       if (cancelled) return;
+      const isFirstConfigSync = !configSynced.current;
+      if (options.hydrate && !isFirstConfigSync) return;
       const nextMode = normalizeColumnLayoutMode(config.columnLayoutMode);
       const nextCustomLayout = normalizeStoredColumnLayoutPreference(config.customColumnLayout);
       const nextBrowseLayout = nextMode === 'custom'
         ? nextCustomLayout ?? DEFAULT_COLUMN_LAYOUT
         : DEFAULT_COLUMN_LAYOUT;
+      const shouldHydrateBrowseLayout = options.hydrate && isFirstConfigSync && !editingLayoutRef.current;
+      configSynced.current = true;
+      configLoaded.current = true;
+      setLayoutConfigReady(true);
+      setLayoutEditReady(true);
 
       setSavedCustomLayout(nextCustomLayout);
       setLayoutMode(nextMode);
       if (editingLayoutRef.current) return;
       setPreviewingCustomLayout(false);
       setDraftLayout(cloneColumnLayout(nextCustomLayout ?? DEFAULT_COLUMN_LAYOUT));
-      setRenderedBrowseLayout(cloneColumnLayout(nextBrowseLayout));
-      setLayoutFaded(false);
+      if (shouldHydrateBrowseLayout) {
+        setRenderedBrowseLayout(cloneColumnLayout(nextBrowseLayout));
+        setLayoutFaded(false);
+      }
+    };
+    const recoverConfigSync = () => {
+      if (cancelled || configSynced.current) return;
+      configSynced.current = true;
+      setLayoutConfigReady(true);
     };
 
-    void authStore.getConfig().then(applyConfig).catch(() => {});
+    void authStore.getConfig().then((config) => applyConfig(config, { hydrate: true })).catch(recoverConfigSync);
 
     const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
       if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]?.newValue) return;
-      applyConfig(changes[CONFIG_STORAGE_KEY].newValue);
+      applyConfig(changes[CONFIG_STORAGE_KEY].newValue, { hydrate: false });
     };
     chrome.storage.onChanged.addListener(listener);
     return () => {
@@ -235,6 +258,8 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
 
   useEffect(() => {
     if (layoutFadeTimer.current) clearTimeout(layoutFadeTimer.current);
+    layoutFadeTimer.current = null;
+    pendingBrowseLayout.current = null;
     const transition = browseLayoutTransition(browseTargetLayout, renderedBrowseLayout, {
       editing: editingLayout,
       prefersReducedMotion,
@@ -250,14 +275,20 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
       return;
     }
     setLayoutFaded(true);
+    pendingBrowseLayout.current = cloneColumnLayout(browseTargetLayout);
     layoutFadeTimer.current = setTimeout(() => {
-      const next = completeBrowseLayoutTransition(browseTargetLayout);
+      const target = pendingBrowseLayout.current;
+      if (!target) return;
+      const next = completeBrowseLayoutTransition(target);
       setRenderedBrowseLayout(next.renderedLayout);
       setLayoutFaded(next.faded);
       layoutFadeTimer.current = null;
+      pendingBrowseLayout.current = null;
     }, transition.delayMs);
     return () => {
       if (layoutFadeTimer.current) clearTimeout(layoutFadeTimer.current);
+      layoutFadeTimer.current = null;
+      pendingBrowseLayout.current = null;
     };
   }, [browseTargetLayout, editingLayout, prefersReducedMotion, renderedBrowseLayout]);
 
@@ -273,30 +304,36 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
   useEffect(() => () => {
     if (flashTimer.current) clearTimeout(flashTimer.current);
     if (layoutFadeTimer.current) clearTimeout(layoutFadeTimer.current);
+    pendingBrowseLayout.current = null;
   }, []);
 
   const setBrowseLayoutMode = (mode: ColumnLayoutMode) => {
+    if (!configSynced.current) return;
     setPreviewingCustomLayout(false);
     setLayoutMode(mode);
     void authStore.update({ columnLayoutMode: mode }).catch(() => {});
   };
 
   const previewCustomLayout = (previewing: boolean) => {
+    if (!configSynced.current) return;
     if (!editingLayout && layoutMode === 'default') setPreviewingCustomLayout(previewing);
   };
 
-  const beginLayoutEdit = () => {
-    const editBaseLayout = layoutMode === 'custom'
-      ? customLayout
-      : DEFAULT_COLUMN_LAYOUT;
+  const beginCustomLayoutEdit = () => {
+    if (!configLoaded.current) return;
+    const edit = beginCustomLayoutEditTransition(customLayout);
     if (layoutFadeTimer.current) clearTimeout(layoutFadeTimer.current);
-    preEditMode.current = layoutMode;
-    setPreviewingCustomLayout(false);
-    setDraftLayout(cloneColumnLayout(editBaseLayout));
-    setRenderedBrowseLayout(cloneColumnLayout(editBaseLayout));
-    setLayoutFaded(false);
-    setEditingLayout(true);
+    layoutFadeTimer.current = null;
+    pendingBrowseLayout.current = null;
+    preEditMode.current = edit.preEditMode;
+    setPreviewingCustomLayout(edit.previewingCustomLayout);
+    setLayoutMode(edit.layoutMode);
+    setDraftLayout(edit.draftLayout);
+    setRenderedBrowseLayout(edit.renderedLayout);
+    setLayoutFaded(edit.layoutFaded);
+    setEditingLayout(edit.editingLayout);
     setColumnMenuOpen(false);
+    void authStore.update({ columnLayoutMode: edit.layoutMode }).catch(() => {});
   };
 
   useEffect(() => {
@@ -544,6 +581,8 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
   return {
     layoutMode,
     editingLayout,
+    layoutConfigReady,
+    layoutEditReady,
     previewingCustomLayout,
     draftLayout,
     visibleColumns,
@@ -565,7 +604,7 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     editColumnsButtonRef,
     setBrowseLayoutMode,
     previewCustomLayout,
-    beginLayoutEdit,
+    beginCustomLayoutEdit,
     saveLayoutEdit,
     cancelLayoutEdit,
     resetLayoutEdit,

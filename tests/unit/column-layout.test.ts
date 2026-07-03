@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  beginCustomLayoutEditTransition,
   COLUMN_DEFS,
   columnShiftTransforms,
   completeBrowseLayoutTransition,
@@ -22,6 +23,7 @@ import {
 } from '@/ui/column-layout';
 import {
   BROWSE_LAYOUT_FADE_DELAY_MS,
+  BROWSE_LAYOUT_TABLE_OPACITY_MS,
   COLUMN_GAP_PX,
   COLUMN_HIDE_INTENT_DISTANCE_PX,
   COLUMN_MENU_WIDTH_PX,
@@ -66,6 +68,7 @@ describe('column layout editing', () => {
 
   it('keeps layout edit interaction constants explicit and reusable', () => {
     expect(LAYOUT_PREVIEW_HOVER_DELAY_MS).toBeGreaterThan(BROWSE_LAYOUT_FADE_DELAY_MS);
+    expect(BROWSE_LAYOUT_TABLE_OPACITY_MS).toBe(160);
     expect(TRAY_RESTORE_HEADER_BUFFER_PX).toBeLessThan(COLUMN_HIDE_INTENT_DISTANCE_PX);
     expect(COLUMN_MENU_WIDTH_PX).toBe(208);
     expect(LAYOUT_EDIT_CSS_VARS.columnMenuWidth).toBe(`${COLUMN_MENU_WIDTH_PX}px`);
@@ -227,6 +230,16 @@ describe('column layout editing', () => {
     expect(transition).toEqual({ kind: 'settled' });
   });
 
+  it('settles without a second fade when applying an already-previewed custom layout', () => {
+    const customLayout = hideColumn(DEFAULT_COLUMN_LAYOUT, 'description');
+    const transition = browseLayoutTransition(customLayout, customLayout, {
+      editing: false,
+      prefersReducedMotion: false,
+    });
+
+    expect(transition).toEqual({ kind: 'settled' });
+  });
+
   it('switches browse layout instantly when reduced motion is enabled', () => {
     const target = hideColumn(DEFAULT_COLUMN_LAYOUT, 'description');
     const transition = browseLayoutTransition(target, DEFAULT_COLUMN_LAYOUT, {
@@ -261,5 +274,23 @@ describe('column layout editing', () => {
     });
 
     expect(transition).toEqual({ kind: 'idle' });
+  });
+
+  it('prepares pencil edit as an immediate custom-layout edit transition', () => {
+    const customLayout = hideColumn(moveColumn(DEFAULT_COLUMN_LAYOUT, 'tags', 1), 'description');
+    const transition = beginCustomLayoutEditTransition(customLayout);
+
+    expect(transition).toEqual({
+      layoutMode: 'custom',
+      preEditMode: 'custom',
+      draftLayout: customLayout,
+      renderedLayout: customLayout,
+      previewingCustomLayout: false,
+      layoutFaded: false,
+      editingLayout: true,
+    });
+    expect(transition.draftLayout).not.toBe(customLayout);
+    expect(transition.renderedLayout).not.toBe(customLayout);
+    expect(transition.renderedLayout).not.toBe(transition.draftLayout);
   });
 });

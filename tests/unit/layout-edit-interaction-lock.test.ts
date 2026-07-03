@@ -38,6 +38,40 @@ describe('layout edit interaction lock invariants', () => {
     expect(source).toContain('{layoutEditChrome}');
   });
 
+  it('keeps pencil edit as a single callback while ManagerPanel wires custom edit semantics', () => {
+    const toolbar = read('src/ui/components/Toolbar.tsx');
+    const manager = read('src/ui/ManagerPanel.tsx');
+    const hook = read('src/ui/hooks/use-column-layout-editor.ts');
+
+    expect(toolbar).toContain('onClick={onStartLayoutEdit}');
+    expect(toolbar).not.toContain("onLayoutModeChange('custom');\n                  onStartLayoutEdit");
+    expect(manager).toContain('beginCustomLayoutEdit,');
+    expect(manager).toContain('onStartLayoutEdit={beginCustomLayoutEdit}');
+    expect(manager).toContain('BROWSE_LAYOUT_TABLE_OPACITY_MS');
+    expect(hook).toContain('const beginCustomLayoutEdit = () => {');
+    expect(hook).toContain('if (!configLoaded.current) return;');
+    expect(hook).toContain('preEditMode.current = edit.preEditMode;');
+    expect(hook).toContain("authStore.update({ columnLayoutMode: edit.layoutMode })");
+  });
+
+  it('keeps storage echoes from owning the rendered browse layout after hydration', () => {
+    const hook = read('src/ui/hooks/use-column-layout-editor.ts');
+
+    expect(hook).toContain('const configSynced = useRef(false);');
+    expect(hook).toContain('const configLoaded = useRef(false);');
+    expect(hook).toContain('const isFirstConfigSync = !configSynced.current;');
+    expect(hook).toContain('if (options.hydrate && !isFirstConfigSync) return;');
+    expect(hook).toContain('options: { hydrate: boolean }');
+    expect(hook).toContain('const shouldHydrateBrowseLayout = options.hydrate && isFirstConfigSync && !editingLayoutRef.current;');
+    expect(hook).toContain('configSynced.current = true;');
+    expect(hook).toContain('configLoaded.current = true;');
+    expect(hook).toContain('setLayoutConfigReady(true);');
+    expect(hook).toContain('setLayoutEditReady(true);');
+    expect(hook).toContain('authStore.getConfig().then((config) => applyConfig(config, { hydrate: true }))');
+    expect(hook).toContain('applyConfig(changes[CONFIG_STORAGE_KEY].newValue, { hydrate: false });');
+    expect(hook).toMatch(/if \(shouldHydrateBrowseLayout\) \{\s+setRenderedBrowseLayout\(cloneColumnLayout\(nextBrowseLayout\)\);\s+setLayoutFaded\(false\);\s+\}/);
+  });
+
   it('locks sibling regions and row-level actions without teaching them a provider', () => {
     for (const path of [
       'src/ui/components/ActiveFilterChips.tsx',

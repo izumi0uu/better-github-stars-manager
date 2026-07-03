@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 import type { BackfillId, BackfillState } from '@/types';
 import { COLUMN_DEFS } from '@/ui/column-layout';
+import { BROWSE_LAYOUT_TABLE_OPACITY_MS } from '@/ui/layout-edit-constants';
 
 const ROW_HEIGHT = 64;
 
@@ -49,6 +50,8 @@ export function ManagerPanel() {
   const {
     layoutMode,
     editingLayout,
+    layoutConfigReady,
+    layoutEditReady,
     previewingCustomLayout,
     draftLayout,
     visibleColumns,
@@ -70,7 +73,7 @@ export function ManagerPanel() {
     editColumnsButtonRef,
     setBrowseLayoutMode,
     previewCustomLayout,
-    beginLayoutEdit,
+    beginCustomLayoutEdit,
     saveLayoutEdit,
     cancelLayoutEdit,
     resetLayoutEdit,
@@ -372,11 +375,13 @@ export function ManagerPanel() {
           searchRef={searchRef}
           layoutMode={layoutMode}
           layoutEditing={editingLayout}
+          layoutConfigReady={layoutConfigReady}
+          layoutEditReady={layoutEditReady}
           customLayoutDirty={customLayoutDirty}
           customPreviewing={previewingCustomLayout}
           hiddenColumnCount={hiddenColumnCount}
           onLayoutModeChange={setBrowseLayoutMode}
-          onStartLayoutEdit={beginLayoutEdit}
+          onStartLayoutEdit={beginCustomLayoutEdit}
           onPreviewCustomChange={previewCustomLayout}
           layoutEditChrome={layoutEditChrome}
         />
@@ -444,7 +449,7 @@ export function ManagerPanel() {
               className="gsm-layout-table-shell"
               style={{
                 opacity: phase === 'fading-out' || layoutFaded ? 0 : 1,
-                '--gsm-table-opacity-duration': `${phase === 'fading-out' ? 120 : 160}ms`,
+                '--gsm-table-opacity-duration': `${phase === 'fading-out' ? 120 : BROWSE_LAYOUT_TABLE_OPACITY_MS}ms`,
               } as CSSProperties & Record<'--gsm-table-opacity-duration', string>}
             >
             <div

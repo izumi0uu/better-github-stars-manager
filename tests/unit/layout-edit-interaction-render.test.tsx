@@ -66,6 +66,49 @@ function fakeTag(): Tag {
   };
 }
 
+function renderToolbarViewTabs({
+  layoutMode,
+  customPreviewing,
+  layoutConfigReady = true,
+  layoutEditReady = true,
+}: {
+  layoutMode: 'default' | 'custom';
+  customPreviewing: boolean;
+  layoutConfigReady?: boolean;
+  layoutEditReady?: boolean;
+}) {
+  return renderToStaticMarkup(
+    <TooltipProvider>
+      <Toolbar
+        f={fakeFilterState()}
+        status={null}
+        loading={false}
+        listPhase="idle"
+        total={1}
+        grandTotal={1}
+        busy={false}
+        pendingAction={null}
+        successAction={null}
+        onSync={vi.fn()}
+        onAutoAssignTags={vi.fn()}
+        onToggleTheme={vi.fn()}
+        theme="light"
+        searchRef={{ current: null }}
+        layoutMode={layoutMode}
+        layoutEditing={false}
+        layoutConfigReady={layoutConfigReady}
+        layoutEditReady={layoutEditReady}
+        customLayoutDirty
+        customPreviewing={customPreviewing}
+        hiddenColumnCount={0}
+        onLayoutModeChange={vi.fn()}
+        onStartLayoutEdit={vi.fn()}
+        onPreviewCustomChange={vi.fn()}
+      />
+    </TooltipProvider>,
+  );
+}
+
 describe('layout edit interaction lock render behavior', () => {
   it('renders locked helper attributes and suppresses anchor activation', () => {
     expect(getLockedRegionProps(true)).toEqual({ 'aria-disabled': true, inert: '' });
@@ -110,6 +153,8 @@ describe('layout edit interaction lock render behavior', () => {
           searchRef={{ current: null }}
           layoutMode="default"
           layoutEditing
+          layoutConfigReady
+          layoutEditReady
           customLayoutDirty={false}
           customPreviewing={false}
           hiddenColumnCount={0}
@@ -126,6 +171,42 @@ describe('layout edit interaction lock render behavior', () => {
     expect(markup).toContain('aria-disabled="true"');
     expect(markup).toContain('tabindex="-1"');
     expect(markup).toContain('pointer-events-none opacity-50');
+  });
+
+  it('renders the view tab active dot for default, custom, and custom preview states', () => {
+    const activeDot = 'size-1.5 rounded-full bg-primary';
+    const defaultMarkup = renderToolbarViewTabs({ layoutMode: 'default', customPreviewing: false });
+    const customMarkup = renderToolbarViewTabs({ layoutMode: 'custom', customPreviewing: false });
+    const previewMarkup = renderToolbarViewTabs({ layoutMode: 'default', customPreviewing: true });
+
+    expect(defaultMarkup.match(new RegExp(activeDot, 'g'))?.length).toBe(1);
+    expect(defaultMarkup.indexOf(activeDot)).toBeLessThan(defaultMarkup.indexOf('Default'));
+    expect(customMarkup.match(new RegExp(activeDot, 'g'))?.length).toBe(1);
+    expect(customMarkup.indexOf(activeDot)).toBeGreaterThan(customMarkup.indexOf('Default'));
+    expect(previewMarkup.match(new RegExp(activeDot, 'g'))?.length).toBe(1);
+    expect(previewMarkup).toContain('gsm-seg-previewing');
+    expect(previewMarkup.indexOf(activeDot)).toBeGreaterThan(previewMarkup.indexOf('Default'));
+  });
+
+  it('keeps browse tabs enabled while the pencil remains disabled in recovered config-only state', () => {
+    const markup = renderToolbarViewTabs({
+      layoutMode: 'custom',
+      customPreviewing: false,
+      layoutConfigReady: true,
+      layoutEditReady: false,
+    });
+
+    const buttons = [...markup.matchAll(/<button[\s\S]*?<\/button>/g)].map((match) => match[0]);
+    const defaultTab = buttons.find((button) => button.includes('Default'));
+    const customTab = buttons.find((button) => button.includes('Custom'));
+    const editButton = buttons.find((button) => button.includes('w-7'));
+
+    expect(defaultTab).toBeDefined();
+    expect(customTab).toBeDefined();
+    expect(editButton).toBeDefined();
+    expect(defaultTab).not.toContain('disabled');
+    expect(customTab).not.toContain('disabled');
+    expect(editButton).toContain('disabled=""');
   });
 
   it('renders sibling regions as inert while layout edit chrome remains enabled', () => {

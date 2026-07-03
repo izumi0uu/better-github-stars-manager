@@ -88,6 +88,8 @@ export function Toolbar({
   searchRef,
   layoutMode,
   layoutEditing,
+  layoutConfigReady,
+  layoutEditReady,
   customLayoutDirty,
   customPreviewing,
   hiddenColumnCount,
@@ -115,6 +117,8 @@ export function Toolbar({
   searchRef: React.MutableRefObject<HTMLInputElement | null>;
   layoutMode: 'default' | 'custom';
   layoutEditing: boolean;
+  layoutConfigReady: boolean;
+  layoutEditReady: boolean;
   customLayoutDirty: boolean;
   customPreviewing: boolean;
   hiddenColumnCount: number;
@@ -131,8 +135,10 @@ export function Toolbar({
   const progressValue = phase && phase.total ? Math.max(1, Math.min(100, Math.round((phase.done / phase.total) * 100))) : null;
   const progressCount = phase?.total ? `${phase.done}/${phase.total}` : null;
   const searchInput = useImeBufferedInput(f.query, f.setQuery);
+  const layoutControlsDisabled = layoutEditing || !layoutConfigReady;
+  const layoutEditDisabled = layoutEditing || !layoutEditReady;
   const customPreviewIntent = useDelayedHoverIntent({
-    enabled: layoutMode === 'default' && !layoutEditing && customLayoutDirty,
+    enabled: layoutMode === 'default' && !layoutControlsDisabled && customLayoutDirty,
     delayMs: LAYOUT_PREVIEW_HOVER_DELAY_MS,
     onOpen: () => onPreviewCustomChange(true),
     onClose: () => onPreviewCustomChange(false),
@@ -469,12 +475,12 @@ export function Toolbar({
             </span>
           )}
           <span className="flex-1" />
-          <div className={cn('relative ml-auto inline-flex shrink-0 items-center gap-2', { 'pointer-events-none opacity-[0.35]': layoutEditing })}>
+          <div className={cn('relative ml-auto inline-flex shrink-0 items-center gap-2', { 'pointer-events-none opacity-[0.35]': layoutControlsDisabled })}>
             <span className="text-[11px]">{m.toolbar.viewLabel}</span>
             <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted p-0.5 text-[11px]">
               <button
                 type="button"
-                disabled={layoutEditing}
+                disabled={layoutControlsDisabled}
                 onClick={() => onLayoutModeChange('default')}
                 className={segmentItemClass(layoutMode === 'default' && !customPreviewing)}
               >
@@ -485,7 +491,7 @@ export function Toolbar({
               </button>
               <button
                 type="button"
-                disabled={layoutEditing}
+                disabled={layoutControlsDisabled}
                 title={customLayoutDirty ? m.toolbar.customLayoutChanged : undefined}
                 onMouseEnter={customPreviewIntent.onMouseEnter}
                 onMouseLeave={customPreviewIntent.onMouseLeave}
@@ -508,7 +514,7 @@ export function Toolbar({
               <span className="mx-0.5 h-4 w-px bg-border" />
               <button
                 type="button"
-                disabled={layoutEditing}
+                disabled={layoutEditDisabled}
                 onClick={onStartLayoutEdit}
                 title={m.toolbar.editLayout}
                 aria-label={m.toolbar.editLayout}
