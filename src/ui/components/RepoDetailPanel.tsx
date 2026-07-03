@@ -19,7 +19,7 @@ import { Separator } from '@/ui/shadcn/separator';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
-import { getLockedAnchorProps, getLockedRegionProps } from '@/ui/interaction-lock';
+import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut } from '@/ui/interaction-lock';
 
 /** single-repo detail drawer (tag/note/suggest deep-edit lives here so rows stay compact); flex aside, no portal. */
 export function RepoDetailPanel({
@@ -171,9 +171,7 @@ export function RepoDetailPanel({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (interactionLocked) return;
-      const tagName = (e.target as HTMLElement)?.tagName;
-      if (tagName === 'INPUT' || tagName === 'TEXTAREA') return;
+      if (shouldIgnorePanelShortcut(interactionLocked, e.target)) return;
       if (e.key === 'Escape') onClose();
       else if (e.key === '[' && hasPrev) onPrev();
       else if (e.key === ']' && hasNext) onNext();

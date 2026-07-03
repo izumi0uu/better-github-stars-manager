@@ -26,3 +26,12 @@ export function getLockedAnchorProps(locked: boolean): LockedAnchorProps {
     },
   };
 }
+
+export function isTextEditingTarget(target: EventTarget | null): boolean {
+  const tagName = (target as { tagName?: string } | null)?.tagName;
+  return tagName === 'INPUT' || tagName === 'TEXTAREA';
+}
+
+export function shouldIgnorePanelShortcut(locked: boolean, target: EventTarget | null): boolean {
+  return locked || isTextEditingTarget(target);
+}
