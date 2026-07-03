@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Sun, Moon, Search, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow, X,
   Tags, Upload, Download, AlertTriangle, ExternalLink, Home, EyeOff, Star, RefreshCcw,
+  Pencil,
 } from 'lucide-react';
 import { CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { REPO_URL } from '@/lib/links';
@@ -17,7 +18,10 @@ import { ActionIcon } from '@/ui/shadcn/action-icon';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/ui/shadcn/tooltip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/shadcn/select';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
+import { useDelayedHoverIntent } from '@/ui/hooks/use-delayed-hover-intent';
 import { useI18n } from '@/i18n';
+import { cn } from '@/lib/utils';
+import { LAYOUT_PREVIEW_HOVER_DELAY_MS } from '@/ui/layout-edit-constants';
 
 /** Top toolbar for the stars page. */
 type Account = { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null };
@@ -81,6 +85,15 @@ export function Toolbar({
   onTogglePanel,
   theme,
   searchRef,
+  layoutMode,
+  layoutEditing,
+  customLayoutDirty,
+  customPreviewing,
+  hiddenColumnCount,
+  onLayoutModeChange,
+  onStartLayoutEdit,
+  onPreviewCustomChange,
+  layoutEditChrome,
 }: {
   f: FilterState;
   status: SyncStatus | null;
@@ -99,6 +112,15 @@ export function Toolbar({
   onTogglePanel?: () => void;
   theme: 'dark' | 'light';
   searchRef: React.MutableRefObject<HTMLInputElement | null>;
+  layoutMode: 'default' | 'custom';
+  layoutEditing: boolean;
+  customLayoutDirty: boolean;
+  customPreviewing: boolean;
+  hiddenColumnCount: number;
+  onLayoutModeChange: (mode: 'default' | 'custom') => void;
+  onStartLayoutEdit: () => void;
+  onPreviewCustomChange: (previewing: boolean) => void;
+  layoutEditChrome?: ReactNode;
 }) {
   const { m } = useI18n();
   const [account, setAccount] = useState<Account | null>(null);
@@ -108,6 +130,16 @@ export function Toolbar({
   const progressValue = phase && phase.total ? Math.max(1, Math.min(100, Math.round((phase.done / phase.total) * 100))) : null;
   const progressCount = phase?.total ? `${phase.done}/${phase.total}` : null;
   const searchInput = useImeBufferedInput(f.query, f.setQuery);
+  const customPreviewIntent = useDelayedHoverIntent({
+    enabled: layoutMode === 'default' && !layoutEditing && customLayoutDirty,
+    delayMs: LAYOUT_PREVIEW_HOVER_DELAY_MS,
+    onOpen: () => onPreviewCustomChange(true),
+    onClose: () => onPreviewCustomChange(false),
+  });
+  const segmentItemClass = (active: boolean) => cn(
+    'gsm-touch-target relative inline-flex h-6 items-center gap-1.5 rounded-md px-2 font-medium text-muted-foreground transition-[background-color,color,box-shadow] duration-150 hover:text-foreground',
+    { 'bg-background text-foreground shadow-sm': active },
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -236,7 +268,7 @@ export function Toolbar({
           </ActionIcon>
           {m.toolbar.syncButton}
           {pendingAction === 'syncIncremental' && progressCount && (
-            <span className="ml-1 tabular-nums text-[10px] opacity-80">{progressCount}</span>
+            <span className="gsm-inline-progress-count">{progressCount}</span>
           )}
         </TButton>
 
@@ -252,7 +284,7 @@ export function Toolbar({
           </ActionIcon>
           {m.toolbar.fullSyncButton}
           {pendingAction === 'syncFull' && progressCount && (
-            <span className="ml-1 tabular-nums text-[10px] opacity-80">{progressCount}</span>
+            <span className="gsm-inline-progress-count">{progressCount}</span>
           )}
         </TButton>
 
@@ -327,7 +359,14 @@ export function Toolbar({
             "show panel" button then appears so it can be re-mounted). */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => onTogglePanel?.()} data-coach-target="hide-panel">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              disabled={layoutEditing}
+              onClick={() => onTogglePanel?.()}
+              data-coach-target="hide-panel"
+            >
               <EyeOff className="size-4" />
             </Button>
           </TooltipTrigger>
@@ -371,12 +410,12 @@ export function Toolbar({
       </div>
 
       <div className="flex flex-col gap-1 border-t border-border/50 px-3 py-1 text-xs text-muted-foreground">
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <span
             className="tabular-nums"
             style={{
               opacity: listPhase === 'fading-out' ? 0 : 1,
-              transition: `opacity ${listPhase === 'fading-out' ? 120 : 160}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+              transition: `opacity ${listPhase === 'fading-out' ? 'var(--gsm-duration-fast)' : 'var(--gsm-duration-table)'} var(--gsm-ease-standard)`,
             }}
           >
             {loading && grandTotal === 0 ? (
@@ -401,14 +440,75 @@ export function Toolbar({
               {m.toolbar.noToken}
             </span>
           )}
+          <span className="flex-1" />
+          <div className={cn('relative ml-auto inline-flex shrink-0 items-center gap-2', { 'pointer-events-none opacity-[0.35]': layoutEditing })}>
+            <span className="text-[11px]">{m.toolbar.viewLabel}</span>
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted p-0.5 text-[11px]">
+              <button
+                type="button"
+                disabled={layoutEditing}
+                onClick={() => onLayoutModeChange('default')}
+                className={segmentItemClass(layoutMode === 'default' && !customPreviewing)}
+              >
+                {layoutMode === 'default' && !customPreviewing && (
+                  <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+                )}
+                {m.toolbar.defaultLayout}
+              </button>
+              <button
+                type="button"
+                disabled={layoutEditing}
+                title={customLayoutDirty ? m.toolbar.customLayoutChanged : undefined}
+                onMouseEnter={customPreviewIntent.onMouseEnter}
+                onMouseLeave={customPreviewIntent.onMouseLeave}
+                onFocus={customPreviewIntent.onFocus}
+                onBlur={customPreviewIntent.onBlur}
+                onClick={() => {
+                  customPreviewIntent.clear();
+                  onLayoutModeChange('custom');
+                }}
+                className={cn(
+                  segmentItemClass(layoutMode === 'custom' || customPreviewing),
+                  { 'gsm-seg-previewing': customPreviewing },
+                )}
+              >
+                {(layoutMode === 'custom' || customPreviewing) && (
+                  <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+                )}
+                {m.toolbar.customLayout}
+              </button>
+              <span className="mx-0.5 h-4 w-px bg-border" />
+              <button
+                type="button"
+                disabled={layoutEditing}
+                onClick={onStartLayoutEdit}
+                title={m.toolbar.editLayout}
+                aria-label={m.toolbar.editLayout}
+                className="gsm-touch-target grid h-6 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground disabled:pointer-events-none"
+              >
+                <Pencil className="size-3.5" />
+              </button>
+            </div>
+            {hiddenColumnCount > 0 && (
+              <span className="rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+                {hiddenColumnCount}
+              </span>
+            )}
+            {customPreviewing && (
+              <span className="gsm-z-preview absolute right-0 top-8 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] text-popover-foreground shadow-md">
+                {m.toolbar.previewCustomLayout}
+              </span>
+            )}
+          </div>
         </div>
         {syncing && progressValue != null && (
           <div className="flex items-center gap-2">
             <Progress value={progressValue} className="h-2 flex-1" />
-            <span className="min-w-[48px] text-right tabular-nums text-foreground">{progressCount}</span>
+            <span className="gsm-progress-count">{progressCount}</span>
           </div>
         )}
       </div>
+      {layoutEditChrome}
     </div>
   );
 }

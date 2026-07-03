@@ -83,6 +83,27 @@ export interface MessageCatalog {
     columnUpdated: string;
     columnTags: string;
     columnFavorite: string;
+    columnNotes: string;
+    viewLabel: string;
+    defaultLayout: string;
+    customLayout: string;
+    customLayoutChanged: string;
+    editLayout: string;
+    previewCustomLayout: string;
+    editingLayout: string;
+    columnsButton: string;
+    columnsButtonTitle: string;
+    hiddenColumns: (count: number) => string;
+    hiddenColumnsTip: string;
+    hideColumn: (label: string) => string;
+    restoreColumn: (label: string) => string;
+    dragColumnTitle: (label: string) => string;
+    dragColumnHint: string;
+    dragHideHint: (label: string) => string;
+    dragTrayHint: string;
+    dragInsertHint: string;
+    lockedColumn: string;
+    resetLayout: string;
   };
   activeFilters: {
     onlyFavorite: string;
@@ -422,6 +443,27 @@ const messages: Record<Locale, MessageCatalog> = {
       columnUpdated: "Updated",
       columnTags: "Tags",
       columnFavorite: "Favorite",
+      columnNotes: "Notes",
+      viewLabel: "View",
+      defaultLayout: "Default",
+      customLayout: "Custom",
+      customLayoutChanged: "Custom layout differs from default",
+      editLayout: "Edit custom layout",
+      previewCustomLayout: "Previewing custom layout. Click to apply.",
+      editingLayout: "Editing layout",
+      columnsButton: "Columns",
+      columnsButtonTitle: "Show or hide columns",
+      hiddenColumns: (count) => `${count} hidden`,
+      hiddenColumnsTip: "Click to restore · drag into the header to place",
+      hideColumn: (label) => `Hide ${label}`,
+      restoreColumn: (label) => `Restore ${label}`,
+      dragColumnTitle: (label) => `Drag ${label} to reorder; drop into tray to hide`,
+      dragColumnHint: "Horizontal drag reorders · drop into tray hides",
+      dragHideHint: (label) => `Release to hide ${label}`,
+      dragTrayHint: "Drag into the header to place",
+      dragInsertHint: "Release to insert here",
+      lockedColumn: "Locked",
+      resetLayout: "Reset",
     },
     activeFilters: {
       onlyFavorite: "Favorites",
@@ -787,6 +829,27 @@ const messages: Record<Locale, MessageCatalog> = {
       columnUpdated: "更新",
       columnTags: "标签",
       columnFavorite: "收藏",
+      columnNotes: "备注",
+      viewLabel: "视图",
+      defaultLayout: "默认",
+      customLayout: "自定义",
+      customLayoutChanged: "自定义布局与默认不同",
+      editLayout: "编辑自定义布局",
+      previewCustomLayout: "正在预览自定义布局，点击应用",
+      editingLayout: "正在编辑布局",
+      columnsButton: "列",
+      columnsButtonTitle: "显示或隐藏列",
+      hiddenColumns: (count) => `已隐藏 ${count}`,
+      hiddenColumnsTip: "点击恢复 · 拖回表头可插入位置",
+      hideColumn: (label) => `隐藏「${label}」`,
+      restoreColumn: (label) => `恢复「${label}」`,
+      dragColumnTitle: (label) => `拖动「${label}」排序；拖到托盘隐藏`,
+      dragColumnHint: "水平拖动排序 · 拖到托盘隐藏",
+      dragHideHint: (label) => `松手隐藏「${label}」`,
+      dragTrayHint: "拖到表头插入",
+      dragInsertHint: "松手插入这里",
+      lockedColumn: "锁定",
+      resetLayout: "重置",
     },
     activeFilters: {
       onlyFavorite: "收藏",

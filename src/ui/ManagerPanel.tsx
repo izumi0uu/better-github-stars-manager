@@ -1,6 +1,6 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle, Heart, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertTriangle, EyeOff, GripVertical, Heart, RefreshCw, Sparkles, StickyNote } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
 import { StarRow } from '@/ui/components/StarRow';
@@ -9,6 +9,8 @@ import { FilterSidebar } from '@/ui/components/FilterSidebar';
 import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
+import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
+import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
 import { pruneFavoriteOverrides, resolveFavoriteState, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { pickInitialSyncAction } from '@/ui/initial-sync';
 import { Button } from '@/ui/shadcn/button';
@@ -22,9 +24,9 @@ import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnbo
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 import type { BackfillId, BackfillState } from '@/types';
+import { COLUMN_DEFS } from '@/ui/column-layout';
 
 const ROW_HEIGHT = 64;
-const GRID_COLS = 'grid-cols-[minmax(180px,1.4fr)_2fr_80px_64px_84px_1.6fr_28px_20px]';
 
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
@@ -43,6 +45,41 @@ export function ManagerPanel() {
   const rootRef = useRef<HTMLDivElement>(null);
   const { theme, themeClass, toggle: toggleTheme } = useTheme();
   const { m } = useI18n();
+  const {
+    layoutMode,
+    editingLayout,
+    previewingCustomLayout,
+    draftLayout,
+    visibleColumns,
+    gridTemplateColumns,
+    hiddenTrayColumns,
+    customLayoutDirty,
+    hiddenColumnCount,
+    dragGhost,
+    layoutDrag,
+    columnShifts,
+    trayOpen,
+    trayDropReady,
+    trayCaretX,
+    layoutFaded,
+    flashedColumn,
+    columnMenuOpen,
+    columnMenuPosition,
+    headerRef,
+    editColumnsButtonRef,
+    setBrowseLayoutMode,
+    previewCustomLayout,
+    beginLayoutEdit,
+    saveLayoutEdit,
+    cancelLayoutEdit,
+    resetLayoutEdit,
+    setColumnHidden,
+    beginColumnDrag,
+    beginTrayDrag,
+    restoreHiddenColumn,
+    toggleColumnMenu,
+    closeColumnMenu,
+  } = useColumnLayoutEditor(rootRef);
 
   const refreshStatus = async () => {
     const next = await bgCall<SyncStatus>('getStatus').catch(() => null);
@@ -219,7 +256,6 @@ export function ManagerPanel() {
   );
   const selectedStar = selectedIdx >= 0 ? rows[selectedIdx] : null;
   const selectedTag = selectedStar ? tagsByFullName.get(selectedStar.full_name) : undefined;
-
   useEffect(() => {
     setFavoriteOverrides((current) => pruneFavoriteOverrides(current, tagsByFullName, rows));
   }, [rows, tagsByFullName]);
@@ -281,6 +317,36 @@ export function ManagerPanel() {
     await refreshStatus();
   };
 
+  const layoutColumnMenu = (
+    <LayoutColumnMenu
+      container={rootRef.current}
+      editing={editingLayout}
+      open={columnMenuOpen}
+      position={columnMenuPosition}
+      draftLayout={draftLayout}
+      onSetColumnHidden={setColumnHidden}
+      onClose={closeColumnMenu}
+    />
+  );
+
+  const layoutEditChrome = (
+    <LayoutEditChrome
+      editing={editingLayout}
+      draftLayout={draftLayout}
+      hiddenTrayColumns={hiddenTrayColumns}
+      trayOpen={trayOpen}
+      trayDropReady={trayDropReady}
+      dropReadyLabel={layoutDrag?.kind === 'column' ? m.toolbar.dragHideHint(layoutDrag.label) : null}
+      editColumnsButtonRef={editColumnsButtonRef}
+      onToggleColumnMenu={toggleColumnMenu}
+      onReset={resetLayoutEdit}
+      onSave={saveLayoutEdit}
+      onCancel={cancelLayoutEdit}
+      onBeginTrayDrag={beginTrayDrag}
+      onRestoreHiddenColumn={restoreHiddenColumn}
+    />
+  );
+
   return (
     <PortalProvider containerRef={rootRef}>
       <TooltipProvider delayDuration={300} skipDelayDuration={150}>
@@ -305,7 +371,17 @@ export function ManagerPanel() {
           onTogglePanel={hidePanel}
           theme={theme}
           searchRef={searchRef}
+          layoutMode={layoutMode}
+          layoutEditing={editingLayout}
+          customLayoutDirty={customLayoutDirty}
+          customPreviewing={previewingCustomLayout}
+          hiddenColumnCount={hiddenColumnCount}
+          onLayoutModeChange={setBrowseLayoutMode}
+          onStartLayoutEdit={beginLayoutEdit}
+          onPreviewCustomChange={previewCustomLayout}
+          layoutEditChrome={layoutEditChrome}
         />
+        {layoutColumnMenu}
 
         {statusLoaded && status && !status.hasToken && status.onboardingStage === 'done' && (
           <div className="flex items-center gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -320,14 +396,12 @@ export function ManagerPanel() {
           </div>
         )}
 
-        {hasActiveFilter && (
-          <div className="border-b border-border">
-            <ActiveFilterChips f={f} count={total} />
-          </div>
-        )}
+        <div className={cn('filter-row-anim border-b border-border', { collapsed: !hasActiveFilter })}>
+          <ActiveFilterChips f={f} count={total} />
+        </div>
 
         {info && (
-          <div className="border-b border-border bg-card px-3 py-1 text-[11px] text-muted-foreground">{info}</div>
+          <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">{info}</div>
         )}
 
         <div className="flex min-h-0 flex-1">
@@ -364,27 +438,80 @@ export function ManagerPanel() {
             ) : (
               <>
             <div
+              className="gsm-layout-table-shell"
               style={{
-                opacity: phase === 'fading-out' ? 0 : 1,
-                transition: `opacity ${phase === 'fading-out' ? 120 : 160}ms cubic-bezier(0.4, 0, 0.2, 1)`,
-              }}
+                opacity: phase === 'fading-out' || layoutFaded ? 0 : 1,
+                '--gsm-table-opacity-duration': `${phase === 'fading-out' ? 120 : 160}ms`,
+              } as CSSProperties & Record<'--gsm-table-opacity-duration', string>}
             >
             <div
+              ref={headerRef}
               className={cn(
-                'sticky top-0 z-10 grid gap-2 border-b border-border bg-background px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground',
-                GRID_COLS,
+                'gsm-layout-grid gsm-meta-label gsm-z-sticky sticky top-0 grid gap-2 border-b bg-background px-3 py-1.5 relative',
+                {
+                  'border-primary': editingLayout,
+                  'border-border': !editingLayout,
+                },
               )}
+              style={{ gridTemplateColumns }}
             >
-              <span>{m.toolbar.columnRepository}</span>
-              <span>{m.toolbar.columnDescription}</span>
-              <span>{m.toolbar.columnLanguage}</span>
-              <span className="text-right">{m.toolbar.columnStars}</span>
-              <span>{m.toolbar.columnUpdated}</span>
-              <span>{m.toolbar.columnTags}</span>
-              <span className="flex justify-center" title={m.toolbar.columnFavorite}>
-                <Heart className="size-3" aria-label={m.toolbar.columnFavorite} />
-              </span>
-              <span />
+              {visibleColumns.map((id, index) => {
+                const def = COLUMN_DEFS[id];
+                const label = def.label(m);
+                return (
+                  <span
+                    key={id}
+                    data-header-col={id}
+                    className={cn(
+                      'gsm-hdr-cell group relative flex min-w-0 items-center gap-1 overflow-visible rounded-sm transition-[background-color,opacity,transform] duration-150',
+                      {
+                        'justify-end text-right': def.align === 'end',
+                        'justify-center': def.align === 'center',
+                        'opacity-[0.35]': layoutDrag?.kind === 'column' && layoutDrag.id === id,
+                        'gsm-drag-hide-intent': layoutDrag?.kind === 'column' && layoutDrag.id === id && layoutDrag.hideIntent,
+                        'gsm-flash-col': flashedColumn === id,
+                      },
+                    )}
+                    style={{
+                      transform: columnShifts[id] ? `translateX(${columnShifts[id]}px)` : undefined,
+                    }}
+                  >
+                    {editingLayout && !def.locked && (
+                      <button
+                        type="button"
+                        onPointerDown={(e) => beginColumnDrag(e, id)}
+                        title={m.toolbar.dragColumnTitle(label)}
+                        className="gsm-gear-in grid size-4 shrink-0 touch-none cursor-grab place-items-center rounded text-muted-foreground/55 transition-colors hover:bg-accent hover:text-foreground active:cursor-grabbing"
+                        style={{ '--d': `${index * 28}ms` } as CSSProperties & Record<'--d', string>}
+                      >
+                        <GripVertical className="size-3" />
+                      </button>
+                    )}
+                    {id === 'favorite' ? (
+                      <Heart className="size-3" aria-label={label} />
+                    ) : id === 'notes' ? (
+                      <StickyNote className="size-3" aria-label={label} />
+                    ) : (
+                      <span className="truncate">{label}</span>
+                    )}
+                    {editingLayout && !def.locked && (
+                      <button
+                        type="button"
+                        onClick={() => setColumnHidden(id, true)}
+                        title={m.toolbar.hideColumn(label)}
+                        aria-label={m.toolbar.hideColumn(label)}
+                        className="gsm-gear-in ml-auto grid size-4 shrink-0 place-items-center rounded text-muted-foreground/0 transition-colors hover:bg-accent hover:text-foreground group-hover:text-muted-foreground group-focus-within:text-muted-foreground focus-visible:text-muted-foreground"
+                        style={{ '--d': `${index * 28 + 60}ms` } as CSSProperties & Record<'--d', string>}
+                      >
+                        <EyeOff className="size-3" />
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
+              {trayCaretX != null && (
+                <span className="gsm-insert-caret" style={{ left: trayCaretX }} />
+              )}
             </div>
             {rows.length === 0 ? (
               <div className="p-10 text-center text-sm text-muted-foreground">
@@ -415,6 +542,9 @@ export function ManagerPanel() {
                         onToggleFavorite={handleToggleFavorite}
                         selected={selected === star.full_name}
                         onSelect={handleSelect}
+                        columns={visibleColumns}
+                        gridTemplateColumns={gridTemplateColumns}
+                        flashedColumn={flashedColumn}
                       />
                     </div>
                   );
@@ -426,7 +556,10 @@ export function ManagerPanel() {
             )}
           </div>
 
-          <div className={cn('drawer-anim border-l border-border', selectedStar ? 'drawer-enter' : 'drawer-exit')}>
+          <div className={cn('drawer-anim border-l border-border', {
+            'drawer-enter': selectedStar,
+            'drawer-exit': !selectedStar,
+          })}>
             {selectedStar && (
               <RepoDetailPanel
                 star={selectedStar}
@@ -445,6 +578,8 @@ export function ManagerPanel() {
         </div>
 
         <FloatingLocaleToggle drawerOpen={!!selectedStar} />
+
+        <LayoutDragGhost ghost={dragGhost} />
 
         {statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
           <CoachOverlay
@@ -680,7 +815,7 @@ function CoachOverlay({
     // (toolbar buttons can't be clicked OR hovered). Several highlights are destructive
     // if clicked — step 1 would start a real sync, step 4 would unmount the panel and
     // kill the tour. The card below opts back into pointer-events-auto.
-    <div className="pointer-events-auto absolute inset-0 z-50">
+    <div className="gsm-z-overlay pointer-events-auto absolute inset-0">
       {spot && (
         <div
           className="gsm-coach-spotlight absolute"
@@ -697,7 +832,7 @@ function CoachOverlay({
       )}
 
       <div className="pointer-events-auto absolute bottom-6 left-1/2 w-[min(440px,90vw)] -translate-x-1/2 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl">
-        <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+        <div className="gsm-meta-label mb-1 flex items-center justify-between">
           <span>{m.onboarding.coachTitle}</span>
           <span>{m.onboarding.coachOf(step + 1, total)}</span>
         </div>
@@ -718,4 +853,3 @@ function CoachOverlay({
     </div>
   );
 }
-
