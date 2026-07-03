@@ -50,7 +50,7 @@ export interface MessageCatalog {
     searchClearTitle: string;
     sortStarredAt: string;
     sortPushedAt: string;
-    sortLatestRelease: string;
+    sortCreatedAt: string;
     sortStars: string;
     sortName: string;
     toggleSortDir: string;
@@ -391,7 +391,7 @@ const messages: Record<Locale, MessageCatalog> = {
       searchClearTitle: "Clear search",
       sortStarredAt: "Sort by starred date",
       sortPushedAt: "Sort by updated date",
-      sortLatestRelease: "Sort by release date",
+      sortCreatedAt: "Sort by repository creation date",
       sortStars: "Sort by stars",
       sortName: "Sort by name",
       toggleSortDir: "Toggle sort direction",
@@ -757,7 +757,7 @@ const messages: Record<Locale, MessageCatalog> = {
       searchClearTitle: "清空搜索",
       sortStarredAt: "按 star 时间",
       sortPushedAt: "按更新时间",
-      sortLatestRelease: "按 Release 时间",
+      sortCreatedAt: "按仓库创建时间",
       sortStars: "按 star 数",
       sortName: "按名称",
       toggleSortDir: "切换排序方向",

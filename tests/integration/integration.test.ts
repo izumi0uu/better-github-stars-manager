@@ -12,10 +12,9 @@ const base = {
   stargazers_count: 0,
   topics: [] as string[],
   pushed_at: '',
+  created_at: null as string | null,
   fork: false,
   archived: false,
-  latest_release_at: null as string | null,
-  latest_release_synced_at: null as string | null,
   tombstone: false,
   synced_at: '',
 };
@@ -33,8 +32,7 @@ beforeEach(async () => {
       starred_at: '2026-06-20',
       stargazers_count: 100,
       pushed_at: '2026-06-19',
-      latest_release_at: '2026-05-10',
-      latest_release_synced_at: '2026-06-22T00:00:00Z',
+      created_at: '2026-05-10',
     },
     {
       ...base,
@@ -45,8 +43,7 @@ beforeEach(async () => {
       starred_at: '2026-06-21',
       stargazers_count: 50,
       pushed_at: '2026-06-22',
-      latest_release_at: '2026-06-18',
-      latest_release_synced_at: '2026-06-22T00:00:00Z',
+      created_at: '2026-06-18',
       archived: true,
     },
     {
@@ -58,8 +55,7 @@ beforeEach(async () => {
       starred_at: '2026-01-01',
       stargazers_count: 5,
       pushed_at: '2025-01-01',
-      latest_release_at: null,
-      latest_release_synced_at: '2026-06-22T00:00:00Z',
+      created_at: null,
       tombstone: true,
     },
   ] as Star[]);
@@ -177,18 +173,17 @@ describe('Integration (real query engine + Dexie)', () => {
     assert.deepEqual(r.rows.map((s) => s.stargazers_count), [100, 50]);
   });
 
-  it('sort by latest release date keeps null releases last', async () => {
+  it('sort by repository creation date keeps null dates last', async () => {
     await db.stars.put({
       ...base,
-      full_name: 'd/no-release',
-      description: 'no release yet',
+      full_name: 'd/no-created',
+      description: 'missing created_at',
       language: 'Go',
       topics: [],
       starred_at: '2026-06-22',
       stargazers_count: 20,
       pushed_at: '2026-06-22',
-      latest_release_at: null,
-      latest_release_synced_at: '2026-06-22T00:00:00Z',
+      created_at: null,
     } as Star);
     await db.stars.put({
       ...base,
@@ -199,16 +194,15 @@ describe('Integration (real query engine + Dexie)', () => {
       starred_at: '2026-06-23',
       stargazers_count: 2,
       pushed_at: '2026-06-23',
-      latest_release_at: undefined,
-      latest_release_synced_at: undefined,
+      created_at: undefined,
     } as unknown as Star);
     invalidateCache();
     const r = await queryStars({
-      filter: { ...defaultFilter(), showTombstone: true, sortKey: 'latest_release_at', sortDir: 'desc' },
+      filter: { ...defaultFilter(), showTombstone: true, sortKey: 'created_at', sortDir: 'desc' },
       offset: 0,
       limit: 100,
     });
-    assert.deepEqual(r.rows.map((s) => s.full_name), ['b/rust', 'a/ai', 'c/gone', 'd/no-release', 'e/legacy']);
+    assert.deepEqual(r.rows.map((s) => s.full_name), ['b/rust', 'a/ai', 'c/gone', 'd/no-created', 'e/legacy']);
   });
 
   it('offset/limit windowing', async () => {

@@ -26,7 +26,7 @@
     "test:tag-draft": "vitest run tests/unit/tag-draft.test.mjs",
     "test:integration": "vitest run tests/integration/integration.test.ts",
     "test:shape": "vitest run tests/unit/shape.test.ts",
-    "test:regressions": "vitest run tests/regressions/auth/token-probe-and-status-regression.test.ts tests/regressions/sync/rescan-regression.test.ts tests/regressions/sync/incremental-archived-regression.test.ts tests/regressions/sync/gist-recovery-regression.test.ts tests/regressions/storage/backfill-regression.test.ts tests/regressions/sync/full-sync-release-regression.test.ts",
+    "test:regressions": "vitest run tests/regressions",
     "test:runtime": "node tests/runtime/puppeteer-runtime.test.mjs",
     "test:smoke": "node tests/runtime/smoke.test.mjs",
     "test:verify-chrome": "node tests/manual/e2e/verify-chrome.mjs",

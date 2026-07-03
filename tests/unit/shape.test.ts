@@ -12,6 +12,7 @@ const payload = {
     stargazers_count: 42,
     topics: ['ai', 'loop'],
     pushed_at: '2026-06-20T00:00:00Z',
+    created_at: '2020-01-02T00:00:00Z',
     fork: false,
     archived: false,
   },
@@ -33,8 +34,7 @@ describe('Payload shape regression', () => {
     assert.equal(star.language, 'TypeScript');
     assert.equal(star.stargazers_count, 42);
     assert.equal(star.topics.length, 2);
-    assert.equal(star.latest_release_at, null);
-    assert.equal(star.latest_release_synced_at, null);
+    assert.equal(star.created_at, '2020-01-02T00:00:00Z');
     assert.equal(star.tombstone, false);
     assert.equal(typeof star.synced_at, 'string');
     assert.ok(star.synced_at.length > 0);

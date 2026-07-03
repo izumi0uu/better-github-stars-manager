@@ -39,13 +39,10 @@ export interface Star {
   stargazers_count: number;
   topics: string[];
   pushed_at: string; // ISO, repo last push
+  created_at: string | null; // ISO, repo creation time
   fork: boolean;
   archived: boolean;
   starred_at: string;
-  /** Latest known release date for the repo (published_at preferred, created_at fallback). */
-  latest_release_at: string | null;
-  /** Timestamp of the last attempt to hydrate latest_release_at. */
-  latest_release_synced_at: string | null;
   /** True once a full rescan no longer sees this repo in /user/starred. */
   tombstone: boolean;
   synced_at: string;
