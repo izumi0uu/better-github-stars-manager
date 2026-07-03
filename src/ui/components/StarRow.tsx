@@ -105,6 +105,12 @@ export const StarRow = memo(function StarRow({
             );
           case 'updated':
             return <div key={column} data-row-col={column} className={cn('rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>{star.pushed_at.slice(0, 10)}</div>;
+          case 'created':
+            return (
+              <div key={column} data-row-col={column} className={cn('rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>
+                {star.created_at ? star.created_at.slice(0, 10) : <span className="text-muted-foreground/60">{m.common.none}</span>}
+              </div>
+            );
           case 'tags':
             return (
               <div key={column} data-row-col={column} onClick={(e) => e.stopPropagation()} className={cn('flex flex-wrap items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>

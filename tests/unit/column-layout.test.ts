@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  COLUMN_DEFS,
   columnShiftTransforms,
   completeBrowseLayoutTransition,
   DEFAULT_COLUMN_LAYOUT,
@@ -31,6 +32,7 @@ import {
   RESTORE_FLASH_DURATION_MS,
   TRAY_RESTORE_HEADER_BUFFER_PX,
 } from '@/ui/layout-edit-constants';
+import { messageFor } from '@/i18n';
 
 describe('column layout editing', () => {
   const rects: ColumnRect[] = [
@@ -43,6 +45,23 @@ describe('column layout editing', () => {
 
   it('starts custom layout equivalent to default until the user saves a change', () => {
     expect(INITIAL_CUSTOM_COLUMN_LAYOUT).toEqual(DEFAULT_COLUMN_LAYOUT);
+  });
+
+  it('registers repository creation time as an unlocked layout column', () => {
+    expect(DEFAULT_COLUMN_LAYOUT.order).toEqual([
+      'repository',
+      'description',
+      'language',
+      'stars',
+      'updated',
+      'created',
+      'tags',
+      'favorite',
+      'notes',
+    ]);
+    expect(COLUMN_DEFS.created.locked).toBeUndefined();
+    expect(COLUMN_DEFS.created.label(messageFor('en'))).toBe('Created');
+    expect(COLUMN_DEFS.created.label(messageFor('zh-CN'))).toBe('创建');
   });
 
   it('keeps layout edit interaction constants explicit and reusable', () => {
@@ -112,9 +131,26 @@ describe('column layout editing', () => {
     });
 
     expect(stored).toEqual({
-      order: ['tags', 'repository', 'description', 'language', 'stars', 'updated', 'favorite', 'notes'],
+      order: ['tags', 'repository', 'description', 'language', 'stars', 'updated', 'created', 'favorite', 'notes'],
       hidden: ['description'],
     });
+  });
+
+  it('normalizes old saved layouts by inserting created before locked action columns', () => {
+    expect(normalizeColumnLayout({
+      order: ['repository', 'description', 'language', 'stars', 'updated', 'tags', 'favorite', 'notes'],
+      hidden: [],
+    }).order).toEqual([
+      'repository',
+      'description',
+      'language',
+      'stars',
+      'updated',
+      'tags',
+      'created',
+      'favorite',
+      'notes',
+    ]);
   });
 
   it('stores default-equivalent custom layout as null', () => {
@@ -142,10 +178,10 @@ describe('column layout editing', () => {
   });
 
   it('lists hidden tray columns in canonical order rather than hide order', () => {
-    const hidden = hideColumn(hideColumn(hideColumn(DEFAULT_COLUMN_LAYOUT, 'tags'), 'description'), 'language');
+    const hidden = hideColumn(hideColumn(hideColumn(hideColumn(DEFAULT_COLUMN_LAYOUT, 'tags'), 'created'), 'description'), 'language');
 
-    expect(hidden.hidden).toEqual(['tags', 'description', 'language']);
-    expect(hiddenColumnIdsInCanonicalOrder(hidden)).toEqual(['description', 'language', 'tags']);
+    expect(hidden.hidden).toEqual(['tags', 'created', 'description', 'language']);
+    expect(hiddenColumnIdsInCanonicalOrder(hidden)).toEqual(['description', 'language', 'created', 'tags']);
   });
 
   it('keeps locked columns at the end when reordering', () => {

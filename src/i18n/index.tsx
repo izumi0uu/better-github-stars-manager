@@ -81,6 +81,7 @@ export interface MessageCatalog {
     columnLanguage: string;
     columnStars: string;
     columnUpdated: string;
+    columnCreated: string;
     columnTags: string;
     columnFavorite: string;
     columnNotes: string;
@@ -441,6 +442,7 @@ const messages: Record<Locale, MessageCatalog> = {
       columnLanguage: "Lang",
       columnStars: "Stars",
       columnUpdated: "Updated",
+      columnCreated: "Created",
       columnTags: "Tags",
       columnFavorite: "Favorite",
       columnNotes: "Notes",
@@ -827,6 +829,7 @@ const messages: Record<Locale, MessageCatalog> = {
       columnLanguage: "语言",
       columnStars: "Stars",
       columnUpdated: "更新",
+      columnCreated: "创建",
       columnTags: "标签",
       columnFavorite: "收藏",
       columnNotes: "备注",
