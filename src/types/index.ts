@@ -95,6 +95,13 @@ export interface Config {
   autoTagLimit: number;
   /** Whether your own GitHub stars page should open the overlay panel by default. */
   starsPanelDefaultEnabled: boolean;
+  /** Last selected stars-table layout mode. */
+  columnLayoutMode: 'default' | 'custom';
+  /** User-saved custom stars-table column layout; null means custom equals default. */
+  customColumnLayout: {
+    order: string[];
+    hidden: string[];
+  } | null;
   /** One-shot migration flag: clear auto-derived `language` tags (now that
    *  language is a first-class filter, not a tag). Set true after the migration
    *  runs so it never repeats. */
