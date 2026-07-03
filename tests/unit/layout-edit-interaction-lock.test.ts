@@ -8,7 +8,7 @@ describe('layout edit interaction lock invariants', () => {
     const source = read('src/ui/ManagerPanel.tsx');
 
     expect(source).toContain('const interactionLocked = editingLayout;');
-    expect(source).toContain('if (interactionLocked) return;');
+    expect(source).toContain('shouldIgnorePanelShortcut(interactionLocked, e.target)');
     expect(source).toContain('<ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />');
     expect(source).toContain('interactionLocked={interactionLocked}');
     expect(source).toContain('<FloatingLocaleToggle drawerOpen={!!selectedStar} interactionLocked={interactionLocked} />');
@@ -58,7 +58,7 @@ describe('layout edit interaction lock invariants', () => {
   it('prevents drawer keyboard and external-link escape hatches while preserving the mounted drawer', () => {
     const source = read('src/ui/components/RepoDetailPanel.tsx');
 
-    expect(source).toContain('if (interactionLocked) return;');
+    expect(source).toContain('shouldIgnorePanelShortcut(interactionLocked, e.target)');
     expect(source).toContain('[onClose, onPrev, onNext, hasPrev, hasNext, interactionLocked]');
     expect(source).toContain('getLockedRegionProps(interactionLocked)');
     expect(source).toContain('getLockedAnchorProps(interactionLocked)');

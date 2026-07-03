@@ -18,7 +18,7 @@ import { Spinner } from '@/ui/shadcn/spinner';
 import { PortalProvider } from '@/ui/shadcn/portal-context';
 import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import { useTheme } from '@/ui/hooks/use-theme';
-import { getLockedAnchorProps, getLockedRegionProps } from '@/ui/interaction-lock';
+import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut } from '@/ui/interaction-lock';
 import { bgCall, mergeProgressStatus, mergeStatusPatch, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
 import { hidePanel } from '@/content/stars-page/panel-toggle';
 import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnboardingSync } from '@/onboarding/state';
@@ -146,9 +146,7 @@ export function ManagerPanel() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (interactionLocked) return;
+      if (shouldIgnorePanelShortcut(interactionLocked, e.target)) return;
       if (e.key === '/') {
         e.preventDefault();
         searchRef.current?.focus();
