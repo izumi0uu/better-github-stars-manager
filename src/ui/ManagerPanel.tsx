@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertTriangle, Heart, RefreshCw, Sparkles } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
@@ -284,9 +284,11 @@ export function ManagerPanel() {
           </div>
         )}
 
-        <div className={cn('filter-row-anim border-b border-border', !hasActiveFilter && 'collapsed')}>
-          <ActiveFilterChips f={f} count={total} />
-        </div>
+        {hasActiveFilter && (
+          <div className="border-b border-border">
+            <ActiveFilterChips f={f} count={total} />
+          </div>
+        )}
 
         {info && (
           <div className="border-b border-border bg-card px-3 py-1 text-[11px] text-muted-foreground">{info}</div>
@@ -611,3 +613,4 @@ function CoachOverlay({
     </div>
   );
 }
+
