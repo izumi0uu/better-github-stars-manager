@@ -47,6 +47,16 @@ export type BrowseLayoutTransition =
   | { kind: 'instant'; renderedLayout: ColumnLayout }
   | { kind: 'fade'; delayMs: number };
 
+export type CustomLayoutEditTransition = {
+  layoutMode: 'custom';
+  preEditMode: 'custom';
+  draftLayout: ColumnLayout;
+  renderedLayout: ColumnLayout;
+  previewingCustomLayout: false;
+  layoutFaded: false;
+  editingLayout: true;
+};
+
 export const COLUMN_DEFS: Record<ColumnId, ColumnDefinition> = {
   repository: {
     id: 'repository',
@@ -233,6 +243,18 @@ export function completeBrowseLayoutTransition(targetLayout: ColumnLayout): {
   faded: false;
 } {
   return { renderedLayout: cloneColumnLayout(targetLayout), faded: false };
+}
+
+export function beginCustomLayoutEditTransition(customLayout: ColumnLayout): CustomLayoutEditTransition {
+  return {
+    layoutMode: 'custom',
+    preEditMode: 'custom',
+    draftLayout: cloneColumnLayout(customLayout),
+    renderedLayout: cloneColumnLayout(customLayout),
+    previewingCustomLayout: false,
+    layoutFaded: false,
+    editingLayout: true,
+  };
 }
 
 export function isColumnHideIntent(
