@@ -52,8 +52,8 @@ afterAll(async () => {
   await db.close();
 });
 
-describe('Full sync release regressions', () => {
-  it('syncFull hydrates latest release timestamps from GraphQL without per-repo release calls', async () => {
+describe('Full sync repo-created-time regressions', () => {
+  it('syncFull hydrates repository creation timestamps from REST starred pages', async () => {
     await db.delete();
     await db.open();
     await chrome.storage.local.set({
@@ -77,66 +77,53 @@ describe('Full sync release regressions', () => {
     });
 
     const seenUrls: string[] = [];
-    const graphQlBodies: string[] = [];
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       seenUrls.push(url);
-      if (url !== 'https://api.github.com/graphql') {
-        throw new Error(`unexpected fetch: ${url}`);
-      }
-      graphQlBodies.push(String(init?.body ?? ''));
-      return new Response(JSON.stringify({
-        data: {
-          viewer: {
-            starredRepositories: {
-              totalCount: 2,
-              pageInfo: {
-                hasNextPage: false,
-                endCursor: null,
-              },
-              edges: [
-                {
-                  starredAt: '2026-06-28T10:00:00Z',
-                  node: {
-                    nameWithOwner: 'a/with-release',
-                    url: 'https://github.com/a/with-release',
-                    description: 'has release',
-                    primaryLanguage: { name: 'TypeScript' },
-                    stargazerCount: 10,
-                    repositoryTopics: {
-                      nodes: [{ topic: { name: 'tooling' } }],
-                    },
-                    pushedAt: '2026-06-27T00:00:00Z',
-                    isFork: false,
-                    isArchived: false,
-                    latestRelease: {
-                      publishedAt: '2026-06-20T12:00:00Z',
-                      createdAt: '2026-06-19T12:00:00Z',
-                    },
-                  },
-                },
-                {
-                  starredAt: '2026-06-27T10:00:00Z',
-                  node: {
-                    nameWithOwner: 'b/no-release',
-                    url: 'https://github.com/b/no-release',
-                    description: 'no release',
-                    primaryLanguage: null,
-                    stargazerCount: 5,
-                    repositoryTopics: {
-                      nodes: [],
-                    },
-                    pushedAt: null,
-                    isFork: true,
-                    isArchived: true,
-                    latestRelease: null,
-                  },
-                },
-              ],
+      if (url === 'https://api.github.com/user/starred?per_page=100&page=1') {
+        return new Response(JSON.stringify([
+          {
+            starred_at: '2026-06-28T10:00:00Z',
+            repo: {
+              full_name: 'a/old-repo',
+              html_url: 'https://github.com/a/old-repo',
+              description: 'old repo',
+              language: 'TypeScript',
+              stargazers_count: 10,
+              topics: ['tooling'],
+              pushed_at: '2026-06-27T00:00:00Z',
+              created_at: '2020-01-02T12:00:00Z',
+              fork: false,
+              archived: false,
             },
           },
-        },
-      }), { status: 200 });
+        ]), {
+          status: 200,
+          headers: {
+            link: '<https://api.github.com/user/starred?per_page=100&page=2>; rel="next", <https://api.github.com/user/starred?per_page=100&page=2>; rel="last"',
+          },
+        });
+      }
+      if (url === 'https://api.github.com/user/starred?per_page=100&page=2') {
+        return new Response(JSON.stringify([
+          {
+            starred_at: '2026-06-27T10:00:00Z',
+            repo: {
+              full_name: 'b/archived-repo',
+              html_url: 'https://github.com/b/archived-repo',
+              description: 'archived repo',
+              language: null,
+              stargazers_count: 5,
+              topics: [],
+              pushed_at: '2026-06-27T10:00:00Z',
+              created_at: '2021-03-04T08:00:00Z',
+              fork: true,
+              archived: true,
+            },
+          },
+        ]), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url} ${(init?.method ?? 'GET')}`);
     }) as typeof fetch;
 
     const originalGetToken = authStore.getToken;
@@ -145,20 +132,19 @@ describe('Full sync release regressions', () => {
     try {
       const result = await githubStarSource.syncFull();
       assert.deepEqual(result, { added: 2, updated: 2 });
-      assert.deepEqual(seenUrls, ['https://api.github.com/graphql']);
-      assert.match(graphQlBodies[0] ?? '', /starredRepositories/);
-      assert.match(graphQlBodies[0] ?? '', /latestRelease/);
+      assert.deepEqual(seenUrls, [
+        'https://api.github.com/user/starred?per_page=100&page=1',
+        'https://api.github.com/user/starred?per_page=100&page=2',
+      ]);
 
-      const withRelease = await db.stars.get('a/with-release');
-      assert.equal(withRelease?.latest_release_at, '2026-06-20T12:00:00Z');
-      assert.ok(withRelease?.latest_release_synced_at);
-      assert.equal(withRelease?.topics[0], 'tooling');
+      const oldRepo = await db.stars.get('a/old-repo');
+      assert.equal(oldRepo?.created_at, '2020-01-02T12:00:00Z');
+      assert.equal(oldRepo?.topics[0], 'tooling');
 
-      const noRelease = await db.stars.get('b/no-release');
-      assert.equal(noRelease?.latest_release_at, null);
-      assert.ok(noRelease?.latest_release_synced_at);
-      assert.equal(noRelease?.pushed_at, '2026-06-27T10:00:00Z');
-      assert.equal(noRelease?.archived, true);
+      const archivedRepo = await db.stars.get('b/archived-repo');
+      assert.equal(archivedRepo?.created_at, '2021-03-04T08:00:00Z');
+      assert.equal(archivedRepo?.pushed_at, '2026-06-27T10:00:00Z');
+      assert.equal(archivedRepo?.archived, true);
       assert.equal((await authStore.getConfig()).lastSyncStarredAt, '2026-06-28T10:00:00Z');
     } finally {
       authStore.getToken = originalGetToken;

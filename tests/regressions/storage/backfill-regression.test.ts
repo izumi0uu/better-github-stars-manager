@@ -13,6 +13,7 @@ const base = {
   stargazers_count: 0,
   topics: [] as string[],
   pushed_at: '2026-06-20T00:00:00Z',
+  created_at: null as string | null,
   fork: false,
   archived: false,
   tombstone: false,
@@ -34,8 +35,7 @@ describe('Backfill regressions', () => {
       ...base,
       full_name: 'legacy/repo',
       starred_at: '2026-06-20T00:00:00Z',
-      latest_release_at: undefined,
-      latest_release_synced_at: undefined,
+      created_at: undefined,
     } as unknown as Star);
 
     const next = await reconcileBackfillMap({});
@@ -43,13 +43,12 @@ describe('Backfill regressions', () => {
     assert.equal(selectActiveBackfillId(next), 'repo_data_sync_v1');
   });
 
-  it('keeps repo data sync backfill done after later rows arrive without release metadata', async () => {
+  it('keeps repo data sync backfill done after later rows arrive without creation metadata', async () => {
     await db.stars.put({
       ...base,
       full_name: 'new/repo',
       starred_at: '2026-06-21T00:00:00Z',
-      latest_release_at: null,
-      latest_release_synced_at: null,
+      created_at: null,
     } as Star);
 
     const next = await reconcileBackfillMap({

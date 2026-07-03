@@ -1,5 +1,5 @@
 import { authStore } from '@/auth/auth-store';
-import { githubStarSource, hydrateLatestReleaseDates } from '@/api/github-star-source';
+import { githubStarSource } from '@/api/github-star-source';
 import { getMessages } from '@/i18n';
 import { idbTagStore, resetDirtyForDev } from '@/storage/idb-tag-store';
 import { db, liveStarCount } from '@/storage/db';
@@ -49,7 +49,6 @@ type Req =
   | { type: 'markTooltipSeen'; bit: number }
   | { type: 'testConnection' }
   | { type: 'openOptions' }
-  | { type: 'hydrateLatestReleaseDates'; fullNames: string[] }
   | { type: 'devClearLocalData' }
   | { type: 'runBackfill'; id: BackfillId }
   | { type: 'deferBackfill'; id: BackfillId };
@@ -434,13 +433,6 @@ async function handle(req: Req): Promise<Res> {
       }
       case 'query':
         return { ok: true, data: await queryStars(req.params) as QueryResult };
-      case 'hydrateLatestReleaseDates': {
-        const m = await getLocaleMessages();
-        if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
-        const result = await run(async () => hydrateLatestReleaseDates(req.fullNames));
-        broadcastDataChanged();
-        return { ok: true, data: result };
-      }
       case 'runBackfill': {
         const m = await getLocaleMessages();
         const task = backfillTasks[req.id];

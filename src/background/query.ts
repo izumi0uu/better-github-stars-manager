@@ -61,9 +61,9 @@ function sortRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Star[] {
       case 'pushed_at':
         cmp = a[key].localeCompare(b[key]);
         break;
-      case 'latest_release_at': {
-        const aValue = a.latest_release_at;
-        const bValue = b.latest_release_at;
+      case 'created_at': {
+        const aValue = a.created_at;
+        const bValue = b.created_at;
         const aMissing = aValue == null;
         const bMissing = bValue == null;
         if (aMissing || bMissing) {

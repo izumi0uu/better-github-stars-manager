@@ -10,14 +10,14 @@ export interface BackfillTaskDef {
 }
 
 /**
- * The current completeness marker is `latest_release_synced_at`. If it is
- * missing on live rows, the library predates the newer repo-metadata sync path
- * and needs one full refresh to normalize local data.
+ * `created_at` comes directly from GitHub's repo metadata. If live rows are
+ * missing it, the library predates the current repo-metadata sync path and
+ * needs one full refresh to normalize local data.
  */
 async function needsRepoDataSyncBackfill(): Promise<boolean> {
   const firstMissing = await db.stars
     .toCollection()
-    .filter((star) => !star.tombstone && star.latest_release_synced_at == null)
+    .filter((star) => !star.tombstone && star.created_at == null)
     .first();
   return !!firstMissing;
 }

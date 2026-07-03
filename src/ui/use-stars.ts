@@ -3,7 +3,6 @@ import { useFilterStore } from './filter-store';
 import type { Star, Tag } from '@/types';
 import type { QueryResult } from '@/background/query';
 import { classifyStarsQueryTrigger } from './stars-refresh';
-import { bgCall } from '@/utils/messaging';
 
 // Transition timings for the list fade-out → swap → fade-in (see FADE_PHASE).
 const FADE_OUT_MS = 120;
@@ -113,15 +112,6 @@ export function useStars() {
   }, []);
 
   const rows: Star[] = committed?.rows ?? [];
-
-  useEffect(() => {
-    if (f.sortKey !== 'latest_release_at' || rows.length === 0) return;
-    const missing = rows
-      .filter((row) => row.latest_release_synced_at == null)
-      .map((row) => row.full_name);
-    if (missing.length === 0) return;
-    bgCall<{ updated: number }>('hydrateLatestReleaseDates', { fullNames: missing }).catch(() => {});
-  }, [f.sortKey, rows]);
 
   const tagsByFullName = new Map<string, Tag>();
   if (committed?.tagsForRows) {

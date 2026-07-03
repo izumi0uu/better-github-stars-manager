@@ -50,10 +50,9 @@ const base = {
   stargazers_count: 0,
   topics: [] as string[],
   pushed_at: '',
+  created_at: null as string | null,
   fork: false,
   archived: false,
-  latest_release_at: null as string | null,
-  latest_release_synced_at: null as string | null,
   synced_at: '',
 };
 
