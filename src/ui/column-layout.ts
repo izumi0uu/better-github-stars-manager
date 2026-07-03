@@ -11,6 +11,7 @@ export const COLUMN_IDS = [
   'language',
   'stars',
   'updated',
+  'created',
   'tags',
   'favorite',
   'notes',
@@ -72,6 +73,11 @@ export const COLUMN_DEFS: Record<ColumnId, ColumnDefinition> = {
     id: 'updated',
     width: '84px',
     label: (m) => m.toolbar.columnUpdated,
+  },
+  created: {
+    id: 'created',
+    width: '84px',
+    label: (m) => m.toolbar.columnCreated,
   },
   tags: {
     id: 'tags',
