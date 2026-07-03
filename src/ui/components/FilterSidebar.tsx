@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { bgCall } from '@/utils/messaging';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { useI18n } from '@/i18n';
+import { getLockedRegionProps } from '@/ui/interaction-lock';
 
 /**
  * Left filter rail: special toggles up top + collapsible Languages + flat Tags
@@ -19,11 +20,13 @@ export function FilterSidebar({
   f,
   languages,
   tagTree,
+  interactionLocked = false,
   onTagDeleted,
 }: {
   f: FilterState;
   languages: [string, number][];
   tagTree: { tags: { name: string; count: number }[]; total: number };
+  interactionLocked?: boolean;
   /** Called after a tag delete attempt. Receives a status message (success/failure)
    *  to surface in the manager info banner, or null to leave it untouched. */
   onTagDeleted?: (message: string | null) => void;
@@ -31,7 +34,13 @@ export function FilterSidebar({
   const { m } = useI18n();
 
   return (
-    <div data-coach-target="tags" className="flex w-52 shrink-0 flex-col gap-3 overflow-auto border-r border-border bg-card p-2 text-sm">
+    <div
+      data-coach-target="tags"
+      className={cn('flex w-52 shrink-0 flex-col gap-3 overflow-auto border-r border-border bg-card p-2 text-sm', {
+        'opacity-55': interactionLocked,
+      })}
+      {...getLockedRegionProps(interactionLocked)}
+    >
       {/* Special filters */}
       <Section title={m.filterSidebar.specialFilters}>
         <FilterToggle

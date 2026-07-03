@@ -5,6 +5,7 @@ import { Badge } from '@/ui/shadcn/badge';
 import { FavoriteButton } from '@/ui/components/FavoriteButton';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
+import { getLockedRegionProps } from '@/ui/interaction-lock';
 import type { ColumnId } from '@/ui/column-layout';
 
 /**
@@ -27,6 +28,7 @@ export const StarRow = memo(function StarRow({
   columns,
   gridTemplateColumns,
   flashedColumn,
+  interactionLocked = false,
   minWidth,
 }: {
   star: Star;
@@ -42,6 +44,7 @@ export const StarRow = memo(function StarRow({
   columns: ColumnId[];
   gridTemplateColumns: string;
   flashedColumn: ColumnId | null;
+  interactionLocked?: boolean;
   minWidth?: number;
 }) {
   const selectedSet = new Set(selectedTags);
@@ -52,19 +55,25 @@ export const StarRow = memo(function StarRow({
 
   return (
     <div
-      onClick={() => onSelect(star.full_name)}
+      onClick={() => {
+        if (!interactionLocked) onSelect(star.full_name);
+      }}
       className={cn(
-        'gsm-layout-grid grid h-16 cursor-pointer items-center gap-2 border-b border-border px-3 text-sm',
+        'gsm-layout-grid grid h-16 items-center gap-2 border-b border-border px-3 text-sm',
         {
+          'cursor-pointer': !interactionLocked,
+          'cursor-default': interactionLocked,
           'bg-primary/10': selected,
           'bg-muted/40': !selected && star.tombstone,
           'bg-transparent': !selected && !star.tombstone,
           'border-l-2 border-l-primary': selected,
           'border-l-2 border-l-transparent': !selected,
           'opacity-55': star.tombstone,
+          'pointer-events-none opacity-55': interactionLocked,
         },
       )}
       style={{ gridTemplateColumns, minWidth }}
+      {...getLockedRegionProps(interactionLocked)}
     >
       {columns.map((column) => {
         switch (column) {
@@ -104,8 +113,14 @@ export const StarRow = memo(function StarRow({
                 ) : (
                   <>
                     {visible.map((t) => (
-                      <button key={t} onClick={() => onToggleTag(t)} title={selectedSet.has(t) ? m.starRow.clearTagFilter(t) : m.starRow.filterByTag(t)}>
-                        <Badge variant={selectedSet.has(t) ? 'tagActive' : 'tag'} className="cursor-pointer hover:opacity-80">
+                      <button key={t} disabled={interactionLocked} onClick={() => onToggleTag(t)} title={selectedSet.has(t) ? m.starRow.clearTagFilter(t) : m.starRow.filterByTag(t)}>
+                        <Badge
+                          variant={selectedSet.has(t) ? 'tagActive' : 'tag'}
+                          className={cn('hover:opacity-80', {
+                            'cursor-pointer': !interactionLocked,
+                            'cursor-default opacity-70': interactionLocked,
+                          })}
+                        >
                           {t}
                         </Badge>
                       </button>
@@ -124,10 +139,11 @@ export const StarRow = memo(function StarRow({
               <div key={column} data-row-col={column} className={cn('flex justify-center rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
                 <FavoriteButton
                   active={favorite}
-                  busy={favoriteBusy}
+                  busy={favoriteBusy || interactionLocked}
                   activeLabel={m.starRow.removeFavorite}
                   inactiveLabel={m.starRow.markFavorite}
                   onToggle={(next) => {
+                    if (interactionLocked) return;
                     onToggleFavorite(star.full_name, next)
                       .catch(() => {});
                   }}

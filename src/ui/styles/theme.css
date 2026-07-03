@@ -22,6 +22,10 @@
     --muted-foreground: 0 0% 40%;
     --accent: 0 0% 96%;
     --accent-foreground: 0 0% 9%;
+    --layout-edit: 210 20% 96%;
+    --layout-edit-foreground: 220 18% 13%;
+    --layout-edit-border: 215 16% 82%;
+    --layout-edit-accent: 215 18% 34%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
     --favorite: 350 89% 60%;
@@ -76,6 +80,10 @@
     --muted-foreground: 0 0% 64%;
     --accent: 0 0% 14%;
     --accent-foreground: 0 0% 98%;
+    --layout-edit: 220 13% 15%;
+    --layout-edit-foreground: 210 20% 96%;
+    --layout-edit-border: 220 11% 28%;
+    --layout-edit-accent: 210 24% 78%;
     --destructive: 0 62% 50%;
     --destructive-foreground: 0 0% 98%;
     --favorite: 350 89% 60%;

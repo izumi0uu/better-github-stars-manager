@@ -3,13 +3,16 @@ import { X } from 'lucide-react';
 import { Badge } from '@/ui/shadcn/badge';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
+import { getLockedRegionProps } from '@/ui/interaction-lock';
 
 export function ActiveFilterChips({
   f,
   count,
+  interactionLocked = false,
 }: {
   f: FilterState;
   count: number;
+  interactionLocked?: boolean;
 }) {
   const { m } = useI18n();
   const active: { label: string; clear: () => void; kind: 'lang' | 'tag' | 'special' }[] = [];
@@ -28,10 +31,15 @@ export function ActiveFilterChips({
   // no early return: the parent container animates its grid-rows height to collapse.
 
   return (
-    <div className="flex flex-wrap items-center gap-1 bg-muted/30 px-3 py-1">
+    <div
+      className={cn('flex flex-wrap items-center gap-1 bg-muted/30 px-3 py-1', {
+        'opacity-55': interactionLocked,
+      })}
+      {...getLockedRegionProps(interactionLocked)}
+    >
       <span className="gsm-muted-count mr-1">{m.activeFilters.summary(count)}</span>
       {active.map((a, i) => (
-        <button key={`${a.label}-${i}`} onClick={a.clear} title={m.activeFilters.clearOne}>
+        <button key={`${a.label}-${i}`} disabled={interactionLocked} onClick={a.clear} title={m.activeFilters.clearOne}>
           <Badge
             variant={a.kind === 'tag' ? 'default' : 'secondary'}
             className={cn(
@@ -45,8 +53,9 @@ export function ActiveFilterChips({
         </button>
       ))}
       <button
+        disabled={interactionLocked}
         onClick={() => f.resetFilters()}
-        className="gsm-helper-text ml-1 underline hover:text-foreground"
+        className="gsm-helper-text ml-1 underline hover:text-foreground disabled:no-underline disabled:opacity-70"
         title={m.activeFilters.clearAll}
       >
         {m.activeFilters.clearAll}

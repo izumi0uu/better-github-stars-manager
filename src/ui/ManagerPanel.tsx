@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle, EyeOff, GripVertical, Heart, RefreshCw, Sparkles, StickyNote } from 'lucide-react';
+import { AlertTriangle, GripVertical, Heart, RefreshCw, Sparkles, StickyNote } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
 import { StarRow } from '@/ui/components/StarRow';
@@ -18,6 +18,7 @@ import { Spinner } from '@/ui/shadcn/spinner';
 import { PortalProvider } from '@/ui/shadcn/portal-context';
 import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import { useTheme } from '@/ui/hooks/use-theme';
+import { getLockedAnchorProps, getLockedRegionProps } from '@/ui/interaction-lock';
 import { bgCall, mergeProgressStatus, mergeStatusPatch, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
 import { hidePanel } from '@/content/stars-page/panel-toggle';
 import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnboardingSync } from '@/onboarding/state';
@@ -78,8 +79,8 @@ export function ManagerPanel() {
     beginTrayDrag,
     restoreHiddenColumn,
     toggleColumnMenu,
-    closeColumnMenu,
   } = useColumnLayoutEditor(rootRef);
+  const interactionLocked = editingLayout;
 
   const refreshStatus = async () => {
     const next = await bgCall<SyncStatus>('getStatus').catch(() => null);
@@ -147,6 +148,7 @@ export function ManagerPanel() {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (interactionLocked) return;
       if (e.key === '/') {
         e.preventDefault();
         searchRef.current?.focus();
@@ -154,7 +156,7 @@ export function ManagerPanel() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [interactionLocked]);
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -325,7 +327,6 @@ export function ManagerPanel() {
       position={columnMenuPosition}
       draftLayout={draftLayout}
       onSetColumnHidden={setColumnHidden}
-      onClose={closeColumnMenu}
     />
   );
 
@@ -389,6 +390,7 @@ export function ManagerPanel() {
             <span>{m.manager.noTokenBanner}</span>
             <Button
               size="sm"
+              disabled={interactionLocked}
               onClick={() => bgCall('openOptions').catch(() => {})}
             >
               {m.manager.addPat}
@@ -397,7 +399,7 @@ export function ManagerPanel() {
         )}
 
         <div className={cn('filter-row-anim border-b border-border', { collapsed: !hasActiveFilter })}>
-          <ActiveFilterChips f={f} count={total} />
+          <ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />
         </div>
 
         {info && (
@@ -409,6 +411,7 @@ export function ManagerPanel() {
             f={f}
             languages={languages}
             tagTree={tagTree}
+            interactionLocked={interactionLocked}
             onTagDeleted={(message) => {
               refreshStars();
               if (message) setInfo(message);
@@ -424,6 +427,7 @@ export function ManagerPanel() {
               <OnboardingCard
                 stage={status.onboardingStage}
                 failedInfo={info}
+                interactionLocked={interactionLocked}
                 onOpenOptions={() => bgCall('openOptions').catch(() => {})}
                 onRetry={() => void doSync('syncFull', m.popup.syncFull)}
               />
@@ -432,6 +436,7 @@ export function ManagerPanel() {
                 state={activeBackfillState}
                 progress={status.progress}
                 actionBusy={busy || !!pendingAction}
+                interactionLocked={interactionLocked}
                 onRun={() => void runBackfill(activeBackfillId)}
                 onDefer={() => void deferBackfill(activeBackfillId)}
               />
@@ -494,18 +499,6 @@ export function ManagerPanel() {
                     ) : (
                       <span className="truncate">{label}</span>
                     )}
-                    {editingLayout && !def.locked && (
-                      <button
-                        type="button"
-                        onClick={() => setColumnHidden(id, true)}
-                        title={m.toolbar.hideColumn(label)}
-                        aria-label={m.toolbar.hideColumn(label)}
-                        className="gsm-gear-in ml-auto grid size-4 shrink-0 place-items-center rounded text-muted-foreground/0 transition-colors hover:bg-accent hover:text-foreground group-hover:text-muted-foreground group-focus-within:text-muted-foreground focus-visible:text-muted-foreground"
-                        style={{ '--d': `${index * 28 + 60}ms` } as CSSProperties & Record<'--d', string>}
-                      >
-                        <EyeOff className="size-3" />
-                      </button>
-                    )}
                   </span>
                 );
               })}
@@ -545,6 +538,7 @@ export function ManagerPanel() {
                         columns={visibleColumns}
                         gridTemplateColumns={gridTemplateColumns}
                         flashedColumn={flashedColumn}
+                        interactionLocked={interactionLocked}
                       />
                     </div>
                   );
@@ -572,12 +566,13 @@ export function ManagerPanel() {
                 onNext={() => selectedIdx >= 0 && selectedIdx < rows.length - 1 && setSelected(rows[selectedIdx + 1].full_name)}
                 hasPrev={selectedIdx > 0}
                 hasNext={selectedIdx >= 0 && selectedIdx < rows.length - 1}
+                interactionLocked={interactionLocked}
               />
             )}
           </div>
         </div>
 
-        <FloatingLocaleToggle drawerOpen={!!selectedStar} />
+        <FloatingLocaleToggle drawerOpen={!!selectedStar} interactionLocked={interactionLocked} />
 
         <LayoutDragGhost ghost={dragGhost} />
 
@@ -616,11 +611,13 @@ function emptyFilter() {
 function OnboardingCard({
   stage,
   failedInfo,
+  interactionLocked,
   onOpenOptions,
   onRetry,
 }: {
   stage: SyncStatus['onboardingStage'];
   failedInfo: string | null;
+  interactionLocked: boolean;
   onOpenOptions: () => void;
   onRetry: () => void;
 }) {
@@ -635,7 +632,10 @@ function OnboardingCard({
         </div>
 
         {stage === 'needs_token' ? (
-          <div className="space-y-3 text-muted-foreground">
+          <div
+            className={cn('space-y-3 text-muted-foreground', { 'opacity-55': interactionLocked })}
+            {...getLockedRegionProps(interactionLocked)}
+          >
             <p>{m.onboarding.noTokenBody}</p>
             <ol className="list-decimal space-y-1 pl-5">
               <li>
@@ -644,6 +644,7 @@ function OnboardingCard({
                   href="https://github.com/settings/personal-access-tokens/new"
                   target="_blank"
                   rel="noreferrer"
+                  {...getLockedAnchorProps(interactionLocked)}
                 >
                   {m.onboarding.createPatLabel}
                 </a>
@@ -651,17 +652,20 @@ function OnboardingCard({
               <li>{m.options.tokenPublicRepos}</li>
               <li>{m.options.tokenGists}</li>
             </ol>
-            <Button onClick={onOpenOptions} className="w-full">
+            <Button onClick={onOpenOptions} className="w-full" disabled={interactionLocked}>
               {m.onboarding.openOptions}
             </Button>
           </div>
         ) : stage === 'sync_failed' ? (
-          <div className="space-y-3 text-muted-foreground">
+          <div
+            className={cn('space-y-3 text-muted-foreground', { 'opacity-55': interactionLocked })}
+            {...getLockedRegionProps(interactionLocked)}
+          >
             <p>
               {m.onboarding.syncFailedBody} <span className="text-destructive">{failedInfo}</span>
             </p>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={onRetry}>
+              <Button variant="outline" onClick={onRetry} disabled={interactionLocked}>
                 <RefreshCw className="size-4" data-icon="inline-start" />
                 {m.onboarding.retry}
               </Button>
@@ -684,12 +688,14 @@ function BackfillCard({
   state,
   progress,
   actionBusy,
+  interactionLocked,
   onRun,
   onDefer,
 }: {
   state: BackfillState;
   progress: SyncStatus['progress'];
   actionBusy: boolean;
+  interactionLocked: boolean;
   onRun: () => void;
   onDefer: () => void;
 }) {
@@ -719,7 +725,7 @@ function BackfillCard({
               <p className="text-destructive">{m.manager.backfillSyncFailed(state.error)}</p>
             )}
             <div className="flex gap-2">
-              <Button onClick={onRun} disabled={actionBusy}>
+              <Button onClick={onRun} disabled={actionBusy || interactionLocked}>
                 {state.status === 'failed' ? (
                   <>
                     <RefreshCw className="size-4" data-icon="inline-start" />
@@ -729,7 +735,7 @@ function BackfillCard({
                   m.manager.backfillSyncAction
                 )}
               </Button>
-              <Button variant="ghost" onClick={onDefer} disabled={actionBusy}>
+              <Button variant="ghost" onClick={onDefer} disabled={actionBusy || interactionLocked}>
                 {m.manager.backfillSyncLater}
               </Button>
             </div>

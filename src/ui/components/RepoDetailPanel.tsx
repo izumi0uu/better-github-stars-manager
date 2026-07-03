@@ -19,6 +19,7 @@ import { Separator } from '@/ui/shadcn/separator';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
+import { getLockedAnchorProps, getLockedRegionProps } from '@/ui/interaction-lock';
 
 /** single-repo detail drawer (tag/note/suggest deep-edit lives here so rows stay compact); flex aside, no portal. */
 export function RepoDetailPanel({
@@ -32,6 +33,7 @@ export function RepoDetailPanel({
   onNext,
   hasPrev,
   hasNext,
+  interactionLocked = false,
 }: {
   star: Star;
   tag: Tag | undefined;
@@ -43,6 +45,7 @@ export function RepoDetailPanel({
   onNext: () => void;
   hasPrev: boolean;
   hasNext: boolean;
+  interactionLocked?: boolean;
 }) {
   const myTags = tag?.tags ?? [];
   const myTagsKey = myTags.join('\u0000');
@@ -168,6 +171,7 @@ export function RepoDetailPanel({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (interactionLocked) return;
       const tagName = (e.target as HTMLElement)?.tagName;
       if (tagName === 'INPUT' || tagName === 'TEXTAREA') return;
       if (e.key === 'Escape') onClose();
@@ -176,22 +180,36 @@ export function RepoDetailPanel({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, onPrev, onNext, hasPrev, hasNext]);
+  }, [onClose, onPrev, onNext, hasPrev, hasNext, interactionLocked]);
 
   const selectedSet = new Set(selectedTags);
 
   return (
-    <div className="flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card">
+    <div
+      className={cn('flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card', {
+        'opacity-55': interactionLocked,
+      })}
+      {...getLockedRegionProps(interactionLocked)}
+    >
       <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
-        <Button variant="ghost" size="icon" onClick={onPrev} disabled={!hasPrev} title={m.repoDetail.previousTitle} className={cn({ 'opacity-30': !hasPrev })}><ChevronLeft className="size-4" /></Button>
-        <Button variant="ghost" size="icon" onClick={onNext} disabled={!hasNext} title={m.repoDetail.nextTitle} className={cn({ 'opacity-30': !hasNext })}><ChevronRight className="size-4" /></Button>
+        <Button variant="ghost" size="icon" onClick={onPrev} disabled={!hasPrev || interactionLocked} title={m.repoDetail.previousTitle} className={cn({ 'opacity-30': !hasPrev })}><ChevronLeft className="size-4" /></Button>
+        <Button variant="ghost" size="icon" onClick={onNext} disabled={!hasNext || interactionLocked} title={m.repoDetail.nextTitle} className={cn({ 'opacity-30': !hasNext })}><ChevronRight className="size-4" /></Button>
         <span className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={onClose} title={m.repoDetail.closeTitle}><X className="size-4" /></Button>
+        <Button variant="ghost" size="icon" onClick={onClose} disabled={interactionLocked} title={m.repoDetail.closeTitle}><X className="size-4" /></Button>
       </div>
 
       <div className="flex flex-col gap-4 p-3">
         <div>
-          <a href={star.html_url} target="_blank" rel="noreferrer" className="break-all text-[13px] font-semibold text-primary underline underline-offset-2 hover:underline">
+          <a
+            href={star.html_url}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(
+              'break-all text-[13px] font-semibold text-primary underline underline-offset-2 hover:underline',
+              { 'pointer-events-none opacity-70': interactionLocked },
+            )}
+            {...getLockedAnchorProps(interactionLocked)}
+          >
             {star.full_name}
           </a>
           <div className="mt-0.5 flex gap-2">
