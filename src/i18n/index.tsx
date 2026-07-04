@@ -28,6 +28,7 @@ export interface MessageCatalog {
     clearLocalData: string;
     confirmClearLocalData: string;
     clearingLocalData: string;
+    clearLocalDataFailed: (error: string) => string;
   };
   manager: {
     syncFailed: (label: string, error: string) => string;
@@ -388,6 +389,7 @@ const messages: Record<Locale, MessageCatalog> = {
       clearLocalData: "Clear local",
       confirmClearLocalData: "Confirm clear",
       clearingLocalData: "Clearing…",
+      clearLocalDataFailed: (error) => `Clear failed: ${error}`,
     },
     manager: {
       syncFailed: (label, error) => `${label}: ${error}`,
@@ -777,6 +779,7 @@ const messages: Record<Locale, MessageCatalog> = {
       clearLocalData: "清本地",
       confirmClearLocalData: "确认清除",
       clearingLocalData: "清除中…",
+      clearLocalDataFailed: (error) => `清除失败: ${error}`,
     },
     manager: {
       syncFailed: (label, error) => `${label}: ${error}`,

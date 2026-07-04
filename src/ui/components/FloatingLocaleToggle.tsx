@@ -21,6 +21,7 @@ export function FloatingLocaleToggle({
   const { locale, setLocale, m } = useI18n();
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!confirmClear) return;
@@ -31,13 +32,17 @@ export function FloatingLocaleToggle({
   const clearLocalData = async () => {
     if (interactionLocked) return;
     if (!confirmClear) {
+      setClearError(null);
       setConfirmClear(true);
       return;
     }
     setClearing(true);
+    setClearError(null);
     try {
       await bgCall('devClearLocalData');
       window.setTimeout(() => window.location.reload(), 150);
+    } catch (error) {
+      setClearError(error instanceof Error ? error.message : String(error));
     } finally {
       setClearing(false);
       setConfirmClear(false);
@@ -69,16 +74,19 @@ export function FloatingLocaleToggle({
               'rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-60',
               {
                 'bg-destructive text-destructive-foreground hover:bg-destructive/90': confirmClear,
-                'text-muted-foreground hover:bg-destructive/10 hover:text-destructive': !confirmClear,
+                'bg-destructive/10 text-destructive hover:bg-destructive/15': clearError !== null && !confirmClear,
+                'text-muted-foreground hover:bg-destructive/10 hover:text-destructive': !confirmClear && clearError === null,
               },
             )}
-            title={confirmClear ? m.dev.confirmClearLocalData : m.dev.clearLocalData}
+            title={clearError ? m.dev.clearLocalDataFailed(clearError) : confirmClear ? m.dev.confirmClearLocalData : m.dev.clearLocalData}
           >
             {clearing
               ? m.dev.clearingLocalData
-              : confirmClear
-                ? m.dev.confirmClearLocalData
-                : m.dev.clearLocalData}
+              : clearError
+                ? m.dev.clearLocalDataFailed(clearError)
+                : confirmClear
+                  ? m.dev.confirmClearLocalData
+                  : m.dev.clearLocalData}
           </button>
         )}
         <span className="pl-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">

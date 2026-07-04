@@ -24,8 +24,8 @@ function versionHash(): string {
   return `${commit}-${stateHash}-${buildHash}`;
 }
 
-export default defineConfig(({ command, mode }) => {
-  const DEV = mode !== 'production' || process.env.GSM_DEV === 'true';
+export default defineConfig(({ command }) => {
+  const DEV = command === 'serve' || process.env.GSM_DEV === 'true';
   const VERSION_HASH = versionHash();
 
   return {

@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it } from 'vitest';
 import { db } from '../../../src/storage/db';
-import { reconcileBackfillMap } from '../../../src/upgrades/tasks';
+import { backfillTasks, reconcileBackfillMap } from '../../../src/upgrades/tasks';
 import { selectActiveBackfillId } from '../../../src/upgrades/backfill-state';
 import type { Star } from '../../../src/types';
 
@@ -62,6 +62,30 @@ describe('Backfill regressions', () => {
     });
     assert.equal(next.repo_data_sync_v1?.status, 'done');
     assert.equal(selectActiveBackfillId(next), null);
+  });
+
+  it('does not scan local data when an existing backfill is already done', async () => {
+    const originalDetectNeed = backfillTasks.repo_data_sync_v1.detectNeed;
+    let detectCalls = 0;
+    backfillTasks.repo_data_sync_v1.detectNeed = async () => {
+      detectCalls++;
+      throw new Error('done backfills should not detect need');
+    };
+    try {
+      const next = await reconcileBackfillMap({
+        repo_data_sync_v1: {
+          status: 'done',
+          queuedAt: '2026-06-22T00:00:00Z',
+          lastAttemptAt: '2026-06-22T00:00:00Z',
+          completedAt: '2026-06-22T00:05:00Z',
+          error: null,
+        },
+      });
+      assert.equal(next.repo_data_sync_v1?.status, 'done');
+      assert.equal(detectCalls, 0);
+    } finally {
+      backfillTasks.repo_data_sync_v1.detectNeed = originalDetectNeed;
+    }
   });
 
   it('does not surface deferred backfills as active cards', async () => {

@@ -253,7 +253,7 @@ describe('Status/token regressions', () => {
     const cfg = await authStore.getConfig();
     assert.equal(cfg.columnLayoutMode, 'custom');
     assert.deepEqual(cfg.customColumnLayout, {
-      order: ['tags', 'repository', 'description', 'language', 'stars', 'updated', 'favorite', 'notes'],
+      order: ['tags', 'repository', 'description', 'language', 'stars', 'updated', 'created', 'favorite', 'notes'],
       hidden: ['description'],
     });
   });
