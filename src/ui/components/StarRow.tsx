@@ -118,7 +118,11 @@ export const StarRow = memo(function StarRow({
               </div>
             );
           case 'updated':
-            return <div key={column} data-row-col={column} className={cn('min-w-0 truncate rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>{star.pushed_at.slice(0, 10)}</div>;
+            return (
+              <div key={column} data-row-col={column} className={cn('min-w-0 truncate rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>
+                {star.pushed_at ? star.pushed_at.slice(0, 10) : <span className="text-muted-foreground/60">{m.common.none}</span>}
+              </div>
+            );
           case 'created':
             return (
               <div key={column} data-row-col={column} className={cn('min-w-0 truncate rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>

@@ -9,7 +9,8 @@ import { LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import {
   LayoutOverflowIndicator,
   LayoutResizeFeedbackOverlay,
-} from '@/ui/ManagerPanel';
+  StarsTable,
+} from '@/ui/components/StarsTable';
 import {
   LayoutResizeSurface,
   layoutResizeOverlayFromRects,
@@ -19,38 +20,11 @@ import {
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { DEFAULT_COLUMN_LAYOUT } from '@/ui/column-layout';
 import { getMessages } from '@/i18n';
-import type { Star, Tag } from '@/types';
+import { fakeStar, fakeTag } from './test-utils';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mountedRoots: Root[] = [];
-
-function fakeStar(): Star {
-  return {
-    full_name: 'owner/repo',
-    html_url: 'https://github.com/owner/repo',
-    description: 'A repository',
-    language: 'TypeScript',
-    stargazers_count: 1200,
-    topics: ['react'],
-    archived: false,
-    fork: false,
-    created_at: '2024-01-01T00:00:00Z',
-    pushed_at: '2024-02-01T00:00:00Z',
-    starred_at: '2024-03-01T00:00:00Z',
-    tombstone: false,
-    synced_at: '2024-03-02T00:00:00Z',
-  };
-}
-
-function fakeTag(): Tag {
-  return {
-    full_name: 'owner/repo',
-    tags: ['ui'],
-    notes: 'draft',
-    mtime: '2024-03-02T00:00:00Z',
-  };
-}
 
 function mount(element: React.ReactElement): { container: HTMLDivElement; root: Root } {
   const container = document.createElement('div');
@@ -79,6 +53,12 @@ function findButton(container: HTMLElement, label: string): HTMLButtonElement {
 
 function findExactButton(container: HTMLElement, label: string): HTMLButtonElement {
   const button = [...container.querySelectorAll('button')].find((item) => item.textContent?.trim() === label);
+  if (!button) throw new Error(`Expected ${label} button to render`);
+  return button;
+}
+
+function findButtonByAriaLabel(container: HTMLElement, label: string): HTMLButtonElement {
+  const button = [...container.querySelectorAll('button')].find((item) => item.getAttribute('aria-label') === label);
   if (!button) throw new Error(`Expected ${label} button to render`);
   return button;
 }
@@ -261,7 +241,9 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
     expect(findExactButton(container, 'Reset').disabled).toBe(true);
     expect(findButton(container, 'Save').disabled).toBe(true);
     expect(findButton(container, 'Cancel').disabled).toBe(true);
-    expect(findButton(container, 'Lang').disabled).toBe(true);
+    const trayChip = container.querySelector('.gsm-tray-chip');
+    expect(trayChip).toBeInstanceOf(HTMLButtonElement);
+    expect((trayChip as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('renders resize overlay badges and overflow chip only when metrics are present', () => {
@@ -289,7 +271,8 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
     expect(container.textContent).toContain('current column only');
     expect(container.querySelector<HTMLElement>('.gsm-col-hilite')?.style.top).toBe('12px');
     expect(container.querySelector<HTMLElement>('.gsm-delta-badge')?.style.top).toBe('244px');
-    expect(container.querySelector('[data-layout-overflow-chip]')?.textContent).toContain('Overflow +56px');
+    expect(container.querySelector('[data-layout-overflow-edge]')).not.toBeNull();
+    expect(container.querySelector('[data-layout-overflow-chip]')).toBeNull();
 
     act(() => {
       root.render(
@@ -353,6 +336,93 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
 
     expect(handleRule).toContain('opacity: 0.45;');
     expect(hoverRule).toContain('opacity: 1;');
+  });
+
+  it('keeps layout edit header controls accessible from keyboard', () => {
+    const scrollRef = createRef<HTMLDivElement>();
+    const headerRef = createRef<HTMLDivElement>();
+    const onMoveColumnByKeyboard = vi.fn();
+    const onResizeColumnByKeyboard = vi.fn();
+    const onAutoFitColumnWidth = vi.fn();
+    const m = getMessages('en');
+    const { container } = mount(
+      <div ref={scrollRef}>
+        <StarsTable
+          rows={[]}
+          loading={false}
+          phase="idle"
+          tagsByFullName={new Map()}
+          selectedTags={[]}
+          selectedFullName={null}
+          visibleColumns={['repository', 'description', 'favorite', 'notes']}
+          gridTemplateColumns="180px 240px 28px 20px"
+          tableMinWidth={468}
+          interactionLocked={false}
+          layoutEdit={{
+            editing: true,
+            faded: false,
+            draggedColumnId: null,
+            draggedColumnHideIntent: false,
+            columnShifts: {},
+            flashedColumn: null,
+            trayCaretX: null,
+            onBeginColumnDrag: vi.fn(),
+            onMoveColumnByKeyboard,
+          }}
+          layoutResize={null}
+          scrollRef={scrollRef}
+          headerRef={headerRef}
+          onSelect={vi.fn()}
+          onToggleTag={vi.fn()}
+          onToggleFavorite={vi.fn(async () => {})}
+          onBeginColumnResize={vi.fn()}
+          onResizeColumnByKeyboard={onResizeColumnByKeyboard}
+          onAutoFitColumnWidth={onAutoFitColumnWidth}
+        />
+      </div>,
+    );
+
+    const dragRepository = findButtonByAriaLabel(
+      container,
+      m.toolbar.dragColumnTitle(m.toolbar.columnRepository),
+    );
+    const resizeRepository = findButtonByAriaLabel(
+      container,
+      m.toolbar.resizeColumnTitle(m.toolbar.columnRepository),
+    );
+
+    expect(dragRepository.textContent).toContain(m.toolbar.dragColumnTitle(m.toolbar.columnRepository));
+    expect(resizeRepository.textContent).toContain(m.toolbar.resizeColumnTitle(m.toolbar.columnRepository));
+    expect(container.querySelector(`[aria-label="${m.toolbar.dragColumnTitle(m.toolbar.columnFavorite)}"]`)).toBeNull();
+    expect(container.querySelector(`[aria-label="${m.toolbar.resizeColumnTitle(m.toolbar.columnNotes)}"]`)).toBeNull();
+
+    const dragRight = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+    const dragLeft = new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true });
+    const resizeRight = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+    const resizeLeftLarge = new KeyboardEvent('keydown', {
+      key: 'ArrowLeft',
+      bubbles: true,
+      cancelable: true,
+      shiftKey: true,
+    });
+    const autoFit = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+
+    act(() => {
+      dragRepository.dispatchEvent(dragRight);
+      dragRepository.dispatchEvent(dragLeft);
+      resizeRepository.dispatchEvent(resizeRight);
+      resizeRepository.dispatchEvent(resizeLeftLarge);
+      resizeRepository.dispatchEvent(autoFit);
+    });
+
+    expect(dragRight.defaultPrevented).toBe(true);
+    expect(resizeRight.defaultPrevented).toBe(true);
+    expect(autoFit.defaultPrevented).toBe(true);
+    expect(onMoveColumnByKeyboard).toHaveBeenNthCalledWith(1, 'repository', 1);
+    expect(onMoveColumnByKeyboard).toHaveBeenNthCalledWith(2, 'repository', -1);
+    expect(onResizeColumnByKeyboard).toHaveBeenNthCalledWith(1, 'repository', 1, false);
+    expect(onResizeColumnByKeyboard).toHaveBeenNthCalledWith(2, 'repository', -1, true);
+    expect(onAutoFitColumnWidth).toHaveBeenCalledWith('repository');
   });
 
 
@@ -633,8 +703,8 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
     expect(deltaBadge.textContent).toContain('+80px');
     expect(readout.textContent).toContain('Repository 320px');
 
-    const liveChip = shell.querySelector<HTMLElement>('[data-layout-live-overflow-chip]');
-    expect(liveChip?.textContent).toContain('Overflow +');
+    expect(shell.querySelector('[data-layout-live-overflow-edge]')).not.toBeNull();
+    expect(shell.querySelector('[data-layout-live-overflow-chip]')).toBeNull();
 
     Object.defineProperty(stage, 'clientWidth', { configurable: true, value: 900 });
     paintLayoutResizeLive({
@@ -661,6 +731,7 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
       m: getMessages('en'),
     });
 
+    expect(shell.querySelector('[data-layout-live-overflow-edge]')).toBeNull();
     expect(shell.querySelector('[data-layout-live-overflow-chip]')).toBeNull();
   });
 });

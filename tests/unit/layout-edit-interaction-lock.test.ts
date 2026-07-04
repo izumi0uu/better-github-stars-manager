@@ -41,13 +41,18 @@ describe('layout edit interaction lock invariants', () => {
   it('keeps pencil edit as a single callback while ManagerPanel wires custom edit semantics', () => {
     const toolbar = read('src/ui/components/Toolbar.tsx');
     const manager = read('src/ui/ManagerPanel.tsx');
+    const table = read('src/ui/components/StarsTable.tsx');
     const hook = read('src/ui/hooks/use-column-layout-editor.ts');
 
     expect(toolbar).toContain('onClick={onStartLayoutEdit}');
     expect(toolbar).not.toContain("onLayoutModeChange('custom');\n                  onStartLayoutEdit");
     expect(manager).toContain('beginCustomLayoutEdit,');
     expect(manager).toContain('onStartLayoutEdit={beginCustomLayoutEdit}');
-    expect(manager).toContain('BROWSE_LAYOUT_TABLE_OPACITY_MS');
+    expect(manager).toContain('<StarsTable');
+    expect(table).toContain('BROWSE_LAYOUT_TABLE_OPACITY_MS');
+    expect(table).toContain('data-table-head');
+    expect(table).toContain('data-table-head-sentinel');
+    expect(table).not.toContain('cloneElement');
     expect(hook).toContain('const beginCustomLayoutEdit = () => {');
     expect(hook).toContain('if (!configLoaded.current) return;');
     expect(hook).toContain('preEditMode.current = layoutMode;');

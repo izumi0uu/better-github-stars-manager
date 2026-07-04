@@ -17,6 +17,7 @@ export interface FilterState {
   setQuery: (q: string) => void;
   toggleLanguage: (lang: string) => void;
   toggleTag: (tag: string) => void;
+  clearTags: () => void;
   setTagMode: (m: 'any' | 'all') => void;
   setShowTombstone: (v: boolean) => void;
   setOnlyFavorite: (v: boolean) => void;
@@ -48,6 +49,7 @@ export const useFilterStore = create<FilterState>((set) => ({
     set((s) => ({
       tags: s.tags.includes(tag) ? s.tags.filter((t) => t !== tag) : [...s.tags, tag],
     })),
+  clearTags: () => set((s) => (s.tags.length === 0 ? s : { tags: [] })),
   setTagMode: (tagMode) => set({ tagMode }),
   setShowTombstone: (showTombstone) => set({ showTombstone }),
   setOnlyFavorite: (onlyFavorite) => set({ onlyFavorite }),

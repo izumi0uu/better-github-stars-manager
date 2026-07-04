@@ -12,12 +12,11 @@ import {
   normalizeOnboardingStage,
   resolveOnboardingStageAfterSync,
 } from '../../src/onboarding/state.ts';
-import { autoTagPhaseForSync } from '../../src/background/sync-flow.ts';
 import { mountState, pageOwner } from '../../src/content/stars-page/mount-state.ts';
 import { pruneFavoriteOverrides, resolveFavoriteState } from '../../src/ui/favorite-state.ts';
 import { pickInitialSyncAction } from '../../src/ui/initial-sync.ts';
 import { classifyStarsQueryTrigger } from '../../src/ui/stars-refresh.ts';
-import { normalizeAutoTagLimit } from '../../src/preferences.ts';
+import { countTopicRepoFrequency, suggestTags } from '../../src/ui/suggest.ts';
 
 function lwwMerge(
   local: Map<string, { tags: string[]; mtime: string }>,
@@ -123,22 +122,6 @@ const tagsByRepo = new Map([
   ['b/rust-lib', ['rust']],
 ]);
 const favoritesByRepo = new Map([['b/rust-lib', true]]);
-
-function suggestTags(
-  star: S,
-  existing: string[],
-  excluded: Iterable<string> = [],
-  limit = 5,
-): string[] {
-  const have = new Set(existing.map((t) => t.toLowerCase()));
-  const skip = new Set([...excluded].map((t) => t.toLowerCase()));
-  const out: string[] = [];
-  for (const t of star.topics) {
-    if (have.has(t.toLowerCase()) || skip.has(t.toLowerCase())) continue;
-    out.push(t);
-  }
-  return out.slice(0, normalizeAutoTagLimit(limit));
-}
 
 function resetPanelState(): void {
   onPanelToggle(() => {});
@@ -311,20 +294,6 @@ describe('Onboarding state machine', () => {
   });
 });
 
-describe('Sync auto-tag policy', () => {
-  it('incremental sync auto-tags in incremental phase', () => {
-    assert.equal(autoTagPhaseForSync('syncIncremental'), 'incremental');
-  });
-
-  it('full sync auto-tags in full phase', () => {
-    assert.equal(autoTagPhaseForSync('syncFull'), 'full');
-  });
-
-  it('rescan does not auto-tag', () => {
-    assert.equal(autoTagPhaseForSync('syncRescan'), null);
-  });
-});
-
 describe('Auto-suggest', () => {
   it('suggests only topics not already tagged (no language)', () => {
     const s = suggestTags(sample[0], []);
@@ -365,6 +334,38 @@ describe('Auto-suggest', () => {
       Number.NaN,
     );
     assert.deepEqual(s, ['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it('bulk auto-suggest skips topics below the minimum repo coverage', () => {
+    const stars: S[] = [
+      { ...sample[0], topics: ['ai', 'agent'] },
+      { ...sample[1], topics: ['ai', 'rust'] },
+      { ...sample[2], topics: ['ai', 'legacy'] },
+    ];
+    const topicRepoCounts = countTopicRepoFrequency(stars);
+    const s = suggestTags(stars[0], [], [], {
+      limit: 3,
+      minRepoCount: 3,
+      topicRepoCounts,
+    });
+    assert.deepEqual(s, ['ai']);
+  });
+
+  it('topic repo coverage counts duplicate topics in the same repo once', () => {
+    const stars: S[] = [
+      { ...sample[0], topics: ['AI', 'ai', 'agent'] },
+      { ...sample[1], topics: ['ai'] },
+    ];
+    const topicRepoCounts = countTopicRepoFrequency(stars);
+    assert.equal(topicRepoCounts.get('ai'), 2);
+    assert.equal(topicRepoCounts.get('agent'), 1);
+
+    const s = suggestTags(stars[0], [], [], {
+      limit: 3,
+      minRepoCount: 2,
+      topicRepoCounts,
+    });
+    assert.deepEqual(s, ['AI']);
   });
 });
 

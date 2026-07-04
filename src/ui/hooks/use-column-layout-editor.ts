@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { useI18n } from '@/i18n';
 import {
@@ -26,6 +26,7 @@ import {
   normalizeStoredColumnLayoutPreference,
   resetColumnLayout,
   restoreColumn,
+  resizeSnapshot,
   tableMinWidthFor,
   trayInsertIndex,
   visibleColumnIds,
@@ -37,9 +38,8 @@ import {
 } from '@/ui/column-layout';
 import {
   COLUMN_GAP_PX,
-  COLUMN_MENU_EDGE_GUARD_PX,
-  COLUMN_MENU_TRIGGER_GAP_PX,
-  COLUMN_MENU_WIDTH_PX,
+  COLUMN_KEYBOARD_RESIZE_LARGE_STEP_PX,
+  COLUMN_KEYBOARD_RESIZE_STEP_PX,
   RESTORE_FLASH_DURATION_MS,
   TRAY_DRAG_MOVE_THRESHOLD_PX,
   TRAY_RESTORE_HEADER_BUFFER_PX,
@@ -49,7 +49,13 @@ import {
   type LayoutResizeLiveAdapter,
   type LayoutResizeSession,
 } from '@/ui/layout-resize-tool';
+import {
+  bindLayoutColumnMenuDismissal,
+  isInsideLayoutColumnMenuPath,
+  useLayoutColumnMenuPosition,
+} from '@/ui/hooks/use-layout-column-menu';
 export type { LayoutResizeLiveAdapter, LayoutResizeLiveState } from '@/ui/layout-resize-tool';
+export { bindLayoutColumnMenuDismissal, isInsideLayoutColumnMenuPath };
 
 function reportLayoutPersistenceFailure(action: string, error: unknown) {
   console.warn('[GSM] failed to persist layout preference:', action, error instanceof Error ? error.message : String(error));
@@ -92,34 +98,6 @@ type LayoutDrag =
 
 type LayoutResize = LayoutResizeSession;
 
-export function isInsideLayoutColumnMenuPath(path: readonly EventTarget[]) {
-  return path.some((node) => (
-    node instanceof Element &&
-    node.closest('[data-layout-column-menu]') !== null
-  ));
-}
-
-export function bindLayoutColumnMenuDismissal(
-  target: Pick<Window, 'addEventListener' | 'removeEventListener'>,
-  onDismiss: () => void,
-) {
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') onDismiss();
-  };
-  const onPointerDown = (e: PointerEvent) => {
-    if (isInsideLayoutColumnMenuPath(e.composedPath())) return;
-    onDismiss();
-  };
-
-  target.addEventListener('keydown', onKey);
-  target.addEventListener('pointerdown', onPointerDown);
-
-  return () => {
-    target.removeEventListener('keydown', onKey);
-    target.removeEventListener('pointerdown', onPointerDown);
-  };
-}
-
 export function useColumnLayoutEditor(
   rootRef: RefObject<HTMLDivElement | null>,
   layoutStageRef?: RefObject<HTMLElement | null>,
@@ -140,7 +118,6 @@ export function useColumnLayoutEditor(
   const [layoutEditReady, setLayoutEditReady] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [flashedColumn, setFlashedColumn] = useState<ColumnId | null>(null);
-  const [columnMenuPosition, setColumnMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingBrowseLayout = useRef<ColumnLayout | null>(null);
@@ -247,43 +224,13 @@ export function useColumnLayoutEditor(
     };
   }, []);
 
-  useEffect(() => {
-    if (!columnMenuOpen) return;
-    return bindLayoutColumnMenuDismissal(window, () => setColumnMenuOpen(false));
-  }, [columnMenuOpen]);
-
-  useLayoutEffect(() => {
-    if (!columnMenuOpen) {
-      setColumnMenuPosition(null);
-      return;
-    }
-
-    const updatePosition = () => {
-      const root = rootRef.current;
-      const trigger = editColumnsButtonRef.current;
-      if (!root || !trigger) return;
-      const rootRect = root.getBoundingClientRect();
-      const triggerRect = trigger.getBoundingClientRect();
-      setColumnMenuPosition({
-        left: Math.max(
-          COLUMN_MENU_EDGE_GUARD_PX,
-          Math.min(
-            triggerRect.left - rootRect.left,
-            rootRect.width - COLUMN_MENU_WIDTH_PX - COLUMN_MENU_EDGE_GUARD_PX,
-          ),
-        ),
-        top: triggerRect.bottom - rootRect.top + COLUMN_MENU_TRIGGER_GAP_PX,
-      });
-    };
-
-    updatePosition();
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-    };
-  }, [columnMenuOpen, rootRef]);
+  const dismissColumnMenu = useCallback(() => setColumnMenuOpen(false), []);
+  const columnMenuPosition = useLayoutColumnMenuPosition({
+    open: columnMenuOpen,
+    rootRef,
+    triggerRef: editColumnsButtonRef,
+    onDismiss: dismissColumnMenu,
+  });
 
   useEffect(() => {
     if (layoutFadeTimer.current) clearTimeout(layoutFadeTimer.current);
@@ -603,6 +550,36 @@ export function useColumnLayoutEditor(
     });
   };
 
+  const moveColumnByKeyboard = (id: ColumnId, direction: -1 | 1) => {
+    if (!editingLayout || layoutResizeRef.current || layoutDragRef.current || COLUMN_DEFS[id].locked) return;
+    setDraftLayout((current) => {
+      const visible = visibleColumnIds(current);
+      const index = visible.indexOf(id);
+      if (index < 0) return current;
+      const targetIndex = index + direction;
+      const lockedStart = visible.findIndex((columnId) => COLUMN_DEFS[columnId].locked);
+      if (targetIndex < 0 || (lockedStart >= 0 && targetIndex >= lockedStart)) return current;
+      return moveColumn(current, id, direction < 0 ? index - 1 : index + 1);
+    });
+    setColumnMenuOpen(false);
+  };
+
+  const resizeColumnByKeyboard = (id: ColumnId, direction: -1 | 1, largeStep = false) => {
+    if (!editingLayout || layoutResizeRef.current || layoutDragRef.current || COLUMN_DEFS[id].locked) return;
+    const snapshot = measureResizeSnapshot();
+    const startWidth = normalizedColumnWidth(id, draftLayout.widths?.[id]) ?? snapshot?.[id];
+    if (!snapshot || startWidth == null) return;
+    const delta = direction * (largeStep ? COLUMN_KEYBOARD_RESIZE_LARGE_STEP_PX : COLUMN_KEYBOARD_RESIZE_STEP_PX);
+    setDraftLayout((current) => normalizeColumnLayout({
+      ...current,
+      widths: {
+        ...current.widths,
+        ...resizeSnapshot({ ...snapshot, [id]: startWidth }, id, delta, startWidth),
+      },
+    }));
+    setColumnMenuOpen(false);
+  };
+
   const fitLayoutWidths = () => {
     if (blockLayoutMutationDuringResize()) return;
     const snapshot = measureResizeSnapshot();
@@ -752,6 +729,7 @@ export function useColumnLayoutEditor(
     window.addEventListener('pointercancel', onCancel);
     window.addEventListener('keydown', onKey);
     return () => {
+      tool.disposeActiveGesture();
       document.body.classList.remove('gsm-resizing-column');
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
@@ -797,6 +775,8 @@ export function useColumnLayoutEditor(
     setColumnHidden,
     beginColumnDrag,
     beginColumnResize,
+    moveColumnByKeyboard,
+    resizeColumnByKeyboard,
     autoFitColumnWidth,
     fitLayoutWidths,
     beginTrayDrag,
