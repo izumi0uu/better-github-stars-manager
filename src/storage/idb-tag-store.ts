@@ -66,6 +66,43 @@ export const idbTagStore: TagStore = {
     }
   },
 
+  async setTagsBulk(updates) {
+    const touchedNames: string[] = [];
+    let clearedExcluded = false;
+    const ts = now();
+
+    await db.transaction('rw', db.tags, db.tagMeta, async () => {
+      for (const update of updates) {
+        const existing = (await db.tags.get(update.full_name)) ?? emptyTag(update.full_name);
+        const existingTags = existing.tags ?? [];
+        if (existingTags.length === update.tags.length && existingTags.every((tag, i) => tag === update.tags[i])) {
+          continue;
+        }
+
+        await db.tags.put({
+          ...existing,
+          favorite: existing.favorite ?? false,
+          tags: update.tags,
+          mtime: ts,
+        });
+        touchedNames.push(update.full_name);
+
+        const newlyAdded = update.tags.filter((tag) => !existingTags.includes(tag));
+        for (const name of newlyAdded) {
+          const meta = await db.tagMeta.get(name);
+          if (meta?.excluded) {
+            await db.tagMeta.put({ ...meta, excluded: false, mtime: ts });
+            clearedExcluded = true;
+          }
+        }
+      }
+    });
+
+    for (const fullName of touchedNames) dirty.add(fullName);
+    if (clearedExcluded) dirtyMeta = true;
+    return { updated: touchedNames.length };
+  },
+
   async setNotes(full_name, notes) {
     const existing = (await db.tags.get(full_name)) ?? emptyTag(full_name);
     await db.tags.put({ ...existing, favorite: existing.favorite ?? false, notes, mtime: touch(full_name) });
@@ -110,6 +147,30 @@ export const idbTagStore: TagStore = {
     });
     dirtyMeta = true;
     return { removed };
+  },
+
+  async deleteAllTags() {
+    const touchedNames: string[] = [];
+    const removedNames = new Set<string>();
+    let assignmentsRemoved = 0;
+    const ts = now();
+
+    await db.transaction('rw', db.tags, async () => {
+      const rows = await db.tags.toArray();
+      for (const tag of rows) {
+        if (tag.tags.length === 0) continue;
+        assignmentsRemoved += tag.tags.length;
+        touchedNames.push(tag.full_name);
+        for (const name of tag.tags) removedNames.add(name);
+        await db.tags.put({ ...tag, tags: [], favorite: tag.favorite ?? false, mtime: ts });
+      }
+    });
+
+    for (const fullName of touchedNames) dirty.add(fullName);
+    return {
+      assignmentsRemoved,
+      distinctTagsRemoved: removedNames.size,
+    };
   },
 
   async listExcluded(): Promise<string[]> {

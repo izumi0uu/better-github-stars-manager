@@ -9,6 +9,7 @@
 
   .gsm-favorite-action {
     @apply inline-flex items-center justify-center rounded p-1 transition-colors disabled:opacity-70;
+
     color: hsl(var(--muted-foreground) / 0.45);
     transition-duration: 200ms;
   }
@@ -63,6 +64,22 @@
 
   .gsm-muted-count-soft {
     @apply text-[10px] text-muted-foreground/70;
+  }
+
+  .gsm-body-note {
+    @apply text-[13px] leading-relaxed text-muted-foreground;
+  }
+
+  .gsm-status-note {
+    @apply text-[13px];
+  }
+
+  .gsm-segment-item {
+    @apply gsm-touch-target relative inline-flex h-6 items-center gap-1.5 rounded-md px-2 font-medium text-muted-foreground transition-[background-color,color,box-shadow] duration-150 hover:text-foreground;
+  }
+
+  .gsm-compact-icon-button {
+    @apply gsm-touch-target grid h-6 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground disabled:pointer-events-none;
   }
 
   .gsm-progress-count {

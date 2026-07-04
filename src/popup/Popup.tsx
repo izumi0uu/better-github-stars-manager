@@ -129,7 +129,7 @@ export function Popup() {
     );
 
   return (
-    <div className="flex flex-col gap-2 p-3 font-sans" style={{ minWidth: 280 }}>
+    <div className="flex min-w-[280px] flex-col gap-2 p-3 font-sans">
       <div className="flex items-center justify-between gap-2">
         <h2 className="m-0 inline-flex items-center gap-1.5 text-[15px] font-semibold text-foreground">
           <Star className="size-4 fill-current text-primary" />
@@ -143,7 +143,7 @@ export function Popup() {
       </div>
 
       {!hasToken && (
-        <div className="flex items-center gap-2 text-[13px] text-warning">
+        <div className="gsm-status-note flex items-center gap-2 text-warning">
           {m.popup.noToken}
           <Button variant="outline" size="sm" onClick={openOptions}>{m.popup.addPat}</Button>
         </div>

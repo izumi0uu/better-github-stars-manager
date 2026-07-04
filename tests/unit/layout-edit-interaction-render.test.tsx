@@ -27,6 +27,7 @@ function fakeFilterState(): FilterState {
     setQuery: vi.fn(),
     toggleLanguage: vi.fn(),
     toggleTag: vi.fn(),
+    clearTags: vi.fn(),
     setTagMode: vi.fn(),
     setShowTombstone: vi.fn(),
     setOnlyFavorite: vi.fn(),

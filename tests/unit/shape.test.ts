@@ -40,6 +40,18 @@ describe('Payload shape regression', () => {
     assert.ok(star.synced_at.length > 0);
   });
 
+  it('toStar preserves null pushed_at for never-pushed repositories', () => {
+    const star = toStar({
+      ...payload,
+      repo: {
+        ...payload.repo,
+        pushed_at: null,
+      },
+    } as never);
+
+    assert.equal(star.pushed_at, null);
+  });
+
   it('full_name is a valid IDB key (string, non-empty)', () => {
     const star = toStar(payload as never);
     assert.equal(typeof star.full_name, 'string');

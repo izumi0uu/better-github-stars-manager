@@ -313,7 +313,7 @@ export function Toolbar({
           )}
         </TButton>
 
-        <TButton variant="ghost" size="sm" onClick={() => onAutoAssignTags()} disabled={actionBusy || layoutEditing} tip={m.toolbar.autoAssignTitle} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
+        <TButton variant="ghost" size="sm" onClick={() => onAutoAssignTags()} disabled={actionBusy || layoutEditing} tip={m.toolbar.autoAssignTitle} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch} data-coach-target="auto-tags">
           <ActionIcon phase={successAction === 'autoAssignTags' ? 'ok' : pendingAction === 'autoAssignTags' ? 'busy' : 'idle'}>
             {successAction === 'autoAssignTags' ? (
               <SuccessCheck data-icon="inline-start" />

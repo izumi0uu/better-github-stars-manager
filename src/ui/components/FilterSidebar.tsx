@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Search, Trash2, X, Check } from 'lucide-react';
+import { ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, Search, Trash2, X, Check } from 'lucide-react';
 import type { FilterState } from '@/ui/filter-store';
 import { Checkbox } from '@/ui/shadcn/checkbox';
 import { Input } from '@/ui/shadcn/input';
@@ -13,23 +13,25 @@ import { useI18n } from '@/i18n';
 import { getLockedRegionProps } from '@/ui/interaction-lock';
 
 /**
- * Left filter rail: special toggles up top + collapsible Languages + flat Tags
- * (sorted by use count, hover to delete). tagMode (any/all) sits in Tags header.
+ * Left filter rail: special toggles up top + collapsible Languages + flat Tags.
+ * Tags keep their incoming order unless the user sorts by name.
  */
 export function FilterSidebar({
   f,
   languages,
   tagTree,
   interactionLocked = false,
-  onTagDeleted,
+  onTagMutationMessage,
+  onTagMutationSuccess,
 }: {
   f: FilterState;
   languages: [string, number][];
   tagTree: { tags: { name: string; count: number }[]; total: number };
   interactionLocked?: boolean;
-  /** Called after a tag delete attempt. Receives a status message (success/failure)
-   *  to surface in the manager info banner, or null to leave it untouched. */
-  onTagDeleted?: (message: string | null) => void;
+  /** Called after a tag mutation to surface a manager info/error banner. */
+  onTagMutationMessage?: (message: string | null) => void;
+  /** Called only after a tag mutation succeeds, so the owner can refresh data. */
+  onTagMutationSuccess?: () => void;
 }) {
   const { m } = useI18n();
 
@@ -74,9 +76,14 @@ export function FilterSidebar({
       {/* Languages — collapsible, collapsed by default */}
       <LanguagesSection f={f} languages={languages} />
 
-      {/* Tags — flat list sorted by count; a search box filters it.
+      {/* Tags — flat list in incoming order; optional name sort and search live inside.
           tagMode (any/all) sits in the header. */}
-      <TagsSection f={f} tagTree={tagTree} onTagDeleted={onTagDeleted} />
+      <TagsSection
+        f={f}
+        tagTree={tagTree}
+        onTagMutationMessage={onTagMutationMessage}
+        onTagMutationSuccess={onTagMutationSuccess}
+      />
     </div>
   );
 }
@@ -146,17 +153,20 @@ function LanguagesSection({ f, languages }: { f: FilterState; languages: [string
   );
 }
 
-// Flat tag list (topic-derived + user-authored), sorted by count; previews top TAG_PREVIEW with a "show all" button, search overrides the preview.
+// Flat tag list (topic-derived + user-authored), preserving incoming order unless name-sorted by the user.
 const TAG_PREVIEW = 50;
+const TAG_NAME_COLLATOR = new Intl.Collator(['zh-CN', 'en'], { numeric: true, sensitivity: 'base' });
 
 function TagsSection({
   f,
   tagTree,
-  onTagDeleted,
+  onTagMutationMessage,
+  onTagMutationSuccess,
 }: {
   f: FilterState;
   tagTree: { tags: { name: string; count: number }[]; total: number };
-  onTagDeleted?: (message: string | null) => void;
+  onTagMutationMessage?: (message: string | null) => void;
+  onTagMutationSuccess?: () => void;
 }) {
   const { m } = useI18n();
   // Tag-name search.
@@ -165,8 +175,11 @@ function TagsSection({
   // Two-step delete: a tag pending confirmation (its name). Click trash → confirm.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [pendingDeleteAll, setPendingDeleteAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   // Reveal the full list past TAG_PREVIEW (search always shows all matches).
   const [showAll, setShowAll] = useState(false);
+  const [sortDir, setSortDir] = useState<'default' | 'asc' | 'desc'>('default');
 
   // Auto-revert the delete-confirm state if the user doesn't commit within 3s,
   // so a red check button never gets stranded on a tag. Cleared on commit/escape.
@@ -176,25 +189,60 @@ function TagsSection({
     return () => clearTimeout(t);
   }, [pendingDelete]);
 
+  useEffect(() => {
+    if (!pendingDeleteAll) return;
+    const t = setTimeout(() => setPendingDeleteAll(false), 3000);
+    return () => clearTimeout(t);
+  }, [pendingDeleteAll]);
+
   const doDelete = async (name: string) => {
     setDeleting(name);
     try {
       const { removed } = await bgCall<{ removed: number }>('deleteTag', { name });
       // If the deleted tag was an active filter, drop it so results stay coherent.
       if (f.tags.includes(name)) f.toggleTag(name);
-      onTagDeleted?.(m.filterSidebar.deleteTagDone(removed));
+      onTagMutationSuccess?.();
+      onTagMutationMessage?.(m.filterSidebar.deleteTagDone(removed));
     } catch (e) {
       console.error('[gsm] deleteTag failed', e);
-      onTagDeleted?.(m.manager.deleteTagFailed(e instanceof Error ? e.message : String(e)));
+      onTagMutationMessage?.(m.manager.deleteTagFailed(e instanceof Error ? e.message : String(e)));
     } finally {
       setDeleting(null);
       setPendingDelete(null);
     }
   };
 
+  const doDeleteAll = async () => {
+    setDeletingAll(true);
+    try {
+      const result = await bgCall<{
+        assignmentsRemoved: number;
+        distinctTagsRemoved: number;
+      }>('deleteAllTags');
+      if (f.tags.length > 0) f.clearTags();
+      onTagMutationSuccess?.();
+      onTagMutationMessage?.(
+        m.filterSidebar.deleteAllTagsDone(result.assignmentsRemoved, result.distinctTagsRemoved),
+      );
+    } catch (e) {
+      console.error('[gsm] deleteAllTags failed', e);
+      onTagMutationMessage?.(m.manager.deleteAllTagsFailed(e instanceof Error ? e.message : String(e)));
+    } finally {
+      setDeletingAll(false);
+      setPendingDeleteAll(false);
+    }
+  };
+
+  const sortedTags = useMemo(() => {
+    if (sortDir === 'default') return tagTree.tags;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...tagTree.tags].sort((a, b) => dir * TAG_NAME_COLLATOR.compare(a.name, b.name));
+  }, [sortDir, tagTree.tags]);
+
   const q = deferredQuery.trim().toLowerCase();
-  const list = q ? tagTree.tags.filter(({ name }) => name.toLowerCase().includes(q)) : tagTree.tags;
+  const list = q ? sortedTags.filter(({ name }) => name.toLowerCase().includes(q)) : sortedTags;
   const visible = q || showAll ? list : list.slice(0, TAG_PREVIEW);
+  const nextSortTitle = sortDir === 'asc' ? m.filterSidebar.tagsSortDescTitle : m.filterSidebar.tagsSortAscTitle;
 
   // Whole Tags section is collapsible (like the Languages section above): click
   // the header to fold the list away. Defaults open. Search keeps working while
@@ -212,7 +260,55 @@ function TagsSection({
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
           <span>{m.filterSidebar.tags(tagTree.total)}</span>
         </button>
+        {tagTree.total > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSortDir((current) => (current === 'asc' ? 'desc' : 'asc'));
+                }}
+                className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors duration-150 hover:bg-muted/50 hover:text-foreground"
+                title={nextSortTitle}
+                aria-label={nextSortTitle}
+                aria-pressed={sortDir !== 'default'}
+              >
+                {sortDir === 'asc' ? <ArrowDownAZ className="size-3.5" /> : <ArrowUpAZ className="size-3.5" />}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{nextSortTitle}</TooltipContent>
+          </Tooltip>
+        )}
         <div className="ml-auto inline-flex items-center gap-0.5">
+          {tagTree.total > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  disabled={deletingAll}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (pendingDeleteAll) void doDeleteAll();
+                    else setPendingDeleteAll(true);
+                  }}
+                  className={cn(
+                    'inline-flex size-5 shrink-0 items-center justify-center rounded leading-none transition-colors duration-150 disabled:opacity-50',
+                    {
+                      'bg-destructive/10 text-destructive ring-1 ring-inset ring-destructive/30 hover:bg-destructive/15': pendingDeleteAll,
+                      'text-muted-foreground/55 hover:bg-destructive/10 hover:text-destructive': !pendingDeleteAll,
+                    },
+                  )}
+                  title={pendingDeleteAll ? m.filterSidebar.deleteAllTagsConfirm : m.filterSidebar.deleteAllTagsTitle}
+                >
+                  <ActionIcon phase={pendingDeleteAll ? 'confirm' : 'idle'}>
+                    {pendingDeleteAll ? <Check className="size-3.5" /> : <Trash2 className="size-3.5" />}
+                  </ActionIcon>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{pendingDeleteAll ? m.filterSidebar.deleteAllTagsConfirm : m.filterSidebar.deleteAllTagsTitle}</TooltipContent>
+            </Tooltip>
+          )}
           {(['any', 'all'] as const).map((mode) => (
             <button
               key={mode}

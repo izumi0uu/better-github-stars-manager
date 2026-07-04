@@ -27,7 +27,7 @@ interface StarredRepoPayload {
     language: string | null;
     stargazers_count: number;
     topics?: string[];
-    pushed_at: string;
+    pushed_at: string | null;
     created_at: string | null;
     fork: boolean;
     archived: boolean;
@@ -233,28 +233,23 @@ export const githubStarSource: StarSource = {
     let added = 0;
     let page = 1;
     let stop = false;
-    let stopReason = '';
     let newestStarredAt: string | null = null;
     // Walk pages in starred_at-desc order; page 1 holds the newest (captured as the next cursor). Cap at 5 pages.
-    console.log('[GSM] incremental START | cursor:', cursor ?? '(none)');
     while (!stop && page <= 5) {
       const { items } = await fetchPageWithRetry(page);
-      if (items.length === 0) { stopReason = `empty page ${page}`; break; }
+      if (items.length === 0) break;
       if (page === 1) newestStarredAt = items[0]?.starred_at ?? newestStarredAt;
       const fresh = cursor ? items.filter((it) => it.starred_at > cursor) : items;
-      console.log(`[GSM] incremental page ${page} | items=${items.length} fresh=${fresh.length}`);
       // Upsert every repo we touch so repo metadata like `archived` stays fresh
       // even for rows that are older than the incremental cursor.
       await bulkPutStars(items.map(toStar));
       added += fresh.length;
-      if (cursor && items.some((it) => it.starred_at <= cursor)) { stop = true; stopReason = `hit old data on page ${page}`; }
-      if (fresh.length < items.length) { stop = true; stopReason = stopReason || `mixed page ${page} (fresh<items)`; }
+      if (cursor && items.some((it) => it.starred_at <= cursor)) stop = true;
+      if (fresh.length < items.length) stop = true;
       page++;
     }
-    if (!stop && page > 5) stopReason = 'hit 5-page cap';
     // Advance cursor to the newest we saw this run.
     if (newestStarredAt) await authStore.update({ lastSyncStarredAt: newestStarredAt });
-    console.log('[GSM] incremental END | added:', added, '| stop:', stopReason || 'loop exhausted', '| nextCursor:', newestStarredAt ?? '(none)');
     return { added };
   },
 

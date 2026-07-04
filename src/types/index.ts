@@ -38,7 +38,7 @@ export interface Star {
   language: string | null;
   stargazers_count: number;
   topics: string[];
-  pushed_at: string; // ISO, repo last push
+  pushed_at: string | null; // ISO, repo last push; null for never-pushed repositories
   created_at: string | null; // ISO, repo creation time
   fork: boolean;
   archived: boolean;
@@ -91,7 +91,7 @@ export interface Config {
   seenOnboarding: boolean;
   /** Bitmask of one-time button coachmarks already shown. */
   seenTooltips: number;
-  /** Max number of topic-derived tags auto-added per repo in a single auto-tag pass. */
+  /** Max topic-derived tags per repo; bulk auto-tag also uses this as the minimum topic repo coverage. */
   autoTagLimit: number;
   /** Whether your own GitHub stars page should open the overlay panel by default. */
   starsPanelDefaultEnabled: boolean;
