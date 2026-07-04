@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { BackfillId } from '@/types';
 import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnboardingSync } from '@/onboarding/state';
 import { pickInitialSyncAction } from '@/ui/initial-sync';
+import { ACTION_SUCCESS_FEEDBACK_MS } from '@/ui/ui-feedback-constants';
 import { bgCall, mergeProgressStatus, mergeStatusPatch, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
 
 function emptyFilter() {
@@ -50,7 +51,7 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
   const flashSuccess = (type: string) => {
     if (successTimer.current) clearTimeout(successTimer.current);
     setSuccessAction(type);
-    successTimer.current = setTimeout(() => setSuccessAction(null), 1300);
+    successTimer.current = setTimeout(() => setSuccessAction(null), ACTION_SUCCESS_FEEDBACK_MS);
   };
 
   const doSync = async (type: string, label: string) => {
