@@ -11,6 +11,25 @@ export type OnboardingStage =
   | 'coach'
   | 'done';
 
+export type BackfillId = 'repo_data_sync_v1';
+
+export type BackfillStatus =
+  | 'pending'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'deferred';
+
+export interface BackfillState {
+  status: BackfillStatus;
+  queuedAt: string | null;
+  lastAttemptAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+}
+
+export type BackfillMap = Partial<Record<BackfillId, BackfillState>>;
+
 /** Star metadata stored locally. */
 export interface Star {
   full_name: string;
@@ -20,6 +39,7 @@ export interface Star {
   stargazers_count: number;
   topics: string[];
   pushed_at: string; // ISO, repo last push
+  created_at: string | null; // ISO, repo creation time
   fork: boolean;
   archived: boolean;
   starred_at: string;
@@ -75,6 +95,13 @@ export interface Config {
   autoTagLimit: number;
   /** Whether your own GitHub stars page should open the overlay panel by default. */
   starsPanelDefaultEnabled: boolean;
+  /** Last selected stars-table layout mode. */
+  columnLayoutMode: 'default' | 'custom';
+  /** User-saved custom stars-table column layout; null means custom equals default. */
+  customColumnLayout: {
+    order: string[];
+    hidden: string[];
+  } | null;
   /** One-shot migration flag: clear auto-derived `language` tags (now that
    *  language is a first-class filter, not a tag). Set true after the migration
    *  runs so it never repeats. */
@@ -82,6 +109,8 @@ export interface Config {
   /** Last sync snapshot mirrored from the background so reopened surfaces can
    *  still show progress/error context after a long-running job or SW wake. */
   lastSyncProgress: SyncProgress;
+  /** One-shot data-capability backfills keyed by feature, not app version. */
+  backfills: BackfillMap;
 }
 
 export interface CryptoMeta {

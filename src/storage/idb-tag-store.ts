@@ -136,3 +136,8 @@ export function clearDirty(names: Iterable<string>, meta: boolean) {
 export function snapshotDirty(): { names: string[]; meta: boolean } {
   return { names: Array.from(dirty), meta: dirtyMeta };
 }
+
+export function resetDirtyForDev() {
+  dirty.clear();
+  dirtyMeta = false;
+}

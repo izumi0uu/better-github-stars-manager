@@ -186,9 +186,10 @@ export function Options() {
                   }}
                   className={cn(
                     "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
-                    active
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
+                    {
+                      "bg-primary text-primary-foreground shadow-sm": active,
+                      "text-muted-foreground hover:text-foreground": !active,
+                    },
                   )}
                 >
                   {lng === "en" ? "EN" : "中文"}
@@ -349,7 +350,7 @@ export function Options() {
           {syncing && progressValue != null && (
             <div className="mt-2 flex items-center gap-2">
               <Progress value={progressValue} className="h-2 flex-1" />
-              <span className="min-w-[48px] text-right tabular-nums text-foreground">
+              <span className="gsm-progress-count">
                 {progressCount}
               </span>
             </div>
@@ -429,7 +430,10 @@ export function Options() {
         <div
           className={cn(
             "mt-4 text-[13px]",
-            msg.kind === "ok" ? "text-success" : "text-destructive",
+            {
+              "text-success": msg.kind === "ok",
+              "text-destructive": msg.kind !== "ok",
+            },
           )}
         >
           {msg.text}
@@ -449,7 +453,7 @@ function ScreenshotCard({ src, caption }: { src: string; caption: string }) {
         decoding="async"
         className="block w-full"
       />
-      <figcaption className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+      <figcaption className="gsm-helper-text border-t border-border px-3 py-2">
         {caption}
       </figcaption>
     </figure>

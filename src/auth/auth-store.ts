@@ -11,6 +11,11 @@ import {
   normalizeAutoTagLimit,
   normalizeStarsPanelDefaultEnabled,
 } from "@/preferences";
+import { normalizeBackfillMap } from "@/upgrades/backfill-state";
+import {
+  normalizeColumnLayoutMode,
+  normalizeStoredColumnLayoutPreference,
+} from "@/ui/column-layout";
 
 /**
  * Owns the fine-grained PAT lifecycle.
@@ -40,8 +45,11 @@ const DEFAULT_CONFIG: Config = {
   seenTooltips: 0,
   autoTagLimit: DEFAULT_AUTO_TAG_LIMIT,
   starsPanelDefaultEnabled: true,
+  columnLayoutMode: "default",
+  customColumnLayout: null,
   langTagMigrationDone: false,
   lastSyncProgress: { phase: "idle", done: 0, total: null, message: "" },
+  backfills: {},
 };
 
 let cache: Config | null = null;
@@ -60,6 +68,11 @@ function withNormalizedOnboarding(config: Config): Config {
     starsPanelDefaultEnabled: normalizeStarsPanelDefaultEnabled(
       config.starsPanelDefaultEnabled,
     ),
+    columnLayoutMode: normalizeColumnLayoutMode(config.columnLayoutMode),
+    customColumnLayout: normalizeStoredColumnLayoutPreference(
+      config.customColumnLayout,
+    ),
+    backfills: normalizeBackfillMap(config.backfills),
     onboardingStage,
     seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
   };
@@ -75,8 +88,8 @@ async function read(): Promise<Config> {
 
 async function write(next: Config): Promise<void> {
   const normalized = withNormalizedOnboarding(next);
-  cache = normalized;
   await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: normalized });
+  cache = normalized;
 }
 
 async function readDecryptedToken(): Promise<string | null> {
@@ -175,7 +188,6 @@ export const authStore = {
       );
 
     const { cipher, meta } = await encrypt(clean);
-    plaintextToken = clean;
     const current = await read();
     const onboardingStage =
       current.onboardingStage === "done" ? "done" : "awaiting_sync";
@@ -188,6 +200,7 @@ export const authStore = {
       displayName,
       onboardingStage,
     });
+    plaintextToken = clean;
     return { username: login };
   },
 

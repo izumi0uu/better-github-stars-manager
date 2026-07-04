@@ -1,10 +1,12 @@
 import { memo } from 'react';
-import { Archive, Heart, Star as StarIcon, StickyNote } from 'lucide-react';
+import { Archive, Star as StarIcon, StickyNote } from 'lucide-react';
 import type { Star } from '@/types';
 import { Badge } from '@/ui/shadcn/badge';
-import { ActionIcon } from '@/ui/shadcn/action-icon';
+import { FavoriteButton } from '@/ui/components/FavoriteButton';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
+import { getLockedRegionProps } from '@/ui/interaction-lock';
+import type { ColumnId } from '@/ui/column-layout';
 
 /**
  * virtualized-list row. Fixed h-16 (64px) MUST match the virtualizer
@@ -23,6 +25,11 @@ export const StarRow = memo(function StarRow({
   onToggleFavorite,
   selected,
   onSelect,
+  columns,
+  gridTemplateColumns,
+  flashedColumn,
+  interactionLocked = false,
+  minWidth,
 }: {
   star: Star;
   tags: string[];
@@ -34,6 +41,11 @@ export const StarRow = memo(function StarRow({
   onToggleFavorite: (full_name: string, favorite: boolean) => Promise<void>;
   selected: boolean;
   onSelect: (full_name: string) => void;
+  columns: ColumnId[];
+  gridTemplateColumns: string;
+  flashedColumn: ColumnId | null;
+  interactionLocked?: boolean;
+  minWidth?: number;
 }) {
   const selectedSet = new Set(selectedTags);
   const overflow = tags.length > COMPACT_VISIBLE;
@@ -43,95 +55,122 @@ export const StarRow = memo(function StarRow({
 
   return (
     <div
-      onClick={() => onSelect(star.full_name)}
+      onClick={() => {
+        if (!interactionLocked) onSelect(star.full_name);
+      }}
       className={cn(
-        'grid h-16 cursor-pointer items-center gap-2 border-b border-border px-3 text-sm',
-        // columns: repo | desc | lang | stars | updated | tags | favorite | note
-        'grid-cols-[minmax(180px,1.4fr)_2fr_80px_64px_84px_1.6fr_28px_20px]',
-        selected ? 'bg-primary/10' : star.tombstone ? 'bg-muted/40' : 'bg-transparent',
-        selected ? 'border-l-2 border-l-primary' : 'border-l-2 border-l-transparent',
-        star.tombstone && 'opacity-55',
+        'gsm-layout-grid grid h-16 items-center gap-2 border-b border-border px-3 text-sm',
+        {
+          'cursor-pointer': !interactionLocked,
+          'cursor-default': interactionLocked,
+          'bg-primary/10': selected,
+          'bg-muted/40': !selected && star.tombstone,
+          'bg-transparent': !selected && !star.tombstone,
+          'border-l-2 border-l-primary': selected,
+          'border-l-2 border-l-transparent': !selected,
+          'opacity-55': star.tombstone,
+          'pointer-events-none opacity-55': interactionLocked,
+        },
       )}
+      style={{ gridTemplateColumns, minWidth }}
+      {...getLockedRegionProps(interactionLocked)}
     >
-      {/* Repo name + status icons */}
-      <div className="flex items-center gap-1 overflow-hidden">
-        <span className="truncate text-primary">{star.full_name}</span>
-        {star.archived && <Archive className="size-3 shrink-0 text-warning" aria-label={m.starRow.archived} />}
-      </div>
-
-      {/* Description */}
-      <div className="truncate text-xs text-muted-foreground">
-        {star.description || <span className="text-muted-foreground/60">{m.common.none}</span>}
-      </div>
-
-      {/* Language */}
-      <div className="truncate text-xs text-primary">
-        {star.language ?? <span className="text-muted-foreground/60">{m.common.none}</span>}
-      </div>
-
-      {/* Stars */}
-      <div className="flex items-center justify-end gap-0.5 text-xs text-muted-foreground">
-        <StarIcon className="size-3 fill-current" />
-        <span className="tabular-nums">{fmt(star.stargazers_count)}</span>
-      </div>
-
-      {/* Updated */}
-      <div className="text-xs text-muted-foreground/70">{star.pushed_at.slice(0, 10)}</div>
-
-      {/* Tags */}
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="flex flex-wrap items-center gap-1 overflow-hidden"
-      >
-        {tags.length === 0 ? (
-          <span className="text-xs italic text-muted-foreground/50">{m.common.none}</span>
-        ) : (
-          <>
-            {visible.map((t) => (
-              <button key={t} onClick={() => onToggleTag(t)} title={selectedSet.has(t) ? m.starRow.clearTagFilter(t) : m.starRow.filterByTag(t)}>
-                <Badge variant={selectedSet.has(t) ? 'tagActive' : 'tag'} className="cursor-pointer hover:opacity-80">
-                  {t}
-                </Badge>
-              </button>
-            ))}
-            {overflow && (
-              <span className="text-[10px] text-muted-foreground" title={m.starRow.moreHidden(hiddenCount)}>
-                +{hiddenCount}
-              </span>
-            )}
-          </>
-        )}
-      </div>
-
-      <div className="flex justify-center">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            if (favoriteBusy) return;
-            const next = !favorite;
-            onToggleFavorite(star.full_name, next)
-              .catch(() => {});
-          }}
-          disabled={favoriteBusy}
-          className={cn(
-            'inline-flex items-center justify-center rounded p-1 transition-colors duration-200 disabled:opacity-70',
-            favorite
-              ? 'text-rose-500 hover:text-rose-600'
-              : 'text-muted-foreground/45 hover:text-rose-400',
-          )}
-          aria-label={favorite ? m.starRow.removeFavorite : m.starRow.markFavorite}
-          title={favorite ? m.starRow.removeFavorite : m.starRow.markFavorite}
-        >
-          <ActionIcon phase={favorite ? 'favorite-on' : 'favorite-off'}>
-            <Heart className={cn('size-4', favorite && 'fill-current')} />
-          </ActionIcon>
-        </button>
-      </div>
-
-      {/* Note indicator */}
-      <div className="flex justify-center" title={hasNotes ? m.starRow.hasNotes : m.starRow.noNotes}>
-        {hasNotes && <StickyNote className="size-3.5 text-muted-foreground" />}
-      </div>
+      {columns.map((column) => {
+        switch (column) {
+          case 'repository':
+            return (
+              <div key={column} data-row-col={column} className={cn('flex items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+                <span className="truncate text-primary">{star.full_name}</span>
+                {star.archived && <Archive className="size-3 shrink-0 text-warning" aria-label={m.starRow.archived} />}
+              </div>
+            );
+          case 'description':
+            return (
+              <div key={column} data-row-col={column} className={cn('truncate rounded-sm text-xs text-muted-foreground', { 'gsm-flash-col': flashedColumn === column })}>
+                {star.description || <span className="text-muted-foreground/60">{m.common.none}</span>}
+              </div>
+            );
+          case 'language':
+            return (
+              <div key={column} data-row-col={column} className={cn('truncate rounded-sm text-xs text-primary', { 'gsm-flash-col': flashedColumn === column })}>
+                {star.language ?? <span className="text-muted-foreground/60">{m.common.none}</span>}
+              </div>
+            );
+          case 'stars':
+            return (
+              <div key={column} data-row-col={column} className={cn('flex items-center justify-end gap-0.5 rounded-sm text-xs text-muted-foreground', { 'gsm-flash-col': flashedColumn === column })}>
+                <StarIcon className="size-3 fill-current" />
+                <span className="tabular-nums">{fmt(star.stargazers_count)}</span>
+              </div>
+            );
+          case 'updated':
+            return <div key={column} data-row-col={column} className={cn('rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>{star.pushed_at.slice(0, 10)}</div>;
+          case 'created':
+            return (
+              <div key={column} data-row-col={column} className={cn('rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>
+                {star.created_at ? star.created_at.slice(0, 10) : <span className="text-muted-foreground/60">{m.common.none}</span>}
+              </div>
+            );
+          case 'tags':
+            return (
+              <div key={column} data-row-col={column} onClick={(e) => e.stopPropagation()} className={cn('flex flex-wrap items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+                {tags.length === 0 ? (
+                  <span className="text-xs italic text-muted-foreground/50">{m.common.none}</span>
+                ) : (
+                  <>
+                    {visible.map((t) => (
+                      <button key={t} disabled={interactionLocked} onClick={() => onToggleTag(t)} title={selectedSet.has(t) ? m.starRow.clearTagFilter(t) : m.starRow.filterByTag(t)}>
+                        <Badge
+                          variant={selectedSet.has(t) ? 'tagActive' : 'tag'}
+                          className={cn('hover:opacity-80', {
+                            'cursor-pointer': !interactionLocked,
+                            'cursor-default opacity-70': interactionLocked,
+                          })}
+                        >
+                          {t}
+                        </Badge>
+                      </button>
+                    ))}
+                    {overflow && (
+                      <span className="gsm-muted-count" title={m.starRow.moreHidden(hiddenCount)}>
+                        +{hiddenCount}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          case 'favorite':
+            return (
+              <div key={column} data-row-col={column} className={cn('flex justify-center rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+                <FavoriteButton
+                  active={favorite}
+                  busy={favoriteBusy || interactionLocked}
+                  activeLabel={m.starRow.removeFavorite}
+                  inactiveLabel={m.starRow.markFavorite}
+                  onToggle={(next) => {
+                    if (interactionLocked) return;
+                    onToggleFavorite(star.full_name, next)
+                      .catch(() => {});
+                  }}
+                />
+              </div>
+            );
+          case 'notes':
+            return (
+              <div
+                key={column}
+                data-row-col={column}
+                className={cn('flex justify-center rounded-sm', { 'gsm-flash-col': flashedColumn === column })}
+                title={hasNotes ? m.starRow.hasNotes : m.starRow.noNotes}
+              >
+                {hasNotes && <StickyNote className="size-3.5 text-muted-foreground" />}
+              </div>
+            );
+        }
+        const exhaustive: never = column;
+        return exhaustive;
+      })}
     </div>
   );
 });

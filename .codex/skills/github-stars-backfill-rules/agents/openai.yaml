@@ -1,0 +1,4 @@
+interface:
+  display_name: "Backfill Rules"
+  short_description: "Repo migration and backfill rules"
+  default_prompt: "Use $github-stars-backfill-rules to decide and implement this storage, migration, or backfill change."

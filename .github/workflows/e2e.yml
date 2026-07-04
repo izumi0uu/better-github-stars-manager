@@ -1,6 +1,7 @@
 name: E2E Chrome Verification
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       scenario:
@@ -56,5 +57,9 @@ jobs:
           GSM_RESET_GIST: '1'
           GSM_SCENARIO: ${{ github.event.inputs.scenario }}
         run: |
-          scenario="${GSM_SCENARIO:-no-token,invalid-token,valid-token}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            scenario="no-token"
+          else
+            scenario="${GSM_SCENARIO:-no-token,invalid-token,valid-token}"
+          fi
           xvfb-run -a pnpm test:verify-first-run -- --scenario="$scenario"

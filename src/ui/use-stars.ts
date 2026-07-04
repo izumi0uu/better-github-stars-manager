@@ -32,6 +32,7 @@ export function useStars() {
     showTombstone: f.showTombstone,
     onlyFavorite: f.onlyFavorite,
     onlyUntagged: f.onlyUntagged,
+    onlyArchived: f.onlyArchived,
     sortKey: f.sortKey,
     sortDir: f.sortDir,
   };
@@ -111,6 +112,7 @@ export function useStars() {
   }, []);
 
   const rows: Star[] = committed?.rows ?? [];
+
   const tagsByFullName = new Map<string, Tag>();
   if (committed?.tagsForRows) {
     for (const [name, tag] of Object.entries(committed.tagsForRows)) {

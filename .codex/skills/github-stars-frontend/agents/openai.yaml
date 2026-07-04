@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Stars Frontend"
+  short_description: "Repo UI, theme, and motion rules"
+  default_prompt: "Use $github-stars-frontend to implement or review this frontend change according to the repo conventions."

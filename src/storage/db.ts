@@ -27,6 +27,12 @@ export class StarsDB extends Dexie {
       tags: 'full_name, *tags, mtime',
       tagMeta: 'name, dimension, mtime',
     });
+    // v3: stars gained repo `created_at` for creation-time sorting.
+    this.version(3).stores({
+      stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
+      tags: 'full_name, *tags, mtime',
+      tagMeta: 'name, dimension, mtime',
+    });
   }
 }
 

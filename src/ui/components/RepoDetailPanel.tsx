@@ -19,6 +19,7 @@ import { Separator } from '@/ui/shadcn/separator';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
+import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut } from '@/ui/interaction-lock';
 
 /** single-repo detail drawer (tag/note/suggest deep-edit lives here so rows stay compact); flex aside, no portal. */
 export function RepoDetailPanel({
@@ -32,6 +33,7 @@ export function RepoDetailPanel({
   onNext,
   hasPrev,
   hasNext,
+  interactionLocked = false,
 }: {
   star: Star;
   tag: Tag | undefined;
@@ -43,6 +45,7 @@ export function RepoDetailPanel({
   onNext: () => void;
   hasPrev: boolean;
   hasNext: boolean;
+  interactionLocked?: boolean;
 }) {
   const myTags = tag?.tags ?? [];
   const myTagsKey = myTags.join('\u0000');
@@ -168,30 +171,43 @@ export function RepoDetailPanel({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tagName = (e.target as HTMLElement)?.tagName;
-      if (tagName === 'INPUT' || tagName === 'TEXTAREA') return;
+      if (shouldIgnorePanelShortcut(interactionLocked, e.target)) return;
       if (e.key === 'Escape') onClose();
       else if (e.key === '[' && hasPrev) onPrev();
       else if (e.key === ']' && hasNext) onNext();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, onPrev, onNext, hasPrev, hasNext]);
+  }, [onClose, onPrev, onNext, hasPrev, hasNext, interactionLocked]);
 
   const selectedSet = new Set(selectedTags);
 
   return (
-    <div className="flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card">
+    <div
+      className={cn('flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card', {
+        'opacity-55': interactionLocked,
+      })}
+      {...getLockedRegionProps(interactionLocked)}
+    >
       <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
-        <Button variant="ghost" size="icon" onClick={onPrev} disabled={!hasPrev} title={m.repoDetail.previousTitle} className={cn(!hasPrev && 'opacity-30')}><ChevronLeft className="size-4" /></Button>
-        <Button variant="ghost" size="icon" onClick={onNext} disabled={!hasNext} title={m.repoDetail.nextTitle} className={cn(!hasNext && 'opacity-30')}><ChevronRight className="size-4" /></Button>
+        <Button variant="ghost" size="icon" onClick={onPrev} disabled={!hasPrev || interactionLocked} title={m.repoDetail.previousTitle} className={cn({ 'opacity-30': !hasPrev })}><ChevronLeft className="size-4" /></Button>
+        <Button variant="ghost" size="icon" onClick={onNext} disabled={!hasNext || interactionLocked} title={m.repoDetail.nextTitle} className={cn({ 'opacity-30': !hasNext })}><ChevronRight className="size-4" /></Button>
         <span className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={onClose} title={m.repoDetail.closeTitle}><X className="size-4" /></Button>
+        <Button variant="ghost" size="icon" onClick={onClose} disabled={interactionLocked} title={m.repoDetail.closeTitle}><X className="size-4" /></Button>
       </div>
 
       <div className="flex flex-col gap-4 p-3">
         <div>
-          <a href={star.html_url} target="_blank" rel="noreferrer" className="break-all text-[13px] font-semibold text-primary underline underline-offset-2 hover:underline">
+          <a
+            href={star.html_url}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(
+              'break-all text-[13px] font-semibold text-primary underline underline-offset-2 hover:underline',
+              { 'pointer-events-none opacity-70': interactionLocked },
+            )}
+            {...getLockedAnchorProps(interactionLocked)}
+          >
             {star.full_name}
           </a>
           <div className="mt-0.5 flex gap-2">
@@ -301,7 +317,7 @@ export function RepoDetailPanel({
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
-      <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div className="gsm-meta-label mb-1">{title}</div>
       {children}
     </div>
   );
@@ -324,7 +340,7 @@ function SaveRow({
 }) {
   return (
     <div className="mt-2 flex items-center justify-between gap-3">
-      <div className="min-h-[12px] text-[10px] text-muted-foreground">
+      <div className="gsm-muted-count min-h-[12px]">
         {phase === 'ok' ? (
           <span className="inline-flex items-center gap-1 text-success">
             <Check className="size-3" />
@@ -373,7 +389,7 @@ function flashSaved(
 function Meta({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] text-muted-foreground/70">{label}</div>
+      <div className="gsm-muted-count-soft">{label}</div>
       <div className="text-foreground">{value}</div>
     </div>
   );

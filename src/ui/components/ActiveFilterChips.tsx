@@ -3,13 +3,16 @@ import { X } from 'lucide-react';
 import { Badge } from '@/ui/shadcn/badge';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
+import { getLockedRegionProps } from '@/ui/interaction-lock';
 
 export function ActiveFilterChips({
   f,
   count,
+  interactionLocked = false,
 }: {
   f: FilterState;
   count: number;
+  interactionLocked?: boolean;
 }) {
   const { m } = useI18n();
   const active: { label: string; clear: () => void; kind: 'lang' | 'tag' | 'special' }[] = [];
@@ -21,21 +24,27 @@ export function ActiveFilterChips({
   }
   if (f.onlyFavorite) active.push({ label: m.activeFilters.onlyFavorite, clear: () => f.setOnlyFavorite(false), kind: 'special' });
   if (f.onlyUntagged) active.push({ label: m.activeFilters.onlyUntagged, clear: () => f.setOnlyUntagged(false), kind: 'special' });
+  if (f.onlyArchived) active.push({ label: m.activeFilters.onlyArchived, clear: () => f.setOnlyArchived(false), kind: 'special' });
   // "Show unstarred" (tombstone) chip — disabled for now.
   // if (f.showTombstone) active.push({ label: m.filterSidebar.showTombstoneLabel, clear: () => f.setShowTombstone(false), kind: 'special' });
 
   // no early return: the parent container animates its grid-rows height to collapse.
 
   return (
-    <div className="flex flex-wrap items-center gap-1 bg-muted/30 px-3 py-1">
-      <span className="mr-1 text-[10px] text-muted-foreground">{m.activeFilters.summary(count)}</span>
+    <div
+      className={cn('flex flex-wrap items-center gap-1 bg-muted/30 px-3 py-1', {
+        'opacity-55': interactionLocked,
+      })}
+      {...getLockedRegionProps(interactionLocked)}
+    >
+      <span className="gsm-muted-count mr-1">{m.activeFilters.summary(count)}</span>
       {active.map((a, i) => (
-        <button key={`${a.label}-${i}`} onClick={a.clear} title={m.activeFilters.clearOne}>
+        <button key={`${a.label}-${i}`} disabled={interactionLocked} onClick={a.clear} title={m.activeFilters.clearOne}>
           <Badge
             variant={a.kind === 'tag' ? 'default' : 'secondary'}
             className={cn(
               'cursor-pointer gap-1 hover:opacity-80',
-              a.kind === 'special' && 'border-warning/40 bg-warning/10 text-warning',
+              { 'border-warning/40 bg-warning/10 text-warning': a.kind === 'special' },
             )}
           >
             {a.label}
@@ -44,8 +53,9 @@ export function ActiveFilterChips({
         </button>
       ))}
       <button
+        disabled={interactionLocked}
         onClick={() => f.resetFilters()}
-        className="ml-1 text-[11px] text-muted-foreground underline hover:text-foreground"
+        className="gsm-helper-text ml-1 underline hover:text-foreground disabled:no-underline disabled:opacity-70"
         title={m.activeFilters.clearAll}
       >
         {m.activeFilters.clearAll}

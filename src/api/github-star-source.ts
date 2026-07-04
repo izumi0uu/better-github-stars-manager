@@ -1,4 +1,4 @@
-import type { Star } from '@/types';
+import type { Star, SyncProgress } from '@/types';
 import type { StarSource } from './star-source';
 import { db } from '@/storage/db';
 import { authStore } from '@/auth/auth-store';
@@ -6,9 +6,11 @@ import { getMessages } from '@/i18n';
 import { GH_NO_TOKEN, GH_TOKEN_REJECTED, GH_RATE_LIMIT, GH_FORBIDDEN, GH_TIMEOUT, GH_NETWORK, GH_PAGE_STATUS, GH_BAD_SHAPE } from './errors';
 
 /**
- * GitHub-backed `StarSource` using the authenticated `GET /user/starred`
- * with `star+json` media (which surfaces `starred_at`); pages are pulled
- * concurrently. See `StarSource` for the sync job contract.
+ * GitHub-backed `StarSource`.
+ * - All sync modes use authenticated `GET /user/starred` with `star+json`
+ *   media so the cursor, tombstone scan, and repo metadata all come from the
+ *   same payload shape.
+ * See `StarSource` for the sync job contract.
  */
 
 const PER_PAGE = 100;
@@ -26,6 +28,7 @@ interface StarredRepoPayload {
     stargazers_count: number;
     topics?: string[];
     pushed_at: string;
+    created_at: string | null;
     fork: boolean;
     archived: boolean;
   };
@@ -130,6 +133,7 @@ export function toStar(it: StarredRepoPayload): Star {
     stargazers_count: r.stargazers_count,
     topics: r.topics ?? [],
     pushed_at: r.pushed_at,
+    created_at: r.created_at ?? null,
     fork: r.fork,
     archived: r.archived,
     starred_at: it.starred_at,
@@ -168,6 +172,36 @@ async function bulkPutStars(stars: Star[]): Promise<void> {
   }
 }
 
+type ProgressReporter = ((progress: SyncProgress) => void) | undefined;
+
+async function fetchAllStarredPages(
+  phase: Extract<SyncProgress['phase'], 'full' | 'rescan'>,
+  progressMessage: (total: number) => string,
+  onProgress: ProgressReporter,
+  retryMessage: (page: number, attempt: number) => string,
+): Promise<{ items: StarredRepoPayload[]; total: number }> {
+  const first = await fetchPageWithRetry(1, (attempt) => {
+    onProgress?.({ phase, done: 0, total: null, message: retryMessage(1, attempt) });
+  });
+  const total = lastPage(first.link) ?? 1;
+  onProgress?.({ phase, done: 1, total, message: progressMessage(total) });
+
+  const restPages = total > 1 ? Array.from({ length: total - 1 }, (_, i) => i + 2) : [];
+  let fetched = 1;
+  const rest = await fetchPages(
+    restPages,
+    () => {
+      fetched++;
+      onProgress?.({ phase, done: fetched, total, message: progressMessage(total) });
+    },
+    (page, attempt) => {
+      onProgress?.({ phase, done: fetched, total, message: retryMessage(page, attempt) });
+    },
+  );
+
+  return { items: [...first.items, ...rest.flat()], total };
+}
+
 export const githubStarSource: StarSource = {
   async getUsername() {
     const u = await authStore.getUsername();
@@ -177,33 +211,17 @@ export const githubStarSource: StarSource = {
 
   async syncFull(onProgress) {
     const m = await getLocaleMessages();
-    const first = await fetchPageWithRetry(1, (attempt) => {
-      onProgress?.({ phase: 'full', done: 0, total: null, message: m.background.fetchingPageRetry(1, attempt) });
-    });
-    const total = lastPage(first.link) ?? 1;
-    onProgress?.({ phase: 'full', done: 1, total, message: m.background.fetchingPages(total) });
-
-    // We already have page 1; fetch the rest concurrently.
-    const restPages = total > 1 ? Array.from({ length: total - 1 }, (_, i) => i + 2) : [];
-    let fetched = 1;
-    const rest = await fetchPages(
-      restPages,
-      () => {
-        fetched++;
-        onProgress?.({ phase: 'full', done: fetched, total, message: m.background.fetchingPages(total) });
-      },
-      (page, attempt) => {
-        onProgress?.({ phase: 'full', done: fetched, total, message: m.background.fetchingPageRetry(page, attempt) });
-      },
+    const { items, total } = await fetchAllStarredPages(
+      'full',
+      (pageTotal) => m.background.fetchingPages(pageTotal),
+      onProgress,
+      (page, attempt) => m.background.fetchingPageRetry(page, attempt),
     );
-    const all = [...first.items, ...rest.flat()];
-
-    // Bulk upsert. Dexie bulkPut is the fastest path.
-    const stars = all.map(toStar);
+    const stars = items.map(toStar);
     await bulkPutStars(stars);
 
     // Advance the incremental cursor to the newest starred_at.
-    const newest = all[0]?.starred_at ?? new Date().toISOString();
+    const newest = items[0]?.starred_at ?? new Date().toISOString();
     await authStore.update({ lastSyncStarredAt: newest });
 
     onProgress?.({ phase: 'full', done: total, total, message: m.background.syncedRepos(stars.length) });
@@ -225,10 +243,10 @@ export const githubStarSource: StarSource = {
       if (page === 1) newestStarredAt = items[0]?.starred_at ?? newestStarredAt;
       const fresh = cursor ? items.filter((it) => it.starred_at > cursor) : items;
       console.log(`[GSM] incremental page ${page} | items=${items.length} fresh=${fresh.length}`);
-      if (fresh.length > 0) {
-        await db.stars.bulkPut(fresh.map(toStar));
-        added += fresh.length;
-      }
+      // Upsert every repo we touch so repo metadata like `archived` stays fresh
+      // even for rows that are older than the incremental cursor.
+      await bulkPutStars(items.map(toStar));
+      added += fresh.length;
       if (cursor && items.some((it) => it.starred_at <= cursor)) { stop = true; stopReason = `hit old data on page ${page}`; }
       if (fresh.length < items.length) { stop = true; stopReason = stopReason || `mixed page ${page} (fresh<items)`; }
       page++;
@@ -246,25 +264,12 @@ export const githubStarSource: StarSource = {
     await db.stars.each((s) => {
       if (s.tombstone) previouslyTombstoned.add(s.full_name);
     });
-    const first = await fetchPageWithRetry(1, (attempt) => {
-      onProgress?.({ phase: 'rescan', done: 0, total: null, message: m.background.fetchingPageRetry(1, attempt) });
-    });
-    const total = lastPage(first.link) ?? 1;
-    onProgress?.({ phase: 'rescan', done: 1, total, message: m.background.rescanningPages(total) });
-
-    const restPages = total > 1 ? Array.from({ length: total - 1 }, (_, i) => i + 2) : [];
-    let fetched = 1;
-    const rest = await fetchPages(
-      restPages,
-      () => {
-        fetched++;
-        onProgress?.({ phase: 'rescan', done: fetched, total, message: m.background.rescanningPages(total) });
-      },
-      (page, attempt) => {
-        onProgress?.({ phase: 'rescan', done: fetched, total, message: m.background.fetchingPageRetry(page, attempt) });
-      },
+    const { items: all, total } = await fetchAllStarredPages(
+      'rescan',
+      (pageTotal) => m.background.rescanningPages(pageTotal),
+      onProgress,
+      (page, attempt) => m.background.fetchingPageRetry(page, attempt),
     );
-    const all = [...first.items, ...rest.flat()];
     const apiNames = new Set(all.map((it) => it.repo.full_name));
 
     // Refresh all live repos.
