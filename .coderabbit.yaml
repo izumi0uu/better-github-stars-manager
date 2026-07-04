@@ -1,0 +1,11 @@
+language: "zh-CN"
+
+reviews:
+  auto_review:
+    enabled: true
+    drafts: false
+    allowed_base_branches:
+      - ".*"
+
+chat:
+  auto_reply: true
