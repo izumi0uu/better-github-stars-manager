@@ -168,6 +168,8 @@ export const StarRow = memo(function StarRow({
               </div>
             );
         }
+        const exhaustive: never = column;
+        return exhaustive;
       })}
     </div>
   );

@@ -44,8 +44,6 @@ function fakeStar(): Star {
     description: 'A repository',
     language: 'TypeScript',
     stargazers_count: 1200,
-    forks_count: 10,
-    open_issues_count: 2,
     topics: ['react'],
     archived: false,
     fork: false,
@@ -180,10 +178,13 @@ describe('layout edit interaction lock render behavior', () => {
     const previewMarkup = renderToolbarViewTabs({ layoutMode: 'default', customPreviewing: true });
 
     expect(defaultMarkup.match(new RegExp(activeDot, 'g'))?.length).toBe(1);
+    expect(defaultMarkup).toContain('aria-pressed="true"');
     expect(defaultMarkup.indexOf(activeDot)).toBeLessThan(defaultMarkup.indexOf('Default'));
     expect(customMarkup.match(new RegExp(activeDot, 'g'))?.length).toBe(1);
+    expect(customMarkup).toContain('aria-pressed="true"');
     expect(customMarkup.indexOf(activeDot)).toBeGreaterThan(customMarkup.indexOf('Default'));
     expect(previewMarkup.match(new RegExp(activeDot, 'g'))?.length).toBe(1);
+    expect(previewMarkup).toContain('aria-pressed="true"');
     expect(previewMarkup).toContain('gsm-seg-previewing');
     expect(previewMarkup.indexOf(activeDot)).toBeGreaterThan(previewMarkup.indexOf('Default'));
   });

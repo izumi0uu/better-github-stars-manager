@@ -163,12 +163,15 @@ function findEditLayoutButton(container: HTMLElement): HTMLButtonElement {
 }
 
 describe('layout editor config sync', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     vi.useFakeTimers();
     storageListeners = [];
     authMocks.getConfig.mockReset();
     authMocks.update.mockReset();
     authMocks.update.mockResolvedValue(undefined);
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubGlobal('chrome', {
       runtime: {
         sendMessage: vi.fn().mockResolvedValue({ ok: true, data: null }),
@@ -191,6 +194,7 @@ describe('layout editor config sync', () => {
     });
     document.body.replaceChildren();
     vi.useRealTimers();
+    warnSpy.mockRestore();
     vi.unstubAllGlobals();
   });
 
@@ -248,7 +252,7 @@ describe('layout editor config sync', () => {
 
     expect(editor.current.editingLayout).toBe(true);
     expect(editor.current.visibleColumns).not.toContain('language');
-    expect(authMocks.update).toHaveBeenCalledWith({ columnLayoutMode: 'custom' });
+    expect(authMocks.update).not.toHaveBeenCalled();
   });
 
   it('recovers browse controls after initial config read failure without enabling writable layout edit', async () => {
@@ -286,14 +290,63 @@ describe('layout editor config sync', () => {
     });
 
     expect(editor.current.editingLayout).toBe(true);
-    expect(authMocks.update).toHaveBeenCalledWith({ columnLayoutMode: 'custom' });
+    expect(authMocks.update).not.toHaveBeenCalled();
 
     act(() => {
       editor.current.cancelLayoutEdit();
     });
 
     expect(editor.current.editingLayout).toBe(false);
+    expect(editor.current.layoutMode).toBe('default');
+  });
+
+  it('refreshes cancel target when config changes while layout edit is open', async () => {
+    authMocks.getConfig.mockResolvedValue(configFor('default'));
+    const editor = mountLayoutEditor();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      editor.current.beginCustomLayoutEdit();
+    });
+    expect(editor.current.editingLayout).toBe(true);
+
+    act(() => {
+      emitConfig({
+        ...configFor('default'),
+        customColumnLayout: null,
+      });
+      editor.current.cancelLayoutEdit();
+    });
+
+    expect(editor.current.editingLayout).toBe(false);
+    expect(editor.current.layoutMode).toBe('default');
+  });
+
+  it('logs layout preference persistence failures without blocking local state', async () => {
+    authMocks.getConfig.mockResolvedValue(configFor('default'));
+    authMocks.update.mockRejectedValueOnce(new Error('storage write failed'));
+    const editor = mountLayoutEditor();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      editor.current.setBrowseLayoutMode('custom');
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
     expect(editor.current.layoutMode).toBe('custom');
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[GSM] failed to persist layout preference:',
+      'set browse mode',
+      'storage write failed',
+    );
   });
 
   it('renders Toolbar from the real hook and enables the pencil after successful hydration', async () => {
@@ -315,6 +368,6 @@ describe('layout editor config sync', () => {
       editButton.click();
     });
 
-    expect(authMocks.update).toHaveBeenCalledWith({ columnLayoutMode: 'custom' });
+    expect(authMocks.update).not.toHaveBeenCalled();
   });
 });

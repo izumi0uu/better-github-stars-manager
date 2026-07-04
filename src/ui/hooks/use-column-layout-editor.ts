@@ -39,6 +39,10 @@ import {
   TRAY_RESTORE_HEADER_BUFFER_PX,
 } from '@/ui/layout-edit-constants';
 
+function reportLayoutPersistenceFailure(action: string, error: unknown) {
+  console.warn('[GSM] failed to persist layout preference:', action, error instanceof Error ? error.message : String(error));
+}
+
 type LayoutDrag =
   | {
       kind: 'column';
@@ -311,7 +315,9 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     if (!configSynced.current) return;
     setPreviewingCustomLayout(false);
     setLayoutMode(mode);
-    void authStore.update({ columnLayoutMode: mode }).catch(() => {});
+    void authStore.update({ columnLayoutMode: mode }).catch((error) => {
+      reportLayoutPersistenceFailure('set browse mode', error);
+    });
   };
 
   const previewCustomLayout = (previewing: boolean) => {
@@ -325,7 +331,7 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     if (layoutFadeTimer.current) clearTimeout(layoutFadeTimer.current);
     layoutFadeTimer.current = null;
     pendingBrowseLayout.current = null;
-    preEditMode.current = edit.preEditMode;
+    preEditMode.current = layoutMode;
     setPreviewingCustomLayout(edit.previewingCustomLayout);
     setLayoutMode(edit.layoutMode);
     setDraftLayout(edit.draftLayout);
@@ -333,7 +339,6 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     setLayoutFaded(edit.layoutFaded);
     setEditingLayout(edit.editingLayout);
     setColumnMenuOpen(false);
-    void authStore.update({ columnLayoutMode: edit.layoutMode }).catch(() => {});
   };
 
   useEffect(() => {
@@ -342,9 +347,19 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     return () => cancelAnimationFrame(frame);
   }, [editingLayout]);
 
-  const saveLayoutEdit = () => {
+  const saveLayoutEdit = async () => {
     const next = normalizeColumnLayout(draftLayout);
-    setSavedCustomLayout(layoutsEqual(next, DEFAULT_COLUMN_LAYOUT) ? null : next);
+    const nextSavedCustomLayout = layoutsEqual(next, DEFAULT_COLUMN_LAYOUT) ? null : next;
+    try {
+      await authStore.update({
+        columnLayoutMode: 'custom',
+        customColumnLayout: nextSavedCustomLayout,
+      });
+    } catch (error) {
+      reportLayoutPersistenceFailure('save edit', error);
+      return;
+    }
+    setSavedCustomLayout(nextSavedCustomLayout);
     setDraftLayout(cloneColumnLayout(next));
     setRenderedBrowseLayout(cloneColumnLayout(next));
     setLayoutFaded(false);
@@ -352,16 +367,13 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     setEditingLayout(false);
     setLayoutDrag(null);
     setColumnMenuOpen(false);
-    void authStore.update({
-      columnLayoutMode: 'custom',
-      customColumnLayout: layoutsEqual(next, DEFAULT_COLUMN_LAYOUT) ? null : next,
-    }).catch(() => {});
   };
 
   const cancelLayoutEdit = () => {
     setDraftLayout(cloneColumnLayout(customLayout));
     setEditingLayout(false);
     setLayoutMode(preEditMode.current);
+    setPreviewingCustomLayout(false);
     setLayoutDrag(null);
     setColumnMenuOpen(false);
   };

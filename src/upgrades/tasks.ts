@@ -67,11 +67,11 @@ export async function reconcileBackfillMap(
 
   for (const [id, task] of Object.entries(backfillTasks) as [BackfillId, BackfillTaskDef][]) {
     const existing = current[id];
-    const needs = await task.detectNeed();
     if (existing?.status === 'done') {
       next[id] = doneState(existing.completedAt ?? now, existing);
       continue;
     }
+    const needs = await task.detectNeed();
     if (!needs) {
       next[id] = doneState(now, existing);
       continue;

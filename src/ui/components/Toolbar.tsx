@@ -481,6 +481,7 @@ export function Toolbar({
               <button
                 type="button"
                 disabled={layoutControlsDisabled}
+                aria-pressed={layoutMode === 'default' && !customPreviewing}
                 onClick={() => onLayoutModeChange('default')}
                 className={segmentItemClass(layoutMode === 'default' && !customPreviewing)}
               >
@@ -492,6 +493,7 @@ export function Toolbar({
               <button
                 type="button"
                 disabled={layoutControlsDisabled}
+                aria-pressed={layoutMode === 'custom' || customPreviewing}
                 title={customLayoutDirty ? m.toolbar.customLayoutChanged : undefined}
                 onMouseEnter={customPreviewIntent.onMouseEnter}
                 onMouseLeave={customPreviewIntent.onMouseLeave}

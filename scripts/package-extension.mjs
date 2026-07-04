@@ -61,7 +61,7 @@ try {
 const digest = createHash('sha256').update(readFileSync(zipPath)).digest('hex');
 writeFileSync(checksumPath, `${digest}  ${path.basename(zipPath)}\n`);
 
-const versionHashPattern = /\b(?:[0-9a-f]{8}|unknown)-[0-9a-f]{6}-[0-9a-f]{6}\b/;
+const versionHashPattern = /\b(?:[0-9a-f]{8}|unknown)-(?:clean|[0-9a-f]{6})-[0-9a-f]{6}\b/;
 const assetDir = path.join(distDir, 'assets');
 let versionHash = null;
 for (const entry of existsSync(assetDir) ? readdirSync(assetDir) : []) {

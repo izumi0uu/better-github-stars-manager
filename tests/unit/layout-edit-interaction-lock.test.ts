@@ -50,8 +50,9 @@ describe('layout edit interaction lock invariants', () => {
     expect(manager).toContain('BROWSE_LAYOUT_TABLE_OPACITY_MS');
     expect(hook).toContain('const beginCustomLayoutEdit = () => {');
     expect(hook).toContain('if (!configLoaded.current) return;');
-    expect(hook).toContain('preEditMode.current = edit.preEditMode;');
-    expect(hook).toContain("authStore.update({ columnLayoutMode: edit.layoutMode })");
+    expect(hook).toContain('preEditMode.current = layoutMode;');
+    expect(hook).toContain('reportLayoutPersistenceFailure');
+    expect(hook).not.toContain("authStore.update({ columnLayoutMode: edit.layoutMode })");
   });
 
   it('keeps storage echoes from owning the rendered browse layout after hydration', () => {

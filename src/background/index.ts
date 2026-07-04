@@ -7,9 +7,9 @@ import { DEV } from '@/dev';
 import { queryStars, invalidateCache, type QueryParams, type QueryResult } from './query';
 import { suggestTags } from '@/ui/suggest';
 import { translateError } from '@/api/errors';
-import { normalizeBackfillMap, selectActiveBackfillId } from '@/upgrades/backfill-state';
-import { backfillTasks, reconcileBackfillMap } from '@/upgrades/tasks';
-import type { BackfillId, BackfillMap, BackfillState, OnboardingStage, SyncProgress } from '@/types';
+import { selectActiveBackfillId } from '@/upgrades/backfill-state';
+import { createBackfillConfigStore, getBackfillTask } from './backfill-config';
+import type { OnboardingStage, SyncProgress } from '@/types';
 import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
@@ -50,8 +50,8 @@ type Req =
   | { type: 'testConnection' }
   | { type: 'openOptions' }
   | { type: 'devClearLocalData' }
-  | { type: 'runBackfill'; id: BackfillId }
-  | { type: 'deferBackfill'; id: BackfillId };
+  | { type: 'runBackfill'; id: string }
+  | { type: 'deferBackfill'; id: string };
 
 type Res =
   | { ok: true; data?: unknown }
@@ -60,6 +60,9 @@ type Res =
 let inFlight: Promise<unknown> | null = null;
 let lastProgress: SyncProgress = { phase: 'idle', done: 0, total: null, message: '' };
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+const backfillConfig = createBackfillConfigStore(authStore, {
+  isBackfillRunning: () => !!inFlight,
+});
 
 function shouldPersistProgress(prev: SyncProgress, next: SyncProgress): boolean {
   if (prev.phase !== next.phase) return true;
@@ -127,32 +130,6 @@ async function getLocaleMessages() {
   return getMessages(await authStore.getLocale());
 }
 
-function backfillsEqual(a: BackfillMap | null | undefined, b: BackfillMap | null | undefined): boolean {
-  return JSON.stringify(normalizeBackfillMap(a)) === JSON.stringify(normalizeBackfillMap(b));
-}
-
-async function reconcileStoredBackfills(): Promise<BackfillMap> {
-  const cfg = await authStore.getConfig();
-  const next = await reconcileBackfillMap(cfg.backfills, { keepRunning: !!inFlight });
-  if (!backfillsEqual(cfg.backfills, next)) {
-    await authStore.update({ backfills: next });
-  }
-  return next;
-}
-
-async function setBackfillState(
-  id: BackfillId,
-  mutate: (current: BackfillState | undefined, now: string) => BackfillState,
-): Promise<BackfillState> {
-  const cfg = await authStore.getConfig();
-  const backfills = normalizeBackfillMap(cfg.backfills);
-  const now = new Date().toISOString();
-  const next = mutate(backfills[id], now);
-  backfills[id] = next;
-  await authStore.update({ backfills });
-  return next;
-}
-
 async function run<T>(fn: () => Promise<T>): Promise<T> {
   if (inFlight) await inFlight.catch(() => {});
   const p = fn();
@@ -165,7 +142,7 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function getStatusPayload() {
-  const backfills = await reconcileStoredBackfills();
+  const backfills = await backfillConfig.reconcileStoredBackfills();
   const cfg = await authStore.getConfig();
   const hasToken = await authStore.hasToken();
   const onboardingStage = normalizeOnboardingStage(
@@ -435,11 +412,11 @@ async function handle(req: Req): Promise<Res> {
         return { ok: true, data: await queryStars(req.params) as QueryResult };
       case 'runBackfill': {
         const m = await getLocaleMessages();
-        const task = backfillTasks[req.id];
+        const task = getBackfillTask(req.id);
         if (!task) return { ok: false, error: `Unknown backfill: ${req.id}` };
         if (task.kind !== 'full_sync') return { ok: false, error: `Unsupported backfill kind: ${task.kind}` };
         if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
-        await setBackfillState(req.id, (current, now) => ({
+        await backfillConfig.setBackfillState(task.id, (current, now) => ({
           status: 'running',
           queuedAt: current?.queuedAt ?? now,
           lastAttemptAt: now,
@@ -448,17 +425,17 @@ async function handle(req: Req): Promise<Res> {
         }));
         try {
           const result = await performFullSync();
-          await setBackfillState(req.id, (current, now) => ({
+          await backfillConfig.setBackfillState(task.id, (current, now) => ({
             status: 'done',
             queuedAt: current?.queuedAt ?? now,
             lastAttemptAt: current?.lastAttemptAt ?? now,
             completedAt: now,
             error: null,
           }));
-          return { ok: true, data: { id: req.id, ...result.sync, tagged: result.autoTag?.tagged ?? 0 } };
+          return { ok: true, data: { id: task.id, ...result.sync, tagged: result.autoTag?.tagged ?? 0 } };
         } catch (e) {
           const msg = translateError(e, m);
-          await setBackfillState(req.id, (current, now) => ({
+          await backfillConfig.setBackfillState(task.id, (current, now) => ({
             status: 'failed',
             queuedAt: current?.queuedAt ?? now,
             lastAttemptAt: now,
@@ -469,14 +446,16 @@ async function handle(req: Req): Promise<Res> {
         }
       }
       case 'deferBackfill': {
-        await setBackfillState(req.id, (current, now) => ({
+        const task = getBackfillTask(req.id);
+        if (!task) return { ok: false, error: `Unknown backfill: ${req.id}` };
+        await backfillConfig.setBackfillState(task.id, (current, now) => ({
           status: 'deferred',
           queuedAt: current?.queuedAt ?? now,
           lastAttemptAt: current?.lastAttemptAt ?? null,
           completedAt: null,
           error: current?.error ?? null,
         }));
-        return { ok: true, data: { id: req.id } };
+        return { ok: true, data: { id: task.id } };
       }
       case 'setTags':
         await idbTagStore.setTags(req.full_name, req.tags);
@@ -586,7 +565,7 @@ chrome.runtime.onMessage.addListener((req: Req, _sender, sendResponse) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   setProgress({ phase: 'idle', done: 0, total: null, message: '' });
-  void reconcileStoredBackfills().catch(() => {});
+  void backfillConfig.reconcileStoredBackfills().catch(() => {});
 });
 
 /**
@@ -619,7 +598,7 @@ async function selfCheck() {
   }
 }
 selfCheck();
-void reconcileStoredBackfills().catch(() => {});
+void backfillConfig.reconcileStoredBackfills().catch(() => {});
 migrateLanguageTags();
 void authStore.getConfig().then((cfg) => {
   if (!inFlight && lastProgress.phase === 'idle' && !lastProgress.message) {

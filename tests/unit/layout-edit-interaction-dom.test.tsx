@@ -20,8 +20,6 @@ function fakeStar(): Star {
     description: 'A repository',
     language: 'TypeScript',
     stargazers_count: 1200,
-    forks_count: 10,
-    open_issues_count: 2,
     topics: ['react'],
     archived: false,
     fork: false,
