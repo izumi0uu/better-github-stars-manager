@@ -18,7 +18,11 @@ function createChromeMock() {
   const listeners = new Set<
     (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void
   >();
+  let rejectNextSet: Error | null = null;
   return {
+    rejectNextSet(error: Error) {
+      rejectNextSet = error;
+    },
     api: {
       storage: {
         local: {
@@ -26,6 +30,11 @@ function createChromeMock() {
             return { [key]: state[key] };
           },
           async set(next: Record<string, unknown>) {
+            if (rejectNextSet) {
+              const error = rejectNextSet;
+              rejectNextSet = null;
+              throw error;
+            }
             const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
             for (const [key, value] of Object.entries(next)) {
               changes[key] = { oldValue: state[key], newValue: value };
@@ -207,6 +216,46 @@ describe('Status/token regressions', () => {
     assert.equal(cfg.tokenEncrypted, null);
     assert.equal(cfg.username, null);
     assert.equal(await authStore.getToken(), null);
+  });
+
+  it('authStore.update keeps the previous cached config when storage write fails', async () => {
+    await authStore.update({ theme: 'dark', locale: 'en' });
+    chromeMock.rejectNextSet(new Error('storage write failed'));
+
+    await assert.rejects(
+      () => authStore.update({ theme: 'light' }),
+      /storage write failed/,
+    );
+
+    const cfg = await authStore.getConfig();
+    assert.equal(cfg.theme, 'dark');
+  });
+
+  it('authStore.setToken does not cache plaintext when storage write fails', async () => {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/user') && method === 'GET') {
+        return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+      }
+      if (url.includes('/user/starred') && method === 'GET') return response(200, []);
+      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-3' });
+      if (url.endsWith('/gists/probe-3') && method === 'DELETE') return response(204);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    await authStore.clearToken();
+    chromeMock.rejectNextSet(new Error('storage write failed'));
+
+    await assert.rejects(
+      () => authStore.setToken('github_pat_storage_failure'),
+      /storage write failed/,
+    );
+
+    assert.equal(await authStore.getToken(), null);
+    const cfg = await authStore.getConfig();
+    assert.equal(cfg.tokenEncrypted, null);
+    assert.equal(cfg.username, null);
   });
 
   it('authStore normalizes new behavior defaults for legacy configs', async () => {

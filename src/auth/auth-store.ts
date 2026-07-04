@@ -88,8 +88,8 @@ async function read(): Promise<Config> {
 
 async function write(next: Config): Promise<void> {
   const normalized = withNormalizedOnboarding(next);
-  cache = normalized;
   await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: normalized });
+  cache = normalized;
 }
 
 async function readDecryptedToken(): Promise<string | null> {
@@ -188,7 +188,6 @@ export const authStore = {
       );
 
     const { cipher, meta } = await encrypt(clean);
-    plaintextToken = clean;
     const current = await read();
     const onboardingStage =
       current.onboardingStage === "done" ? "done" : "awaiting_sync";
@@ -201,6 +200,7 @@ export const authStore = {
       displayName,
       onboardingStage,
     });
+    plaintextToken = clean;
     return { username: login };
   },
 
