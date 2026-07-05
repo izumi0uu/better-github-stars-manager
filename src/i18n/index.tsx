@@ -116,7 +116,6 @@ export interface MessageCatalog {
     resizeBadgeDefault: string;
     resizeBadgeMin: string;
     resizeDeltaCurrentOnly: string;
-    resizeOverflowChip: (overflow: number) => string;
     resizeWidthReadout: (tableWidth: number, panelWidth: number, overflow: number) => string;
     resizeLiveWidthReadout: (label: string, width: number, delta: number, tableWidth: number, panelWidth: number, overflow: number) => string;
   };
@@ -498,7 +497,6 @@ const messages: Record<Locale, MessageCatalog> = {
       resizeBadgeDefault: "default",
       resizeBadgeMin: "min",
       resizeDeltaCurrentOnly: "current column only",
-      resizeOverflowChip: (overflow) => `Overflow +${overflow}px`,
       resizeWidthReadout: (tableWidth, panelWidth, overflow) => `Table ${tableWidth}px / Panel ${panelWidth}px${overflow > 0 ? ` / Overflow +${overflow}px` : ''}`,
       resizeLiveWidthReadout: (label, width, delta, tableWidth, panelWidth, overflow) =>
         `${label} ${width}px (${delta >= 0 ? '+' : ''}${delta}px) / Table ${tableWidth}px / Panel ${panelWidth}px${overflow > 0 ? ` / Overflow +${overflow}px` : ''}`,
@@ -909,7 +907,6 @@ const messages: Record<Locale, MessageCatalog> = {
       resizeBadgeDefault: "默认",
       resizeBadgeMin: "最小",
       resizeDeltaCurrentOnly: "仅当前列",
-      resizeOverflowChip: (overflow) => `溢出 +${overflow}px`,
       resizeWidthReadout: (tableWidth, panelWidth, overflow) => `总宽 ${tableWidth}px / 面板 ${panelWidth}px${overflow > 0 ? ` / 溢出 +${overflow}px` : ''}`,
       resizeLiveWidthReadout: (label, width, delta, tableWidth, panelWidth, overflow) =>
         `${label} ${width}px（${delta >= 0 ? '+' : ''}${delta}px） / 总宽 ${tableWidth}px / 面板 ${panelWidth}px${overflow > 0 ? ` / 溢出 +${overflow}px` : ''}`,
