@@ -80,12 +80,13 @@ describe('layout edit interaction lock invariants', () => {
 
   it('keeps numeric right alignment limited to default browse layout', () => {
     const manager = read('src/ui/ManagerPanel.tsx');
+    const table = read('src/ui/components/StarsTable.tsx');
     const row = read('src/ui/components/StarRow.tsx');
 
     expect(manager).toContain("const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;");
-    expect(manager).toContain("'justify-end text-right': def.align === 'end' && !customColumnLayoutActive");
-    expect(manager).toContain('starColumnAlignStart={customColumnLayoutActive}');
-    expect(manager).not.toContain("'justify-end pr-3 text-right': def.align === 'end'");
+    expect(table).toContain("'justify-end text-right': def.align === 'end' && !customColumnLayoutActive");
+    expect(table).toContain('starColumnAlignStart={customColumnLayoutActive}');
+    expect(table).not.toContain("'justify-end pr-3 text-right': def.align === 'end'");
     expect(row).toContain("'justify-start': starColumnAlignStart");
     expect(row).toContain("'justify-end': !starColumnAlignStart");
     expect(row).not.toContain("'justify-start': interactionLocked");
