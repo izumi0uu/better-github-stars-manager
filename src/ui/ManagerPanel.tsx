@@ -1,17 +1,16 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle, GripVertical, Heart, RefreshCw, Sparkles, StickyNote } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
-import { StarRow } from '@/ui/components/StarRow';
 import { Toolbar } from '@/ui/components/Toolbar';
 import { FilterSidebar } from '@/ui/components/FilterSidebar';
 import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
+import { StarsTable } from '@/ui/components/StarsTable';
 import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
-import { pruneFavoriteOverrides, resolveFavoriteState, type FavoriteOverrideState } from '@/ui/favorite-state';
+import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { pickInitialSyncAction } from '@/ui/initial-sync';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
@@ -26,21 +25,11 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 import type { BackfillId, BackfillState } from '@/types';
 import { COLUMN_DEFS } from '@/ui/column-layout';
-import { BROWSE_LAYOUT_TABLE_OPACITY_MS } from '@/ui/layout-edit-constants';
-import {
-  LayoutResizeSurface,
-  layoutViewportFromMeasurements,
-  resetLiveOverflowElements,
-  type LayoutResizeOverlayState,
-  type LayoutViewportState,
-} from '@/ui/layout-resize-surface';
+import { layoutViewportFromMeasurements, type LayoutViewportState } from '@/ui/layout-resize-surface';
 import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
 
-const ROW_HEIGHT = 64;
-
-export {
-  layoutViewportFromMeasurements,
-};
+export { layoutViewportFromMeasurements };
+export { LayoutOverflowIndicator, LayoutResizeFeedbackOverlay } from '@/ui/components/StarsTable';
 
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
@@ -56,12 +45,8 @@ export function ManagerPanel() {
   const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const tableShellRef = useRef<HTMLDivElement>(null);
-  const headerSentinelRef = useRef<HTMLDivElement>(null);
-  const [headerStuck, setHeaderStuck] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const layoutResizeLiveAdapterRef = useRef<LayoutResizeLiveAdapter | null>(null);
-  const layoutResizeSurfaceRef = useRef(new LayoutResizeSurface());
   const { theme, themeClass, toggle: toggleTheme } = useTheme();
   const { m } = useI18n();
   const {
@@ -109,7 +94,6 @@ export function ManagerPanel() {
   const interactionLocked = editingLayout;
   const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;
   const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
-  const [layoutResizeOverlay, setLayoutResizeOverlay] = useState<LayoutResizeOverlayState | null>(null);
 
   const refreshStatus = async () => {
     const next = await bgCall<SyncStatus>('getStatus').catch(() => null);
@@ -184,131 +168,6 @@ export function ManagerPanel() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [interactionLocked]);
-
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => listRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 12,
-  });
-  const virtualItems = rowVirtualizer.getVirtualItems();
-  const virtualRowsSignature = layoutResize
-    ? virtualItems.map((item) => `${item.index}:${item.start}`).join('|')
-    : '';
-
-  useEffect(() => {
-    const root = listRef.current;
-    const sentinel = headerSentinelRef.current;
-    if (!root || !sentinel || typeof IntersectionObserver === 'undefined') return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => setHeaderStuck(!entry.isIntersecting),
-      { root, threshold: 0 },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, []);
-
-  useLayoutEffect(() => {
-    const scroller = listRef.current;
-    const header = headerRef.current;
-    if (!scroller || !header) return;
-
-    const measure = () => {
-      setLayoutViewport(layoutViewportFromMeasurements({
-        panelWidth: scroller.clientWidth,
-        headerScrollWidth: header.scrollWidth,
-        headerRectWidth: header.getBoundingClientRect().width,
-        tableMinWidth,
-      }));
-    };
-
-    measure();
-    if (layoutResize) return;
-    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
-    resizeObserver?.observe(scroller);
-    resizeObserver?.observe(header);
-    window.addEventListener('resize', measure);
-    return () => {
-      resizeObserver?.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, [headerRef, tableMinWidth, gridTemplateColumns, rows.length, editingLayout, layoutResize]);
-
-  useLayoutEffect(() => {
-    const surface = layoutResizeSurfaceRef.current;
-    surface.configure({
-      visibleColumns,
-      tableShell: tableShellRef.current,
-      readoutRoot: rootRef.current,
-      header: headerRef.current,
-      stage: listRef.current,
-      m,
-    });
-  }, [m, visibleColumns]);
-
-  useLayoutEffect(() => {
-    const surface = layoutResizeSurfaceRef.current;
-    if (!layoutResize) {
-      setLayoutResizeOverlay(null);
-      return;
-    }
-
-    const measure = () => {
-      surface.configure({
-        visibleColumns,
-        tableShell: tableShellRef.current,
-        readoutRoot: rootRef.current,
-        header: headerRef.current,
-        stage: listRef.current,
-        m,
-      });
-      setLayoutResizeOverlay(surface.refreshGeometry(layoutResize));
-    };
-
-    measure();
-    window.addEventListener('resize', measure);
-    return () => {
-      window.removeEventListener('resize', measure);
-    };
-  }, [layoutResize, m, visibleColumns]);
-
-  useLayoutEffect(() => {
-    if (!layoutResizeOverlay) return;
-    layoutResizeSurfaceRef.current.refreshLiveNodes();
-  }, [layoutResizeOverlay]);
-
-  useLayoutEffect(() => {
-    if (!layoutResize) return;
-    layoutResizeSurfaceRef.current.refreshVisibleRows();
-  }, [layoutResize, virtualRowsSignature]);
-
-  useLayoutEffect(() => {
-    const surface = layoutResizeSurfaceRef.current;
-    layoutResizeLiveAdapterRef.current = {
-      measureStart: (resize) => {
-        surface.configure({
-          visibleColumns,
-          tableShell: tableShellRef.current,
-          readoutRoot: rootRef.current,
-          header: headerRef.current,
-          stage: listRef.current,
-          m,
-        });
-        surface.measureStart(resize);
-      },
-      paint: (resize) => surface.paint(resize),
-      cleanup: (outcome) => surface.cleanup(outcome),
-    };
-    return () => {
-      layoutResizeLiveAdapterRef.current = null;
-    };
-  }, [m, visibleColumns]);
-
-  useLayoutEffect(() => {
-    if (layoutResize) return;
-    resetLiveOverflowElements(tableShellRef.current);
-  }, [layoutResize]);
 
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashSuccess = (type: string) => {
@@ -566,10 +425,10 @@ export function ManagerPanel() {
             languages={languages}
             tagTree={tagTree}
             interactionLocked={interactionLocked}
-            onTagDeleted={(message) => {
-              refreshStars();
+            onTagMutationMessage={(message) => {
               if (message) setInfo(message);
             }}
+            onTagMutationSuccess={refreshStars}
           />
 
           <div ref={listRef} data-coach-target="repo" className="no-scrollbar flex-1 overflow-auto">
@@ -595,139 +454,39 @@ export function ManagerPanel() {
                 onDefer={() => void deferBackfill(activeBackfillId)}
               />
             ) : (
-              <>
-            <div
-              ref={tableShellRef}
-              className="gsm-layout-table-shell relative"
-              style={{
-                opacity: phase === 'fading-out' || layoutFaded ? 0 : 1,
-                '--gsm-table-opacity-duration': `${phase === 'fading-out' ? 120 : BROWSE_LAYOUT_TABLE_OPACITY_MS}ms`,
-              } as CSSProperties & Record<'--gsm-table-opacity-duration', string>}
-            >
-            <div ref={headerSentinelRef} data-table-head-sentinel className="h-px" aria-hidden="true" />
-            <div
-              ref={headerRef}
-              data-table-head
-              data-stuck={headerStuck ? 'true' : 'false'}
-              className={cn(
-                'gsm-layout-grid gsm-meta-label gsm-z-sticky sticky top-0 grid gap-2 border-b bg-background px-3 py-1.5',
-                {
-                  'border-primary': editingLayout,
-                  'border-border': !editingLayout,
-                  'gsm-table-head-stuck': headerStuck,
-                },
-              )}
-              style={{ gridTemplateColumns, minWidth: tableMinWidth }}
-            >
-              {visibleColumns.map((id, index) => {
-                const def = COLUMN_DEFS[id];
-                const label = def.label(m);
-                return (
-                  <span
-                    key={id}
-                    data-header-col={id}
-                    className={cn(
-                      'gsm-hdr-cell group relative flex min-w-0 items-center gap-1 overflow-visible rounded-sm transition-[background-color,opacity,transform] duration-150',
-                      {
-                        'justify-end text-right': def.align === 'end' && !customColumnLayoutActive,
-                        'justify-center': def.align === 'center',
-                        'gsm-active-resize-col': layoutResize?.id === id,
-                        'opacity-[0.35]': layoutDrag?.kind === 'column' && layoutDrag.id === id,
-                        'gsm-drag-hide-intent': layoutDrag?.kind === 'column' && layoutDrag.id === id && layoutDrag.hideIntent,
-                        'gsm-flash-col': flashedColumn === id,
-                      },
-                    )}
-                    style={{
-                      transform: columnShifts[id] ? `translateX(${columnShifts[id]}px)` : undefined,
-                    }}
-                  >
-                    {editingLayout && !def.locked && (
-                      <button
-                        type="button"
-                        onPointerDown={(e) => beginColumnDrag(e, id)}
-                        title={m.toolbar.dragColumnTitle(label)}
-                        className="gsm-gear-in grid size-4 shrink-0 touch-none cursor-grab place-items-center rounded text-muted-foreground/55 transition-colors hover:bg-accent hover:text-foreground active:cursor-grabbing"
-                        style={{ '--d': `${index * 28}ms` } as CSSProperties & Record<'--d', string>}
-                      >
-                        <GripVertical className="size-3" />
-                      </button>
-                    )}
-                    {id === 'favorite' ? (
-                      <Heart className="size-3" aria-label={label} />
-                    ) : id === 'notes' ? (
-                      <StickyNote className="size-3" aria-label={label} />
-                    ) : (
-                      <span data-header-label={id} className="truncate">{label}</span>
-                    )}
-                    {editingLayout && !def.locked && (
-                      <button
-                        type="button"
-                        onPointerDown={(e) => beginColumnResize(e, id)}
-                        onDoubleClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          autoFitColumnWidth(id);
-                        }}
-                        title={m.toolbar.resizeColumnTitle(label)}
-                        aria-label={m.toolbar.resizeColumnTitle(label)}
-                        className="gsm-resize-handle"
-                        style={{ '--d': `${index * 28}ms` } as CSSProperties & Record<'--d', string>}
-                      >
-                        <span className="sr-only">{m.toolbar.resizeColumnTitle(label)}</span>
-                      </button>
-                    )}
-                  </span>
-                );
-              })}
-              {trayCaretX != null && (
-                <span className="gsm-insert-caret" style={{ left: trayCaretX }} />
-              )}
-            </div>
-            <LayoutResizeFeedbackOverlay overlay={layoutResizeOverlay} resize={layoutResize} />
-            <LayoutOverflowIndicator overflowPx={editingLayout ? layoutViewport?.overflowPx ?? 0 : 0} />
-            {rows.length === 0 ? (
-              <div className="p-10 text-center text-sm text-muted-foreground">
-                {loading ? m.common.loading : m.manager.emptyState}
-              </div>
-            ) : (
-              <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
-                {virtualItems.map((vi) => {
-                  const star = rows[vi.index];
-                  const tag = tagsByFullName.get(star.full_name);
-                  const { favorite, busy: favoriteBusy } = resolveFavoriteState(
-                    tag,
-                    favoriteOverrides[star.full_name],
-                  );
-                  return (
-                    <div
-                      key={star.full_name}
-                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: ROW_HEIGHT, transform: `translateY(${vi.start}px)` }}
-                    >
-                      <StarRow
-                        star={star}
-                        tags={tag?.tags ?? []}
-                        hasNotes={!!(tag?.notes && tag.notes.trim())}
-                        favorite={favorite}
-                        favoriteBusy={favoriteBusy}
-                        selectedTags={f.tags}
-                        onToggleTag={f.toggleTag}
-                        onToggleFavorite={handleToggleFavorite}
-                        selected={selected === star.full_name}
-                        onSelect={handleSelect}
-                        columns={visibleColumns}
-                        gridTemplateColumns={gridTemplateColumns}
-                        minWidth={tableMinWidth}
-                        flashedColumn={flashedColumn}
-                        interactionLocked={interactionLocked}
-                        starColumnAlignStart={customColumnLayoutActive}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            </div>
-              </>
+              <StarsTable
+                rows={rows}
+                loading={loading}
+                phase={phase}
+                tagsByFullName={tagsByFullName}
+                favoriteOverrides={favoriteOverrides}
+                selectedTags={f.tags}
+                selectedFullName={selected}
+                visibleColumns={visibleColumns}
+                gridTemplateColumns={gridTemplateColumns}
+                tableMinWidth={tableMinWidth}
+                editingLayout={editingLayout}
+                interactionLocked={interactionLocked}
+                layoutFaded={layoutFaded}
+                draggedColumnId={layoutDrag?.kind === 'column' ? layoutDrag.id : null}
+                draggedColumnHideIntent={layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false}
+                columnShifts={columnShifts}
+                flashedColumn={flashedColumn}
+                layoutResize={layoutResize}
+                customColumnLayoutActive={customColumnLayoutActive}
+                trayCaretX={trayCaretX}
+                scrollRef={listRef}
+                rootRef={rootRef}
+                headerRef={headerRef}
+                layoutResizeLiveAdapterRef={layoutResizeLiveAdapterRef}
+                onLayoutViewportChange={setLayoutViewport}
+                onSelect={handleSelect}
+                onToggleTag={f.toggleTag}
+                onToggleFavorite={handleToggleFavorite}
+                onBeginColumnDrag={beginColumnDrag}
+                onBeginColumnResize={beginColumnResize}
+                onAutoFitColumnWidth={autoFitColumnWidth}
+              />
             )}
           </div>
 
@@ -760,9 +519,9 @@ export function ManagerPanel() {
         {statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
           <CoachOverlay
             step={coachStep}
-            total={4}
+            total={COACH_TARGETS.length}
             rootRef={rootRef}
-            onNext={() => setCoachStep((s) => (s === null ? s : Math.min(s + 1, 3)))}
+            onNext={() => setCoachStep((s) => (s === null ? s : Math.min(s + 1, COACH_TARGETS.length - 1)))}
             onBack={() => setCoachStep((s) => (s === null ? s : Math.max(s - 1, 0)))}
             onFinish={() => void finishCoach()}
             onSkip={() => void skipCoach()}
@@ -787,63 +546,6 @@ function emptyFilter() {
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
   };
-}
-
-export function LayoutResizeFeedbackOverlay({
-  overlay,
-  resize,
-}: {
-  overlay: LayoutResizeOverlayState | null;
-  resize: {
-    defaultWidth: number;
-    liveWidth: number;
-    delta: number;
-    atDefaultWidth: boolean;
-    snappedToDefault: boolean;
-    atMinWidth: boolean;
-  } | null;
-}) {
-  const { m } = useI18n();
-  if (!overlay || !resize) return null;
-
-  return (
-    <div className="pointer-events-none absolute inset-0 gsm-z-overlay" data-layout-resize-overlay>
-      <span className="gsm-col-hilite" style={{ top: overlay.top, left: overlay.left, width: overlay.width, height: overlay.height }} />
-      <span className="gsm-stable-rail" style={{ top: overlay.top, left: overlay.left, height: overlay.height }} />
-      <span className="gsm-guide-v gsm-guide-v-ref" style={{ top: overlay.top, left: overlay.defaultRight, height: overlay.height }}>
-        <span className="gsm-guide-tag">{m.toolbar.resizeDefaultGuide(Math.round(resize.defaultWidth))}</span>
-      </span>
-      <span className="gsm-guide-v" style={{ top: overlay.top, left: overlay.right, height: overlay.height }} />
-      <span
-        className={cn('gsm-px-badge', {
-          snap: resize.snappedToDefault || resize.atDefaultWidth,
-          limit: resize.atMinWidth,
-        })}
-        style={{ left: overlay.right, top: overlay.top - 26 }}
-      >
-        {Math.round(resize.liveWidth)}px
-        {(resize.atDefaultWidth || resize.atMinWidth) && (
-          <span className="u"> · {resize.atDefaultWidth ? m.toolbar.resizeBadgeDefault : m.toolbar.resizeBadgeMin}</span>
-        )}
-      </span>
-      <span className="gsm-delta-badge" style={{ left: overlay.right, top: overlay.top + overlay.height - 8 }}>
-        {resize.delta >= 0 ? '+' : ''}{Math.round(resize.delta)}px
-        <span className="u"> · {m.toolbar.resizeDeltaCurrentOnly}</span>
-      </span>
-    </div>
-  );
-}
-
-export function LayoutOverflowIndicator({ overflowPx }: { overflowPx: number }) {
-  const { m } = useI18n();
-  if (overflowPx <= 0) return null;
-
-  return (
-    <>
-      <span className="gsm-ov-edge" data-layout-overflow-edge aria-hidden="true" />
-      <span className="gsm-ov-chip" data-layout-overflow-chip>{m.toolbar.resizeOverflowChip(Math.round(overflowPx))}</span>
-    </>
-  );
 }
 
 function OnboardingCard({
@@ -984,9 +686,10 @@ function BackfillCard({
   );
 }
 
-const COACH_TARGETS = ['sync', 'tags', 'repo', 'hide-panel'] as const;
+const COACH_TARGETS = ['sync', 'auto-tags', 'tags', 'repo', 'hide-panel'] as const;
 const COACH_SPOT_PADDING: Record<(typeof COACH_TARGETS)[number], number> = {
   sync: 4,
+  'auto-tags': 4,
   tags: 10,
   repo: 10,
   'hide-panel': 4,
@@ -1050,8 +753,13 @@ function CoachOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, targetSel, rootRef]);
 
-  const titles = [m.onboarding.coachStep1Title, m.onboarding.coachStep2Title, m.onboarding.coachStep3Title, m.onboarding.coachStep4Title];
-  const bodies = [m.onboarding.coachStep1Body, m.onboarding.coachStep2Body, m.onboarding.coachStep3Body, m.onboarding.coachStep4Body];
+  const steps = [
+    { title: m.onboarding.coachStep1Title, body: m.onboarding.coachStep1Body },
+    { title: m.onboarding.coachStep2Title, body: m.onboarding.coachStep2Body },
+    { title: m.onboarding.coachStep3Title, body: m.onboarding.coachStep3Body },
+    { title: m.onboarding.coachStep4Title, body: m.onboarding.coachStep4Body },
+    { title: m.onboarding.coachStep5Title, body: m.onboarding.coachStep5Body },
+  ];
   const isLast = step === total - 1;
 
   return (
@@ -1080,8 +788,8 @@ function CoachOverlay({
           <span>{m.onboarding.coachTitle}</span>
           <span>{m.onboarding.coachOf(step + 1, total)}</span>
         </div>
-        <h3 className="text-sm font-semibold">{titles[step]}</h3>
-        <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{bodies[step]}</p>
+        <h3 className="text-sm font-semibold">{steps[step]?.title}</h3>
+        <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{steps[step]?.body}</p>
         {step === 0 && <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground/80">{m.onboarding.coachIntro}</p>}
         <div className="mt-3 flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onSkip}>{m.onboarding.coachSkip}</Button>

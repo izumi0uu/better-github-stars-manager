@@ -228,7 +228,7 @@ export function Options() {
       {/* 1. Token */}
       <section className="mt-6">
         <h2 className="text-base font-medium">{m.options.tokenHeading}</h2>
-        <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+        <p className="gsm-body-note mt-1">
           {m.options.tokenIntroPrefix}{" "}
           <a
             className="text-primary hover:underline"
@@ -242,7 +242,7 @@ export function Options() {
         </p>
 
         {/* Detailed PAT walkthrough with tutorial screenshots. Captions live in i18n. */}
-        <details className="mt-3 rounded-md border border-border bg-muted/20 p-3 text-[13px] text-muted-foreground">
+        <details className="gsm-status-note mt-3 rounded-md border border-border bg-muted/20 p-3 text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">
             {m.options.tokenStepsTitle}
           </summary>
@@ -269,14 +269,14 @@ export function Options() {
           </div>
         </details>
 
-        <ul className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
+        <ul className="gsm-body-note mt-2">
           <li>{m.options.tokenPublicRepos}</li>
           <li>{m.options.tokenGists}</li>
         </ul>
         <p className="mt-1 text-xs text-warning">{m.options.tokenGistNote}</p>
 
         {hasUsableToken && username && (
-          <div className="my-3 flex items-center gap-1.5 text-[13px] text-success">
+          <div className="gsm-status-note my-3 flex items-center gap-1.5 text-success">
             <Check className="size-4 shrink-0" />
             <span>{m.options.authenticatedAs(username)}</span>
             <Button variant="ghost" size="sm" className="ml-2" onClick={clear}>
@@ -285,7 +285,7 @@ export function Options() {
           </div>
         )}
         {!hasUsableToken && username && (
-          <div className="my-3 flex items-center gap-1.5 text-[13px] text-warning">
+          <div className="gsm-status-note my-3 flex items-center gap-1.5 text-warning">
             <AlertTriangle className="size-4 shrink-0" />
             <span>{m.options.cachedAccountWarning(username)}</span>
             <Button variant="ghost" size="sm" className="ml-2" onClick={clear}>
@@ -319,7 +319,7 @@ export function Options() {
       {/* 2. Gist */}
       <section>
         <h2 className="text-base font-medium">{m.options.gistHeading}</h2>
-        <p className="mt-1 text-[13px] text-muted-foreground">
+        <p className="gsm-status-note mt-1 text-muted-foreground">
           {gistId ? (
             <>
               {m.options.gistBoundPrefix} <code>{gistId}</code>.{" "}
@@ -371,7 +371,7 @@ export function Options() {
             </label>
             <p
               id="auto-tag-limit-hint"
-              className="text-[13px] leading-relaxed text-muted-foreground"
+              className="gsm-body-note"
             >
               {m.options.autoTagLimitHint}
             </p>
@@ -417,7 +417,7 @@ export function Options() {
               </span>
               <span
                 id="stars-panel-default-hint"
-                className="text-[13px] leading-relaxed text-muted-foreground"
+                className="gsm-body-note"
               >
                 {m.options.starsPanelDefaultHint}
               </span>
@@ -429,7 +429,7 @@ export function Options() {
       {msg && (
         <div
           className={cn(
-            "mt-4 text-[13px]",
+            "gsm-status-note mt-4",
             {
               "text-success": msg.kind === "ok",
               "text-destructive": msg.kind !== "ok",

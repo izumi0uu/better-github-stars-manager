@@ -231,7 +231,7 @@ export function RepoDetailPanel({
               </span>
             }
           />
-          <Meta label={m.repoDetail.updated} value={star.pushed_at.slice(0, 10)} />
+          <Meta label={m.repoDetail.updated} value={star.pushed_at ? star.pushed_at.slice(0, 10) : m.common.none} />
           <Meta label={m.repoDetail.starred} value={star.starred_at.slice(0, 10)} />
         </div>
 
