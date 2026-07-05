@@ -261,7 +261,9 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
     expect(findExactButton(container, 'Reset').disabled).toBe(true);
     expect(findButton(container, 'Save').disabled).toBe(true);
     expect(findButton(container, 'Cancel').disabled).toBe(true);
-    expect(findButton(container, 'Lang').disabled).toBe(true);
+    const trayChip = container.querySelector('.gsm-tray-chip');
+    expect(trayChip).toBeInstanceOf(HTMLButtonElement);
+    expect((trayChip as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('renders resize overlay badges and overflow chip only when metrics are present', () => {
