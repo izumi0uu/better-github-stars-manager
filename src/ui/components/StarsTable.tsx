@@ -414,13 +414,7 @@ export const LayoutResizeFeedbackOverlay = memo(function LayoutResizeFeedbackOve
 });
 
 export function LayoutOverflowIndicator({ overflowPx }: { overflowPx: number }) {
-  const { m } = useI18n();
   if (overflowPx <= 0) return null;
 
-  return (
-    <>
-      <span className="gsm-ov-edge" data-layout-overflow-edge aria-hidden="true" />
-      <span className="gsm-ov-chip" data-layout-overflow-chip>{m.toolbar.resizeOverflowChip(Math.round(overflowPx))}</span>
-    </>
-  );
+  return <span className="gsm-ov-edge" data-layout-overflow-edge aria-hidden="true" />;
 }

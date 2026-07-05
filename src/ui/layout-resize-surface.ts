@@ -45,9 +45,7 @@ type LiveNodes = {
   pxBadge: HTMLElement | null;
   deltaBadge: HTMLElement | null;
   staticOverflowEdge: HTMLElement | null;
-  staticOverflowChip: HTMLElement | null;
   liveOverflowEdge: HTMLElement | null;
-  liveOverflowChip: HTMLElement | null;
   widthReadout: HTMLElement | null;
 };
 
@@ -246,7 +244,7 @@ export class LayoutResizeSurface {
     applyGridMetrics(cache.header, metrics);
     cache.rows.forEach((row) => applyGridMetrics(row, metrics));
     this.paintOverlay(cache, resize, context.m);
-    this.paintOverflow(cache, metrics.overflowPx, context.m);
+    this.paintOverflow(cache, metrics.overflowPx);
     this.paintReadout(cache, resize, metrics, context.m);
   }
 
@@ -272,9 +270,7 @@ export class LayoutResizeSurface {
       pxBadge: tableShell.querySelector<HTMLElement>('.gsm-px-badge'),
       deltaBadge: tableShell.querySelector<HTMLElement>('.gsm-delta-badge'),
       staticOverflowEdge: tableShell.querySelector<HTMLElement>('[data-layout-overflow-edge]'),
-      staticOverflowChip: tableShell.querySelector<HTMLElement>('[data-layout-overflow-chip]'),
       liveOverflowEdge: tableShell.querySelector<HTMLElement>('[data-layout-live-overflow-edge]'),
-      liveOverflowChip: tableShell.querySelector<HTMLElement>('[data-layout-live-overflow-chip]'),
       widthReadout: readoutRoot?.querySelector<HTMLElement>('[data-layout-width-readout]')
         ?? tableShell.querySelector<HTMLElement>('[data-layout-width-readout]'),
     };
@@ -314,13 +310,11 @@ export class LayoutResizeSurface {
     }
   }
 
-  private paintOverflow(cache: SurfaceCache, overflowPx: number, m: MessageCatalog): void {
-    let { liveOverflowEdge, liveOverflowChip, staticOverflowEdge, staticOverflowChip } = cache.nodes;
+  private paintOverflow(cache: SurfaceCache, overflowPx: number): void {
+    let { liveOverflowEdge, staticOverflowEdge } = cache.nodes;
     if (overflowPx <= 0) {
       hideOrRemoveLiveOverflowElement(liveOverflowEdge ?? staticOverflowEdge);
-      hideOrRemoveLiveOverflowElement(liveOverflowChip ?? staticOverflowChip);
       cache.nodes.liveOverflowEdge = null;
-      cache.nodes.liveOverflowChip = null;
       return;
     }
     if (!liveOverflowEdge && !staticOverflowEdge) {
@@ -331,20 +325,8 @@ export class LayoutResizeSurface {
       cache.tableShell.appendChild(liveOverflowEdge);
       cache.nodes.liveOverflowEdge = liveOverflowEdge;
     }
-    if (!liveOverflowChip && !staticOverflowChip) {
-      liveOverflowChip = document.createElement('span');
-      liveOverflowChip.className = 'gsm-ov-chip';
-      liveOverflowChip.dataset.layoutLiveOverflowChip = '';
-      cache.tableShell.appendChild(liveOverflowChip);
-      cache.nodes.liveOverflowChip = liveOverflowChip;
-    }
     const edge = liveOverflowEdge ?? staticOverflowEdge;
-    const chip = liveOverflowChip ?? staticOverflowChip;
     if (edge) edge.hidden = false;
-    if (chip) {
-      chip.hidden = false;
-      chip.textContent = m.toolbar.resizeOverflowChip(Math.round(overflowPx));
-    }
   }
 
   private paintReadout(cache: SurfaceCache, resize: LayoutResizeLiveState, metrics: GridMetrics, m: MessageCatalog): void {
@@ -386,7 +368,7 @@ function replaceBadgeText(element: HTMLElement, value: string, suffix: string | 
 
 function hideOrRemoveLiveOverflowElement(element: HTMLElement | null): void {
   if (!element) return;
-  if (element.dataset.layoutLiveOverflowEdge != null || element.dataset.layoutLiveOverflowChip != null) {
+  if (element.dataset.layoutLiveOverflowEdge != null) {
     element.remove();
     return;
   }
@@ -396,10 +378,10 @@ function hideOrRemoveLiveOverflowElement(element: HTMLElement | null): void {
 export function resetLiveOverflowElements(tableShell: HTMLElement | null): void {
   if (!tableShell) return;
   tableShell
-    .querySelectorAll<HTMLElement>('[data-layout-live-overflow-edge], [data-layout-live-overflow-chip]')
+    .querySelectorAll<HTMLElement>('[data-layout-live-overflow-edge]')
     .forEach((element) => element.remove());
   tableShell
-    .querySelectorAll<HTMLElement>('[data-layout-overflow-edge], [data-layout-overflow-chip]')
+    .querySelectorAll<HTMLElement>('[data-layout-overflow-edge]')
     .forEach((element) => {
       element.hidden = false;
     });
