@@ -99,6 +99,12 @@ describe('layout edit interaction lock invariants', () => {
     expect(skill).toContain('Do not drive editable/custom header or row alignment directly from `COLUMN_DEFS[id].align`;');
   });
 
+  it('disables row-grid transitions while column resizing is active', () => {
+    const motion = read('src/ui/styles/motion.css');
+
+    expect(motion).toContain('body.gsm-resizing-column [data-layout-row-grid]');
+  });
+
   it('locks sibling regions and row-level actions without teaching them a provider', () => {
     for (const path of [
       'src/ui/components/ActiveFilterChips.tsx',

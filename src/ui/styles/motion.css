@@ -284,6 +284,7 @@
   body.gsm-resizing-column .gsm-row,
   body.gsm-resizing-column .gsm-hdr-cell,
   body.gsm-resizing-column .gsm-resize-handle,
+  body.gsm-resizing-column [data-layout-row-grid],
   body.gsm-resizing-column [data-header-col],
   body.gsm-resizing-column [data-row] {
     transition-property: none !important;
