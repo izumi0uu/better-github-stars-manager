@@ -105,8 +105,19 @@ export interface MessageCatalog {
     dragHideHint: (label: string) => string;
     dragTrayHint: string;
     dragInsertHint: string;
+    resizeColumnTitle: (label: string) => string;
     lockedColumn: string;
+    fitWidths: string;
+    resetWidths: string;
     resetLayout: string;
+    resizeFrozenPeers: string;
+    resizeFitExplicit: string;
+    resizeDefaultGuide: (width: number) => string;
+    resizeBadgeDefault: string;
+    resizeBadgeMin: string;
+    resizeDeltaCurrentOnly: string;
+    resizeWidthReadout: (tableWidth: number, panelWidth: number, overflow: number) => string;
+    resizeLiveWidthReadout: (label: string, width: number, delta: number, tableWidth: number, panelWidth: number, overflow: number) => string;
   };
   activeFilters: {
     onlyFavorite: string;
@@ -475,8 +486,20 @@ const messages: Record<Locale, MessageCatalog> = {
       dragHideHint: (label) => `Release to hide ${label}`,
       dragTrayHint: "Drag into the header to place",
       dragInsertHint: "Release to insert here",
+      resizeColumnTitle: (label) => `Resize ${label}`,
       lockedColumn: "Locked",
+      fitWidths: "Fit width",
+      resetWidths: "Reset widths",
       resetLayout: "Reset",
+      resizeFrozenPeers: "Live drag: frozen peers",
+      resizeFitExplicit: "Fit action: explicit only",
+      resizeDefaultGuide: (width) => `Default ${width}px`,
+      resizeBadgeDefault: "default",
+      resizeBadgeMin: "min",
+      resizeDeltaCurrentOnly: "current column only",
+      resizeWidthReadout: (tableWidth, panelWidth, overflow) => `Table ${tableWidth}px / Panel ${panelWidth}px${overflow > 0 ? ` / Overflow +${overflow}px` : ''}`,
+      resizeLiveWidthReadout: (label, width, delta, tableWidth, panelWidth, overflow) =>
+        `${label} ${width}px (${delta >= 0 ? '+' : ''}${delta}px) / Table ${tableWidth}px / Panel ${panelWidth}px${overflow > 0 ? ` / Overflow +${overflow}px` : ''}`,
     },
     activeFilters: {
       onlyFavorite: "Favorites",
@@ -873,8 +896,20 @@ const messages: Record<Locale, MessageCatalog> = {
       dragHideHint: (label) => `松手隐藏「${label}」`,
       dragTrayHint: "拖到表头插入",
       dragInsertHint: "松手插入这里",
+      resizeColumnTitle: (label) => `调整「${label}」列宽`,
       lockedColumn: "锁定",
+      fitWidths: "适应面板宽度",
+      resetWidths: "重置列宽",
       resetLayout: "重置",
+      resizeFrozenPeers: "Live drag：冻结同伴列",
+      resizeFitExplicit: "Fit action：只在显式动作发生",
+      resizeDefaultGuide: (width) => `默认 ${width}px`,
+      resizeBadgeDefault: "默认",
+      resizeBadgeMin: "最小",
+      resizeDeltaCurrentOnly: "仅当前列",
+      resizeWidthReadout: (tableWidth, panelWidth, overflow) => `总宽 ${tableWidth}px / 面板 ${panelWidth}px${overflow > 0 ? ` / 溢出 +${overflow}px` : ''}`,
+      resizeLiveWidthReadout: (label, width, delta, tableWidth, panelWidth, overflow) =>
+        `${label} ${width}px（${delta >= 0 ? '+' : ''}${delta}px） / 总宽 ${tableWidth}px / 面板 ${panelWidth}px${overflow > 0 ? ` / 溢出 +${overflow}px` : ''}`,
     },
     activeFilters: {
       onlyFavorite: "收藏",

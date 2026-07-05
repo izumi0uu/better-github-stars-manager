@@ -1,5 +1,7 @@
 /** Core domain types for Better GitHub Stars Manager. */
 
+import type { ColumnId } from '@/ui/column-layout';
+
 export type Locale = 'en' | 'zh-CN';
 
 export type OnboardingStage =
@@ -101,6 +103,7 @@ export interface Config {
   customColumnLayout: {
     order: string[];
     hidden: string[];
+    widths?: Partial<Record<ColumnId, number>>;
   } | null;
   /** One-shot migration flag: clear auto-derived `language` tags (now that
    *  language is a first-class filter, not a tag). Set true after the migration

@@ -1,6 +1,6 @@
 import { type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Columns3, EyeOff, GripVertical, RotateCcw, X } from 'lucide-react';
+import { Check, Columns3, EyeOff, GripVertical, Maximize2, RotateCcw, Ruler, X } from 'lucide-react';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/shadcn/button';
@@ -19,6 +19,42 @@ export type LayoutDragGhostState = {
   y: number;
   hideIntent: boolean;
 };
+
+type LayoutResizeReadoutState = {
+  liveWidth: number;
+  delta: number;
+  atDefaultWidth: boolean;
+  atMinWidth: boolean;
+};
+
+function getWidthReadout({
+  m,
+  resizeColumnLabel,
+  layoutResize,
+  tableWidth,
+  panelWidth,
+  overflowPx,
+}: {
+  m: ReturnType<typeof useI18n>['m'];
+  resizeColumnLabel: string | null;
+  layoutResize: LayoutResizeReadoutState | null;
+  tableWidth: number | null;
+  panelWidth: number | null;
+  overflowPx: number;
+}): string | null {
+  if (tableWidth == null || panelWidth == null) return null;
+  if (layoutResize && resizeColumnLabel) {
+    return m.toolbar.resizeLiveWidthReadout(
+      resizeColumnLabel,
+      layoutResize.liveWidth,
+      layoutResize.delta,
+      tableWidth,
+      panelWidth,
+      overflowPx,
+    );
+  }
+  return m.toolbar.resizeWidthReadout(tableWidth, panelWidth, overflowPx);
+}
 
 export function LayoutColumnMenu({
   container,
@@ -84,12 +120,19 @@ export function LayoutColumnMenu({
 export function LayoutEditChrome({
   editing,
   draftLayout,
+  resizeColumnLabel,
+  layoutResize,
+  tableWidth,
+  panelWidth,
+  overflowPx,
   hiddenTrayColumns,
   trayOpen,
   trayDropReady,
   dropReadyLabel,
   editColumnsButtonRef,
   onToggleColumnMenu,
+  onFitWidths,
+  onResetWidths,
   onReset,
   onSave,
   onCancel,
@@ -98,12 +141,19 @@ export function LayoutEditChrome({
 }: {
   editing: boolean;
   draftLayout: ColumnLayout;
+  resizeColumnLabel: string | null;
+  layoutResize: LayoutResizeReadoutState | null;
+  tableWidth: number | null;
+  panelWidth: number | null;
+  overflowPx: number;
   hiddenTrayColumns: ColumnId[];
   trayOpen: boolean;
   trayDropReady: boolean;
   dropReadyLabel: string | null;
   editColumnsButtonRef: RefObject<HTMLButtonElement>;
   onToggleColumnMenu: () => void;
+  onFitWidths: () => void;
+  onResetWidths: () => void;
   onReset: () => void;
   onSave: () => void;
   onCancel: () => void;
@@ -111,6 +161,16 @@ export function LayoutEditChrome({
   onRestoreHiddenColumn: (id: ColumnId) => void;
 }) {
   const { m } = useI18n();
+  const widthReadout = getWidthReadout({
+    m,
+    resizeColumnLabel,
+    layoutResize,
+    tableWidth,
+    panelWidth,
+    overflowPx,
+  });
+  const resizeActive = layoutResize != null;
+  const canMutateLayout = editing && !resizeActive;
 
   return (
     <div
@@ -128,7 +188,7 @@ export function LayoutEditChrome({
               ref={editColumnsButtonRef}
               variant="ghost"
               size="sm"
-              disabled={!editing}
+              disabled={!canMutateLayout}
               onClick={onToggleColumnMenu}
               title={m.toolbar.columnsButtonTitle}
             >
@@ -142,18 +202,35 @@ export function LayoutEditChrome({
             </Button>
           </div>
           <span className="flex-1" />
-          <Button variant="ghost" size="sm" disabled={!editing} onClick={onReset}>
+          <Button variant="ghost" size="sm" disabled={!canMutateLayout} onClick={onFitWidths}>
+            <Maximize2 className="size-3.5" data-icon="inline-start" />
+            {m.toolbar.fitWidths}
+          </Button>
+          <Button variant="ghost" size="sm" disabled={!canMutateLayout} onClick={onResetWidths}>
+            <Ruler className="size-3.5" data-icon="inline-start" />
+            {m.toolbar.resetWidths}
+          </Button>
+          <Button variant="ghost" size="sm" disabled={!canMutateLayout} onClick={onReset}>
             <RotateCcw className="size-3.5" data-icon="inline-start" />
             {m.toolbar.resetLayout}
           </Button>
-          <Button size="sm" disabled={!editing} onClick={onSave}>
+          <Button size="sm" disabled={!canMutateLayout} onClick={onSave}>
             <Check className="size-3.5" data-icon="inline-start" />
             {m.common.save}
           </Button>
-          <Button variant="outline" size="sm" disabled={!editing} onClick={onCancel}>
+          <Button variant="outline" size="sm" disabled={!canMutateLayout} onClick={onCancel}>
             <X className="size-3.5" data-icon="inline-start" />
             {m.common.cancel}
           </Button>
+        </div>
+        <div className="gsm-freeze-strip border-b border-border bg-muted/25 px-3 py-1.5 text-[11px] text-muted-foreground">
+          <span className={cn('gsm-freeze-chip', { dimmed: !layoutResize })}>{m.toolbar.resizeFrozenPeers}</span>
+          <span className="gsm-freeze-chip dimmed">{m.toolbar.resizeFitExplicit}</span>
+          {widthReadout && (
+            <span data-layout-width-readout className="gsm-muted-count-soft ml-auto truncate">
+              {widthReadout}
+            </span>
+          )}
         </div>
         <div className={cn('gsm-tray-zone', { open: trayOpen })}>
           <div>
@@ -176,7 +253,7 @@ export function LayoutEditChrome({
                     <button
                       key={id}
                       type="button"
-                      disabled={!editing}
+                      disabled={!canMutateLayout}
                       onPointerDown={(e) => onBeginTrayDrag(e, id)}
                       onClick={() => onRestoreHiddenColumn(id)}
                       title={m.toolbar.restoreColumn(label)}

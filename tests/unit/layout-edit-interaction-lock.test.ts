@@ -78,6 +78,35 @@ describe('layout edit interaction lock invariants', () => {
     expect(hook).toMatch(/if \(shouldHydrateBrowseLayout\) \{\s+setRenderedBrowseLayout\(cloneColumnLayout\(nextBrowseLayout\)\);\s+setLayoutFaded\(false\);\s+\}/);
   });
 
+  it('keeps numeric right alignment limited to default browse layout', () => {
+    const manager = read('src/ui/ManagerPanel.tsx');
+    const table = read('src/ui/components/StarsTable.tsx');
+    const row = read('src/ui/components/StarRow.tsx');
+
+    expect(manager).toContain("const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;");
+    expect(table).toContain("'justify-end text-right': def.align === 'end' && !customColumnLayoutActive");
+    expect(table).toContain('starColumnAlignStart={customColumnLayoutActive}');
+    expect(table).not.toContain("'justify-end pr-3 text-right': def.align === 'end'");
+    expect(row).toContain("'justify-start': starColumnAlignStart");
+    expect(row).toContain("'justify-end': !starColumnAlignStart");
+    expect(row).not.toContain("'justify-start': interactionLocked");
+  });
+
+
+  it('documents the numeric column custom-layout alignment invariant in the frontend skill', () => {
+    const skill = read('.codex/skills/github-stars-frontend/SKILL.md');
+
+    expect(skill).toContain('Numeric columns may be right-aligned only in the default browse layout.');
+    expect(skill).toContain('editing, saved custom mode, and custom hover preview');
+    expect(skill).toContain('Do not drive editable/custom header or row alignment directly from `COLUMN_DEFS[id].align`;');
+  });
+
+  it('disables row-grid transitions while column resizing is active', () => {
+    const motion = read('src/ui/styles/motion.css');
+
+    expect(motion).toContain('body.gsm-resizing-column [data-layout-row-grid]');
+  });
+
   it('locks sibling regions and row-level actions without teaching them a provider', () => {
     for (const path of [
       'src/ui/components/ActiveFilterChips.tsx',

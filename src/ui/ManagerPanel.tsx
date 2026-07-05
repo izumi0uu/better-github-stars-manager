@@ -24,6 +24,12 @@ import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnbo
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 import type { BackfillId, BackfillState } from '@/types';
+import { COLUMN_DEFS } from '@/ui/column-layout';
+import { layoutViewportFromMeasurements, type LayoutViewportState } from '@/ui/layout-resize-surface';
+import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
+
+export { layoutViewportFromMeasurements };
+export { LayoutOverflowIndicator, LayoutResizeFeedbackOverlay } from '@/ui/components/StarsTable';
 
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
@@ -40,6 +46,7 @@ export function ManagerPanel() {
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const layoutResizeLiveAdapterRef = useRef<LayoutResizeLiveAdapter | null>(null);
   const { theme, themeClass, toggle: toggleTheme } = useTheme();
   const { m } = useI18n();
   const {
@@ -51,11 +58,13 @@ export function ManagerPanel() {
     draftLayout,
     visibleColumns,
     gridTemplateColumns,
+    tableMinWidth,
     hiddenTrayColumns,
     customLayoutDirty,
     hiddenColumnCount,
     dragGhost,
     layoutDrag,
+    layoutResize,
     columnShifts,
     trayOpen,
     trayDropReady,
@@ -72,13 +81,19 @@ export function ManagerPanel() {
     saveLayoutEdit,
     cancelLayoutEdit,
     resetLayoutEdit,
+    resetLayoutWidths,
     setColumnHidden,
     beginColumnDrag,
+    beginColumnResize,
+    autoFitColumnWidth,
+    fitLayoutWidths,
     beginTrayDrag,
     restoreHiddenColumn,
     toggleColumnMenu,
-  } = useColumnLayoutEditor(rootRef);
+  } = useColumnLayoutEditor(rootRef, listRef, layoutResizeLiveAdapterRef);
   const interactionLocked = editingLayout;
+  const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;
+  const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
 
   const refreshStatus = async () => {
     const next = await bgCall<SyncStatus>('getStatus').catch(() => null);
@@ -323,12 +338,19 @@ export function ManagerPanel() {
     <LayoutEditChrome
       editing={editingLayout}
       draftLayout={draftLayout}
+      resizeColumnLabel={layoutResize ? COLUMN_DEFS[layoutResize.id].label(m) : null}
+      layoutResize={layoutResize}
+      tableWidth={layoutViewport?.tableWidth ?? null}
+      panelWidth={layoutViewport?.panelWidth ?? null}
+      overflowPx={layoutViewport?.overflowPx ?? 0}
       hiddenTrayColumns={hiddenTrayColumns}
       trayOpen={trayOpen}
       trayDropReady={trayDropReady}
       dropReadyLabel={layoutDrag?.kind === 'column' ? m.toolbar.dragHideHint(layoutDrag.label) : null}
       editColumnsButtonRef={editColumnsButtonRef}
       onToggleColumnMenu={toggleColumnMenu}
+      onFitWidths={fitLayoutWidths}
+      onResetWidths={resetLayoutWidths}
       onReset={resetLayoutEdit}
       onSave={saveLayoutEdit}
       onCancel={cancelLayoutEdit}
@@ -442,6 +464,7 @@ export function ManagerPanel() {
                 selectedFullName={selected}
                 visibleColumns={visibleColumns}
                 gridTemplateColumns={gridTemplateColumns}
+                tableMinWidth={tableMinWidth}
                 editingLayout={editingLayout}
                 interactionLocked={interactionLocked}
                 layoutFaded={layoutFaded}
@@ -449,13 +472,20 @@ export function ManagerPanel() {
                 draggedColumnHideIntent={layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false}
                 columnShifts={columnShifts}
                 flashedColumn={flashedColumn}
+                layoutResize={layoutResize}
+                customColumnLayoutActive={customColumnLayoutActive}
                 trayCaretX={trayCaretX}
                 scrollRef={listRef}
+                rootRef={rootRef}
                 headerRef={headerRef}
+                layoutResizeLiveAdapterRef={layoutResizeLiveAdapterRef}
+                onLayoutViewportChange={setLayoutViewport}
                 onSelect={handleSelect}
                 onToggleTag={f.toggleTag}
                 onToggleFavorite={handleToggleFavorite}
                 onBeginColumnDrag={beginColumnDrag}
+                onBeginColumnResize={beginColumnResize}
+                onAutoFitColumnWidth={autoFitColumnWidth}
               />
             )}
           </div>

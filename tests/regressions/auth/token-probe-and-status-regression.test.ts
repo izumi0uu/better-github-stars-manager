@@ -295,6 +295,12 @@ describe('Status/token regressions', () => {
         customColumnLayout: {
           order: ['tags', 'repository', 'unknown', 'tags'],
           hidden: ['favorite', 'description', 'description'],
+          widths: {
+            repository: 260,
+            favorite: 300,
+            language: 20,
+            tags: Number.NaN,
+          },
         },
       },
     });
@@ -304,6 +310,10 @@ describe('Status/token regressions', () => {
     assert.deepEqual(cfg.customColumnLayout, {
       order: ['tags', 'repository', 'description', 'language', 'stars', 'updated', 'created', 'favorite', 'notes'],
       hidden: ['description'],
+      widths: {
+        repository: 260,
+        language: 64,
+      },
     });
   });
 });

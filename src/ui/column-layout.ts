@@ -22,6 +22,7 @@ export type ColumnId = (typeof COLUMN_IDS)[number];
 export type ColumnLayout = {
   order: ColumnId[];
   hidden: ColumnId[];
+  widths?: Partial<Record<ColumnId, number>>;
 };
 
 export type ColumnLayoutMode = 'default' | 'custom';
@@ -29,6 +30,8 @@ export type ColumnLayoutMode = 'default' | 'custom';
 export type ColumnDefinition = {
   id: ColumnId;
   width: string;
+  minWidth: number;
+  maxWidth?: number;
   locked?: boolean;
   align?: 'start' | 'end' | 'center';
   label: (m: MessageCatalog) => string;
@@ -61,42 +64,50 @@ export const COLUMN_DEFS: Record<ColumnId, ColumnDefinition> = {
   repository: {
     id: 'repository',
     width: 'minmax(180px,1.4fr)',
+    minWidth: 180,
     label: (m) => m.toolbar.columnRepository,
   },
   description: {
     id: 'description',
     width: '2fr',
+    minWidth: 120,
     label: (m) => m.toolbar.columnDescription,
   },
   language: {
     id: 'language',
     width: '80px',
+    minWidth: 64,
     label: (m) => m.toolbar.columnLanguage,
   },
   stars: {
     id: 'stars',
     width: '64px',
+    minWidth: 48,
     align: 'end',
     label: (m) => m.toolbar.columnStars,
   },
   updated: {
     id: 'updated',
     width: '84px',
+    minWidth: 72,
     label: (m) => m.toolbar.columnUpdated,
   },
   created: {
     id: 'created',
     width: '84px',
+    minWidth: 84,
     label: (m) => m.toolbar.columnCreated,
   },
   tags: {
     id: 'tags',
     width: '1.6fr',
+    minWidth: 100,
     label: (m) => m.toolbar.columnTags,
   },
   favorite: {
     id: 'favorite',
     width: '28px',
+    minWidth: 28,
     locked: true,
     align: 'center',
     label: (m) => m.toolbar.columnFavorite,
@@ -104,11 +115,16 @@ export const COLUMN_DEFS: Record<ColumnId, ColumnDefinition> = {
   notes: {
     id: 'notes',
     width: '20px',
+    minWidth: 20,
     locked: true,
     align: 'center',
     label: (m) => m.toolbar.columnNotes,
   },
 };
+
+export const COLUMN_WIDTH_MAX_PX = 720;
+export const COLUMN_WIDTH_SNAP_PX = 6;
+export const COLUMN_GRID_PADDING_PX = 24;
 
 export const DEFAULT_COLUMN_LAYOUT: ColumnLayout = {
   order: [...COLUMN_IDS],
@@ -131,7 +147,10 @@ export function hiddenColumnIdsInCanonicalOrder(layout: ColumnLayout): ColumnId[
 }
 
 export function gridTemplateFor(layout: ColumnLayout): string {
-  return visibleColumnIds(layout).map((id) => COLUMN_DEFS[id].width).join(' ');
+  return visibleColumnIds(layout).map((id) => {
+    const width = normalizedColumnWidth(id, layout.widths?.[id]);
+    return width == null ? COLUMN_DEFS[id].width : `${width}px`;
+  }).join(' ');
 }
 
 export function normalizeColumnLayout(layout: ColumnLayout): ColumnLayout {
@@ -150,7 +169,9 @@ export function normalizeColumnLayout(layout: ColumnLayout): ColumnLayout {
     seenHidden.add(id);
     return true;
   });
-  return { order: moveLockedColumnsToEnd(order), hidden };
+  const normalized = { order: moveLockedColumnsToEnd(order), hidden };
+  const widths = normalizeColumnWidths(layout.widths);
+  return Object.keys(widths).length > 0 ? { ...normalized, widths } : normalized;
 }
 
 export function normalizeColumnLayoutMode(value: unknown): ColumnLayoutMode {
@@ -159,23 +180,29 @@ export function normalizeColumnLayoutMode(value: unknown): ColumnLayoutMode {
 
 export function normalizeStoredColumnLayoutPreference(value: unknown): ColumnLayout | null {
   if (!value || typeof value !== 'object') return null;
-  const layout = value as { order?: unknown; hidden?: unknown };
+  const layout = value as { order?: unknown; hidden?: unknown; widths?: unknown };
   if (!Array.isArray(layout.order) || !Array.isArray(layout.hidden)) return null;
   const normalized = normalizeColumnLayout({
     order: layout.order as ColumnId[],
     hidden: layout.hidden as ColumnId[],
+    widths: layout.widths as Partial<Record<ColumnId, number>> | undefined,
   });
   return layoutsEqual(normalized, DEFAULT_COLUMN_LAYOUT) ? null : normalized;
 }
 
 export function cloneColumnLayout(layout: ColumnLayout): ColumnLayout {
-  return { order: [...layout.order], hidden: [...layout.hidden] };
+  return {
+    order: [...layout.order],
+    hidden: [...layout.hidden],
+    ...(layout.widths ? { widths: { ...layout.widths } } : {}),
+  };
 }
 
 export function layoutsEqual(a: ColumnLayout, b: ColumnLayout): boolean {
   return (
     a.order.join('|') === b.order.join('|') &&
-    a.hidden.join('|') === b.hidden.join('|')
+    a.hidden.join('|') === b.hidden.join('|') &&
+    widthSignature(a.widths) === widthSignature(b.widths)
   );
 }
 
@@ -212,11 +239,76 @@ export function restoreColumn(layout: ColumnLayout, id: ColumnId, insertIndex?: 
   return normalizeColumnLayout({
     order: mergeVisibleOrder(layout.order, withoutId),
     hidden,
+    widths: layout.widths,
   });
 }
 
 export function resetColumnLayout(): ColumnLayout {
   return cloneColumnLayout(DEFAULT_COLUMN_LAYOUT);
+}
+
+export function clearColumnWidths(layout: ColumnLayout): ColumnLayout {
+  const { widths: _widths, ...rest } = layout;
+  return cloneColumnLayout(rest);
+}
+
+export function tableMinWidthFor(layout: ColumnLayout): number | undefined {
+  if (!layout.widths || Object.keys(layout.widths).length === 0) return undefined;
+  const visible = visibleColumnIds(layout);
+  let total = COLUMN_GRID_PADDING_PX + COLUMN_GAP_PX * Math.max(0, visible.length - 1);
+  for (const id of visible) {
+    const width = normalizedColumnWidth(id, layout.widths[id]) ?? fixedTrackWidth(id);
+    if (width == null) return undefined;
+    total += width;
+  }
+  return Math.round(total);
+}
+
+export function widthsFromRects(rects: ColumnRect[]): Partial<Record<ColumnId, number>> {
+  return rects.reduce<Partial<Record<ColumnId, number>>>((widths, rect) => {
+    if (!COLUMN_DEFS[rect.id].locked) widths[rect.id] = clampColumnWidth(rect.id, rect.width);
+    return widths;
+  }, {});
+}
+
+export function resizeSnapshot(
+  frozenWidths: Partial<Record<ColumnId, number>>,
+  id: ColumnId,
+  deltaPx: number,
+  defaultWidth?: number,
+): Partial<Record<ColumnId, number>> {
+  const start = normalizedColumnWidth(id, frozenWidths[id]) ?? COLUMN_DEFS[id].minWidth;
+  let width = clampColumnWidth(id, start + deltaPx);
+  if (defaultWidth != null && Math.abs(width - defaultWidth) <= COLUMN_WIDTH_SNAP_PX) {
+    width = clampColumnWidth(id, defaultWidth);
+  }
+  return { ...frozenWidths, [id]: width };
+}
+
+export function fitColumnWidthsToContainer(
+  layout: ColumnLayout,
+  containerWidth: number,
+): ColumnLayout {
+  const minWidth = tableMinWidthFor(layout);
+  if (!layout.widths || minWidth == null || minWidth <= containerWidth) return layout;
+  const overflow = minWidth - containerWidth;
+  const candidates = visibleColumnIds(layout)
+    .filter((id) => !COLUMN_DEFS[id].locked && layout.widths?.[id] != null && fixedTrackWidth(id) == null)
+    .map((id) => ({
+      id,
+      width: normalizedColumnWidth(id, layout.widths?.[id]) ?? COLUMN_DEFS[id].minWidth,
+      min: COLUMN_DEFS[id].minWidth,
+    }))
+    .filter((item) => item.width > item.min);
+  const capacity = candidates.reduce((sum, item) => sum + item.width - item.min, 0);
+  if (capacity <= 0) return layout;
+  const take = Math.min(overflow, capacity);
+  const widths = { ...layout.widths };
+  candidates.forEach((item) => {
+    const share = take * ((item.width - item.min) / capacity);
+    widths[item.id] = clampColumnWidth(item.id, item.width - share);
+  });
+  return normalizeColumnLayout({ ...layout, widths });
 }
 
 export function browseLayoutTransition(
@@ -336,4 +428,39 @@ function mergeVisibleOrder(baseOrder: ColumnId[], visibleOrder: ColumnId[]): Col
   const visible = new Set(visibleOrder);
   const hiddenInBaseOrder = baseOrder.filter((id) => !visible.has(id) && !COLUMN_DEFS[id].locked);
   return moveLockedColumnsToEnd([...visibleOrder, ...hiddenInBaseOrder]);
+}
+
+function normalizeColumnWidths(value: unknown): Partial<Record<ColumnId, number>> {
+  if (!value || typeof value !== 'object') return {};
+  const source = value as Partial<Record<ColumnId, unknown>>;
+  return COLUMN_IDS.reduce<Partial<Record<ColumnId, number>>>((widths, id) => {
+    if (COLUMN_DEFS[id].locked) return widths;
+    const width = normalizedColumnWidth(id, source[id]);
+    if (width != null) widths[id] = width;
+    return widths;
+  }, {});
+}
+
+export function normalizedColumnWidth(id: ColumnId, value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
+  return clampColumnWidth(id, value);
+}
+
+export function clampColumnWidth(id: ColumnId, value: number): number {
+  const min = COLUMN_DEFS[id].minWidth;
+  const max = COLUMN_DEFS[id].maxWidth ?? COLUMN_WIDTH_MAX_PX;
+  return Math.round(Math.max(min, Math.min(max, value)));
+}
+
+function fixedTrackWidth(id: ColumnId): number | null {
+  const match = /^(\d+(?:\.\d+)?)px$/.exec(COLUMN_DEFS[id].width);
+  return match ? Math.round(Number(match[1])) : null;
+}
+
+function widthSignature(widths: ColumnLayout['widths']): string {
+  const normalized = normalizeColumnWidths(widths);
+  return COLUMN_IDS
+    .map((id) => (normalized[id] == null ? '' : `${id}:${normalized[id]}`))
+    .filter(Boolean)
+    .join('|');
 }
