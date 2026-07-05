@@ -465,16 +465,19 @@ export function ManagerPanel() {
                 visibleColumns={visibleColumns}
                 gridTemplateColumns={gridTemplateColumns}
                 tableMinWidth={tableMinWidth}
-                editingLayout={editingLayout}
                 interactionLocked={interactionLocked}
-                layoutFaded={layoutFaded}
-                draggedColumnId={layoutDrag?.kind === 'column' ? layoutDrag.id : null}
-                draggedColumnHideIntent={layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false}
-                columnShifts={columnShifts}
-                flashedColumn={flashedColumn}
+                layoutEdit={{
+                  editing: editingLayout,
+                  faded: layoutFaded,
+                  draggedColumnId: layoutDrag?.kind === 'column' ? layoutDrag.id : null,
+                  draggedColumnHideIntent: layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false,
+                  columnShifts,
+                  flashedColumn,
+                  trayCaretX,
+                  onBeginColumnDrag: beginColumnDrag,
+                }}
                 layoutResize={layoutResize}
                 customColumnLayoutActive={customColumnLayoutActive}
-                trayCaretX={trayCaretX}
                 scrollRef={listRef}
                 rootRef={rootRef}
                 headerRef={headerRef}
@@ -483,7 +486,6 @@ export function ManagerPanel() {
                 onSelect={handleSelect}
                 onToggleTag={f.toggleTag}
                 onToggleFavorite={handleToggleFavorite}
-                onBeginColumnDrag={beginColumnDrag}
                 onBeginColumnResize={beginColumnResize}
                 onAutoFitColumnWidth={autoFitColumnWidth}
               />

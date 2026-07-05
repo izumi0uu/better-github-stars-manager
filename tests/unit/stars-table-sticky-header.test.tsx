@@ -2,13 +2,11 @@
  * @vitest-environment jsdom
  */
 import { act, createRef } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Star, Tag } from '@/types';
 import { StarsTable } from '@/ui/components/StarsTable';
 import { DEFAULT_COLUMN_LAYOUT, gridTemplateFor } from '@/ui/column-layout';
-
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+import { cleanupMountedRootsAndBody, mountReact, type MountedRoot } from './test-utils';
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: () => ({
@@ -55,47 +53,44 @@ class FakeIntersectionObserver {
   }
 }
 
-const mountedRoots: Root[] = [];
+const mountedRoots: MountedRoot[] = [];
 
 function renderTable(rows: Star[] = []) {
-  const container = document.createElement('div');
   const scrollContainer = document.createElement('div');
-  document.body.append(scrollContainer, container);
-  const root = createRoot(container);
+  document.body.appendChild(scrollContainer);
   const scrollRef = { current: scrollContainer };
   const headerRef = createRef<HTMLDivElement>();
 
-  act(() => {
-    root.render(
-      <StarsTable
-        rows={rows}
-        loading={false}
-        phase="idle"
-        tagsByFullName={new Map<string, Tag>()}
-        favoriteOverrides={{}}
-        selectedTags={[]}
-        selectedFullName={null}
-        visibleColumns={DEFAULT_COLUMN_LAYOUT.order}
-        gridTemplateColumns={gridTemplateFor(DEFAULT_COLUMN_LAYOUT)}
-        editingLayout={false}
-        interactionLocked={false}
-        layoutFaded={false}
-        draggedColumnId={null}
-        draggedColumnHideIntent={false}
-        columnShifts={{}}
-        flashedColumn={null}
-        trayCaretX={null}
-        scrollRef={scrollRef}
-        headerRef={headerRef}
-        onSelect={vi.fn()}
-        onToggleTag={vi.fn()}
-        onToggleFavorite={vi.fn()}
-        onBeginColumnDrag={vi.fn()}
-      />,
-    );
-  });
-
-  mountedRoots.push(root);
+  const container = mountReact(
+    <StarsTable
+      rows={rows}
+      loading={false}
+      phase="idle"
+      tagsByFullName={new Map<string, Tag>()}
+      favoriteOverrides={{}}
+      selectedTags={[]}
+      selectedFullName={null}
+      visibleColumns={DEFAULT_COLUMN_LAYOUT.order}
+      gridTemplateColumns={gridTemplateFor(DEFAULT_COLUMN_LAYOUT)}
+      interactionLocked={false}
+      layoutEdit={{
+        editing: false,
+        faded: false,
+        draggedColumnId: null,
+        draggedColumnHideIntent: false,
+        columnShifts: {},
+        flashedColumn: null,
+        trayCaretX: null,
+        onBeginColumnDrag: vi.fn(),
+      }}
+      scrollRef={scrollRef}
+      headerRef={headerRef}
+      onSelect={vi.fn()}
+      onToggleTag={vi.fn()}
+      onToggleFavorite={vi.fn()}
+    />,
+    mountedRoots,
+  );
   return { container, headerRef };
 }
 
@@ -106,11 +101,7 @@ describe('stars table sticky header', () => {
   });
 
   afterEach(() => {
-    act(() => {
-      for (const root of mountedRoots) root.unmount();
-      mountedRoots.length = 0;
-    });
-    document.body.replaceChildren();
+    cleanupMountedRootsAndBody(mountedRoots);
     vi.unstubAllGlobals();
   });
 

@@ -2,12 +2,16 @@
  * @vitest-environment jsdom
  */
 import type { ReactElement } from 'react';
-import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FilterSidebar } from '@/ui/components/FilterSidebar';
-import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import type { FilterState } from '@/ui/filter-store';
+import {
+  cleanupMountedRootsAndBody,
+  click,
+  mountWithTooltipProvider,
+  setInputValue,
+  type MountedRoot,
+} from './test-utils';
 
 const messagingMocks = vi.hoisted(() => ({
   bgCall: vi.fn(),
@@ -17,19 +21,10 @@ vi.mock('@/utils/messaging', () => ({
   bgCall: messagingMocks.bgCall,
 }));
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const mountedRoots: Root[] = [];
+const mountedRoots: MountedRoot[] = [];
 
 function mount(element: ReactElement): HTMLDivElement {
-  const container = document.createElement('div');
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  act(() => {
-    root.render(<TooltipProvider>{element}</TooltipProvider>);
-  });
-  mountedRoots.push(root);
-  return container;
+  return mountWithTooltipProvider(element, mountedRoots);
 }
 
 function makeFilterState(order: string[], tags = ['react', 'ui']): FilterState {
@@ -70,23 +65,6 @@ function getTagRows(container: HTMLDivElement) {
   return [...container.querySelectorAll('div.group\\/tag')];
 }
 
-async function click(button: HTMLButtonElement) {
-  await act(async () => {
-    button.click();
-    await Promise.resolve();
-  });
-}
-
-async function setInputValue(input: HTMLInputElement, value: string) {
-  await act(async () => {
-    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    valueSetter?.call(input, value);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    await Promise.resolve();
-  });
-}
-
 function getNaturalTagOrder(tags: { name: string; count: number }[], direction: 'asc' | 'desc') {
   const collator = new Intl.Collator(['zh-CN', 'en'], { numeric: true, sensitivity: 'base' });
   const sorted = [...tags].sort((a, b) => collator.compare(a.name, b.name));
@@ -99,11 +77,7 @@ describe('FilterSidebar delete-all-tags control', () => {
   });
 
   afterEach(() => {
-    act(() => {
-      for (const root of mountedRoots) root.unmount();
-      mountedRoots.length = 0;
-    });
-    document.body.replaceChildren();
+    cleanupMountedRootsAndBody(mountedRoots);
   });
 
   it('renders the sort control beside the Tags header and natural-sorts tags across search toggles', async () => {

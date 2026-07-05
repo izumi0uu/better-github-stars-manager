@@ -2,15 +2,13 @@
  * @vitest-environment jsdom
  */
 import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
 import type { BackfillState } from '@/types';
 import type { SyncStatus } from '@/utils/messaging';
+import { cleanupMountedRootsAndBody, mountReact, type MountedRoot } from './test-utils';
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const mountedRoots: Root[] = [];
+const mountedRoots: MountedRoot[] = [];
 const sendMessage = vi.fn();
 let latest: ReturnType<typeof useManagerSyncActions> | null = null;
 let messageListeners: Array<(message: { type?: string }) => void> = [];
@@ -51,19 +49,13 @@ function fail(error: string) {
 
 function mountHook(refreshStars = vi.fn()) {
   latest = null;
-  const container = document.createElement('div');
-  document.body.appendChild(container);
-  const root = createRoot(container);
 
   function Probe() {
     latest = useManagerSyncActions({ refreshStars });
     return null;
   }
 
-  act(() => {
-    root.render(<Probe />);
-  });
-  mountedRoots.push(root);
+  mountReact(<Probe />, mountedRoots);
 
   return {
     refreshStars,
@@ -114,9 +106,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const root of mountedRoots.splice(0)) {
-    act(() => root.unmount());
-  }
+  cleanupMountedRootsAndBody(mountedRoots);
   vi.unstubAllGlobals();
 });
 
@@ -173,6 +163,26 @@ describe('useManagerSyncActions', () => {
     expect(hook.current.pendingAction).toBeNull();
   });
 
+  it('uses catalog labels when the initial automatic sync fails', async () => {
+    sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'getStatus') {
+        return ok(baseStatus({ hasToken: true, onboardingStage: 'awaiting_sync', inFlight: false }));
+      }
+      if (message.type === 'query') return ok({ grandTotal: 0 });
+      if (message.type === 'setOnboardingStage') return ok();
+      if (message.type === 'syncFull') return fail('initial-down');
+      throw new Error(`Unexpected message: ${message.type}`);
+    });
+
+    const hook = mountHook();
+
+    await waitFor(() => {
+      expect(hook.current.info).toBe('Full re-pull all stars: initial-down');
+      expect(hook.current.status?.onboardingStage).toBe('sync_failed');
+      expect(hook.current.pendingAction).toBeNull();
+    });
+  });
+
   it('runs a backfill action and exposes a success state', async () => {
     const refreshStars = vi.fn();
     const status = baseStatus({
@@ -199,5 +209,49 @@ describe('useManagerSyncActions', () => {
     expect(hook.current.successAction).toBe('backfill:repo_data_sync_v1');
     expect(hook.current.pendingAction).toBeNull();
     expect(hook.current.busy).toBe(false);
+  });
+
+  it('uses catalog copy when gist pull is missing', async () => {
+    sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'getStatus') return ok(baseStatus({ onboardingStage: 'done' }));
+      if (message.type === 'gistPull') return ok({ missing: true });
+      throw new Error(`Unexpected message: ${message.type}`);
+    });
+
+    const hook = mountHook();
+    await waitFor(() => expect(hook.current.statusLoaded).toBe(true));
+
+    await act(async () => {
+      await hook.current.doSync('gistPull', 'Pull tags from Gist');
+    });
+
+    expect(hook.current.info).toBe(
+      'The linked sync Gist was missing; the app unbound it on this device. Push to create a new one.',
+    );
+    expect(hook.current.successAction).toBeNull();
+  });
+
+  it('uses catalog copy when a backfill action fails', async () => {
+    const status = baseStatus({
+      hasToken: false,
+      onboardingStage: 'done',
+      backfills: { repo_data_sync_v1: backfillState() },
+      activeBackfillId: 'repo_data_sync_v1',
+    });
+    sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'getStatus') return ok(status);
+      if (message.type === 'runBackfill') return fail('backfill-down');
+      throw new Error(`Unexpected message: ${message.type}`);
+    });
+
+    const hook = mountHook();
+    await waitFor(() => expect(hook.current.statusLoaded).toBe(true));
+
+    await act(async () => {
+      await hook.current.runBackfill('repo_data_sync_v1');
+    });
+
+    expect(hook.current.info).toBe('Run Full Sync: backfill-down');
+    expect(hook.current.successAction).toBeNull();
   });
 });

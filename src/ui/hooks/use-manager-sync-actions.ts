@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BackfillId } from '@/types';
+import { useI18n } from '@/i18n';
 import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnboardingSync } from '@/onboarding/state';
 import { pickInitialSyncAction } from '@/ui/initial-sync';
 import { ACTION_SUCCESS_FEEDBACK_MS } from '@/ui/ui-feedback-constants';
@@ -20,7 +21,12 @@ function emptyFilter() {
   };
 }
 
+function initialSyncLabel(type: 'syncFull' | 'syncIncremental', m: ReturnType<typeof useI18n>['m']) {
+  return type === 'syncIncremental' ? m.popup.syncIncremental : m.popup.syncFull;
+}
+
 export function useManagerSyncActions({ refreshStars }: { refreshStars: () => void }) {
+  const { m } = useI18n();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [statusLoaded, setStatusLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -70,13 +76,13 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
       await refreshStatus();
       if (tracksOnboarding) await finalizeOnboardingAfterSync(!!status?.hasToken);
       if (type === 'gistPull' && result?.missing) {
-        setInfo('Gist not found yet. Push once from your primary browser first.');
+        setInfo(m.background.gistPullMissing);
       } else {
         flashSuccess(type);
       }
     } catch (e) {
       if (tracksOnboarding) await setOnboardingStage('sync_failed');
-      setInfo(`${label}: ${e instanceof Error ? e.message : String(e)}`);
+      setInfo(m.manager.syncFailed(label, e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
       setPendingAction((cur) => (cur === type ? null : cur));
@@ -95,7 +101,7 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
       flashSuccess(`backfill:${id}`);
     } catch (e) {
       await refreshStatus();
-      setInfo(`Sync repository metadata: ${e instanceof Error ? e.message : String(e)}`);
+      setInfo(m.manager.syncFailed(m.manager.backfillSyncAction, e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
       setPendingAction((cur) => (cur === `backfill:${id}` ? null : cur));
@@ -119,6 +125,7 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
       }).catch(() => null);
       const syncType = pickInitialSyncAction(st, q?.grandTotal ?? 0);
       if (!syncType) return;
+      const syncLabel = initialSyncLabel(syncType, m);
       const tracksOnboarding = shouldTrackOnboardingSync(st.onboardingStage);
       setPendingAction(syncType);
       if (tracksOnboarding) await setOnboardingStage('syncing');
@@ -131,7 +138,7 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
         .catch(async (e) => {
           await refreshStatus();
           if (tracksOnboarding) await setOnboardingStage('sync_failed');
-          setInfo(`${syncType}: ${e instanceof Error ? e.message : String(e)}`);
+          setInfo(m.manager.syncFailed(syncLabel, e instanceof Error ? e.message : String(e)));
         })
         .finally(() => setPendingAction((cur) => (cur === syncType ? null : cur)));
     })().finally(() => setStatusLoaded(true));

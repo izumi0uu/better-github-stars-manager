@@ -22,6 +22,17 @@ const noopLayoutViewportChange = () => {};
 
 export type StarsTablePhase = 'idle' | 'fading-out' | 'fading-in';
 
+export interface StarsTableLayoutEdit {
+  editing: boolean;
+  faded: boolean;
+  draggedColumnId: ColumnId | null;
+  draggedColumnHideIntent: boolean;
+  columnShifts: Partial<Record<ColumnId, number>>;
+  flashedColumn: ColumnId | null;
+  trayCaretX: number | null;
+  onBeginColumnDrag: (event: PointerEvent<HTMLElement>, id: ColumnId) => void;
+}
+
 export function StarsTable({
   rows,
   loading,
@@ -33,16 +44,10 @@ export function StarsTable({
   visibleColumns,
   gridTemplateColumns,
   tableMinWidth,
-  editingLayout,
   interactionLocked,
-  layoutFaded,
-  draggedColumnId,
-  draggedColumnHideIntent,
-  columnShifts,
-  flashedColumn,
+  layoutEdit,
   layoutResize,
   customColumnLayoutActive,
-  trayCaretX,
   scrollRef,
   rootRef,
   headerRef,
@@ -51,7 +56,6 @@ export function StarsTable({
   onSelect,
   onToggleTag,
   onToggleFavorite,
-  onBeginColumnDrag,
   onBeginColumnResize = () => {},
   onAutoFitColumnWidth = () => {},
 }: {
@@ -65,16 +69,10 @@ export function StarsTable({
   visibleColumns: ColumnId[];
   gridTemplateColumns: string;
   tableMinWidth?: number;
-  editingLayout: boolean;
   interactionLocked: boolean;
-  layoutFaded: boolean;
-  draggedColumnId: ColumnId | null;
-  draggedColumnHideIntent: boolean;
-  columnShifts: Partial<Record<ColumnId, number>>;
-  flashedColumn: ColumnId | null;
+  layoutEdit: StarsTableLayoutEdit;
   layoutResize?: LayoutResizeLiveState | null;
   customColumnLayoutActive?: boolean;
-  trayCaretX: number | null;
   scrollRef: RefObject<HTMLElement>;
   rootRef?: RefObject<HTMLElement>;
   headerRef: RefObject<HTMLDivElement>;
@@ -83,7 +81,6 @@ export function StarsTable({
   onSelect: (fullName: string) => void;
   onToggleTag: (tag: string) => void;
   onToggleFavorite: (fullName: string, favorite: boolean) => Promise<void>;
-  onBeginColumnDrag: (event: PointerEvent<HTMLElement>, id: ColumnId) => void;
   onBeginColumnResize?: (event: PointerEvent<HTMLElement>, id: ColumnId) => void;
   onAutoFitColumnWidth?: (id: ColumnId) => void;
 }) {
@@ -171,7 +168,7 @@ export function StarsTable({
       resizeObserver?.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [headerRef, tableMinWidth, gridTemplateColumns, rows.length, editingLayout, layoutResize, onLayoutViewportChange, scrollRef]);
+  }, [headerRef, tableMinWidth, gridTemplateColumns, rows.length, layoutEdit.editing, layoutResize, onLayoutViewportChange, scrollRef]);
 
   useLayoutEffect(() => {
     const surface = layoutResizeSurface;
@@ -232,7 +229,7 @@ export function StarsTable({
       ref={tableShellRef}
       className="gsm-layout-table-shell relative"
       style={{
-        opacity: phase === 'fading-out' || layoutFaded ? 0 : 1,
+        opacity: phase === 'fading-out' || layoutEdit.faded ? 0 : 1,
         '--gsm-table-opacity-duration': `${phase === 'fading-out' ? 120 : BROWSE_LAYOUT_TABLE_OPACITY_MS}ms`,
       } as CSSProperties & Record<'--gsm-table-opacity-duration', string>}
     >
@@ -244,8 +241,8 @@ export function StarsTable({
         className={cn(
           'gsm-layout-grid gsm-meta-label gsm-z-sticky sticky top-0 grid gap-2 border-b bg-background px-3 py-1.5',
           {
-            'border-primary': editingLayout,
-            'border-border': !editingLayout,
+            'border-primary': layoutEdit.editing,
+            'border-border': !layoutEdit.editing,
           },
         )}
         style={{ gridTemplateColumns, minWidth: tableMinWidth }}
@@ -263,19 +260,19 @@ export function StarsTable({
                   'justify-end text-right': def.align === 'end' && !customColumnLayoutActive,
                   'justify-center': def.align === 'center',
                   'gsm-active-resize-col': layoutResize?.id === id,
-                  'opacity-[0.35]': draggedColumnId === id,
-                  'gsm-drag-hide-intent': draggedColumnId === id && draggedColumnHideIntent,
-                  'gsm-flash-col': flashedColumn === id,
+                  'opacity-[0.35]': layoutEdit.draggedColumnId === id,
+                  'gsm-drag-hide-intent': layoutEdit.draggedColumnId === id && layoutEdit.draggedColumnHideIntent,
+                  'gsm-flash-col': layoutEdit.flashedColumn === id,
                 },
               )}
               style={{
-                transform: columnShifts[id] ? `translateX(${columnShifts[id]}px)` : undefined,
+                transform: layoutEdit.columnShifts[id] ? `translateX(${layoutEdit.columnShifts[id]}px)` : undefined,
               }}
             >
-              {editingLayout && !def.locked && (
+              {layoutEdit.editing && !def.locked && (
                 <button
                   type="button"
-                  onPointerDown={(e) => onBeginColumnDrag(e, id)}
+                  onPointerDown={(e) => layoutEdit.onBeginColumnDrag(e, id)}
                   title={m.toolbar.dragColumnTitle(label)}
                   className="gsm-gear-in grid size-4 shrink-0 touch-none cursor-grab place-items-center rounded text-muted-foreground/55 transition-colors hover:bg-accent hover:text-foreground active:cursor-grabbing"
                   style={{ '--d': `${index * 28}ms` } as CSSProperties & Record<'--d', string>}
@@ -290,7 +287,7 @@ export function StarsTable({
               ) : (
                 <span data-header-label={id} className="truncate">{label}</span>
               )}
-              {editingLayout && !def.locked && (
+              {layoutEdit.editing && !def.locked && (
                 <button
                   type="button"
                   onPointerDown={(e) => onBeginColumnResize(e, id)}
@@ -310,12 +307,12 @@ export function StarsTable({
             </span>
           );
         })}
-        {trayCaretX != null && (
-          <span className="gsm-insert-caret" style={{ left: trayCaretX }} />
+        {layoutEdit.trayCaretX != null && (
+          <span className="gsm-insert-caret" style={{ left: layoutEdit.trayCaretX }} />
         )}
       </div>
       <LayoutResizeFeedbackOverlay overlay={layoutResizeOverlay} resize={layoutResize ?? null} />
-      <LayoutOverflowIndicator overflowPx={editingLayout ? layoutViewport?.overflowPx ?? 0 : 0} />
+      <LayoutOverflowIndicator overflowPx={layoutEdit.editing ? layoutViewport?.overflowPx ?? 0 : 0} />
       {rows.length === 0 ? (
         <div className="p-10 text-center text-sm text-muted-foreground">
           {loading ? m.common.loading : m.manager.emptyState}
@@ -355,7 +352,7 @@ export function StarsTable({
                   columns={visibleColumns}
                   gridTemplateColumns={gridTemplateColumns}
                   minWidth={tableMinWidth}
-                  flashedColumn={flashedColumn}
+                  flashedColumn={layoutEdit.flashedColumn}
                   interactionLocked={interactionLocked}
                   starColumnAlignStart={customColumnLayoutActive}
                 />
