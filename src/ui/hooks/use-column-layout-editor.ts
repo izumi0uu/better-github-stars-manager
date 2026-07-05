@@ -696,6 +696,7 @@ export function useColumnLayoutEditor(
     window.addEventListener('pointercancel', onCancel);
     window.addEventListener('keydown', onKey);
     return () => {
+      tool.disposeActiveGesture();
       document.body.classList.remove('gsm-resizing-column');
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);

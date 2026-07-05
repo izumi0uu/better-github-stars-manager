@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MutableRefObject, type PointerEvent, type RefObject } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MutableRefObject, type PointerEvent, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { GripVertical, Heart, StickyNote } from 'lucide-react';
 import type { Star, Tag } from '@/types';
@@ -93,7 +93,11 @@ export function StarsTable({
   const fallbackRootRef = useRef<HTMLDivElement>(null);
   const fallbackLiveAdapterRef = useRef<LayoutResizeLiveAdapter | null>(null);
   const stuckRef = useRef(false);
-  const layoutResizeSurfaceRef = useRef(new LayoutResizeSurface());
+  const layoutResizeSurfaceRef = useRef<LayoutResizeSurface | null>(null);
+  if (layoutResizeSurfaceRef.current === null) {
+    layoutResizeSurfaceRef.current = new LayoutResizeSurface();
+  }
+  const layoutResizeSurface = layoutResizeSurfaceRef.current;
   const [layoutResizeOverlay, setLayoutResizeOverlay] = useState<LayoutResizeOverlayState | null>(null);
   const readoutRootRef = rootRef ?? fallbackRootRef;
   const liveAdapterRef = layoutResizeLiveAdapterRef ?? fallbackLiveAdapterRef;
@@ -108,6 +112,14 @@ export function StarsTable({
   const virtualRowsSignature = layoutResize
     ? virtualItems.map((item) => `${item.index}:${item.start}`).join('|')
     : '';
+  const buildSurfaceContext = () => ({
+    visibleColumns,
+    tableShell: tableShellRef.current,
+    readoutRoot: readoutRootRef.current,
+    header: headerRef.current,
+    stage: scrollRef.current,
+    m,
+  });
 
   useEffect(() => {
     const root = scrollRef.current;
@@ -162,33 +174,19 @@ export function StarsTable({
   }, [headerRef, tableMinWidth, gridTemplateColumns, rows.length, editingLayout, layoutResize, onLayoutViewportChange, scrollRef]);
 
   useLayoutEffect(() => {
-    const surface = layoutResizeSurfaceRef.current;
-    surface.configure({
-      visibleColumns,
-      tableShell: tableShellRef.current,
-      readoutRoot: readoutRootRef.current,
-      header: headerRef.current,
-      stage: scrollRef.current,
-      m,
-    });
-  }, [headerRef, m, readoutRootRef, scrollRef, visibleColumns]);
+    const surface = layoutResizeSurface;
+    surface.configure(buildSurfaceContext());
+  }, [m, visibleColumns]);
 
   useLayoutEffect(() => {
-    const surface = layoutResizeSurfaceRef.current;
+    const surface = layoutResizeSurface;
     if (!layoutResize) {
       setLayoutResizeOverlay(null);
       return;
     }
 
     const measure = () => {
-      surface.configure({
-        visibleColumns,
-        tableShell: tableShellRef.current,
-        readoutRoot: readoutRootRef.current,
-        header: headerRef.current,
-        stage: scrollRef.current,
-        m,
-      });
+      surface.configure(buildSurfaceContext());
       setLayoutResizeOverlay(surface.refreshGeometry(layoutResize));
     };
 
@@ -197,30 +195,23 @@ export function StarsTable({
     return () => {
       window.removeEventListener('resize', measure);
     };
-  }, [headerRef, layoutResize, m, readoutRootRef, scrollRef, visibleColumns]);
+  }, [layoutResize, m, visibleColumns]);
 
   useLayoutEffect(() => {
     if (!layoutResizeOverlay) return;
-    layoutResizeSurfaceRef.current.refreshLiveNodes();
+    layoutResizeSurface.refreshLiveNodes();
   }, [layoutResizeOverlay]);
 
   useLayoutEffect(() => {
     if (!layoutResize) return;
-    layoutResizeSurfaceRef.current.refreshVisibleRows();
+    layoutResizeSurface.refreshVisibleRows();
   }, [layoutResize, virtualRowsSignature]);
 
   useLayoutEffect(() => {
-    const surface = layoutResizeSurfaceRef.current;
+    const surface = layoutResizeSurface;
     liveAdapterRef.current = {
       measureStart: (resize) => {
-        surface.configure({
-          visibleColumns,
-          tableShell: tableShellRef.current,
-          readoutRoot: readoutRootRef.current,
-          header: headerRef.current,
-          stage: scrollRef.current,
-          m,
-        });
+        surface.configure(buildSurfaceContext());
         surface.measureStart(resize);
       },
       paint: (resize) => surface.paint(resize),
@@ -229,7 +220,7 @@ export function StarsTable({
     return () => {
       liveAdapterRef.current = null;
     };
-  }, [headerRef, liveAdapterRef, m, readoutRootRef, scrollRef, visibleColumns]);
+  }, [liveAdapterRef, m, visibleColumns]);
 
   useLayoutEffect(() => {
     if (layoutResize) return;
@@ -377,7 +368,7 @@ export function StarsTable({
   );
 }
 
-export function LayoutResizeFeedbackOverlay({
+export const LayoutResizeFeedbackOverlay = memo(function LayoutResizeFeedbackOverlay({
   overlay,
   resize,
 }: {
@@ -420,7 +411,7 @@ export function LayoutResizeFeedbackOverlay({
       </span>
     </div>
   );
-}
+});
 
 export function LayoutOverflowIndicator({ overflowPx }: { overflowPx: number }) {
   const { m } = useI18n();

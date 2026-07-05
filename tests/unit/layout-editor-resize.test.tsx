@@ -77,7 +77,7 @@ function defineRect(element: HTMLElement, id: ColumnId, left: number) {
 
 function mountResizeHarness(
   config: Config = baseConfig(),
-  liveAdapterPaint?: (resize: LayoutResizeLiveState) => void,
+  liveAdapter?: ((resize: LayoutResizeLiveState) => void) | LayoutResizeLiveAdapter,
 ) {
   let latest: LayoutEditorState | null = null;
   const container = document.createElement('div');
@@ -89,7 +89,9 @@ function mountResizeHarness(
     const rootRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
     const liveAdapterRef = useRef<LayoutResizeLiveAdapter | null>(null);
-    liveAdapterRef.current = liveAdapterPaint ? { paint: liveAdapterPaint } : null;
+    liveAdapterRef.current = typeof liveAdapter === 'function'
+      ? { paint: liveAdapter }
+      : liveAdapter ?? null;
     const editor = useColumnLayoutEditor(rootRef, stageRef, liveAdapterRef);
     latest = editor;
 
@@ -394,6 +396,33 @@ describe('layout editor column resize', () => {
     expect(harness.current.layoutResize).toBeNull();
     expect(harness.current.draftLayout.widths?.description).toBe(340);
     expect(handle.releasePointerCapture).toHaveBeenCalledWith(61);
+  });
+
+  it('cancels the active resize gesture when the editor unmounts', async () => {
+    const cleanup = vi.fn<NonNullable<LayoutResizeLiveAdapter['cleanup']>>();
+    const harness = mountResizeHarness(baseConfig(), { paint: vi.fn(), cleanup });
+    await hydrateAndEdit(harness);
+    const handle = harness.container.querySelector<HTMLButtonElement>('button[aria-label="resize-description"]');
+    if (!handle) throw new Error('Expected description resize handle');
+    handle.setPointerCapture = vi.fn();
+    handle.hasPointerCapture = vi.fn(() => true);
+    handle.releasePointerCapture = vi.fn();
+
+    act(() => {
+      handle.dispatchEvent(eventWithPointer('pointerdown', { pointerId: 62, clientX: 200 }));
+    });
+
+    expect(harness.current.layoutResize?.id).toBe('description');
+    expect(document.body.classList.contains('gsm-resizing-column')).toBe(true);
+
+    act(() => {
+      for (const root of mountedRoots) root.unmount();
+      mountedRoots.length = 0;
+    });
+
+    expect(handle.releasePointerCapture).toHaveBeenCalledWith(62);
+    expect(cleanup).toHaveBeenCalledWith('cancel');
+    expect(document.body.classList.contains('gsm-resizing-column')).toBe(false);
   });
 
   it('fits widths against the visible layout stage width instead of the header shell width', async () => {
