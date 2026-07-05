@@ -101,6 +101,7 @@ export interface Config {
   customColumnLayout: {
     order: string[];
     hidden: string[];
+    widths?: Partial<Record<string, number>>;
   } | null;
   /** One-shot migration flag: clear auto-derived `language` tags (now that
    *  language is a first-class filter, not a tag). Set true after the migration

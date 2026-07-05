@@ -7,23 +7,29 @@ import {
   INITIAL_CUSTOM_COLUMN_LAYOUT,
   beginCustomLayoutEditTransition,
   browseLayoutTransition,
+  clampColumnWidth,
+  clearColumnWidths,
   cloneColumnLayout,
   columnShiftTransforms,
   completeBrowseLayoutTransition,
   dragInsertIndex,
+  fitColumnWidthsToContainer,
   gridTemplateFor,
   hiddenColumnIdsInCanonicalOrder,
   hideColumn,
   isColumnHideIntent,
   layoutsEqual,
   moveColumn,
+  normalizedColumnWidth,
   normalizeColumnLayoutMode,
   normalizeColumnLayout,
   normalizeStoredColumnLayoutPreference,
   resetColumnLayout,
   restoreColumn,
+  tableMinWidthFor,
   trayInsertIndex,
   visibleColumnIds,
+  widthsFromRects,
   type ColumnId,
   type ColumnLayout,
   type ColumnLayoutMode,
@@ -38,6 +44,12 @@ import {
   TRAY_DRAG_MOVE_THRESHOLD_PX,
   TRAY_RESTORE_HEADER_BUFFER_PX,
 } from '@/ui/layout-edit-constants';
+import {
+  LayoutResizeTool,
+  type LayoutResizeLiveAdapter,
+  type LayoutResizeSession,
+} from '@/ui/layout-resize-tool';
+export type { LayoutResizeLiveAdapter, LayoutResizeLiveState } from '@/ui/layout-resize-tool';
 
 function reportLayoutPersistenceFailure(action: string, error: unknown) {
   console.warn('[GSM] failed to persist layout preference:', action, error instanceof Error ? error.message : String(error));
@@ -78,6 +90,8 @@ type LayoutDrag =
       y: number;
     };
 
+type LayoutResize = LayoutResizeSession;
+
 export function isInsideLayoutColumnMenuPath(path: readonly EventTarget[]) {
   return path.some((node) => (
     node instanceof Element &&
@@ -106,7 +120,11 @@ export function bindLayoutColumnMenuDismissal(
   };
 }
 
-export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>) {
+export function useColumnLayoutEditor(
+  rootRef: RefObject<HTMLDivElement | null>,
+  layoutStageRef?: RefObject<HTMLElement | null>,
+  layoutResizeLiveAdapterRef?: RefObject<LayoutResizeLiveAdapter | null>,
+) {
   const { m } = useI18n();
   const [layoutMode, setLayoutMode] = useState<ColumnLayoutMode>('default');
   const [savedCustomLayout, setSavedCustomLayout] = useState<ColumnLayout | null>(null);
@@ -114,6 +132,7 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
   const [editingLayout, setEditingLayout] = useState(false);
   const [previewingCustomLayout, setPreviewingCustomLayout] = useState(false);
   const [layoutDrag, setLayoutDrag] = useState<LayoutDrag | null>(null);
+  const [layoutResize, setLayoutResize] = useState<LayoutResize | null>(null);
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [renderedBrowseLayout, setRenderedBrowseLayout] = useState<ColumnLayout>(() => cloneColumnLayout(DEFAULT_COLUMN_LAYOUT));
   const [layoutFaded, setLayoutFaded] = useState(false);
@@ -131,6 +150,8 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
   const headerRef = useRef<HTMLDivElement>(null);
   const editColumnsButtonRef = useRef<HTMLButtonElement>(null);
   const layoutDragRef = useRef<LayoutDrag | null>(null);
+  const layoutResizeRef = useRef<LayoutResize | null>(null);
+  const layoutResizeToolRef = useRef<LayoutResizeTool | null>(null);
   const editingLayoutRef = useRef(false);
   const suppressTrayClick = useRef(false);
 
@@ -139,8 +160,12 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     ? customLayout
     : DEFAULT_COLUMN_LAYOUT;
   const activeLayout = editingLayout ? draftLayout : renderedBrowseLayout;
+  const displayLayout = layoutResize
+    ? normalizeColumnLayout({ ...draftLayout, widths: { ...draftLayout.widths, ...layoutResize.liveWidths } })
+    : activeLayout;
   const visibleColumns = useMemo(() => visibleColumnIds(activeLayout), [activeLayout]);
-  const gridTemplateColumns = useMemo(() => gridTemplateFor(activeLayout), [activeLayout]);
+  const gridTemplateColumns = useMemo(() => gridTemplateFor(displayLayout), [displayLayout]);
+  const tableMinWidth = useMemo(() => tableMinWidthFor(displayLayout), [displayLayout]);
   const hiddenTrayColumns = useMemo(() => hiddenColumnIdsInCanonicalOrder(draftLayout), [draftLayout]);
   const customLayoutDirty = savedCustomLayout != null && !layoutsEqual(savedCustomLayout, DEFAULT_COLUMN_LAYOUT);
   const hiddenColumnCount = (editingLayout ? draftLayout : customLayout).hidden.length;
@@ -313,6 +338,7 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
 
   const setBrowseLayoutMode = (mode: ColumnLayoutMode) => {
     if (!configSynced.current) return;
+    if (layoutResizeRef.current) return;
     setPreviewingCustomLayout(false);
     setLayoutMode(mode);
     void authStore.update({ columnLayoutMode: mode }).catch((error) => {
@@ -327,6 +353,7 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
 
   const beginCustomLayoutEdit = () => {
     if (!configLoaded.current) return;
+    if (layoutResizeRef.current) return;
     const edit = beginCustomLayoutEditTransition(customLayout);
     if (layoutFadeTimer.current) clearTimeout(layoutFadeTimer.current);
     layoutFadeTimer.current = null;
@@ -347,7 +374,14 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     return () => cancelAnimationFrame(frame);
   }, [editingLayout]);
 
+  const blockLayoutMutationDuringResize = () => {
+    if (!layoutResizeRef.current) return false;
+    setColumnMenuOpen(false);
+    return true;
+  };
+
   const saveLayoutEdit = async () => {
+    if (blockLayoutMutationDuringResize()) return;
     const next = normalizeColumnLayout(draftLayout);
     const nextSavedCustomLayout = layoutsEqual(next, DEFAULT_COLUMN_LAYOUT) ? null : next;
     try {
@@ -366,25 +400,36 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     setLayoutMode('custom');
     setEditingLayout(false);
     setLayoutDrag(null);
+    setLayoutResize(null);
     setColumnMenuOpen(false);
   };
 
   const cancelLayoutEdit = () => {
+    if (blockLayoutMutationDuringResize()) return;
     setDraftLayout(cloneColumnLayout(customLayout));
     setEditingLayout(false);
     setLayoutMode(preEditMode.current);
     setPreviewingCustomLayout(false);
     setLayoutDrag(null);
+    setLayoutResize(null);
     setColumnMenuOpen(false);
   };
 
   const resetLayoutEdit = () => {
+    if (blockLayoutMutationDuringResize()) return;
     setDraftLayout(resetColumnLayout());
     setColumnMenuOpen(false);
   };
 
+  const resetLayoutWidths = () => {
+    if (blockLayoutMutationDuringResize()) return;
+    setDraftLayout((current) => clearColumnWidths(current));
+    setColumnMenuOpen(false);
+  };
+
   const setColumnHidden = (id: ColumnId, hidden: boolean) => {
-    setDraftLayout((current) => (hidden ? hideColumn(current, id) : restoreColumn(current, id)));
+    if (blockLayoutMutationDuringResize()) return;
+    setDraftLayout((current) => (hidden ? hideColumn(current, id) : restoreColumnWithMeasuredWidth(current, id)));
   };
 
   const flashColumn = (id: ColumnId) => {
@@ -394,8 +439,9 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
   };
 
   const restoreHiddenColumn = (id: ColumnId) => {
+    if (blockLayoutMutationDuringResize()) return;
     if (layoutDragRef.current || suppressTrayClick.current) return;
-    setDraftLayout((current) => restoreColumn(current, id));
+    setDraftLayout((current) => restoreColumnWithMeasuredWidth(current, id));
     flashColumn(id);
   };
 
@@ -421,6 +467,39 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     };
   };
 
+  const measureResizeSnapshot = () => {
+    const measured = measureHeader();
+    return measured ? widthsFromRects(measured.rects) : null;
+  };
+
+  const restoreColumnWithMeasuredWidth = (layout: ColumnLayout, id: ColumnId, insertIndex?: number) => {
+    const restored = restoreColumn(layout, id, insertIndex);
+    if (COLUMN_DEFS[id].locked || normalizedColumnWidth(id, restored.widths?.[id]) != null) return restored;
+    if (!layout.widths || Object.keys(layout.widths).length === 0) return restored;
+
+    const measuredSnapshot = measureResizeSnapshot() ?? {};
+    const widths = visibleColumnIds(restored).reduce<Partial<Record<ColumnId, number>>>((next, columnId) => {
+      if (COLUMN_DEFS[columnId].locked) return next;
+      const width = normalizedColumnWidth(columnId, measuredSnapshot[columnId] ?? layout.widths?.[columnId])
+        ?? (columnId === id ? COLUMN_DEFS[columnId].minWidth : null);
+      if (width != null) next[columnId] = width;
+      return next;
+    }, {});
+
+    return normalizeColumnLayout({
+      ...restored,
+      widths: { ...layout.widths, ...widths },
+    });
+  };
+
+  const getResizeContainerWidth = () => {
+    const stage = layoutStageRef?.current;
+    if (stage?.clientWidth) return stage.clientWidth;
+    const header = headerRef.current;
+    if (!header) return 0;
+    return header.parentElement?.clientWidth || Math.round(header.getBoundingClientRect().width);
+  };
+
   const caretXForInsert = (rects: ColumnRect[], index: number, headerLeft: number) => {
     if (index <= 0) return Math.max(0, Math.round(rects[0].left - headerLeft - COLUMN_GAP_PX / 2));
     const previous = rects[Math.min(index - 1, rects.length - 1)];
@@ -429,7 +508,7 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
   };
 
   const beginColumnDrag = (e: ReactPointerEvent<HTMLElement>, id: ColumnId) => {
-    if (!editingLayout || COLUMN_DEFS[id].locked || e.button !== 0) return;
+    if (!editingLayout || layoutResizeRef.current || COLUMN_DEFS[id].locked || e.button !== 0 || e.isPrimary === false) return;
     const measured = measureHeader();
     if (!measured) return;
     e.preventDefault();
@@ -454,7 +533,7 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
   };
 
   const beginTrayDrag = (e: ReactPointerEvent<HTMLElement>, id: ColumnId) => {
-    if (!editingLayout || e.button !== 0) return;
+    if (!editingLayout || layoutResizeRef.current || e.button !== 0 || e.isPrimary === false) return;
     const measured = measureHeader();
     if (!measured) return;
     e.preventDefault();
@@ -491,6 +570,72 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     setLayoutDrag(null);
   };
 
+  const getLayoutResizeTool = () => {
+    if (!layoutResizeToolRef.current) {
+      layoutResizeToolRef.current = new LayoutResizeTool({
+        getSession: () => layoutResizeRef.current,
+        setSession: (session, options) => {
+          layoutResizeRef.current = session;
+          if (options.render) setLayoutResize(session);
+        },
+        getAdapter: () => layoutResizeLiveAdapterRef?.current ?? null,
+        onCommit: (liveWidths) => {
+          setDraftLayout((current) => normalizeColumnLayout({
+            ...current,
+            widths: { ...current.widths, ...liveWidths },
+          }));
+        },
+        onStart: () => setColumnMenuOpen(false),
+      });
+    }
+    return layoutResizeToolRef.current;
+  };
+
+  const beginColumnResize = (e: ReactPointerEvent<HTMLElement>, id: ColumnId) => {
+    if (!editingLayout || layoutResizeRef.current || layoutDragRef.current || COLUMN_DEFS[id].locked || e.button !== 0 || e.isPrimary === false) return;
+    const frozenWidths = measureResizeSnapshot();
+    if (!frozenWidths?.[id]) return;
+    getLayoutResizeTool().onPointerDown({
+      event: e,
+      id,
+      frozenWidths,
+      defaultWidth: normalizedColumnWidth(id, draftLayout.widths?.[id]) ?? frozenWidths[id],
+    });
+  };
+
+  const fitLayoutWidths = () => {
+    if (blockLayoutMutationDuringResize()) return;
+    const snapshot = measureResizeSnapshot();
+    const containerWidth = getResizeContainerWidth();
+    if (!snapshot || containerWidth <= 0) return;
+    setDraftLayout((current) => fitColumnWidthsToContainer(
+      normalizeColumnLayout({ ...current, widths: { ...current.widths, ...snapshot } }),
+      containerWidth,
+    ));
+    setColumnMenuOpen(false);
+  };
+
+  const autoFitColumnWidth = (id: ColumnId) => {
+    if (blockLayoutMutationDuringResize()) return;
+    if (!editingLayout || COLUMN_DEFS[id].locked) return;
+    const snapshot = measureResizeSnapshot();
+    if (!snapshot?.[id]) return;
+    const header = headerRef.current;
+    let measuredWidth = 0;
+    const headerLabel = header?.querySelector<HTMLElement>(`[data-header-label="${id}"]`);
+    if (headerLabel) measuredWidth = Math.max(measuredWidth, headerLabel.scrollWidth);
+    rootRef.current
+      ?.querySelectorAll<HTMLElement>(`[data-row-col="${id}"]`)
+      .forEach((cell) => {
+        measuredWidth = Math.max(measuredWidth, cell.scrollWidth);
+      });
+    const targetWidth = clampColumnWidth(id, measuredWidth + 28);
+    setDraftLayout((current) => normalizeColumnLayout({
+      ...current,
+      widths: { ...current.widths, ...snapshot, [id]: targetWidth },
+    }));
+  };
+
   const finishLayoutDrag = (commit: boolean) => {
     const drag = layoutDragRef.current;
     if (!drag) return;
@@ -508,10 +653,10 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
           setDraftLayout((current) => moveColumn(current, drag.id, drag.insertIndex!));
         }
       } else if (!drag.moved) {
-        setDraftLayout((current) => restoreColumn(current, drag.id));
+        setDraftLayout((current) => restoreColumnWithMeasuredWidth(current, drag.id));
         flashColumn(drag.id);
       } else if (drag.insertIndex != null) {
-        setDraftLayout((current) => restoreColumn(current, drag.id, drag.insertIndex!));
+        setDraftLayout((current) => restoreColumnWithMeasuredWidth(current, drag.id, drag.insertIndex!));
         flashColumn(drag.id);
       }
     }
@@ -521,6 +666,10 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
   useEffect(() => {
     layoutDragRef.current = layoutDrag;
   }, [layoutDrag]);
+
+  useEffect(() => {
+    layoutResizeRef.current = layoutResize;
+  }, [layoutResize]);
 
   useEffect(() => {
     if (!layoutDrag) return;
@@ -590,6 +739,28 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutDrag !== null]);
 
+  useEffect(() => {
+    if (!layoutResize) return;
+    const tool = getLayoutResizeTool();
+    document.body.classList.add('gsm-resizing-column');
+    const onMove = (e: PointerEvent) => tool.onPointerMove(e);
+    const onUp = (e: PointerEvent) => tool.onPointerUp(e);
+    const onCancel = (e: PointerEvent) => tool.onPointerCancel(e);
+    const onKey = (e: KeyboardEvent) => tool.onKeyDown(e);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.classList.remove('gsm-resizing-column');
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutResize !== null]);
+
   return {
     layoutMode,
     editingLayout,
@@ -599,11 +770,13 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     draftLayout,
     visibleColumns,
     gridTemplateColumns,
+    tableMinWidth,
     hiddenTrayColumns,
     customLayoutDirty,
     hiddenColumnCount,
     dragGhost,
     layoutDrag,
+    layoutResize,
     columnShifts,
     trayOpen,
     trayDropReady,
@@ -620,10 +793,17 @@ export function useColumnLayoutEditor(rootRef: RefObject<HTMLDivElement | null>)
     saveLayoutEdit,
     cancelLayoutEdit,
     resetLayoutEdit,
+    resetLayoutWidths,
     setColumnHidden,
     beginColumnDrag,
+    beginColumnResize,
+    autoFitColumnWidth,
+    fitLayoutWidths,
     beginTrayDrag,
     restoreHiddenColumn,
-    toggleColumnMenu: () => setColumnMenuOpen((open) => !open),
+    toggleColumnMenu: () => {
+      if (blockLayoutMutationDuringResize()) return;
+      setColumnMenuOpen((open) => !open);
+    },
   };
 }

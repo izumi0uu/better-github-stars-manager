@@ -219,12 +219,19 @@ describe('layout edit interaction lock render behavior', () => {
       <LayoutEditChrome
         editing
         draftLayout={{ ...DEFAULT_COLUMN_LAYOUT, hidden: ['language'] }}
+        resizeColumnLabel="Repository"
+        layoutResize={null}
+        tableWidth={864}
+        panelWidth={720}
+        overflowPx={144}
         hiddenTrayColumns={['language']}
         trayOpen
         trayDropReady={false}
         dropReadyLabel={null}
         editColumnsButtonRef={createRef<HTMLButtonElement>()}
         onToggleColumnMenu={vi.fn()}
+        onFitWidths={vi.fn()}
+        onResetWidths={vi.fn()}
         onReset={vi.fn()}
         onSave={vi.fn()}
         onCancel={vi.fn()}
@@ -240,6 +247,8 @@ describe('layout edit interaction lock render behavior', () => {
     expect(chrome).not.toContain('aria-disabled="true"');
     expect(chrome).toContain('Columns');
     expect(chrome).toContain('Save');
+    expect(chrome).toContain('Live drag: frozen peers');
+    expect(chrome).toContain('Table 864px / Panel 720px / Overflow +144px');
   });
 
   it('renders the detail drawer visible but inert and makes its repo link unfocusable', () => {

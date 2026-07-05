@@ -29,6 +29,7 @@ export const StarRow = memo(function StarRow({
   gridTemplateColumns,
   flashedColumn,
   interactionLocked = false,
+  starColumnAlignStart = false,
   minWidth,
 }: {
   star: Star;
@@ -45,6 +46,7 @@ export const StarRow = memo(function StarRow({
   gridTemplateColumns: string;
   flashedColumn: ColumnId | null;
   interactionLocked?: boolean;
+  starColumnAlignStart?: boolean;
   minWidth?: number;
 }) {
   const selectedSet = new Set(selectedTags);
@@ -72,6 +74,7 @@ export const StarRow = memo(function StarRow({
           'pointer-events-none opacity-55': interactionLocked,
         },
       )}
+      data-layout-row-grid
       style={{ gridTemplateColumns, minWidth }}
       {...getLockedRegionProps(interactionLocked)}
     >
@@ -98,16 +101,27 @@ export const StarRow = memo(function StarRow({
             );
           case 'stars':
             return (
-              <div key={column} data-row-col={column} className={cn('flex items-center justify-end gap-0.5 rounded-sm text-xs text-muted-foreground', { 'gsm-flash-col': flashedColumn === column })}>
-                <StarIcon className="size-3 fill-current" />
-                <span className="tabular-nums">{fmt(star.stargazers_count)}</span>
+              <div
+                key={column}
+                data-row-col={column}
+                className={cn(
+                  'flex min-w-0 items-center gap-0.5 overflow-hidden rounded-sm text-xs text-muted-foreground',
+                  {
+                    'justify-start': starColumnAlignStart,
+                    'justify-end': !starColumnAlignStart,
+                    'gsm-flash-col': flashedColumn === column,
+                  },
+                )}
+              >
+                <StarIcon className="size-3 shrink-0 fill-current" />
+                <span className="min-w-0 truncate tabular-nums">{fmt(star.stargazers_count)}</span>
               </div>
             );
           case 'updated':
-            return <div key={column} data-row-col={column} className={cn('rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>{star.pushed_at.slice(0, 10)}</div>;
+            return <div key={column} data-row-col={column} className={cn('min-w-0 truncate rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>{star.pushed_at.slice(0, 10)}</div>;
           case 'created':
             return (
-              <div key={column} data-row-col={column} className={cn('rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>
+              <div key={column} data-row-col={column} className={cn('min-w-0 truncate rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>
                 {star.created_at ? star.created_at.slice(0, 10) : <span className="text-muted-foreground/60">{m.common.none}</span>}
               </div>
             );
