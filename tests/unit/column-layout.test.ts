@@ -5,20 +5,27 @@ import {
   COLUMN_DEFS,
   columnShiftTransforms,
   completeBrowseLayoutTransition,
+  clearColumnWidths,
   DEFAULT_COLUMN_LAYOUT,
   browseLayoutTransition,
   dragInsertIndex,
+  fitColumnWidthsToContainer,
+  gridTemplateFor,
   hiddenColumnIdsInCanonicalOrder,
   hideColumn,
   INITIAL_CUSTOM_COLUMN_LAYOUT,
   isColumnHideIntent,
+  layoutsEqual,
   moveColumn,
   normalizeColumnLayout,
   normalizeColumnLayoutMode,
   normalizeStoredColumnLayoutPreference,
+  resizeSnapshot,
   restoreColumn,
+  tableMinWidthFor,
   trayInsertIndex,
   visibleColumnIds,
+  widthsFromRects,
   type ColumnRect,
 } from '@/ui/column-layout';
 import {
@@ -160,6 +167,43 @@ describe('column layout editing', () => {
     expect(normalizeStoredColumnLayoutPreference(DEFAULT_COLUMN_LAYOUT)).toBeNull();
   });
 
+  it('keeps default order and hidden as custom when explicit widths exist', () => {
+    expect(normalizeStoredColumnLayoutPreference({
+      ...DEFAULT_COLUMN_LAYOUT,
+      widths: { repository: 260 },
+    })).toEqual({
+      ...DEFAULT_COLUMN_LAYOUT,
+      widths: { repository: 260 },
+    });
+  });
+
+  it('normalizes widths while preserving old order-and-hidden-only layouts', () => {
+    expect(normalizeColumnLayout({
+      ...DEFAULT_COLUMN_LAYOUT,
+      widths: {
+        repository: 260,
+        description: Number.NaN,
+        favorite: 300,
+        tags: -1,
+        language: 20,
+      },
+    })).toEqual({
+      ...DEFAULT_COLUMN_LAYOUT,
+      widths: {
+        repository: 260,
+        language: 64,
+      },
+    });
+
+    expect(normalizeStoredColumnLayoutPreference({
+      ...DEFAULT_COLUMN_LAYOUT,
+      hidden: ['language'],
+    })).toEqual({
+      ...DEFAULT_COLUMN_LAYOUT,
+      hidden: ['language'],
+    });
+  });
+
   it('normalizes layout mode and duplicate hidden ids', () => {
     expect(normalizeColumnLayoutMode('custom')).toBe('custom');
     expect(normalizeColumnLayoutMode('wat')).toBe('default');
@@ -177,6 +221,19 @@ describe('column layout editing', () => {
 
     const restored = restoreColumn(hidden, 'description');
 
+    expect(visibleColumnIds(restored)).toEqual(DEFAULT_COLUMN_LAYOUT.order);
+  });
+
+  it('preserves explicit hidden column widths through hide and restore', () => {
+    const layout = normalizeColumnLayout({
+      ...DEFAULT_COLUMN_LAYOUT,
+      widths: { description: 240, tags: 180 },
+    });
+    const hidden = hideColumn(layout, 'description');
+    const restored = restoreColumn(hidden, 'description');
+
+    expect(hidden.widths?.description).toBe(240);
+    expect(restored.widths?.description).toBe(240);
     expect(visibleColumnIds(restored)).toEqual(DEFAULT_COLUMN_LAYOUT.order);
   });
 
@@ -219,6 +276,80 @@ describe('column layout editing', () => {
     expect(shifts.description).toBe(88);
     expect(shifts.favorite).toBeUndefined();
     expect(shifts.notes).toBeUndefined();
+  });
+
+  it('builds px grid templates, full snapshots, and shared min width from measured columns', () => {
+    const fullRects: ColumnRect[] = [
+      { id: 'repository', left: 0, width: 180, mid: 90 },
+      { id: 'description', left: 188, width: 220, mid: 298 },
+      { id: 'language', left: 416, width: 80, mid: 456 },
+      { id: 'stars', left: 504, width: 64, mid: 536 },
+      { id: 'updated', left: 576, width: 84, mid: 618 },
+      { id: 'created', left: 668, width: 84, mid: 710 },
+      { id: 'tags', left: 760, width: 160, mid: 840 },
+      { id: 'favorite', left: 928, width: 28, mid: 942 },
+      { id: 'notes', left: 964, width: 20, mid: 974 },
+    ];
+    const snapshot = widthsFromRects(fullRects);
+    const layout = normalizeColumnLayout({ ...DEFAULT_COLUMN_LAYOUT, widths: snapshot });
+
+    expect(snapshot).toEqual({
+      repository: 180,
+      description: 220,
+      language: 80,
+      stars: 64,
+      updated: 84,
+      created: 84,
+      tags: 160,
+    });
+    expect(gridTemplateFor(layout)).toContain('180px 220px 80px');
+    expect(tableMinWidthFor(layout)).toBe(180 + 220 + 80 + 64 + 84 + 84 + 160 + 28 + 20 + 24 + 8 * COLUMN_GAP_PX);
+  });
+
+  it('resizes a frozen snapshot by changing only the active column', () => {
+    const snapshot = widthsFromRects(rects);
+    const resized = resizeSnapshot(snapshot, 'description', 40);
+
+    expect(resized).toEqual({
+      ...snapshot,
+      description: 260,
+    });
+  });
+
+  it('resets widths without changing order or hidden state and includes widths in equality', () => {
+    const layout = hideColumn(moveColumn({
+      ...DEFAULT_COLUMN_LAYOUT,
+      widths: { repository: 260, description: 220 },
+    }, 'tags', 1), 'language');
+    const cleared = clearColumnWidths(layout);
+
+    expect(cleared.order).toEqual(layout.order);
+    expect(cleared.hidden).toEqual(layout.hidden);
+    expect(cleared.widths).toBeUndefined();
+    expect(layoutsEqual(DEFAULT_COLUMN_LAYOUT, { ...DEFAULT_COLUMN_LAYOUT, widths: { repository: 260 } })).toBe(false);
+  });
+
+  it('fits an explicit snapshot to the panel by shrinking modified unlocked columns only', () => {
+    const layout = normalizeColumnLayout({
+      ...DEFAULT_COLUMN_LAYOUT,
+      widths: {
+        repository: 300,
+        description: 300,
+        language: 80,
+        stars: 64,
+        updated: 84,
+        created: 84,
+        tags: 200,
+      },
+    });
+    const minWidth = tableMinWidthFor(layout);
+    expect(minWidth).toBeDefined();
+
+    const fitted = fitColumnWidthsToContainer(layout, minWidth! - 100);
+    expect(tableMinWidthFor(fitted)).toBeLessThanOrEqual(minWidth! - 99);
+    expect(fitted.widths?.repository).toBeLessThan(300);
+    expect(fitted.widths?.description).toBeLessThan(300);
+    expect(fitted.widths?.language).toBe(80);
   });
 
   it('settles the browse transition without leaving the table faded when layouts already match', () => {

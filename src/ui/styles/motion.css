@@ -127,6 +127,11 @@
     user-select: none;
   }
 
+  .gsm-resizing-column {
+    cursor: col-resize;
+    user-select: none;
+  }
+
   .gsm-edit-dot {
     animation: gsm-edit-dot var(--gsm-duration-pulse) var(--gsm-ease-pulse) infinite;
   }
@@ -275,6 +280,16 @@
     opacity: 0.25;
   }
 
+  body.gsm-resizing-column .gsm-layout-grid,
+  body.gsm-resizing-column .gsm-row,
+  body.gsm-resizing-column .gsm-hdr-cell,
+  body.gsm-resizing-column .gsm-resize-handle,
+  body.gsm-resizing-column [data-layout-row-grid],
+  body.gsm-resizing-column [data-header-col],
+  body.gsm-resizing-column [data-row] {
+    transition-property: none !important;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -288,6 +303,7 @@
     .gsm-edit-chrome-wrap,
     .gsm-tray-zone,
     .gsm-hdr-cell,
+    .gsm-resize-handle,
     .gsm-tray-chip,
     .drawer-anim,
     .filter-row-anim,

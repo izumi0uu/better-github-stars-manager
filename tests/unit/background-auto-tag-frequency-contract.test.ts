@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { describe, it } from 'vitest';
+
+const source = readFileSync(new URL('../../src/background/index.ts', import.meta.url), 'utf8');
+
+describe('background auto-tag frequency contract', () => {
+  function autoTagAllBlock(): string {
+    const block = source.match(/async function autoTagAll\([\s\S]*?\n}\n\nasync function performFullSync/)?.[0] ?? '';
+    assert.ok(block, 'autoTagAll block should exist');
+    return block;
+  }
+
+  it('computes topic repo frequency before bulk auto-tag suggestions', () => {
+    assert.match(source, /import \{ countTopicRepoFrequency, suggestTags \} from '@\/ui\/suggest';/);
+    assert.match(source, /const topicRepoCounts = countTopicRepoFrequency\(stars\);/);
+  });
+
+  it('uses autoTagLimit as both per-repo cap and minimum repo coverage', () => {
+    const block = source.match(/const toAdd = suggestTags\([\s\S]*?\n    \}\);/)?.[0] ?? '';
+    assert.ok(block, 'autoTagAll should call suggestTags with a policy object');
+    assert.match(block, /limit: cfg\.autoTagLimit/);
+    assert.match(block, /minRepoCount: cfg\.autoTagLimit/);
+    assert.match(block, /topicRepoCounts/);
+  });
+
+  it('computes the full update plan before one bulk write', () => {
+    const block = autoTagAllBlock();
+    const bulkWrites = block.match(/idbTagStore\.setTagsBulk\(/g) ?? [];
+    const perRepoWrites = block.match(/idbTagStore\.setTags\(/g) ?? [];
+
+    assert.equal(bulkWrites.length, 1, 'autoTagAll should have exactly one bulk write site');
+    assert.equal(perRepoWrites.length, 0, 'autoTagAll should not use per-repo setTags writes');
+    assert.match(block, /const updates: TagBulkUpdate\[\] = \[\];/);
+    assert.match(block, /updates\.push\(\{ full_name: star\.full_name, tags: merged \}\);/);
+    assert.match(block, /updates\.length > 0 \? await idbTagStore\.setTagsBulk\(updates\) : \{ updated: 0 \}/);
+    assert.ok(
+      block.indexOf('updates.push({ full_name: star.full_name, tags: merged });') <
+        block.indexOf('await idbTagStore.setTagsBulk(updates)'),
+      'autoTagAll should finish planning changed rows before the storage write',
+    );
+  });
+
+  it('keeps manual Auto Tags as the only autoTagAll call site', () => {
+    const calls = source.match(/return autoTagAll\(m\.background\.autoAssignTagging/g) ?? [];
+    assert.equal(calls.length, 1);
+  });
+});

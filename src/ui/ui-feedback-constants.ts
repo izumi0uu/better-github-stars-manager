@@ -1,0 +1,1 @@
+export const ACTION_SUCCESS_FEEDBACK_MS = 1300;

@@ -41,13 +41,18 @@ describe('layout edit interaction lock invariants', () => {
   it('keeps pencil edit as a single callback while ManagerPanel wires custom edit semantics', () => {
     const toolbar = read('src/ui/components/Toolbar.tsx');
     const manager = read('src/ui/ManagerPanel.tsx');
+    const table = read('src/ui/components/StarsTable.tsx');
     const hook = read('src/ui/hooks/use-column-layout-editor.ts');
 
     expect(toolbar).toContain('onClick={onStartLayoutEdit}');
     expect(toolbar).not.toContain("onLayoutModeChange('custom');\n                  onStartLayoutEdit");
     expect(manager).toContain('beginCustomLayoutEdit,');
     expect(manager).toContain('onStartLayoutEdit={beginCustomLayoutEdit}');
-    expect(manager).toContain('BROWSE_LAYOUT_TABLE_OPACITY_MS');
+    expect(manager).toContain('<StarsTable');
+    expect(table).toContain('BROWSE_LAYOUT_TABLE_OPACITY_MS');
+    expect(table).toContain('data-table-head');
+    expect(table).toContain('data-table-head-sentinel');
+    expect(table).not.toContain('cloneElement');
     expect(hook).toContain('const beginCustomLayoutEdit = () => {');
     expect(hook).toContain('if (!configLoaded.current) return;');
     expect(hook).toContain('preEditMode.current = layoutMode;');
@@ -71,6 +76,35 @@ describe('layout edit interaction lock invariants', () => {
     expect(hook).toContain('authStore.getConfig().then((config) => applyConfig(config, { hydrate: true }))');
     expect(hook).toContain('applyConfig(changes[CONFIG_STORAGE_KEY].newValue, { hydrate: false });');
     expect(hook).toMatch(/if \(shouldHydrateBrowseLayout\) \{\s+setRenderedBrowseLayout\(cloneColumnLayout\(nextBrowseLayout\)\);\s+setLayoutFaded\(false\);\s+\}/);
+  });
+
+  it('keeps numeric right alignment limited to default browse layout', () => {
+    const manager = read('src/ui/ManagerPanel.tsx');
+    const table = read('src/ui/components/StarsTable.tsx');
+    const row = read('src/ui/components/StarRow.tsx');
+
+    expect(manager).toContain("const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;");
+    expect(table).toContain("'justify-end text-right': def.align === 'end' && !customColumnLayoutActive");
+    expect(table).toContain('starColumnAlignStart={customColumnLayoutActive}');
+    expect(table).not.toContain("'justify-end pr-3 text-right': def.align === 'end'");
+    expect(row).toContain("'justify-start': starColumnAlignStart");
+    expect(row).toContain("'justify-end': !starColumnAlignStart");
+    expect(row).not.toContain("'justify-start': interactionLocked");
+  });
+
+
+  it('documents the numeric column custom-layout alignment invariant in the frontend skill', () => {
+    const skill = read('.codex/skills/github-stars-frontend/SKILL.md');
+
+    expect(skill).toContain('Numeric columns may be right-aligned only in the default browse layout.');
+    expect(skill).toContain('editing, saved custom mode, and custom hover preview');
+    expect(skill).toContain('Do not drive editable/custom header or row alignment directly from `COLUMN_DEFS[id].align`;');
+  });
+
+  it('disables row-grid transitions while column resizing is active', () => {
+    const motion = read('src/ui/styles/motion.css');
+
+    expect(motion).toContain('body.gsm-resizing-column [data-layout-row-grid]');
   });
 
   it('locks sibling regions and row-level actions without teaching them a provider', () => {

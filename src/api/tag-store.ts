@@ -2,6 +2,11 @@ import type { Tag, TagMeta } from '@/types';
 
 export type CountProgressCallback = (done: number, total: number | null) => void;
 
+export type TagBulkUpdate = {
+  full_name: string;
+  tags: string[];
+};
+
 /**
  * Abstraction over the user's annotation layer (tags + notes + favorites + tag metadata).
  *
@@ -26,6 +31,7 @@ export interface TagStore {
 
   // --- writes (local; mark dirty for Gist sync) ---
   setTags(full_name: string, tags: string[]): Promise<void>;
+  setTagsBulk(updates: TagBulkUpdate[]): Promise<{ updated: number }>;
   setNotes(full_name: string, notes: string): Promise<void>;
   setFavorite(full_name: string, favorite: boolean): Promise<void>;
   /** Upsert a full Tag record (used by Gist merge-in). */
@@ -38,6 +44,12 @@ export interface TagStore {
    * re-add (setTags) clears it. Used by the sidebar's per-tag delete button.
    */
   deleteTag(name: string): Promise<{ removed: number }>;
+  /**
+   * Clear every current tag assignment while preserving notes, favorites, and
+   * tag metadata. Unlike deleteTag, this reset does not tombstone tag names, so
+   * auto-assign can generate eligible topics again later.
+   */
+  deleteAllTags(): Promise<{ assignmentsRemoved: number; distinctTagsRemoved: number }>;
 
   // --- Gist sync (per-repo mtime LWW merge) ---
   /** Push local dirty tags/tagMeta to the Gist. */

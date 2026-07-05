@@ -52,26 +52,36 @@ async function ensureCache() {
   return cache;
 }
 
+function compareNullableDate(
+  aValue: string | null | undefined,
+  bValue: string | null | undefined,
+  tieBreakA: string,
+  tieBreakB: string,
+  dir: 'asc' | 'desc',
+): number {
+  const aMissing = aValue == null;
+  const bMissing = bValue == null;
+  if (aMissing || bMissing) {
+    if (aMissing && bMissing) return tieBreakA.localeCompare(tieBreakB);
+    return aMissing ? 1 : -1;
+  }
+  const cmp = aValue.localeCompare(bValue);
+  return dir === 'asc' ? cmp : -cmp;
+}
+
 function sortRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Star[] {
   const mul = dir === 'asc' ? 1 : -1;
   return rows.sort((a, b) => {
     let cmp = 0;
     switch (key) {
       case 'starred_at':
-      case 'pushed_at':
         cmp = a[key].localeCompare(b[key]);
         break;
+      case 'pushed_at': {
+        return compareNullableDate(a.pushed_at, b.pushed_at, a.full_name, b.full_name, dir);
+      }
       case 'created_at': {
-        const aValue = a.created_at;
-        const bValue = b.created_at;
-        const aMissing = aValue == null;
-        const bMissing = bValue == null;
-        if (aMissing || bMissing) {
-          if (aMissing && bMissing) return a.full_name.localeCompare(b.full_name);
-          return aMissing ? 1 : -1;
-        }
-        cmp = aValue.localeCompare(bValue);
-        break;
+        return compareNullableDate(a.created_at, b.created_at, a.full_name, b.full_name, dir);
       }
       case 'stargazers_count':
         cmp = a.stargazers_count - b.stargazers_count;
