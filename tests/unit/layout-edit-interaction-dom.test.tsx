@@ -289,7 +289,8 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
     expect(container.textContent).toContain('current column only');
     expect(container.querySelector<HTMLElement>('.gsm-col-hilite')?.style.top).toBe('12px');
     expect(container.querySelector<HTMLElement>('.gsm-delta-badge')?.style.top).toBe('244px');
-    expect(container.querySelector('[data-layout-overflow-chip]')?.textContent).toContain('Overflow +56px');
+    expect(container.querySelector('[data-layout-overflow-edge]')).not.toBeNull();
+    expect(container.querySelector('[data-layout-overflow-chip]')).toBeNull();
 
     act(() => {
       root.render(
@@ -633,8 +634,8 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
     expect(deltaBadge.textContent).toContain('+80px');
     expect(readout.textContent).toContain('Repository 320px');
 
-    const liveChip = shell.querySelector<HTMLElement>('[data-layout-live-overflow-chip]');
-    expect(liveChip?.textContent).toContain('Overflow +');
+    expect(shell.querySelector('[data-layout-live-overflow-edge]')).not.toBeNull();
+    expect(shell.querySelector('[data-layout-live-overflow-chip]')).toBeNull();
 
     Object.defineProperty(stage, 'clientWidth', { configurable: true, value: 900 });
     paintLayoutResizeLive({
@@ -661,6 +662,7 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
       m: getMessages('en'),
     });
 
+    expect(shell.querySelector('[data-layout-live-overflow-edge]')).toBeNull();
     expect(shell.querySelector('[data-layout-live-overflow-chip]')).toBeNull();
   });
 });
