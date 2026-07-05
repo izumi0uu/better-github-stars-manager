@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
     "test:vitest": "vitest run",
-    "test:logic": "vitest run tests/unit/logic.test.ts tests/unit/sync-flow.test.ts tests/unit/shape.test.ts tests/unit/column-layout.test.ts tests/unit/star-row-columns.test.tsx tests/unit/layout-edit-chrome.test.ts tests/unit/layout-edit-interaction-lock.test.ts tests/unit/layout-edit-interaction-render.test.tsx tests/unit/layout-edit-interaction-dom.test.tsx tests/unit/layout-editor-config-sync.test.tsx tests/unit/floating-locale-toggle.test.tsx tests/unit/ime-input.test.mjs tests/unit/tag-draft.test.mjs tests/unit/commit-message.test.mjs",
+    "test:logic": "vitest run tests/unit/logic.test.ts tests/unit/sync-flow.test.ts tests/unit/shape.test.ts tests/unit/column-layout.test.ts tests/unit/star-row-columns.test.tsx tests/unit/layout-edit-chrome.test.ts tests/unit/layout-edit-interaction-lock.test.ts tests/unit/layout-edit-interaction-render.test.tsx tests/unit/layout-edit-interaction-dom.test.tsx tests/unit/layout-editor-config-sync.test.tsx tests/unit/layout-editor-resize.test.tsx tests/unit/floating-locale-toggle.test.tsx tests/unit/ime-input.test.mjs tests/unit/tag-draft.test.mjs tests/unit/commit-message.test.mjs",
     "test:commit-message": "vitest run tests/unit/commit-message.test.mjs",
     "test:ime": "vitest run tests/unit/ime-input.test.mjs",
     "test:tag-draft": "vitest run tests/unit/tag-draft.test.mjs",

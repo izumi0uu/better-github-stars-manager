@@ -73,6 +73,190 @@
     @apply ml-1 tabular-nums text-[10px] opacity-80;
   }
 
+  .gsm-resize-handle {
+    @apply absolute inset-y-0 -right-1 z-10 w-2 touch-none cursor-col-resize rounded-sm transition-colors;
+  }
+
+  .gsm-resize-handle::after {
+    content: '';
+    position: absolute;
+    inset: 4px 3px;
+    border-radius: 999px;
+    background: hsl(var(--layout-edit-accent) / 0.28);
+    opacity: 0.45;
+    transition: opacity var(--gsm-duration-fast) var(--gsm-ease-linearized);
+  }
+
+  .gsm-resize-handle:hover::after,
+  .gsm-resize-handle:focus-visible::after {
+    opacity: 1;
+  }
+
+  .gsm-freeze-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .gsm-freeze-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--primary) / 0.32);
+    background: hsl(var(--primary) / 0.08);
+    color: hsl(var(--foreground));
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .gsm-freeze-chip.dimmed {
+    border-color: hsl(var(--border));
+    background: hsl(var(--background));
+    color: hsl(var(--muted-foreground));
+    font-weight: 500;
+  }
+
+  .gsm-guide-v {
+    position: absolute;
+    top: 0;
+    z-index: var(--gsm-z-overlay);
+    width: 1.5px;
+    background: hsl(var(--primary));
+    box-shadow: 0 0 6px hsl(var(--primary) / 0.5);
+  }
+
+  .gsm-guide-v.gsm-guide-v-ref {
+    background: none;
+    box-shadow: none;
+    border-left: 1.5px dashed hsl(var(--muted-foreground) / 0.55);
+  }
+
+  .gsm-guide-tag {
+    position: absolute;
+    top: 4px;
+    left: 6px;
+    white-space: nowrap;
+    font-size: 10px;
+    color: hsl(var(--muted-foreground));
+    background: hsl(var(--background) / 0.92);
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid hsl(var(--border));
+  }
+
+  .gsm-px-badge {
+    position: absolute;
+    z-index: calc(var(--gsm-z-overlay) + 1);
+    transform: translateX(-50%);
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--popover));
+    box-shadow: var(--shadow-md);
+    font: 600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    color: hsl(var(--foreground));
+    white-space: nowrap;
+  }
+
+  .gsm-px-badge .u {
+    font-weight: 400;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .gsm-px-badge.snap {
+    border-color: hsl(var(--primary));
+    color: hsl(var(--primary));
+  }
+
+  .gsm-px-badge.limit {
+    border-color: hsl(var(--warning));
+    color: hsl(var(--warning));
+  }
+
+  .gsm-col-hilite {
+    position: absolute;
+    top: 0;
+    z-index: calc(var(--gsm-z-overlay) - 1);
+    background: hsl(var(--primary) / 0.05);
+    border-left: 1px solid hsl(var(--primary) / 0.12);
+    border-right: 1px solid hsl(var(--primary) / 0.12);
+  }
+
+  .gsm-stable-rail {
+    position: absolute;
+    top: 0;
+    z-index: calc(var(--gsm-z-overlay) - 1);
+    border-left: 1px solid hsl(var(--success) / 0.45);
+  }
+
+  .gsm-stable-rail::after {
+    content: '';
+    position: absolute;
+    top: 28px;
+    left: 5px;
+    width: 10px;
+    height: 10px;
+    padding: 0;
+    border-radius: 4px;
+    background: hsl(var(--success) / 0.12);
+  }
+
+  .gsm-delta-badge {
+    position: absolute;
+    z-index: calc(var(--gsm-z-overlay) + 1);
+    transform: translate(-50%, -100%);
+    padding: 2px 7px;
+    border-radius: 5px;
+    border: 1px solid hsl(var(--success) / 0.45);
+    background: hsl(var(--popover));
+    box-shadow: var(--shadow-sm);
+    color: hsl(var(--success));
+    font: 600 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: nowrap;
+  }
+
+  .gsm-delta-badge .u {
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .gsm-ov-edge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 34px;
+    z-index: var(--gsm-z-overlay);
+    background: linear-gradient(to right, transparent, hsl(var(--destructive) / 0.18));
+    pointer-events: none;
+  }
+
+  .gsm-ov-chip {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    z-index: calc(var(--gsm-z-overlay) + 1);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--destructive) / 0.45);
+    background: hsl(var(--destructive) / 0.1);
+    color: hsl(var(--destructive));
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .gsm-active-resize-col {
+    background: hsl(var(--primary) / 0.07);
+  }
+
   @media (pointer: coarse) {
     .gsm-touch-target {
       min-height: 32px;

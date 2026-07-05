@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertTriangle, GripVertical, Heart, RefreshCw, Sparkles, StickyNote } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
@@ -27,8 +27,20 @@ import { useI18n } from '@/i18n';
 import type { BackfillId, BackfillState } from '@/types';
 import { COLUMN_DEFS } from '@/ui/column-layout';
 import { BROWSE_LAYOUT_TABLE_OPACITY_MS } from '@/ui/layout-edit-constants';
+import {
+  LayoutResizeSurface,
+  layoutViewportFromMeasurements,
+  resetLiveOverflowElements,
+  type LayoutResizeOverlayState,
+  type LayoutViewportState,
+} from '@/ui/layout-resize-surface';
+import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
 
 const ROW_HEIGHT = 64;
+
+export {
+  layoutViewportFromMeasurements,
+};
 
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
@@ -44,9 +56,12 @@ export function ManagerPanel() {
   const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const tableShellRef = useRef<HTMLDivElement>(null);
   const headerSentinelRef = useRef<HTMLDivElement>(null);
   const [headerStuck, setHeaderStuck] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const layoutResizeLiveAdapterRef = useRef<LayoutResizeLiveAdapter | null>(null);
+  const layoutResizeSurfaceRef = useRef(new LayoutResizeSurface());
   const { theme, themeClass, toggle: toggleTheme } = useTheme();
   const { m } = useI18n();
   const {
@@ -58,11 +73,13 @@ export function ManagerPanel() {
     draftLayout,
     visibleColumns,
     gridTemplateColumns,
+    tableMinWidth,
     hiddenTrayColumns,
     customLayoutDirty,
     hiddenColumnCount,
     dragGhost,
     layoutDrag,
+    layoutResize,
     columnShifts,
     trayOpen,
     trayDropReady,
@@ -79,13 +96,20 @@ export function ManagerPanel() {
     saveLayoutEdit,
     cancelLayoutEdit,
     resetLayoutEdit,
+    resetLayoutWidths,
     setColumnHidden,
     beginColumnDrag,
+    beginColumnResize,
+    autoFitColumnWidth,
+    fitLayoutWidths,
     beginTrayDrag,
     restoreHiddenColumn,
     toggleColumnMenu,
-  } = useColumnLayoutEditor(rootRef);
+  } = useColumnLayoutEditor(rootRef, listRef, layoutResizeLiveAdapterRef);
   const interactionLocked = editingLayout;
+  const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;
+  const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
+  const [layoutResizeOverlay, setLayoutResizeOverlay] = useState<LayoutResizeOverlayState | null>(null);
 
   const refreshStatus = async () => {
     const next = await bgCall<SyncStatus>('getStatus').catch(() => null);
@@ -167,6 +191,10 @@ export function ManagerPanel() {
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const virtualRowsSignature = layoutResize
+    ? virtualItems.map((item) => `${item.index}:${item.start}`).join('|')
+    : '';
 
   useEffect(() => {
     const root = listRef.current;
@@ -180,6 +208,107 @@ export function ManagerPanel() {
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, []);
+
+  useLayoutEffect(() => {
+    const scroller = listRef.current;
+    const header = headerRef.current;
+    if (!scroller || !header) return;
+
+    const measure = () => {
+      setLayoutViewport(layoutViewportFromMeasurements({
+        panelWidth: scroller.clientWidth,
+        headerScrollWidth: header.scrollWidth,
+        headerRectWidth: header.getBoundingClientRect().width,
+        tableMinWidth,
+      }));
+    };
+
+    measure();
+    if (layoutResize) return;
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    resizeObserver?.observe(scroller);
+    resizeObserver?.observe(header);
+    window.addEventListener('resize', measure);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [headerRef, tableMinWidth, gridTemplateColumns, rows.length, editingLayout, layoutResize]);
+
+  useLayoutEffect(() => {
+    const surface = layoutResizeSurfaceRef.current;
+    surface.configure({
+      visibleColumns,
+      tableShell: tableShellRef.current,
+      readoutRoot: rootRef.current,
+      header: headerRef.current,
+      stage: listRef.current,
+      m,
+    });
+  }, [m, visibleColumns]);
+
+  useLayoutEffect(() => {
+    const surface = layoutResizeSurfaceRef.current;
+    if (!layoutResize) {
+      setLayoutResizeOverlay(null);
+      return;
+    }
+
+    const measure = () => {
+      surface.configure({
+        visibleColumns,
+        tableShell: tableShellRef.current,
+        readoutRoot: rootRef.current,
+        header: headerRef.current,
+        stage: listRef.current,
+        m,
+      });
+      setLayoutResizeOverlay(surface.refreshGeometry(layoutResize));
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('resize', measure);
+    };
+  }, [layoutResize, m, visibleColumns]);
+
+  useLayoutEffect(() => {
+    if (!layoutResizeOverlay) return;
+    layoutResizeSurfaceRef.current.refreshLiveNodes();
+  }, [layoutResizeOverlay]);
+
+  useLayoutEffect(() => {
+    if (!layoutResize) return;
+    layoutResizeSurfaceRef.current.refreshVisibleRows();
+  }, [layoutResize, virtualRowsSignature]);
+
+  useLayoutEffect(() => {
+    const surface = layoutResizeSurfaceRef.current;
+    layoutResizeLiveAdapterRef.current = {
+      measureStart: (resize) => {
+        surface.configure({
+          visibleColumns,
+          tableShell: tableShellRef.current,
+          readoutRoot: rootRef.current,
+          header: headerRef.current,
+          stage: listRef.current,
+          m,
+        });
+        surface.measureStart(resize);
+      },
+      paint: (resize) => surface.paint(resize),
+      cleanup: (outcome) => surface.cleanup(outcome),
+    };
+    return () => {
+      layoutResizeLiveAdapterRef.current = null;
+    };
+  }, [m, visibleColumns]);
+
+  useLayoutEffect(() => {
+    if (layoutResize) return;
+    resetLiveOverflowElements(tableShellRef.current);
+  }, [layoutResize]);
 
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashSuccess = (type: string) => {
@@ -350,12 +479,19 @@ export function ManagerPanel() {
     <LayoutEditChrome
       editing={editingLayout}
       draftLayout={draftLayout}
+      resizeColumnLabel={layoutResize ? COLUMN_DEFS[layoutResize.id].label(m) : null}
+      layoutResize={layoutResize}
+      tableWidth={layoutViewport?.tableWidth ?? null}
+      panelWidth={layoutViewport?.panelWidth ?? null}
+      overflowPx={layoutViewport?.overflowPx ?? 0}
       hiddenTrayColumns={hiddenTrayColumns}
       trayOpen={trayOpen}
       trayDropReady={trayDropReady}
       dropReadyLabel={layoutDrag?.kind === 'column' ? m.toolbar.dragHideHint(layoutDrag.label) : null}
       editColumnsButtonRef={editColumnsButtonRef}
       onToggleColumnMenu={toggleColumnMenu}
+      onFitWidths={fitLayoutWidths}
+      onResetWidths={resetLayoutWidths}
       onReset={resetLayoutEdit}
       onSave={saveLayoutEdit}
       onCancel={cancelLayoutEdit}
@@ -461,7 +597,8 @@ export function ManagerPanel() {
             ) : (
               <>
             <div
-              className="gsm-layout-table-shell"
+              ref={tableShellRef}
+              className="gsm-layout-table-shell relative"
               style={{
                 opacity: phase === 'fading-out' || layoutFaded ? 0 : 1,
                 '--gsm-table-opacity-duration': `${phase === 'fading-out' ? 120 : BROWSE_LAYOUT_TABLE_OPACITY_MS}ms`,
@@ -480,7 +617,7 @@ export function ManagerPanel() {
                   'gsm-table-head-stuck': headerStuck,
                 },
               )}
-              style={{ gridTemplateColumns }}
+              style={{ gridTemplateColumns, minWidth: tableMinWidth }}
             >
               {visibleColumns.map((id, index) => {
                 const def = COLUMN_DEFS[id];
@@ -492,8 +629,9 @@ export function ManagerPanel() {
                     className={cn(
                       'gsm-hdr-cell group relative flex min-w-0 items-center gap-1 overflow-visible rounded-sm transition-[background-color,opacity,transform] duration-150',
                       {
-                        'justify-end text-right': def.align === 'end',
+                        'justify-end text-right': def.align === 'end' && !customColumnLayoutActive,
                         'justify-center': def.align === 'center',
+                        'gsm-active-resize-col': layoutResize?.id === id,
                         'opacity-[0.35]': layoutDrag?.kind === 'column' && layoutDrag.id === id,
                         'gsm-drag-hide-intent': layoutDrag?.kind === 'column' && layoutDrag.id === id && layoutDrag.hideIntent,
                         'gsm-flash-col': flashedColumn === id,
@@ -519,7 +657,24 @@ export function ManagerPanel() {
                     ) : id === 'notes' ? (
                       <StickyNote className="size-3" aria-label={label} />
                     ) : (
-                      <span className="truncate">{label}</span>
+                      <span data-header-label={id} className="truncate">{label}</span>
+                    )}
+                    {editingLayout && !def.locked && (
+                      <button
+                        type="button"
+                        onPointerDown={(e) => beginColumnResize(e, id)}
+                        onDoubleClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          autoFitColumnWidth(id);
+                        }}
+                        title={m.toolbar.resizeColumnTitle(label)}
+                        aria-label={m.toolbar.resizeColumnTitle(label)}
+                        className="gsm-resize-handle"
+                        style={{ '--d': `${index * 28}ms` } as CSSProperties & Record<'--d', string>}
+                      >
+                        <span className="sr-only">{m.toolbar.resizeColumnTitle(label)}</span>
+                      </button>
                     )}
                   </span>
                 );
@@ -528,13 +683,15 @@ export function ManagerPanel() {
                 <span className="gsm-insert-caret" style={{ left: trayCaretX }} />
               )}
             </div>
+            <LayoutResizeFeedbackOverlay overlay={layoutResizeOverlay} resize={layoutResize} />
+            <LayoutOverflowIndicator overflowPx={editingLayout ? layoutViewport?.overflowPx ?? 0 : 0} />
             {rows.length === 0 ? (
               <div className="p-10 text-center text-sm text-muted-foreground">
                 {loading ? m.common.loading : m.manager.emptyState}
               </div>
             ) : (
               <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
-                {rowVirtualizer.getVirtualItems().map((vi) => {
+                {virtualItems.map((vi) => {
                   const star = rows[vi.index];
                   const tag = tagsByFullName.get(star.full_name);
                   const { favorite, busy: favoriteBusy } = resolveFavoriteState(
@@ -559,8 +716,10 @@ export function ManagerPanel() {
                         onSelect={handleSelect}
                         columns={visibleColumns}
                         gridTemplateColumns={gridTemplateColumns}
+                        minWidth={tableMinWidth}
                         flashedColumn={flashedColumn}
                         interactionLocked={interactionLocked}
+                        starColumnAlignStart={customColumnLayoutActive}
                       />
                     </div>
                   );
@@ -628,6 +787,63 @@ function emptyFilter() {
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
   };
+}
+
+export function LayoutResizeFeedbackOverlay({
+  overlay,
+  resize,
+}: {
+  overlay: LayoutResizeOverlayState | null;
+  resize: {
+    defaultWidth: number;
+    liveWidth: number;
+    delta: number;
+    atDefaultWidth: boolean;
+    snappedToDefault: boolean;
+    atMinWidth: boolean;
+  } | null;
+}) {
+  const { m } = useI18n();
+  if (!overlay || !resize) return null;
+
+  return (
+    <div className="pointer-events-none absolute inset-0 gsm-z-overlay" data-layout-resize-overlay>
+      <span className="gsm-col-hilite" style={{ top: overlay.top, left: overlay.left, width: overlay.width, height: overlay.height }} />
+      <span className="gsm-stable-rail" style={{ top: overlay.top, left: overlay.left, height: overlay.height }} />
+      <span className="gsm-guide-v gsm-guide-v-ref" style={{ top: overlay.top, left: overlay.defaultRight, height: overlay.height }}>
+        <span className="gsm-guide-tag">{m.toolbar.resizeDefaultGuide(Math.round(resize.defaultWidth))}</span>
+      </span>
+      <span className="gsm-guide-v" style={{ top: overlay.top, left: overlay.right, height: overlay.height }} />
+      <span
+        className={cn('gsm-px-badge', {
+          snap: resize.snappedToDefault || resize.atDefaultWidth,
+          limit: resize.atMinWidth,
+        })}
+        style={{ left: overlay.right, top: overlay.top - 26 }}
+      >
+        {Math.round(resize.liveWidth)}px
+        {(resize.atDefaultWidth || resize.atMinWidth) && (
+          <span className="u"> · {resize.atDefaultWidth ? m.toolbar.resizeBadgeDefault : m.toolbar.resizeBadgeMin}</span>
+        )}
+      </span>
+      <span className="gsm-delta-badge" style={{ left: overlay.right, top: overlay.top + overlay.height - 8 }}>
+        {resize.delta >= 0 ? '+' : ''}{Math.round(resize.delta)}px
+        <span className="u"> · {m.toolbar.resizeDeltaCurrentOnly}</span>
+      </span>
+    </div>
+  );
+}
+
+export function LayoutOverflowIndicator({ overflowPx }: { overflowPx: number }) {
+  const { m } = useI18n();
+  if (overflowPx <= 0) return null;
+
+  return (
+    <>
+      <span className="gsm-ov-edge" data-layout-overflow-edge aria-hidden="true" />
+      <span className="gsm-ov-chip" data-layout-overflow-chip>{m.toolbar.resizeOverflowChip(Math.round(overflowPx))}</span>
+    </>
+  );
 }
 
 function OnboardingCard({
