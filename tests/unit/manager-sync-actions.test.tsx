@@ -231,6 +231,28 @@ describe('useManagerSyncActions', () => {
     expect(hook.current.successAction).toBeNull();
   });
 
+  it('runs auto tags through the shared manager action lifecycle', async () => {
+    const refreshStars = vi.fn();
+    sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'getStatus') return ok(baseStatus({ onboardingStage: 'done' }));
+      if (message.type === 'autoAssignTags') return ok();
+      throw new Error(`Unexpected message: ${message.type}`);
+    });
+
+    const hook = mountHook(refreshStars);
+    await waitFor(() => expect(hook.current.statusLoaded).toBe(true));
+
+    await act(async () => {
+      await hook.current.autoAssignTags();
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'autoAssignTags' });
+    expect(refreshStars).toHaveBeenCalledTimes(1);
+    expect(hook.current.successAction).toBe('autoAssignTags');
+    expect(hook.current.pendingAction).toBeNull();
+    expect(hook.current.busy).toBe(false);
+  });
+
   it('uses catalog copy when a backfill action fails', async () => {
     const status = baseStatus({
       hasToken: false,
