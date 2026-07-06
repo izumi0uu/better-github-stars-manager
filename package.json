@@ -26,7 +26,7 @@
     "test:tag-draft": "vitest run tests/unit/tag-draft.test.mjs",
     "test:integration": "vitest run tests/integration/integration.test.ts",
     "test:shape": "vitest run tests/unit/shape.test.ts",
-    "test:regressions": "vitest run tests/regressions/auth tests/regressions/query tests/regressions/storage tests/regressions/sync",
+    "test:regressions": "vitest run tests/regressions/auth tests/regressions/fuzz tests/regressions/query tests/regressions/storage tests/regressions/sync",
     "test:runtime": "node tests/runtime/puppeteer-runtime.test.mjs",
     "test:smoke": "node tests/runtime/extension-browser-smoke.mjs",
     "test:smoke:headless-basic": "node tests/runtime/smoke.test.mjs",

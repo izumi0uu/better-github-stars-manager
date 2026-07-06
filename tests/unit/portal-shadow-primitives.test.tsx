@@ -2,23 +2,116 @@
  * @vitest-environment jsdom
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { act, type RefObject } from 'react';
+import React, { act, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, it, vi } from 'vitest';
 import { PortalProvider, usePortalContainer } from '@/ui/shadcn/portal-context';
+import { PopoverContent } from '@/ui/shadcn/popover';
+import { SelectContent, SelectItem } from '@/ui/shadcn/select';
+import { TooltipContent } from '@/ui/shadcn/tooltip';
+import {
+  COLUMN_MENU_EDGE_GUARD_PX,
+  COLUMN_MENU_TRIGGER_GAP_PX,
+  COLUMN_MENU_WIDTH_PX,
+} from '@/ui/layout-edit-constants';
 import {
   bindLayoutColumnMenuDismissal,
   isInsideLayoutColumnMenuPath,
+  useLayoutColumnMenuPosition,
 } from '@/ui/hooks/use-layout-column-menu';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+function portal(node: React.ReactNode, container?: HTMLElement) {
+  const wrapped = <div data-portal-owner={container?.id ?? 'fallback'}>{node}</div>;
+  return container ? createPortal(wrapped, container) : wrapped;
+}
+
+vi.mock('@radix-ui/react-popover', async () => {
+  const React = await import('react');
+  return {
+    Root: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Trigger: ({ children }: { children: React.ReactNode }) => <button type="button">{children}</button>,
+    Portal: ({ container, children }: { container?: HTMLElement; children: React.ReactNode }) => portal(children, container),
+    Content: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement> & { sideOffset?: number }>((props, ref) => {
+      const { sideOffset: _sideOffset, ...rest } = props;
+      return <div ref={ref} data-primitive="popover" {...rest} />;
+    }),
+  };
+});
+
+vi.mock('@radix-ui/react-tooltip', async () => {
+  const React = await import('react');
+  return {
+    Provider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Root: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Trigger: ({ children }: { children: React.ReactNode }) => <button type="button">{children}</button>,
+    Portal: ({ container, children }: { container?: HTMLElement; children: React.ReactNode }) => portal(children, container),
+    Content: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement> & { sideOffset?: number }>((props, ref) => {
+      const { sideOffset: _sideOffset, ...rest } = props;
+      return <div ref={ref} data-primitive="tooltip" {...rest} />;
+    }),
+  };
+});
+
+vi.mock('@radix-ui/react-select', async () => {
+  const React = await import('react');
+  const passthrough = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
+  return {
+    Root: passthrough,
+    Group: passthrough,
+    Value: passthrough,
+    Portal: ({ container, children }: { container?: HTMLElement; children: React.ReactNode }) => portal(children, container),
+    Trigger: React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement>>((props, ref) => (
+      <button ref={ref} type="button" {...props} />
+    )),
+    Content: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+      <div ref={ref} data-primitive="select" {...props} />
+    )),
+    Viewport: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+      <div ref={ref} {...props} />
+    )),
+    Item: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+      <div ref={ref} {...props} />
+    )),
+    ItemText: passthrough,
+    ItemIndicator: passthrough,
+    ScrollUpButton: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+      <div ref={ref} {...props} />
+    )),
+    ScrollDownButton: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+      <div ref={ref} {...props} />
+    )),
+    Label: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+      <div ref={ref} {...props} />
+    )),
+    Separator: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
+      <div ref={ref} {...props} />
+    )),
+  };
+});
 
 const roots: Root[] = [];
 
 function Probe({ label }: { label: string }) {
   const container = usePortalContainer();
   return <span data-label={label} data-owner={container?.id ?? 'none'} />;
+}
+
+function ColumnMenuPositionProbe({
+  open,
+  rootRef,
+  triggerRef,
+  onDismiss,
+}: {
+  open: boolean;
+  rootRef: RefObject<HTMLDivElement | null>;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  onDismiss: () => void;
+}) {
+  const position = useLayoutColumnMenuPosition({ open, rootRef, triggerRef, onDismiss });
+  return <span data-position={position ? `${position.left}:${position.top}` : 'none'} />;
 }
 
 function mount(node: React.ReactNode) {
@@ -109,28 +202,60 @@ describe('portal and shadow primitive invariants', () => {
   });
 
   it('keeps Radix primitives wired to the shared portal container with fallback behavior', () => {
-    const popover = readFileSync('src/ui/shadcn/popover.tsx', 'utf8');
-    const tooltip = readFileSync('src/ui/shadcn/tooltip.tsx', 'utf8');
-    const select = readFileSync('src/ui/shadcn/select.tsx', 'utf8');
+    const portalRoot = document.createElement('div');
+    portalRoot.id = 'panel-root';
+    document.body.appendChild(portalRoot);
 
-    assert.match(popover, /const container = usePortalContainer\(\);/);
-    assert.match(popover, /<PopoverPrimitive\.Portal container=\{container\}>\{content\}<\/PopoverPrimitive\.Portal>/);
-    assert.match(popover, /<PopoverPrimitive\.Portal>\{content\}<\/PopoverPrimitive\.Portal>/);
-    assert.match(tooltip, /const container = usePortalContainer\(\);/);
-    assert.match(tooltip, /<TooltipPrimitive\.Portal container=\{container\}>\{content\}<\/TooltipPrimitive\.Portal>/);
-    assert.match(tooltip, /<TooltipPrimitive\.Portal>\{content\}<\/TooltipPrimitive\.Portal>/);
-    assert.match(select, /const container = usePortalContainer\(\);/);
-    assert.match(select, /<SelectPrimitive\.Portal container=\{container\}>/);
+    mount(
+      <>
+        <PopoverContent data-testid="popover" />
+        <PortalProvider containerRef={{ current: portalRoot }}>
+          <TooltipContent data-testid="tooltip" />
+          <SelectContent data-testid="select">
+            <SelectItem value="one">One</SelectItem>
+          </SelectContent>
+        </PortalProvider>
+      </>,
+    );
+
+    assert.equal(document.body.querySelector('[data-testid="popover"]')?.closest('[data-portal-owner]')?.getAttribute('data-portal-owner'), 'fallback');
+    assert.equal(portalRoot.querySelector('[data-testid="tooltip"]')?.closest('[data-portal-owner]')?.getAttribute('data-portal-owner'), 'panel-root');
+    assert.equal(portalRoot.querySelector('[data-testid="select"]')?.closest('[data-portal-owner]')?.getAttribute('data-portal-owner'), 'panel-root');
   });
 
   it('positions layout column menu with panel-relative clamp and removes resize/scroll listeners', () => {
-    const source = readFileSync('src/ui/hooks/use-layout-column-menu.ts', 'utf8');
-    assert.match(source, /Math\.max\(\s*COLUMN_MENU_EDGE_GUARD_PX,/);
-    assert.match(source, /rootRect\.width - COLUMN_MENU_WIDTH_PX - COLUMN_MENU_EDGE_GUARD_PX/);
-    assert.match(source, /top: triggerRect\.bottom - rootRect\.top \+ COLUMN_MENU_TRIGGER_GAP_PX/);
-    assert.match(source, /window\.addEventListener\('resize', updatePosition\);/);
-    assert.match(source, /window\.addEventListener\('scroll', updatePosition, true\);/);
-    assert.match(source, /window\.removeEventListener\('resize', updatePosition\);/);
-    assert.match(source, /window\.removeEventListener\('scroll', updatePosition, true\);/);
+    const rootEl = document.createElement('div');
+    const triggerEl = document.createElement('button');
+    const rootRef: RefObject<HTMLDivElement | null> = { current: rootEl };
+    const triggerRef: RefObject<HTMLButtonElement | null> = { current: triggerEl };
+    const onDismiss = vi.fn();
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+
+    rootEl.getBoundingClientRect = () => ({ left: 100, top: 20, width: 260, height: 100, right: 360, bottom: 120, x: 100, y: 20, toJSON: () => {} });
+    triggerEl.getBoundingClientRect = () => ({ left: 340, top: 40, width: 20, height: 20, right: 360, bottom: 60, x: 340, y: 40, toJSON: () => {} });
+
+    const host = mount(
+      <ColumnMenuPositionProbe
+        open
+        rootRef={rootRef}
+        triggerRef={triggerRef}
+        onDismiss={onDismiss}
+      />,
+    );
+
+    assert.equal(
+      host.querySelector('[data-position]')?.getAttribute('data-position'),
+      `${260 - COLUMN_MENU_WIDTH_PX - COLUMN_MENU_EDGE_GUARD_PX}:${60 - 20 + COLUMN_MENU_TRIGGER_GAP_PX}`,
+    );
+    assert.equal(add.mock.calls.some(([type]) => type === 'resize'), true);
+    assert.equal(add.mock.calls.some(([type]) => type === 'scroll'), true);
+
+    act(() => {
+      for (const root of roots.splice(0)) root.unmount();
+    });
+
+    assert.equal(remove.mock.calls.some(([type]) => type === 'resize'), true);
+    assert.equal(remove.mock.calls.some(([type]) => type === 'scroll'), true);
   });
 });

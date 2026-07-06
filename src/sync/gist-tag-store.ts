@@ -118,8 +118,9 @@ export const gistTagStore = {
     dirtySnapshot?: DirtySnapshot,
   ): Promise<{ pushed: number; snapshot: number; recreated: boolean }> {
     const pushedNames = dirtySnapshot ? new Set(dirtySnapshot.names.map(({ name }) => name)) : new Set(dirtyNames);
-    const hasLocalChanges = pushedNames.size > 0 || dirtyMeta;
-    const pushed = pushedNames.size + (dirtyMeta ? 1 : 0);
+    const pushingMeta = dirtySnapshot ? dirtySnapshot.meta : dirtyMeta;
+    const hasLocalChanges = pushedNames.size > 0 || pushingMeta;
+    const pushed = pushedNames.size + (pushingMeta ? 1 : 0);
     const { id, recreated } = await ensureWritableGist();
     // Explicit Push still creates/binds a gist when none exists, even if the
     // local snapshot hasn't changed since the last sync. Only skip work when
@@ -137,7 +138,7 @@ export const gistTagStore = {
     });
     if (!res.ok) throw new Error(GIST_PUSH_FAILED);
     if (dirtySnapshot) clearDirty(dirtySnapshot);
-    else clearDirty(pushedNames, dirtyMeta);
+    else clearDirty(pushedNames, pushingMeta);
     await authStore.update({ gistSyncCursor: payload.exportedAt });
     onProgress?.(total, total);
     return { pushed, snapshot: total, recreated };

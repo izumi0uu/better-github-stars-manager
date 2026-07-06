@@ -200,7 +200,7 @@ export const idbTagStore: TagStore = {
 
   async syncPush(onProgress?: CountProgressCallback) {
     const dirtySnapshot = snapshotDirtyForPush();
-    return gistTagStore.push(new Set(dirtySnapshot.names.map(({ name }) => name)), dirtySnapshot.meta, onProgress, dirtySnapshot);
+    return gistTagStore.push(new Set(), false, onProgress, dirtySnapshot);
   },
 
   async syncPull(onProgress?: CountProgressCallback) {

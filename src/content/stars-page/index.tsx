@@ -1,7 +1,8 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { ManagerPanel } from '@/ui/ManagerPanel';
-import { I18nProvider, messageFor } from '@/i18n';
+import { I18nProvider } from '@/i18n';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
+import { applyFabLabel } from '@/content/stars-page/fab-label';
 import { mountState, pageOwner } from '@/content/stars-page/mount-state';
 import {
   isPanelEnabled,
@@ -166,10 +167,7 @@ function injectFab(): void {
 
   // No React here; localize after mount and let the CSS bubble wait for data-tip.
   void authStore.getLocale().then((locale) => {
-    const label = messageFor(locale).popup.title;
-    if (!document.getElementById('gsm-fab')) return; // gone already
-    btn.setAttribute('data-tip', label);
-    btn.setAttribute('aria-label', label);
+    applyFabLabel(btn, locale);
   });
 }
 

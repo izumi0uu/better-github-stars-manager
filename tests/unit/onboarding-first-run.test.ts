@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'vitest';
 import {
   isOnboardingCardStage,
@@ -7,7 +6,7 @@ import {
   resolveOnboardingStageAfterSync,
   shouldTrackOnboardingSync,
 } from '@/onboarding/state';
-import { mergeStatusSnapshot, type SyncStatus } from '@/utils/messaging';
+import { mergeStatusPatch, mergeStatusSnapshot, type SyncStatus } from '@/utils/messaging';
 import type { OnboardingStage } from '@/types';
 
 function status(patch: Partial<SyncStatus> = {}): SyncStatus {
@@ -76,13 +75,22 @@ describe('onboarding first-run invariants', () => {
     assert.equal(merged?.inFlight, true);
   });
 
-  it('keeps production ManagerPanel as the onboarding side-effect owner', () => {
-    const source = readFileSync('src/ui/ManagerPanel.tsx', 'utf8');
-    assert.match(source, /const refreshStatus = async \(\) => \{/);
-    assert.match(source, /setStatus\(\(current\) => mergeStatusSnapshot\(current, next\)\)/);
-    assert.match(source, /const setOnboardingStage = async \(stage: SyncStatus\['onboardingStage'\]\) => \{/);
-    assert.match(source, /await bgCall\('setOnboardingStage', \{ stage \}\)\.catch\(\(\) => \{\}\);/);
-    assert.match(source, /resolveOnboardingStageAfterSync\(hasToken, q\.grandTotal\)/);
-    assert.doesNotMatch(source, /useManagerSyncActions\(/);
+  it('turns onboarding stage patches into normalized terminal/runtime status', () => {
+    const syncing = status({
+      progress: { phase: 'full', done: 2, total: 10, message: 'Syncing' },
+      hasToken: true,
+      onboardingStage: 'syncing',
+      inFlight: true,
+    });
+
+    const failed = mergeStatusPatch(syncing, { onboardingStage: 'sync_failed', inFlight: false });
+    assert.equal(failed.onboardingStage, 'sync_failed');
+    assert.equal(failed.seenOnboarding, false);
+    assert.equal(failed.inFlight, false);
+    assert.deepEqual(failed.progress, syncing.progress);
+
+    const done = mergeStatusPatch(failed, { onboardingStage: 'done' });
+    assert.equal(done.onboardingStage, 'done');
+    assert.equal(done.seenOnboarding, true);
   });
 });
