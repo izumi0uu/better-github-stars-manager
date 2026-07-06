@@ -10,7 +10,7 @@ import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import { DEFAULT_COLUMN_LAYOUT } from '@/ui/column-layout';
 import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut } from '@/ui/interaction-lock';
 import type { FilterState } from '@/ui/filter-store';
-import type { Star, Tag } from '@/types';
+import { fakeStar, fakeTag } from './test-utils';
 
 function fakeFilterState(): FilterState {
   return {
@@ -37,33 +37,6 @@ function fakeFilterState(): FilterState {
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
-  };
-}
-
-function fakeStar(): Star {
-  return {
-    full_name: 'owner/repo',
-    html_url: 'https://github.com/owner/repo',
-    description: 'A repository',
-    language: 'TypeScript',
-    stargazers_count: 1200,
-    topics: ['react'],
-    archived: false,
-    fork: false,
-    created_at: '2024-01-01T00:00:00Z',
-    pushed_at: '2024-02-01T00:00:00Z',
-    starred_at: '2024-03-01T00:00:00Z',
-    tombstone: false,
-    synced_at: '2024-03-02T00:00:00Z',
-  };
-}
-
-function fakeTag(): Tag {
-  return {
-    full_name: 'owner/repo',
-    tags: ['ui'],
-    notes: 'draft',
-    mtime: '2024-03-02T00:00:00Z',
   };
 }
 

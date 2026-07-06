@@ -138,4 +138,31 @@ describe('preferences persistence', () => {
     assert.deepEqual(storedConfig.libraryView.filters.languages, ['Rust']);
     assert.deepEqual(storedConfig.libraryView.filters.tags, ['systems']);
   });
+
+  it('merges auto-tag policy updates with the latest stored config', async () => {
+    const { authStore, CONFIG_STORAGE_KEY } = await import('../src/auth/auth-store');
+
+    storageBacking[CONFIG_STORAGE_KEY] = {
+      locale: 'en',
+      autoTagLimit: 3,
+      maxTagsPerRepo: 3,
+      minTopicRepoCount: 3,
+    };
+
+    await authStore.getConfig();
+    storageBacking[CONFIG_STORAGE_KEY] = {
+      ...(storageBacking[CONFIG_STORAGE_KEY] as Config),
+      locale: 'zh-CN',
+      theme: 'light',
+    };
+
+    await authStore.updateAutoTagPolicy({ maxTagsPerRepo: 8 });
+
+    const storedConfig = storageBacking[CONFIG_STORAGE_KEY] as Config;
+    assert.equal(storedConfig.locale, 'zh-CN');
+    assert.equal(storedConfig.theme, 'light');
+    assert.equal(storedConfig.autoTagLimit, 8);
+    assert.equal(storedConfig.maxTagsPerRepo, 8);
+    assert.equal(storedConfig.minTopicRepoCount, 3);
+  });
 });

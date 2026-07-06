@@ -153,6 +153,7 @@ export interface MessageCatalog {
     tagsMatchHelp: string;
     tagsSortAscTitle: string;
     tagsSortDescTitle: string;
+    tagsSortDefaultTitle: string;
     deleteTagTitle: string;
     deleteTagConfirm: (name: string, count: number) => string;
     deleteTagDone: (count: number) => string;
@@ -539,6 +540,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tagsMatchHelp: "match any / all selected tags",
       tagsSortAscTitle: "Sort tags A to Z",
       tagsSortDescTitle: "Sort tags Z to A",
+      tagsSortDefaultTitle: "Restore original tag order",
       deleteTagTitle: "Delete tag everywhere",
       deleteTagConfirm: (name, count) =>
         count > 0
@@ -955,6 +957,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tagsMatchHelp: "匹配 任一 / 全部 所选标签",
       tagsSortAscTitle: "按标签自然升序排序",
       tagsSortDescTitle: "按标签自然降序排序",
+      tagsSortDefaultTitle: "恢复标签原始顺序",
       deleteTagTitle: "删除该标签（所有仓库）",
       deleteTagConfirm: (name, count) =>
         count > 0

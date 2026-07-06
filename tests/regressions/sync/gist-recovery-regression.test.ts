@@ -3,44 +3,7 @@ import assert from 'node:assert/strict';
 import { afterAll, afterEach, describe, it } from 'vitest';
 import { GIST_PUSH_FAILED } from '../../../src/api/errors';
 import type { GistPayload } from '../../../src/types';
-
-function response(status: number, body?: unknown): Response {
-  return new Response(body === undefined ? null : JSON.stringify(body), { status });
-}
-
-function createChromeMock() {
-  const state: Record<string, unknown> = {};
-  const listeners = new Set<
-    (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void
-  >();
-  return {
-    api: {
-      storage: {
-        local: {
-          async get(key: string) {
-            return { [key]: state[key] };
-          },
-          async set(next: Record<string, unknown>) {
-            const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
-            for (const [key, value] of Object.entries(next)) {
-              changes[key] = { oldValue: state[key], newValue: value };
-              state[key] = value;
-            }
-            for (const listener of listeners) listener(changes, 'local');
-          },
-        },
-        onChanged: {
-          addListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.add(listener);
-          },
-          removeListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.delete(listener);
-          },
-        },
-      },
-    },
-  };
-}
+import { createChromeMock, response } from '../../helpers/chrome-mock';
 
 const chromeMock = createChromeMock();
 (globalThis as { chrome?: unknown }).chrome = chromeMock.api;
@@ -111,6 +74,7 @@ describe('Gist recovery regressions', () => {
       mtime: '2026-06-24T12:00:00.000Z',
     });
     const calls: string[] = [];
+    let gistCreateCount = 0;
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
@@ -123,8 +87,8 @@ describe('Gist recovery regressions', () => {
         return response(200, []);
       }
       if (url.endsWith('/gists') && method === 'POST') {
-        if (calls.length === 3) return response(201, { id: 'probe-gist' });
-        return response(201, { id: 'fresh-gist' });
+        gistCreateCount++;
+        return response(201, { id: gistCreateCount === 1 ? 'probe-gist' : 'fresh-gist' });
       }
       if (url.endsWith('/gists/probe-gist') && method === 'DELETE') {
         return response(204);
@@ -216,6 +180,7 @@ describe('Gist recovery regressions', () => {
       mtime: '2026-06-24T12:00:00.000Z',
     });
     const calls: string[] = [];
+    let gistCreateCount = 0;
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
@@ -228,8 +193,8 @@ describe('Gist recovery regressions', () => {
         return response(200, []);
       }
       if (url.endsWith('/gists') && method === 'POST') {
-        if (calls.length === 3) return response(201, { id: 'probe-gist' });
-        return response(201, { id: 'fresh-gist' });
+        gistCreateCount++;
+        return response(201, { id: gistCreateCount === 1 ? 'probe-gist' : 'fresh-gist' });
       }
       if (url.endsWith('/gists/probe-gist') && method === 'DELETE') {
         return response(204);

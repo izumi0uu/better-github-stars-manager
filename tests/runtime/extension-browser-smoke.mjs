@@ -328,7 +328,12 @@ async function withTimeout(task, timeoutMs, describeFailure) {
       task(),
       new Promise((_, reject) => {
         timeout = setTimeout(async () => {
-          const detail = await describeFailure();
+          let detail;
+          try {
+            detail = await describeFailure();
+          } catch (err) {
+            detail = `timed out after ${timeoutMs}ms (diagnostic capture failed: ${err instanceof Error ? err.message : String(err)})`;
+          }
           reject(new Error(detail));
         }, timeoutMs);
       }),

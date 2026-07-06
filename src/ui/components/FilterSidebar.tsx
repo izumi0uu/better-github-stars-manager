@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, Search, Trash2, X, Check } from 'lucide-react';
+import { ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, ListRestart, Search, Trash2, X, Check } from 'lucide-react';
 import type { FilterState } from '@/ui/filter-store';
 import { Checkbox } from '@/ui/shadcn/checkbox';
 import { Input } from '@/ui/shadcn/input';
@@ -242,7 +242,13 @@ function TagsSection({
   const q = deferredQuery.trim().toLowerCase();
   const list = q ? sortedTags.filter(({ name }) => name.toLowerCase().includes(q)) : sortedTags;
   const visible = q || showAll ? list : list.slice(0, TAG_PREVIEW);
-  const nextSortTitle = sortDir === 'asc' ? m.filterSidebar.tagsSortDescTitle : m.filterSidebar.tagsSortAscTitle;
+  const nextSortDir = sortDir === 'default' ? 'asc' : sortDir === 'asc' ? 'desc' : 'default';
+  const nextSortTitle =
+    nextSortDir === 'asc'
+      ? m.filterSidebar.tagsSortAscTitle
+      : nextSortDir === 'desc'
+        ? m.filterSidebar.tagsSortDescTitle
+        : m.filterSidebar.tagsSortDefaultTitle;
 
   // Whole Tags section is collapsible (like the Languages section above): click
   // the header to fold the list away. Defaults open. Search keeps working while
@@ -267,14 +273,18 @@ function TagsSection({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setSortDir((current) => (current === 'asc' ? 'desc' : 'asc'));
+                  setSortDir((current) => (current === 'default' ? 'asc' : current === 'asc' ? 'desc' : 'default'));
                 }}
                 className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors duration-150 hover:bg-muted/50 hover:text-foreground"
                 title={nextSortTitle}
                 aria-label={nextSortTitle}
                 aria-pressed={sortDir !== 'default'}
               >
-                {sortDir === 'asc' ? <ArrowDownAZ className="size-3.5" /> : <ArrowUpAZ className="size-3.5" />}
+                {sortDir === 'default'
+                  ? <ListRestart className="size-3.5" />
+                  : sortDir === 'asc'
+                    ? <ArrowDownAZ className="size-3.5" />
+                    : <ArrowUpAZ className="size-3.5" />}
               </button>
             </TooltipTrigger>
             <TooltipContent>{nextSortTitle}</TooltipContent>

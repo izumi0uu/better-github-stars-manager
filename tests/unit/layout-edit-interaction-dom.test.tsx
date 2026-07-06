@@ -20,38 +20,11 @@ import {
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { DEFAULT_COLUMN_LAYOUT } from '@/ui/column-layout';
 import { getMessages } from '@/i18n';
-import type { Star, Tag } from '@/types';
+import { fakeStar, fakeTag } from './test-utils';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mountedRoots: Root[] = [];
-
-function fakeStar(): Star {
-  return {
-    full_name: 'owner/repo',
-    html_url: 'https://github.com/owner/repo',
-    description: 'A repository',
-    language: 'TypeScript',
-    stargazers_count: 1200,
-    topics: ['react'],
-    archived: false,
-    fork: false,
-    created_at: '2024-01-01T00:00:00Z',
-    pushed_at: '2024-02-01T00:00:00Z',
-    starred_at: '2024-03-01T00:00:00Z',
-    tombstone: false,
-    synced_at: '2024-03-02T00:00:00Z',
-  };
-}
-
-function fakeTag(): Tag {
-  return {
-    full_name: 'owner/repo',
-    tags: ['ui'],
-    notes: 'draft',
-    mtime: '2024-03-02T00:00:00Z',
-  };
-}
 
 function mount(element: React.ReactElement): { container: HTMLDivElement; root: Root } {
   const container = document.createElement('div');

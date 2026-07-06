@@ -1,18 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'vitest';
-
-const source = readFileSync(new URL('../../src/background/index.ts', import.meta.url), 'utf8');
-
-function caseBlock(name: string, nextName?: string): string {
-  const start = source.indexOf(`case '${name}': {`);
-  const end = nextName
-    ? source.indexOf(`case '${nextName}':`, start + 1)
-    : source.indexOf('  } catch', start + 1);
-  assert.notEqual(start, -1, `${name} case block should exist`);
-  assert.notEqual(end, -1, `${nextName ?? 'catch'} boundary should exist after ${name}`);
-  return source.slice(start, end);
-}
+import { caseBlock } from '../helpers/background-case-block';
 
 describe('background suggestion mutation contract', () => {
   it('deduplicates single-repo accepted suggestions and broadcasts after the write', () => {

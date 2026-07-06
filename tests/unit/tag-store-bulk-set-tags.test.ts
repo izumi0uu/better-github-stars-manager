@@ -104,10 +104,28 @@ describe('idbTagStore.setTagsBulk', () => {
     assert.equal(snapshotDirty().meta, true);
   });
 
+  it('preserves tag order semantics while dirtying reordered updates', async () => {
+    await db.tags.put({
+      full_name: 'a/react',
+      tags: ['react', 'ui'],
+      notes: 'keep notes',
+      favorite: true,
+      mtime: '2026-07-01T00:00:00Z',
+    });
+
+    const result = await idbTagStore.setTagsBulk([
+      { full_name: 'a/react', tags: ['ui', 'react'] },
+    ]);
+
+    assert.deepEqual(result, { updated: 1 });
+    assert.deepEqual((await db.tags.get('a/react'))?.tags, ['ui', 'react']);
+    assert.deepEqual(snapshotDirty().names.sort(), ['a/react']);
+  });
+
   it('does not leak data or dirty state when the transaction aborts', async () => {
     await idbTagStore.setNotes('z/preexisting', 'already dirty');
     const dirtyBefore = snapshotDirty();
-    const put = vi.spyOn(db.tags, 'put').mockRejectedValueOnce(new Error('abort bulk set'));
+    const bulkPut = vi.spyOn(db.tags, 'bulkPut').mockRejectedValueOnce(new Error('abort bulk set'));
 
     await assert.rejects(
       () =>
@@ -117,7 +135,7 @@ describe('idbTagStore.setTagsBulk', () => {
         ]),
       /abort bulk set/,
     );
-    put.mockRestore();
+    bulkPut.mockRestore();
 
     assert.deepEqual((await db.tags.get('a/react'))?.tags, ['react']);
     assert.deepEqual((await db.tags.get('b/infra'))?.tags, ['infra']);

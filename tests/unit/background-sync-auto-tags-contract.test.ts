@@ -1,22 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'vitest';
-
-const source = readFileSync(new URL('../../src/background/index.ts', import.meta.url), 'utf8');
-
-function caseBlock(name: string, nextName: string): string {
-  const start = source.indexOf(`case '${name}': {`);
-  const end = source.indexOf(`case '${nextName}':`, start + 1);
-  assert.notEqual(start, -1, `${name} case block should exist`);
-  assert.notEqual(end, -1, `${nextName} case block should exist after ${name}`);
-  return source.slice(start, end);
-}
+import { backgroundSource, caseBlock } from '../helpers/background-case-block';
 
 describe('background sync auto-tag contract', () => {
   it('does not keep the old sync auto-tag helper wired into background actions', () => {
-    assert.doesNotMatch(source, /sync-flow/);
-    assert.doesNotMatch(source, /runSyncActionWithAutoTag/);
-    assert.doesNotMatch(source, /autoTagPhaseForSync/);
+    assert.doesNotMatch(backgroundSource, /sync-flow/);
+    assert.doesNotMatch(backgroundSource, /runSyncActionWithAutoTag/);
+    assert.doesNotMatch(backgroundSource, /autoTagPhaseForSync/);
   });
 
   it('runs incremental sync without auto-tagging and keeps tagged zero for compatibility', () => {
@@ -30,9 +20,9 @@ describe('background sync auto-tag contract', () => {
   });
 
   it('runs full sync and backfill without auto-tagging or nested full-sync runners', () => {
-    assert.match(source, /const result = await githubStarSource\.syncFull\(\(p\) => setProgress\(p\)\);/);
-    assert.match(source, /async function performFullSync\(\) {\n  return run\(performFullSyncJob\);\n}/);
-    assert.match(source, /setIdleMessage\(m\.background\.fullDone\(result\.added\)\)/);
+    assert.match(backgroundSource, /const result = await githubStarSource\.syncFull\(\(p\) => setProgress\(p\)\);/);
+    assert.match(backgroundSource, /async function performFullSync\(\) {\n  return run\(performFullSyncJob\);\n}/);
+    assert.match(backgroundSource, /setIdleMessage\(m\.background\.fullDone\(result\.added\)\)/);
 
     const fullBlock = caseBlock('syncFull', 'syncRescan');
     assert.match(fullBlock, /performFullSync\(\)/);

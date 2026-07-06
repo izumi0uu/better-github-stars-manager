@@ -92,6 +92,7 @@ export const idbTagStore: TagStore = {
     const ts = now();
 
     await db.transaction('rw', db.tags, db.tagMeta, async () => {
+      const tagRecords: Tag[] = [];
       for (const update of updates) {
         const existing = (await db.tags.get(update.full_name)) ?? emptyTag(update.full_name);
         const existingTags = existing.tags ?? [];
@@ -99,7 +100,7 @@ export const idbTagStore: TagStore = {
           continue;
         }
 
-        await db.tags.put({
+        tagRecords.push({
           ...existing,
           favorite: existing.favorite ?? false,
           tags: update.tags,
@@ -116,6 +117,7 @@ export const idbTagStore: TagStore = {
           }
         }
       }
+      if (tagRecords.length > 0) await db.tags.bulkPut(tagRecords);
     });
 
     for (const fullName of touchedNames) markDirty(fullName);

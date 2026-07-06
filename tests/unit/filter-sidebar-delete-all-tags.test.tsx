@@ -110,6 +110,7 @@ describe('FilterSidebar delete-all-tags control', () => {
     expect(buttons.indexOf(sortButton!)).toBeLessThan(buttons.indexOf(deleteAll!));
     expect(sortButton!.getAttribute('aria-label')).toBe('Sort tags A to Z');
     expect(sortButton!.getAttribute('aria-pressed')).toBe('false');
+    expect(sortButton!.querySelector('svg')?.classList.contains('lucide-list-restart')).toBe(true);
 
     expect(getTagNames(container)).toEqual(tags.map(({ name }) => name));
 
@@ -123,6 +124,7 @@ describe('FilterSidebar delete-all-tags control', () => {
     expect(sortButton!.title).toBe('Sort tags Z to A');
     expect(sortButton!.getAttribute('aria-label')).toBe('Sort tags Z to A');
     expect(sortButton!.getAttribute('aria-pressed')).toBe('true');
+    expect(sortButton!.querySelector('svg')?.classList.contains('lucide-arrow-down-a-z')).toBe(true);
 
     const searchInput = container.querySelector('input[placeholder="Search tags…"]') as HTMLInputElement | null;
     expect(searchInput).toBeTruthy();
@@ -131,12 +133,21 @@ describe('FilterSidebar delete-all-tags control', () => {
 
     await click(sortButton!);
     expect(getTagNames(container)).toEqual(['tag10', 'tag2']);
+    expect(sortButton!.title).toBe('Restore original tag order');
+    expect(sortButton!.getAttribute('aria-label')).toBe('Restore original tag order');
+    expect(sortButton!.getAttribute('aria-pressed')).toBe('true');
+    expect(sortButton!.querySelector('svg')?.classList.contains('lucide-arrow-up-a-z')).toBe(true);
+
+    await click(sortButton!);
+    expect(getTagNames(container)).toEqual(tags.filter(({ name }) => name.includes('tag')).map(({ name }) => name));
     expect(sortButton!.title).toBe('Sort tags A to Z');
     expect(sortButton!.getAttribute('aria-label')).toBe('Sort tags A to Z');
-    expect(sortButton!.getAttribute('aria-pressed')).toBe('true');
+    expect(sortButton!.getAttribute('aria-pressed')).toBe('false');
+    expect(sortButton!.querySelector('svg')?.classList.contains('lucide-list-restart')).toBe(true);
 
+    await click(sortButton!);
     await setInputValue(searchInput!, '');
-    expect(getTagNames(container)).toEqual(getNaturalTagOrder(tags, 'desc'));
+    expect(getTagNames(container)).toEqual(getNaturalTagOrder(tags, 'asc'));
   });
 
   it('keeps Any and All tag mode actions stable after sorting', async () => {

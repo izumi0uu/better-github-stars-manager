@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { TooltipProvider } from '@/ui/shadcn/tooltip';
+import type { Star, Tag } from '@/types';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -52,4 +53,33 @@ export async function setInputValue(input: HTMLInputElement, value: string) {
     input.dispatchEvent(new Event('change', { bubbles: true }));
     await Promise.resolve();
   });
+}
+
+export function fakeStar(overrides: Partial<Star> = {}): Star {
+  return {
+    full_name: 'owner/repo',
+    html_url: 'https://github.com/owner/repo',
+    description: 'A repository',
+    language: 'TypeScript',
+    stargazers_count: 1200,
+    topics: ['react'],
+    archived: false,
+    fork: false,
+    created_at: '2024-01-01T00:00:00Z',
+    pushed_at: '2024-02-01T00:00:00Z',
+    starred_at: '2024-03-01T00:00:00Z',
+    tombstone: false,
+    synced_at: '2024-03-02T00:00:00Z',
+    ...overrides,
+  };
+}
+
+export function fakeTag(overrides: Partial<Tag> = {}): Tag {
+  return {
+    full_name: 'owner/repo',
+    tags: ['ui'],
+    notes: 'draft',
+    mtime: '2024-03-02T00:00:00Z',
+    ...overrides,
+  };
 }

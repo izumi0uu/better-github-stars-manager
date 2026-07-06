@@ -234,6 +234,22 @@ describe('library view preference persistence', () => {
     );
   });
 
+  it('ignores malformed #gsm-tag values without discarding persisted preferences', async () => {
+    window.history.replaceState(null, '', '/stars#gsm-tag=%E0%A4%A');
+    authMocks.getConfig.mockResolvedValue(baseConfig());
+    mountReact(<Harness />, mountedRoots);
+    await flush();
+
+    const message = vi.mocked(chrome.runtime.sendMessage).mock.calls[0][0] as unknown as {
+      params: { filter: { tags: string[]; languages: string[]; sortKey: string } };
+    };
+    expect(message.params.filter.tags).toEqual(['react']);
+    expect(message.params.filter.languages).toEqual(['TypeScript']);
+    expect(message.params.filter.sortKey).toBe('created_at');
+    expect(authMocks.updateLibraryViewPrefs).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe('');
+  });
+
   it('applies external storage changes without writing them back', async () => {
     authMocks.getConfig.mockResolvedValue(baseConfig());
     mountReact(<Harness />, mountedRoots);
