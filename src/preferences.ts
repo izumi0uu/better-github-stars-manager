@@ -35,18 +35,23 @@ export const DEFAULT_LIBRARY_VIEW_PREFS: LibraryViewPrefs = {
   },
 };
 
-export function normalizeAutoTagLimit(value: unknown): number {
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string'
-        ? Number.parseInt(value, 10)
-        : Number.NaN;
-  if (!Number.isFinite(parsed)) return DEFAULT_AUTO_TAG_LIMIT;
+function normalizeIntegerPreference(value: unknown, fallback: number): number {
+  let parsed = Number.NaN;
+  if (typeof value === 'number') {
+    parsed = value;
+  } else if (typeof value === 'string') {
+    parsed = Number.parseInt(value, 10);
+  }
+
+  if (!Number.isFinite(parsed)) return fallback;
   return Math.min(
     MAX_AUTO_TAG_LIMIT,
     Math.max(MIN_AUTO_TAG_LIMIT, Math.trunc(parsed)),
   );
+}
+
+export function normalizeAutoTagLimit(value: unknown): number {
+  return normalizeIntegerPreference(value, DEFAULT_AUTO_TAG_LIMIT);
 }
 
 export function normalizeMaxTagsPerRepo(value: unknown, legacyValue?: unknown): number {
@@ -60,7 +65,7 @@ export function normalizeMinTopicRepoCount(value: unknown): number {
   if (value === undefined || value === null || value === '') {
     return DEFAULT_MIN_TOPIC_REPO_COUNT;
   }
-  return normalizeAutoTagLimit(value);
+  return normalizeIntegerPreference(value, DEFAULT_MIN_TOPIC_REPO_COUNT);
 }
 
 function uniqueStrings(value: unknown): string[] {

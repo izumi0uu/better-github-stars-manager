@@ -1,79 +1,141 @@
 import assert from 'node:assert/strict';
+import { beforeEach, describe, it, vi } from 'vitest';
+import type { Config } from '../src/types';
 
 const storageBacking: Record<string, unknown> = {};
 
-(globalThis as any).chrome = {
-  storage: {
-    local: {
-      async get(keys: string | string[] | null) {
-        if (keys === null) return { ...storageBacking };
-        const selectedKeys = Array.isArray(keys) ? keys : [keys];
-        return Object.fromEntries(
-          selectedKeys
-            .filter((key) => Object.hasOwn(storageBacking, key))
-            .map((key) => [key, storageBacking[key]]),
-        );
+function installChromeMock() {
+  (globalThis as typeof globalThis & { chrome: typeof chrome }).chrome = ({
+    storage: {
+      local: {
+        async get(keys: string | string[] | null) {
+          if (keys === null) return { ...storageBacking };
+          const selectedKeys = Array.isArray(keys) ? keys : [keys];
+          return Object.fromEntries(
+            selectedKeys
+              .filter((key) => Object.hasOwn(storageBacking, key))
+              .map((key) => [key, storageBacking[key]]),
+          );
+        },
+        async set(items: Record<string, unknown>) {
+          Object.assign(storageBacking, items);
+        },
       },
-      async set(items: Record<string, unknown>) {
-        Object.assign(storageBacking, items);
+      onChanged: {
+        addListener: () => {},
+        removeListener: () => {},
       },
     },
-    onChanged: {
-      addListener: () => {},
-    },
-  },
-};
+  } as unknown) as typeof chrome;
+}
 
-const { authStore, CONFIG_STORAGE_KEY } = await import('../src/auth/auth-store');
-const { useFilterStore, libraryViewPrefsFromFilterState } = await import(
-  '../src/ui/filter-store'
-);
+describe('preferences persistence', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    for (const key of Object.keys(storageBacking)) delete storageBacking[key];
+    installChromeMock();
+  });
 
-storageBacking[CONFIG_STORAGE_KEY] = {
-  autoTagLimit: 7,
-  libraryView: {
-    version: 1,
-    filters: {
-      languages: ['TypeScript'],
-      tags: ['react'],
-      tagMode: 'all',
-      showTombstone: true,
-      onlyFavorite: true,
-      onlyUntagged: false,
-      onlyArchived: true,
-    },
-    sort: {
-      sortKey: 'created_at',
-      sortDir: 'asc',
-    },
-  },
-};
+  it('normalizes and persists legacy preference fields', async () => {
+    const { authStore, CONFIG_STORAGE_KEY } = await import('../src/auth/auth-store');
+    const { useFilterStore, libraryViewPrefsFromFilterState } = await import(
+      '../src/ui/filter-store'
+    );
 
-const legacyConfig = await authStore.getConfig();
-assert.equal(legacyConfig.maxTagsPerRepo, 7);
-assert.equal(legacyConfig.minTopicRepoCount, 3);
-assert.equal(legacyConfig.libraryView.filters.onlyArchived, true);
+    storageBacking[CONFIG_STORAGE_KEY] = {
+      autoTagLimit: 7,
+      libraryView: {
+        version: 1,
+        filters: {
+          languages: ['TypeScript'],
+          tags: ['react'],
+          tagMode: 'all',
+          showTombstone: true,
+          onlyFavorite: true,
+          onlyUntagged: false,
+          onlyArchived: true,
+        },
+        sort: {
+          sortKey: 'created_at',
+          sortDir: 'asc',
+        },
+      },
+    };
 
-useFilterStore.getState().applyLibraryViewPrefs(legacyConfig.libraryView, 'vue');
-const hydratedPrefs = libraryViewPrefsFromFilterState(useFilterStore.getState());
-assert.deepEqual(hydratedPrefs.filters.languages, ['TypeScript']);
-assert.deepEqual(hydratedPrefs.filters.tags, ['vue']);
-assert.equal(hydratedPrefs.filters.tagMode, 'all');
-assert.equal(hydratedPrefs.sort.sortKey, 'created_at');
-assert.equal(hydratedPrefs.sort.sortDir, 'asc');
+    const legacyConfig = await authStore.getConfig();
+    assert.equal(legacyConfig.maxTagsPerRepo, 7);
+    assert.equal(legacyConfig.minTopicRepoCount, 3);
+    assert.equal(legacyConfig.libraryView.filters.onlyArchived, true);
 
-await authStore.updateAutoTagPolicy({ maxTagsPerRepo: 4, minTopicRepoCount: 3 });
-await authStore.updateLibraryViewPrefs(hydratedPrefs);
+    useFilterStore.getState().applyLibraryViewPrefs(legacyConfig.libraryView, 'vue');
+    const hydratedPrefs = libraryViewPrefsFromFilterState(useFilterStore.getState());
+    assert.deepEqual(hydratedPrefs.filters.languages, ['TypeScript']);
+    assert.deepEqual(hydratedPrefs.filters.tags, ['vue']);
+    assert.equal(hydratedPrefs.filters.tagMode, 'all');
+    assert.equal(hydratedPrefs.sort.sortKey, 'created_at');
+    assert.equal(hydratedPrefs.sort.sortDir, 'asc');
 
-const storedConfig = storageBacking[CONFIG_STORAGE_KEY] as {
-  autoTagLimit: number;
-  maxTagsPerRepo: number;
-  minTopicRepoCount: number;
-  libraryView: unknown;
-};
-assert.equal(storedConfig.autoTagLimit, 4);
-assert.equal(storedConfig.maxTagsPerRepo, 4);
-assert.equal(storedConfig.minTopicRepoCount, 3);
-assert.deepEqual(storedConfig.libraryView, hydratedPrefs);
+    await authStore.updateAutoTagPolicy({ maxTagsPerRepo: 4, minTopicRepoCount: 3 });
+    await authStore.updateLibraryViewPrefs(hydratedPrefs);
 
-console.log('preferences persistence smoke passed');
+    const storedConfig = storageBacking[CONFIG_STORAGE_KEY] as Config;
+    assert.equal(storedConfig.autoTagLimit, 4);
+    assert.equal(storedConfig.maxTagsPerRepo, 4);
+    assert.equal(storedConfig.minTopicRepoCount, 3);
+    assert.deepEqual(storedConfig.libraryView, hydratedPrefs);
+  });
+
+  it('merges library view updates with the latest stored config', async () => {
+    const { authStore, CONFIG_STORAGE_KEY } = await import('../src/auth/auth-store');
+
+    storageBacking[CONFIG_STORAGE_KEY] = {
+      locale: 'en',
+      libraryView: {
+        version: 1,
+        filters: {
+          languages: ['TypeScript'],
+          tags: [],
+          tagMode: 'any',
+          showTombstone: false,
+          onlyFavorite: false,
+          onlyUntagged: false,
+          onlyArchived: false,
+        },
+        sort: {
+          sortKey: 'starred_at',
+          sortDir: 'desc',
+        },
+      },
+    };
+
+    await authStore.getConfig();
+    storageBacking[CONFIG_STORAGE_KEY] = {
+      ...(storageBacking[CONFIG_STORAGE_KEY] as Config),
+      locale: 'zh-CN',
+      theme: 'light',
+    };
+
+    await authStore.updateLibraryViewPrefs({
+      version: 1,
+      filters: {
+        languages: ['Rust'],
+        tags: ['systems'],
+        tagMode: 'all',
+        showTombstone: true,
+        onlyFavorite: true,
+        onlyUntagged: true,
+        onlyArchived: true,
+      },
+      sort: {
+        sortKey: 'name',
+        sortDir: 'asc',
+      },
+    });
+
+    const storedConfig = storageBacking[CONFIG_STORAGE_KEY] as Config;
+    assert.equal(storedConfig.locale, 'zh-CN');
+    assert.equal(storedConfig.theme, 'light');
+    assert.deepEqual(storedConfig.libraryView.filters.languages, ['Rust']);
+    assert.deepEqual(storedConfig.libraryView.filters.tags, ['systems']);
+  });
+});

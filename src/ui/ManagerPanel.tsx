@@ -11,7 +11,6 @@ import { StarsTable } from '@/ui/components/StarsTable';
 import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
 import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
-import { useLibraryViewPrefs } from '@/ui/hooks/use-library-view-prefs';
 import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
@@ -31,7 +30,6 @@ import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
 export { layoutViewportFromMeasurements };
 
 export function ManagerPanel() {
-  useLibraryViewPrefs();
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
   const f = useFilterStore();
   const {

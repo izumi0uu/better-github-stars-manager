@@ -101,7 +101,6 @@ export const useFilterStore = create<FilterState>((set) => ({
   applyLibraryViewPrefs: (prefs, tagOverride) => {
     const normalized = normalizeLibraryViewPrefs(prefs ?? DEFAULT_LIBRARY_VIEW_PREFS);
     set({
-      query: '',
       languages: normalized.filters.languages,
       tags: tagOverride ? [tagOverride] : normalized.filters.tags,
       tagMode: normalized.filters.tagMode,

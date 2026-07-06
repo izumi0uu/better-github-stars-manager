@@ -387,75 +387,23 @@ export function Options() {
       <section className="mt-6">
         <h2 className="text-base font-medium">{m.options.behaviorHeading}</h2>
         <div className="mt-3 grid gap-4 rounded-lg border border-border bg-muted/20 p-4">
-          <div className="grid gap-1.5">
-            <label
-              htmlFor="max-tags-per-repo"
-              className="text-sm font-medium text-foreground"
-            >
-              {m.options.maxTagsPerRepoLabel}
-            </label>
-            <p
-              id="max-tags-per-repo-hint"
-              className="gsm-body-note"
-            >
-              {m.options.maxTagsPerRepoHint}
-            </p>
-            <div className="flex items-center gap-3">
-              <Input
-                id="max-tags-per-repo"
-                type="number"
-                min={MIN_AUTO_TAG_LIMIT}
-                max={MAX_AUTO_TAG_LIMIT}
-                step={1}
-                value={maxTagsPerRepo}
-                aria-describedby="max-tags-per-repo-hint"
-                onChange={(e) => setMaxTagsPerRepo(e.currentTarget.value)}
-                onBlur={(e) => void saveMaxTagsPerRepo(e.currentTarget.value)}
-                className="w-24"
-              />
-              <span
-                className="text-xs text-muted-foreground"
-                aria-hidden="true"
-              >
-                {MIN_AUTO_TAG_LIMIT}–{MAX_AUTO_TAG_LIMIT}
-              </span>
-            </div>
-          </div>
+          <NumericPrefField
+            id="max-tags-per-repo"
+            label={m.options.maxTagsPerRepoLabel}
+            hint={m.options.maxTagsPerRepoHint}
+            value={maxTagsPerRepo}
+            onChange={setMaxTagsPerRepo}
+            onSave={saveMaxTagsPerRepo}
+          />
 
-          <div className="grid gap-1.5">
-            <label
-              htmlFor="min-topic-repo-count"
-              className="text-sm font-medium text-foreground"
-            >
-              {m.options.minTopicRepoCountLabel}
-            </label>
-            <p
-              id="min-topic-repo-count-hint"
-              className="gsm-body-note"
-            >
-              {m.options.minTopicRepoCountHint}
-            </p>
-            <div className="flex items-center gap-3">
-              <Input
-                id="min-topic-repo-count"
-                type="number"
-                min={MIN_AUTO_TAG_LIMIT}
-                max={MAX_AUTO_TAG_LIMIT}
-                step={1}
-                value={minTopicRepoCount}
-                aria-describedby="min-topic-repo-count-hint"
-                onChange={(e) => setMinTopicRepoCount(e.currentTarget.value)}
-                onBlur={(e) => void saveMinTopicRepoCount(e.currentTarget.value)}
-                className="w-24"
-              />
-              <span
-                className="text-xs text-muted-foreground"
-                aria-hidden="true"
-              >
-                {MIN_AUTO_TAG_LIMIT}–{MAX_AUTO_TAG_LIMIT}
-              </span>
-            </div>
-          </div>
+          <NumericPrefField
+            id="min-topic-repo-count"
+            label={m.options.minTopicRepoCountLabel}
+            hint={m.options.minTopicRepoCountHint}
+            value={minTopicRepoCount}
+            onChange={setMinTopicRepoCount}
+            onSave={saveMinTopicRepoCount}
+          />
 
           <div className="flex items-start gap-3">
             <Checkbox
@@ -498,6 +446,61 @@ export function Options() {
           {msg.text}
         </div>
       )}
+    </div>
+  );
+}
+
+function NumericPrefField({
+  id,
+  label,
+  hint,
+  value,
+  onChange,
+  onSave,
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (value: string) => void;
+  onSave: (value: string) => Promise<void>;
+}) {
+  const hintId = `${id}-hint`;
+
+  return (
+    <div className="grid gap-1.5">
+      <label
+        htmlFor={id}
+        className="text-sm font-medium text-foreground"
+      >
+        {label}
+      </label>
+      <p
+        id={hintId}
+        className="gsm-body-note"
+      >
+        {hint}
+      </p>
+      <div className="flex items-center gap-3">
+        <Input
+          id={id}
+          type="number"
+          min={MIN_AUTO_TAG_LIMIT}
+          max={MAX_AUTO_TAG_LIMIT}
+          step={1}
+          value={value}
+          aria-describedby={hintId}
+          onChange={(event) => onChange(event.currentTarget.value)}
+          onBlur={(event) => void onSave(event.currentTarget.value)}
+          className="w-24"
+        />
+        <span
+          className="text-xs text-muted-foreground"
+          aria-hidden="true"
+        >
+          {MIN_AUTO_TAG_LIMIT}–{MAX_AUTO_TAG_LIMIT}
+        </span>
+      </div>
     </div>
   );
 }

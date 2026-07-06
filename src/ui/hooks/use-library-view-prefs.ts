@@ -28,7 +28,7 @@ export function useLibraryViewPrefs() {
 
     authStore.getConfig()
       .then((config) => {
-        if (cancelled) return;
+        if (cancelled || hydratedRef.current) return;
         const tagOverride = readHashTagOverride();
         useFilterStore.getState().applyLibraryViewPrefs(config.libraryView, tagOverride);
         const nextPrefs = libraryViewPrefsFromFilterState(useFilterStore.getState());
@@ -37,7 +37,7 @@ export function useLibraryViewPrefs() {
         if (tagOverride) void authStore.updateLibraryViewPrefs(nextPrefs);
       })
       .catch(() => {
-        if (cancelled) return;
+        if (cancelled || hydratedRef.current) return;
         useFilterStore.getState().applyLibraryViewPrefs(DEFAULT_LIBRARY_VIEW_PREFS);
         lastPersistedKeyRef.current = libraryViewPrefsKey(
           libraryViewPrefsFromFilterState(useFilterStore.getState()),
@@ -73,6 +73,7 @@ export function useLibraryViewPrefs() {
       const change = changes[CONFIG_STORAGE_KEY];
       if (!change?.newValue) return;
       const nextConfig = change.newValue as { libraryView?: unknown };
+      if (!Object.prototype.hasOwnProperty.call(nextConfig, 'libraryView')) return;
       const nextPrefs = normalizeLibraryViewPrefs(nextConfig.libraryView);
       const nextKey = libraryViewPrefsKey(nextPrefs);
       if (nextKey === lastPersistedKeyRef.current) return;
