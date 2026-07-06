@@ -41,6 +41,5 @@ export function parseRepoFromPathname(pathname: string): { owner: string; repo: 
   if (!match) return null;
   const [, owner, repo] = match;
   if (EXCLUDED_TOP_LEVEL_PATHS.has(owner)) return null;
-  if (repo.includes('.')) return null;
   return { owner, repo };
 }

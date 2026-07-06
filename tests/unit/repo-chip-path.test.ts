@@ -5,6 +5,7 @@ describe('parseRepoFromPathname', () => {
   it('accepts repository paths', () => {
     expect(parseRepoFromPathname('/owner/repo')).toEqual({ owner: 'owner', repo: 'repo' });
     expect(parseRepoFromPathname('/owner/repo/issues')).toEqual({ owner: 'owner', repo: 'repo' });
+    expect(parseRepoFromPathname('/owner/owner.github.io')).toEqual({ owner: 'owner', repo: 'owner.github.io' });
   });
 
   it('rejects GitHub top-level non-repo paths', () => {
@@ -13,8 +14,7 @@ describe('parseRepoFromPathname', () => {
     expect(parseRepoFromPathname('/pulls/assigned')).toBeNull();
   });
 
-  it('rejects non-repo document-like paths', () => {
+  it('rejects non-repo document-like top-level paths', () => {
     expect(parseRepoFromPathname('/about.html')).toBeNull();
-    expect(parseRepoFromPathname('/owner/repo.name')).toBeNull();
   });
 });
