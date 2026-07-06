@@ -9,6 +9,7 @@ import { LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import {
   LayoutOverflowIndicator,
   LayoutResizeFeedbackOverlay,
+  StarsTable,
 } from '@/ui/components/StarsTable';
 import {
   LayoutResizeSurface,
@@ -79,6 +80,12 @@ function findButton(container: HTMLElement, label: string): HTMLButtonElement {
 
 function findExactButton(container: HTMLElement, label: string): HTMLButtonElement {
   const button = [...container.querySelectorAll('button')].find((item) => item.textContent?.trim() === label);
+  if (!button) throw new Error(`Expected ${label} button to render`);
+  return button;
+}
+
+function findButtonByAriaLabel(container: HTMLElement, label: string): HTMLButtonElement {
+  const button = [...container.querySelectorAll('button')].find((item) => item.getAttribute('aria-label') === label);
   if (!button) throw new Error(`Expected ${label} button to render`);
   return button;
 }
@@ -359,14 +366,90 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
   });
 
   it('keeps layout edit header controls accessible from keyboard', () => {
-    const source = readFileSync('src/ui/components/StarsTable.tsx', 'utf8');
+    const scrollRef = createRef<HTMLDivElement>();
+    const headerRef = createRef<HTMLDivElement>();
+    const onMoveColumnByKeyboard = vi.fn();
+    const onResizeColumnByKeyboard = vi.fn();
+    const onAutoFitColumnWidth = vi.fn();
+    const m = getMessages('en');
+    const { container } = mount(
+      <div ref={scrollRef}>
+        <StarsTable
+          rows={[]}
+          loading={false}
+          phase="idle"
+          tagsByFullName={new Map()}
+          selectedTags={[]}
+          selectedFullName={null}
+          visibleColumns={['repository', 'description', 'favorite', 'notes']}
+          gridTemplateColumns="180px 240px 28px 20px"
+          tableMinWidth={468}
+          interactionLocked={false}
+          layoutEdit={{
+            editing: true,
+            faded: false,
+            draggedColumnId: null,
+            draggedColumnHideIntent: false,
+            columnShifts: {},
+            flashedColumn: null,
+            trayCaretX: null,
+            onBeginColumnDrag: vi.fn(),
+            onMoveColumnByKeyboard,
+          }}
+          layoutResize={null}
+          scrollRef={scrollRef}
+          headerRef={headerRef}
+          onSelect={vi.fn()}
+          onToggleTag={vi.fn()}
+          onToggleFavorite={vi.fn(async () => {})}
+          onBeginColumnResize={vi.fn()}
+          onResizeColumnByKeyboard={onResizeColumnByKeyboard}
+          onAutoFitColumnWidth={onAutoFitColumnWidth}
+        />
+      </div>,
+    );
 
-    expect(source).toContain('aria-label={m.toolbar.dragColumnTitle(label)}');
-    expect(source).toContain('<span className="sr-only">{m.toolbar.dragColumnTitle(label)}</span>');
-    expect(source).toContain('onKeyDown={(e) => onDragHandleKeyDown(e, id)}');
-    expect(source).toContain('onKeyDown={(e) => onResizeHandleKeyDown(e, id)}');
-    expect(source).toContain('layoutEdit.onMoveColumnByKeyboard?.(id');
-    expect(source).toContain('onResizeColumnByKeyboard(id');
+    const dragRepository = findButtonByAriaLabel(
+      container,
+      m.toolbar.dragColumnTitle(m.toolbar.columnRepository),
+    );
+    const resizeRepository = findButtonByAriaLabel(
+      container,
+      m.toolbar.resizeColumnTitle(m.toolbar.columnRepository),
+    );
+
+    expect(dragRepository.textContent).toContain(m.toolbar.dragColumnTitle(m.toolbar.columnRepository));
+    expect(resizeRepository.textContent).toContain(m.toolbar.resizeColumnTitle(m.toolbar.columnRepository));
+    expect(container.querySelector(`[aria-label="${m.toolbar.dragColumnTitle(m.toolbar.columnFavorite)}"]`)).toBeNull();
+    expect(container.querySelector(`[aria-label="${m.toolbar.resizeColumnTitle(m.toolbar.columnNotes)}"]`)).toBeNull();
+
+    const dragRight = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+    const dragLeft = new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true });
+    const resizeRight = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+    const resizeLeftLarge = new KeyboardEvent('keydown', {
+      key: 'ArrowLeft',
+      bubbles: true,
+      cancelable: true,
+      shiftKey: true,
+    });
+    const autoFit = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+
+    act(() => {
+      dragRepository.dispatchEvent(dragRight);
+      dragRepository.dispatchEvent(dragLeft);
+      resizeRepository.dispatchEvent(resizeRight);
+      resizeRepository.dispatchEvent(resizeLeftLarge);
+      resizeRepository.dispatchEvent(autoFit);
+    });
+
+    expect(dragRight.defaultPrevented).toBe(true);
+    expect(resizeRight.defaultPrevented).toBe(true);
+    expect(autoFit.defaultPrevented).toBe(true);
+    expect(onMoveColumnByKeyboard).toHaveBeenNthCalledWith(1, 'repository', 1);
+    expect(onMoveColumnByKeyboard).toHaveBeenNthCalledWith(2, 'repository', -1);
+    expect(onResizeColumnByKeyboard).toHaveBeenNthCalledWith(1, 'repository', 1, false);
+    expect(onResizeColumnByKeyboard).toHaveBeenNthCalledWith(2, 'repository', -1, true);
+    expect(onAutoFitColumnWidth).toHaveBeenCalledWith('repository');
   });
 
 
