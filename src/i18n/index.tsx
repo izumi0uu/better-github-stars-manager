@@ -282,6 +282,8 @@ export interface MessageCatalog {
   };
   background: {
     noToken: string;
+    unknownBackfill: (id: string) => string;
+    unsupportedBackfillKind: (kind: string) => string;
     incrementalSyncing: string;
     incrementalDone: (added: number) => string;
     fullDone: (count: number) => string;
@@ -682,6 +684,8 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     background: {
       noToken: "No token configured",
+      unknownBackfill: (id) => `Unknown backfill: ${id}`,
+      unsupportedBackfillKind: (kind) => `Unsupported backfill kind: ${kind}`,
       incrementalSyncing: "Checking for newly starred repos…",
       incrementalDone: (added) => `+${added} new`,
       fullDone: (count) => `Full sync done · ${count} repos refreshed`,
@@ -1092,6 +1096,8 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     background: {
       noToken: "未配置 token",
+      unknownBackfill: (id) => `未知 backfill：${id}`,
+      unsupportedBackfillKind: (kind) => `不支持的 backfill 类型：${kind}`,
       incrementalSyncing: "正在检查新 star 的仓库…",
       incrementalDone: (added) => `新增 ${added} 个`,
       fullDone: (count) => `全量同步完成 · 刷新 ${count} 个仓库`,

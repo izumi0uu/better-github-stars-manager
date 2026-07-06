@@ -43,6 +43,39 @@ describe('Backfill config regressions', () => {
     assert.equal(getBackfillTask('missing'), null);
   });
 
+  it('normalizes malformed stored backfill states before mutation', async () => {
+    let current = makeConfig({
+      repo_data_sync_v1: {
+        status: 'bogus',
+        queuedAt: '2026-06-22T00:00:00Z',
+      } as never,
+    });
+    const store = createBackfillConfigStore({
+      async getConfig() {
+        return current;
+      },
+      async update(patch: Partial<Config>) {
+        current = { ...current, ...patch };
+      },
+    });
+
+    const next = await store.setBackfillState('repo_data_sync_v1', (state, now) => {
+      assert.equal(state?.status, 'pending');
+      assert.equal(state?.queuedAt, '2026-06-22T00:00:00Z');
+      assert.equal(state?.lastAttemptAt, null);
+      return {
+        status: 'failed',
+        queuedAt: state?.queuedAt ?? now,
+        lastAttemptAt: now,
+        completedAt: null,
+        error: 'manual retry failed after malformed storage',
+      };
+    });
+
+    assert.equal(next.status, 'failed');
+    assert.equal(current.backfills.repo_data_sync_v1?.error, 'manual retry failed after malformed storage');
+  });
+
   it('serializes queued mutations against a fresh config snapshot', async () => {
     let current = makeConfig({});
     const written: BackfillMap[] = [];
