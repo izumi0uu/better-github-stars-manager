@@ -146,12 +146,14 @@ describe('Background queue regressions', () => {
 
   it('records failed backfills and leaves the serialized queue usable', async () => {
     const jobQueue = createSerializedRunner();
-    const states: Array<{ status: BackfillState['status']; error: string | null }> = [];
+    const states: Array<{ status: BackfillState['status']; error: string | null; lastAttemptAt: string | null }> = [];
+    let currentState: BackfillState | undefined;
     const backfillExecutor = createBackfillExecutor({
       jobQueue,
       async setBackfillState(_id, mutate) {
-        const next = mutate(undefined, `t${states.length + 1}`);
-        states.push({ status: next.status, error: next.error });
+        const next = mutate(currentState, `t${states.length + 1}`);
+        currentState = next;
+        states.push({ status: next.status, error: next.error, lastAttemptAt: next.lastAttemptAt });
         return next;
       },
       async performFullSyncJob() {
@@ -164,21 +166,23 @@ describe('Background queue regressions', () => {
       /sync failed/,
     );
     assert.deepEqual(states, [
-      { status: 'running', error: null },
-      { status: 'failed', error: 'translated failure' },
+      { status: 'running', error: null, lastAttemptAt: 't1' },
+      { status: 'failed', error: 'translated failure', lastAttemptAt: 't1' },
     ]);
     assert.equal(await jobQueue.run(async () => 'after'), 'after');
   });
 
   it('allows the same backfill id to retry after a failed execution settles', async () => {
     const jobQueue = createSerializedRunner();
-    const states: BackfillState['status'][] = [];
+    const states: Array<{ status: BackfillState['status']; lastAttemptAt: string | null }> = [];
+    let currentState: BackfillState | undefined;
     let fullSyncCalls = 0;
     const backfillExecutor = createBackfillExecutor({
       jobQueue,
       async setBackfillState(_id, mutate) {
-        const next = mutate(undefined, `t${states.length + 1}`);
-        states.push(next.status);
+        const next = mutate(currentState, `t${states.length + 1}`);
+        currentState = next;
+        states.push({ status: next.status, lastAttemptAt: next.lastAttemptAt });
         return next;
       },
       async performFullSyncJob() {
@@ -198,6 +202,11 @@ describe('Background queue regressions', () => {
       { ok: true, data: { id: 'repo_data_sync_v1', added: 3, updated: 0, tagged: 0 } },
     );
     assert.equal(fullSyncCalls, 2);
-    assert.deepEqual(states, ['running', 'failed', 'running', 'done']);
+    assert.deepEqual(states, [
+      { status: 'running', lastAttemptAt: 't1' },
+      { status: 'failed', lastAttemptAt: 't1' },
+      { status: 'running', lastAttemptAt: 't3' },
+      { status: 'done', lastAttemptAt: 't3' },
+    ]);
   });
 });

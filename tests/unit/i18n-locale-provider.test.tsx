@@ -2,11 +2,11 @@
  * @vitest-environment jsdom
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, it, vi } from 'vitest';
 import { getMessages, I18nProvider, messageFor, useI18n } from '@/i18n';
+import { applyFabLabel } from '@/content/stars-page/fab-label';
 import type { Locale } from '@/types';
 
 const authMock = vi.hoisted(() => ({
@@ -155,12 +155,19 @@ describe('i18n catalog and locale propagation invariants', () => {
     });
   });
 
-  it('keeps the content-script FAB label on the shared non-React message lookup', () => {
-    const source = readFileSync('src/content/stars-page/index.tsx', 'utf8');
-    assert.match(source, /import \{ I18nProvider, messageFor \} from '@\/i18n';/);
-    assert.match(source, /const label = messageFor\(locale\)\.popup\.title;/);
-    assert.match(source, /if \(!document\.getElementById\('gsm-fab'\)\) return;/);
-    assert.match(source, /btn\.setAttribute\('data-tip', label\);/);
-    assert.match(source, /btn\.setAttribute\('aria-label', label\);/);
+  it('applies the content-script FAB label through the shared non-React message lookup', () => {
+    const host = document.createElement('div');
+    host.id = 'gsm-fab';
+    const button = document.createElement('button');
+    host.appendChild(button);
+    document.body.appendChild(host);
+
+    assert.equal(applyFabLabel(button, 'zh-CN'), true);
+    assert.equal(button.getAttribute('data-tip'), getMessages('zh-CN').popup.title);
+    assert.equal(button.getAttribute('aria-label'), getMessages('zh-CN').popup.title);
+
+    host.remove();
+    assert.equal(applyFabLabel(button, 'en'), false);
+    assert.equal(button.getAttribute('data-tip'), getMessages('zh-CN').popup.title);
   });
 });

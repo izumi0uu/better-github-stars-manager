@@ -50,7 +50,7 @@ const originalFetch = globalThis.fetch;
 // These modules read chrome.storage during initialization; the mock above must exist first.
 const { authStore } = await import('../../../src/auth/auth-store');
 const { gistTagStore } = await import('../../../src/sync/gist-tag-store');
-const { idbTagStore, resetDirtyForDev, snapshotDirty } = await import('../../../src/storage/idb-tag-store');
+const { idbTagStore, resetDirtyForDev, snapshotDirty, snapshotDirtyForPush } = await import('../../../src/storage/idb-tag-store');
 const { db } = await import('../../../src/storage/db');
 
 async function resetState() {
@@ -325,6 +325,30 @@ describe('Gist recovery regressions', () => {
     assert.equal(result.pushed, 1);
     assert.equal(patched.payload?.tagMeta.alpha.color, '#ff0000');
     assert.deepEqual(snapshotDirty(), { names: [], meta: true });
+  });
+
+  it('derives dirty meta state from the pushed snapshot instead of caller flags', async () => {
+    await resetState();
+    await storeSyntheticToken();
+    await authStore.update({ gistId: 'bound-gist' });
+    await idbTagStore.upsertMeta({ name: 'alpha', color: '#ff0000', dimension: null, excluded: false, mtime: '2026-06-24T12:00:00.000Z' });
+    const dirtySnapshot = snapshotDirtyForPush();
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/gists/bound-gist') && method === 'GET') return response(200, {});
+      if (url.endsWith('/gists/bound-gist') && method === 'PATCH') {
+        const payload = parsePatchedPayload(init);
+        assert.equal(payload.tagMeta.alpha.color, '#ff0000');
+        return response(200, {});
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    const result = await gistTagStore.push(new Set(), false, undefined, dirtySnapshot);
+    assert.equal(result.pushed, 1);
+    assert.deepEqual(snapshotDirty(), { names: [], meta: false });
   });
 
   it('legacy direct push clears only the dirty names passed by the caller', async () => {

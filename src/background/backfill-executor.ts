@@ -46,6 +46,8 @@ export function createBackfillExecutor<TFullSyncResult extends object>({
       }));
 
       try {
+        // This already runs inside jobQueue.run; calling the queued full-sync
+        // wrapper here would re-enter the serialized runner and deadlock.
         const result = await performFullSyncJob();
         await setBackfillState(task.id, (current, now) => ({
           status: 'done',
@@ -64,7 +66,7 @@ export function createBackfillExecutor<TFullSyncResult extends object>({
         await setBackfillState(task.id, (current, now) => ({
           status: 'failed',
           queuedAt: current?.queuedAt ?? now,
-          lastAttemptAt: now,
+          lastAttemptAt: current?.lastAttemptAt ?? now,
           completedAt: null,
           error: msg,
         }));
