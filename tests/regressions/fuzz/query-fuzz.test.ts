@@ -1,0 +1,330 @@
+import 'fake-indexeddb/auto';
+import assert from 'node:assert/strict';
+import { afterAll, beforeEach, describe, it } from 'vitest';
+import { queryStars, invalidateCache, type QueryParams, type QueryResult } from '@/background/query';
+import { db } from '@/storage/db';
+import type { Star, Tag, TagMeta } from '@/types';
+import type { SortKey } from '@/ui/filter-store';
+import { createRng, fuzzCases, fuzzFailure, type SeededRng } from '../../helpers/seeded-fuzz';
+
+const FILE = 'tests/regressions/fuzz/query-fuzz.test.ts';
+const PREFIX = 'QUERY_FUZZ';
+const SUITE = 'query fuzz';
+const CASES = fuzzCases(PREFIX, '20260705-query', 200);
+
+const languages = ['TypeScript', 'Rust', 'Go', 'Python', 'Ruby'];
+const words = ['agent', 'vector', 'sync', 'render', 'index', 'worker', 'cache', 'query'];
+const tagNames = ['ai', 'ui', 'infra', 'database', 'testing', 'sync', 'archived', 'tooling'];
+const sortKeys: SortKey[] = ['starred_at', 'pushed_at', 'created_at', 'stargazers_count', 'name'];
+
+beforeEach(async () => {
+  await db.delete();
+  await db.open();
+  invalidateCache();
+});
+
+afterAll(async () => {
+  await db.close();
+});
+
+describe('query seeded fuzz', () => {
+  for (const caseIndex of CASES.cases) {
+    it(`matches the reference query model for case ${caseIndex}`, async () => {
+      const rng = createRng(CASES.seed, caseIndex);
+      const generated = generateQueryCase(rng);
+      await db.stars.bulkPut(generated.stars);
+      await db.tags.bulkPut(generated.tags);
+      await db.tagMeta.bulkPut(generated.tagMeta);
+      invalidateCache();
+
+      const actual = await queryStars(generated.params);
+      const expected = referenceQuery(generated);
+
+      assertQueryEqual(actual, expected, {
+        caseIndex,
+        trace: summarizeCase(generated),
+      });
+    });
+  }
+
+  it('keeps direct DB mutations stale until the query cache is invalidated', async () => {
+    const rng = createRng(CASES.seed, CASES.singleCase ?? 0);
+    const generated = generateQueryCase(rng, { forceStars: 3 });
+    await db.stars.bulkPut(generated.stars);
+    await db.tags.bulkPut(generated.tags);
+    await db.tagMeta.bulkPut(generated.tagMeta);
+    invalidateCache();
+
+    const first = await queryStars(generated.params);
+    const injected = makeStar('cache/injected', 999, rng, { language: 'TypeScript' });
+    await db.stars.put(injected);
+
+    const stale = await queryStars(generated.params);
+    assert.deepEqual(
+      stale.rows.map((row) => row.full_name),
+      first.rows.map((row) => row.full_name),
+      fuzzFailure({
+        suite: SUITE,
+        prefix: PREFIX,
+        seed: CASES.seed,
+        caseIndex: CASES.singleCase ?? 0,
+        file: FILE,
+        invariant: 'direct DB mutation is stale before invalidateCache',
+        trace: summarizeCase(generated),
+      }),
+    );
+
+    invalidateCache();
+    const refreshed = await queryStars(generated.params);
+    assert.equal(
+      refreshed.grandTotal,
+      generated.stars.length + 1,
+      fuzzFailure({
+        suite: SUITE,
+        prefix: PREFIX,
+        seed: CASES.seed,
+        caseIndex: CASES.singleCase ?? 0,
+        file: FILE,
+        invariant: 'invalidateCache observes direct DB mutation',
+        expected: generated.stars.length + 1,
+        actual: refreshed.grandTotal,
+      }),
+    );
+  });
+});
+
+interface GeneratedQueryCase {
+  stars: Star[];
+  tags: Tag[];
+  tagMeta: TagMeta[];
+  params: QueryParams;
+}
+
+function generateQueryCase(rng: SeededRng, options: { forceStars?: number } = {}): GeneratedQueryCase {
+  const starCount = options.forceStars ?? rng.int(0, 80);
+  const stars = Array.from({ length: starCount }, (_value, index) => makeStar(`owner${index % 7}/repo${index}`, index, rng));
+  const fullNames = stars.map((star) => star.full_name);
+  const tags = fullNames.flatMap((fullName, index) => {
+    if (rng.bool(0.18)) return [];
+    const selected = rng.subset(tagNames, rng.int(0, 4));
+    return [makeTag(fullName, selected, index, rng)];
+  });
+  if (rng.bool(0.35)) {
+    tags.push(makeTag(`missing/repo${rng.int(0, 100)}`, rng.subset(tagNames, 3), 999, rng));
+  }
+  const tagMeta = tagNames
+    .filter(() => rng.bool(0.75))
+    .map((name, index) => ({
+      name,
+      dimension: rng.maybe(rng.pick(['topic', 'stack', 'workflow']), 0.7),
+      color: rng.maybe(`#${rng.int(0, 0xffffff).toString(16).padStart(6, '0')}`, 0.5),
+      mtime: iso(index + 400),
+      excluded: rng.bool(0.2) ? true : undefined,
+    } satisfies TagMeta));
+  const queryTerm = rng.pick(['', '', 'repo', 'agent', 'sync', 'note', 'cache', rng.pick(words)]);
+  const params: QueryParams = {
+    filter: {
+      query: rng.bool(0.2) ? `  ${queryTerm.toUpperCase()}  ` : queryTerm,
+      languages: rng.subset(languages, 2),
+      tags: rng.subset(tagNames, 3),
+      tagMode: rng.pick(['any', 'all'] as const),
+      showTombstone: rng.bool(0.25),
+      onlyFavorite: rng.bool(0.2),
+      onlyUntagged: rng.bool(0.2),
+      onlyArchived: rng.bool(0.2),
+      sortKey: rng.pick(sortKeys),
+      sortDir: rng.pick(['asc', 'desc'] as const),
+    },
+    offset: rng.int(0, Math.max(0, starCount + 5)),
+    limit: rng.int(1, 25),
+  };
+  return { stars, tags, tagMeta, params };
+}
+
+function makeStar(fullName: string, index: number, rng: SeededRng, overrides: Partial<Star> = {}): Star {
+  return {
+    full_name: fullName,
+    html_url: `https://github.com/${fullName}`,
+    description: rng.subset(words, 3).join(' '),
+    language: rng.maybe(rng.pick(languages), 0.75),
+    stargazers_count: rng.int(0, 5000),
+    topics: rng.subset(words, 4),
+    pushed_at: rng.maybe(iso(index + rng.int(0, 50)), 0.85),
+    created_at: rng.maybe(iso(index + rng.int(100, 150)), 0.8),
+    fork: rng.bool(0.15),
+    archived: rng.bool(0.15),
+    starred_at: iso(index + 200),
+    tombstone: rng.bool(0.15),
+    synced_at: iso(index + 300),
+    ...overrides,
+  };
+}
+
+function makeTag(fullName: string, selected: string[], index: number, rng: SeededRng): Tag {
+  return {
+    full_name: fullName,
+    tags: selected,
+    notes: rng.bool(0.35) ? `note ${rng.pick(words)}` : '',
+    favorite: rng.bool(0.2),
+    gh_list_id: rng.bool(0.2) ? rng.int(1, 20) : null,
+    mtime: iso(index + 500),
+  };
+}
+
+function referenceQuery(input: GeneratedQueryCase): QueryResult {
+  const indexedStars = [...input.stars].sort((a, b) => a.full_name.localeCompare(b.full_name));
+  const indexedTags = [...input.tags].sort((a, b) => a.full_name.localeCompare(b.full_name));
+  const tagMap = new Map(indexedTags.map((tag) => [tag.full_name, tag]));
+  const excluded = new Set(input.tagMeta.filter((meta) => meta.excluded).map((meta) => meta.name));
+  const q = input.params.filter.query.trim().toLowerCase();
+  const langSet = input.params.filter.languages.length ? new Set(input.params.filter.languages) : null;
+  const tagSet = input.params.filter.tags.length ? new Set(input.params.filter.tags) : null;
+  const filtered = indexedStars.filter((star) => {
+    if (!input.params.filter.showTombstone && star.tombstone) return false;
+    if (input.params.filter.onlyArchived && !star.archived) return false;
+    if (langSet && (star.language === null || !langSet.has(star.language))) return false;
+    const tagRecord = tagMap.get(star.full_name);
+    const myTags = tagRecord?.tags ?? [];
+    if (input.params.filter.onlyFavorite && !tagRecord?.favorite) return false;
+    if (input.params.filter.onlyUntagged && myTags.length > 0) return false;
+    if (tagSet) {
+      if (input.params.filter.tagMode === 'all') {
+        if (!input.params.filter.tags.every((tag) => myTags.includes(tag))) return false;
+      } else if (!myTags.some((tag) => tagSet.has(tag))) {
+        return false;
+      }
+    }
+    if (q) {
+      const haystack = `${star.full_name} ${star.description} ${star.topics.join(' ')} ${tagRecord?.notes ?? ''}`.toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
+  const sorted = sortReferenceRows(filtered, input.params.filter.sortKey, input.params.filter.sortDir);
+  const rows = sorted.slice(input.params.offset, input.params.offset + input.params.limit);
+  const languagesFacet = [...countLanguages(indexedStars).entries()].sort((a, b) => b[1] - a[1]).slice(0, 40);
+  const tagCounts = countTags(indexedTags, excluded);
+  const tagTree = [...tagCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  const tagsForRows: Record<string, Tag | undefined> = {};
+  for (const row of rows) tagsForRows[row.full_name] = tagMap.get(row.full_name);
+  return {
+    rows,
+    total: filtered.length,
+    grandTotal: input.stars.length,
+    tagsForRows,
+    languages: languagesFacet,
+    tagTree,
+    tagTotal: tagCounts.size,
+  };
+}
+
+function sortReferenceRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Star[] {
+  const mul = dir === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    switch (key) {
+      case 'pushed_at':
+        return compareNullableDate(a.pushed_at, b.pushed_at, a.full_name, b.full_name, dir);
+      case 'created_at':
+        return compareNullableDate(a.created_at, b.created_at, a.full_name, b.full_name, dir);
+      case 'starred_at':
+        return a.starred_at.localeCompare(b.starred_at) * mul;
+      case 'stargazers_count':
+        return (a.stargazers_count - b.stargazers_count) * mul;
+      case 'name':
+        return a.full_name.localeCompare(b.full_name) * mul;
+    }
+  });
+}
+
+function compareNullableDate(
+  aValue: string | null | undefined,
+  bValue: string | null | undefined,
+  tieBreakA: string,
+  tieBreakB: string,
+  dir: 'asc' | 'desc',
+): number {
+  const aMissing = aValue == null;
+  const bMissing = bValue == null;
+  if (aMissing || bMissing) {
+    if (aMissing && bMissing) return tieBreakA.localeCompare(tieBreakB);
+    return aMissing ? 1 : -1;
+  }
+  const cmp = aValue.localeCompare(bValue);
+  return dir === 'asc' ? cmp : -cmp;
+}
+
+function countLanguages(stars: Star[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const star of stars) {
+    if (star.language) counts.set(star.language, (counts.get(star.language) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function countTags(tags: Tag[], excluded: Set<string>): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const row of tags) {
+    for (const tag of row.tags) {
+      if (!excluded.has(tag)) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+function assertQueryEqual(
+  actual: QueryResult,
+  expected: QueryResult,
+  context: { caseIndex: number; trace: unknown },
+): void {
+  const actualSummary = summarizeResult(actual);
+  const expectedSummary = summarizeResult(expected);
+  assert.deepEqual(
+    actualSummary,
+    expectedSummary,
+    fuzzFailure({
+      suite: SUITE,
+      prefix: PREFIX,
+      seed: CASES.seed,
+      caseIndex: context.caseIndex,
+      file: FILE,
+      invariant: 'query result matches reference model',
+      expected: expectedSummary,
+      actual: actualSummary,
+      trace: context.trace,
+    }),
+  );
+}
+
+function summarizeResult(result: QueryResult) {
+  return {
+    rows: result.rows.map((row) => row.full_name),
+    total: result.total,
+    grandTotal: result.grandTotal,
+    tagsForRows: Object.fromEntries(Object.entries(result.tagsForRows).map(([name, tag]) => [name, tag?.tags ?? null])),
+    languages: result.languages,
+    tagTree: result.tagTree,
+    tagTotal: result.tagTotal,
+  };
+}
+
+function summarizeCase(input: GeneratedQueryCase) {
+  return {
+    filter: input.params.filter,
+    offset: input.params.offset,
+    limit: input.params.limit,
+    stars: input.stars.map((star) => ({
+      full_name: star.full_name,
+      language: star.language,
+      archived: star.archived,
+      tombstone: star.tombstone,
+      created_at: star.created_at,
+      pushed_at: star.pushed_at,
+    })),
+    tags: input.tags.map((tag) => ({ full_name: tag.full_name, tags: tag.tags, favorite: tag.favorite, notes: tag.notes })),
+    excluded: input.tagMeta.filter((meta) => meta.excluded).map((meta) => meta.name),
+  };
+}
+
+function iso(offset: number): string {
+  return new Date(Date.UTC(2026, 0, 1 + offset, 0, 0, 0)).toISOString();
+}

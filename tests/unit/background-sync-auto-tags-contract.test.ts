@@ -29,8 +29,9 @@ describe('background sync auto-tag contract', () => {
     assert.doesNotMatch(block, /autoAssignDone/);
   });
 
-  it('runs full sync and backfill through performFullSync without auto-tagging', () => {
-    assert.match(source, /return githubStarSource\.syncFull\(\(p\) => setProgress\(p\)\);/);
+  it('runs full sync and backfill without auto-tagging or nested full-sync runners', () => {
+    assert.match(source, /const result = await githubStarSource\.syncFull\(\(p\) => setProgress\(p\)\);/);
+    assert.match(source, /async function performFullSync\(\) {\n  return run\(performFullSyncJob\);\n}/);
     assert.match(source, /setIdleMessage\(m\.background\.fullDone\(result\.added\)\)/);
 
     const fullBlock = caseBlock('syncFull', 'syncRescan');
@@ -40,8 +41,8 @@ describe('background sync auto-tag contract', () => {
     assert.doesNotMatch(fullBlock, /autoAssignDone/);
 
     const backfillBlock = caseBlock('runBackfill', 'deferBackfill');
-    assert.match(backfillBlock, /performFullSync\(\)/);
-    assert.match(backfillBlock, /tagged: 0/);
+    assert.match(backfillBlock, /backfillExecutor\.runBackfill/);
+    assert.doesNotMatch(backfillBlock, /performFullSync\(\)/);
     assert.doesNotMatch(backfillBlock, /autoTagAll/);
   });
 

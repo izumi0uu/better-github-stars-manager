@@ -9,10 +9,29 @@ import { db } from './db';
  */
 
 const dirty = new Set<string>(); // full_names with unsynced changes
+const dirtyVersions = new Map<string, number>();
 let dirtyMeta = false;
+let dirtyMetaVersion = 0;
+let dirtyVersion = 0;
+
+export type DirtySnapshot = {
+  names: Array<{ name: string; version: number }>;
+  meta: boolean;
+  metaVersion: number;
+};
 
 function now(): string {
   return new Date().toISOString();
+}
+
+function markDirty(full_name: string): void {
+  dirty.add(full_name);
+  dirtyVersions.set(full_name, ++dirtyVersion);
+}
+
+function markMetaDirty(): void {
+  dirtyMeta = true;
+  dirtyMetaVersion++;
 }
 
 function emptyTag(full_name: string): Tag {
@@ -26,7 +45,7 @@ function emptyTag(full_name: string): Tag {
 }
 
 function touch(full_name: string): string {
-  dirty.add(full_name);
+  markDirty(full_name);
   return now();
 }
 
@@ -62,6 +81,7 @@ export const idbTagStore: TagStore = {
       const meta = await db.tagMeta.get(name);
       if (meta?.excluded) {
         await db.tagMeta.put({ ...meta, excluded: false, mtime: now() });
+        markMetaDirty();
       }
     }
   },
@@ -98,8 +118,8 @@ export const idbTagStore: TagStore = {
       }
     });
 
-    for (const fullName of touchedNames) dirty.add(fullName);
-    if (clearedExcluded) dirtyMeta = true;
+    for (const fullName of touchedNames) markDirty(fullName);
+    if (clearedExcluded) markMetaDirty();
     return { updated: touchedNames.length };
   },
 
@@ -115,12 +135,12 @@ export const idbTagStore: TagStore = {
 
   async upsert(tag) {
     await db.tags.put({ ...tag, favorite: tag.favorite ?? false });
-    dirty.add(tag.full_name);
+    markDirty(tag.full_name);
   },
 
   async upsertMeta(meta) {
     await db.tagMeta.put(meta);
-    dirtyMeta = true;
+    markMetaDirty();
   },
 
   async deleteTag(name) {
@@ -145,7 +165,7 @@ export const idbTagStore: TagStore = {
         mtime: ts,
       });
     });
-    dirtyMeta = true;
+    markMetaDirty();
     return { removed };
   },
 
@@ -166,7 +186,7 @@ export const idbTagStore: TagStore = {
       }
     });
 
-    for (const fullName of touchedNames) dirty.add(fullName);
+    for (const fullName of touchedNames) markDirty(fullName);
     return {
       assignmentsRemoved,
       distinctTagsRemoved: removedNames.size,
@@ -179,7 +199,8 @@ export const idbTagStore: TagStore = {
   },
 
   async syncPush(onProgress?: CountProgressCallback) {
-    return gistTagStore.push(dirty, dirtyMeta, onProgress);
+    const dirtySnapshot = snapshotDirtyForPush();
+    return gistTagStore.push(new Set(dirtySnapshot.names.map(({ name }) => name)), dirtySnapshot.meta, onProgress, dirtySnapshot);
   },
 
   async syncPull(onProgress?: CountProgressCallback) {
@@ -188,9 +209,25 @@ export const idbTagStore: TagStore = {
   },
 };
 
-/** Internal hooks for the Gist transport to clear the dirty set after a push. */
-export function clearDirty(names: Iterable<string>, meta: boolean) {
-  for (const n of names) dirty.delete(n);
+/** Internal hooks for the Gist transport to clear only the dirty versions it pushed. */
+export function clearDirty(snapshot: DirtySnapshot): void;
+export function clearDirty(names: Iterable<string>, meta: boolean): void;
+export function clearDirty(namesOrSnapshot: DirtySnapshot | Iterable<string>, meta = false) {
+  if (typeof namesOrSnapshot === 'object' && 'names' in namesOrSnapshot) {
+    for (const { name, version } of namesOrSnapshot.names) {
+      if (dirtyVersions.get(name) === version) {
+        dirty.delete(name);
+        dirtyVersions.delete(name);
+      }
+    }
+    if (namesOrSnapshot.meta && dirtyMetaVersion === namesOrSnapshot.metaVersion) dirtyMeta = false;
+    return;
+  }
+
+  for (const name of namesOrSnapshot) {
+    dirty.delete(name);
+    dirtyVersions.delete(name);
+  }
   if (meta) dirtyMeta = false;
 }
 
@@ -198,7 +235,18 @@ export function snapshotDirty(): { names: string[]; meta: boolean } {
   return { names: Array.from(dirty), meta: dirtyMeta };
 }
 
+export function snapshotDirtyForPush(): DirtySnapshot {
+  return {
+    names: Array.from(dirty, (name) => ({ name, version: dirtyVersions.get(name) ?? 0 })),
+    meta: dirtyMeta,
+    metaVersion: dirtyMetaVersion,
+  };
+}
+
 export function resetDirtyForDev() {
   dirty.clear();
+  dirtyVersions.clear();
   dirtyMeta = false;
+  dirtyMetaVersion = 0;
+  dirtyVersion = 0;
 }
