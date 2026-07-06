@@ -24,6 +24,7 @@ function fakeFilterState(): FilterState {
     onlyArchived: false,
     sortKey: 'starred_at',
     sortDir: 'desc',
+    libraryViewHydrated: true,
     setQuery: vi.fn(),
     toggleLanguage: vi.fn(),
     toggleTag: vi.fn(),
@@ -34,6 +35,7 @@ function fakeFilterState(): FilterState {
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
     setSort: vi.fn(),
+    applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
   };
 }

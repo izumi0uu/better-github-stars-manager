@@ -88,30 +88,38 @@ vi.mock('@/ui/use-stars', () => ({
 
 vi.mock('@/ui/filter-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/ui/filter-store')>();
+  const filterState = {
+    query: '',
+    languages: [],
+    tags: [],
+    tagMode: 'any' as const,
+    showTombstone: false,
+    onlyFavorite: false,
+    onlyUntagged: false,
+    onlyArchived: false,
+    sortKey: 'starred_at' as const,
+    sortDir: 'desc' as const,
+    libraryViewHydrated: true,
+    setQuery: managerPanelMocks.setQuery,
+    toggleLanguage: managerPanelMocks.toggleLanguage,
+    toggleTag: managerPanelMocks.toggleTag,
+    clearTags: vi.fn(),
+    setTagMode: managerPanelMocks.setTagMode,
+    setShowTombstone: managerPanelMocks.setShowTombstone,
+    setOnlyFavorite: managerPanelMocks.setOnlyFavorite,
+    setOnlyUntagged: managerPanelMocks.setOnlyUntagged,
+    setOnlyArchived: managerPanelMocks.setOnlyArchived,
+    setSort: managerPanelMocks.setSort,
+    applyLibraryViewPrefs: vi.fn(),
+    resetFilters: managerPanelMocks.resetFilters,
+  };
+  const useFilterStore = Object.assign(() => filterState, {
+    getState: () => filterState,
+    subscribe: vi.fn(() => () => {}),
+  });
   return {
     ...actual,
-    useFilterStore: () => ({
-      query: '',
-      languages: [],
-      tags: [],
-      tagMode: 'any',
-      showTombstone: false,
-      onlyFavorite: false,
-      onlyUntagged: false,
-      onlyArchived: false,
-      sortKey: 'starred_at',
-      sortDir: 'desc',
-      setQuery: managerPanelMocks.setQuery,
-      toggleLanguage: managerPanelMocks.toggleLanguage,
-      toggleTag: managerPanelMocks.toggleTag,
-      setTagMode: managerPanelMocks.setTagMode,
-      setShowTombstone: managerPanelMocks.setShowTombstone,
-      setOnlyFavorite: managerPanelMocks.setOnlyFavorite,
-      setOnlyUntagged: managerPanelMocks.setOnlyUntagged,
-      setOnlyArchived: managerPanelMocks.setOnlyArchived,
-      setSort: managerPanelMocks.setSort,
-      resetFilters: managerPanelMocks.resetFilters,
-    }),
+    useFilterStore,
   };
 });
 
@@ -197,6 +205,7 @@ function fakeFilterState(): FilterState {
     onlyArchived: false,
     sortKey: 'starred_at',
     sortDir: 'desc',
+    libraryViewHydrated: true,
     setQuery: vi.fn(),
     toggleLanguage: vi.fn(),
     toggleTag: vi.fn(),
@@ -207,6 +216,7 @@ function fakeFilterState(): FilterState {
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
     setSort: vi.fn(),
+    applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
   };
 }

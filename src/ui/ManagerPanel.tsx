@@ -115,15 +115,6 @@ export function ManagerPanel() {
   };
 
   useEffect(() => {
-    const m = location.hash.match(/gsm-tag=([^&]+)/);
-    if (m) {
-      f.toggleTag(decodeURIComponent(m[1]));
-      history.replaceState(null, '', location.pathname + location.search);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
     let off = () => {};
     (async () => {
       off = onProgress((progress) => setStatus((current) => mergeProgressStatus(current, progress)));

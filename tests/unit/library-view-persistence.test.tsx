@@ -1,0 +1,332 @@
+/**
+ * @vitest-environment jsdom
+ */
+import { act } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useStars } from '@/ui/use-stars';
+import { useFilterStore } from '@/ui/filter-store';
+import type { Config } from '@/types';
+import {
+  cleanupMountedRootsAndBody,
+  mountReact,
+  type MountedRoot,
+} from './test-utils';
+
+const authMocks = vi.hoisted(() => ({
+  getConfig: vi.fn(),
+  updateLibraryViewPrefs: vi.fn(),
+}));
+
+vi.mock('@/auth/auth-store', () => ({
+  CONFIG_STORAGE_KEY: 'gsm_config',
+  authStore: authMocks,
+}));
+
+const mountedRoots: MountedRoot[] = [];
+const storageListeners: Array<(changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void> = [];
+const runtimeListeners: Array<(message: { type?: string }) => void> = [];
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
+function baseConfig(): Config {
+  return {
+    tokenEncrypted: null,
+    tokenCryptoMeta: null,
+    theme: 'dark',
+    locale: 'en',
+    defaultView: 'table',
+    lastSyncStarredAt: null,
+    gistId: null,
+    gistSyncCursor: null,
+    username: null,
+    avatarUrl: null,
+    displayName: null,
+    onboardingStage: 'done',
+    seenOnboarding: true,
+    seenTooltips: 0,
+    autoTagLimit: 5,
+    maxTagsPerRepo: 5,
+    minTopicRepoCount: 3,
+    libraryView: {
+      version: 1,
+      filters: {
+        languages: ['TypeScript'],
+        tags: ['react'],
+        tagMode: 'all',
+        showTombstone: true,
+        onlyFavorite: true,
+        onlyUntagged: false,
+        onlyArchived: true,
+      },
+      sort: {
+        sortKey: 'created_at',
+        sortDir: 'asc',
+      },
+    },
+    starsPanelDefaultEnabled: true,
+    columnLayoutMode: 'default',
+    customColumnLayout: null,
+    langTagMigrationDone: true,
+    lastSyncProgress: { phase: 'idle', done: 0, total: null, message: '' },
+    backfills: {},
+  };
+}
+
+function resetFilterStore() {
+  useFilterStore.setState({
+    query: '',
+    languages: [],
+    tags: [],
+    tagMode: 'any',
+    showTombstone: false,
+    onlyFavorite: false,
+    onlyUntagged: false,
+    onlyArchived: false,
+    sortKey: 'starred_at',
+    sortDir: 'desc',
+    libraryViewHydrated: false,
+  });
+}
+
+function Harness() {
+  useStars();
+  return null;
+}
+
+async function flush() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+describe('library view preference persistence', () => {
+  beforeEach(() => {
+    resetFilterStore();
+    authMocks.getConfig.mockReset();
+    authMocks.updateLibraryViewPrefs.mockReset();
+    storageListeners.length = 0;
+    runtimeListeners.length = 0;
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: vi.fn(() => Promise.resolve({
+          ok: true,
+          data: {
+            rows: [],
+            total: 0,
+            grandTotal: 0,
+            tagsForRows: {},
+            languages: [],
+            tagTree: [],
+            tagTotal: 0,
+          },
+        })),
+        onMessage: {
+          addListener: vi.fn((listener) => runtimeListeners.push(listener)),
+          removeListener: vi.fn((listener) => {
+            const index = runtimeListeners.indexOf(listener);
+            if (index >= 0) runtimeListeners.splice(index, 1);
+          }),
+        },
+      },
+      storage: {
+        onChanged: {
+          addListener: vi.fn((listener) => storageListeners.push(listener)),
+          removeListener: vi.fn((listener) => {
+            const index = storageListeners.indexOf(listener);
+            if (index >= 0) storageListeners.splice(index, 1);
+          }),
+        },
+      },
+    });
+    window.history.replaceState(null, '', '/stars');
+  });
+
+  afterEach(() => {
+    cleanupMountedRootsAndBody(mountedRoots);
+    vi.unstubAllGlobals();
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('hydrates before the first visible query and does not persist defaults', async () => {
+    authMocks.getConfig.mockResolvedValue(baseConfig());
+    mountReact(<Harness />, mountedRoots);
+
+    expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
+    expect(authMocks.updateLibraryViewPrefs).not.toHaveBeenCalled();
+
+    await flush();
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(1);
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'query',
+      params: {
+        filter: {
+          query: '',
+          languages: ['TypeScript'],
+          tags: ['react'],
+          tagMode: 'all',
+          showTombstone: true,
+          onlyFavorite: true,
+          onlyUntagged: false,
+          onlyArchived: true,
+          sortKey: 'created_at',
+          sortDir: 'asc',
+        },
+        offset: 0,
+        limit: Number.MAX_SAFE_INTEGER,
+      },
+    });
+    expect(authMocks.updateLibraryViewPrefs).not.toHaveBeenCalled();
+  });
+
+  it('persists changes after hydration and reset preserves sort and tag mode', async () => {
+    authMocks.getConfig.mockResolvedValue(baseConfig());
+    mountReact(<Harness />, mountedRoots);
+    await flush();
+
+    act(() => {
+      useFilterStore.getState().toggleTag('react');
+      useFilterStore.getState().resetFilters();
+    });
+    await flush();
+
+    expect(authMocks.updateLibraryViewPrefs).toHaveBeenLastCalledWith({
+      version: 1,
+      filters: {
+        languages: [],
+        tags: [],
+        tagMode: 'all',
+        showTombstone: false,
+        onlyFavorite: false,
+        onlyUntagged: false,
+        onlyArchived: false,
+      },
+      sort: {
+        sortKey: 'created_at',
+        sortDir: 'asc',
+      },
+    });
+  });
+
+  it('lets #gsm-tag override persisted tags before the first query', async () => {
+    window.history.replaceState(null, '', '/stars#gsm-tag=vue');
+    authMocks.getConfig.mockResolvedValue(baseConfig());
+    mountReact(<Harness />, mountedRoots);
+    await flush();
+
+    const message = vi.mocked(chrome.runtime.sendMessage).mock.calls[0][0] as unknown as {
+      params: { filter: { tags: string[]; languages: string[]; sortKey: string } };
+    };
+    expect(message.params.filter.tags).toEqual(['vue']);
+    expect(message.params.filter.languages).toEqual(['TypeScript']);
+    expect(message.params.filter.sortKey).toBe('created_at');
+    expect(authMocks.updateLibraryViewPrefs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filters: expect.objectContaining({ tags: ['vue'] }),
+      }),
+    );
+  });
+
+  it('applies external storage changes without writing them back', async () => {
+    authMocks.getConfig.mockResolvedValue(baseConfig());
+    mountReact(<Harness />, mountedRoots);
+    await flush();
+    authMocks.updateLibraryViewPrefs.mockClear();
+
+    act(() => {
+      useFilterStore.getState().setQuery('zustand');
+    });
+
+    act(() => {
+      storageListeners.forEach((listener) => listener({
+        gsm_config: {
+          newValue: {
+            libraryView: {
+              version: 1,
+              filters: {
+                languages: ['Rust'],
+                tags: ['systems'],
+                tagMode: 'any',
+                showTombstone: false,
+                onlyFavorite: false,
+                onlyUntagged: true,
+                onlyArchived: false,
+              },
+              sort: {
+                sortKey: 'name',
+                sortDir: 'desc',
+              },
+            },
+          },
+        } as chrome.storage.StorageChange,
+      }, 'local'));
+    });
+    await flush();
+
+    expect(useFilterStore.getState()).toEqual(expect.objectContaining({
+      languages: ['Rust'],
+      tags: ['systems'],
+      tagMode: 'any',
+      onlyUntagged: true,
+      sortKey: 'name',
+      sortDir: 'desc',
+      libraryViewHydrated: true,
+    }));
+    expect(useFilterStore.getState().query).toBe('zustand');
+    expect(authMocks.updateLibraryViewPrefs).not.toHaveBeenCalled();
+  });
+
+  it('does not let stale initial hydration overwrite fresher storage changes', async () => {
+    const initialConfig = deferred<Config>();
+    authMocks.getConfig.mockReturnValue(initialConfig.promise);
+    mountReact(<Harness />, mountedRoots);
+
+    act(() => {
+      storageListeners.forEach((listener) => listener({
+        gsm_config: {
+          newValue: {
+            libraryView: {
+              version: 1,
+              filters: {
+                languages: ['Rust'],
+                tags: ['systems'],
+                tagMode: 'any',
+                showTombstone: false,
+                onlyFavorite: false,
+                onlyUntagged: true,
+                onlyArchived: false,
+              },
+              sort: {
+                sortKey: 'name',
+                sortDir: 'desc',
+              },
+            },
+          },
+        } as chrome.storage.StorageChange,
+      }, 'local'));
+    });
+    await flush();
+
+    act(() => {
+      initialConfig.resolve(baseConfig());
+    });
+    await flush();
+
+    expect(useFilterStore.getState()).toEqual(expect.objectContaining({
+      languages: ['Rust'],
+      tags: ['systems'],
+      onlyUntagged: true,
+      sortKey: 'name',
+      sortDir: 'desc',
+      libraryViewHydrated: true,
+    }));
+    expect(authMocks.updateLibraryViewPrefs).not.toHaveBeenCalled();
+  });
+});

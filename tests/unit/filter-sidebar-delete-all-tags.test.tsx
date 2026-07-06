@@ -39,6 +39,7 @@ function makeFilterState(order: string[], tags = ['react', 'ui']): FilterState {
     onlyArchived: false,
     sortKey: 'starred_at',
     sortDir: 'desc',
+    libraryViewHydrated: true,
     setQuery: vi.fn(),
     toggleLanguage: vi.fn(),
     toggleTag: vi.fn(),
@@ -49,6 +50,7 @@ function makeFilterState(order: string[], tags = ['react', 'ui']): FilterState {
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
     setSort: vi.fn(),
+    applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
   };
 }
