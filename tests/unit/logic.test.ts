@@ -351,6 +351,14 @@ describe('Auto-suggest', () => {
     assert.deepEqual(s, ['ai']);
   });
 
+  it('inline auto-suggest ignores min repo coverage without a topic frequency map', () => {
+    const s = suggestTags(sample[0], [], [], {
+      limit: 3,
+      minRepoCount: 3,
+    });
+    assert.deepEqual(s, ['ai', 'agent']);
+  });
+
   it('topic repo coverage counts duplicate topics in the same repo once', () => {
     const stars: S[] = [
       { ...sample[0], topics: ['AI', 'ai', 'agent'] },

@@ -32,6 +32,26 @@ export interface BackfillState {
 
 export type BackfillMap = Partial<Record<BackfillId, BackfillState>>;
 
+export type LibraryViewSortKey = 'starred_at' | 'pushed_at' | 'created_at' | 'stargazers_count' | 'name';
+export type LibraryViewSortDir = 'asc' | 'desc';
+
+export interface LibraryViewPrefs {
+  version: 1;
+  filters: {
+    languages: string[];
+    tags: string[];
+    tagMode: 'any' | 'all';
+    showTombstone: boolean;
+    onlyFavorite: boolean;
+    onlyUntagged: boolean;
+    onlyArchived: boolean;
+  };
+  sort: {
+    sortKey: LibraryViewSortKey;
+    sortDir: LibraryViewSortDir;
+  };
+}
+
 /** Star metadata stored locally. */
 export interface Star {
   full_name: string;
@@ -93,8 +113,14 @@ export interface Config {
   seenOnboarding: boolean;
   /** Bitmask of one-time button coachmarks already shown. */
   seenTooltips: number;
-  /** Max topic-derived tags per repo; bulk auto-tag also uses this as the minimum topic repo coverage. */
+  /** Legacy max topic-derived tags per repo. Read as compatibility input only. */
   autoTagLimit: number;
+  /** Max topic-derived tags per repo for Auto Tags. */
+  maxTagsPerRepo: number;
+  /** Minimum repos that must share a topic before bulk Auto Tags generates it. */
+  minTopicRepoCount: number;
+  /** Durable library view intent for filters and primary sort. */
+  libraryView: LibraryViewPrefs;
   /** Whether your own GitHub stars page should open the overlay panel by default. */
   starsPanelDefaultEnabled: boolean;
   /** Last selected stars-table layout mode. */

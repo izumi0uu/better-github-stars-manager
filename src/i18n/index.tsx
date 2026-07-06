@@ -235,8 +235,10 @@ export interface MessageCatalog {
     /** Label for the prominent "Star the project" CTA button. */
     starRepoButton: string;
     behaviorHeading: string;
-    autoTagLimitLabel: string;
-    autoTagLimitHint: string;
+    maxTagsPerRepoLabel: string;
+    maxTagsPerRepoHint: string;
+    minTopicRepoCountLabel: string;
+    minTopicRepoCountHint: string;
     starsPanelDefaultLabel: string;
     starsPanelDefaultHint: string;
     tokenHeading: string;
@@ -247,6 +249,7 @@ export interface MessageCatalog {
     tokenGists: string;
     tokenGistNote: string;
     authenticatedAs: (username: string) => string;
+    openVerifiedStars: string;
     removeToken: string;
     cachedAccountWarning: (username: string) => string;
     clearCachedAuth: string;
@@ -619,9 +622,12 @@ const messages: Record<Locale, MessageCatalog> = {
       title: "Better GitHub Stars Manager — Options",
       starRepoButton: "Like the project? Leave a star:)",
       behaviorHeading: "3. Preference",
-      autoTagLimitLabel: "Auto-tag limit and minimum coverage",
-      autoTagLimitHint:
-        "When you run Auto Tags, each repo can receive at most this many topic tags, and a topic must appear on at least this many repos before bulk auto-tag generates it.",
+      maxTagsPerRepoLabel: "Max Auto Tags per repo",
+      maxTagsPerRepoHint:
+        "When you run Auto Tags, each repo can receive at most this many topic tags.",
+      minTopicRepoCountLabel: "Minimum topic coverage",
+      minTopicRepoCountHint:
+        "Bulk Auto Tags only generates a topic tag after that topic appears on at least this many repos.",
       starsPanelDefaultLabel: "Open my stars page with the manager panel by default",
       starsPanelDefaultHint:
         "Turn this off if you prefer to land on GitHub's native stars list and open the overlay manually.",
@@ -635,6 +641,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenGistNote:
         "Note: GitHub Gist scope is account-wide (no per-gist isolation for fine-grained tokens). We create one dedicated secret gist for sync.",
       authenticatedAs: (username) => `Authenticated as @${username}.`,
+      openVerifiedStars: "Open my stars",
       removeToken: "Remove token",
       cachedAccountWarning: (username) =>
         `Cached account @${username} exists, but the token is not usable in this extension instance.`,
@@ -1028,9 +1035,12 @@ const messages: Record<Locale, MessageCatalog> = {
       title: "Better GitHub Stars Manager — 选项",
       starRepoButton: "点个Star~",
       behaviorHeading: "3. 偏好",
-      autoTagLimitLabel: "自动打标数量上限和最低覆盖数",
-      autoTagLimitHint:
-        "点击 Auto Tags 时，单个仓库最多自动添加这么多个 topic 标签；同时 topic 至少出现在这么多个仓库里，才会被批量自动生成。",
+      maxTagsPerRepoLabel: "每个仓库最多自动标签数",
+      maxTagsPerRepoHint:
+        "点击 Auto Tags 时，单个仓库最多自动添加这么多个 topic 标签。",
+      minTopicRepoCountLabel: "最低 topic 覆盖数",
+      minTopicRepoCountHint:
+        "批量 Auto Tags 只会生成至少出现在这么多个仓库里的 topic 标签。",
       starsPanelDefaultLabel: "默认打开自己的 stars 页面时显示管理面板",
       starsPanelDefaultHint:
         "关闭后会优先显示 GitHub 原生 stars 列表，需要时再手动打开悬浮面板。",
@@ -1044,6 +1054,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenGistNote:
         "注意：GitHub Gist 权限是账号级的（细粒度 token 不能按 gist 隔离）。我们会为同步创建一个专用 secret gist。",
       authenticatedAs: (username) => `已认证为 @${username}。`,
+      openVerifiedStars: "打开我的 stars",
       removeToken: "移除 token",
       cachedAccountWarning: (username) =>
         `缓存账号 @${username} 仍在，但当前扩展实例里的 token 已不可用。`,

@@ -3,8 +3,8 @@ import type { Star, Tag, TagMeta } from '@/types';
 
 /**
  * IndexedDB schema (via Dexie). IDB is the source of truth for stars/tags/tagMeta;
- * chrome.storage.local holds only lightweight config (encrypted token, theme,
- * locale). Indexes back the UI filter/sort paths.
+ * chrome.storage.local holds lightweight config and UI preferences. Indexes
+ * back the UI filter/sort paths.
  */
 export class StarsDB extends Dexie {
   stars!: Table<Star, string>;
