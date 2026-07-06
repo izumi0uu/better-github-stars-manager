@@ -2,6 +2,11 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, afterEach, describe, it, vi } from 'vitest';
 import type { Config } from '../../../src/types';
+import {
+  DEFAULT_AUTO_TAG_LIMIT,
+  DEFAULT_LIBRARY_VIEW_PREFS,
+  DEFAULT_MIN_TOPIC_REPO_COUNT,
+} from '../../../src/preferences';
 
 function createChromeMock() {
   const state: Record<string, unknown> = {};
@@ -72,6 +77,9 @@ function configWithCursor(lastSyncStarredAt: string | null): Config {
     seenOnboarding: false,
     seenTooltips: 0,
     autoTagLimit: 3,
+    maxTagsPerRepo: DEFAULT_AUTO_TAG_LIMIT,
+    minTopicRepoCount: DEFAULT_MIN_TOPIC_REPO_COUNT,
+    libraryView: DEFAULT_LIBRARY_VIEW_PREFS,
     starsPanelDefaultEnabled: true,
     columnLayoutMode: 'default',
     customColumnLayout: null,
