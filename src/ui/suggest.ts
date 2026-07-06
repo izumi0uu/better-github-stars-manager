@@ -1,5 +1,5 @@
 import type { Star } from '@/types';
-import { DEFAULT_AUTO_TAG_LIMIT, normalizeAutoTagLimit } from '@/preferences';
+import { DEFAULT_AUTO_TAG_LIMIT, normalizeAutoTagLimit, normalizeMinTopicRepoCount } from '@/preferences';
 
 export type AutoTagSuggestionPolicy =
   | number
@@ -23,7 +23,7 @@ function resolveSuggestionPolicy(policy: AutoTagSuggestionPolicy): {
   }
   return {
     limit: normalizeAutoTagLimit(policy.limit),
-    minRepoCount: policy.minRepoCount === undefined ? 1 : normalizeAutoTagLimit(policy.minRepoCount),
+    minRepoCount: policy.minRepoCount === undefined ? 1 : normalizeMinTopicRepoCount(policy.minRepoCount),
     topicRepoCounts: policy.topicRepoCounts ?? null,
   };
 }
