@@ -45,6 +45,9 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
     setStatus((cur) => mergeStatusPatch(cur, { onboardingStage: stage }));
     await bgCall('setOnboardingStage', { stage }).catch(() => {});
   };
+  const applyStatusPatch = (patch: Partial<SyncStatus>) => {
+    setStatus((cur) => mergeStatusPatch(cur, patch));
+  };
 
   const finalizeOnboardingAfterSync = async (hasToken: boolean) => {
     const q = await bgCall<{ grandTotal: number }>('query', {
@@ -86,6 +89,24 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
     } finally {
       setBusy(false);
       setPendingAction((cur) => (cur === type ? null : cur));
+    }
+  };
+
+  const autoAssignTags = async () => {
+    setBusy(true);
+    setPendingAction('autoAssignTags');
+    setSuccessAction(null);
+    setInfo(null);
+    try {
+      await bgCall('autoAssignTags');
+      refreshStars();
+      await refreshStatus();
+      flashSuccess('autoAssignTags');
+    } catch (e) {
+      setInfo(m.manager.autoAssignFailed(e instanceof Error ? e.message : String(e)));
+    } finally {
+      setBusy(false);
+      setPendingAction((cur) => (cur === 'autoAssignTags' ? null : cur));
     }
   };
 
@@ -161,7 +182,6 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
 
   return {
     status,
-    setStatus,
     statusLoaded,
     busy,
     pendingAction,
@@ -169,12 +189,12 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
     info,
     setInfo,
     refreshStatus,
+    applyStatusPatch,
     setOnboardingStage,
-    finalizeOnboardingAfterSync,
     doSync,
+    autoAssignTags,
     runBackfill,
     deferBackfill,
-    flashSuccess,
     isOnboardingCardStage,
   };
 }

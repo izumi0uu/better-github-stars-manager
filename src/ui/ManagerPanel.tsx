@@ -10,36 +10,44 @@ import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { StarsTable } from '@/ui/components/StarsTable';
 import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
+import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
 import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
-import { pickInitialSyncAction } from '@/ui/initial-sync';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { PortalProvider } from '@/ui/shadcn/portal-context';
 import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import { useTheme } from '@/ui/hooks/use-theme';
 import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut } from '@/ui/interaction-lock';
-import { bgCall, mergeProgressStatus, mergeStatusPatch, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
+import { bgCall, type SyncStatus } from '@/utils/messaging';
 import { hidePanel } from '@/content/stars-page/panel-toggle';
-import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnboardingSync } from '@/onboarding/state';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
-import type { BackfillId, BackfillState } from '@/types';
+import type { BackfillState } from '@/types';
 import { COLUMN_DEFS } from '@/ui/column-layout';
 import { layoutViewportFromMeasurements, type LayoutViewportState } from '@/ui/layout-resize-surface';
 import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
 
 export { layoutViewportFromMeasurements };
-export { LayoutOverflowIndicator, LayoutResizeFeedbackOverlay } from '@/ui/components/StarsTable';
 
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
   const f = useFilterStore();
-  const [status, setStatus] = useState<SyncStatus | null>(null);
-  const [statusLoaded, setStatusLoaded] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [successAction, setSuccessAction] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
+  const {
+    status,
+    statusLoaded,
+    busy,
+    pendingAction,
+    successAction,
+    info,
+    setInfo,
+    applyStatusPatch,
+    setOnboardingStage,
+    doSync,
+    autoAssignTags,
+    runBackfill,
+    deferBackfill,
+    isOnboardingCardStage,
+  } = useManagerSyncActions({ refreshStars });
   const [selected, setSelected] = useState<string | null>(null);
   const [coachStep, setCoachStep] = useState<number | null>(null);
   const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
@@ -85,6 +93,8 @@ export function ManagerPanel() {
     setColumnHidden,
     beginColumnDrag,
     beginColumnResize,
+    moveColumnByKeyboard,
+    resizeColumnByKeyboard,
     autoFitColumnWidth,
     fitLayoutWidths,
     beginTrayDrag,
@@ -94,59 +104,6 @@ export function ManagerPanel() {
   const interactionLocked = editingLayout;
   const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;
   const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
-
-  const refreshStatus = async () => {
-    const next = await bgCall<SyncStatus>('getStatus').catch(() => null);
-    setStatus((current) => mergeStatusSnapshot(current, next));
-    return next;
-  };
-
-  const setOnboardingStage = async (stage: SyncStatus['onboardingStage']) => {
-    setStatus((cur) => mergeStatusPatch(cur, { onboardingStage: stage }));
-    await bgCall('setOnboardingStage', { stage }).catch(() => {});
-  };
-
-  const finalizeOnboardingAfterSync = async (hasToken: boolean) => {
-    const q = await bgCall<{ grandTotal: number }>('query', {
-      params: { filter: emptyFilter(), offset: 0, limit: 1 },
-    }).catch(() => null);
-    if (!q) return;
-    await setOnboardingStage(resolveOnboardingStageAfterSync(hasToken, q.grandTotal));
-  };
-
-  useEffect(() => {
-    let off = () => {};
-    (async () => {
-      off = onProgress((progress) => setStatus((current) => mergeProgressStatus(current, progress)));
-      const st = await refreshStatus();
-      setStatusLoaded(true);
-      if (st?.hasToken) {
-        const q = await bgCall<{ grandTotal: number }>('query', {
-          params: { filter: emptyFilter(), offset: 0, limit: 1 },
-        }).catch(() => null);
-        const syncType = pickInitialSyncAction(st, q?.grandTotal ?? 0);
-        if (!syncType) return;
-        const syncLabel = syncType === 'syncIncremental' ? m.popup.syncIncremental : m.popup.syncFull;
-        const tracksOnboarding = shouldTrackOnboardingSync(st.onboardingStage);
-        setPendingAction(syncType);
-        if (tracksOnboarding) await setOnboardingStage('syncing');
-        bgCall(syncType)
-          .then(async () => {
-            refreshStars();
-            await refreshStatus();
-            if (tracksOnboarding) await finalizeOnboardingAfterSync(true);
-          })
-          .catch(async (e) => {
-            await refreshStatus();
-            if (tracksOnboarding) await setOnboardingStage('sync_failed');
-            setInfo(m.manager.syncFailed(syncLabel, e instanceof Error ? e.message : String(e)));
-          })
-          .finally(() => setPendingAction((cur) => (cur === syncType ? null : cur)));
-      }
-    })().finally(() => setStatusLoaded(true));
-    return () => off();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -160,68 +117,11 @@ export function ManagerPanel() {
     return () => window.removeEventListener('keydown', onKey);
   }, [interactionLocked]);
 
-  const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashSuccess = (type: string) => {
-    if (successTimer.current) clearTimeout(successTimer.current);
-    setSuccessAction(type);
-    successTimer.current = setTimeout(() => setSuccessAction(null), 1300);
-  };
-  useEffect(() => () => { if (successTimer.current) clearTimeout(successTimer.current); }, []);
-
-  const doSync = async (type: string, label: string) => {
-    setBusy(true);
-    setPendingAction(type);
-    setSuccessAction(null);
-    setInfo(null);
-    const tracksOnboarding =
-      (type === 'syncIncremental' || type === 'syncFull') &&
-      !!status &&
-      shouldTrackOnboardingSync(status.onboardingStage);
-    try {
-      if (tracksOnboarding) await setOnboardingStage('syncing');
-      const result = await bgCall<{ missing?: boolean }>(type);
-      refreshStars();
-      await refreshStatus();
-      if (tracksOnboarding) await finalizeOnboardingAfterSync(!!status?.hasToken);
-      if (type === 'gistPull' && result?.missing) {
-        setInfo(m.background.gistPullMissing);
-      } else {
-        flashSuccess(type);
-      }
-    } catch (e) {
-      if (tracksOnboarding) await setOnboardingStage('sync_failed');
-      setInfo(m.manager.syncFailed(label, e instanceof Error ? e.message : String(e)));
-    } finally {
-      setBusy(false);
-      setPendingAction((cur) => (cur === type ? null : cur));
-    }
-  };
-
-  const autoAssignTags = async () => {
-    setBusy(true);
-    setPendingAction('autoAssignTags');
-    setSuccessAction(null);
-    setInfo(null);
-    try {
-      await bgCall('autoAssignTags');
-      refreshStars();
-      await refreshStatus();
-      flashSuccess('autoAssignTags');
-    } catch (e) {
-      setInfo(m.manager.autoAssignFailed(e instanceof Error ? e.message : String(e)));
-    } finally {
-      setBusy(false);
-      setPendingAction((cur) => (cur === 'autoAssignTags' ? null : cur));
-    }
-  };
-
   const dismissOnboarding = async () => {
     setCoachStep(null);
     await setOnboardingStage('done');
   };
 
-  const progressActive = !!status?.inFlight && status.progress.phase !== 'idle';
-  const syncingNow = !!pendingAction || progressActive;
   useEffect(() => {
     if (!statusLoaded || !status) return;
     if (status.onboardingStage === 'coach') {
@@ -230,13 +130,6 @@ export function ManagerPanel() {
     }
     if (coachStep !== null) setCoachStep(null);
   }, [coachStep, status, statusLoaded]);
-
-  useEffect(() => {
-    if (!statusLoaded || !status) return;
-    if (status.onboardingStage !== 'syncing' || syncingNow) return;
-    void finalizeOnboardingAfterSync(status.hasToken);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusLoaded, status?.onboardingStage, status?.hasToken, syncingNow]);
 
   const finishCoach = async () => {
     setCoachStep(null);
@@ -289,30 +182,6 @@ export function ManagerPanel() {
     f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged || f.onlyArchived;
   const activeBackfillId = status?.activeBackfillId ?? null;
   const activeBackfillState = activeBackfillId ? status?.backfills[activeBackfillId] ?? null : null;
-
-  const runBackfill = async (id: BackfillId) => {
-    setBusy(true);
-    setPendingAction(`backfill:${id}`);
-    setSuccessAction(null);
-    setInfo(null);
-    try {
-      await bgCall('runBackfill', { id });
-      refreshStars();
-      await refreshStatus();
-      flashSuccess(`backfill:${id}`);
-    } catch (e) {
-      await refreshStatus();
-      setInfo(m.manager.syncFailed(m.manager.backfillSyncAction, e instanceof Error ? e.message : String(e)));
-    } finally {
-      setBusy(false);
-      setPendingAction((cur) => (cur === `backfill:${id}` ? null : cur));
-    }
-  };
-
-  const deferBackfill = async (id: BackfillId) => {
-    await bgCall('deferBackfill', { id }).catch(() => {});
-    await refreshStatus();
-  };
 
   const layoutColumnMenu = (
     <LayoutColumnMenu
@@ -369,7 +238,7 @@ export function ManagerPanel() {
           successAction={successAction}
           onSync={doSync}
           onAutoAssignTags={autoAssignTags}
-          onStatusPatch={(patch) => setStatus((cur) => mergeStatusPatch(cur, patch))}
+          onStatusPatch={applyStatusPatch}
           onToggleTheme={toggleTheme}
           onTogglePanel={hidePanel}
           theme={theme}
@@ -466,6 +335,7 @@ export function ManagerPanel() {
                   flashedColumn,
                   trayCaretX,
                   onBeginColumnDrag: beginColumnDrag,
+                  onMoveColumnByKeyboard: moveColumnByKeyboard,
                 }}
                 layoutResize={layoutResize}
                 customColumnLayoutActive={customColumnLayoutActive}
@@ -478,6 +348,7 @@ export function ManagerPanel() {
                 onToggleTag={f.toggleTag}
                 onToggleFavorite={handleToggleFavorite}
                 onBeginColumnResize={beginColumnResize}
+                onResizeColumnByKeyboard={resizeColumnByKeyboard}
                 onAutoFitColumnWidth={autoFitColumnWidth}
               />
             )}
@@ -524,21 +395,6 @@ export function ManagerPanel() {
       </TooltipProvider>
     </PortalProvider>
   );
-}
-
-function emptyFilter() {
-  return {
-    query: '',
-    languages: [],
-    tags: [],
-    tagMode: 'any' as const,
-    showTombstone: false,
-    onlyFavorite: false,
-    onlyUntagged: false,
-    onlyArchived: false,
-    sortKey: 'starred_at' as const,
-    sortDir: 'desc' as const,
-  };
 }
 
 function OnboardingCard({
