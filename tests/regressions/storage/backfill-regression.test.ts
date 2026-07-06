@@ -51,16 +51,16 @@ describe('Backfill regressions', () => {
       created_at: null,
     } as Star);
 
-    const next = await reconcileBackfillMap({
-      repo_data_sync_v1: {
-        status: 'done',
-        queuedAt: '2026-06-22T00:00:00Z',
-        lastAttemptAt: '2026-06-22T00:00:00Z',
-        completedAt: '2026-06-22T00:05:00Z',
-        error: null,
-      },
-    });
-    assert.equal(next.repo_data_sync_v1?.status, 'done');
+    const existing = {
+      status: 'done' as const,
+      queuedAt: '2026-06-22T00:00:00Z',
+      lastAttemptAt: '2026-06-22T00:01:00Z',
+      completedAt: '2026-06-22T00:05:00Z',
+      error: null,
+    };
+    const next = await reconcileBackfillMap({ repo_data_sync_v1: existing });
+
+    assert.deepEqual(next.repo_data_sync_v1, existing);
     assert.equal(selectActiveBackfillId(next), null);
   });
 
@@ -86,6 +86,48 @@ describe('Backfill regressions', () => {
     } finally {
       backfillTasks.repo_data_sync_v1.detectNeed = originalDetectNeed;
     }
+  });
+
+  it('keeps failed repo data sync backfills active and preserves retry evidence', async () => {
+    await db.stars.put({
+      ...base,
+      full_name: 'failed/repo',
+      starred_at: '2026-06-23T00:00:00Z',
+      created_at: undefined,
+    } as unknown as Star);
+
+    const existing = {
+      status: 'failed' as const,
+      queuedAt: '2026-06-22T00:00:00Z',
+      lastAttemptAt: '2026-06-22T00:04:00Z',
+      completedAt: null,
+      error: 'GitHub metadata refresh failed',
+    };
+    const next = await reconcileBackfillMap({ repo_data_sync_v1: existing });
+
+    assert.deepEqual(next.repo_data_sync_v1, existing);
+    assert.equal(selectActiveBackfillId(next), 'repo_data_sync_v1');
+  });
+
+  it('keeps deferred repo data sync backfills inactive and preserves deferral evidence', async () => {
+    await db.stars.put({
+      ...base,
+      full_name: 'deferred/repo',
+      starred_at: '2026-06-24T00:00:00Z',
+      created_at: null,
+    } as Star);
+
+    const existing = {
+      status: 'deferred' as const,
+      queuedAt: '2026-06-22T00:00:00Z',
+      lastAttemptAt: '2026-06-22T00:03:00Z',
+      completedAt: null,
+      error: 'User postponed after previous failure',
+    };
+    const next = await reconcileBackfillMap({ repo_data_sync_v1: existing });
+
+    assert.deepEqual(next.repo_data_sync_v1, existing);
+    assert.equal(selectActiveBackfillId(next), null);
   });
 
   it('does not surface deferred backfills as active cards', async () => {

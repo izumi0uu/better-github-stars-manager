@@ -69,6 +69,7 @@ Keep this file short and practical. Add rules here only when they are core to th
   - `pnpm test:regressions` for sync/storage compatibility changes
   - `pnpm test:runtime` for extension runtime smoke coverage
 - Add a regression test when changing sync semantics, storage compatibility, migration/backfill logic, or GitHub data mapping.
+- Name new tests, suites, and replay env prefixes by product surface or behavior, not priority or phase labels. Use names like `query-fuzz`, `tag-store-fuzz`, or `BACKGROUND_RUNNER_FUZZ`.
 - For docs-only changes, code tests are optional.
 
 ## Comment Rules

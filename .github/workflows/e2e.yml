@@ -21,7 +21,7 @@ permissions:
 jobs:
   verify-extension:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
 
     steps:
       - name: Checkout
@@ -46,6 +46,12 @@ jobs:
 
       - name: Build extension
         run: pnpm build
+
+      - name: Run local extension browser smoke
+        env:
+          CI: 'true'
+          PUPPETEER_HEADLESS: 'false'
+        run: xvfb-run -a pnpm test:smoke
 
       - name: Run first-run Chrome verification
         env:
