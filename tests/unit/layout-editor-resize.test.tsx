@@ -438,6 +438,49 @@ describe('layout editor column resize', () => {
     expect(harness.current.draftLayout.widths?.description).toBeLessThan(280);
   });
 
+  it('supports keyboard column reorder without crossing locked columns', async () => {
+    const harness = mountResizeHarness();
+    await hydrateAndEdit(harness);
+
+    act(() => {
+      harness.current.moveColumnByKeyboard('description', 1);
+    });
+    expect(harness.current.visibleColumns.slice(0, 4)).toEqual(['repository', 'language', 'description', 'stars']);
+
+    act(() => {
+      harness.current.moveColumnByKeyboard('tags', 1);
+    });
+    expect(harness.current.visibleColumns.slice(-3)).toEqual(['tags', 'favorite', 'notes']);
+
+    act(() => {
+      harness.current.moveColumnByKeyboard('description', -1);
+    });
+    expect(harness.current.visibleColumns.slice(0, 3)).toEqual(['repository', 'description', 'language']);
+  });
+
+  it('supports keyboard column resize through the normalized width snapshot', async () => {
+    const harness = mountResizeHarness();
+    await hydrateAndEdit(harness);
+
+    act(() => {
+      harness.current.resizeColumnByKeyboard('description', 1);
+    });
+    expect(harness.current.draftLayout.widths).toMatchObject({
+      repository: 240,
+      description: 288,
+      language: 80,
+      stars: 64,
+      updated: 84,
+      created: 84,
+      tags: 180,
+    });
+
+    act(() => {
+      harness.current.resizeColumnByKeyboard('description', -1, true);
+    });
+    expect(harness.current.draftLayout.widths?.description).toBe(264);
+  });
+
   it('does not start column reorder while a resize is active', async () => {
     const harness = mountResizeHarness();
     await hydrateAndEdit(harness);

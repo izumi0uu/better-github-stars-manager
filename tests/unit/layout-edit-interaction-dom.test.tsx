@@ -9,7 +9,7 @@ import { LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import {
   LayoutOverflowIndicator,
   LayoutResizeFeedbackOverlay,
-} from '@/ui/ManagerPanel';
+} from '@/ui/components/StarsTable';
 import {
   LayoutResizeSurface,
   layoutResizeOverlayFromRects,
@@ -356,6 +356,17 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
 
     expect(handleRule).toContain('opacity: 0.45;');
     expect(hoverRule).toContain('opacity: 1;');
+  });
+
+  it('keeps layout edit header controls accessible from keyboard', () => {
+    const source = readFileSync('src/ui/components/StarsTable.tsx', 'utf8');
+
+    expect(source).toContain('aria-label={m.toolbar.dragColumnTitle(label)}');
+    expect(source).toContain('<span className="sr-only">{m.toolbar.dragColumnTitle(label)}</span>');
+    expect(source).toContain('onKeyDown={(e) => onDragHandleKeyDown(e, id)}');
+    expect(source).toContain('onKeyDown={(e) => onResizeHandleKeyDown(e, id)}');
+    expect(source).toContain('layoutEdit.onMoveColumnByKeyboard?.(id');
+    expect(source).toContain('onResizeColumnByKeyboard(id');
   });
 
 

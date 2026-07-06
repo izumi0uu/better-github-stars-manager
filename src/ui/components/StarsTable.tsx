@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MutableRefObject, type PointerEvent, type RefObject } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { GripVertical, Heart, StickyNote } from 'lucide-react';
 import type { Star, Tag } from '@/types';
@@ -31,6 +31,7 @@ export interface StarsTableLayoutEdit {
   flashedColumn: ColumnId | null;
   trayCaretX: number | null;
   onBeginColumnDrag: (event: PointerEvent<HTMLElement>, id: ColumnId) => void;
+  onMoveColumnByKeyboard?: (id: ColumnId, direction: -1 | 1) => void;
 }
 
 export function StarsTable({
@@ -57,6 +58,7 @@ export function StarsTable({
   onToggleTag,
   onToggleFavorite,
   onBeginColumnResize = () => {},
+  onResizeColumnByKeyboard = () => {},
   onAutoFitColumnWidth = () => {},
 }: {
   rows: Star[];
@@ -82,6 +84,7 @@ export function StarsTable({
   onToggleTag: (tag: string) => void;
   onToggleFavorite: (fullName: string, favorite: boolean) => Promise<void>;
   onBeginColumnResize?: (event: PointerEvent<HTMLElement>, id: ColumnId) => void;
+  onResizeColumnByKeyboard?: (id: ColumnId, direction: -1 | 1, largeStep?: boolean) => void;
   onAutoFitColumnWidth?: (id: ColumnId) => void;
 }) {
   const { m } = useI18n();
@@ -117,6 +120,24 @@ export function StarsTable({
     stage: scrollRef.current,
     m,
   });
+  const onDragHandleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, id: ColumnId) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    event.stopPropagation();
+    layoutEdit.onMoveColumnByKeyboard?.(id, event.key === 'ArrowLeft' ? -1 : 1);
+  };
+  const onResizeHandleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, id: ColumnId) => {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      event.stopPropagation();
+      onResizeColumnByKeyboard(id, event.key === 'ArrowLeft' ? -1 : 1, event.shiftKey);
+      return;
+    }
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    event.stopPropagation();
+    onAutoFitColumnWidth(id);
+  };
 
   useEffect(() => {
     const root = scrollRef.current;
@@ -273,11 +294,14 @@ export function StarsTable({
                 <button
                   type="button"
                   onPointerDown={(e) => layoutEdit.onBeginColumnDrag(e, id)}
+                  onKeyDown={(e) => onDragHandleKeyDown(e, id)}
                   title={m.toolbar.dragColumnTitle(label)}
+                  aria-label={m.toolbar.dragColumnTitle(label)}
                   className="gsm-gear-in grid size-4 shrink-0 touch-none cursor-grab place-items-center rounded text-muted-foreground/55 transition-colors hover:bg-accent hover:text-foreground active:cursor-grabbing"
                   style={{ '--d': `${index * 28}ms` } as CSSProperties & Record<'--d', string>}
                 >
                   <GripVertical className="size-3" />
+                  <span className="sr-only">{m.toolbar.dragColumnTitle(label)}</span>
                 </button>
               )}
               {id === 'favorite' ? (
@@ -291,6 +315,7 @@ export function StarsTable({
                 <button
                   type="button"
                   onPointerDown={(e) => onBeginColumnResize(e, id)}
+                  onKeyDown={(e) => onResizeHandleKeyDown(e, id)}
                   onDoubleClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();

@@ -26,6 +26,7 @@ import {
   normalizeStoredColumnLayoutPreference,
   resetColumnLayout,
   restoreColumn,
+  resizeSnapshot,
   tableMinWidthFor,
   trayInsertIndex,
   visibleColumnIds,
@@ -37,6 +38,8 @@ import {
 } from '@/ui/column-layout';
 import {
   COLUMN_GAP_PX,
+  COLUMN_KEYBOARD_RESIZE_LARGE_STEP_PX,
+  COLUMN_KEYBOARD_RESIZE_STEP_PX,
   RESTORE_FLASH_DURATION_MS,
   TRAY_DRAG_MOVE_THRESHOLD_PX,
   TRAY_RESTORE_HEADER_BUFFER_PX,
@@ -547,6 +550,36 @@ export function useColumnLayoutEditor(
     });
   };
 
+  const moveColumnByKeyboard = (id: ColumnId, direction: -1 | 1) => {
+    if (!editingLayout || layoutResizeRef.current || layoutDragRef.current || COLUMN_DEFS[id].locked) return;
+    setDraftLayout((current) => {
+      const visible = visibleColumnIds(current);
+      const index = visible.indexOf(id);
+      if (index < 0) return current;
+      const targetIndex = index + direction;
+      const lockedStart = visible.findIndex((columnId) => COLUMN_DEFS[columnId].locked);
+      if (targetIndex < 0 || (lockedStart >= 0 && targetIndex >= lockedStart)) return current;
+      return moveColumn(current, id, direction < 0 ? index - 1 : index + 1);
+    });
+    setColumnMenuOpen(false);
+  };
+
+  const resizeColumnByKeyboard = (id: ColumnId, direction: -1 | 1, largeStep = false) => {
+    if (!editingLayout || layoutResizeRef.current || layoutDragRef.current || COLUMN_DEFS[id].locked) return;
+    const snapshot = measureResizeSnapshot();
+    const startWidth = normalizedColumnWidth(id, draftLayout.widths?.[id]) ?? snapshot?.[id];
+    if (!snapshot || startWidth == null) return;
+    const delta = direction * (largeStep ? COLUMN_KEYBOARD_RESIZE_LARGE_STEP_PX : COLUMN_KEYBOARD_RESIZE_STEP_PX);
+    setDraftLayout((current) => normalizeColumnLayout({
+      ...current,
+      widths: {
+        ...current.widths,
+        ...resizeSnapshot({ ...snapshot, [id]: startWidth }, id, delta, startWidth),
+      },
+    }));
+    setColumnMenuOpen(false);
+  };
+
   const fitLayoutWidths = () => {
     if (blockLayoutMutationDuringResize()) return;
     const snapshot = measureResizeSnapshot();
@@ -742,6 +775,8 @@ export function useColumnLayoutEditor(
     setColumnHidden,
     beginColumnDrag,
     beginColumnResize,
+    moveColumnByKeyboard,
+    resizeColumnByKeyboard,
     autoFitColumnWidth,
     fitLayoutWidths,
     beginTrayDrag,
