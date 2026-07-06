@@ -3,7 +3,6 @@
  */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useLibraryViewPrefs } from '@/ui/hooks/use-library-view-prefs';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
 import type { Config } from '@/types';
@@ -26,6 +25,14 @@ vi.mock('@/auth/auth-store', () => ({
 const mountedRoots: MountedRoot[] = [];
 const storageListeners: Array<(changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void> = [];
 const runtimeListeners: Array<(message: { type?: string }) => void> = [];
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
 
 function baseConfig(): Config {
   return {
@@ -88,7 +95,6 @@ function resetFilterStore() {
 }
 
 function Harness() {
-  useLibraryViewPrefs();
   useStars();
   return null;
 }
@@ -235,6 +241,10 @@ describe('library view preference persistence', () => {
     authMocks.updateLibraryViewPrefs.mockClear();
 
     act(() => {
+      useFilterStore.getState().setQuery('zustand');
+    });
+
+    act(() => {
       storageListeners.forEach((listener) => listener({
         gsm_config: {
           newValue: {
@@ -264,6 +274,54 @@ describe('library view preference persistence', () => {
       languages: ['Rust'],
       tags: ['systems'],
       tagMode: 'any',
+      onlyUntagged: true,
+      sortKey: 'name',
+      sortDir: 'desc',
+      libraryViewHydrated: true,
+    }));
+    expect(useFilterStore.getState().query).toBe('zustand');
+    expect(authMocks.updateLibraryViewPrefs).not.toHaveBeenCalled();
+  });
+
+  it('does not let stale initial hydration overwrite fresher storage changes', async () => {
+    const initialConfig = deferred<Config>();
+    authMocks.getConfig.mockReturnValue(initialConfig.promise);
+    mountReact(<Harness />, mountedRoots);
+
+    act(() => {
+      storageListeners.forEach((listener) => listener({
+        gsm_config: {
+          newValue: {
+            libraryView: {
+              version: 1,
+              filters: {
+                languages: ['Rust'],
+                tags: ['systems'],
+                tagMode: 'any',
+                showTombstone: false,
+                onlyFavorite: false,
+                onlyUntagged: true,
+                onlyArchived: false,
+              },
+              sort: {
+                sortKey: 'name',
+                sortDir: 'desc',
+              },
+            },
+          },
+        } as chrome.storage.StorageChange,
+      }, 'local'));
+    });
+    await flush();
+
+    act(() => {
+      initialConfig.resolve(baseConfig());
+    });
+    await flush();
+
+    expect(useFilterStore.getState()).toEqual(expect.objectContaining({
+      languages: ['Rust'],
+      tags: ['systems'],
       onlyUntagged: true,
       sortKey: 'name',
       sortDir: 'desc',

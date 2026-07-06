@@ -22,6 +22,8 @@ describe('preference normalization', () => {
     assert.equal(normalizeMinTopicRepoCount('2.9'), 2);
     assert.equal(normalizeMinTopicRepoCount('-1'), 1);
     assert.equal(normalizeMinTopicRepoCount('99'), 50);
+    assert.equal(normalizeMinTopicRepoCount('nope'), DEFAULT_MIN_TOPIC_REPO_COUNT);
+    assert.equal(normalizeMinTopicRepoCount(Number.NaN), DEFAULT_MIN_TOPIC_REPO_COUNT);
   });
 
   it('normalizes libraryView v1 and strips non-owned fields', () => {

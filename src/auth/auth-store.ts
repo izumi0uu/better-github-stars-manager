@@ -104,10 +104,14 @@ function withNormalizedOnboarding(config: Config): Config {
 
 async function read(): Promise<Config> {
   if (cache) return cache;
+  cache = await readStoredConfig();
+  return cache;
+}
+
+async function readStoredConfig(): Promise<Config> {
   const raw = await chrome.storage.local.get(CONFIG_STORAGE_KEY);
   const stored = (raw[CONFIG_STORAGE_KEY] ?? {}) as Partial<Config>;
-  cache = withNormalizedOnboarding(mergeStoredConfig(stored));
-  return cache;
+  return withNormalizedOnboarding(mergeStoredConfig(stored));
 }
 
 async function write(next: Config): Promise<void> {
@@ -268,8 +272,11 @@ export const authStore = {
   },
 
   async updateLibraryViewPrefs(libraryView: Config['libraryView']): Promise<void> {
+    // Fresh-read avoids stale module-cache clobbering across extension contexts.
+    // This remains last-write-wins, not transactional compare-and-swap.
+    const current = await readStoredConfig();
     await write({
-      ...(await read()),
+      ...current,
       libraryView: normalizeLibraryViewPrefs(libraryView),
     });
   },

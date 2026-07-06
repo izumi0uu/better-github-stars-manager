@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useFilterStore } from './filter-store';
+import { useLibraryViewPrefs } from './hooks/use-library-view-prefs';
 import type { Star, Tag } from '@/types';
 import type { QueryResult } from '@/background/query';
 import { classifyStarsQueryTrigger } from './stars-refresh';
@@ -14,6 +15,7 @@ const FADE_IN_MS = 160;
  * keeping the list mounted so scroll position is preserved.
  */
 export function useStars() {
+  useLibraryViewPrefs();
   const f = useFilterStore();
   const [committed, setCommitted] = useState<QueryResult | null>(null);
   // Transition phase drives the list opacity. 'fading-out' keeps the committed

@@ -10,7 +10,6 @@ import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { StarsTable } from '@/ui/components/StarsTable';
 import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
-import { useLibraryViewPrefs } from '@/ui/hooks/use-library-view-prefs';
 import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { pickInitialSyncAction } from '@/ui/initial-sync';
 import { Button } from '@/ui/shadcn/button';
@@ -33,7 +32,6 @@ export { layoutViewportFromMeasurements };
 export { LayoutOverflowIndicator, LayoutResizeFeedbackOverlay } from '@/ui/components/StarsTable';
 
 export function ManagerPanel() {
-  useLibraryViewPrefs();
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
   const f = useFilterStore();
   const [status, setStatus] = useState<SyncStatus | null>(null);
