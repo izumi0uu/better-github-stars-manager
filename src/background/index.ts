@@ -414,14 +414,15 @@ async function handle(req: Req): Promise<Res> {
       case 'runBackfill': {
         const m = await getLocaleMessages();
         const task = getBackfillTask(req.id);
-        if (!task) return { ok: false, error: `Unknown backfill: ${req.id}` };
-        if (task.kind !== 'full_sync') return { ok: false, error: `Unsupported backfill kind: ${task.kind}` };
+        if (!task) return { ok: false, error: m.background.unknownBackfill(req.id) };
+        if (task.kind !== 'full_sync') return { ok: false, error: m.background.unsupportedBackfillKind(task.kind) };
         if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
         return await backfillExecutor.runBackfill(task, (error) => translateError(error, m));
       }
       case 'deferBackfill': {
+        const m = await getLocaleMessages();
         const task = getBackfillTask(req.id);
-        if (!task) return { ok: false, error: `Unknown backfill: ${req.id}` };
+        if (!task) return { ok: false, error: m.background.unknownBackfill(req.id) };
         await backfillConfig.setBackfillState(task.id, (current, now) => ({
           status: 'deferred',
           queuedAt: current?.queuedAt ?? now,
