@@ -2,7 +2,7 @@ import type { GistPayload, Tag, TagMeta } from '@/types';
 import type { CountProgressCallback } from '@/api/tag-store';
 import { db } from '@/storage/db';
 import { authStore } from '@/auth/auth-store';
-import { clearDirty } from '@/storage/idb-tag-store';
+import { clearDirty, type DirtySnapshot } from '@/storage/idb-tag-store';
 import { GIST_NO_TOKEN, GIST_CREATE_FAILED, GIST_PUSH_FAILED, GIST_PULL_FAILED } from '@/api/errors';
 
 /**
@@ -115,9 +115,11 @@ export const gistTagStore = {
     dirtyNames: Set<string>,
     dirtyMeta: boolean,
     onProgress?: CountProgressCallback,
+    dirtySnapshot?: DirtySnapshot,
   ): Promise<{ pushed: number; snapshot: number; recreated: boolean }> {
-    const hasLocalChanges = dirtyNames.size > 0 || dirtyMeta;
-    const pushed = dirtyNames.size + (dirtyMeta ? 1 : 0);
+    const pushedNames = dirtySnapshot ? new Set(dirtySnapshot.names.map(({ name }) => name)) : new Set(dirtyNames);
+    const hasLocalChanges = pushedNames.size > 0 || dirtyMeta;
+    const pushed = pushedNames.size + (dirtyMeta ? 1 : 0);
     const { id, recreated } = await ensureWritableGist();
     // Explicit Push still creates/binds a gist when none exists, even if the
     // local snapshot hasn't changed since the last sync. Only skip work when
@@ -134,7 +136,8 @@ export const gistTagStore = {
       }),
     });
     if (!res.ok) throw new Error(GIST_PUSH_FAILED);
-    clearDirty(dirtyNames, dirtyMeta);
+    if (dirtySnapshot) clearDirty(dirtySnapshot);
+    else clearDirty(pushedNames, dirtyMeta);
     await authStore.update({ gistSyncCursor: payload.exportedAt });
     onProgress?.(total, total);
     return { pushed, snapshot: total, recreated };

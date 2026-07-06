@@ -42,6 +42,13 @@ async function seedBulkTags() {
       excluded: false,
       mtime: '2026-07-01T00:00:00Z',
     },
+    {
+      name: 'react',
+      dimension: 'framework',
+      color: '#61dafb',
+      excluded: true,
+      mtime: '2026-07-01T00:00:00Z',
+    },
   ] satisfies TagMeta[]);
 }
 
@@ -58,7 +65,7 @@ describe('idbTagStore.setTagsBulk', () => {
     await db.close();
   });
 
-  it('updates changed repositories together while preserving annotation fields', async () => {
+  it('updates mixed rows while preserving annotations and clearing only newly re-added tombstones', async () => {
     const result = await idbTagStore.setTagsBulk([
       { full_name: 'a/react', tags: ['react', 'ui'] },
       { full_name: 'b/infra', tags: ['infra'] },
@@ -82,7 +89,17 @@ describe('idbTagStore.setTagsBulk', () => {
     assert.equal(created?.notes, '');
     assert.equal(created?.favorite, false);
 
-    assert.equal((await db.tagMeta.get('ui'))?.excluded, false);
+    const [uiMeta, reactMeta] = await Promise.all([
+      db.tagMeta.get('ui'),
+      db.tagMeta.get('react'),
+    ]);
+    assert.equal(uiMeta?.excluded, false);
+    assert.equal(uiMeta?.dimension, 'topic');
+    assert.equal(uiMeta?.color, '#ff00aa');
+    assert.equal(reactMeta?.excluded, true);
+    assert.equal(reactMeta?.dimension, 'framework');
+    assert.equal(reactMeta?.color, '#61dafb');
+
     assert.deepEqual(snapshotDirty().names.sort(), ['a/react', 'c/new']);
     assert.equal(snapshotDirty().meta, true);
   });

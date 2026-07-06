@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterAll, afterEach, describe, it } from 'vitest';
 import {
+  TOKEN_EMPTY,
   TOKEN_GIST_CLEANUP_STATUS,
   TOKEN_PROFILE_STATUS,
   TOKEN_STARS_STATUS,
@@ -94,6 +95,36 @@ const chromeMock = createChromeMock();
 (globalThis as { chrome?: unknown }).chrome = chromeMock.api;
 const originalFetch = globalThis.fetch;
 const { authStore } = await import('../../../src/auth/auth-store');
+
+async function storeReadableToken(token: string, probeId: string) {
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init?.method ?? 'GET';
+    if (url.endsWith('/user') && method === 'GET') {
+      return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+    }
+    if (url.includes('/user/starred') && method === 'GET') return response(200, []);
+    if (url.endsWith('/gists') && method === 'POST') return response(201, { id: probeId });
+    if (url.endsWith(`/gists/${probeId}`) && method === 'DELETE') return response(204);
+    throw new Error(`unexpected fetch: ${method} ${url}`);
+  }) as typeof fetch;
+  await authStore.setToken(token);
+  return authStore.getConfig();
+}
+
+function successfulProbeFetch(probeId: string): typeof fetch {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init?.method ?? 'GET';
+    if (url.endsWith('/user') && method === 'GET') {
+      return response(200, { login: 'later', avatar_url: 'https://example.com/later.png', name: 'Later' }, { 'x-oauth-scopes': '' });
+    }
+    if (url.includes('/user/starred') && method === 'GET') return response(200, []);
+    if (url.endsWith('/gists') && method === 'POST') return response(201, { id: probeId });
+    if (url.endsWith(`/gists/${probeId}`) && method === 'DELETE') return response(204);
+    throw new Error(`unexpected fetch: ${method} ${url}`);
+  }) as typeof fetch;
+}
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -315,5 +346,117 @@ describe('Status/token regressions', () => {
         language: 64,
       },
     });
+  });
+
+  it('authStore.setToken keeps existing persisted token when probe cleanup fails', async () => {
+    const previousConfig = await storeReadableToken('github_pat_existing_cleanup_guard', 'probe-existing');
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/user') && method === 'GET') {
+        return response(200, { login: 'later', avatar_url: 'https://example.com/later.png', name: 'Later' }, { 'x-oauth-scopes': '' });
+      }
+      if (url.includes('/user/starred') && method === 'GET') return response(200, []);
+      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-cleanup-blocked' });
+      if (url.endsWith('/gists/probe-cleanup-blocked') && method === 'DELETE') return response(500);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    await assert.rejects(
+      () => authStore.setToken('github_pat_rejected_cleanup_guard'),
+      (e: unknown) => e instanceof Error && e.message === `${TOKEN_GIST_CLEANUP_STATUS}500`,
+    );
+
+    const cfg = await authStore.getConfig();
+    assert.equal(cfg.tokenEncrypted, previousConfig.tokenEncrypted);
+    assert.deepEqual(cfg.tokenCryptoMeta, previousConfig.tokenCryptoMeta);
+    assert.equal(cfg.username, 'idah');
+    assert.equal(await authStore.getToken(), 'github_pat_existing_cleanup_guard');
+  });
+
+  it('authStore.setToken leaves existing plaintext cache unchanged when storage write fails', async () => {
+    const previousConfig = await storeReadableToken('github_pat_existing_write_guard', 'probe-write-existing');
+    globalThis.fetch = successfulProbeFetch('probe-write-failed');
+    chromeMock.rejectNextSet(new Error('storage write failed'));
+
+    await assert.rejects(
+      () => authStore.setToken('github_pat_rejected_write_guard'),
+      /storage write failed/,
+    );
+
+    const cfg = await authStore.getConfig();
+    assert.equal(cfg.tokenEncrypted, previousConfig.tokenEncrypted);
+    assert.deepEqual(cfg.tokenCryptoMeta, previousConfig.tokenCryptoMeta);
+    assert.equal(cfg.username, 'idah');
+    assert.equal(await authStore.getToken(), 'github_pat_existing_write_guard');
+  });
+
+  it('authStore.setToken rejects whitespace without fetch, encryption, or storage writes', async () => {
+    let fetchCalls = 0;
+    let storageWrites = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      throw new Error('whitespace token must not fetch');
+    }) as typeof fetch;
+    const originalEncrypt = crypto.subtle.encrypt.bind(crypto.subtle);
+    let encryptCalls = 0;
+    crypto.subtle.encrypt = (async (...args: Parameters<SubtleCrypto['encrypt']>) => {
+      encryptCalls += 1;
+      return originalEncrypt(...args);
+    }) as SubtleCrypto['encrypt'];
+    const originalSet = chromeMock.api.storage.local.set;
+    chromeMock.api.storage.local.set = (async (...args: Parameters<typeof originalSet>) => {
+      storageWrites += 1;
+      return originalSet(...args);
+    }) as typeof originalSet;
+
+    try {
+      await assert.rejects(
+        () => authStore.setToken('   \n\t  '),
+        (e: unknown) => e instanceof Error && e.message === TOKEN_EMPTY,
+      );
+    } finally {
+      crypto.subtle.encrypt = originalEncrypt as SubtleCrypto['encrypt'];
+      chromeMock.api.storage.local.set = originalSet;
+    }
+
+    assert.equal(fetchCalls, 0);
+    assert.equal(encryptCalls, 0);
+    assert.equal(storageWrites, 0);
+  });
+
+  it('authStore clears cached plaintext on external token crypto changes only', async () => {
+    const persisted = await storeReadableToken('github_pat_cache_invalidation_guard', 'probe-cache-guard');
+    const originalDecrypt = crypto.subtle.decrypt.bind(crypto.subtle);
+    let decryptCalls = 0;
+    crypto.subtle.decrypt = (async (...args: Parameters<SubtleCrypto['decrypt']>) => {
+      decryptCalls += 1;
+      return originalDecrypt(...args);
+    }) as SubtleCrypto['decrypt'];
+
+    try {
+      await chromeMock.api.storage.local.set({
+        gsm_config: {
+          ...persisted,
+          theme: persisted.theme === 'dark' ? 'light' : 'dark',
+        },
+      });
+      assert.equal(await authStore.getToken(), 'github_pat_cache_invalidation_guard');
+      assert.equal(decryptCalls, 0);
+
+      assert.ok(persisted.tokenEncrypted);
+      const changedCipher = `${persisted.tokenEncrypted[0] === 'A' ? 'B' : 'A'}${persisted.tokenEncrypted.slice(1)}`;
+      assert.notEqual(persisted.tokenEncrypted, changedCipher);
+      await chromeMock.api.storage.local.set({
+        gsm_config: {
+          ...persisted,
+          tokenEncrypted: changedCipher,
+        },
+      });
+      assert.equal(await authStore.getToken(), null);
+      assert.equal(decryptCalls, 1);
+    } finally {
+      crypto.subtle.decrypt = originalDecrypt as SubtleCrypto['decrypt'];
+    }
   });
 });

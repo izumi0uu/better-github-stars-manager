@@ -47,6 +47,12 @@ jobs:
       - name: Build extension
         run: pnpm build
 
+      - name: Run local extension browser smoke
+        env:
+          CI: 'true'
+          PUPPETEER_HEADLESS: 'false'
+        run: xvfb-run -a pnpm test:smoke
+
       - name: Run first-run Chrome verification
         env:
           CI: 'true'
