@@ -1,4 +1,9 @@
 import { create } from 'zustand';
+import {
+  DEFAULT_LIBRARY_VIEW_PREFS,
+  normalizeLibraryViewPrefs,
+} from '@/preferences';
+import type { LibraryViewPrefs } from '@/types';
 
 export type SortKey = 'starred_at' | 'pushed_at' | 'created_at' | 'stargazers_count' | 'name';
 export type SortDir = 'asc' | 'desc';
@@ -14,6 +19,7 @@ export interface FilterState {
   onlyArchived: boolean;
   sortKey: SortKey;
   sortDir: SortDir;
+  libraryViewHydrated: boolean;
   setQuery: (q: string) => void;
   toggleLanguage: (lang: string) => void;
   toggleTag: (tag: string) => void;
@@ -24,7 +30,42 @@ export interface FilterState {
   setOnlyUntagged: (v: boolean) => void;
   setOnlyArchived: (v: boolean) => void;
   setSort: (k: SortKey, d?: SortDir) => void;
+  applyLibraryViewPrefs: (prefs: LibraryViewPrefs, tagOverride?: string | null) => void;
   resetFilters: () => void;
+}
+
+export function libraryViewPrefsFromFilterState(state: Pick<
+  FilterState,
+  | 'languages'
+  | 'tags'
+  | 'tagMode'
+  | 'showTombstone'
+  | 'onlyFavorite'
+  | 'onlyUntagged'
+  | 'onlyArchived'
+  | 'sortKey'
+  | 'sortDir'
+>): LibraryViewPrefs {
+  return normalizeLibraryViewPrefs({
+    version: 1,
+    filters: {
+      languages: state.languages,
+      tags: state.tags,
+      tagMode: state.tagMode,
+      showTombstone: state.showTombstone,
+      onlyFavorite: state.onlyFavorite,
+      onlyUntagged: state.onlyUntagged,
+      onlyArchived: state.onlyArchived,
+    },
+    sort: {
+      sortKey: state.sortKey,
+      sortDir: state.sortDir,
+    },
+  });
+}
+
+export function libraryViewPrefsKey(prefs: LibraryViewPrefs): string {
+  return JSON.stringify(normalizeLibraryViewPrefs(prefs));
 }
 
 export const useFilterStore = create<FilterState>((set) => ({
@@ -38,6 +79,7 @@ export const useFilterStore = create<FilterState>((set) => ({
   onlyArchived: false,
   sortKey: 'starred_at',
   sortDir: 'desc',
+  libraryViewHydrated: false,
   setQuery: (query) => set({ query }),
   toggleLanguage: (lang) =>
     set((s) => ({
@@ -56,6 +98,22 @@ export const useFilterStore = create<FilterState>((set) => ({
   setOnlyUntagged: (onlyUntagged) => set({ onlyUntagged }),
   setOnlyArchived: (onlyArchived) => set({ onlyArchived }),
   setSort: (sortKey, sortDir) => set((s) => ({ sortKey, sortDir: sortDir ?? s.sortDir })),
+  applyLibraryViewPrefs: (prefs, tagOverride) => {
+    const normalized = normalizeLibraryViewPrefs(prefs ?? DEFAULT_LIBRARY_VIEW_PREFS);
+    set({
+      query: '',
+      languages: normalized.filters.languages,
+      tags: tagOverride ? [tagOverride] : normalized.filters.tags,
+      tagMode: normalized.filters.tagMode,
+      showTombstone: normalized.filters.showTombstone,
+      onlyFavorite: normalized.filters.onlyFavorite,
+      onlyUntagged: normalized.filters.onlyUntagged,
+      onlyArchived: normalized.filters.onlyArchived,
+      sortKey: normalized.sort.sortKey,
+      sortDir: normalized.sort.sortDir,
+      libraryViewHydrated: true,
+    });
+  },
   resetFilters: () =>
     set({ query: '', languages: [], tags: [], showTombstone: false, onlyFavorite: false, onlyUntagged: false, onlyArchived: false }),
 }));

@@ -282,10 +282,41 @@ describe('Status/token regressions', () => {
 
     const cfg = await authStore.getConfig();
     assert.equal(cfg.autoTagLimit, 5);
+    assert.equal(cfg.maxTagsPerRepo, 5);
+    assert.equal(cfg.minTopicRepoCount, 3);
+    assert.deepEqual(cfg.libraryView, {
+      version: 1,
+      filters: {
+        languages: [],
+        tags: [],
+        tagMode: 'any',
+        showTombstone: false,
+        onlyFavorite: false,
+        onlyUntagged: false,
+        onlyArchived: false,
+      },
+      sort: {
+        sortKey: 'starred_at',
+        sortDir: 'desc',
+      },
+    });
     assert.equal(cfg.starsPanelDefaultEnabled, true);
     assert.equal(cfg.columnLayoutMode, 'default');
     assert.equal(cfg.customColumnLayout, null);
     assert.deepEqual(cfg.backfills, {});
+  });
+
+  it('authStore maps legacy autoTagLimit to maxTagsPerRepo when the split field is absent', async () => {
+    await chromeMock.api.storage.local.set({
+      gsm_config: {
+        autoTagLimit: 7,
+      },
+    });
+
+    const cfg = await authStore.getConfig();
+    assert.equal(cfg.autoTagLimit, 7);
+    assert.equal(cfg.maxTagsPerRepo, 7);
+    assert.equal(cfg.minTopicRepoCount, 3);
   });
 
   it('authStore normalizes stored column layout preferences', async () => {

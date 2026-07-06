@@ -49,6 +49,10 @@ export function useStars() {
   // Same-filter reloads (dataChanged broadcasts or explicit refresh()) update
   // the committed rows in place so the list does not flash.
   useEffect(() => {
+    if (!f.libraryViewHydrated) {
+      setLoading(true);
+      return;
+    }
     let cancelled = false;
     let fadeOut: ReturnType<typeof setTimeout> | null = null;
     let fadeIn: ReturnType<typeof setTimeout> | null = null;
@@ -98,7 +102,7 @@ export function useStars() {
       if (fadeIn) clearTimeout(fadeIn);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKey, refreshKey]);
+  }, [f.libraryViewHydrated, filterKey, refreshKey]);
 
   // Live refresh when background signals data changed (sync/write).
   useEffect(() => {

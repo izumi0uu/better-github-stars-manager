@@ -23,18 +23,20 @@ vi.mock('@/ui/use-stars', () => ({
   }),
 }));
 
-vi.mock('@/ui/filter-store', () => ({
-  useFilterStore: () => ({
+vi.mock('@/ui/filter-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/ui/filter-store')>();
+  const filterState = {
     query: '',
     languages: [],
     tags: [],
-    tagMode: 'any',
+    tagMode: 'any' as const,
     showTombstone: false,
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
-    sortKey: 'starred_at',
-    sortDir: 'desc',
+    sortKey: 'starred_at' as const,
+    sortDir: 'desc' as const,
+    libraryViewHydrated: true,
     setQuery: vi.fn(),
     toggleLanguage: vi.fn(),
     toggleTag: vi.fn(),
@@ -45,9 +47,18 @@ vi.mock('@/ui/filter-store', () => ({
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
     setSort: vi.fn(),
+    applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
-  }),
-}));
+  };
+  const useFilterStore = Object.assign(() => filterState, {
+    getState: () => filterState,
+    subscribe: vi.fn(() => () => {}),
+  });
+  return {
+    ...actual,
+    useFilterStore,
+  };
+});
 
 vi.mock('@/ui/hooks/use-theme', () => ({
   useTheme: () => ({

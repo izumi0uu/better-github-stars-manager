@@ -16,12 +16,13 @@ describe('background auto-tag frequency contract', () => {
     assert.match(source, /const topicRepoCounts = countTopicRepoFrequency\(stars\);/);
   });
 
-  it('uses autoTagLimit as both per-repo cap and minimum repo coverage', () => {
+  it('uses split auto-tag policy fields for cap and minimum repo coverage', () => {
     const block = source.match(/const toAdd = suggestTags\([\s\S]*?\n    \}\);/)?.[0] ?? '';
     assert.ok(block, 'autoTagAll should call suggestTags with a policy object');
-    assert.match(block, /limit: cfg\.autoTagLimit/);
-    assert.match(block, /minRepoCount: cfg\.autoTagLimit/);
+    assert.match(block, /limit: cfg\.maxTagsPerRepo/);
+    assert.match(block, /minRepoCount: cfg\.minTopicRepoCount/);
     assert.match(block, /topicRepoCounts/);
+    assert.doesNotMatch(block, /cfg\.autoTagLimit/);
   });
 
   it('computes the full update plan before one bulk write', () => {

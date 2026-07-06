@@ -197,16 +197,16 @@ async function autoTagAll(
     '| phase:',
     phase,
     '| limit:',
-    cfg.autoTagLimit,
+    cfg.maxTagsPerRepo,
     '| minRepoCount:',
-    cfg.autoTagLimit,
+    cfg.minTopicRepoCount,
   );
   for (let i = 0; i < stars.length; i++) {
     const star = stars[i];
     const existing = existingTags.get(star.full_name)?.tags ?? [];
     const toAdd = suggestTags(star, existing, excluded, {
-      limit: cfg.autoTagLimit,
-      minRepoCount: cfg.autoTagLimit,
+      limit: cfg.maxTagsPerRepo,
+      minRepoCount: cfg.minTopicRepoCount,
       topicRepoCounts,
     });
     if (toAdd.length > 0) {

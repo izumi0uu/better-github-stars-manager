@@ -8,7 +8,12 @@ import {
 } from "@/onboarding/state";
 import {
   DEFAULT_AUTO_TAG_LIMIT,
+  DEFAULT_LIBRARY_VIEW_PREFS,
+  DEFAULT_MIN_TOPIC_REPO_COUNT,
+  normalizeLibraryViewPrefs,
   normalizeAutoTagLimit,
+  normalizeMaxTagsPerRepo,
+  normalizeMinTopicRepoCount,
   normalizeStarsPanelDefaultEnabled,
 } from "@/preferences";
 import { normalizeBackfillMap } from "@/upgrades/backfill-state";
@@ -44,6 +49,9 @@ const DEFAULT_CONFIG: Config = {
   seenOnboarding: false,
   seenTooltips: 0,
   autoTagLimit: DEFAULT_AUTO_TAG_LIMIT,
+  maxTagsPerRepo: DEFAULT_AUTO_TAG_LIMIT,
+  minTopicRepoCount: DEFAULT_MIN_TOPIC_REPO_COUNT,
+  libraryView: DEFAULT_LIBRARY_VIEW_PREFS,
   starsPanelDefaultEnabled: true,
   columnLayoutMode: "default",
   customColumnLayout: null,
@@ -55,6 +63,16 @@ const DEFAULT_CONFIG: Config = {
 let cache: Config | null = null;
 let plaintextToken: string | null = null; // in-memory only
 
+function mergeStoredConfig(stored: Partial<Config>): Config {
+  const maxTagsPerRepo =
+    stored.maxTagsPerRepo === undefined ? stored.autoTagLimit : stored.maxTagsPerRepo;
+  return {
+    ...DEFAULT_CONFIG,
+    ...stored,
+    maxTagsPerRepo: maxTagsPerRepo ?? DEFAULT_CONFIG.maxTagsPerRepo,
+  };
+}
+
 function withNormalizedOnboarding(config: Config): Config {
   const hasTokenHint = !!(plaintextToken || config.tokenEncrypted);
   const onboardingStage = normalizeOnboardingStage(
@@ -65,6 +83,12 @@ function withNormalizedOnboarding(config: Config): Config {
   return {
     ...config,
     autoTagLimit: normalizeAutoTagLimit(config.autoTagLimit),
+    maxTagsPerRepo: normalizeMaxTagsPerRepo(
+      config.maxTagsPerRepo,
+      config.autoTagLimit,
+    ),
+    minTopicRepoCount: normalizeMinTopicRepoCount(config.minTopicRepoCount),
+    libraryView: normalizeLibraryViewPrefs(config.libraryView),
     starsPanelDefaultEnabled: normalizeStarsPanelDefaultEnabled(
       config.starsPanelDefaultEnabled,
     ),
@@ -82,7 +106,7 @@ async function read(): Promise<Config> {
   if (cache) return cache;
   const raw = await chrome.storage.local.get(CONFIG_STORAGE_KEY);
   const stored = (raw[CONFIG_STORAGE_KEY] ?? {}) as Partial<Config>;
-  cache = withNormalizedOnboarding({ ...DEFAULT_CONFIG, ...stored });
+  cache = withNormalizedOnboarding(mergeStoredConfig(stored));
   return cache;
 }
 
@@ -108,7 +132,7 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
 
     const prev = cache;
     const stored = (change.newValue ?? {}) as Partial<Config>;
-    cache = withNormalizedOnboarding({ ...DEFAULT_CONFIG, ...stored });
+    cache = withNormalizedOnboarding(mergeStoredConfig(stored));
 
     const tokenChanged =
       prev?.tokenEncrypted !== cache.tokenEncrypted ||
@@ -222,5 +246,31 @@ export const authStore = {
 
   async update(patch: Partial<Config>): Promise<void> {
     await write({ ...(await read()), ...patch });
+  },
+
+  async updateAutoTagPolicy(patch: {
+    maxTagsPerRepo?: number;
+    minTopicRepoCount?: number;
+  }): Promise<void> {
+    const current = await read();
+    const maxTagsPerRepo = patch.maxTagsPerRepo === undefined
+      ? current.maxTagsPerRepo
+      : normalizeMaxTagsPerRepo(patch.maxTagsPerRepo, current.autoTagLimit);
+    const minTopicRepoCount = patch.minTopicRepoCount === undefined
+      ? current.minTopicRepoCount
+      : normalizeMinTopicRepoCount(patch.minTopicRepoCount);
+    await write({
+      ...current,
+      autoTagLimit: maxTagsPerRepo,
+      maxTagsPerRepo,
+      minTopicRepoCount,
+    });
+  },
+
+  async updateLibraryViewPrefs(libraryView: Config['libraryView']): Promise<void> {
+    await write({
+      ...(await read()),
+      libraryView: normalizeLibraryViewPrefs(libraryView),
+    });
   },
 };
