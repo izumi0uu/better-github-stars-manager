@@ -20,7 +20,7 @@ Use this skill before changing persisted data shape or data-completeness behavio
 
 1. If the change is UI-only, do not add a storage migration or backfill.
 2. If only `Config` shape changes, add a safe default and normalize in `src/auth/auth-store.ts`; no Dexie bump.
-3. If an IndexedDB stored field or index changes, update `src/types/index.ts` and bump Dexie schema in `src/storage/db.ts`.
+3. If an IndexedDB stored field or index changes, update `src/types/index.ts`, bump Dexie schema in `src/storage/db.ts`, and treat old `undefined` values as missing data for legacy rows.
 4. If old local rows are missing data required by a new feature, prefer a capability-keyed backfill task.
 5. If missing data can be filled safely over time without blocking correctness, prefer lazy hydration.
 6. Use a full-sync backfill only when the feature requires library-wide consistency and there is no safe incremental/lazy path.
