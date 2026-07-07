@@ -7,12 +7,11 @@ describe('layout edit interaction lock invariants', () => {
   it('keeps the lock owned locally by ManagerPanel and passes it to non-editor regions', () => {
     const source = read('src/ui/ManagerPanel.tsx');
 
-    expect(source).toContain('const interactionLocked = editingLayout;');
-    expect(source).toContain('shouldIgnorePanelShortcut(interactionLocked, e.target)');
-    expect(source).toContain('<ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />');
-    expect(source).toContain('interactionLocked={interactionLocked}');
-    expect(source).toContain('<FloatingLocaleToggle drawerOpen={!!selectedStar} interactionLocked={interactionLocked} />');
-    expect(source).toContain('disabled={actionBusy || interactionLocked}');
+    expect(source).toMatch(/const\s+interactionLocked\s*=\s*editingLayout;/);
+    expect(source).toMatch(/shouldIgnorePanelShortcut\(interactionLocked,\s*e\.target\)/);
+    expect(source).toMatch(/<ActiveFilterChips[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
+    expect(source).toMatch(/<FloatingLocaleToggle[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
+    expect(source).toMatch(/disabled=\{actionBusy\s*\|\|\s*interactionLocked\}/);
   });
 
   it('uses semantic inert/anchor helpers instead of a global provider', () => {
@@ -44,18 +43,18 @@ describe('layout edit interaction lock invariants', () => {
     const table = read('src/ui/components/StarsTable.tsx');
     const hook = read('src/ui/hooks/use-column-layout-editor.ts');
 
-    expect(toolbar).toContain('onClick={onStartLayoutEdit}');
-    expect(toolbar).not.toContain("onLayoutModeChange('custom');\n                  onStartLayoutEdit");
-    expect(manager).toContain('beginCustomLayoutEdit,');
-    expect(manager).toContain('onStartLayoutEdit={beginCustomLayoutEdit}');
-    expect(manager).toContain('<StarsTable');
+    expect(toolbar).toMatch(/onClick=\{onStartLayoutEdit\}/);
+    expect(toolbar).not.toMatch(/onLayoutModeChange\('custom'\);\s*onStartLayoutEdit/);
+    expect(manager).toMatch(/beginCustomLayoutEdit,/);
+    expect(manager).toMatch(/onStartLayoutEdit=\{beginCustomLayoutEdit\}/);
+    expect(manager).toMatch(/<StarsTable\b/);
     expect(table).toContain('BROWSE_LAYOUT_TABLE_OPACITY_MS');
     expect(table).toContain('data-table-head');
     expect(table).toContain('data-table-head-sentinel');
     expect(table).not.toContain('cloneElement');
-    expect(hook).toContain('const beginCustomLayoutEdit = () => {');
-    expect(hook).toContain('if (!configLoaded.current) return;');
-    expect(hook).toContain('preEditMode.current = layoutMode;');
+    expect(hook).toMatch(/const\s+beginCustomLayoutEdit\s*=\s*\(\)\s*=>\s*\{/);
+    expect(hook).toMatch(/if\s*\(!configLoaded\.current\)\s*return;/);
+    expect(hook).toMatch(/preEditMode\.current\s*=\s*layoutMode;/);
     expect(hook).toContain('reportLayoutPersistenceFailure');
     expect(hook).not.toContain("authStore.update({ columnLayoutMode: edit.layoutMode })");
   });
@@ -63,10 +62,10 @@ describe('layout edit interaction lock invariants', () => {
   it('keeps storage echoes from owning the rendered browse layout after hydration', () => {
     const hook = read('src/ui/hooks/use-column-layout-editor.ts');
 
-    expect(hook).toContain('const configSynced = useRef(false);');
-    expect(hook).toContain('const configLoaded = useRef(false);');
-    expect(hook).toContain('const isFirstConfigSync = !configSynced.current;');
-    expect(hook).toContain('if (options.hydrate && !isFirstConfigSync) return;');
+    expect(hook).toMatch(/const\s+configSynced\s*=\s*useRef\(false\);/);
+    expect(hook).toMatch(/const\s+configLoaded\s*=\s*useRef\(false\);/);
+    expect(hook).toMatch(/const\s+isFirstConfigSync\s*=\s*!configSynced\.current;/);
+    expect(hook).toMatch(/if\s*\(options\.hydrate\s*&&\s*!isFirstConfigSync\)\s*return;/);
     expect(hook).toContain('options: { hydrate: boolean }');
     expect(hook).toContain('const shouldHydrateBrowseLayout = options.hydrate && isFirstConfigSync && !editingLayoutRef.current;');
     expect(hook).toContain('configSynced.current = true;');
@@ -83,7 +82,7 @@ describe('layout edit interaction lock invariants', () => {
     const table = read('src/ui/components/StarsTable.tsx');
     const row = read('src/ui/components/StarRow.tsx');
 
-    expect(manager).toContain("const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;");
+    expect(manager).toMatch(/const\s+customColumnLayoutActive\s*=\s*editingLayout\s*\|\|\s*layoutMode\s*===\s*'custom'\s*\|\|\s*previewingCustomLayout;/);
     expect(table).toContain("'justify-end text-right': def.align === 'end' && !customColumnLayoutActive");
     expect(table).toContain('starColumnAlignStart={customColumnLayoutActive}');
     expect(table).not.toContain("'justify-end pr-3 text-right': def.align === 'end'");

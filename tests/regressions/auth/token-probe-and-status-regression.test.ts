@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterAll, afterEach, describe, it } from 'vitest';
+import { createChromeMock, response } from '../../helpers/chrome-mock';
 import {
   TOKEN_EMPTY,
   TOKEN_GIST_CLEANUP_STATUS,
@@ -9,53 +10,6 @@ import {
 } from '../../../src/api/errors';
 import { probeTokenCapabilities } from '../../../src/auth/token-probe';
 import { mergeStatusPatch, mergeStatusSnapshot, type SyncStatus } from '../../../src/utils/messaging';
-
-function response(status: number, body?: unknown, headers?: Record<string, string>): Response {
-  return new Response(body === undefined ? null : JSON.stringify(body), { status, headers });
-}
-
-function createChromeMock() {
-  const state: Record<string, unknown> = {};
-  const listeners = new Set<
-    (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void
-  >();
-  let rejectNextSet: Error | null = null;
-  return {
-    rejectNextSet(error: Error) {
-      rejectNextSet = error;
-    },
-    api: {
-      storage: {
-        local: {
-          async get(key: string) {
-            return { [key]: state[key] };
-          },
-          async set(next: Record<string, unknown>) {
-            if (rejectNextSet) {
-              const error = rejectNextSet;
-              rejectNextSet = null;
-              throw error;
-            }
-            const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
-            for (const [key, value] of Object.entries(next)) {
-              changes[key] = { oldValue: state[key], newValue: value };
-              state[key] = value;
-            }
-            for (const listener of listeners) listener(changes, 'local');
-          },
-        },
-        onChanged: {
-          addListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.add(listener);
-          },
-          removeListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.delete(listener);
-          },
-        },
-      },
-    },
-  };
-}
 
 function fakeMessages() {
   return {
@@ -193,13 +147,13 @@ describe('Status/token regressions', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       calls.push(`${method} ${url}`);
-      if (calls.length === 1) {
+      if (url.endsWith('/user') && method === 'GET') {
         return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': '' });
       }
-      if (calls.length === 2) return response(200, []);
-      if (calls.length === 3) return response(201, { id: 'probe-1' });
-      if (calls.length === 4) return response(500);
-      throw new Error(`unexpected fetch call ${calls.length}: ${method} ${url}`);
+      if (url.includes('/user/starred?per_page=1&page=1') && method === 'GET') return response(200, []);
+      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-1' });
+      if (url.endsWith('/gists/probe-1') && method === 'DELETE') return response(500);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
     }) as typeof fetch;
 
     await assert.rejects(

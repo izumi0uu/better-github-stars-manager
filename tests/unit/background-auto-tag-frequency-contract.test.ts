@@ -1,23 +1,21 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'vitest';
-
-const source = readFileSync(new URL('../../src/background/index.ts', import.meta.url), 'utf8');
+import { backgroundSource } from '../helpers/background-case-block';
 
 describe('background auto-tag frequency contract', () => {
   function autoTagAllBlock(): string {
-    const block = source.match(/async function autoTagAll\([\s\S]*?\n}\n\nasync function performFullSync/)?.[0] ?? '';
+    const block = backgroundSource.match(/async function autoTagAll\([\s\S]*?\n}\n\nasync function performFullSync/)?.[0] ?? '';
     assert.ok(block, 'autoTagAll block should exist');
     return block;
   }
 
   it('computes topic repo frequency before bulk auto-tag suggestions', () => {
-    assert.match(source, /import \{ countTopicRepoFrequency, suggestTags \} from '@\/ui\/suggest';/);
-    assert.match(source, /const topicRepoCounts = countTopicRepoFrequency\(stars\);/);
+    assert.match(backgroundSource, /import \{ countTopicRepoFrequency, suggestTags \} from '@\/ui\/suggest';/);
+    assert.match(backgroundSource, /const topicRepoCounts = countTopicRepoFrequency\(stars\);/);
   });
 
   it('uses split auto-tag policy fields for cap and minimum repo coverage', () => {
-    const block = source.match(/const toAdd = suggestTags\([\s\S]*?\n    \}\);/)?.[0] ?? '';
+    const block = backgroundSource.match(/const toAdd = suggestTags\([\s\S]*?\n    \}\);/)?.[0] ?? '';
     assert.ok(block, 'autoTagAll should call suggestTags with a policy object');
     assert.match(block, /limit: cfg\.maxTagsPerRepo/);
     assert.match(block, /minRepoCount: cfg\.minTopicRepoCount/);
@@ -43,7 +41,7 @@ describe('background auto-tag frequency contract', () => {
   });
 
   it('keeps manual Auto Tags as the only autoTagAll call site', () => {
-    const calls = source.match(/return autoTagAll\(m\.background\.autoAssignTagging/g) ?? [];
+    const calls = backgroundSource.match(/return autoTagAll\(m\.background\.autoAssignTagging/g) ?? [];
     assert.equal(calls.length, 1);
   });
 });
