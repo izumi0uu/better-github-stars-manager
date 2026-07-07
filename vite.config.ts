@@ -19,8 +19,8 @@ function versionHash(): string {
   const commit = git(['rev-parse', '--short=8', 'HEAD'], 'unknown');
   const dirty = git(['status', '--short']);
   const diff = git(['diff', '--binary', 'HEAD']);
-  const stateHash = dirty ? createHash('sha1').update(`${diff}\n${dirty}`).digest('hex').slice(0, 6) : 'clean';
-  const buildHash = createHash('sha1').update(new Date().toISOString()).digest('hex').slice(0, 6);
+  const stateHash = dirty ? createHash('sha256').update(`${diff}\n${dirty}`).digest('hex').slice(0, 6) : 'clean';
+  const buildHash = createHash('sha256').update(new Date().toISOString()).digest('hex').slice(0, 6);
   return `${commit}-${stateHash}-${buildHash}`;
 }
 

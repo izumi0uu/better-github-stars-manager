@@ -63,15 +63,14 @@ writeFileSync(checksumPath, `${digest}  ${path.basename(zipPath)}\n`);
 
 const versionHashPattern = /\b(?:[0-9a-f]{8}|unknown)-(?:clean|[0-9a-f]{6})-[0-9a-f]{6}\b/;
 const assetDir = path.join(distDir, 'assets');
-let versionHash = null;
+const versionHashCandidates = new Set();
 for (const entry of existsSync(assetDir) ? readdirSync(assetDir) : []) {
   if (!entry.endsWith('.js')) continue;
-  const match = readFileSync(path.join(assetDir, entry), 'utf8').match(versionHashPattern);
-  if (match) {
-    versionHash = match[0];
-    break;
+  for (const match of readFileSync(path.join(assetDir, entry), 'utf8').matchAll(versionHashPattern)) {
+    versionHashCandidates.add(match[0]);
   }
 }
+const [versionHash] = versionHashCandidates.size === 1 ? versionHashCandidates : [];
 
 console.log(`✅ Packaged ${path.relative(root, zipPath)}`);
 console.log(`✅ Wrote ${path.relative(root, checksumPath)}`);
