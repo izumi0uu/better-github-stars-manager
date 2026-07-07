@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
@@ -104,6 +104,11 @@ export function ManagerPanel() {
   const interactionLocked = editingLayout;
   const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;
   const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
+
+  useLayoutEffect(() => {
+    if (!editingLayout) return;
+    setSelected(null);
+  }, [editingLayout]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -8,6 +8,7 @@ describe('layout edit interaction lock invariants', () => {
     const source = read('src/ui/ManagerPanel.tsx');
 
     expect(source).toMatch(/const\s+interactionLocked\s*=\s*editingLayout;/);
+    expect(source).toMatch(/useLayoutEffect\(\(\)\s*=>\s*\{\s*if \(!editingLayout\) return;\s*setSelected\(null\);\s*\}, \[editingLayout\]\);/);
     expect(source).toMatch(/shouldIgnorePanelShortcut\(interactionLocked,\s*e\.target\)/);
     expect(source).toMatch(/<ActiveFilterChips[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
     expect(source).toMatch(/<FloatingLocaleToggle[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
