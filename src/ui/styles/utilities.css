@@ -1,3 +1,32 @@
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.28) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: hsl(var(--muted-foreground) / 0.28);
+    background-clip: content-box;
+  }
+
+  *:hover::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.42);
+    background-clip: content-box;
+  }
+}
+
 @layer utilities {
   .no-scrollbar {
     scrollbar-width: none;
@@ -5,6 +34,35 @@
 
   .no-scrollbar::-webkit-scrollbar {
     display: none;
+  }
+
+  .gsm-sidebar-row {
+    @apply rounded transition-[background-color,color,transform] duration-150;
+  }
+
+  .gsm-sidebar-row:hover {
+    transform: translateX(1px);
+  }
+
+  .gsm-sidebar-input-icon {
+    transition:
+      color var(--gsm-duration-fast) var(--gsm-ease-linearized),
+      transform var(--gsm-duration-fast) var(--gsm-ease-linearized);
+  }
+
+  .gsm-sidebar-search:focus-within .gsm-sidebar-input-icon {
+    color: hsl(var(--foreground));
+    transform: translateY(-50%) scale(1.05);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gsm-sidebar-row:hover {
+      transform: none;
+    }
+
+    .gsm-sidebar-search:focus-within .gsm-sidebar-input-icon {
+      transform: translateY(-50%);
+    }
   }
 
   .gsm-favorite-action {

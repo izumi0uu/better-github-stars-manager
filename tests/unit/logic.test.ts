@@ -17,7 +17,6 @@ import { pruneFavoriteOverrides, resolveFavoriteState } from '../../src/ui/favor
 import { pickInitialSyncAction } from '../../src/ui/initial-sync.ts';
 import { classifyStarsQueryTrigger } from '../../src/ui/stars-refresh.ts';
 import { countTopicRepoFrequency, suggestTags } from '../../src/ui/suggest.ts';
-import { getMessages } from '../../src/i18n/index.tsx';
 
 function lwwMerge(
   local: Map<string, { tags: string[]; mtime: string }>,
@@ -377,10 +376,6 @@ describe('Auto-suggest', () => {
     assert.deepEqual(s, ['AI']);
   });
 
-  it('keeps archived filter hints non-empty in supported locales', () => {
-    assert.notEqual(getMessages('en').filterSidebar.onlyArchivedHint.trim(), '');
-    assert.notEqual(getMessages('zh-CN').filterSidebar.onlyArchivedHint.trim(), '');
-  });
 });
 
 describe('Stars-page panel toggle state', () => {

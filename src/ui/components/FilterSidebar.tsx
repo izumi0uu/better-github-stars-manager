@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronRight, ListRestart, Search, Trash2, X, Check } from 'lucide-react';
+import { ArrowDownAZ, ArrowUpAZ, ChevronRight, ListRestart, Search, Trash2, X, Check } from 'lucide-react';
 import type { FilterState } from '@/ui/filter-store';
 import { Checkbox } from '@/ui/shadcn/checkbox';
 import { Input } from '@/ui/shadcn/input';
@@ -108,10 +108,10 @@ function LanguagesSection({ f, languages }: { f: FilterState; languages: [string
         onToggle={() => setOpen((v) => !v)}
       />
       {open && (
-        <div className="flex flex-col gap-1">
+        <div className="gsm-sidebar-body-in flex flex-col gap-1">
           {languages.length > 6 && (
-            <div className="relative mb-1">
-              <Search className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
+            <div className="gsm-sidebar-search relative mb-1">
+              <Search className="gsm-sidebar-input-icon pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
               <Input
                 {...queryInput.inputProps}
                 placeholder={m.filterSidebar.languagesSearch}
@@ -135,8 +135,9 @@ function LanguagesSection({ f, languages }: { f: FilterState; languages: [string
               return (
                 <label
                   key={lang}
-                  className={cn('flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-muted/40', {
+                  className={cn('gsm-sidebar-row flex cursor-pointer items-center gap-1.5 px-1.5 py-0.5 hover:bg-muted/40', {
                     'text-foreground': on,
+                    'bg-muted/30': on,
                     'text-muted-foreground': !on,
                   })}
                 >
@@ -263,7 +264,7 @@ function TagsSection({
           onClick={() => setOpen((v) => !v)}
           className="gsm-meta-label flex items-center gap-1 hover:text-foreground"
         >
-          {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          <ChevronRight className={cn('size-3 transition-transform duration-150', { 'rotate-90': open })} />
           <span>{m.filterSidebar.tags(tagTree.total)}</span>
         </button>
         {tagTree.total > 0 && (
@@ -339,14 +340,14 @@ function TagsSection({
       </div>
 
       {open && (tagTree.tags.length === 0 ? (
-        <div className="text-xs leading-relaxed text-muted-foreground">
+        <div className="gsm-sidebar-body-in text-xs leading-relaxed text-muted-foreground">
           {m.filterSidebar.noTagsPrefix} <b className="text-foreground">{m.filterSidebar.noTagsEmphasis}</b> {m.filterSidebar.noTagsSuffix}
         </div>
       ) : (
-        <>
+        <div className="gsm-sidebar-body-in">
           {/* Tag search box */}
-          <div className="relative mb-1.5">
-            <Search className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
+          <div className="gsm-sidebar-search relative mb-1.5">
+            <Search className="gsm-sidebar-input-icon pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
             <Input
               {...queryInput.inputProps}
               placeholder={m.filterSidebar.tagsFilter}
@@ -374,9 +375,10 @@ function TagsSection({
                   // The delete/confirm button stops propagation so it never filters.
                   onClick={() => f.toggleTag(name)}
                   className={cn(
-                    'group/tag flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-muted/40',
+                    'gsm-sidebar-row group/tag flex cursor-pointer items-center gap-1.5 px-1.5 py-0.5 hover:bg-muted/40',
                     {
                       'text-foreground': on,
+                      'bg-muted/30': on,
                       'text-muted-foreground': !on,
                       'bg-destructive/10 ring-1 ring-inset ring-destructive/30': isPending,
                     },
@@ -432,7 +434,7 @@ function TagsSection({
               <div className="px-1.5 py-2 text-center text-xs text-muted-foreground">{m.filterSidebar.tagsEmpty}</div>
             )}
           </div>
-        </>
+        </div>
       ))}
     </div>
   );
@@ -445,7 +447,7 @@ function SectionTitle({ title, open, onToggle }: { title: string; open: boolean;
       onClick={onToggle}
       className="gsm-meta-label mb-1.5 flex w-full items-center gap-1 hover:text-foreground"
     >
-      {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+      <ChevronRight className={cn('size-3 transition-transform duration-150', { 'rotate-90': open })} />
       <span>{title}</span>
     </button>
   );
@@ -463,8 +465,9 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function FilterToggle({ checked, onChange, label, hint }: { checked: boolean; onChange: () => void; label: string; hint: string }) {
   return (
     <label
-      className={cn('flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 hover:bg-muted/40', {
+      className={cn('gsm-sidebar-row flex cursor-pointer items-center gap-1.5 px-1 py-0.5 hover:bg-muted/40', {
         'text-foreground': checked,
+        'bg-muted/30': checked,
         'text-muted-foreground': !checked,
       })}
     >

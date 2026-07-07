@@ -57,6 +57,22 @@
     }
   }
 
+  .gsm-sidebar-body-in {
+    animation: gsm-sidebar-body-in var(--gsm-duration-control) var(--gsm-ease-standard) both;
+  }
+
+  @keyframes gsm-sidebar-body-in {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
   .gsm-coach-spotlight {
     animation: gsm-coach-pulse var(--gsm-duration-pulse) var(--gsm-ease-pulse) infinite;
   }
@@ -316,6 +332,7 @@
     .gsm-tray-chip,
     .gsm-flash-col,
     .gsm-edit-dot,
+    .gsm-sidebar-body-in,
     .success-check-path,
     .gsm-action-icon-in,
     .gsm-coach-spotlight {
