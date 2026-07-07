@@ -1,10 +1,11 @@
 import Dexie, { type Table } from 'dexie';
 import type { Star, Tag, TagMeta } from '@/types';
+import { normalizeStoredTag, type LegacyTagRow } from './tag-shape';
 
 /**
  * IndexedDB schema (via Dexie). IDB is the source of truth for stars/tags/tagMeta;
- * chrome.storage.local holds only lightweight config (encrypted token, theme,
- * locale). Indexes back the UI filter/sort paths.
+ * chrome.storage.local holds lightweight config and UI preferences. Indexes
+ * back the UI filter/sort paths.
  */
 export class StarsDB extends Dexie {
   stars!: Table<Star, string>;
@@ -26,6 +27,18 @@ export class StarsDB extends Dexie {
       stars: 'full_name, language, starred_at, pushed_at, tombstone',
       tags: 'full_name, *tags, mtime',
       tagMeta: 'name, dimension, mtime',
+    });
+    // v3: stars gained repo `created_at`, and tags split ambiguous `tags`
+    // into manual/auto/dismissed layers. The visible tag union is derived in
+    // memory, so the old *tags index is intentionally gone.
+    this.version(3).stores({
+      stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
+      tags: 'full_name, mtime',
+      tagMeta: 'name, dimension, mtime',
+    }).upgrade(async (tx) => {
+      const table = tx.table('tags');
+      const rows = await table.toArray() as LegacyTagRow[];
+      await table.bulkPut(rows.map((row) => normalizeStoredTag(row)));
     });
   }
 }

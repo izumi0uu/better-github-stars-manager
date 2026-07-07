@@ -2,6 +2,8 @@ import type { Tag } from '@/types';
 import { authStore } from '@/auth/auth-store';
 import { messageFor } from '@/i18n';
 import { bgCall } from '@/utils/messaging';
+import { parseRepoFromPathname } from './repo-path';
+import { manualTagNames, visibleTagNames } from '@/tags/tag-model';
 
 /**
  * Repo-page content script. Injects a tag chip beside a repo title on
@@ -22,14 +24,7 @@ function iconSvg(name: 'check' | 'pencil'): string {
 }
 
 function parseRepoFromUrl(): { owner: string; repo: string } | null {
-  const m = location.pathname.match(/^\/([^/]+)\/([^/]+?)(?:\/|$)/);
-  if (!m) return null;
-  const [, owner, repo] = m;
-  // Exclude non-repo top-level paths.
-  const exclude = new Set(['settings', 'orgs', 'users', 'search', 'explore', 'notifications', 'login', 'signup', 'stars', 'dashboard', 'marketplace', 'pulls', 'issues', 'trending', 'collections', 'topics', 'events', 'sponsors', 'about', 'features', 'security', 'customer-stories', 'readme', 'enterprise', 'team', 'pricing', 'site', 'resources', 'apps', 'developer', 'copilot', 'freecoursecenter', 'forks', 'network', 'graphs']);
-  if (exclude.has(owner)) return null;
-  if (repo.includes('.')) return null; // e.g. /about.html — not a repo
-  return { owner, repo };
+  return parseRepoFromPathname(location.pathname);
 }
 
 function findAnchor(): { host: HTMLElement; full_name: string } | null {
@@ -89,7 +84,7 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
   root.appendChild(box);
 
   let editing = false;
-  let draft = (tag?.tags ?? []).join(', ');
+  let draft = manualTagNames(tag).join(', ');
 
   function render() {
     box.innerHTML = '';
@@ -110,14 +105,25 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
         await bgCall('setTags', { full_name, tags });
         editing = false;
         const got = await bgCall<{ tag: Tag | null }>('getTag', { full_name });
-        tag = got.tag ?? { full_name, tags, notes: '', mtime: new Date().toISOString() };
+        const ts = new Date().toISOString();
+        tag = got.tag ?? {
+          full_name,
+          manualTags: tags,
+          autoTags: [],
+          dismissedAutoTags: [],
+          manualTagsMtime: ts,
+          autoTagsMtime: ts,
+          dismissedAutoTagsMtime: ts,
+          notes: '',
+          mtime: ts,
+        };
         render();
       };
       editor.appendChild(input);
       editor.appendChild(save);
       wrap.appendChild(editor);
     } else {
-      const tags = tag?.tags ?? [];
+      const tags = visibleTagNames(tag);
       if (tags.length === 0) {
         const none = document.createElement('span');
         none.className = 'none';
@@ -147,7 +153,7 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
       edit.title = m.repoChip.editTags;
       edit.onclick = () => {
         editing = true;
-        draft = (tag?.tags ?? []).join(', ');
+        draft = manualTagNames(tag).join(', ');
         render();
       };
       wrap.appendChild(edit);

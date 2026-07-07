@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useFilterStore } from './filter-store';
+import { useLibraryViewPrefs } from './hooks/use-library-view-prefs';
 import type { Star, Tag } from '@/types';
 import type { QueryResult } from '@/background/query';
 import { classifyStarsQueryTrigger } from './stars-refresh';
@@ -14,6 +15,7 @@ const FADE_IN_MS = 160;
  * keeping the list mounted so scroll position is preserved.
  */
 export function useStars() {
+  useLibraryViewPrefs();
   const f = useFilterStore();
   const [committed, setCommitted] = useState<QueryResult | null>(null);
   // Transition phase drives the list opacity. 'fading-out' keeps the committed
@@ -32,6 +34,7 @@ export function useStars() {
     showTombstone: f.showTombstone,
     onlyFavorite: f.onlyFavorite,
     onlyUntagged: f.onlyUntagged,
+    onlyArchived: f.onlyArchived,
     sortKey: f.sortKey,
     sortDir: f.sortDir,
   };
@@ -48,6 +51,10 @@ export function useStars() {
   // Same-filter reloads (dataChanged broadcasts or explicit refresh()) update
   // the committed rows in place so the list does not flash.
   useEffect(() => {
+    if (!f.libraryViewHydrated) {
+      setLoading(true);
+      return;
+    }
     let cancelled = false;
     let fadeOut: ReturnType<typeof setTimeout> | null = null;
     let fadeIn: ReturnType<typeof setTimeout> | null = null;
@@ -97,7 +104,7 @@ export function useStars() {
       if (fadeIn) clearTimeout(fadeIn);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKey, refreshKey]);
+  }, [f.libraryViewHydrated, filterKey, refreshKey]);
 
   // Live refresh when background signals data changed (sync/write).
   useEffect(() => {
@@ -111,6 +118,7 @@ export function useStars() {
   }, []);
 
   const rows: Star[] = committed?.rows ?? [];
+
   const tagsByFullName = new Map<string, Tag>();
   if (committed?.tagsForRows) {
     for (const [name, tag] of Object.entries(committed.tagsForRows)) {

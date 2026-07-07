@@ -1,16 +1,23 @@
-import { memo } from 'react';
-import { Archive, Heart, Star as StarIcon, StickyNote } from 'lucide-react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Archive, Star as StarIcon, StickyNote } from 'lucide-react';
 import type { Star } from '@/types';
 import { Badge } from '@/ui/shadcn/badge';
-import { ActionIcon } from '@/ui/shadcn/action-icon';
+import { FavoriteButton } from '@/ui/components/FavoriteButton';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
+import { getLockedRegionProps } from '@/ui/interaction-lock';
+import type { ColumnId } from '@/ui/column-layout';
+import { fitInlineTags } from '@/ui/inline-tag-fit';
 
 /**
  * virtualized-list row. Fixed h-16 (64px) MUST match the virtualizer
  * estimateSize, else 10k+ row scroll math drifts.
  */
-const COMPACT_VISIBLE = 2;
+const INITIAL_VISIBLE_TAGS = 2;
+const INLINE_TAG_GAP_PX = 4;
+
+const useIsomorphicLayoutEffect =
+  typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 export const StarRow = memo(function StarRow({
   star,
@@ -23,6 +30,12 @@ export const StarRow = memo(function StarRow({
   onToggleFavorite,
   selected,
   onSelect,
+  columns,
+  gridTemplateColumns,
+  flashedColumn,
+  interactionLocked = false,
+  starColumnAlignStart = false,
+  minWidth,
 }: {
   star: Star;
   tags: string[];
@@ -34,104 +47,242 @@ export const StarRow = memo(function StarRow({
   onToggleFavorite: (full_name: string, favorite: boolean) => Promise<void>;
   selected: boolean;
   onSelect: (full_name: string) => void;
+  columns: ColumnId[];
+  gridTemplateColumns: string;
+  flashedColumn: ColumnId | null;
+  interactionLocked?: boolean;
+  starColumnAlignStart?: boolean;
+  minWidth?: number;
 }) {
-  const selectedSet = new Set(selectedTags);
-  const overflow = tags.length > COMPACT_VISIBLE;
-  const visible = overflow ? tags.slice(0, COMPACT_VISIBLE) : tags;
+  const selectedSet = useMemo(() => new Set(selectedTags), [selectedTags]);
+  const tagCellRef = useRef<HTMLDivElement | null>(null);
+  const tagMeasureRef = useRef<HTMLDivElement | null>(null);
+  const tagsKey = useMemo(() => tags.join('\u0000'), [tags]);
+  const hasTagsColumn = columns.includes('tags');
+  const [tagFit, setTagFit] = useState<{ tagsKey: string; visibleCount: number } | null>(null);
+  const initialVisibleCount = Math.min(INITIAL_VISIBLE_TAGS, tags.length);
+  const fittedVisibleCount = tagFit?.tagsKey === tagsKey ? tagFit.visibleCount : initialVisibleCount;
+  const visibleCount = Math.max(0, Math.min(tags.length, fittedVisibleCount));
+  const visible = tags.slice(0, visibleCount);
   const hiddenCount = tags.length - visible.length;
+  const overflow = hiddenCount > 0;
   const { m } = useI18n();
+
+  useIsomorphicLayoutEffect(() => {
+    if (!hasTagsColumn || tags.length === 0) return;
+
+    const cell = tagCellRef.current;
+    const measure = tagMeasureRef.current;
+    if (!cell || !measure) return;
+
+    const updateFit = () => {
+      const tagWidths = [...measure.querySelectorAll<HTMLElement>('[data-inline-tag-measure="tag"]')]
+        .map((element) => element.offsetWidth);
+      if (tagWidths.length !== tags.length) return;
+
+      const countWidths = new Map<number, number>();
+      for (const element of measure.querySelectorAll<HTMLElement>('[data-inline-tag-measure="count"]')) {
+        const count = Number(element.dataset.count);
+        if (Number.isFinite(count)) countWidths.set(count, element.offsetWidth);
+      }
+
+      const next = fitInlineTags({
+        availableWidth: cell.clientWidth,
+        tagWidths,
+        gapWidth: INLINE_TAG_GAP_PX,
+        hiddenCountWidth: (count) => countWidths.get(count) ?? 0,
+      });
+
+      setTagFit((current) => {
+        if (current?.tagsKey === tagsKey && current.visibleCount === next.visibleCount) return current;
+        return { tagsKey, visibleCount: next.visibleCount };
+      });
+    };
+
+    updateFit();
+
+    if (typeof ResizeObserver === 'undefined') return undefined;
+
+    const observer = new ResizeObserver(updateFit);
+    observer.observe(cell);
+    return () => observer.disconnect();
+  }, [hasTagsColumn, tags.length, tagsKey]);
 
   return (
     <div
-      onClick={() => onSelect(star.full_name)}
+      onClick={() => {
+        if (!interactionLocked) onSelect(star.full_name);
+      }}
       className={cn(
-        'grid h-16 cursor-pointer items-center gap-2 border-b border-border px-3 text-sm',
-        // columns: repo | desc | lang | stars | updated | tags | favorite | note
-        'grid-cols-[minmax(180px,1.4fr)_2fr_80px_64px_84px_1.6fr_28px_20px]',
-        selected ? 'bg-primary/10' : star.tombstone ? 'bg-muted/40' : 'bg-transparent',
-        selected ? 'border-l-2 border-l-primary' : 'border-l-2 border-l-transparent',
-        star.tombstone && 'opacity-55',
+        'gsm-layout-grid grid h-16 items-center gap-2 border-b border-border px-3 text-sm',
+        {
+          'cursor-pointer': !interactionLocked,
+          'cursor-default': interactionLocked,
+          'bg-primary/10': selected,
+          'bg-muted/40': !selected && star.tombstone,
+          'bg-transparent': !selected && !star.tombstone,
+          'border-l-2 border-l-primary': selected,
+          'border-l-2 border-l-transparent': !selected,
+          'opacity-55': star.tombstone,
+          'pointer-events-none opacity-55': interactionLocked,
+        },
       )}
+      data-layout-row-grid
+      style={{ gridTemplateColumns, minWidth }}
+      {...getLockedRegionProps(interactionLocked)}
     >
-      {/* Repo name + status icons */}
-      <div className="flex items-center gap-1 overflow-hidden">
-        <span className="truncate text-primary">{star.full_name}</span>
-        {star.archived && <Archive className="size-3 shrink-0 text-warning" aria-label={m.starRow.archived} />}
-      </div>
-
-      {/* Description */}
-      <div className="truncate text-xs text-muted-foreground">
-        {star.description || <span className="text-muted-foreground/60">{m.common.none}</span>}
-      </div>
-
-      {/* Language */}
-      <div className="truncate text-xs text-primary">
-        {star.language ?? <span className="text-muted-foreground/60">{m.common.none}</span>}
-      </div>
-
-      {/* Stars */}
-      <div className="flex items-center justify-end gap-0.5 text-xs text-muted-foreground">
-        <StarIcon className="size-3 fill-current" />
-        <span className="tabular-nums">{fmt(star.stargazers_count)}</span>
-      </div>
-
-      {/* Updated */}
-      <div className="text-xs text-muted-foreground/70">{star.pushed_at.slice(0, 10)}</div>
-
-      {/* Tags */}
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="flex flex-wrap items-center gap-1 overflow-hidden"
-      >
-        {tags.length === 0 ? (
-          <span className="text-xs italic text-muted-foreground/50">{m.common.none}</span>
-        ) : (
-          <>
-            {visible.map((t) => (
-              <button key={t} onClick={() => onToggleTag(t)} title={selectedSet.has(t) ? m.starRow.clearTagFilter(t) : m.starRow.filterByTag(t)}>
-                <Badge variant={selectedSet.has(t) ? 'tagActive' : 'tag'} className="cursor-pointer hover:opacity-80">
-                  {t}
-                </Badge>
-              </button>
-            ))}
-            {overflow && (
-              <span className="text-[10px] text-muted-foreground" title={m.starRow.moreHidden(hiddenCount)}>
-                +{hiddenCount}
-              </span>
-            )}
-          </>
-        )}
-      </div>
-
-      <div className="flex justify-center">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            if (favoriteBusy) return;
-            const next = !favorite;
-            onToggleFavorite(star.full_name, next)
-              .catch(() => {});
-          }}
-          disabled={favoriteBusy}
-          className={cn(
-            'inline-flex items-center justify-center rounded p-1 transition-colors duration-200 disabled:opacity-70',
-            favorite
-              ? 'text-rose-500 hover:text-rose-600'
-              : 'text-muted-foreground/45 hover:text-rose-400',
-          )}
-          aria-label={favorite ? m.starRow.removeFavorite : m.starRow.markFavorite}
-          title={favorite ? m.starRow.removeFavorite : m.starRow.markFavorite}
-        >
-          <ActionIcon phase={favorite ? 'favorite-on' : 'favorite-off'}>
-            <Heart className={cn('size-4', favorite && 'fill-current')} />
-          </ActionIcon>
-        </button>
-      </div>
-
-      {/* Note indicator */}
-      <div className="flex justify-center" title={hasNotes ? m.starRow.hasNotes : m.starRow.noNotes}>
-        {hasNotes && <StickyNote className="size-3.5 text-muted-foreground" />}
-      </div>
+      {columns.map((column) => {
+        switch (column) {
+          case 'repository':
+            return (
+              <div key={column} data-row-col={column} className={cn('flex items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+                <span className="truncate text-primary">{star.full_name}</span>
+                {star.archived && <Archive className="size-3 shrink-0 text-warning" aria-label={m.starRow.archived} />}
+              </div>
+            );
+          case 'description':
+            return (
+              <div key={column} data-row-col={column} className={cn('truncate rounded-sm text-xs text-muted-foreground', { 'gsm-flash-col': flashedColumn === column })}>
+                {star.description || <span className="text-muted-foreground/60">{m.common.none}</span>}
+              </div>
+            );
+          case 'language':
+            return (
+              <div key={column} data-row-col={column} className={cn('truncate rounded-sm text-xs text-primary', { 'gsm-flash-col': flashedColumn === column })}>
+                {star.language ?? <span className="text-muted-foreground/60">{m.common.none}</span>}
+              </div>
+            );
+          case 'stars':
+            return (
+              <div
+                key={column}
+                data-row-col={column}
+                className={cn(
+                  'flex min-w-0 items-center gap-0.5 overflow-hidden rounded-sm text-xs text-muted-foreground',
+                  {
+                    'justify-start': starColumnAlignStart,
+                    'justify-end': !starColumnAlignStart,
+                    'gsm-flash-col': flashedColumn === column,
+                  },
+                )}
+              >
+                <StarIcon className="size-3 shrink-0 fill-current" />
+                <span className="min-w-0 truncate tabular-nums">{fmt(star.stargazers_count)}</span>
+              </div>
+            );
+          case 'updated':
+            return (
+              <div key={column} data-row-col={column} className={cn('min-w-0 truncate rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>
+                {star.pushed_at ? star.pushed_at.slice(0, 10) : <span className="text-muted-foreground/60">{m.common.none}</span>}
+              </div>
+            );
+          case 'created':
+            return (
+              <div key={column} data-row-col={column} className={cn('min-w-0 truncate rounded-sm text-xs text-muted-foreground/70', { 'gsm-flash-col': flashedColumn === column })}>
+                {star.created_at ? star.created_at.slice(0, 10) : <span className="text-muted-foreground/60">{m.common.none}</span>}
+              </div>
+            );
+          case 'tags':
+            return (
+              <div
+                key={column}
+                ref={tagCellRef}
+                data-row-col={column}
+                className={cn('relative flex min-w-0 items-center overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}
+              >
+                {tags.length === 0 ? (
+                  <span className="text-xs italic text-muted-foreground/50">{m.common.none}</span>
+                ) : (
+                  <>
+                    <div className="flex min-w-0 items-center gap-1 overflow-hidden whitespace-nowrap">
+                      {visible.map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          className="min-w-0 max-w-full shrink-0"
+                          disabled={interactionLocked}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleTag(t);
+                          }}
+                          title={selectedSet.has(t) ? m.starRow.clearTagFilter(t) : m.starRow.filterByTag(t)}
+                        >
+                          <Badge
+                            variant={selectedSet.has(t) ? 'tagActive' : 'tag'}
+                            className={cn('max-w-full truncate hover:opacity-80', {
+                              'cursor-pointer': !interactionLocked,
+                              'cursor-default opacity-70': interactionLocked,
+                            })}
+                          >
+                            {t}
+                          </Badge>
+                        </button>
+                      ))}
+                      {overflow && (
+                        <span className="gsm-muted-count shrink-0" title={m.starRow.moreHidden(hiddenCount)}>
+                          +{hiddenCount}
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      ref={tagMeasureRef}
+                      aria-hidden="true"
+                      className="pointer-events-none absolute left-0 top-0 flex items-center gap-1 whitespace-nowrap opacity-0"
+                    >
+                      {tags.map((t, index) => (
+                        <Badge key={`${t}-${index}`} data-inline-tag-measure="tag" variant="tag" className="max-w-none">
+                          {t}
+                        </Badge>
+                      ))}
+                      {tags.map((_, index) => {
+                        const count = index + 1;
+                        return (
+                          <span
+                            key={count}
+                            data-count={count}
+                            data-inline-tag-measure="count"
+                            className="gsm-muted-count"
+                          >
+                            +{count}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          case 'favorite':
+            return (
+              <div key={column} data-row-col={column} className={cn('flex justify-center rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+                <FavoriteButton
+                  active={favorite}
+                  busy={favoriteBusy || interactionLocked}
+                  activeLabel={m.starRow.removeFavorite}
+                  inactiveLabel={m.starRow.markFavorite}
+                  onToggle={(next) => {
+                    if (interactionLocked) return;
+                    onToggleFavorite(star.full_name, next)
+                      .catch(() => {});
+                  }}
+                />
+              </div>
+            );
+          case 'notes':
+            return (
+              <div
+                key={column}
+                data-row-col={column}
+                className={cn('flex justify-center rounded-sm', { 'gsm-flash-col': flashedColumn === column })}
+                title={hasNotes ? m.starRow.hasNotes : m.starRow.noNotes}
+              >
+                {hasNotes && <StickyNote className="size-3.5 text-muted-foreground" />}
+              </div>
+            );
+        }
+        const exhaustive: never = column;
+        return exhaustive;
+      })}
     </div>
   );
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Sun,
   Moon,
@@ -28,9 +28,12 @@ import { REPO_URL } from "@/lib/links";
 import { useImeBufferedInput } from "@/ui/hooks/use-ime-input";
 import { useI18n } from "@/i18n";
 import {
+  DEFAULT_AUTO_TAG_LIMIT,
+  DEFAULT_MIN_TOPIC_REPO_COUNT,
   MAX_AUTO_TAG_LIMIT,
   MIN_AUTO_TAG_LIMIT,
-  normalizeAutoTagLimit,
+  normalizeMaxTagsPerRepo,
+  normalizeMinTopicRepoCount,
 } from "@/preferences";
 
 const tutorialNewToken = "/tutorial/img_01.png";
@@ -42,7 +45,10 @@ export function Options() {
   const [hasUsableToken, setHasUsableToken] = useState(false);
   const [gistId, setGistId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [autoTagLimit, setAutoTagLimit] = useState<string>("5");
+  const [maxTagsPerRepo, setMaxTagsPerRepo] = useState<string>(String(DEFAULT_AUTO_TAG_LIMIT));
+  const [minTopicRepoCount, setMinTopicRepoCount] = useState<string>(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
+  const persistedMaxTagsPerRepoRef = useRef(String(DEFAULT_AUTO_TAG_LIMIT));
+  const persistedMinTopicRepoCountRef = useRef(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
   const [starsPanelDefaultEnabled, setStarsPanelDefaultEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
@@ -62,7 +68,10 @@ export function Options() {
     setHasUsableToken(hasToken);
     setGistId(c.gistId);
     setTheme(c.theme);
-    setAutoTagLimit(String(c.autoTagLimit));
+    setMaxTagsPerRepo(String(c.maxTagsPerRepo));
+    setMinTopicRepoCount(String(c.minTopicRepoCount));
+    persistedMaxTagsPerRepoRef.current = String(c.maxTagsPerRepo);
+    persistedMinTopicRepoCountRef.current = String(c.minTopicRepoCount);
     setStarsPanelDefaultEnabled(c.starsPanelDefaultEnabled);
     setSyncStatus((current) => mergeStatusSnapshot(current, status));
   };
@@ -104,10 +113,28 @@ export function Options() {
     document.documentElement.classList.toggle("dark", next === "dark");
   };
 
-  const saveAutoTagLimit = async (raw: string) => {
-    const next = normalizeAutoTagLimit(raw);
-    setAutoTagLimit(String(next)); // clamp the field back to a legal value
-    await authStore.update({ autoTagLimit: next });
+  const saveMaxTagsPerRepo = async (raw: string) => {
+    const next = normalizeMaxTagsPerRepo(raw);
+    setMaxTagsPerRepo(String(next)); // clamp the field back to a legal value
+    try {
+      await authStore.updateAutoTagPolicy({ maxTagsPerRepo: next });
+      persistedMaxTagsPerRepoRef.current = String(next);
+    } catch (e) {
+      setMaxTagsPerRepo(persistedMaxTagsPerRepoRef.current);
+      setMsg({ kind: "err", text: translateError(e, m) });
+    }
+  };
+
+  const saveMinTopicRepoCount = async (raw: string) => {
+    const next = normalizeMinTopicRepoCount(raw);
+    setMinTopicRepoCount(String(next));
+    try {
+      await authStore.updateAutoTagPolicy({ minTopicRepoCount: next });
+      persistedMinTopicRepoCountRef.current = String(next);
+    } catch (e) {
+      setMinTopicRepoCount(persistedMinTopicRepoCountRef.current);
+      setMsg({ kind: "err", text: translateError(e, m) });
+    }
   };
 
   const toggleStarsPanelDefaultEnabled = async (checked: boolean) => {
@@ -135,6 +162,8 @@ export function Options() {
   const gistUrl = gistId
     ? `https://gist.github.com/${username ? `${username}/` : ""}${gistId}`
     : null;
+  const starsUrl =
+    hasUsableToken && username ? `https://github.com/${username}?tab=stars` : null;
 
   useEffect(() => {
     const listener = (
@@ -149,7 +178,10 @@ export function Options() {
         oldCfg?.gistId === newCfg?.gistId &&
         oldCfg?.theme === newCfg?.theme &&
         oldCfg?.locale === newCfg?.locale &&
-        oldCfg?.tokenEncrypted === newCfg?.tokenEncrypted
+        oldCfg?.tokenEncrypted === newCfg?.tokenEncrypted &&
+        oldCfg?.maxTagsPerRepo === newCfg?.maxTagsPerRepo &&
+        oldCfg?.minTopicRepoCount === newCfg?.minTopicRepoCount &&
+        oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled
       ) return;
       void refresh();
     };
@@ -186,9 +218,10 @@ export function Options() {
                   }}
                   className={cn(
                     "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
-                    active
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
+                    {
+                      "bg-primary text-primary-foreground shadow-sm": active,
+                      "text-muted-foreground hover:text-foreground": !active,
+                    },
                   )}
                 >
                   {lng === "en" ? "EN" : "中文"}
@@ -227,7 +260,7 @@ export function Options() {
       {/* 1. Token */}
       <section className="mt-6">
         <h2 className="text-base font-medium">{m.options.tokenHeading}</h2>
-        <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+        <p className="gsm-body-note mt-1">
           {m.options.tokenIntroPrefix}{" "}
           <a
             className="text-primary hover:underline"
@@ -241,7 +274,7 @@ export function Options() {
         </p>
 
         {/* Detailed PAT walkthrough with tutorial screenshots. Captions live in i18n. */}
-        <details className="mt-3 rounded-md border border-border bg-muted/20 p-3 text-[13px] text-muted-foreground">
+        <details className="gsm-status-note mt-3 rounded-md border border-border bg-muted/20 p-3 text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">
             {m.options.tokenStepsTitle}
           </summary>
@@ -268,23 +301,34 @@ export function Options() {
           </div>
         </details>
 
-        <ul className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
+        <ul className="gsm-body-note mt-2">
           <li>{m.options.tokenPublicRepos}</li>
           <li>{m.options.tokenGists}</li>
         </ul>
         <p className="mt-1 text-xs text-warning">{m.options.tokenGistNote}</p>
 
         {hasUsableToken && username && (
-          <div className="my-3 flex items-center gap-1.5 text-[13px] text-success">
+          <div className="gsm-status-note my-3 flex flex-wrap items-center gap-1.5 text-success">
             <Check className="size-4 shrink-0" />
             <span>{m.options.authenticatedAs(username)}</span>
+            {starsUrl && (
+              <a
+                href={starsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="ml-2 inline-flex items-center gap-1 text-sm text-primary hover:underline"
+              >
+                {m.options.openVerifiedStars}
+                <ExternalLink className="size-3.5" />
+              </a>
+            )}
             <Button variant="ghost" size="sm" className="ml-2" onClick={clear}>
               {m.options.removeToken}
             </Button>
           </div>
         )}
         {!hasUsableToken && username && (
-          <div className="my-3 flex items-center gap-1.5 text-[13px] text-warning">
+          <div className="gsm-status-note my-3 flex items-center gap-1.5 text-warning">
             <AlertTriangle className="size-4 shrink-0" />
             <span>{m.options.cachedAccountWarning(username)}</span>
             <Button variant="ghost" size="sm" className="ml-2" onClick={clear}>
@@ -318,7 +362,7 @@ export function Options() {
       {/* 2. Gist */}
       <section>
         <h2 className="text-base font-medium">{m.options.gistHeading}</h2>
-        <p className="mt-1 text-[13px] text-muted-foreground">
+        <p className="gsm-status-note mt-1 text-muted-foreground">
           {gistId ? (
             <>
               {m.options.gistBoundPrefix} <code>{gistId}</code>.{" "}
@@ -349,7 +393,7 @@ export function Options() {
           {syncing && progressValue != null && (
             <div className="mt-2 flex items-center gap-2">
               <Progress value={progressValue} className="h-2 flex-1" />
-              <span className="min-w-[48px] text-right tabular-nums text-foreground">
+              <span className="gsm-progress-count">
                 {progressCount}
               </span>
             </div>
@@ -361,41 +405,23 @@ export function Options() {
       <section className="mt-6">
         <h2 className="text-base font-medium">{m.options.behaviorHeading}</h2>
         <div className="mt-3 grid gap-4 rounded-lg border border-border bg-muted/20 p-4">
-          <div className="grid gap-1.5">
-            <label
-              htmlFor="auto-tag-limit"
-              className="text-sm font-medium text-foreground"
-            >
-              {m.options.autoTagLimitLabel}
-            </label>
-            <p
-              id="auto-tag-limit-hint"
-              className="text-[13px] leading-relaxed text-muted-foreground"
-            >
-              {m.options.autoTagLimitHint}
-            </p>
-            <div className="flex items-center gap-3">
-              <Input
-                id="auto-tag-limit"
-                type="number"
-                min={MIN_AUTO_TAG_LIMIT}
-                max={MAX_AUTO_TAG_LIMIT}
-                step={1}
-                value={autoTagLimit}
-                aria-describedby="auto-tag-limit-hint"
-                onChange={(e) => setAutoTagLimit(e.currentTarget.value)}
-                onBlur={(e) => void saveAutoTagLimit(e.currentTarget.value)}
-                className="w-24"
-              />
-              <span
-                id="auto-tag-limit-range"
-                className="text-xs text-muted-foreground"
-                aria-hidden="true"
-              >
-                {MIN_AUTO_TAG_LIMIT}–{MAX_AUTO_TAG_LIMIT}
-              </span>
-            </div>
-          </div>
+          <NumericPrefField
+            id="max-tags-per-repo"
+            label={m.options.maxTagsPerRepoLabel}
+            hint={m.options.maxTagsPerRepoHint}
+            value={maxTagsPerRepo}
+            onChange={setMaxTagsPerRepo}
+            onSave={saveMaxTagsPerRepo}
+          />
+
+          <NumericPrefField
+            id="min-topic-repo-count"
+            label={m.options.minTopicRepoCountLabel}
+            hint={m.options.minTopicRepoCountHint}
+            value={minTopicRepoCount}
+            onChange={setMinTopicRepoCount}
+            onSave={saveMinTopicRepoCount}
+          />
 
           <div className="flex items-start gap-3">
             <Checkbox
@@ -416,7 +442,7 @@ export function Options() {
               </span>
               <span
                 id="stars-panel-default-hint"
-                className="text-[13px] leading-relaxed text-muted-foreground"
+                className="gsm-body-note"
               >
                 {m.options.starsPanelDefaultHint}
               </span>
@@ -428,13 +454,71 @@ export function Options() {
       {msg && (
         <div
           className={cn(
-            "mt-4 text-[13px]",
-            msg.kind === "ok" ? "text-success" : "text-destructive",
+            "gsm-status-note mt-4",
+            {
+              "text-success": msg.kind === "ok",
+              "text-destructive": msg.kind !== "ok",
+            },
           )}
         >
           {msg.text}
         </div>
       )}
+    </div>
+  );
+}
+
+function NumericPrefField({
+  id,
+  label,
+  hint,
+  value,
+  onChange,
+  onSave,
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (value: string) => void;
+  onSave: (value: string) => Promise<void>;
+}) {
+  const hintId = `${id}-hint`;
+
+  return (
+    <div className="grid gap-1.5">
+      <label
+        htmlFor={id}
+        className="text-sm font-medium text-foreground"
+      >
+        {label}
+      </label>
+      <p
+        id={hintId}
+        className="gsm-body-note"
+      >
+        {hint}
+      </p>
+      <div className="flex items-center gap-3">
+        <Input
+          id={id}
+          type="number"
+          min={MIN_AUTO_TAG_LIMIT}
+          max={MAX_AUTO_TAG_LIMIT}
+          step={1}
+          value={value}
+          aria-describedby={hintId}
+          onChange={(event) => onChange(event.currentTarget.value)}
+          onBlur={(event) => void onSave(event.currentTarget.value)}
+          className="w-24"
+        />
+        <span
+          className="text-xs text-muted-foreground"
+          aria-hidden="true"
+        >
+          {MIN_AUTO_TAG_LIMIT}–{MAX_AUTO_TAG_LIMIT}
+        </span>
+      </div>
     </div>
   );
 }
@@ -449,7 +533,7 @@ function ScreenshotCard({ src, caption }: { src: string; caption: string }) {
         decoding="async"
         className="block w-full"
       />
-      <figcaption className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+      <figcaption className="gsm-helper-text border-t border-border px-3 py-2">
         {caption}
       </figcaption>
     </figure>

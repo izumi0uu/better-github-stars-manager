@@ -2,6 +2,16 @@ import type { Tag, TagMeta } from '@/types';
 
 export type CountProgressCallback = (done: number, total: number | null) => void;
 
+export type TagBulkUpdate = {
+  full_name: string;
+  tags: string[];
+};
+
+export type AutoTagBulkUpdate = {
+  full_name: string;
+  autoTags: string[];
+};
+
 /**
  * Abstraction over the user's annotation layer (tags + notes + favorites + tag metadata).
  *
@@ -25,7 +35,11 @@ export interface TagStore {
   listExcluded(): Promise<string[]>;
 
   // --- writes (local; mark dirty for Gist sync) ---
+  /** Compatibility name: replaces the manual tag layer only. */
   setTags(full_name: string, tags: string[]): Promise<void>;
+  setTagsBulk(updates: TagBulkUpdate[]): Promise<{ updated: number }>;
+  setAutoTagsBulk(updates: AutoTagBulkUpdate[]): Promise<{ updated: number }>;
+  removeVisibleTag(full_name: string, name: string): Promise<{ removed: boolean }>;
   setNotes(full_name: string, notes: string): Promise<void>;
   setFavorite(full_name: string, favorite: boolean): Promise<void>;
   /** Upsert a full Tag record (used by Gist merge-in). */
@@ -38,10 +52,20 @@ export interface TagStore {
    * re-add (setTags) clears it. Used by the sidebar's per-tag delete button.
    */
   deleteTag(name: string): Promise<{ removed: number }>;
+  deleteTagEverywhere(name: string): Promise<{ removed: number }>;
+  /**
+   * Clear every current tag assignment while preserving notes, favorites, and
+   * tag metadata. Unlike deleteTag, this reset does not tombstone tag names, so
+   * auto-assign can generate eligible topics again later.
+   */
+  deleteAllTags(): Promise<{ assignmentsRemoved: number; distinctTagsRemoved: number }>;
 
-  // --- Gist sync (per-repo mtime LWW merge) ---
+  // --- Gist sync ---
   /** Push local dirty tags/tagMeta to the Gist. */
   syncPush(onProgress?: CountProgressCallback): Promise<{ pushed: number; snapshot: number; recreated: boolean }>;
-  /** Pull the Gist and merge per-repo by mtime into local IDB. */
+  /**
+   * Pull the Gist into local IDB. Tag assignment layers merge by their own
+   * mtimes; notes/favorite still use the row mtime.
+   */
   syncPull(onProgress?: CountProgressCallback): Promise<{ merged: number; total: number; missing: boolean }>;
 }

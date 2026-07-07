@@ -1,7 +1,8 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { ManagerPanel } from '@/ui/ManagerPanel';
-import { I18nProvider, messageFor } from '@/i18n';
+import { I18nProvider } from '@/i18n';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
+import { applyFabLabel } from '@/content/stars-page/fab-label';
 import { mountState, pageOwner } from '@/content/stars-page/mount-state';
 import {
   isPanelEnabled,
@@ -9,39 +10,22 @@ import {
   resetPanelToggle,
   showPanel,
 } from '@/content/stars-page/panel-toggle';
-import cssText from '@/ui/styles.css?inline';
+import cssText from '@/ui/styles/index.css?inline';
 
 /**
  * Stars-page content script.
  *
- * Injects a full-screen management panel that replaces the native starred list
- * with a virtualized table. It mounts inside a shadow root so the extension's
- * Tailwind/preflight CSS (loaded via `?inline` → `adoptedStyleSheets`) is fully
- * isolated from `github.com`'s light DOM.
- *
- * `?inline` is critical: a normal `import './styles.css'` would be picked up by
- * CRXJS's content-script CSS plugin and injected into the page `<head>`, which
- * would leak preflight across GitHub. `?inline` returns the CSS string only, so
- * it can stay inside the shadow boundary.
- *
- * MV3 match patterns cannot target query strings, so the script gates on `?tab=stars`.
- *
- * The panel can be temporarily retracted via the toolbar "hide panel" button —
- * the native GitHub stars list is then visible with a floating "show panel"
- * button (the FAB) to re-mount it. This hide is a SESSION-LOCAL preview only:
- * the toggle lives in a module-level variable that resets to `true` (panel on)
- * whenever the content script re-runs (full page load / new tab). Refreshing or
- * re-entering the stars page therefore always lands on the panel — never a
- * stuck hidden state. (We deliberately do NOT persist it: a persisted "hidden"
- * would make the extension appear missing on next visit.)
+ * Mounts the manager panel in a shadow root and keeps Tailwind/preflight scoped
+ * with `?inline`; a normal CSS import would leak styles into github.com.
+ * The stars-page gate stays runtime-based because MV3 match patterns cannot
+ * target query strings. Hiding the panel is session-local only, so a refresh
+ * cannot strand the user with an apparently missing extension.
  */
-// Cheap URL pre-filter; the full owner==me check is in isOwnStars().
 function isStarsPage(): boolean {
   return new URLSearchParams(location.search).get('tab') === 'stars';
 }
 
-// tab=stars AND owner==me. No token → false: the panel is useless without one,
-// and a logged-out browser must not overlay a stranger's stars page.
+// No token means no owner proof; never overlay another user's stars page.
 async function isOwnStars(): Promise<boolean> {
   if (!isStarsPage()) return false;
   const owner = pageOwner(location.pathname);
@@ -50,12 +34,7 @@ async function isOwnStars(): Promise<boolean> {
   return !!me && me === owner;
 }
 
-// --- Page scroll lock ---
-// The panel is a full-screen fixed overlay. If the underlying page body keeps
-// scrolling, its scrollbar thumb tracks the page (not the panel's virtual list),
-// which looks broken. We lock html+body overflow while the panel is mounted and
-// restore the original values when it's removed (e.g. navigating away from
-// ?tab=stars). Idempotent: re-locking stores the already-saved originals only once.
+// Keep the page scrollbar from tracking GitHub behind the full-screen panel.
 let savedHtmlOverflow: string | null = null;
 let savedBodyOverflow: string | null = null;
 
@@ -73,11 +52,7 @@ function unlockPageScroll(): void {
   savedBodyOverflow = null;
 }
 
-// --- Panel lifecycle ---
-// `panelRoot` is kept so the React tree (and its chrome.runtime.onMessage /
-// onProgress listeners) is explicitly torn down on eject. Previously the root
-// reference was discarded, so navigating stars→away→stars leaked one listener
-// stack per cycle.
+// Keep the React root so ejecting also tears down runtime/progress listeners.
 let panelRoot: Root | null = null;
 
 function injectPanel(): void {
@@ -90,14 +65,9 @@ function injectPanel(): void {
   host.id = 'gsm-manager-host';
   host.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483000;';
 
-  // Lock the underlying page scroll. The panel is a full-screen fixed overlay,
-  // so the page body should NOT scroll — if it can, its scrollbar shows a thumb
-  // that tracks the page (not the panel's virtual list), which looks broken.
-  // We pin html+body to overflow:hidden for the panel's lifetime.
   lockPageScroll();
 
   const shadow = host.attachShadow({ mode: 'open' });
-  // Adopt the Tailwind CSS into the shadow root (isolated from the page).
   try {
     const sheet = new CSSStyleSheet();
     sheet.replaceSync(cssText);
@@ -109,25 +79,19 @@ function injectPanel(): void {
     shadow.appendChild(styleEl);
   }
 
-  // Inner root carries the theme class (.dark / none) — NOT documentElement,
-  // which would toggle github.com's own dark mode.
+  // Theme class lives here, not on documentElement, to avoid toggling GitHub.
   const root = document.createElement('div');
   root.id = 'gsm-manager-root';
   root.style.cssText = 'width:100%;height:100%;';
   shadow.appendChild(root);
 
-  // GitHub's site-wide `s`/`/` shortcuts live on `document`; a keystroke inside
-  // this shadow root is retargeted to the host there, so GitHub's "am I in a
-  // field?" guard fails and it steals focus from our inputs. Stop the event at
-  // the shadow boundary — but only for editable fields, so `/` on the body still
-  // reaches ManagerPanel's window listener (the `/`→focus-search shortcut).
+  // GitHub listens on document; retargeted input keystrokes need a shadow-boundary stop.
   shadow.addEventListener('keydown', (e) => {
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable) e.stopPropagation();
   }, true);
 
-  // Insert the host, hiding GitHub's native chrome behind the overlay.
   const main = document.querySelector('main') ?? document.querySelector('[data-pjax-container]') ?? document.body;
   main.parentElement?.insertBefore(host, main);
 
@@ -139,9 +103,7 @@ function injectPanel(): void {
   );
 }
 
-// State-based eject: unmount the React tree FIRST, regardless of whether the
-// host still exists, so a half-removed state (host gone, root still alive) can
-// never leave orphaned listeners. Only then clear the host and unlock scroll.
+// Unmount first so a half-removed host cannot leave orphaned listeners.
 function ejectPanel(): void {
   panelRoot?.unmount();
   panelRoot = null;
@@ -149,11 +111,7 @@ function ejectPanel(): void {
   unlockPageScroll();
 }
 
-// --- Floating "show panel" button (FAB) ---
-// Shown only when the panel is disabled but we're still on the stars page, so
-// the user has an in-page way to re-mount the panel. Vanilla DOM + inline SVG +
-// open shadow root (styles sealed in the shadow boundary → already insulated
-// from GitHub's CSS; `open` keeps it inspectable/debuggable). No React/Tailwind.
+// Vanilla shadow-root FAB shown only while the session-local panel hide is active.
 function injectFab(): void {
   if (document.getElementById('gsm-fab')) return; // idempotent
 
@@ -163,9 +121,6 @@ function injectFab(): void {
 
   const shadow = host.attachShadow({ mode: 'open' });
   const style = document.createElement('style');
-  // Neutral palette that reads on both GitHub light/dark. The button is a
-  // translucent dark pill with a white glyph; a prefers-color-scheme tweak
-  // lifts contrast slightly in dark mode.
   style.textContent = `
     :host { all: initial; }
     .btn {
@@ -204,34 +159,29 @@ function injectFab(): void {
   shadow.appendChild(style);
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'btn'; // picks up the .btn rule above (cursor:pointer, pill bg, hover…)
+  btn.className = 'btn';
   btn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>`;
+  btn.setAttribute('data-tip', 'Better GitHub Stars Manager');
+  btn.setAttribute('aria-label', 'Better GitHub Stars Manager');
   btn.onclick = showPanel;
   shadow.appendChild(btn);
   document.body.appendChild(host);
 
-  // Localize the tooltip/aria-label to the extension's name (the FAB is a
-  // generic re-mount affordance, so the product name is the most recognizable
-  // label). Vanilla DOM → can't use the React useI18n hook, so read the locale
-  // and look up the string. The CSS bubble reads `data-tip` (NOT the native
-  // `title`, whose ~1–2s system delay we can't shorten); `aria-label` keeps it
-  // accessible to screen readers. Read asynchronously; until it resolves the
-  // bubble simply isn't rendered.
-  void authStore.getLocale().then((locale) => {
-    const label = messageFor(locale).popup.title;
-    if (!document.getElementById('gsm-fab')) return; // gone already
-    btn.setAttribute('data-tip', label);
-    btn.setAttribute('aria-label', label);
-  });
+  // No React here; localize after mount and let the CSS bubble wait for data-tip.
+  void authStore.getLocale()
+    .then((locale) => {
+      applyFabLabel(btn, locale);
+    })
+    .catch(() => {
+      // Keep the synchronous fallback label when storage is unavailable.
+    });
 }
 
 function ejectFab(): void {
   document.getElementById('gsm-fab')?.remove();
 }
 
-// --- Sync ---
-// Async because isOwnStars() awaits getUsername(); a generation counter drops
-// stale resolutions across rapid PJAX navigations (turbo:load→render→popstate).
+// Drop stale async results across rapid PJAX navigations.
 let syncGen = 0;
 async function sync(): Promise<void> {
   const gen = ++syncGen;
@@ -248,15 +198,11 @@ async function sync(): Promise<void> {
     ejectPanel();
     injectFab();
   } else {
-    // Not own stars page: retract both.
     ejectPanel();
     ejectFab();
   }
 }
 
-// Let the toolbar "hide panel" button (inside the React ManagerPanel) and the
-// FAB "show panel" button drive this module's sync without importing the
-// side-effectful entry — see panel-toggle.ts.
 onPanelToggle(sync);
 
 sync();

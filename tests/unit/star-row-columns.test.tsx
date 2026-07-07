@@ -1,0 +1,162 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+import { StarRow } from '@/ui/components/StarRow';
+import type { Star } from '@/types';
+
+function fakeStar(createdAt: string | null): Star {
+  return {
+    full_name: 'owner/repo',
+    html_url: 'https://github.com/owner/repo',
+    description: 'A repository',
+    language: 'TypeScript',
+    stargazers_count: 1200,
+    topics: ['react'],
+    archived: false,
+    fork: false,
+    created_at: createdAt,
+    pushed_at: '2024-02-01T00:00:00Z',
+    starred_at: '2024-03-01T00:00:00Z',
+    tombstone: false,
+    synced_at: '2024-03-02T00:00:00Z',
+  };
+}
+
+function renderCreatedColumn(createdAt: string | null): string {
+  return renderToStaticMarkup(
+    <StarRow
+      star={fakeStar(createdAt)}
+      tags={[]}
+      hasNotes={false}
+      favorite={false}
+      favoriteBusy={false}
+      selectedTags={[]}
+      onToggleTag={vi.fn()}
+      onToggleFavorite={vi.fn(async () => undefined)}
+      selected={false}
+      onSelect={vi.fn()}
+      columns={['created']}
+      gridTemplateColumns="84px"
+      flashedColumn={null}
+    />,
+  );
+}
+
+describe('star row column rendering', () => {
+  it('applies the shared table min width when provided', () => {
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={fakeStar('2020-01-02T12:00:00Z')}
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['created']}
+        gridTemplateColumns="84px"
+        minWidth={312}
+        flashedColumn={null}
+      />,
+    );
+
+    expect(markup).toContain('min-width:312px');
+  });
+
+  it('renders repository creation date when the created column is visible', () => {
+    const markup = renderCreatedColumn('2020-01-02T12:00:00Z');
+
+    expect(markup).toContain('data-row-col="created"');
+    expect(markup).toContain('2020-01-02');
+  });
+
+  it('renders the empty placeholder when repository creation date is missing', () => {
+    const markup = renderCreatedColumn(null);
+
+    expect(markup).toContain('data-row-col="created"');
+    expect(markup).toContain('—');
+  });
+
+  it('keeps star values right-aligned in the default browse layout', () => {
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 }}
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['stars', 'updated']}
+        gridTemplateColumns="64px 84px"
+        minWidth={180}
+        flashedColumn={null}
+      />,
+    );
+
+    expect(markup).toContain('data-row-col="stars"');
+    expect(markup).toContain('justify-end');
+    expect(markup).not.toContain('justify-start');
+  });
+
+  it('keeps dense numeric and date columns clipped inside their tracks', () => {
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234567 }}
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['stars', 'updated', 'created']}
+        gridTemplateColumns="48px 72px 84px"
+        minWidth={220}
+        flashedColumn={null}
+      />,
+    );
+
+    expect(markup).toContain('data-row-col="stars"');
+    expect(markup).toContain('justify-end');
+    expect(markup).toContain('overflow-hidden');
+    expect(markup).toContain('min-w-0 truncate tabular-nums');
+    expect(markup).toContain('data-row-col="updated"');
+    expect(markup).toContain('min-w-0 truncate rounded-sm text-xs text-muted-foreground/70');
+    expect(markup).toContain('data-row-col="created"');
+  });
+
+  it('keeps star values with their custom layout column group after editing is saved or previewed', () => {
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 }}
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['stars', 'updated']}
+        gridTemplateColumns="64px 84px"
+        minWidth={180}
+        flashedColumn={null}
+        starColumnAlignStart
+      />,
+    );
+
+    expect(markup).toContain('data-row-col="stars"');
+    expect(markup).toContain('justify-start');
+    expect(markup).not.toContain('justify-end');
+  });
+
+});

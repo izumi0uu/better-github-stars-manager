@@ -1,17 +1,23 @@
 import { authStore } from '@/auth/auth-store';
 import { githubStarSource } from '@/api/github-star-source';
 import { getMessages } from '@/i18n';
-import { idbTagStore } from '@/storage/idb-tag-store';
+import { idbTagStore, resetDirtyForDev } from '@/storage/idb-tag-store';
 import { db, liveStarCount } from '@/storage/db';
+import { DEV } from '@/dev';
 import { queryStars, invalidateCache, type QueryParams, type QueryResult } from './query';
-import { suggestTags } from '@/ui/suggest';
+import { countTopicRepoFrequency, reconcileAutoTagAssignments, suggestTags } from '@/ui/suggest';
 import { translateError } from '@/api/errors';
+import type { AutoTagBulkUpdate } from '@/api/tag-store';
+import { addTagNames, dismissedAutoTagNames, manualTagNames, sameTagNames, visibleTagNames } from '@/tags/tag-model';
+import { selectActiveBackfillId } from '@/upgrades/backfill-state';
+import { createBackfillConfigStore, getBackfillTask } from './backfill-config';
+import { createBackfillExecutor } from './backfill-executor';
+import { createSerializedRunner } from './serialized-runner';
 import type { OnboardingStage, SyncProgress } from '@/types';
 import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
 } from '@/onboarding/state';
-import { runSyncActionWithAutoTag } from './sync-flow';
 
 /**
  * Background SW — sync orchestrator and sole owner of the extension-origin
@@ -35,7 +41,9 @@ type Req =
   | { type: 'setTags'; full_name: string; tags: string[] }
   | { type: 'setNotes'; full_name: string; notes: string }
   | { type: 'setFavorite'; full_name: string; favorite: boolean }
+  | { type: 'removeVisibleTag'; full_name: string; name: string }
   | { type: 'deleteTag'; name: string }
+  | { type: 'deleteAllTags' }
   | { type: 'acceptSuggestions'; full_name: string; toAdd: string[] }
   | { type: 'acceptSuggestionsBatch'; items: { full_name: string; toAdd: string[] }[] }
   | { type: 'suggestTags'; full_name: string }
@@ -45,15 +53,21 @@ type Req =
   | { type: 'setOnboardingStage'; stage: OnboardingStage }
   | { type: 'markTooltipSeen'; bit: number }
   | { type: 'testConnection' }
-  | { type: 'openOptions' };
+  | { type: 'openOptions' }
+  | { type: 'devClearLocalData' }
+  | { type: 'runBackfill'; id: string }
+  | { type: 'deferBackfill'; id: string };
 
 type Res =
   | { ok: true; data?: unknown }
   | { ok: false; error: string };
 
-let inFlight: Promise<unknown> | null = null;
+const jobQueue = createSerializedRunner();
 let lastProgress: SyncProgress = { phase: 'idle', done: 0, total: null, message: '' };
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+const backfillConfig = createBackfillConfigStore(authStore, {
+  isBackfillRunning: jobQueue.isRunning,
+});
 
 function shouldPersistProgress(prev: SyncProgress, next: SyncProgress): boolean {
   if (prev.phase !== next.phase) return true;
@@ -99,23 +113,46 @@ function broadcastDataChanged() {
   chrome.runtime.sendMessage({ type: 'dataChanged' }).catch(() => {});
 }
 
+async function clearLocalDataForDev() {
+  if (!DEV) throw new Error('DEV_ONLY');
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  lastProgress = { phase: 'idle', done: 0, total: null, message: '' };
+  resetDirtyForDev();
+  await db.delete();
+  await db.open();
+  await chrome.storage.local.clear();
+  invalidateCache();
+  broadcastDataChanged();
+  return {
+    cleared: ['IndexedDB:better-github-stars-manager', 'chrome.storage.local'],
+  };
+}
+
 async function getLocaleMessages() {
   return getMessages(await authStore.getLocale());
 }
 
-async function run<T>(fn: () => Promise<T>): Promise<T> {
-  if (inFlight) await inFlight.catch(() => {});
-  const p = fn();
-  inFlight = p;
-  try {
-    return await p;
-  } finally {
-    if (inFlight === p) inFlight = null;
+const run = jobQueue.run;
+const BACKFILL_STATUS_RECONCILE_MS = 30_000;
+let lastStatusBackfillReconcileAt = 0;
+
+async function getStatusConfigAndBackfills() {
+  const now = Date.now();
+  if (now - lastStatusBackfillReconcileAt >= BACKFILL_STATUS_RECONCILE_MS) {
+    lastStatusBackfillReconcileAt = now;
+    const backfills = await backfillConfig.reconcileStoredBackfills();
+    const cfg = await authStore.getConfig();
+    return { cfg, backfills };
   }
+  const cfg = await authStore.getConfig();
+  return { cfg, backfills: cfg.backfills };
 }
 
 async function getStatusPayload() {
-  const cfg = await authStore.getConfig();
+  const { cfg, backfills } = await getStatusConfigAndBackfills();
   const hasToken = await authStore.hasToken();
   const onboardingStage = normalizeOnboardingStage(
     cfg.onboardingStage,
@@ -137,7 +174,9 @@ async function getStatusPayload() {
     onboardingStage,
     seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
     seenTooltips: cfg.seenTooltips,
-    inFlight: !!inFlight,
+    backfills,
+    activeBackfillId: selectActiveBackfillId(backfills),
+    inFlight: jobQueue.isRunning(),
   };
 }
 
@@ -155,20 +194,32 @@ async function autoTagAll(
   const stars = await db.stars.toArray();
   const excluded = new Set(await idbTagStore.listExcluded());
   const existingTags = await idbTagStore.getMany(stars.map((star) => star.full_name));
-  let tagged = 0;
+  const topicRepoCounts = countTopicRepoFrequency(stars);
+  const plans: AutoTagBulkUpdate[] = [];
   const total = stars.length;
-  console.log('[GSM] autoTag START | stars:', total, '| excluded:', excluded.size, '| phase:', phase, '| limit:', cfg.autoTagLimit);
+  console.log(
+    '[GSM] autoTag START | stars:',
+    total,
+    '| excluded:',
+    excluded.size,
+    '| phase:',
+    phase,
+    '| limit:',
+    cfg.maxTagsPerRepo,
+    '| minRepoCount:',
+    cfg.minTopicRepoCount,
+  );
   for (let i = 0; i < stars.length; i++) {
     const star = stars[i];
-    const existing = existingTags.get(star.full_name)?.tags ?? [];
-    const toAdd = suggestTags(star, existing, excluded, cfg.autoTagLimit);
-    if (toAdd.length > 0) {
-      const merged = Array.from(new Set([...existing, ...toAdd]));
-      if (merged.length !== existing.length) {
-        await idbTagStore.setTags(star.full_name, merged);
-        tagged++;
-      }
-    }
+    const existing = existingTags.get(star.full_name);
+    const manualTags = manualTagNames(existing);
+    const dismissed = dismissedAutoTagNames(existing);
+    const nextAutoTags = suggestTags(star, [...manualTags, ...dismissed], excluded, {
+      limit: cfg.maxTagsPerRepo,
+      minRepoCount: cfg.minTopicRepoCount,
+      topicRepoCounts,
+    });
+    plans.push({ full_name: star.full_name, autoTags: nextAutoTags });
     const done = i + 1;
     if (onProgress && (done === 1 || done === total || done % 100 === 0)) {
       onProgress({
@@ -180,9 +231,32 @@ async function autoTagAll(
     }
     if (done % 100 === 0) await Promise.resolve();
   }
+  const updates = reconcileAutoTagAssignments(plans, cfg.minTopicRepoCount)
+    .filter((plan) => !sameTagNames(existingTags.get(plan.full_name)?.autoTags ?? [], plan.autoTags));
+  const { updated: tagged } =
+    updates.length > 0 ? await idbTagStore.setAutoTagsBulk(updates) : { updated: 0 };
   console.log('[GSM] autoTag END | newly tagged:', tagged, 'of', total);
   return { tagged };
 }
+
+async function performFullSyncJob() {
+  const m = await getLocaleMessages();
+  setProgress({ phase: 'full', done: 0, total: null, message: m.background.fetchingPages(1) });
+  const result = await githubStarSource.syncFull((p) => setProgress(p));
+  broadcastDataChanged();
+  setIdleMessage(m.background.fullDone(result.added));
+  return result;
+}
+
+async function performFullSync() {
+  return run(performFullSyncJob);
+}
+
+const backfillExecutor = createBackfillExecutor({
+  jobQueue,
+  setBackfillState: backfillConfig.setBackfillState,
+  performFullSyncJob,
+});
 
 /**
  * One-shot migration: strip auto-derived `language` tags (language is now a
@@ -208,8 +282,9 @@ async function migrateLanguageTags(): Promise<void> {
     const allTags = await db.tags.toArray();
     let changed = 0;
     for (const t of allTags) {
-      const next = t.tags.filter((x) => !toRemove.has(x));
-      if (next.length === t.tags.length) continue; // already clean
+      const manualTags = manualTagNames(t);
+      const next = manualTags.filter((x) => !toRemove.has(x));
+      if (next.length === manualTags.length) continue; // already clean
       // setTags bumps mtime + marks dirty → next gistPush propagates the cleanup.
       await idbTagStore.setTags(t.full_name, next);
       if (++changed % 200 === 0) await Promise.resolve();
@@ -238,51 +313,28 @@ async function handle(req: Req): Promise<Res> {
         if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
         const result = await run(async () => {
           setProgress({ phase: 'incremental', done: 0, total: null, message: m.background.incrementalSyncing });
-          return runSyncActionWithAutoTag(
-            'syncIncremental',
-            () => githubStarSource.syncIncremental(),
-            (phase) => autoTagAll(m.background.autoAssignTagging, (p) => setProgress(p), phase),
-          );
+          return githubStarSource.syncIncremental();
         });
         broadcastDataChanged();
-        const idle = result.autoTag?.tagged
-          ? `${m.background.incrementalDone(result.sync.added)} · ${m.background.autoAssignDone(result.autoTag.tagged)}`
-          : m.background.incrementalDone(result.sync.added);
-        setIdleMessage(idle);
-        return { ok: true, data: { ...result.sync, tagged: result.autoTag?.tagged ?? 0 } };
+        setIdleMessage(m.background.incrementalDone(result.added));
+        return { ok: true, data: { ...result, tagged: 0 } };
       }
       case 'syncFull': {
         const m = await getLocaleMessages();
         if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
-        const result = await run(async () => {
-          setProgress({ phase: 'full', done: 0, total: null, message: m.background.fetchingPages(1) });
-          return runSyncActionWithAutoTag(
-            'syncFull',
-            () => githubStarSource.syncFull((p) => setProgress(p)),
-            (phase) => autoTagAll(m.background.autoAssignTagging, (p) => setProgress(p), phase),
-          );
-        });
-        broadcastDataChanged();
-        const idle = result.autoTag?.tagged
-          ? `${m.background.fullDone(result.sync.added)} · ${m.background.autoAssignDone(result.autoTag.tagged)}`
-          : m.background.fullDone(result.sync.added);
-        setIdleMessage(idle);
-        return { ok: true, data: { ...result.sync, tagged: result.autoTag?.tagged ?? 0 } };
+        const result = await performFullSync();
+        return { ok: true, data: { ...result, tagged: 0 } };
       }
       case 'syncRescan': {
         const m = await getLocaleMessages();
         if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
         const result = await run(async () => {
           setProgress({ phase: 'rescan', done: 0, total: null, message: m.background.rescanningPages(1) });
-          return runSyncActionWithAutoTag(
-            'syncRescan',
-            () => githubStarSource.syncRescan((p) => setProgress(p)),
-            (phase) => autoTagAll(m.background.autoAssignTagging, (p) => setProgress(p), phase),
-          );
+          return githubStarSource.syncRescan((p) => setProgress(p));
         });
         broadcastDataChanged();
-        setIdleMessage(m.background.rescanDone(result.sync.tombstoned, result.sync.revived));
-        return { ok: true, data: result.sync };
+        setIdleMessage(m.background.rescanDone(result.tombstoned, result.revived));
+        return { ok: true, data: result };
       }
       case 'autoAssignTags': {
         const m = await getLocaleMessages();
@@ -374,6 +426,30 @@ async function handle(req: Req): Promise<Res> {
       }
       case 'query':
         return { ok: true, data: await queryStars(req.params) as QueryResult };
+      case 'runBackfill': {
+        const m = await getLocaleMessages();
+        const task = getBackfillTask(req.id);
+        if (!task) return { ok: false, error: m.background.unknownBackfill(req.id) };
+        if (task.kind !== 'full_sync') return { ok: false, error: m.background.unsupportedBackfillKind(task.kind) };
+        if (!(await authStore.hasToken())) return { ok: false, error: m.background.noToken };
+        return await backfillExecutor.runBackfill(task, (error) => translateError(error, m));
+      }
+      case 'deferBackfill': {
+        const m = await getLocaleMessages();
+        const task = getBackfillTask(req.id);
+        if (!task) return { ok: false, error: m.background.unknownBackfill(req.id) };
+        await backfillConfig.setBackfillState(task.id, (current, now) => {
+          if (current?.status === 'done') return current;
+          return {
+            status: 'deferred',
+            queuedAt: current?.queuedAt ?? now,
+            lastAttemptAt: current?.lastAttemptAt ?? null,
+            completedAt: null,
+            error: current?.error ?? null,
+          };
+        });
+        return { ok: true, data: { id: task.id } };
+      }
       case 'setTags':
         await idbTagStore.setTags(req.full_name, req.tags);
         broadcastDataChanged();
@@ -386,18 +462,29 @@ async function handle(req: Req): Promise<Res> {
         await idbTagStore.setFavorite(req.full_name, req.favorite);
         broadcastDataChanged();
         return { ok: true, data: { favorite: req.favorite } };
+      case 'removeVisibleTag': {
+        const r = await idbTagStore.removeVisibleTag(req.full_name, req.name);
+        broadcastDataChanged();
+        return { ok: true, data: r };
+      }
       case 'deleteTag': {
-        // Remove this tag from every repo that has it (+ drop its meta).
+        // Remove this tag from every repo that has it and leave a tombstone.
         const r = await idbTagStore.deleteTag(req.name);
         broadcastDataChanged();
         return { ok: true, data: r };
       }
+      case 'deleteAllTags': {
+        const r = await run(() => idbTagStore.deleteAllTags());
+        broadcastDataChanged();
+        return { ok: true, data: r };
+      }
       case 'acceptSuggestions': {
-        const existing = (await idbTagStore.get(req.full_name))?.tags ?? [];
-        const merged = Array.from(new Set([...existing, ...req.toAdd]));
+        const existingTag = await idbTagStore.get(req.full_name);
+        const existing = manualTagNames(existingTag);
+        const merged = addTagNames(existing, req.toAdd);
         await idbTagStore.setTags(req.full_name, merged);
         broadcastDataChanged();
-        return { ok: true, data: { tags: merged } };
+        return { ok: true, data: { tags: visibleTagNames(await idbTagStore.get(req.full_name)) } };
       }
       case 'suggestTags': {
         return { ok: true };
@@ -433,6 +520,10 @@ async function handle(req: Req): Promise<Res> {
         await chrome.runtime.openOptionsPage();
         return { ok: true };
       }
+      case 'devClearLocalData': {
+        const result = await run(clearLocalDataForDev);
+        return { ok: true, data: result };
+      }
       case 'getTag': {
         return { ok: true, data: { tag: (await idbTagStore.get(req.full_name)) ?? null } };
       }
@@ -453,8 +544,8 @@ async function handle(req: Req): Promise<Res> {
         let n = 0;
         for (const item of req.items) {
           if (item.toAdd.length === 0) continue;
-          const existing = (await idbTagStore.get(item.full_name))?.tags ?? [];
-          const merged = Array.from(new Set([...existing, ...item.toAdd]));
+          const existing = manualTagNames(await idbTagStore.get(item.full_name));
+          const merged = addTagNames(existing, item.toAdd);
           if (merged.length !== existing.length) {
             await idbTagStore.setTags(item.full_name, merged);
             n++;
@@ -478,6 +569,7 @@ chrome.runtime.onMessage.addListener((req: Req, _sender, sendResponse) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   setProgress({ phase: 'idle', done: 0, total: null, message: '' });
+  void backfillConfig.reconcileStoredBackfills().catch(() => {});
 });
 
 /**
@@ -510,9 +602,10 @@ async function selfCheck() {
   }
 }
 selfCheck();
+void backfillConfig.reconcileStoredBackfills().catch(() => {});
 migrateLanguageTags();
 void authStore.getConfig().then((cfg) => {
-  if (!inFlight && lastProgress.phase === 'idle' && !lastProgress.message) {
+  if (!jobQueue.isRunning() && lastProgress.phase === 'idle' && !lastProgress.message) {
     lastProgress = cfg.lastSyncProgress ?? lastProgress;
   }
 }).catch(() => {});

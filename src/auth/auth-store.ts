@@ -8,9 +8,19 @@ import {
 } from "@/onboarding/state";
 import {
   DEFAULT_AUTO_TAG_LIMIT,
+  DEFAULT_LIBRARY_VIEW_PREFS,
+  DEFAULT_MIN_TOPIC_REPO_COUNT,
+  normalizeLibraryViewPrefs,
   normalizeAutoTagLimit,
+  normalizeMaxTagsPerRepo,
+  normalizeMinTopicRepoCount,
   normalizeStarsPanelDefaultEnabled,
 } from "@/preferences";
+import { normalizeBackfillMap } from "@/upgrades/backfill-state";
+import {
+  normalizeColumnLayoutMode,
+  normalizeStoredColumnLayoutPreference,
+} from "@/ui/column-layout";
 
 /**
  * Owns the fine-grained PAT lifecycle.
@@ -39,13 +49,29 @@ const DEFAULT_CONFIG: Config = {
   seenOnboarding: false,
   seenTooltips: 0,
   autoTagLimit: DEFAULT_AUTO_TAG_LIMIT,
+  maxTagsPerRepo: DEFAULT_AUTO_TAG_LIMIT,
+  minTopicRepoCount: DEFAULT_MIN_TOPIC_REPO_COUNT,
+  libraryView: DEFAULT_LIBRARY_VIEW_PREFS,
   starsPanelDefaultEnabled: true,
+  columnLayoutMode: "default",
+  customColumnLayout: null,
   langTagMigrationDone: false,
   lastSyncProgress: { phase: "idle", done: 0, total: null, message: "" },
+  backfills: {},
 };
 
 let cache: Config | null = null;
 let plaintextToken: string | null = null; // in-memory only
+
+function mergeStoredConfig(stored: Partial<Config>): Config {
+  const maxTagsPerRepo =
+    stored.maxTagsPerRepo === undefined ? stored.autoTagLimit : stored.maxTagsPerRepo;
+  return {
+    ...DEFAULT_CONFIG,
+    ...stored,
+    maxTagsPerRepo: maxTagsPerRepo ?? DEFAULT_CONFIG.maxTagsPerRepo,
+  };
+}
 
 function withNormalizedOnboarding(config: Config): Config {
   const hasTokenHint = !!(plaintextToken || config.tokenEncrypted);
@@ -57,9 +83,20 @@ function withNormalizedOnboarding(config: Config): Config {
   return {
     ...config,
     autoTagLimit: normalizeAutoTagLimit(config.autoTagLimit),
+    maxTagsPerRepo: normalizeMaxTagsPerRepo(
+      config.maxTagsPerRepo,
+      config.autoTagLimit,
+    ),
+    minTopicRepoCount: normalizeMinTopicRepoCount(config.minTopicRepoCount),
+    libraryView: normalizeLibraryViewPrefs(config.libraryView),
     starsPanelDefaultEnabled: normalizeStarsPanelDefaultEnabled(
       config.starsPanelDefaultEnabled,
     ),
+    columnLayoutMode: normalizeColumnLayoutMode(config.columnLayoutMode),
+    customColumnLayout: normalizeStoredColumnLayoutPreference(
+      config.customColumnLayout,
+    ),
+    backfills: normalizeBackfillMap(config.backfills),
     onboardingStage,
     seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
   };
@@ -67,16 +104,20 @@ function withNormalizedOnboarding(config: Config): Config {
 
 async function read(): Promise<Config> {
   if (cache) return cache;
+  cache = await readStoredConfig();
+  return cache;
+}
+
+async function readStoredConfig(): Promise<Config> {
   const raw = await chrome.storage.local.get(CONFIG_STORAGE_KEY);
   const stored = (raw[CONFIG_STORAGE_KEY] ?? {}) as Partial<Config>;
-  cache = withNormalizedOnboarding({ ...DEFAULT_CONFIG, ...stored });
-  return cache;
+  return withNormalizedOnboarding(mergeStoredConfig(stored));
 }
 
 async function write(next: Config): Promise<void> {
   const normalized = withNormalizedOnboarding(next);
-  cache = normalized;
   await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: normalized });
+  cache = normalized;
 }
 
 async function readDecryptedToken(): Promise<string | null> {
@@ -95,7 +136,7 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
 
     const prev = cache;
     const stored = (change.newValue ?? {}) as Partial<Config>;
-    cache = withNormalizedOnboarding({ ...DEFAULT_CONFIG, ...stored });
+    cache = withNormalizedOnboarding(mergeStoredConfig(stored));
 
     const tokenChanged =
       prev?.tokenEncrypted !== cache.tokenEncrypted ||
@@ -175,7 +216,6 @@ export const authStore = {
       );
 
     const { cipher, meta } = await encrypt(clean);
-    plaintextToken = clean;
     const current = await read();
     const onboardingStage =
       current.onboardingStage === "done" ? "done" : "awaiting_sync";
@@ -188,6 +228,7 @@ export const authStore = {
       displayName,
       onboardingStage,
     });
+    plaintextToken = clean;
     return { username: login };
   },
 
@@ -209,5 +250,35 @@ export const authStore = {
 
   async update(patch: Partial<Config>): Promise<void> {
     await write({ ...(await read()), ...patch });
+  },
+
+  async updateAutoTagPolicy(patch: {
+    maxTagsPerRepo?: number;
+    minTopicRepoCount?: number;
+  }): Promise<void> {
+    // Fresh-read avoids stale module-cache clobbering across extension contexts.
+    const current = await readStoredConfig();
+    const maxTagsPerRepo = patch.maxTagsPerRepo === undefined
+      ? current.maxTagsPerRepo
+      : normalizeMaxTagsPerRepo(patch.maxTagsPerRepo, current.autoTagLimit);
+    const minTopicRepoCount = patch.minTopicRepoCount === undefined
+      ? current.minTopicRepoCount
+      : normalizeMinTopicRepoCount(patch.minTopicRepoCount);
+    await write({
+      ...current,
+      autoTagLimit: maxTagsPerRepo,
+      maxTagsPerRepo,
+      minTopicRepoCount,
+    });
+  },
+
+  async updateLibraryViewPrefs(libraryView: Config['libraryView']): Promise<void> {
+    // Fresh-read avoids stale module-cache clobbering across extension contexts.
+    // This remains last-write-wins, not transactional compare-and-swap.
+    const current = await readStoredConfig();
+    await write({
+      ...current,
+      libraryView: normalizeLibraryViewPrefs(libraryView),
+    });
   },
 };

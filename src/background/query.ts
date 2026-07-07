@@ -1,6 +1,8 @@
 import { db } from '@/storage/db';
 import type { Star, Tag } from '@/types';
 import type { FilterState, SortKey } from '@/ui/filter-store';
+import { visibleTagNames } from '@/tags/tag-model';
+import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
 
 /**
  * Star query engine (runs in the SW, owns IDB); returns a filtered+sorted window
@@ -10,7 +12,7 @@ import type { FilterState, SortKey } from '@/ui/filter-store';
 export interface QueryParams {
   filter: Pick<
     FilterState,
-    'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyFavorite' | 'onlyUntagged' | 'sortKey' | 'sortDir'
+    'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyFavorite' | 'onlyUntagged' | 'onlyArchived' | 'sortKey' | 'sortDir'
   >;
   offset: number;
   limit: number;
@@ -43,7 +45,10 @@ async function ensureCache() {
     db.tagMeta.toArray(),
   ]);
   const tagMap = new Map<string, Tag>();
-  for (const t of tags) tagMap.set(t.full_name, t);
+  for (const t of tags) {
+    const normalized = normalizeStoredTag(t as LegacyTagRow);
+    tagMap.set(normalized.full_name, normalized);
+  }
   const excluded = new Set<string>();
   for (const m of tagMeta) {
     if (m.excluded) excluded.add(m.name);
@@ -52,15 +57,37 @@ async function ensureCache() {
   return cache;
 }
 
+export function compareNullableDate(
+  aValue: string | null | undefined,
+  bValue: string | null | undefined,
+  tieBreakA: string,
+  tieBreakB: string,
+  dir: 'asc' | 'desc',
+): number {
+  const aMissing = aValue == null;
+  const bMissing = bValue == null;
+  if (aMissing || bMissing) {
+    if (aMissing && bMissing) return tieBreakA.localeCompare(tieBreakB);
+    return aMissing ? 1 : -1;
+  }
+  const cmp = aValue.localeCompare(bValue);
+  return dir === 'asc' ? cmp : -cmp;
+}
+
 function sortRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Star[] {
   const mul = dir === 'asc' ? 1 : -1;
   return rows.sort((a, b) => {
     let cmp = 0;
     switch (key) {
       case 'starred_at':
-      case 'pushed_at':
         cmp = a[key].localeCompare(b[key]);
         break;
+      case 'pushed_at': {
+        return compareNullableDate(a.pushed_at, b.pushed_at, a.full_name, b.full_name, dir);
+      }
+      case 'created_at': {
+        return compareNullableDate(a.created_at, b.created_at, a.full_name, b.full_name, dir);
+      }
       case 'stargazers_count':
         cmp = a.stargazers_count - b.stargazers_count;
         break;
@@ -82,9 +109,10 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
 
   const filtered = stars.filter((s) => {
     if (!filter.showTombstone && s.tombstone) return false;
+    if (filter.onlyArchived && !s.archived) return false;
     if (langSet && (s.language === null || !langSet.has(s.language))) return false;
     const tagRecord = tags.get(s.full_name);
-    const myTags = tagRecord?.tags ?? [];
+    const myTags = visibleTagNames(tagRecord);
     if (filter.onlyFavorite && !tagRecord?.favorite) return false;
     if (filter.onlyUntagged && myTags.length > 0) return false;
     if (tagSet) {
@@ -114,9 +142,11 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
   // list sorted by count (no dimension grouping); topic-derived and user-authored
   // tags sit side by side.
   const tagCounts = new Map<string, number>();
-  for (const t of tags.values()) for (const tag of t.tags) {
-    if (excluded.has(tag)) continue;
-    tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+  for (const t of tags.values()) {
+    for (const tag of visibleTagNames(t)) {
+      if (excluded.has(tag)) continue;
+      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+    }
   }
   const tagTree: QueryResult['tagTree'] = [...tagCounts.entries()]
     .map(([name, count]) => ({ name, count }))

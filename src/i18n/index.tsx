@@ -23,20 +23,36 @@ export interface MessageCatalog {
     current: (value: string) => string;
     phase: (phase: SyncProgress["phase"]) => string;
   };
+  dev: {
+    version: (hash: string) => string;
+    clearLocalData: string;
+    confirmClearLocalData: string;
+    clearingLocalData: string;
+    clearLocalDataFailed: (error: string) => string;
+  };
   manager: {
     syncFailed: (label: string, error: string) => string;
     autoAssignDone: (count: number) => string;
     autoAssignFailed: (error: string) => string;
     deleteTagFailed: (error: string) => string;
+    deleteAllTagsFailed: (error: string) => string;
     noTokenBanner: string;
     addPat: string;
     emptyState: string;
+    backfillSyncTitle: string;
+    backfillSyncBody: string;
+    backfillSyncAction: string;
+    backfillSyncRetry: string;
+    backfillSyncLater: string;
+    backfillSyncRunning: string;
+    backfillSyncFailed: (error: string) => string;
   };
   toolbar: {
     searchPlaceholder: string;
     searchClearTitle: string;
     sortStarredAt: string;
     sortPushedAt: string;
+    sortCreatedAt: string;
     sortStars: string;
     sortName: string;
     toggleSortDir: string;
@@ -67,12 +83,46 @@ export interface MessageCatalog {
     columnLanguage: string;
     columnStars: string;
     columnUpdated: string;
+    columnCreated: string;
     columnTags: string;
     columnFavorite: string;
+    columnNotes: string;
+    viewLabel: string;
+    defaultLayout: string;
+    customLayout: string;
+    customLayoutChanged: string;
+    editLayout: string;
+    previewCustomLayout: string;
+    editingLayout: string;
+    columnsButton: string;
+    columnsButtonTitle: string;
+    hiddenColumns: (count: number) => string;
+    hiddenColumnsTip: string;
+    hideColumn: (label: string) => string;
+    restoreColumn: (label: string) => string;
+    dragColumnTitle: (label: string) => string;
+    dragColumnHint: string;
+    dragHideHint: (label: string) => string;
+    dragTrayHint: string;
+    dragInsertHint: string;
+    resizeColumnTitle: (label: string) => string;
+    lockedColumn: string;
+    fitWidths: string;
+    resetWidths: string;
+    resetLayout: string;
+    resizeFrozenPeers: string;
+    resizeFitExplicit: string;
+    resizeDefaultGuide: (width: number) => string;
+    resizeBadgeDefault: string;
+    resizeBadgeMin: string;
+    resizeDeltaCurrentOnly: string;
+    resizeWidthReadout: (tableWidth: number, panelWidth: number, overflow: number) => string;
+    resizeLiveWidthReadout: (label: string, width: number, delta: number, tableWidth: number, panelWidth: number, overflow: number) => string;
   };
   activeFilters: {
     onlyFavorite: string;
     onlyUntagged: string;
+    onlyArchived: string;
     summary: (count: number) => string;
     clearOne: string;
     clearAll: string;
@@ -83,6 +133,8 @@ export interface MessageCatalog {
     onlyFavoriteHint: string;
     onlyUntaggedLabel: string;
     onlyUntaggedHint: string;
+    onlyArchivedLabel: string;
+    onlyArchivedHint: string;
     showTombstoneLabel: string;
     showTombstoneHint: string;
     languages: (count: number) => string;
@@ -99,9 +151,15 @@ export interface MessageCatalog {
     tagsMatchAny: string;
     tagsMatchAll: string;
     tagsMatchHelp: string;
+    tagsSortAscTitle: string;
+    tagsSortDescTitle: string;
+    tagsSortDefaultTitle: string;
     deleteTagTitle: string;
     deleteTagConfirm: (name: string, count: number) => string;
     deleteTagDone: (count: number) => string;
+    deleteAllTagsTitle: string;
+    deleteAllTagsConfirm: string;
+    deleteAllTagsDone: (assignmentsRemoved: number, distinctTagsRemoved: number) => string;
     noTagsPrefix: string;
     noTagsEmphasis: string;
     noTagsSuffix: string;
@@ -127,6 +185,7 @@ export interface MessageCatalog {
     acceptAll: string;
     acceptAllTitle: string;
     tags: (count: number) => string;
+    tagsAction: string;
     notes: string;
     notesPlaceholder: string;
     notesSaved: string;
@@ -178,8 +237,10 @@ export interface MessageCatalog {
     /** Label for the prominent "Star the project" CTA button. */
     starRepoButton: string;
     behaviorHeading: string;
-    autoTagLimitLabel: string;
-    autoTagLimitHint: string;
+    maxTagsPerRepoLabel: string;
+    maxTagsPerRepoHint: string;
+    minTopicRepoCountLabel: string;
+    minTopicRepoCountHint: string;
     starsPanelDefaultLabel: string;
     starsPanelDefaultHint: string;
     tokenHeading: string;
@@ -190,6 +251,7 @@ export interface MessageCatalog {
     tokenGists: string;
     tokenGistNote: string;
     authenticatedAs: (username: string) => string;
+    openVerifiedStars: string;
     removeToken: string;
     cachedAccountWarning: (username: string) => string;
     clearCachedAuth: string;
@@ -222,6 +284,8 @@ export interface MessageCatalog {
   };
   background: {
     noToken: string;
+    unknownBackfill: (id: string) => string;
+    unsupportedBackfillKind: (kind: string) => string;
     incrementalSyncing: string;
     incrementalDone: (added: number) => string;
     fullDone: (count: number) => string;
@@ -309,6 +373,8 @@ export interface MessageCatalog {
     coachStep3Body: string;
     coachStep4Title: string;
     coachStep4Body: string;
+    coachStep5Title: string;
+    coachStep5Body: string;
     coachNext: string;
     coachBack: string;
     coachSkip: string;
@@ -344,15 +410,31 @@ const messages: Record<Locale, MessageCatalog> = {
           gist: "Gist",
         })[phase],
     },
+    dev: {
+      version: (hash) => `DEV ${hash}`,
+      clearLocalData: "Clear local",
+      confirmClearLocalData: "Confirm clear",
+      clearingLocalData: "Clearing…",
+      clearLocalDataFailed: (error) => `Clear failed: ${error}`,
+    },
     manager: {
       syncFailed: (label, error) => `${label}: ${error}`,
       autoAssignDone: (count) =>
         `Auto-assigned tags from repo topics for ${count} repos`,
       autoAssignFailed: (error) => `auto-assign tags: ${error}`,
       deleteTagFailed: (error) => `delete tag: ${error}`,
+      deleteAllTagsFailed: (error) => `delete all tags: ${error}`,
       noTokenBanner: "No GitHub token configured — data cannot load.",
       addPat: "Open options and add a PAT",
       emptyState: "No results. Adjust filters, or click Sync in the toolbar.",
+      backfillSyncTitle: "Sync your data",
+      backfillSyncBody:
+        "This update needs one full sync for your existing starred repos before everything is fully up to date.",
+      backfillSyncAction: "Run Full Sync",
+      backfillSyncRetry: "Retry sync",
+      backfillSyncLater: "Later",
+      backfillSyncRunning: "Syncing your data…",
+      backfillSyncFailed: (error) => `Sync failed: ${error}`,
     },
     toolbar: {
       searchPlaceholder:
@@ -360,6 +442,7 @@ const messages: Record<Locale, MessageCatalog> = {
       searchClearTitle: "Clear search",
       sortStarredAt: "Sort by starred date",
       sortPushedAt: "Sort by updated date",
+      sortCreatedAt: "Sort by repository creation date",
       sortStars: "Sort by stars",
       sortName: "Sort by name",
       toggleSortDir: "Toggle sort direction",
@@ -388,12 +471,47 @@ const messages: Record<Locale, MessageCatalog> = {
       columnLanguage: "Lang",
       columnStars: "Stars",
       columnUpdated: "Updated",
+      columnCreated: "Created",
       columnTags: "Tags",
       columnFavorite: "Favorite",
+      columnNotes: "Notes",
+      viewLabel: "View",
+      defaultLayout: "Default",
+      customLayout: "Custom",
+      customLayoutChanged: "Custom layout differs from default",
+      editLayout: "Edit custom layout",
+      previewCustomLayout: "Previewing custom layout. Click to apply.",
+      editingLayout: "Editing layout",
+      columnsButton: "Columns",
+      columnsButtonTitle: "Show or hide columns",
+      hiddenColumns: (count) => `${count} hidden`,
+      hiddenColumnsTip: "Click to restore · drag into the header to place",
+      hideColumn: (label) => `Hide ${label}`,
+      restoreColumn: (label) => `Restore ${label}`,
+      dragColumnTitle: (label) => `Drag ${label} to reorder; drop into tray to hide`,
+      dragColumnHint: "Horizontal drag reorders · drop into tray hides",
+      dragHideHint: (label) => `Release to hide ${label}`,
+      dragTrayHint: "Drag into the header to place",
+      dragInsertHint: "Release to insert here",
+      resizeColumnTitle: (label) => `Resize ${label}`,
+      lockedColumn: "Locked",
+      fitWidths: "Fit width",
+      resetWidths: "Reset widths",
+      resetLayout: "Reset",
+      resizeFrozenPeers: "Live drag: frozen peers",
+      resizeFitExplicit: "Fit action: explicit only",
+      resizeDefaultGuide: (width) => `Default ${width}px`,
+      resizeBadgeDefault: "default",
+      resizeBadgeMin: "min",
+      resizeDeltaCurrentOnly: "current column only",
+      resizeWidthReadout: (tableWidth, panelWidth, overflow) => `Table ${tableWidth}px / Panel ${panelWidth}px${overflow > 0 ? ` / Overflow +${overflow}px` : ''}`,
+      resizeLiveWidthReadout: (label, width, delta, tableWidth, panelWidth, overflow) =>
+        `${label} ${width}px (${delta >= 0 ? '+' : ''}${delta}px) / Table ${tableWidth}px / Panel ${panelWidth}px${overflow > 0 ? ` / Overflow +${overflow}px` : ''}`,
     },
     activeFilters: {
       onlyFavorite: "Favorites",
       onlyUntagged: "Untagged only",
+      onlyArchived: "Archived",
       summary: (count) => `${count} results · filtered`,
       clearOne: "Remove this filter",
       clearAll: "Clear all filters",
@@ -404,6 +522,8 @@ const messages: Record<Locale, MessageCatalog> = {
       onlyFavoriteHint: "",
       onlyUntaggedLabel: "Untagged only",
       onlyUntaggedHint: "",
+      onlyArchivedLabel: "Archived",
+      onlyArchivedHint: "",
       showTombstoneLabel: "Show unstarred",
       showTombstoneHint: "tombstoned repos",
       languages: (count) => `Languages${count > 0 ? ` · ${count}` : ""}`,
@@ -419,12 +539,19 @@ const messages: Record<Locale, MessageCatalog> = {
       tagsMatchAny: "Any",
       tagsMatchAll: "All",
       tagsMatchHelp: "match any / all selected tags",
+      tagsSortAscTitle: "Sort tags A to Z",
+      tagsSortDescTitle: "Sort tags Z to A",
+      tagsSortDefaultTitle: "Restore original tag order",
       deleteTagTitle: "Delete tag everywhere",
       deleteTagConfirm: (name, count) =>
         count > 0
           ? `Delete "${name}" from all ${count} repos? This cannot be undone.`
           : `Delete "${name}"?`,
       deleteTagDone: (count) => `Deleted tag from ${count} repos`,
+      deleteAllTagsTitle: "Delete all tags",
+      deleteAllTagsConfirm: "Delete all tags from every repo? This cannot be undone.",
+      deleteAllTagsDone: (assignmentsRemoved, distinctTagsRemoved) =>
+        `Cleared ${distinctTagsRemoved} tags from ${assignmentsRemoved} repo assignments`,
       noTagsPrefix: "No tags yet. Use toolbar",
       noTagsEmphasis: "Auto assign tags",
       noTagsSuffix: "to generate them from repo topics.",
@@ -450,6 +577,7 @@ const messages: Record<Locale, MessageCatalog> = {
       acceptAll: "+ Accept all",
       acceptAllTitle: "Add all suggested tags",
       tags: (count) => `Tags (${count})`,
+      tagsAction: "Tags",
       notes: "Notes",
       notesPlaceholder: "Why did you star this repo?",
       notesSaved: "Saved",
@@ -500,9 +628,12 @@ const messages: Record<Locale, MessageCatalog> = {
       title: "Better GitHub Stars Manager — Options",
       starRepoButton: "Like the project? Leave a star:)",
       behaviorHeading: "3. Preference",
-      autoTagLimitLabel: "Auto-tag limit per repo",
-      autoTagLimitHint:
-        "How many topic-derived tags can be auto-added to one repo during Sync / Full Sync / Auto-tag.",
+      maxTagsPerRepoLabel: "Max Auto Tags per repo",
+      maxTagsPerRepoHint:
+        "When you run Auto Tags, each repo can receive at most this many topic tags.",
+      minTopicRepoCountLabel: "Minimum topic coverage",
+      minTopicRepoCountHint:
+        "Bulk Auto Tags only generates a topic tag after that topic appears on at least this many repos.",
       starsPanelDefaultLabel: "Open my stars page with the manager panel by default",
       starsPanelDefaultHint:
         "Turn this off if you prefer to land on GitHub's native stars list and open the overlay manually.",
@@ -516,6 +647,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenGistNote:
         "Note: GitHub Gist scope is account-wide (no per-gist isolation for fine-grained tokens). We create one dedicated secret gist for sync.",
       authenticatedAs: (username) => `Authenticated as @${username}.`,
+      openVerifiedStars: "Open my stars",
       removeToken: "Remove token",
       cachedAccountWarning: (username) =>
         `Cached account @${username} exists, but the token is not usable in this extension instance.`,
@@ -556,6 +688,8 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     background: {
       noToken: "No token configured",
+      unknownBackfill: (id) => `Unknown backfill: ${id}`,
+      unsupportedBackfillKind: (kind) => `Unsupported backfill kind: ${kind}`,
       incrementalSyncing: "Checking for newly starred repos…",
       incrementalDone: (added) => `+${added} new`,
       fullDone: (count) => `Full sync done · ${count} repos refreshed`,
@@ -647,18 +781,21 @@ const messages: Record<Locale, MessageCatalog> = {
         "Pull merges tags + notes from your Gist into this device (per-repo, last-write-wins). Use after editing on another device.",
       coachTitle: "Quick tour",
       coachIntro:
-        "Here are the four things you'll use most. Follow along — this shows only once.",
+        "Here are the core controls you'll use most. Follow along — this shows only once.",
       coachStep1Title: "Sync your stars",
       coachStep1Body:
-        "Sync pulls in newly starred repos since your last visit. It runs automatically on first load; click it anytime to refresh.",
-      coachStep2Title: "Filter by tags",
+        "Sync pulls in newly starred repos since your last visit. It runs automatically on first load; click it anytime to refresh. It won't create tags by itself.",
+      coachStep2Title: "Generate tags when you choose",
       coachStep2Body:
-        "The Tags sidebar lists all your tags, sorted by how often they're used. Click any tag (the whole row) to filter the list. Hover a tag for the delete button.",
-      coachStep3Title: "Open a repo",
+        "Auto Tags suggests topic-based labels for your synced repos. Run it when you want classification; sync and full sync leave tags untouched.",
+      coachStep3Title: "Filter by tags",
       coachStep3Body:
-        "Click any row to open the detail drawer — edit tags, write notes, and accept suggested tags there.",
-      coachStep4Title: "Hide the panel",
+        "The Tags sidebar lists all your tags, sorted by how often they're used. Click any tag (the whole row) to filter the list. Hover a tag for the delete button.",
+      coachStep4Title: "Open a repo",
       coachStep4Body:
+        "Click any row to open the detail drawer — edit tags, write notes, and accept suggested tags there.",
+      coachStep5Title: "Hide the panel",
+      coachStep5Body:
         "Want GitHub's native stars list for a moment? Click here to retract the overlay — a floating button stays on screen to bring the panel back.",
       coachNext: "Next",
       coachBack: "Back",
@@ -693,21 +830,38 @@ const messages: Record<Locale, MessageCatalog> = {
           gist: "Gist",
         })[phase],
     },
+    dev: {
+      version: (hash) => `DEV ${hash}`,
+      clearLocalData: "清本地",
+      confirmClearLocalData: "确认清除",
+      clearingLocalData: "清除中…",
+      clearLocalDataFailed: (error) => `清除失败: ${error}`,
+    },
     manager: {
       syncFailed: (label, error) => `${label}: ${error}`,
       autoAssignDone: (count) =>
         `已从仓库 topics 为 ${count} 个仓库自动分配标签`,
       autoAssignFailed: (error) => `自动分配标签失败: ${error}`,
       deleteTagFailed: (error) => `删除标签失败: ${error}`,
+      deleteAllTagsFailed: (error) => `删除全部标签失败: ${error}`,
       noTokenBanner: "未配置 GitHub token — 无法加载数据。",
       addPat: "打开选项页并添加 PAT",
       emptyState: "无结果。调整筛选，或点击工具栏中的 Sync。",
+      backfillSyncTitle: "需要同步数据",
+      backfillSyncBody:
+        "这个版本需要为你现有的 starred 仓库同步一次数据，跑一次 Full Sync 就可以了。",
+      backfillSyncAction: "立即同步",
+      backfillSyncRetry: "重试同步",
+      backfillSyncLater: "稍后再说",
+      backfillSyncRunning: "正在同步数据…",
+      backfillSyncFailed: (error) => `同步失败: ${error}`,
     },
     toolbar: {
       searchPlaceholder: "搜索 名称 / 描述 / topics / notes   (按 / 聚焦)",
       searchClearTitle: "清空搜索",
       sortStarredAt: "按 star 时间",
       sortPushedAt: "按更新时间",
+      sortCreatedAt: "按仓库创建时间",
       sortStars: "按 star 数",
       sortName: "按名称",
       toggleSortDir: "切换排序方向",
@@ -735,12 +889,47 @@ const messages: Record<Locale, MessageCatalog> = {
       columnLanguage: "语言",
       columnStars: "Stars",
       columnUpdated: "更新",
+      columnCreated: "创建",
       columnTags: "标签",
       columnFavorite: "收藏",
+      columnNotes: "备注",
+      viewLabel: "视图",
+      defaultLayout: "默认",
+      customLayout: "自定义",
+      customLayoutChanged: "自定义布局与默认不同",
+      editLayout: "编辑自定义布局",
+      previewCustomLayout: "正在预览自定义布局，点击应用",
+      editingLayout: "正在编辑布局",
+      columnsButton: "列",
+      columnsButtonTitle: "显示或隐藏列",
+      hiddenColumns: (count) => `已隐藏 ${count}`,
+      hiddenColumnsTip: "点击恢复 · 拖回表头可插入位置",
+      hideColumn: (label) => `隐藏「${label}」`,
+      restoreColumn: (label) => `恢复「${label}」`,
+      dragColumnTitle: (label) => `拖动「${label}」排序；拖到托盘隐藏`,
+      dragColumnHint: "水平拖动排序 · 拖到托盘隐藏",
+      dragHideHint: (label) => `松手隐藏「${label}」`,
+      dragTrayHint: "拖到表头插入",
+      dragInsertHint: "松手插入这里",
+      resizeColumnTitle: (label) => `调整「${label}」列宽`,
+      lockedColumn: "锁定",
+      fitWidths: "适应面板宽度",
+      resetWidths: "重置列宽",
+      resetLayout: "重置",
+      resizeFrozenPeers: "Live drag：冻结同伴列",
+      resizeFitExplicit: "Fit action：只在显式动作发生",
+      resizeDefaultGuide: (width) => `默认 ${width}px`,
+      resizeBadgeDefault: "默认",
+      resizeBadgeMin: "最小",
+      resizeDeltaCurrentOnly: "仅当前列",
+      resizeWidthReadout: (tableWidth, panelWidth, overflow) => `总宽 ${tableWidth}px / 面板 ${panelWidth}px${overflow > 0 ? ` / 溢出 +${overflow}px` : ''}`,
+      resizeLiveWidthReadout: (label, width, delta, tableWidth, panelWidth, overflow) =>
+        `${label} ${width}px（${delta >= 0 ? '+' : ''}${delta}px） / 总宽 ${tableWidth}px / 面板 ${panelWidth}px${overflow > 0 ? ` / 溢出 +${overflow}px` : ''}`,
     },
     activeFilters: {
       onlyFavorite: "收藏",
       onlyUntagged: "仅未标注",
+      onlyArchived: "已归档",
       summary: (count) => `${count} 个结果 · 已筛选`,
       clearOne: "移除该筛选",
       clearAll: "清除全部筛选",
@@ -751,6 +940,8 @@ const messages: Record<Locale, MessageCatalog> = {
       onlyFavoriteHint: "",
       onlyUntaggedLabel: "仅未标注",
       onlyUntaggedHint: "",
+      onlyArchivedLabel: "已归档",
+      onlyArchivedHint: "",
       showTombstoneLabel: "显示已 unstar",
       showTombstoneHint: "tombstoned repos",
       languages: (count) => `Languages${count > 0 ? ` · ${count}` : ""}`,
@@ -766,12 +957,19 @@ const messages: Record<Locale, MessageCatalog> = {
       tagsMatchAny: "任一",
       tagsMatchAll: "全部",
       tagsMatchHelp: "匹配 任一 / 全部 所选标签",
+      tagsSortAscTitle: "按标签自然升序排序",
+      tagsSortDescTitle: "按标签自然降序排序",
+      tagsSortDefaultTitle: "恢复标签原始顺序",
       deleteTagTitle: "删除该标签（所有仓库）",
       deleteTagConfirm: (name, count) =>
         count > 0
           ? `从全部 ${count} 个仓库删除标签「${name}」？此操作不可撤销。`
           : `删除标签「${name}」？`,
       deleteTagDone: (count) => `已从 ${count} 个仓库删除标签`,
+      deleteAllTagsTitle: "删除全部标签",
+      deleteAllTagsConfirm: "从所有仓库清空全部标签？此操作不可撤销。",
+      deleteAllTagsDone: (assignmentsRemoved, distinctTagsRemoved) =>
+        `已清空 ${distinctTagsRemoved} 个标签，共 ${assignmentsRemoved} 个仓库标签关联`,
       noTagsPrefix: "暂无标签。点击工具栏",
       noTagsEmphasis: "自动分配标签",
       noTagsSuffix: "从仓库 topics 自动生成。",
@@ -797,6 +995,7 @@ const messages: Record<Locale, MessageCatalog> = {
       acceptAll: "+ 全部接受",
       acceptAllTitle: "添加所有建议标签",
       tags: (count) => `标签 (${count})`,
+      tagsAction: "标签",
       notes: "笔记",
       notesPlaceholder: "为什么会 star 这个仓库？",
       notesSaved: "已保存",
@@ -846,9 +1045,12 @@ const messages: Record<Locale, MessageCatalog> = {
       title: "Better GitHub Stars Manager — 选项",
       starRepoButton: "点个Star~",
       behaviorHeading: "3. 偏好",
-      autoTagLimitLabel: "每个仓库的自动打标数量上限",
-      autoTagLimitHint:
-        "控制 Sync / Full Sync / 自动打标时，单个仓库最多自动添加多少个 topic 标签。",
+      maxTagsPerRepoLabel: "每个仓库最多自动标签数",
+      maxTagsPerRepoHint:
+        "点击 Auto Tags 时，单个仓库最多自动添加这么多个 topic 标签。",
+      minTopicRepoCountLabel: "共同标签门槛",
+      minTopicRepoCountHint:
+        "只有达到这个仓库数量的共同 topic，才会生成自动标签。",
       starsPanelDefaultLabel: "默认打开自己的 stars 页面时显示管理面板",
       starsPanelDefaultHint:
         "关闭后会优先显示 GitHub 原生 stars 列表，需要时再手动打开悬浮面板。",
@@ -862,6 +1064,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenGistNote:
         "注意：GitHub Gist 权限是账号级的（细粒度 token 不能按 gist 隔离）。我们会为同步创建一个专用 secret gist。",
       authenticatedAs: (username) => `已认证为 @${username}。`,
+      openVerifiedStars: "打开我的 stars",
       removeToken: "移除 token",
       cachedAccountWarning: (username) =>
         `缓存账号 @${username} 仍在，但当前扩展实例里的 token 已不可用。`,
@@ -899,6 +1102,8 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     background: {
       noToken: "未配置 token",
+      unknownBackfill: (id) => `未知 backfill：${id}`,
+      unsupportedBackfillKind: (kind) => `不支持的 backfill 类型：${kind}`,
       incrementalSyncing: "正在检查新 star 的仓库…",
       incrementalDone: (added) => `新增 ${added} 个`,
       fullDone: (count) => `全量同步完成 · 刷新 ${count} 个仓库`,
@@ -981,18 +1186,21 @@ const messages: Record<Locale, MessageCatalog> = {
       tooltipPullFirst:
         "Pull 会把 Gist 中的标签和笔记合并到本设备(按仓库、后写覆盖)。在另一台设备编辑后使用。",
       coachTitle: "快速上手",
-      coachIntro: "下面是最常用的四处。跟着看一遍——本引导只显示一次。",
+      coachIntro: "下面是最常用的核心控件。跟着看一遍——本引导只显示一次。",
       coachStep1Title: "同步你的 stars",
       coachStep1Body:
-        "Sync 按钮会拉取你自上次访问以来新 star 的仓库。首次加载会自动跑;想刷新随时点它。",
-      coachStep2Title: "按标签筛选",
+        "Sync 按钮会拉取你自上次访问以来新 star 的仓库。首次加载会自动跑;想刷新随时点它。同步本身不会创建标签。",
+      coachStep2Title: "需要时再生成标签",
       coachStep2Body:
-        "Tags 侧栏列出所有标签，按使用频次排序。点击任意标签(整行)即可筛选列表。鼠标悬停标签会出现删除按钮。",
-      coachStep3Title: "打开某个仓库",
+        "Auto Tags 会根据已同步仓库的 topics 生成建议标签。只有你点击它时才会打标;Sync 和 Full Sync 都不会改动标签。",
+      coachStep3Title: "按标签筛选",
       coachStep3Body:
-        "点击任意一行打开详情抽屉——在那里编辑标签、写笔记、接受建议标签。",
-      coachStep4Title: "隐藏面板",
+        "Tags 侧栏列出所有标签，按使用频次排序。点击任意标签(整行)即可筛选列表。鼠标悬停标签会出现删除按钮。",
+      coachStep4Title: "打开某个仓库",
       coachStep4Body:
+        "点击任意一行打开详情抽屉——在那里编辑标签、写笔记、接受建议标签。",
+      coachStep5Title: "隐藏面板",
+      coachStep5Body:
         "想暂时用 GitHub 原生 stars 列表?点这里收起悬浮面板——屏幕上会留一个浮动按钮,随时能把面板调回来。",
       coachNext: "下一步",
       coachBack: "上一步",

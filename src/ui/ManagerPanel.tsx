@@ -1,107 +1,118 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle, Heart, RefreshCw, Sparkles } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
-import { StarRow } from '@/ui/components/StarRow';
 import { Toolbar } from '@/ui/components/Toolbar';
 import { FilterSidebar } from '@/ui/components/FilterSidebar';
 import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
-import { pruneFavoriteOverrides, resolveFavoriteState, type FavoriteOverrideState } from '@/ui/favorite-state';
-import { pickInitialSyncAction } from '@/ui/initial-sync';
+import { StarsTable } from '@/ui/components/StarsTable';
+import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
+import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
+import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
+import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { PortalProvider } from '@/ui/shadcn/portal-context';
 import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import { useTheme } from '@/ui/hooks/use-theme';
-import { bgCall, mergeProgressStatus, mergeStatusPatch, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
+import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut } from '@/ui/interaction-lock';
+import { bgCall, type SyncStatus } from '@/utils/messaging';
 import { hidePanel } from '@/content/stars-page/panel-toggle';
-import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnboardingSync } from '@/onboarding/state';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
+import type { BackfillState } from '@/types';
+import { COLUMN_DEFS } from '@/ui/column-layout';
+import { layoutViewportFromMeasurements, type LayoutViewportState } from '@/ui/layout-resize-surface';
+import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
 
-const ROW_HEIGHT = 64;
-const GRID_COLS = 'grid-cols-[minmax(180px,1.4fr)_2fr_80px_64px_84px_1.6fr_28px_20px]';
+export { layoutViewportFromMeasurements };
 
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
   const f = useFilterStore();
-  const [status, setStatus] = useState<SyncStatus | null>(null);
-  const [statusLoaded, setStatusLoaded] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [successAction, setSuccessAction] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
+  const {
+    status,
+    statusLoaded,
+    busy,
+    pendingAction,
+    successAction,
+    info,
+    setInfo,
+    applyStatusPatch,
+    setOnboardingStage,
+    doSync,
+    autoAssignTags,
+    runBackfill,
+    deferBackfill,
+    isOnboardingCardStage,
+  } = useManagerSyncActions({ refreshStars });
   const [selected, setSelected] = useState<string | null>(null);
   const [coachStep, setCoachStep] = useState<number | null>(null);
   const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const layoutResizeLiveAdapterRef = useRef<LayoutResizeLiveAdapter | null>(null);
   const { theme, themeClass, toggle: toggleTheme } = useTheme();
   const { m } = useI18n();
+  const {
+    layoutMode,
+    editingLayout,
+    layoutConfigReady,
+    layoutEditReady,
+    previewingCustomLayout,
+    draftLayout,
+    visibleColumns,
+    gridTemplateColumns,
+    tableMinWidth,
+    hiddenTrayColumns,
+    customLayoutDirty,
+    hiddenColumnCount,
+    dragGhost,
+    layoutDrag,
+    layoutResize,
+    columnShifts,
+    trayOpen,
+    trayDropReady,
+    trayCaretX,
+    layoutFaded,
+    flashedColumn,
+    columnMenuOpen,
+    columnMenuPosition,
+    headerRef,
+    editColumnsButtonRef,
+    setBrowseLayoutMode,
+    previewCustomLayout,
+    beginCustomLayoutEdit,
+    saveLayoutEdit,
+    cancelLayoutEdit,
+    resetLayoutEdit,
+    resetLayoutWidths,
+    setColumnHidden,
+    beginColumnDrag,
+    beginColumnResize,
+    moveColumnByKeyboard,
+    resizeColumnByKeyboard,
+    autoFitColumnWidth,
+    fitLayoutWidths,
+    beginTrayDrag,
+    restoreHiddenColumn,
+    toggleColumnMenu,
+  } = useColumnLayoutEditor(rootRef, listRef, layoutResizeLiveAdapterRef);
+  const interactionLocked = editingLayout;
+  const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;
+  const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
 
-  const setOnboardingStage = async (stage: SyncStatus['onboardingStage']) => {
-    setStatus((cur) => mergeStatusPatch(cur, { onboardingStage: stage }));
-    await bgCall('setOnboardingStage', { stage }).catch(() => {});
-  };
-
-  const finalizeOnboardingAfterSync = async (hasToken: boolean) => {
-    const q = await bgCall<{ grandTotal: number }>('query', {
-      params: { filter: emptyFilter(), offset: 0, limit: 1 },
-    }).catch(() => null);
-    if (!q) return;
-    await setOnboardingStage(resolveOnboardingStageAfterSync(hasToken, q.grandTotal));
-  };
-
-  useEffect(() => {
-    const m = location.hash.match(/gsm-tag=([^&]+)/);
-    if (m) {
-      f.toggleTag(decodeURIComponent(m[1]));
-      history.replaceState(null, '', location.pathname + location.search);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    let off = () => {};
-    (async () => {
-      off = onProgress((progress) => setStatus((current) => mergeProgressStatus(current, progress)));
-      const st = await bgCall<SyncStatus>('getStatus').catch(() => null);
-      setStatus((current) => mergeStatusSnapshot(current, st));
-      setStatusLoaded(true);
-      if (st?.hasToken) {
-        const q = await bgCall<{ grandTotal: number }>('query', {
-          params: { filter: emptyFilter(), offset: 0, limit: 1 },
-        }).catch(() => null);
-        const syncType = pickInitialSyncAction(st, q?.grandTotal ?? 0);
-        if (!syncType) return;
-        const syncLabel = syncType === 'syncIncremental' ? m.popup.syncIncremental : m.popup.syncFull;
-        const tracksOnboarding = shouldTrackOnboardingSync(st.onboardingStage);
-        setPendingAction(syncType);
-        if (tracksOnboarding) await setOnboardingStage('syncing');
-        bgCall(syncType)
-          .then(async () => {
-            refreshStars();
-            if (tracksOnboarding) await finalizeOnboardingAfterSync(true);
-          })
-          .catch(async (e) => {
-            if (tracksOnboarding) await setOnboardingStage('sync_failed');
-            setInfo(m.manager.syncFailed(syncLabel, e instanceof Error ? e.message : String(e)));
-          })
-          .finally(() => setPendingAction((cur) => (cur === syncType ? null : cur)));
-      }
-    })().finally(() => setStatusLoaded(true));
-    return () => off();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useLayoutEffect(() => {
+    if (!editingLayout) return;
+    setSelected(null);
+  }, [editingLayout]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (shouldIgnorePanelShortcut(interactionLocked, e.target)) return;
       if (e.key === '/') {
         e.preventDefault();
         searchRef.current?.focus();
@@ -109,75 +120,13 @@ export function ManagerPanel() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => listRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 12,
-  });
-
-  const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashSuccess = (type: string) => {
-    if (successTimer.current) clearTimeout(successTimer.current);
-    setSuccessAction(type);
-    successTimer.current = setTimeout(() => setSuccessAction(null), 1300);
-  };
-  useEffect(() => () => { if (successTimer.current) clearTimeout(successTimer.current); }, []);
-
-  const doSync = async (type: string, label: string) => {
-    setBusy(true);
-    setPendingAction(type);
-    setSuccessAction(null);
-    setInfo(null);
-    const tracksOnboarding =
-      (type === 'syncIncremental' || type === 'syncFull') &&
-      !!status &&
-      shouldTrackOnboardingSync(status.onboardingStage);
-    try {
-      if (tracksOnboarding) await setOnboardingStage('syncing');
-      const result = await bgCall<{ missing?: boolean }>(type);
-      refreshStars();
-      if (tracksOnboarding) await finalizeOnboardingAfterSync(!!status?.hasToken);
-      if (type === 'gistPull' && result?.missing) {
-        setInfo(m.background.gistPullMissing);
-      } else {
-        flashSuccess(type);
-      }
-    } catch (e) {
-      if (tracksOnboarding) await setOnboardingStage('sync_failed');
-      setInfo(m.manager.syncFailed(label, e instanceof Error ? e.message : String(e)));
-    } finally {
-      setBusy(false);
-      setPendingAction((cur) => (cur === type ? null : cur));
-    }
-  };
-
-  const autoAssignTags = async () => {
-    setBusy(true);
-    setPendingAction('autoAssignTags');
-    setSuccessAction(null);
-    setInfo(null);
-    try {
-      await bgCall('autoAssignTags');
-      refreshStars();
-      flashSuccess('autoAssignTags');
-    } catch (e) {
-      setInfo(m.manager.autoAssignFailed(e instanceof Error ? e.message : String(e)));
-    } finally {
-      setBusy(false);
-      setPendingAction((cur) => (cur === 'autoAssignTags' ? null : cur));
-    }
-  };
+  }, [interactionLocked]);
 
   const dismissOnboarding = async () => {
     setCoachStep(null);
     await setOnboardingStage('done');
   };
 
-  const progressActive = !!status?.inFlight && status.progress.phase !== 'idle';
-  const syncingNow = !!pendingAction || progressActive;
   useEffect(() => {
     if (!statusLoaded || !status) return;
     if (status.onboardingStage === 'coach') {
@@ -186,13 +135,6 @@ export function ManagerPanel() {
     }
     if (coachStep !== null) setCoachStep(null);
   }, [coachStep, status, statusLoaded]);
-
-  useEffect(() => {
-    if (!statusLoaded || !status) return;
-    if (status.onboardingStage !== 'syncing' || syncingNow) return;
-    void finalizeOnboardingAfterSync(status.hasToken);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusLoaded, status?.onboardingStage, status?.hasToken, syncingNow]);
 
   const finishCoach = async () => {
     setCoachStep(null);
@@ -209,7 +151,6 @@ export function ManagerPanel() {
   );
   const selectedStar = selectedIdx >= 0 ? rows[selectedIdx] : null;
   const selectedTag = selectedStar ? tagsByFullName.get(selectedStar.full_name) : undefined;
-
   useEffect(() => {
     setFavoriteOverrides((current) => pruneFavoriteOverrides(current, tagsByFullName, rows));
   }, [rows, tagsByFullName]);
@@ -243,7 +184,45 @@ export function ManagerPanel() {
   };
 
   const hasActiveFilter =
-    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged;
+    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged || f.onlyArchived;
+  const activeBackfillId = status?.activeBackfillId ?? null;
+  const activeBackfillState = activeBackfillId ? status?.backfills[activeBackfillId] ?? null : null;
+
+  const layoutColumnMenu = (
+    <LayoutColumnMenu
+      container={rootRef.current}
+      editing={editingLayout}
+      open={columnMenuOpen}
+      position={columnMenuPosition}
+      draftLayout={draftLayout}
+      onSetColumnHidden={setColumnHidden}
+    />
+  );
+
+  const layoutEditChrome = (
+    <LayoutEditChrome
+      editing={editingLayout}
+      draftLayout={draftLayout}
+      resizeColumnLabel={layoutResize ? COLUMN_DEFS[layoutResize.id].label(m) : null}
+      layoutResize={layoutResize}
+      tableWidth={layoutViewport?.tableWidth ?? null}
+      panelWidth={layoutViewport?.panelWidth ?? null}
+      overflowPx={layoutViewport?.overflowPx ?? 0}
+      hiddenTrayColumns={hiddenTrayColumns}
+      trayOpen={trayOpen}
+      trayDropReady={trayDropReady}
+      dropReadyLabel={layoutDrag?.kind === 'column' ? m.toolbar.dragHideHint(layoutDrag.label) : null}
+      editColumnsButtonRef={editColumnsButtonRef}
+      onToggleColumnMenu={toggleColumnMenu}
+      onFitWidths={fitLayoutWidths}
+      onResetWidths={resetLayoutWidths}
+      onReset={resetLayoutEdit}
+      onSave={saveLayoutEdit}
+      onCancel={cancelLayoutEdit}
+      onBeginTrayDrag={beginTrayDrag}
+      onRestoreHiddenColumn={restoreHiddenColumn}
+    />
+  );
 
   return (
     <PortalProvider containerRef={rootRef}>
@@ -264,12 +243,24 @@ export function ManagerPanel() {
           successAction={successAction}
           onSync={doSync}
           onAutoAssignTags={autoAssignTags}
-          onStatusPatch={(patch) => setStatus((cur) => mergeStatusPatch(cur, patch))}
+          onStatusPatch={applyStatusPatch}
           onToggleTheme={toggleTheme}
           onTogglePanel={hidePanel}
           theme={theme}
           searchRef={searchRef}
+          layoutMode={layoutMode}
+          layoutEditing={editingLayout}
+          layoutConfigReady={layoutConfigReady}
+          layoutEditReady={layoutEditReady}
+          customLayoutDirty={customLayoutDirty}
+          customPreviewing={previewingCustomLayout}
+          hiddenColumnCount={hiddenColumnCount}
+          onLayoutModeChange={setBrowseLayoutMode}
+          onStartLayoutEdit={beginCustomLayoutEdit}
+          onPreviewCustomChange={previewCustomLayout}
+          layoutEditChrome={layoutEditChrome}
         />
+        {layoutColumnMenu}
 
         {statusLoaded && status && !status.hasToken && status.onboardingStage === 'done' && (
           <div className="flex items-center gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -277,6 +268,7 @@ export function ManagerPanel() {
             <span>{m.manager.noTokenBanner}</span>
             <Button
               size="sm"
+              disabled={interactionLocked}
               onClick={() => bgCall('openOptions').catch(() => {})}
             >
               {m.manager.addPat}
@@ -284,14 +276,18 @@ export function ManagerPanel() {
           </div>
         )}
 
-        {hasActiveFilter && (
-          <div className="border-b border-border">
-            <ActiveFilterChips f={f} count={total} />
+        <div
+          className={cn('gsm-active-filter-row', { open: hasActiveFilter })}
+          aria-hidden={!hasActiveFilter}
+          {...getLockedRegionProps(!hasActiveFilter)}
+        >
+          <div>
+            <ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />
           </div>
-        )}
+        </div>
 
         {info && (
-          <div className="border-b border-border bg-card px-3 py-1 text-[11px] text-muted-foreground">{info}</div>
+          <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">{info}</div>
         )}
 
         <div className="flex min-h-0 flex-1">
@@ -299,10 +295,11 @@ export function ManagerPanel() {
             f={f}
             languages={languages}
             tagTree={tagTree}
-            onTagDeleted={(message) => {
-              refreshStars();
+            interactionLocked={interactionLocked}
+            onTagMutationMessage={(message) => {
               if (message) setInfo(message);
             }}
+            onTagMutationSuccess={refreshStars}
           />
 
           <div ref={listRef} data-coach-target="repo" className="no-scrollbar flex-1 overflow-auto">
@@ -314,75 +311,64 @@ export function ManagerPanel() {
               <OnboardingCard
                 stage={status.onboardingStage}
                 failedInfo={info}
+                interactionLocked={interactionLocked}
                 onOpenOptions={() => bgCall('openOptions').catch(() => {})}
                 onRetry={() => void doSync('syncFull', m.popup.syncFull)}
               />
+            ) : status.hasToken && activeBackfillId && activeBackfillState && coachStep === null ? (
+              <BackfillCard
+                state={activeBackfillState}
+                progress={status.progress}
+                actionBusy={busy || !!pendingAction}
+                interactionLocked={interactionLocked}
+                onRun={() => void runBackfill(activeBackfillId)}
+                onDefer={() => void deferBackfill(activeBackfillId)}
+              />
             ) : (
-              <>
-            <div
-              style={{
-                opacity: phase === 'fading-out' ? 0 : 1,
-                transition: `opacity ${phase === 'fading-out' ? 120 : 160}ms cubic-bezier(0.4, 0, 0.2, 1)`,
-              }}
-            >
-            <div
-              className={cn(
-                'sticky top-0 z-10 grid gap-2 border-b border-border bg-background px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground',
-                GRID_COLS,
-              )}
-            >
-              <span>{m.toolbar.columnRepository}</span>
-              <span>{m.toolbar.columnDescription}</span>
-              <span>{m.toolbar.columnLanguage}</span>
-              <span className="text-right">{m.toolbar.columnStars}</span>
-              <span>{m.toolbar.columnUpdated}</span>
-              <span>{m.toolbar.columnTags}</span>
-              <span className="flex justify-center" title={m.toolbar.columnFavorite}>
-                <Heart className="size-3" aria-label={m.toolbar.columnFavorite} />
-              </span>
-              <span />
-            </div>
-            {rows.length === 0 ? (
-              <div className="p-10 text-center text-sm text-muted-foreground">
-                {loading ? m.common.loading : m.manager.emptyState}
-              </div>
-            ) : (
-              <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
-                {rowVirtualizer.getVirtualItems().map((vi) => {
-                  const star = rows[vi.index];
-                  const tag = tagsByFullName.get(star.full_name);
-                  const { favorite, busy: favoriteBusy } = resolveFavoriteState(
-                    tag,
-                    favoriteOverrides[star.full_name],
-                  );
-                  return (
-                    <div
-                      key={star.full_name}
-                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: ROW_HEIGHT, transform: `translateY(${vi.start}px)` }}
-                    >
-                      <StarRow
-                        star={star}
-                        tags={tag?.tags ?? []}
-                        hasNotes={!!(tag?.notes && tag.notes.trim())}
-                        favorite={favorite}
-                        favoriteBusy={favoriteBusy}
-                        selectedTags={f.tags}
-                        onToggleTag={f.toggleTag}
-                        onToggleFavorite={handleToggleFavorite}
-                        selected={selected === star.full_name}
-                        onSelect={handleSelect}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            </div>
-              </>
+              <StarsTable
+                rows={rows}
+                loading={loading}
+                phase={phase}
+                tagsByFullName={tagsByFullName}
+                favoriteOverrides={favoriteOverrides}
+                selectedTags={f.tags}
+                selectedFullName={selected}
+                visibleColumns={visibleColumns}
+                gridTemplateColumns={gridTemplateColumns}
+                tableMinWidth={tableMinWidth}
+                interactionLocked={interactionLocked}
+                layoutEdit={{
+                  editing: editingLayout,
+                  faded: layoutFaded,
+                  draggedColumnId: layoutDrag?.kind === 'column' ? layoutDrag.id : null,
+                  draggedColumnHideIntent: layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false,
+                  columnShifts,
+                  flashedColumn,
+                  trayCaretX,
+                  onBeginColumnDrag: beginColumnDrag,
+                  onMoveColumnByKeyboard: moveColumnByKeyboard,
+                }}
+                layoutResize={layoutResize}
+                customColumnLayoutActive={customColumnLayoutActive}
+                scrollRef={listRef}
+                rootRef={rootRef}
+                headerRef={headerRef}
+                layoutResizeLiveAdapterRef={layoutResizeLiveAdapterRef}
+                onLayoutViewportChange={setLayoutViewport}
+                onSelect={handleSelect}
+                onToggleTag={f.toggleTag}
+                onToggleFavorite={handleToggleFavorite}
+                onBeginColumnResize={beginColumnResize}
+                onResizeColumnByKeyboard={resizeColumnByKeyboard}
+                onAutoFitColumnWidth={autoFitColumnWidth}
+              />
             )}
           </div>
 
-          <div className={cn('drawer-anim border-l border-border', selectedStar ? 'drawer-enter' : 'drawer-exit')}>
+          <div className={cn('drawer-anim border-l border-border', {
+            'drawer-enter': selectedStar,
+            'drawer-exit': !selectedStar,
+          })}>
             {selectedStar && (
               <RepoDetailPanel
                 star={selectedStar}
@@ -395,19 +381,22 @@ export function ManagerPanel() {
                 onNext={() => selectedIdx >= 0 && selectedIdx < rows.length - 1 && setSelected(rows[selectedIdx + 1].full_name)}
                 hasPrev={selectedIdx > 0}
                 hasNext={selectedIdx >= 0 && selectedIdx < rows.length - 1}
+                interactionLocked={interactionLocked}
               />
             )}
           </div>
         </div>
 
-        <FloatingLocaleToggle drawerOpen={!!selectedStar} />
+        <FloatingLocaleToggle drawerOpen={!!selectedStar} interactionLocked={interactionLocked} />
+
+        <LayoutDragGhost ghost={dragGhost} />
 
         {statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
           <CoachOverlay
             step={coachStep}
-            total={4}
+            total={COACH_TARGETS.length}
             rootRef={rootRef}
-            onNext={() => setCoachStep((s) => (s === null ? s : Math.min(s + 1, 3)))}
+            onNext={() => setCoachStep((s) => (s === null ? s : Math.min(s + 1, COACH_TARGETS.length - 1)))}
             onBack={() => setCoachStep((s) => (s === null ? s : Math.max(s - 1, 0)))}
             onFinish={() => void finishCoach()}
             onSkip={() => void skipCoach()}
@@ -419,28 +408,16 @@ export function ManagerPanel() {
   );
 }
 
-function emptyFilter() {
-  return {
-    query: '',
-    languages: [],
-    tags: [],
-    tagMode: 'any' as const,
-    showTombstone: false,
-    onlyFavorite: false,
-    onlyUntagged: false,
-    sortKey: 'starred_at' as const,
-    sortDir: 'desc' as const,
-  };
-}
-
 function OnboardingCard({
   stage,
   failedInfo,
+  interactionLocked,
   onOpenOptions,
   onRetry,
 }: {
   stage: SyncStatus['onboardingStage'];
   failedInfo: string | null;
+  interactionLocked: boolean;
   onOpenOptions: () => void;
   onRetry: () => void;
 }) {
@@ -455,7 +432,10 @@ function OnboardingCard({
         </div>
 
         {stage === 'needs_token' ? (
-          <div className="space-y-3 text-muted-foreground">
+          <div
+            className={cn('space-y-3 text-muted-foreground', { 'opacity-55': interactionLocked })}
+            {...getLockedRegionProps(interactionLocked)}
+          >
             <p>{m.onboarding.noTokenBody}</p>
             <ol className="list-decimal space-y-1 pl-5">
               <li>
@@ -464,6 +444,7 @@ function OnboardingCard({
                   href="https://github.com/settings/personal-access-tokens/new"
                   target="_blank"
                   rel="noreferrer"
+                  {...getLockedAnchorProps(interactionLocked)}
                 >
                   {m.onboarding.createPatLabel}
                 </a>
@@ -471,17 +452,20 @@ function OnboardingCard({
               <li>{m.options.tokenPublicRepos}</li>
               <li>{m.options.tokenGists}</li>
             </ol>
-            <Button onClick={onOpenOptions} className="w-full">
+            <Button onClick={onOpenOptions} className="w-full" disabled={interactionLocked}>
               {m.onboarding.openOptions}
             </Button>
           </div>
         ) : stage === 'sync_failed' ? (
-          <div className="space-y-3 text-muted-foreground">
+          <div
+            className={cn('space-y-3 text-muted-foreground', { 'opacity-55': interactionLocked })}
+            {...getLockedRegionProps(interactionLocked)}
+          >
             <p>
               {m.onboarding.syncFailedBody} <span className="text-destructive">{failedInfo}</span>
             </p>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={onRetry}>
+              <Button variant="outline" onClick={onRetry} disabled={interactionLocked}>
                 <RefreshCw className="size-4" data-icon="inline-start" />
                 {m.onboarding.retry}
               </Button>
@@ -500,9 +484,72 @@ function OnboardingCard({
   );
 }
 
-const COACH_TARGETS = ['sync', 'tags', 'repo', 'hide-panel'] as const;
+function BackfillCard({
+  state,
+  progress,
+  actionBusy,
+  interactionLocked,
+  onRun,
+  onDefer,
+}: {
+  state: BackfillState;
+  progress: SyncStatus['progress'];
+  actionBusy: boolean;
+  interactionLocked: boolean;
+  onRun: () => void;
+  onDefer: () => void;
+}) {
+  const { m } = useI18n();
+  const busy = state.status === 'running' || (actionBusy && progress.phase === 'full');
+
+  return (
+    <div className="flex h-full items-center justify-center p-8">
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-sm">
+        <div className="mb-3 flex items-center gap-2 text-foreground">
+          <Sparkles className="size-5 text-primary" />
+          <h2 className="text-base font-semibold">{m.manager.backfillSyncTitle}</h2>
+        </div>
+
+        {busy ? (
+          <div className="space-y-3 text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Spinner className="size-4" />
+              <span>{progress.message || m.manager.backfillSyncRunning}</span>
+            </div>
+            <p>{m.manager.backfillSyncBody}</p>
+          </div>
+        ) : (
+          <div className="space-y-3 text-muted-foreground">
+            <p>{m.manager.backfillSyncBody}</p>
+            {state.status === 'failed' && state.error && (
+              <p className="text-destructive">{m.manager.backfillSyncFailed(state.error)}</p>
+            )}
+            <div className="flex gap-2">
+              <Button onClick={onRun} disabled={actionBusy || interactionLocked}>
+                {state.status === 'failed' ? (
+                  <>
+                    <RefreshCw className="size-4" data-icon="inline-start" />
+                    {m.manager.backfillSyncRetry}
+                  </>
+                ) : (
+                  m.manager.backfillSyncAction
+                )}
+              </Button>
+              <Button variant="ghost" onClick={onDefer} disabled={actionBusy || interactionLocked}>
+                {m.manager.backfillSyncLater}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const COACH_TARGETS = ['sync', 'auto-tags', 'tags', 'repo', 'hide-panel'] as const;
 const COACH_SPOT_PADDING: Record<(typeof COACH_TARGETS)[number], number> = {
   sync: 4,
+  'auto-tags': 4,
   tags: 10,
   repo: 10,
   'hide-panel': 4,
@@ -566,8 +613,13 @@ function CoachOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, targetSel, rootRef]);
 
-  const titles = [m.onboarding.coachStep1Title, m.onboarding.coachStep2Title, m.onboarding.coachStep3Title, m.onboarding.coachStep4Title];
-  const bodies = [m.onboarding.coachStep1Body, m.onboarding.coachStep2Body, m.onboarding.coachStep3Body, m.onboarding.coachStep4Body];
+  const steps = [
+    { title: m.onboarding.coachStep1Title, body: m.onboarding.coachStep1Body },
+    { title: m.onboarding.coachStep2Title, body: m.onboarding.coachStep2Body },
+    { title: m.onboarding.coachStep3Title, body: m.onboarding.coachStep3Body },
+    { title: m.onboarding.coachStep4Title, body: m.onboarding.coachStep4Body },
+    { title: m.onboarding.coachStep5Title, body: m.onboarding.coachStep5Body },
+  ];
   const isLast = step === total - 1;
 
   return (
@@ -575,7 +627,7 @@ function CoachOverlay({
     // (toolbar buttons can't be clicked OR hovered). Several highlights are destructive
     // if clicked — step 1 would start a real sync, step 4 would unmount the panel and
     // kill the tour. The card below opts back into pointer-events-auto.
-    <div className="pointer-events-auto absolute inset-0 z-50">
+    <div className="gsm-z-overlay pointer-events-auto absolute inset-0">
       {spot && (
         <div
           className="gsm-coach-spotlight absolute"
@@ -592,12 +644,12 @@ function CoachOverlay({
       )}
 
       <div className="pointer-events-auto absolute bottom-6 left-1/2 w-[min(440px,90vw)] -translate-x-1/2 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl">
-        <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+        <div className="gsm-meta-label mb-1 flex items-center justify-between">
           <span>{m.onboarding.coachTitle}</span>
           <span>{m.onboarding.coachOf(step + 1, total)}</span>
         </div>
-        <h3 className="text-sm font-semibold">{titles[step]}</h3>
-        <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{bodies[step]}</p>
+        <h3 className="text-sm font-semibold">{steps[step]?.title}</h3>
+        <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{steps[step]?.body}</p>
         {step === 0 && <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground/80">{m.onboarding.coachIntro}</p>}
         <div className="mt-3 flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onSkip}>{m.onboarding.coachSkip}</Button>
@@ -613,4 +665,3 @@ function CoachOverlay({
     </div>
   );
 }
-
