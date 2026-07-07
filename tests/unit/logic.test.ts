@@ -16,7 +16,7 @@ import { mountState, pageOwner } from '../../src/content/stars-page/mount-state.
 import { pruneFavoriteOverrides, resolveFavoriteState } from '../../src/ui/favorite-state.ts';
 import { pickInitialSyncAction } from '../../src/ui/initial-sync.ts';
 import { classifyStarsQueryTrigger } from '../../src/ui/stars-refresh.ts';
-import { countTopicRepoFrequency, suggestTags } from '../../src/ui/suggest.ts';
+import { countTopicRepoFrequency, reconcileAutoTagAssignments, suggestTags } from '../../src/ui/suggest.ts';
 
 function lwwMerge(
   local: Map<string, { tags: string[]; mtime: string }>,
@@ -374,6 +374,29 @@ describe('Auto-suggest', () => {
       topicRepoCounts,
     });
     assert.deepEqual(s, ['AI']);
+  });
+
+  it('reconciles max-per-repo truncation with final auto-tag assignment coverage', () => {
+    const stars: S[] = [
+      { ...sample[0], full_name: 'a/one', topics: ['react', 'vite'] },
+      { ...sample[1], full_name: 'b/two', topics: ['react', 'vite'] },
+      { ...sample[2], full_name: 'c/three', topics: ['vite', 'react'] },
+    ];
+    const topicRepoCounts = countTopicRepoFrequency(stars);
+    const plans = stars.map((star) => ({
+      full_name: star.full_name,
+      autoTags: suggestTags(star, [], [], {
+        limit: 1,
+        minRepoCount: 3,
+        topicRepoCounts,
+      }),
+    }));
+
+    assert.deepEqual(plans.map((plan) => plan.autoTags), [['react'], ['react'], ['vite']]);
+    assert.deepEqual(
+      reconcileAutoTagAssignments(plans, 3).map((plan) => plan.autoTags),
+      [[], [], []],
+    );
   });
 
 });

@@ -64,3 +64,34 @@ export function suggestTags(
   }
   return out.slice(0, limit);
 }
+
+export interface AutoTagAssignmentPlan {
+  full_name: string;
+  autoTags: string[];
+}
+
+export function reconcileAutoTagAssignments(
+  plans: AutoTagAssignmentPlan[],
+  minAssignmentCount: number,
+): AutoTagAssignmentPlan[] {
+  const minCount = normalizeMinTopicRepoCount(minAssignmentCount);
+  if (minCount <= 1) return plans;
+
+  const counts = new Map<string, number>();
+  for (const plan of plans) {
+    const seenInRepo = new Set<string>();
+    for (const tag of plan.autoTags) {
+      const key = tag.trim().toLowerCase();
+      if (!key || seenInRepo.has(key)) continue;
+      seenInRepo.add(key);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+
+  return plans.map((plan) => ({
+    ...plan,
+    autoTags: plan.autoTags.filter((tag) => (
+      (counts.get(tag.trim().toLowerCase()) ?? 0) >= minCount
+    )),
+  }));
+}

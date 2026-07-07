@@ -10,7 +10,7 @@ describe('background auto-tag frequency contract', () => {
   }
 
   it('computes topic repo frequency before bulk auto-tag suggestions', () => {
-    assert.match(backgroundSource, /import \{ countTopicRepoFrequency, suggestTags \} from '@\/ui\/suggest';/);
+    assert.match(backgroundSource, /import \{ countTopicRepoFrequency, reconcileAutoTagAssignments, suggestTags \} from '@\/ui\/suggest';/);
     assert.match(backgroundSource, /const topicRepoCounts = countTopicRepoFrequency\(stars\);/);
   });
 
@@ -31,13 +31,14 @@ describe('background auto-tag frequency contract', () => {
 
     assert.equal(bulkWrites.length, 1, 'autoTagAll should have exactly one bulk write site');
     assert.equal(perRepoWrites.length, 0, 'autoTagAll should not use per-repo setTags writes');
-    assert.match(block, /const updates: AutoTagBulkUpdate\[\] = \[\];/);
-    assert.match(block, /updates\.push\(\{ full_name: star\.full_name, autoTags: nextAutoTags \}\);/);
+    assert.match(block, /const plans: AutoTagBulkUpdate\[\] = \[\];/);
+    assert.match(block, /plans\.push\(\{ full_name: star\.full_name, autoTags: nextAutoTags \}\);/);
+    assert.match(block, /const updates = reconcileAutoTagAssignments\(plans, cfg\.minTopicRepoCount\)/);
     assert.match(block, /updates\.length > 0 \? await idbTagStore\.setAutoTagsBulk\(updates\) : \{ updated: 0 \}/);
     assert.ok(
-      block.indexOf('updates.push({ full_name: star.full_name, autoTags: nextAutoTags });') <
+      block.indexOf('const updates = reconcileAutoTagAssignments(plans, cfg.minTopicRepoCount)') <
         block.indexOf('await idbTagStore.setAutoTagsBulk(updates)'),
-      'autoTagAll should finish planning changed rows before the storage write',
+      'autoTagAll should reconcile planned assignments before the storage write',
     );
   });
 

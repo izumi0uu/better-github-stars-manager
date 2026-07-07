@@ -1045,9 +1045,9 @@ const messages: Record<Locale, MessageCatalog> = {
       maxTagsPerRepoLabel: "每个仓库最多自动标签数",
       maxTagsPerRepoHint:
         "点击 Auto Tags 时，单个仓库最多自动添加这么多个 topic 标签。",
-      minTopicRepoCountLabel: "最低 topic 覆盖数",
+      minTopicRepoCountLabel: "共同标签门槛",
       minTopicRepoCountHint:
-        "批量 Auto Tags 只会生成至少出现在这么多个仓库里的 topic 标签。",
+        "只有达到这个仓库数量的共同 topic，才会生成自动标签。",
       starsPanelDefaultLabel: "默认打开自己的 stars 页面时显示管理面板",
       starsPanelDefaultHint:
         "关闭后会优先显示 GitHub 原生 stars 列表，需要时再手动打开悬浮面板。",

@@ -5,7 +5,7 @@ import { idbTagStore, resetDirtyForDev } from '@/storage/idb-tag-store';
 import { db, liveStarCount } from '@/storage/db';
 import { DEV } from '@/dev';
 import { queryStars, invalidateCache, type QueryParams, type QueryResult } from './query';
-import { countTopicRepoFrequency, suggestTags } from '@/ui/suggest';
+import { countTopicRepoFrequency, reconcileAutoTagAssignments, suggestTags } from '@/ui/suggest';
 import { translateError } from '@/api/errors';
 import type { AutoTagBulkUpdate } from '@/api/tag-store';
 import { addTagNames, dismissedAutoTagNames, manualTagNames, sameTagNames, visibleTagNames } from '@/tags/tag-model';
@@ -195,7 +195,7 @@ async function autoTagAll(
   const excluded = new Set(await idbTagStore.listExcluded());
   const existingTags = await idbTagStore.getMany(stars.map((star) => star.full_name));
   const topicRepoCounts = countTopicRepoFrequency(stars);
-  const updates: AutoTagBulkUpdate[] = [];
+  const plans: AutoTagBulkUpdate[] = [];
   const total = stars.length;
   console.log(
     '[GSM] autoTag START | stars:',
@@ -219,9 +219,7 @@ async function autoTagAll(
       minRepoCount: cfg.minTopicRepoCount,
       topicRepoCounts,
     });
-    if (!sameTagNames(existing?.autoTags ?? [], nextAutoTags)) {
-      updates.push({ full_name: star.full_name, autoTags: nextAutoTags });
-    }
+    plans.push({ full_name: star.full_name, autoTags: nextAutoTags });
     const done = i + 1;
     if (onProgress && (done === 1 || done === total || done % 100 === 0)) {
       onProgress({
@@ -233,6 +231,8 @@ async function autoTagAll(
     }
     if (done % 100 === 0) await Promise.resolve();
   }
+  const updates = reconcileAutoTagAssignments(plans, cfg.minTopicRepoCount)
+    .filter((plan) => !sameTagNames(existingTags.get(plan.full_name)?.autoTags ?? [], plan.autoTags));
   const { updated: tagged } =
     updates.length > 0 ? await idbTagStore.setAutoTagsBulk(updates) : { updated: 0 };
   console.log('[GSM] autoTag END | newly tagged:', tagged, 'of', total);
