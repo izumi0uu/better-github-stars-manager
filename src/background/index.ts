@@ -50,6 +50,7 @@ type Req =
   | { type: 'markOnboardingSeen' }
   | { type: 'setOnboardingStage'; stage: OnboardingStage }
   | { type: 'markTooltipSeen'; bit: number }
+  | { type: 'dismissReleaseNotes'; id: string }
   | { type: 'testConnection' }
   | { type: 'openOptions' }
   | { type: 'devClearLocalData' }
@@ -174,6 +175,7 @@ async function getStatusPayload() {
     seenTooltips: cfg.seenTooltips,
     backfills,
     activeBackfillId: selectActiveBackfillId(backfills),
+    releaseNotesDismissedId: cfg.releaseNotesDismissedId,
     inFlight: jobQueue.isRunning(),
   };
 }
@@ -532,6 +534,9 @@ async function handle(req: Req): Promise<Res> {
         await authStore.update({ seenTooltips: cur | req.bit });
         return { ok: true, data: { seenTooltips: cur | req.bit } };
       }
+      case 'dismissReleaseNotes':
+        await authStore.update({ releaseNotesDismissedId: req.id });
+        return { ok: true, data: { releaseNotesDismissedId: req.id } };
       case 'acceptSuggestionsBatch': {
         let n = 0;
         for (const item of req.items) {

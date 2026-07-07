@@ -14,6 +14,7 @@ import {
   normalizeAutoTagLimit,
   normalizeMaxTagsPerRepo,
   normalizeMinTopicRepoCount,
+  normalizeReleaseNotesDismissedId,
   normalizeStarsPanelDefaultEnabled,
 } from "@/preferences";
 import { normalizeBackfillMap } from "@/upgrades/backfill-state";
@@ -53,6 +54,7 @@ const DEFAULT_CONFIG: Config = {
   minTopicRepoCount: DEFAULT_MIN_TOPIC_REPO_COUNT,
   libraryView: DEFAULT_LIBRARY_VIEW_PREFS,
   starsPanelDefaultEnabled: true,
+  releaseNotesDismissedId: null,
   columnLayoutMode: "default",
   customColumnLayout: null,
   langTagMigrationDone: false,
@@ -91,6 +93,9 @@ function withNormalizedOnboarding(config: Config): Config {
     libraryView: normalizeLibraryViewPrefs(config.libraryView),
     starsPanelDefaultEnabled: normalizeStarsPanelDefaultEnabled(
       config.starsPanelDefaultEnabled,
+    ),
+    releaseNotesDismissedId: normalizeReleaseNotesDismissedId(
+      config.releaseNotesDismissedId,
     ),
     columnLayoutMode: normalizeColumnLayoutMode(config.columnLayoutMode),
     customColumnLayout: normalizeStoredColumnLayoutPreference(

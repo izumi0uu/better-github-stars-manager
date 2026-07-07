@@ -70,6 +70,7 @@ function baseConfig(): Config {
       },
     },
     starsPanelDefaultEnabled: true,
+    releaseNotesDismissedId: null,
     columnLayoutMode: 'default',
     customColumnLayout: null,
     langTagMigrationDone: true,

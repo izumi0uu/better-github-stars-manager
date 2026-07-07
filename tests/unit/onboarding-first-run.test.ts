@@ -93,4 +93,16 @@ describe('onboarding first-run invariants', () => {
     assert.equal(done.onboardingStage, 'done');
     assert.equal(done.seenOnboarding, true);
   });
+
+  it('allows release notes dismissal patches to clear an optimistic id', () => {
+    const current = status({
+      hasToken: true,
+      onboardingStage: 'done',
+      releaseNotesDismissedId: 'release-user-facing-changes-20260706',
+    });
+
+    const next = mergeStatusPatch(current, { releaseNotesDismissedId: null });
+
+    assert.equal(next.releaseNotesDismissedId, null);
+  });
 });

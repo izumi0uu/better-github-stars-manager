@@ -81,6 +81,7 @@ function configWithCursor(lastSyncStarredAt: string | null): Config {
     minTopicRepoCount: DEFAULT_MIN_TOPIC_REPO_COUNT,
     libraryView: DEFAULT_LIBRARY_VIEW_PREFS,
     starsPanelDefaultEnabled: true,
+    releaseNotesDismissedId: null,
     columnLayoutMode: 'default',
     customColumnLayout: null,
     langTagMigrationDone: true,

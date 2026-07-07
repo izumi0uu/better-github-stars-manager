@@ -125,3 +125,9 @@ export function normalizeLibraryViewPrefs(value: unknown): LibraryViewPrefs {
 export function normalizeStarsPanelDefaultEnabled(value: unknown): boolean {
   return value !== false;
 }
+
+export function normalizeReleaseNotesDismissedId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}

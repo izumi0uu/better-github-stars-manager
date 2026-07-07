@@ -24,6 +24,8 @@ export interface SyncStatus {
   backfills: BackfillMap;
   /** Highest-priority backfill that still needs user attention. */
   activeBackfillId: BackfillId | null;
+  /** Last in-app release notes bundle the user dismissed. */
+  releaseNotesDismissedId?: string | null;
   /** True while the background is still holding an active serialized job. */
   inFlight: boolean;
 }
@@ -48,6 +50,7 @@ export function mergeProgressStatus(
     seenTooltips: current?.seenTooltips ?? 0,
     backfills,
     activeBackfillId: selectActiveBackfillId(backfills),
+    releaseNotesDismissedId: current?.releaseNotesDismissedId ?? null,
     inFlight: progress.phase !== 'idle',
   };
 }
@@ -65,6 +68,7 @@ export function mergeStatusPatch(
     seenTooltips: 0,
     backfills: {},
     activeBackfillId: null,
+    releaseNotesDismissedId: null,
     inFlight: false,
   };
   const hasToken = patch.hasToken ?? base.hasToken;
@@ -74,6 +78,9 @@ export function mergeStatusPatch(
     hasToken,
   );
   const backfills = normalizeBackfillMap(patch.backfills ?? base.backfills);
+  const releaseNotesDismissedId = Object.hasOwn(patch, 'releaseNotesDismissedId')
+    ? patch.releaseNotesDismissedId ?? null
+    : base.releaseNotesDismissedId ?? null;
   return {
     ...base,
     ...patch,
@@ -82,6 +89,7 @@ export function mergeStatusPatch(
     seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
     backfills,
     activeBackfillId: selectActiveBackfillId(patch.backfills ?? base.backfills),
+    releaseNotesDismissedId,
     progress: patch.progress ?? base.progress,
   };
 }
@@ -108,6 +116,7 @@ export function mergeStatusSnapshot(current: SyncStatus | null, snapshot: SyncSt
     seenTooltips: snapshot.seenTooltips ?? current?.seenTooltips ?? 0,
     backfills: normalizeBackfillMap(snapshot.backfills ?? current?.backfills),
     activeBackfillId: selectActiveBackfillId(snapshot.backfills ?? current?.backfills),
+    releaseNotesDismissedId: snapshot.releaseNotesDismissedId ?? current?.releaseNotesDismissedId ?? null,
     inFlight: keepLiveProgress ? true : snapshot.inFlight ?? current?.inFlight ?? snapshot.progress.phase !== 'idle',
   };
   merged.seenOnboarding = stageMarksOnboardingSeen(merged.onboardingStage);

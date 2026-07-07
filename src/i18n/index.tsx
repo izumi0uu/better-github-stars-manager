@@ -47,6 +47,21 @@ export interface MessageCatalog {
     backfillSyncRunning: string;
     backfillSyncFailed: (error: string) => string;
   };
+  releaseNotes: {
+    title: string;
+    subtitle: string;
+    dismissTitle: string;
+    readDetails: string;
+    hideDetails: string;
+    cards: Array<{
+      title: string;
+      body: string;
+    }>;
+    details: Array<{
+      title: string;
+      items: string[];
+    }>;
+  };
   toolbar: {
     searchPlaceholder: string;
     searchClearTitle: string;
@@ -434,6 +449,73 @@ const messages: Record<Locale, MessageCatalog> = {
       backfillSyncLater: "Later",
       backfillSyncRunning: "Syncing your data…",
       backfillSyncFailed: (error) => `Sync failed: ${error}`,
+    },
+    releaseNotes: {
+      title: "What's new in this update",
+      subtitle:
+        "A quick tour of the user-facing changes in the next release, with the full details available below.",
+      dismissTitle: "Dismiss release notes",
+      readDetails: "Read details",
+      hideDetails: "Hide details",
+      cards: [
+        {
+          title: "Custom Table Layout",
+          body:
+            "Switch to Custom layout, edit columns in place, reorder, hide, restore, resize, fit, reset, save, or cancel your table setup.",
+        },
+        {
+          title: "Better Library Browsing",
+          body:
+            "Sort by repository creation date, filter archived repos, and keep your filters and primary sort restored across sessions.",
+        },
+        {
+          title: "Safer Auto Tags",
+          body:
+            "Sync and Full Sync leave tags untouched. Auto Tags runs only when clicked, adds topic coverage control, and keeps the existing per-repo limit.",
+        },
+        {
+          title: "One-Time Data Refresh",
+          body:
+            "Existing libraries missing new repo metadata may see a sync card. You can run the full sync, retry it, or defer it.",
+        },
+      ],
+      details: [
+        {
+          title: "New",
+          items: [
+            "Custom table layout mode with column order, visibility, width editing, keyboard controls, fit/reset, save, and cancel.",
+            "Created column and repository creation-date sorting.",
+            "Archived repository filter.",
+            "Minimum topic coverage preference for Auto Tags.",
+            "Bulk delete-all-tags action with confirmation.",
+            "One-time sync notice for existing libraries missing repository creation metadata.",
+          ],
+        },
+        {
+          title: "Changed",
+          items: [
+            "Auto Tags is manual-only; Sync and Full Sync no longer generate tags silently.",
+            "Incremental sync refreshes metadata for touched repos, including archived state.",
+            "Auto Tags keeps the existing per-repo tag limit while adding topic coverage as a second tuning control.",
+            "Filters and primary sort persist across sessions.",
+            "Tag lists can be sorted A-to-Z or Z-to-A with natural name ordering.",
+            "Layout editing locks unrelated interactions while edits are in progress.",
+            "The first-run tour now teaches the manual Auto Tags flow.",
+            "The table header stays sticky while scrolling long result lists.",
+          ],
+        },
+        {
+          title: "Fixed",
+          items: [
+            "Archived filter hint localization is filled in English and Chinese.",
+            "Topic suggestion thresholds are normalized.",
+            "Backfill states and errors are normalized and localized.",
+            "Repository chip parsing accepts dotted repo names like owner.github.io.",
+            "Auth cache is preserved after failed auth writes.",
+            "Layout edit transitions survive config sync, popovers stay inside the panel root, and overflow feedback stays visible as an edge cue.",
+          ],
+        },
+      ],
     },
     toolbar: {
       searchPlaceholder:
@@ -853,6 +935,73 @@ const messages: Record<Locale, MessageCatalog> = {
       backfillSyncLater: "稍后再说",
       backfillSyncRunning: "正在同步数据…",
       backfillSyncFailed: (error) => `同步失败: ${error}`,
+    },
+    releaseNotes: {
+      title: "本次更新亮点",
+      subtitle:
+        "这里汇总下个版本里用户能直接看到或感受到的变化，完整明细可以在下方展开。",
+      dismissTitle: "关闭更新说明",
+      readDetails: "查看完整明细",
+      hideDetails: "收起明细",
+      cards: [
+        {
+          title: "自定义表格布局",
+          body:
+            "切换到 Custom 布局后，可以直接编辑列：排序、隐藏、恢复、调宽、适应宽度、重置、保存或取消。",
+        },
+        {
+          title: "更好浏览收藏库",
+          body:
+            "新增仓库创建时间排序、已归档仓库筛选，并会在下次打开时恢复筛选和主要排序。",
+        },
+        {
+          title: "更安全的自动标签",
+          body:
+            "Sync 和 Full Sync 不再悄悄改标签。Auto Tags 只在点击时运行，新增 topic 覆盖数控制，并保留原有单仓库标签上限。",
+        },
+        {
+          title: "一次性数据刷新",
+          body:
+            "如果现有收藏库缺少新的仓库元数据，你可能会看到同步提示；可以立即全量同步、重试或稍后处理。",
+        },
+      ],
+      details: [
+        {
+          title: "新增",
+          items: [
+            "自定义表格布局模式，支持列排序、显隐、宽度编辑、键盘控制、适应宽度、重置、保存和取消。",
+            "Created 列，以及按仓库创建时间排序。",
+            "已归档仓库筛选。",
+            "Auto Tags 的最低 topic 覆盖数偏好。",
+            "带确认的批量清空全部标签操作。",
+            "现有收藏库缺少仓库创建元数据时的一次性同步提示。",
+          ],
+        },
+        {
+          title: "变化",
+          items: [
+            "Auto Tags 改为纯手动；Sync 和 Full Sync 不再静默生成标签。",
+            "增量同步会刷新被触及仓库的元数据，包括 archived 状态。",
+            "Auto Tags 在新增 topic 覆盖数调节项的同时，保留原有单仓库标签上限。",
+            "筛选条件和主要排序会跨会话保留。",
+            "标签列表支持按自然名称 A-to-Z 或 Z-to-A 排序。",
+            "布局编辑期间会锁住无关交互，避免误操作。",
+            "首次引导现在会说明手动 Auto Tags 流程。",
+            "长列表滚动时表头会保持 sticky。",
+          ],
+        },
+        {
+          title: "修复",
+          items: [
+            "补齐已归档筛选提示的中英文文案。",
+            "归一化 topic suggestion 阈值。",
+            "归一化并本地化 backfill 状态和错误。",
+            "仓库 chip 解析支持 owner.github.io 这类带点的仓库名。",
+            "认证写入失败后会保留 auth cache。",
+            "布局编辑切换能经受配置同步，弹层内容会留在面板根节点内，溢出反馈也会保留为边缘提示。",
+          ],
+        },
+      ],
     },
     toolbar: {
       searchPlaceholder: "搜索 名称 / 描述 / topics / notes   (按 / 聚焦)",

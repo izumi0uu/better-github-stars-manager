@@ -5,6 +5,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManagerPanel } from '@/ui/ManagerPanel';
+import { RELEASE_NOTES_ID } from '@/ui/components/ReleaseNotesCard';
 import type { SyncStatus } from '@/utils/messaging';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -101,8 +102,14 @@ vi.mock('@/ui/hooks/use-column-layout-editor', () => ({
       saveLayoutEdit: vi.fn(),
       cancelLayoutEdit: vi.fn(),
       resetLayoutEdit: vi.fn(),
+      resetLayoutWidths: vi.fn(),
+      fitLayoutWidths: vi.fn(),
       setColumnHidden: vi.fn(),
       beginColumnDrag: vi.fn(),
+      beginColumnResize: vi.fn(),
+      moveColumnByKeyboard: vi.fn(),
+      resizeColumnByKeyboard: vi.fn(),
+      autoFitColumnWidth: vi.fn(),
       beginTrayDrag: vi.fn(),
       restoreHiddenColumn: vi.fn(),
       toggleColumnMenu: vi.fn(),
@@ -139,8 +146,9 @@ vi.mock('@/ui/components/LayoutEditChrome', () => ({
 const mountedRoots: Root[] = [];
 const sendMessage = vi.fn();
 let messageListeners: Array<(message: { type?: string }) => void> = [];
+let dismissReleaseNotesFails = false;
 
-function status(stage: SyncStatus['onboardingStage']): SyncStatus {
+function status(stage: SyncStatus['onboardingStage'], patch: Partial<SyncStatus> = {}): SyncStatus {
   return {
     progress: { phase: 'idle', done: 0, total: null, message: '' },
     hasToken: true,
@@ -150,6 +158,8 @@ function status(stage: SyncStatus['onboardingStage']): SyncStatus {
     backfills: {},
     activeBackfillId: null,
     inFlight: true,
+    releaseNotesDismissedId: null,
+    ...patch,
   };
 }
 
@@ -157,16 +167,20 @@ function ok(data?: unknown) {
   return Promise.resolve({ ok: true, data });
 }
 
-function mountPanel(initialStage: SyncStatus['onboardingStage']) {
+function mountPanel(initialStage: SyncStatus['onboardingStage'], patch: Partial<SyncStatus> = {}) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
 
   sendMessage.mockImplementation((message: { type: string }) => {
-    if (message.type === 'getStatus') return ok(status(initialStage));
+    if (message.type === 'getStatus') return ok(status(initialStage, patch));
     if (message.type === 'query') return ok({ grandTotal: 3 });
     if (message.type === 'getAccount') {
       return ok({ username: 'idah', avatarUrl: 'avatar.png', displayName: 'Idah', gistId: null });
+    }
+    if (message.type === 'dismissReleaseNotes') {
+      if (dismissReleaseNotesFails) return Promise.resolve({ ok: false, error: 'storage down' });
+      return ok({ releaseNotesDismissedId: RELEASE_NOTES_ID });
     }
     throw new Error(`Unexpected message: ${message.type}`);
   });
@@ -201,6 +215,7 @@ async function waitFor(assertion: () => void) {
 
 beforeEach(() => {
   messageListeners = [];
+  dismissReleaseNotesFails = false;
   sendMessage.mockReset();
   vi.stubGlobal('chrome', {
     runtime: {
@@ -264,6 +279,65 @@ describe('ManagerPanel Auto Tags coach step', () => {
       expect(container.querySelector('[data-coach-target="auto-tags"]')).not.toBeNull();
       expect(container.textContent).not.toContain('Quick tour');
       expect(container.textContent).not.toContain('Step 1 of 5');
+      expect(container.textContent).not.toContain("What's new in this update");
+    });
+  });
+
+  it('keeps release notes hidden while the post-sync coach is active', async () => {
+    const { container } = mountPanel('coach');
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('Quick tour');
+      expect(container.textContent).not.toContain("What's new in this update");
+    });
+  });
+
+  it('shows and dismisses release notes only after onboarding is done', async () => {
+    const { container } = mountPanel('done');
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("What's new in this update");
+      expect(container.textContent).toContain('Custom Table Layout');
+    });
+
+    const dismissButton = container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss release notes"]');
+    expect(dismissButton).not.toBeNull();
+
+    act(() => {
+      dismissButton!.click();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).not.toContain("What's new in this update");
+    });
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'dismissReleaseNotes', id: RELEASE_NOTES_ID });
+  });
+
+  it('keeps release notes hidden after their bundle was dismissed', async () => {
+    const { container } = mountPanel('done', { releaseNotesDismissedId: RELEASE_NOTES_ID });
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="stars-table"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("What's new in this update");
+    });
+  });
+
+  it('restores release notes when dismiss persistence fails', async () => {
+    dismissReleaseNotesFails = true;
+    const { container } = mountPanel('done');
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("What's new in this update");
+    });
+
+    const dismissButton = container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss release notes"]');
+    act(() => {
+      dismissButton!.click();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("What's new in this update");
+      expect(container.textContent).toContain('Dismiss release notes: storage down');
     });
   });
 });

@@ -6,6 +6,7 @@ import { Toolbar } from '@/ui/components/Toolbar';
 import { FilterSidebar } from '@/ui/components/FilterSidebar';
 import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
+import { ReleaseNotesCard, RELEASE_NOTES_ID } from '@/ui/components/ReleaseNotesCard';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { StarsTable } from '@/ui/components/StarsTable';
 import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
@@ -182,6 +183,18 @@ export function ManagerPanel() {
     f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged || f.onlyArchived;
   const activeBackfillId = status?.activeBackfillId ?? null;
   const activeBackfillState = activeBackfillId ? status?.backfills[activeBackfillId] ?? null : null;
+  const showReleaseNotes =
+    !!status?.hasToken &&
+    status.onboardingStage === 'done' &&
+    status.releaseNotesDismissedId !== RELEASE_NOTES_ID;
+
+  const dismissReleaseNotes = async () => {
+    applyStatusPatch({ releaseNotesDismissedId: RELEASE_NOTES_ID });
+    await bgCall('dismissReleaseNotes', { id: RELEASE_NOTES_ID }).catch((error) => {
+      applyStatusPatch({ releaseNotesDismissedId: null });
+      setInfo(m.manager.syncFailed(m.releaseNotes.dismissTitle, error instanceof Error ? error.message : String(error)));
+    });
+  };
 
   const layoutColumnMenu = (
     <LayoutColumnMenu
@@ -314,43 +327,51 @@ export function ManagerPanel() {
                 onDefer={() => void deferBackfill(activeBackfillId)}
               />
             ) : (
-              <StarsTable
-                rows={rows}
-                loading={loading}
-                phase={phase}
-                tagsByFullName={tagsByFullName}
-                favoriteOverrides={favoriteOverrides}
-                selectedTags={f.tags}
-                selectedFullName={selected}
-                visibleColumns={visibleColumns}
-                gridTemplateColumns={gridTemplateColumns}
-                tableMinWidth={tableMinWidth}
-                interactionLocked={interactionLocked}
-                layoutEdit={{
-                  editing: editingLayout,
-                  faded: layoutFaded,
-                  draggedColumnId: layoutDrag?.kind === 'column' ? layoutDrag.id : null,
-                  draggedColumnHideIntent: layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false,
-                  columnShifts,
-                  flashedColumn,
-                  trayCaretX,
-                  onBeginColumnDrag: beginColumnDrag,
-                  onMoveColumnByKeyboard: moveColumnByKeyboard,
-                }}
-                layoutResize={layoutResize}
-                customColumnLayoutActive={customColumnLayoutActive}
-                scrollRef={listRef}
-                rootRef={rootRef}
-                headerRef={headerRef}
-                layoutResizeLiveAdapterRef={layoutResizeLiveAdapterRef}
-                onLayoutViewportChange={setLayoutViewport}
-                onSelect={handleSelect}
-                onToggleTag={f.toggleTag}
-                onToggleFavorite={handleToggleFavorite}
-                onBeginColumnResize={beginColumnResize}
-                onResizeColumnByKeyboard={resizeColumnByKeyboard}
-                onAutoFitColumnWidth={autoFitColumnWidth}
-              />
+              <>
+                {showReleaseNotes && (
+                  <ReleaseNotesCard
+                    interactionLocked={interactionLocked}
+                    onDismiss={() => void dismissReleaseNotes()}
+                  />
+                )}
+                <StarsTable
+                  rows={rows}
+                  loading={loading}
+                  phase={phase}
+                  tagsByFullName={tagsByFullName}
+                  favoriteOverrides={favoriteOverrides}
+                  selectedTags={f.tags}
+                  selectedFullName={selected}
+                  visibleColumns={visibleColumns}
+                  gridTemplateColumns={gridTemplateColumns}
+                  tableMinWidth={tableMinWidth}
+                  interactionLocked={interactionLocked}
+                  layoutEdit={{
+                    editing: editingLayout,
+                    faded: layoutFaded,
+                    draggedColumnId: layoutDrag?.kind === 'column' ? layoutDrag.id : null,
+                    draggedColumnHideIntent: layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false,
+                    columnShifts,
+                    flashedColumn,
+                    trayCaretX,
+                    onBeginColumnDrag: beginColumnDrag,
+                    onMoveColumnByKeyboard: moveColumnByKeyboard,
+                  }}
+                  layoutResize={layoutResize}
+                  customColumnLayoutActive={customColumnLayoutActive}
+                  scrollRef={listRef}
+                  rootRef={rootRef}
+                  headerRef={headerRef}
+                  layoutResizeLiveAdapterRef={layoutResizeLiveAdapterRef}
+                  onLayoutViewportChange={setLayoutViewport}
+                  onSelect={handleSelect}
+                  onToggleTag={f.toggleTag}
+                  onToggleFavorite={handleToggleFavorite}
+                  onBeginColumnResize={beginColumnResize}
+                  onResizeColumnByKeyboard={resizeColumnByKeyboard}
+                  onAutoFitColumnWidth={autoFitColumnWidth}
+                />
+              </>
             )}
           </div>
 

@@ -123,6 +123,8 @@ export interface Config {
   libraryView: LibraryViewPrefs;
   /** Whether your own GitHub stars page should open the overlay panel by default. */
   starsPanelDefaultEnabled: boolean;
+  /** Last in-app release notes bundle the user dismissed. */
+  releaseNotesDismissedId: string | null;
   /** Last selected stars-table layout mode. */
   columnLayoutMode: 'default' | 'custom';
   /** User-saved custom stars-table column layout; null means custom equals default. */
