@@ -17,18 +17,35 @@
     flex-shrink: 0;
   }
 
-  .filter-row-anim {
+  .gsm-active-filter-row {
     display: grid;
-    grid-template-rows: 1fr;
-    transition: grid-template-rows var(--gsm-duration-base) var(--gsm-ease-linearized);
-  }
-
-  .filter-row-anim.collapsed {
     grid-template-rows: 0fr;
+    border-bottom: 0 solid hsl(var(--border));
+    pointer-events: none;
+    transition:
+      grid-template-rows var(--gsm-duration-control) var(--gsm-ease-linearized),
+      border-bottom-width var(--gsm-duration-fast) var(--gsm-ease-linearized);
   }
 
-  .filter-row-anim > * {
+  .gsm-active-filter-row.open {
+    grid-template-rows: 1fr;
+    border-bottom-width: 1px;
+    pointer-events: auto;
+  }
+
+  .gsm-active-filter-row > div {
+    min-height: 0;
     overflow: hidden;
+    opacity: 0;
+    transform: translateY(-3px);
+    transition:
+      opacity var(--gsm-duration-base) var(--gsm-ease-standard),
+      transform var(--gsm-duration-base) var(--gsm-ease-standard);
+  }
+
+  .gsm-active-filter-row.open > div {
+    opacity: 1;
+    transform: none;
   }
 
   .success-check-path {
@@ -318,11 +335,11 @@
     .gsm-layout-table-shell,
     .gsm-edit-chrome-wrap,
     .gsm-tray-zone,
+    .gsm-active-filter-row,
     .gsm-hdr-cell,
     .gsm-resize-handle,
     .gsm-tray-chip,
     .drawer-anim,
-    .filter-row-anim,
     .gsm-insert-caret,
     .gsm-drag-ghost {
       transition: none !important;

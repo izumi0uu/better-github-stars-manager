@@ -28,8 +28,6 @@ export function ActiveFilterChips({
   // "Show unstarred" (tombstone) chip — disabled for now.
   // if (f.showTombstone) active.push({ label: m.filterSidebar.showTombstoneLabel, clear: () => f.setShowTombstone(false), kind: 'special' });
 
-  if (active.length === 0) return null;
-
   return (
     <div
       className={cn('flex flex-wrap items-center gap-1 bg-muted/30 px-3 py-1', {

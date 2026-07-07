@@ -276,11 +276,15 @@ export function ManagerPanel() {
           </div>
         )}
 
-        {hasActiveFilter && (
-          <div className="border-b border-border">
+        <div
+          className={cn('gsm-active-filter-row', { open: hasActiveFilter })}
+          aria-hidden={!hasActiveFilter}
+          {...getLockedRegionProps(!hasActiveFilter)}
+        >
+          <div>
             <ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />
           </div>
-        )}
+        </div>
 
         {info && (
           <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">{info}</div>

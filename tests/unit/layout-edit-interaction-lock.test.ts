@@ -15,13 +15,23 @@ describe('layout edit interaction lock invariants', () => {
     expect(source).toMatch(/disabled=\{actionBusy\s*\|\|\s*interactionLocked\}/);
   });
 
-  it('does not render an empty active-filter row when no filters are selected', () => {
+  it('keeps the active-filter row mounted while collapsing it when no filters are selected', () => {
     const source = read('src/ui/ManagerPanel.tsx');
+    const chips = read('src/ui/components/ActiveFilterChips.tsx');
+    const motion = read('src/ui/styles/motion.css');
 
-    expect(source).toContain('{hasActiveFilter && (');
+    expect(source).toContain("className={cn('gsm-active-filter-row', { open: hasActiveFilter })}");
+    expect(source).toContain('aria-hidden={!hasActiveFilter}');
+    expect(source).toContain('{...getLockedRegionProps(!hasActiveFilter)}');
     expect(source).toContain('<ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />');
-    expect(source).not.toContain("cn('filter-row-anim border-b border-border'");
-    expect(read('src/ui/components/ActiveFilterChips.tsx')).toContain('if (active.length === 0) return null;');
+    expect(source).not.toContain('{hasActiveFilter && (');
+    expect(chips).not.toContain('if (active.length === 0) return null;');
+    expect(motion).toContain('.gsm-active-filter-row');
+    expect(motion).toContain('grid-template-rows: 0fr;');
+    expect(motion).toContain('pointer-events: none;');
+    expect(motion).toContain('.gsm-active-filter-row.open');
+    expect(motion).toContain('border-bottom-width: 1px;');
+    expect(motion).toContain('pointer-events: auto;');
   });
 
   it('uses semantic inert/anchor helpers instead of a global provider', () => {
