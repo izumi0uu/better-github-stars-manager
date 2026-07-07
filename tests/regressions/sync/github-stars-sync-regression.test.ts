@@ -253,6 +253,28 @@ describe('GitHub stars sync regressions', () => {
     assert.equal((await authStore.getConfig()).lastSyncStarredAt, '2026-06-22T00:00:00Z');
   });
 
+  it('syncIncremental does not advance the cursor when the page cap hides the previous cursor', async () => {
+    await resetState('2026-06-01T00:00:00Z');
+    const fetchedPages: number[] = [];
+
+    const fetchMock: typeof fetch = async (input) => {
+      const url = urlFrom(input);
+      const page = Number(new URL(url).searchParams.get('page'));
+      fetchedPages.push(page);
+      if (page < 1 || page > 5) throw new Error(`unexpected fetch: ${url}`);
+      return pageResponse([
+        starredRepo(`fresh/page-${page}`, `2026-06-${String(20 - page).padStart(2, '0')}T00:00:00Z`),
+      ]);
+    };
+    globalThis.fetch = fetchMock;
+
+    const result = await githubStarSource.syncIncremental();
+
+    assert.deepEqual(result, { added: 5 });
+    assert.deepEqual(fetchedPages, [1, 2, 3, 4, 5]);
+    assert.equal((await authStore.getConfig()).lastSyncStarredAt, '2026-06-01T00:00:00Z');
+  });
+
   it('syncFull records a deterministic cursor when the starred account is empty', async () => {
     await resetState('2026-06-20T00:00:00Z');
 

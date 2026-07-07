@@ -233,6 +233,7 @@ export const githubStarSource: StarSource = {
     let added = 0;
     let page = 1;
     let stop = false;
+    let crossedCursor = !cursor;
     let newestStarredAt: string | null = null;
     // Walk pages in starred_at-desc order; page 1 holds the newest (captured as the next cursor). Cap at 5 pages.
     while (!stop && page <= 5) {
@@ -244,12 +245,16 @@ export const githubStarSource: StarSource = {
       // even for rows that are older than the incremental cursor.
       await bulkPutStars(items.map(toStar));
       added += fresh.length;
-      if (cursor && items.some((it) => it.starred_at <= cursor)) stop = true;
-      if (fresh.length < items.length) stop = true;
+      if (fresh.length < items.length) {
+        crossedCursor = true;
+        stop = true;
+      }
       page++;
     }
-    // Advance cursor to the newest we saw this run.
-    if (newestStarredAt) await authStore.update({ lastSyncStarredAt: newestStarredAt });
+    // Advance the cursor only after proving every newer item was covered.
+    // If the page cap is hit first, a later full sync/rescan can still recover
+    // the skipped window because the old cursor remains in place.
+    if (newestStarredAt && crossedCursor) await authStore.update({ lastSyncStarredAt: newestStarredAt });
     return { added };
   },
 
