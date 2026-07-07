@@ -233,7 +233,9 @@ function normalizeGistTag(
     typeof row.autoTagsMtime !== 'string' ||
     typeof row.dismissedAutoTagsMtime !== 'string' ||
     typeof row.notes !== 'string' ||
-    typeof row.mtime !== 'string'
+    typeof row.mtime !== 'string' ||
+    (row.favorite !== undefined && typeof row.favorite !== 'boolean') ||
+    (row.gh_list_id !== undefined && row.gh_list_id !== null && typeof row.gh_list_id !== 'number')
   ) {
     return null;
   }

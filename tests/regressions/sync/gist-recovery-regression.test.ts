@@ -458,6 +458,61 @@ describe('Gist recovery regressions', () => {
     assert.equal(await db.tags.get('owner/no-layer-mtime'), undefined);
   });
 
+  it('pull ignores v2 rows with invalid favorite or list id fields', async () => {
+    await resetState();
+    await storeSyntheticToken();
+    await authStore.update({ gistId: 'bound-gist' });
+    const payload = {
+      v: 2,
+      exportedAt: '2026-06-24T12:00:00.000Z',
+      tags: {
+        'owner/bad-favorite': {
+          manualTags: ['manual'],
+          autoTags: [],
+          dismissedAutoTags: [],
+          manualTagsMtime: '2026-06-24T12:00:00.000Z',
+          autoTagsMtime: '2026-06-24T12:00:00.000Z',
+          dismissedAutoTagsMtime: '2026-06-24T12:00:00.000Z',
+          notes: 'bad favorite',
+          favorite: 'yes',
+          mtime: '2026-06-24T12:00:00.000Z',
+        },
+        'owner/bad-list': {
+          manualTags: ['manual'],
+          autoTags: [],
+          dismissedAutoTags: [],
+          manualTagsMtime: '2026-06-24T12:00:00.000Z',
+          autoTagsMtime: '2026-06-24T12:00:00.000Z',
+          dismissedAutoTagsMtime: '2026-06-24T12:00:00.000Z',
+          notes: 'bad list id',
+          gh_list_id: '123',
+          mtime: '2026-06-24T12:00:00.000Z',
+        },
+        'owner/good': {
+          manualTags: ['manual'],
+          autoTags: [],
+          dismissedAutoTags: [],
+          manualTagsMtime: '2026-06-24T12:00:00.000Z',
+          autoTagsMtime: '2026-06-24T12:00:00.000Z',
+          dismissedAutoTagsMtime: '2026-06-24T12:00:00.000Z',
+          notes: 'good',
+          favorite: true,
+          gh_list_id: null,
+          mtime: '2026-06-24T12:00:00.000Z',
+        },
+      },
+      tagMeta: {},
+    };
+
+    globalThis.fetch = gistGet(payload);
+
+    const result = await gistTagStore.pull();
+    assert.deepEqual(result, { merged: 1, total: 3, missing: false });
+    assert.equal(await db.tags.get('owner/bad-favorite'), undefined);
+    assert.equal(await db.tags.get('owner/bad-list'), undefined);
+    assert.equal((await db.tags.get('owner/good'))?.favorite, true);
+  });
+
   it('pull merges tag layers independently so remote auto changes do not overwrite newer local manual tags', async () => {
     await resetState();
     await storeSyntheticToken();
