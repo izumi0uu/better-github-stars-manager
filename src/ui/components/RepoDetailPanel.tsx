@@ -1,25 +1,36 @@
-import { useEffect, useRef, useState } from 'react';
-import type { MutableRefObject, ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, X, Archive, Star as StarIcon, Check } from 'lucide-react';
-import type { Star, Tag } from '@/types';
-import { suggestTags } from '@/ui/suggest';
-import { bgCall } from '@/utils/messaging';
-import { TagEditor } from './TagEditor';
-import { SaveActionButton, type SaveActionPhase } from './save-action-button';
+import { useEffect, useRef, useState } from "react";
+import type { MutableRefObject, ReactNode } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  X,
+  Archive,
+  Star as StarIcon,
+  Check,
+} from "lucide-react";
+import type { Star, Tag } from "@/types";
+import { suggestTags } from "@/ui/suggest";
+import { bgCall } from "@/utils/messaging";
+import { TagEditor } from "./TagEditor";
+import { SaveActionButton, type SaveActionPhase } from "./SaveActionButton";
 import {
   mergeTagNames,
   sameTagNames,
   shouldAdoptIncomingTagDraft,
   shouldAdoptIncomingTextDraft,
-} from './tag-draft';
-import { Badge } from '@/ui/shadcn/badge';
-import { Button } from '@/ui/shadcn/button';
-import { Textarea } from '@/ui/shadcn/textarea';
-import { Separator } from '@/ui/shadcn/separator';
-import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
-import { cn } from '@/lib/utils';
-import { useI18n } from '@/i18n';
-import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut } from '@/ui/interaction-lock';
+} from "./tag-draft";
+import { Badge } from "@/ui/shadcn/badge";
+import { Button } from "@/ui/shadcn/button";
+import { Textarea } from "@/ui/shadcn/textarea";
+import { Separator } from "@/ui/shadcn/separator";
+import { useImeBufferedInput } from "@/ui/hooks/use-ime-input";
+import { cn } from "@/lib/utils";
+import { useI18n } from "@/i18n";
+import {
+  getLockedAnchorProps,
+  getLockedRegionProps,
+  shouldIgnorePanelShortcut,
+} from "@/ui/interaction-lock";
 
 /** single-repo detail drawer (tag/note/suggest deep-edit lives here so rows stay compact); flex aside, no portal. */
 export function RepoDetailPanel({
@@ -48,15 +59,15 @@ export function RepoDetailPanel({
   interactionLocked?: boolean;
 }) {
   const myTags = tag?.tags ?? [];
-  const myTagsKey = myTags.join('\u0000');
-  const notes = tag?.notes ?? '';
+  const myTagsKey = myTags.join("\u0000");
+  const notes = tag?.notes ?? "";
   const { m } = useI18n();
 
   const [excluded, setExcluded] = useState<string[]>([]);
   const [draftTags, setDraftTags] = useState(myTags);
   const [draftNotes, setDraftNotes] = useState(notes);
-  const [tagsSavePhase, setTagsSavePhase] = useState<SaveActionPhase>('idle');
-  const [notesSavePhase, setNotesSavePhase] = useState<SaveActionPhase>('idle');
+  const [tagsSavePhase, setTagsSavePhase] = useState<SaveActionPhase>("idle");
+  const [notesSavePhase, setNotesSavePhase] = useState<SaveActionPhase>("idle");
   const draftTagsRef = useRef(myTags);
   const draftNotesRef = useRef(notes);
   const loadedRepoRef = useRef(star.full_name);
@@ -67,7 +78,7 @@ export function RepoDetailPanel({
 
   useEffect(() => {
     let cancelled = false;
-    bgCall<string[]>('listExcluded')
+    bgCall<string[]>("listExcluded")
       .then((names) => {
         if (!cancelled) setExcluded(names ?? []);
       })
@@ -93,13 +104,25 @@ export function RepoDetailPanel({
       return;
     }
 
-    if (shouldAdoptIncomingTagDraft(draftTagsRef.current, loadedTagsRef.current, myTags)) {
+    if (
+      shouldAdoptIncomingTagDraft(
+        draftTagsRef.current,
+        loadedTagsRef.current,
+        myTags,
+      )
+    ) {
       draftTagsRef.current = myTags;
       setDraftTags(myTags);
       resetSavePhase(setTagsSavePhase, tagsTimerRef);
     }
 
-    if (shouldAdoptIncomingTextDraft(draftNotesRef.current, loadedNotesRef.current, notes)) {
+    if (
+      shouldAdoptIncomingTextDraft(
+        draftNotesRef.current,
+        loadedNotesRef.current,
+        notes,
+      )
+    ) {
       draftNotesRef.current = notes;
       setDraftNotes(notes);
       resetSavePhase(setNotesSavePhase, notesTimerRef);
@@ -109,10 +132,13 @@ export function RepoDetailPanel({
     loadedNotesRef.current = notes;
   }, [star.full_name, myTagsKey, notes]);
 
-  useEffect(() => () => {
-    if (tagsTimerRef.current) clearTimeout(tagsTimerRef.current);
-    if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (tagsTimerRef.current) clearTimeout(tagsTimerRef.current);
+      if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
+    },
+    [],
+  );
 
   const suggestions = suggestTags(star, draftTags, excluded);
   const tagsDirty = !sameTagNames(draftTags, myTags);
@@ -137,14 +163,14 @@ export function RepoDetailPanel({
     if (sameTagNames(nextTags, myTags)) return;
 
     let ok = false;
-    setTagsSavePhase('busy');
+    setTagsSavePhase("busy");
     try {
-      await bgCall('setTags', { full_name: star.full_name, tags: nextTags });
+      await bgCall("setTags", { full_name: star.full_name, tags: nextTags });
       onDataChanged?.();
       ok = true;
       flashSaved(setTagsSavePhase, tagsTimerRef);
     } finally {
-      if (!ok) setTagsSavePhase('idle');
+      if (!ok) setTagsSavePhase("idle");
     }
   };
 
@@ -153,14 +179,14 @@ export function RepoDetailPanel({
     if (nextNotes === notes) return;
 
     let ok = false;
-    setNotesSavePhase('busy');
+    setNotesSavePhase("busy");
     try {
-      await bgCall('setNotes', { full_name: star.full_name, notes: nextNotes });
+      await bgCall("setNotes", { full_name: star.full_name, notes: nextNotes });
       onDataChanged?.();
       ok = true;
       flashSaved(setNotesSavePhase, notesTimerRef);
     } finally {
-      if (!ok) setNotesSavePhase('idle');
+      if (!ok) setNotesSavePhase("idle");
     }
   };
 
@@ -172,28 +198,57 @@ export function RepoDetailPanel({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (shouldIgnorePanelShortcut(interactionLocked, e.target)) return;
-      if (e.key === 'Escape') onClose();
-      else if (e.key === '[' && hasPrev) onPrev();
-      else if (e.key === ']' && hasNext) onNext();
+      if (e.key === "Escape") onClose();
+      else if (e.key === "[" && hasPrev) onPrev();
+      else if (e.key === "]" && hasNext) onNext();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [onClose, onPrev, onNext, hasPrev, hasNext, interactionLocked]);
 
   const selectedSet = new Set(selectedTags);
 
   return (
     <div
-      className={cn('flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card', {
-        'opacity-55': interactionLocked,
-      })}
+      className={cn(
+        "flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card",
+        {
+          "opacity-55": interactionLocked,
+        },
+      )}
       {...getLockedRegionProps(interactionLocked)}
     >
       <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
-        <Button variant="ghost" size="icon" onClick={onPrev} disabled={!hasPrev || interactionLocked} title={m.repoDetail.previousTitle} className={cn({ 'opacity-30': !hasPrev })}><ChevronLeft className="size-4" /></Button>
-        <Button variant="ghost" size="icon" onClick={onNext} disabled={!hasNext || interactionLocked} title={m.repoDetail.nextTitle} className={cn({ 'opacity-30': !hasNext })}><ChevronRight className="size-4" /></Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onPrev}
+          disabled={!hasPrev || interactionLocked}
+          title={m.repoDetail.previousTitle}
+          className={cn({ "opacity-30": !hasPrev })}
+        >
+          <ChevronLeft className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onNext}
+          disabled={!hasNext || interactionLocked}
+          title={m.repoDetail.nextTitle}
+          className={cn({ "opacity-30": !hasNext })}
+        >
+          <ChevronRight className="size-4" />
+        </Button>
         <span className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={onClose} disabled={interactionLocked} title={m.repoDetail.closeTitle}><X className="size-4" /></Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          disabled={interactionLocked}
+          title={m.repoDetail.closeTitle}
+        >
+          <X className="size-4" />
+        </Button>
       </div>
 
       <div className="flex flex-col gap-4 p-3">
@@ -203,8 +258,8 @@ export function RepoDetailPanel({
             target="_blank"
             rel="noreferrer"
             className={cn(
-              'break-all text-[13px] font-semibold text-primary underline underline-offset-2 hover:underline',
-              { 'pointer-events-none opacity-70': interactionLocked },
+              "break-all text-[13px] font-semibold text-primary underline underline-offset-2 hover:underline",
+              { "pointer-events-none opacity-70": interactionLocked },
             )}
             {...getLockedAnchorProps(interactionLocked)}
           >
@@ -212,7 +267,10 @@ export function RepoDetailPanel({
           </a>
           <div className="mt-0.5 flex gap-2">
             {star.archived && (
-              <span className="inline-flex items-center gap-1 text-xs text-warning" title={m.starRow.archived}>
+              <span
+                className="inline-flex items-center gap-1 text-xs text-warning"
+                title={m.starRow.archived}
+              >
                 <Archive className="size-3" />
                 {m.starRow.archived}
               </span>
@@ -221,7 +279,10 @@ export function RepoDetailPanel({
         </div>
 
         <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
-          <Meta label={m.repoDetail.language} value={star.language ?? m.common.none} />
+          <Meta
+            label={m.repoDetail.language}
+            value={star.language ?? m.common.none}
+          />
           <Meta
             label={m.repoDetail.stars}
             value={
@@ -231,15 +292,23 @@ export function RepoDetailPanel({
               </span>
             }
           />
-          <Meta label={m.repoDetail.updated} value={star.pushed_at ? star.pushed_at.slice(0, 10) : m.common.none} />
-          <Meta label={m.repoDetail.starred} value={star.starred_at.slice(0, 10)} />
+          <Meta
+            label={m.repoDetail.updated}
+            value={star.pushed_at ? star.pushed_at.slice(0, 10) : m.common.none}
+          />
+          <Meta
+            label={m.repoDetail.starred}
+            value={star.starred_at.slice(0, 10)}
+          />
         </div>
 
         {star.description && (
           <>
             <Separator />
             <Section title={m.repoDetail.description}>
-              <p className="m-0 text-xs leading-relaxed text-foreground">{star.description}</p>
+              <p className="m-0 text-xs leading-relaxed text-foreground">
+                {star.description}
+              </p>
             </Section>
           </>
         )}
@@ -250,8 +319,17 @@ export function RepoDetailPanel({
             <Section title={m.repoDetail.topics(star.topics.length)}>
               <div className="flex flex-wrap gap-1">
                 {star.topics.map((topic) => (
-                  <button key={topic} onClick={() => onToggleTag(topic)} title={m.repoDetail.filterTopic}>
-                    <Badge variant={selectedSet.has(topic) ? 'tagActive' : 'tag'} className="cursor-pointer hover:opacity-80">{topic}</Badge>
+                  <button
+                    key={topic}
+                    onClick={() => onToggleTag(topic)}
+                    title={m.repoDetail.filterTopic}
+                  >
+                    <Badge
+                      variant={selectedSet.has(topic) ? "tagActive" : "tag"}
+                      className="cursor-pointer hover:opacity-80"
+                    >
+                      {topic}
+                    </Badge>
                   </button>
                 ))}
               </div>
@@ -265,9 +343,20 @@ export function RepoDetailPanel({
             <Section title={m.repoDetail.suggestedTags}>
               <div className="flex flex-wrap items-center gap-1">
                 {suggestions.map((name) => (
-                  <Badge key={name} variant="outline" className="opacity-70 [border-style:dashed]">{name}</Badge>
+                  <Badge
+                    key={name}
+                    variant="outline"
+                    className="opacity-70 [border-style:dashed]"
+                  >
+                    {name}
+                  </Badge>
                 ))}
-                <Button variant="outline" size="sm" onClick={acceptSuggestions} title={m.repoDetail.acceptAllTitle}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={acceptSuggestions}
+                  title={m.repoDetail.acceptAllTitle}
+                >
                   {m.repoDetail.acceptAll}
                 </Button>
               </div>
@@ -341,7 +430,7 @@ function SaveRow({
   return (
     <div className="mt-2 flex items-center justify-between gap-3">
       <div className="gsm-muted-count min-h-[12px]">
-        {phase === 'ok' ? (
+        {phase === "ok" ? (
           <span className="inline-flex items-center gap-1 text-success">
             <Check className="size-3" />
             {savedLabel}
@@ -355,7 +444,7 @@ function SaveRow({
         size="sm"
         phase={phase}
         onClick={onSave}
-        disabled={!dirty || phase !== 'idle'}
+        disabled={!dirty || phase !== "idle"}
       >
         {saveLabel}
       </SaveActionButton>
@@ -371,7 +460,7 @@ function resetSavePhase(
     clearTimeout(timerRef.current);
     timerRef.current = null;
   }
-  setPhase('idle');
+  setPhase("idle");
 }
 
 function flashSaved(
@@ -379,9 +468,9 @@ function flashSaved(
   timerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>,
 ) {
   if (timerRef.current) clearTimeout(timerRef.current);
-  setPhase('ok');
+  setPhase("ok");
   timerRef.current = setTimeout(() => {
-    setPhase('idle');
+    setPhase("idle");
     timerRef.current = null;
   }, 1300);
 }
