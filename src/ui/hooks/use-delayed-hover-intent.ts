@@ -39,7 +39,10 @@ export function useDelayedHoverIntent({
   }, [clear]);
 
   useEffect(() => {
-    if (!enabled) clear();
+    if (!enabled) {
+      clear();
+      onCloseRef.current();
+    }
   }, [clear, enabled]);
 
   useEffect(() => clear, [clear]);
