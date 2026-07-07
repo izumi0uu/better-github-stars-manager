@@ -271,9 +271,11 @@ export function ManagerPanel() {
           </div>
         )}
 
-        <div className={cn('filter-row-anim border-b border-border', { collapsed: !hasActiveFilter })}>
-          <ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />
-        </div>
+        {hasActiveFilter && (
+          <div className="border-b border-border">
+            <ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />
+          </div>
+        )}
 
         {info && (
           <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">{info}</div>

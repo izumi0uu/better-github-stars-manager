@@ -14,6 +14,14 @@ describe('layout edit interaction lock invariants', () => {
     expect(source).toMatch(/disabled=\{actionBusy\s*\|\|\s*interactionLocked\}/);
   });
 
+  it('does not render an empty active-filter row when no filters are selected', () => {
+    const source = read('src/ui/ManagerPanel.tsx');
+
+    expect(source).toContain('{hasActiveFilter && (');
+    expect(source).toContain('<ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />');
+    expect(source).not.toContain("cn('filter-row-anim border-b border-border'");
+  });
+
   it('uses semantic inert/anchor helpers instead of a global provider', () => {
     const helper = read('src/ui/interaction-lock.ts');
     const manager = read('src/ui/ManagerPanel.tsx');
