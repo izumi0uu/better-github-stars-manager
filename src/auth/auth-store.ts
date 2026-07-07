@@ -256,7 +256,8 @@ export const authStore = {
     maxTagsPerRepo?: number;
     minTopicRepoCount?: number;
   }): Promise<void> {
-    const current = await read();
+    // Fresh-read avoids stale module-cache clobbering across extension contexts.
+    const current = await readStoredConfig();
     const maxTagsPerRepo = patch.maxTagsPerRepo === undefined
       ? current.maxTagsPerRepo
       : normalizeMaxTagsPerRepo(patch.maxTagsPerRepo, current.autoTagLimit);
