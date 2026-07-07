@@ -20,6 +20,7 @@ describe('layout edit interaction lock invariants', () => {
     expect(source).toContain('{hasActiveFilter && (');
     expect(source).toContain('<ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />');
     expect(source).not.toContain("cn('filter-row-anim border-b border-border'");
+    expect(read('src/ui/components/ActiveFilterChips.tsx')).toContain('if (active.length === 0) return null;');
   });
 
   it('uses semantic inert/anchor helpers instead of a global provider', () => {

@@ -28,7 +28,7 @@ export function ActiveFilterChips({
   // "Show unstarred" (tombstone) chip — disabled for now.
   // if (f.showTombstone) active.push({ label: m.filterSidebar.showTombstoneLabel, clear: () => f.setShowTombstone(false), kind: 'special' });
 
-  // no early return: the parent container animates its grid-rows height to collapse.
+  if (active.length === 0) return null;
 
   return (
     <div
