@@ -135,6 +135,34 @@ describe('Backfill config regressions', () => {
     assert.deepEqual(next, { repo_data_sync_v1: currentState });
   });
 
+  it('does not write when a state mutation returns the existing state', async () => {
+    const currentState = {
+      status: 'done' as const,
+      queuedAt: '2026-06-22T00:00:00Z',
+      lastAttemptAt: '2026-06-22T00:01:00Z',
+      completedAt: '2026-06-22T00:05:00Z',
+      error: null,
+    };
+    let updateCalls = 0;
+    const store = createBackfillConfigStore({
+      async getConfig() {
+        return makeConfig({ repo_data_sync_v1: currentState });
+      },
+      async update() {
+        updateCalls++;
+        throw new Error('same-state mutation should not write');
+      },
+    });
+
+    const next = await store.setBackfillState('repo_data_sync_v1', (state) => {
+      assert.deepEqual(state, currentState);
+      return state!;
+    });
+
+    assert.deepEqual(next, currentState);
+    assert.equal(updateCalls, 0);
+  });
+
   it('continues queued backfill config mutations after a rejected update', async () => {
     let current = makeConfig({});
     const writeAttempts: Array<'reject' | 'resolve'> = [];

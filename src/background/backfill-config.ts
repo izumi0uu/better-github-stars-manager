@@ -39,6 +39,13 @@ function backfillsEqual(
   );
 }
 
+function backfillStatesEqual(
+  a: BackfillState | null | undefined,
+  b: BackfillState | null | undefined,
+): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
 export function createBackfillConfigStore(
   store: BackfillConfigStore = authStore,
   options: { isBackfillRunning?: () => boolean } = {},
@@ -85,6 +92,7 @@ export function createBackfillConfigStore(
         // The mutator owns the state transition; this helper owns the fresh
         // config snapshot, normalization, validation, and serialized write.
         const next = mutate(backfills[task.id], now);
+        if (backfillStatesEqual(backfills[task.id], next)) return next;
         backfills[task.id] = next;
         await store.update({ backfills });
         return next;

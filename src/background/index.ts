@@ -134,10 +134,23 @@ async function getLocaleMessages() {
 }
 
 const run = jobQueue.run;
+const BACKFILL_STATUS_RECONCILE_MS = 30_000;
+let lastStatusBackfillReconcileAt = 0;
+
+async function getStatusConfigAndBackfills() {
+  const now = Date.now();
+  if (now - lastStatusBackfillReconcileAt >= BACKFILL_STATUS_RECONCILE_MS) {
+    lastStatusBackfillReconcileAt = now;
+    const backfills = await backfillConfig.reconcileStoredBackfills();
+    const cfg = await authStore.getConfig();
+    return { cfg, backfills };
+  }
+  const cfg = await authStore.getConfig();
+  return { cfg, backfills: cfg.backfills };
+}
 
 async function getStatusPayload() {
-  const backfills = await backfillConfig.reconcileStoredBackfills();
-  const cfg = await authStore.getConfig();
+  const { cfg, backfills } = await getStatusConfigAndBackfills();
   const hasToken = await authStore.hasToken();
   const onboardingStage = normalizeOnboardingStage(
     cfg.onboardingStage,
@@ -423,13 +436,16 @@ async function handle(req: Req): Promise<Res> {
         const m = await getLocaleMessages();
         const task = getBackfillTask(req.id);
         if (!task) return { ok: false, error: m.background.unknownBackfill(req.id) };
-        await backfillConfig.setBackfillState(task.id, (current, now) => ({
-          status: 'deferred',
-          queuedAt: current?.queuedAt ?? now,
-          lastAttemptAt: current?.lastAttemptAt ?? null,
-          completedAt: null,
-          error: current?.error ?? null,
-        }));
+        await backfillConfig.setBackfillState(task.id, (current, now) => {
+          if (current?.status === 'done') return current;
+          return {
+            status: 'deferred',
+            queuedAt: current?.queuedAt ?? now,
+            lastAttemptAt: current?.lastAttemptAt ?? null,
+            completedAt: null,
+            error: current?.error ?? null,
+          };
+        });
         return { ok: true, data: { id: task.id } };
       }
       case 'setTags':
