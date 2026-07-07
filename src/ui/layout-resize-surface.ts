@@ -65,6 +65,16 @@ type SurfaceCache = {
   lastMetrics: Pick<GridMetrics, 'gridTemplateColumns' | 'minWidth'> | null;
 };
 
+type MeasuredResizeGeometry = {
+  context: LayoutResizeSurfaceContext & {
+    tableShell: HTMLElement;
+    header: HTMLElement;
+    stage: HTMLElement;
+  };
+  activeLeft: number;
+  overlay: LayoutResizeOverlayState | null;
+};
+
 export function layoutResizeOverlayFromRects({
   shellRect,
   stageRect,
@@ -162,16 +172,9 @@ export class LayoutResizeSurface {
   }
 
   measureStart(resize: LayoutResizeLiveState): LayoutResizeOverlayState | null {
-    const context = this.context;
-    if (!context?.tableShell || !context.header || !context.stage) return null;
-    const activeCell = context.header.querySelector<HTMLElement>(`[data-header-col="${resize.id}"]`);
-    if (!activeCell) return null;
-
-    const shellRect = context.tableShell.getBoundingClientRect();
-    const stageRect = context.stage.getBoundingClientRect();
-    const activeRect = activeCell.getBoundingClientRect();
-    const overlay = layoutResizeOverlayFromRects({ shellRect, stageRect, activeRect, defaultWidth: resize.defaultWidth });
-    const activeLeft = overlay?.left ?? Math.round(activeRect.left - shellRect.left);
+    const measured = this.measureGeometry(resize);
+    if (!measured) return null;
+    const { context, activeLeft, overlay } = measured;
     this.cache = {
       id: resize.id,
       visibleColumns: [...context.visibleColumns],
@@ -208,18 +211,12 @@ export class LayoutResizeSurface {
   }
 
   refreshGeometry(resize: LayoutResizeLiveState): LayoutResizeOverlayState | null {
-    const context = this.context;
     const cache = this.cache;
-    if (!context?.tableShell || !context.header || !context.stage) return null;
     if (!cache) return this.measureStart(resize);
 
-    const activeCell = context.header.querySelector<HTMLElement>(`[data-header-col="${resize.id}"]`);
-    if (!activeCell) return null;
-    const shellRect = context.tableShell.getBoundingClientRect();
-    const stageRect = context.stage.getBoundingClientRect();
-    const activeRect = activeCell.getBoundingClientRect();
-    const overlay = layoutResizeOverlayFromRects({ shellRect, stageRect, activeRect, defaultWidth: resize.defaultWidth });
-    const activeLeft = overlay?.left ?? Math.round(activeRect.left - shellRect.left);
+    const measured = this.measureGeometry(resize);
+    if (!measured) return null;
+    const { context, activeLeft, overlay } = measured;
 
     cache.activeLeft = activeLeft;
     cache.overlayTop = overlay?.top ?? 0;
@@ -227,6 +224,30 @@ export class LayoutResizeSurface {
     cache.defaultRight = overlay?.defaultRight ?? activeLeft + resize.defaultWidth;
     cache.panelWidth = context.stage.clientWidth;
     return overlay;
+  }
+
+  private measureGeometry(resize: LayoutResizeLiveState): MeasuredResizeGeometry | null {
+    const context = this.context;
+    if (!context?.tableShell || !context.header || !context.stage) return null;
+    const measuredContext: MeasuredResizeGeometry['context'] = {
+      ...context,
+      tableShell: context.tableShell,
+      header: context.header,
+      stage: context.stage,
+    };
+    const activeCell = context.header.querySelector<HTMLElement>(`[data-header-col="${resize.id}"]`);
+    if (!activeCell) return null;
+
+    const shellRect = context.tableShell.getBoundingClientRect();
+    const stageRect = context.stage.getBoundingClientRect();
+    const activeRect = activeCell.getBoundingClientRect();
+    const overlay = layoutResizeOverlayFromRects({ shellRect, stageRect, activeRect, defaultWidth: resize.defaultWidth });
+    const activeLeft = overlay?.left ?? Math.round(activeRect.left - shellRect.left);
+    return {
+      context: measuredContext,
+      activeLeft,
+      overlay,
+    };
   }
 
   paint(resize: LayoutResizeLiveState): void {

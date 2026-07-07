@@ -1,45 +1,12 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, afterEach, describe, it } from 'vitest';
+import { createChromeMock } from '../../helpers/chrome-mock';
 import { db } from '../../../src/storage/db';
 import { authStore, CONFIG_STORAGE_KEY } from '../../../src/auth/auth-store';
 import { githubStarSource } from '../../../src/api/github-star-source';
 import { invalidateCache, queryStars } from '../../../src/background/query';
 import type { Star } from '../../../src/types';
-
-function createChromeMock() {
-  const state: Record<string, unknown> = {};
-  const listeners = new Set<
-    (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void
-  >();
-  return {
-    api: {
-      storage: {
-        local: {
-          async get(key: string) {
-            return { [key]: state[key] };
-          },
-          async set(next: Record<string, unknown>) {
-            const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
-            for (const [key, value] of Object.entries(next)) {
-              changes[key] = { oldValue: state[key], newValue: value };
-              state[key] = value;
-            }
-            for (const listener of listeners) listener(changes, 'local');
-          },
-        },
-        onChanged: {
-          addListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.add(listener);
-          },
-          removeListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.delete(listener);
-          },
-        },
-      },
-    },
-  };
-}
 
 (globalThis as { chrome?: unknown }).chrome = createChromeMock().api;
 

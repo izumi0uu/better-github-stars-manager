@@ -32,6 +32,14 @@ export function createChromeMock() {
             }
             for (const listener of listeners) listener(changes, 'local');
           },
+          async clear() {
+            const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
+            for (const key of Object.keys(state)) {
+              changes[key] = { oldValue: state[key], newValue: undefined };
+              delete state[key];
+            }
+            for (const listener of listeners) listener(changes, 'local');
+          },
         },
         onChanged: {
           addListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {

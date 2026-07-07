@@ -178,8 +178,11 @@ export const gistTagStore = {
 
     // Merge each assignment layer independently. Released v1 payloads are
     // adapted at the import boundary; v2 rows must already be explicit layers.
-    for (const [full_name, remoteTag] of Object.entries(remote.tags)) {
-      const localRow = await db.tags.get(full_name) as LegacyTagRow | undefined;
+    const remoteTagEntries = Object.entries(remote.tags);
+    const localRows = await db.tags.bulkGet(remoteTagEntries.map(([full_name]) => full_name)) as (LegacyTagRow | undefined)[];
+    const mergedTags: Tag[] = [];
+    for (const [index, [full_name, remoteTag]] of remoteTagEntries.entries()) {
+      const localRow = localRows[index];
       const local = localRow ? normalizeStoredTag(localRow) : undefined;
       const remoteNormalized = normalizeGistTag(full_name, remoteTag, remote.v);
       if (!remoteNormalized) {
@@ -188,18 +191,19 @@ export const gistTagStore = {
         continue;
       }
       if (!local) {
-        await db.tags.put(remoteNormalized);
+        mergedTags.push(remoteNormalized);
         merged++;
       } else {
         const next = mergeTagRowsByLayer(local, remoteNormalized);
         if (next.changed) {
-          await db.tags.put(next.tag);
+          mergedTags.push(next.tag);
           merged++;
         }
       }
       done++;
       if (done === total || done % 50 === 0) tick();
     }
+    if (mergedTags.length > 0) await db.tags.bulkPut(mergedTags);
 
     // Merge tagMeta by mtime.
     for (const [name, remoteMeta] of Object.entries(remote.tagMeta)) {

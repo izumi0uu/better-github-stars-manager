@@ -2,7 +2,7 @@ import type { MouseEvent } from 'react';
 
 type LockedRegionProps = {
   'aria-disabled'?: true;
-  inert?: boolean;
+  inert?: '';
 };
 
 type LockedAnchorProps = {
@@ -12,7 +12,7 @@ type LockedAnchorProps = {
 };
 
 export function getLockedRegionProps(locked: boolean): LockedRegionProps {
-  return locked ? { 'aria-disabled': true, inert: true } : {};
+  return locked ? { 'aria-disabled': true, inert: '' } : {};
 }
 
 export function getLockedAnchorProps(locked: boolean): LockedAnchorProps {

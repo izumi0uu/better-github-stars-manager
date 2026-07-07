@@ -157,6 +157,34 @@ function LanguagesSection({ f, languages }: { f: FilterState; languages: [string
 // Flat tag list (topic-derived + user-authored), preserving incoming order unless name-sorted by the user.
 const TAG_PREVIEW = 50;
 const TAG_NAME_COLLATOR = new Intl.Collator(['zh-CN', 'en'], { numeric: true, sensitivity: 'base' });
+const CONFIRM_TIMEOUT_MS = 3000;
+
+function useTwoStepConfirm<T>() {
+  const [pending, setPending] = useState<T | null>(null);
+  const [busy, setBusy] = useState<T | null>(null);
+
+  useEffect(() => {
+    if (pending === null) return;
+    const timer = setTimeout(() => setPending(null), CONFIRM_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [pending]);
+
+  const confirm = async (target: T, action: (target: T) => Promise<void>) => {
+    if (!Object.is(pending, target)) {
+      setPending(target);
+      return;
+    }
+    setBusy(target);
+    try {
+      await action(target);
+    } finally {
+      setBusy(null);
+      setPending(null);
+    }
+  };
+
+  return { pending, busy, confirm };
+}
 
 function TagsSection({
   f,
@@ -173,31 +201,13 @@ function TagsSection({
   // Tag-name search.
   const queryInput = useImeBufferedInput('');
   const deferredQuery = useDeferredValue(queryInput.value);
-  // Two-step delete: a tag pending confirmation (its name). Click trash → confirm.
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [pendingDeleteAll, setPendingDeleteAll] = useState(false);
-  const [deletingAll, setDeletingAll] = useState(false);
+  const tagDelete = useTwoStepConfirm<string>();
+  const deleteAll = useTwoStepConfirm<'all'>();
   // Reveal the full list past TAG_PREVIEW (search always shows all matches).
   const [showAll, setShowAll] = useState(false);
   const [sortDir, setSortDir] = useState<'default' | 'asc' | 'desc'>('default');
 
-  // Auto-revert the delete-confirm state if the user doesn't commit within 3s,
-  // so a red check button never gets stranded on a tag. Cleared on commit/escape.
-  useEffect(() => {
-    if (!pendingDelete) return;
-    const t = setTimeout(() => setPendingDelete(null), 3000);
-    return () => clearTimeout(t);
-  }, [pendingDelete]);
-
-  useEffect(() => {
-    if (!pendingDeleteAll) return;
-    const t = setTimeout(() => setPendingDeleteAll(false), 3000);
-    return () => clearTimeout(t);
-  }, [pendingDeleteAll]);
-
   const doDelete = async (name: string) => {
-    setDeleting(name);
     try {
       const { removed } = await bgCall<{ removed: number }>('deleteTag', { name });
       // If the deleted tag was an active filter, drop it so results stay coherent.
@@ -207,14 +217,10 @@ function TagsSection({
     } catch (e) {
       console.error('[gsm] deleteTag failed', e);
       onTagMutationMessage?.(m.manager.deleteTagFailed(e instanceof Error ? e.message : String(e)));
-    } finally {
-      setDeleting(null);
-      setPendingDelete(null);
     }
   };
 
   const doDeleteAll = async () => {
-    setDeletingAll(true);
     try {
       const result = await bgCall<{
         assignmentsRemoved: number;
@@ -228,9 +234,6 @@ function TagsSection({
     } catch (e) {
       console.error('[gsm] deleteAllTags failed', e);
       onTagMutationMessage?.(m.manager.deleteAllTagsFailed(e instanceof Error ? e.message : String(e)));
-    } finally {
-      setDeletingAll(false);
-      setPendingDeleteAll(false);
     }
   };
 
@@ -297,27 +300,26 @@ function TagsSection({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  disabled={deletingAll}
+                  disabled={deleteAll.busy === 'all'}
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (pendingDeleteAll) void doDeleteAll();
-                    else setPendingDeleteAll(true);
+                    void deleteAll.confirm('all', doDeleteAll);
                   }}
                   className={cn(
                     'inline-flex size-5 shrink-0 items-center justify-center rounded leading-none transition-colors duration-150 disabled:opacity-50',
                     {
-                      'bg-destructive/10 text-destructive ring-1 ring-inset ring-destructive/30 hover:bg-destructive/15': pendingDeleteAll,
-                      'text-muted-foreground/55 hover:bg-destructive/10 hover:text-destructive': !pendingDeleteAll,
+                      'bg-destructive/10 text-destructive ring-1 ring-inset ring-destructive/30 hover:bg-destructive/15': deleteAll.pending === 'all',
+                      'text-muted-foreground/55 hover:bg-destructive/10 hover:text-destructive': deleteAll.pending !== 'all',
                     },
                   )}
-                  title={pendingDeleteAll ? m.filterSidebar.deleteAllTagsConfirm : m.filterSidebar.deleteAllTagsTitle}
+                  title={deleteAll.pending === 'all' ? m.filterSidebar.deleteAllTagsConfirm : m.filterSidebar.deleteAllTagsTitle}
                 >
-                  <ActionIcon phase={pendingDeleteAll ? 'confirm' : 'idle'}>
-                    {pendingDeleteAll ? <Check className="size-3.5" /> : <Trash2 className="size-3.5" />}
+                  <ActionIcon phase={deleteAll.pending === 'all' ? 'confirm' : 'idle'}>
+                    {deleteAll.pending === 'all' ? <Check className="size-3.5" /> : <Trash2 className="size-3.5" />}
                   </ActionIcon>
                 </button>
               </TooltipTrigger>
-              <TooltipContent>{pendingDeleteAll ? m.filterSidebar.deleteAllTagsConfirm : m.filterSidebar.deleteAllTagsTitle}</TooltipContent>
+              <TooltipContent>{deleteAll.pending === 'all' ? m.filterSidebar.deleteAllTagsConfirm : m.filterSidebar.deleteAllTagsTitle}</TooltipContent>
             </Tooltip>
           )}
           {(['any', 'all'] as const).map((mode) => (
@@ -366,8 +368,8 @@ function TagsSection({
           <div className="flex flex-col gap-1">
             {visible.map(({ name, count }) => {
               const on = f.tags.includes(name);
-              const isPending = pendingDelete === name;
-              const isBusy = deleting === name;
+              const isPending = tagDelete.pending === name;
+              const isBusy = tagDelete.busy === name;
               return (
                 <div
                   key={name}
@@ -398,8 +400,7 @@ function TagsSection({
                         disabled={isBusy}
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (isPending) void doDelete(name);
-                          else setPendingDelete(name);
+                          void tagDelete.confirm(name, doDelete);
                         }}
                         className={cn(
                           'inline-flex shrink-0 items-center justify-center rounded p-0.5 leading-none transition-colors duration-150 disabled:opacity-50',

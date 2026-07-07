@@ -7,48 +7,7 @@ import {
   DEFAULT_MIN_TOPIC_REPO_COUNT,
 } from '../../../src/preferences';
 import type { Config } from '../../../src/types';
-
-function createChromeMock() {
-  const state: Record<string, unknown> = {};
-  const listeners = new Set<
-    (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void
-  >();
-  return {
-    api: {
-      storage: {
-        local: {
-          async get(key: string) {
-            return { [key]: state[key] };
-          },
-          async set(next: Record<string, unknown>) {
-            const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
-            for (const [key, value] of Object.entries(next)) {
-              changes[key] = { oldValue: state[key], newValue: value };
-              state[key] = value;
-            }
-            for (const listener of listeners) listener(changes, 'local');
-          },
-          async clear() {
-            const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
-            for (const key of Object.keys(state)) {
-              changes[key] = { oldValue: state[key], newValue: undefined };
-              delete state[key];
-            }
-            for (const listener of listeners) listener(changes, 'local');
-          },
-        },
-        onChanged: {
-          addListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.add(listener);
-          },
-          removeListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.delete(listener);
-          },
-        },
-      },
-    },
-  };
-}
+import { createChromeMock } from '../../helpers/chrome-mock';
 
 const chromeMock = createChromeMock();
 Object.defineProperty(globalThis, 'chrome', { value: chromeMock.api, configurable: true });

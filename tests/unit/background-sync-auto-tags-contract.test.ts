@@ -21,7 +21,7 @@ describe('background sync auto-tag contract', () => {
 
   it('runs full sync and backfill without auto-tagging or nested full-sync runners', () => {
     assert.match(backgroundSource, /const result = await githubStarSource\.syncFull\(\(p\) => setProgress\(p\)\);/);
-    assert.match(backgroundSource, /async function performFullSync\(\) {\n  return run\(performFullSyncJob\);\n}/);
+    assert.match(backgroundSource, /async function performFullSync\(\)\s*\{\s*return run\(performFullSyncJob\);\s*\}/);
     assert.match(backgroundSource, /setIdleMessage\(m\.background\.fullDone\(result\.added\)\)/);
 
     const fullBlock = caseBlock('syncFull', 'syncRescan');

@@ -23,7 +23,7 @@ describe('layout edit interaction lock invariants', () => {
     expect(source).toContain("className={cn('gsm-active-filter-row', { open: hasActiveFilter })}");
     expect(source).toContain('aria-hidden={!hasActiveFilter}');
     expect(source).toContain('{...getLockedRegionProps(!hasActiveFilter)}');
-    expect(source).toContain('<ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />');
+    expect(source).toMatch(/<ActiveFilterChips\b[\s\S]*?\bf=\{f\}[\s\S]*?\bcount=\{total\}[\s\S]*?\binteractionLocked=\{interactionLocked\}[\s\S]*?\/>/);
     expect(source).not.toContain('{hasActiveFilter && (');
     expect(chips).not.toContain('if (active.length === 0) return null;');
     expect(motion).toContain('.gsm-active-filter-row');
@@ -39,7 +39,7 @@ describe('layout edit interaction lock invariants', () => {
     const manager = read('src/ui/ManagerPanel.tsx');
 
     expect(helper).toContain('getLockedRegionProps');
-    expect(helper).toContain('inert: true');
+    expect(helper).toContain("inert: ''");
     expect(helper).toContain('getLockedAnchorProps');
     expect(helper).toContain('tabIndex: -1');
     expect(helper).toContain('event.preventDefault();');

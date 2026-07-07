@@ -57,7 +57,7 @@ async function ensureCache() {
   return cache;
 }
 
-function compareNullableDate(
+export function compareNullableDate(
   aValue: string | null | undefined,
   bValue: string | null | undefined,
   tieBreakA: string,

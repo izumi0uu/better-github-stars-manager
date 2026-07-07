@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it } from 'vitest';
-import { queryStars, invalidateCache, type QueryParams, type QueryResult } from '@/background/query';
+import { compareNullableDate, queryStars, invalidateCache, type QueryParams, type QueryResult } from '@/background/query';
 import { db } from '@/storage/db';
 import { visibleTagNames } from '@/tags/tag-model';
 import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
@@ -247,23 +247,6 @@ function sortReferenceRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Sta
         return a.full_name.localeCompare(b.full_name) * mul;
     }
   });
-}
-
-function compareNullableDate(
-  aValue: string | null | undefined,
-  bValue: string | null | undefined,
-  tieBreakA: string,
-  tieBreakB: string,
-  dir: 'asc' | 'desc',
-): number {
-  const aMissing = aValue == null;
-  const bMissing = bValue == null;
-  if (aMissing || bMissing) {
-    if (aMissing && bMissing) return tieBreakA.localeCompare(tieBreakB);
-    return aMissing ? 1 : -1;
-  }
-  const cmp = aValue.localeCompare(bValue);
-  return dir === 'asc' ? cmp : -cmp;
 }
 
 function countLanguages(stars: Star[]): Map<string, number> {
