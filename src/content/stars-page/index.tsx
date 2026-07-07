@@ -161,14 +161,20 @@ function injectFab(): void {
   btn.type = 'button';
   btn.className = 'btn';
   btn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>`;
+  btn.setAttribute('data-tip', 'Better GitHub Stars Manager');
+  btn.setAttribute('aria-label', 'Better GitHub Stars Manager');
   btn.onclick = showPanel;
   shadow.appendChild(btn);
   document.body.appendChild(host);
 
   // No React here; localize after mount and let the CSS bubble wait for data-tip.
-  void authStore.getLocale().then((locale) => {
-    applyFabLabel(btn, locale);
-  });
+  void authStore.getLocale()
+    .then((locale) => {
+      applyFabLabel(btn, locale);
+    })
+    .catch(() => {
+      // Keep the synchronous fallback label when storage is unavailable.
+    });
 }
 
 function ejectFab(): void {

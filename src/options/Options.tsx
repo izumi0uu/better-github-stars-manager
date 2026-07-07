@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Sun,
   Moon,
@@ -28,6 +28,8 @@ import { REPO_URL } from "@/lib/links";
 import { useImeBufferedInput } from "@/ui/hooks/use-ime-input";
 import { useI18n } from "@/i18n";
 import {
+  DEFAULT_AUTO_TAG_LIMIT,
+  DEFAULT_MIN_TOPIC_REPO_COUNT,
   MAX_AUTO_TAG_LIMIT,
   MIN_AUTO_TAG_LIMIT,
   normalizeMaxTagsPerRepo,
@@ -43,8 +45,10 @@ export function Options() {
   const [hasUsableToken, setHasUsableToken] = useState(false);
   const [gistId, setGistId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [maxTagsPerRepo, setMaxTagsPerRepo] = useState<string>("5");
-  const [minTopicRepoCount, setMinTopicRepoCount] = useState<string>("3");
+  const [maxTagsPerRepo, setMaxTagsPerRepo] = useState<string>(String(DEFAULT_AUTO_TAG_LIMIT));
+  const [minTopicRepoCount, setMinTopicRepoCount] = useState<string>(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
+  const persistedMaxTagsPerRepoRef = useRef(String(DEFAULT_AUTO_TAG_LIMIT));
+  const persistedMinTopicRepoCountRef = useRef(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
   const [starsPanelDefaultEnabled, setStarsPanelDefaultEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
@@ -66,6 +70,8 @@ export function Options() {
     setTheme(c.theme);
     setMaxTagsPerRepo(String(c.maxTagsPerRepo));
     setMinTopicRepoCount(String(c.minTopicRepoCount));
+    persistedMaxTagsPerRepoRef.current = String(c.maxTagsPerRepo);
+    persistedMinTopicRepoCountRef.current = String(c.minTopicRepoCount);
     setStarsPanelDefaultEnabled(c.starsPanelDefaultEnabled);
     setSyncStatus((current) => mergeStatusSnapshot(current, status));
   };
@@ -110,13 +116,25 @@ export function Options() {
   const saveMaxTagsPerRepo = async (raw: string) => {
     const next = normalizeMaxTagsPerRepo(raw);
     setMaxTagsPerRepo(String(next)); // clamp the field back to a legal value
-    await authStore.updateAutoTagPolicy({ maxTagsPerRepo: next });
+    try {
+      await authStore.updateAutoTagPolicy({ maxTagsPerRepo: next });
+      persistedMaxTagsPerRepoRef.current = String(next);
+    } catch (e) {
+      setMaxTagsPerRepo(persistedMaxTagsPerRepoRef.current);
+      setMsg({ kind: "err", text: translateError(e, m) });
+    }
   };
 
   const saveMinTopicRepoCount = async (raw: string) => {
     const next = normalizeMinTopicRepoCount(raw);
     setMinTopicRepoCount(String(next));
-    await authStore.updateAutoTagPolicy({ minTopicRepoCount: next });
+    try {
+      await authStore.updateAutoTagPolicy({ minTopicRepoCount: next });
+      persistedMinTopicRepoCountRef.current = String(next);
+    } catch (e) {
+      setMinTopicRepoCount(persistedMinTopicRepoCountRef.current);
+      setMsg({ kind: "err", text: translateError(e, m) });
+    }
   };
 
   const toggleStarsPanelDefaultEnabled = async (checked: boolean) => {

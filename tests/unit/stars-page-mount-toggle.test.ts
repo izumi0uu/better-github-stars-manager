@@ -62,11 +62,13 @@ function installChromeMock() {
 async function loadContentScript({
   config,
   getConfig,
+  getLocale,
   initialBodyOverflow = '',
   initialHtmlOverflow = '',
 }: {
   config?: Config;
   getConfig?: () => Promise<Config>;
+  getLocale?: () => Promise<string>;
   initialBodyOverflow?: string;
   initialHtmlOverflow?: string;
 } = {}) {
@@ -86,7 +88,7 @@ async function loadContentScript({
   let currentConfig = config ?? { starsPanelDefaultEnabled: true };
   const getConfigFn = vi.fn(getConfig ?? (() => Promise.resolve(currentConfig)));
   const getUsernameMock = vi.fn(() => Promise.resolve('idah'));
-  const getLocaleMock = vi.fn(() => Promise.resolve('en'));
+  const getLocaleMock = vi.fn(getLocale ?? (() => Promise.resolve('en')));
 
   vi.doMock('@/auth/auth-store', () => ({
     CONFIG_STORAGE_KEY,
@@ -249,5 +251,18 @@ describe('stars-page mount and toggle invariants', () => {
     assert.equal(document.querySelectorAll('#gsm-fab').length, 1);
     assert.equal(document.documentElement.style.overflow, 'scroll');
     assert.equal(document.body.style.overflow, 'auto');
+  });
+
+  it('keeps a fallback FAB label when locale loading fails', async () => {
+    await loadContentScript({
+      config: { starsPanelDefaultEnabled: false },
+      getLocale: () => Promise.reject(new Error('storage down')),
+    });
+    await waitFor(() => document.getElementById('gsm-fab') !== null);
+
+    const button = document.getElementById('gsm-fab')?.shadowRoot?.querySelector('button');
+    assert.ok(button);
+    assert.equal(button.getAttribute('aria-label'), 'Better GitHub Stars Manager');
+    assert.equal(button.getAttribute('data-tip'), 'Better GitHub Stars Manager');
   });
 });

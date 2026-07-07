@@ -39,7 +39,7 @@ describe('layout edit interaction lock invariants', () => {
     const manager = read('src/ui/ManagerPanel.tsx');
 
     expect(helper).toContain('getLockedRegionProps');
-    expect(helper).toContain("inert: ''");
+    expect(helper).toContain('inert: true');
     expect(helper).toContain('getLockedAnchorProps');
     expect(helper).toContain('tabIndex: -1');
     expect(helper).toContain('event.preventDefault();');

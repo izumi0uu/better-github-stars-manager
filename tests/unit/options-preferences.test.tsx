@@ -187,6 +187,30 @@ describe('Options preferences', () => {
     expect(minCoverage?.value).toBe('1');
   });
 
+  it('reverts split auto-tag policy inputs when persistence fails', async () => {
+    authMocks.getConfig.mockResolvedValue(config());
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.updateAutoTagPolicy
+      .mockRejectedValueOnce(new Error('storage down'))
+      .mockRejectedValueOnce(new Error('storage down'));
+
+    await renderOptions();
+
+    const maxTags = document.querySelector<HTMLInputElement>('#max-tags-per-repo');
+    const minCoverage = document.querySelector<HTMLInputElement>('#min-topic-repo-count');
+    expect(maxTags).not.toBeNull();
+    expect(minCoverage).not.toBeNull();
+
+    await setInputValue(maxTags!, '12');
+    await blur(maxTags!);
+    await setInputValue(minCoverage!, '6');
+    await blur(minCoverage!);
+
+    expect(maxTags?.value).toBe('5');
+    expect(minCoverage?.value).toBe('3');
+    expect(document.body.textContent).toContain('storage down');
+  });
+
   it('hides the stars link after clearing the token', async () => {
     let currentConfig = config();
     let currentHasToken = true;

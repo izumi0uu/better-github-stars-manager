@@ -27,6 +27,19 @@ export function useLibraryViewPrefs() {
   const hydratedRef = useRef(false);
   const lastPersistedKeyRef = useRef<string | null>(null);
   const applyingStoredChangeRef = useRef(false);
+  const hashTagOverrideRef = useRef<{ initialized: boolean; value: string | null }>({
+    initialized: false,
+    value: null,
+  });
+  if (!hashTagOverrideRef.current.initialized) {
+    hashTagOverrideRef.current = { initialized: true, value: readHashTagOverride() };
+  }
+
+  const takeHashTagOverride = () => {
+    const value = hashTagOverrideRef.current.value;
+    hashTagOverrideRef.current.value = null;
+    return value;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -34,7 +47,7 @@ export function useLibraryViewPrefs() {
     authStore.getConfig()
       .then((config) => {
         if (cancelled || hydratedRef.current) return;
-        const tagOverride = readHashTagOverride();
+        const tagOverride = takeHashTagOverride();
         useFilterStore.getState().applyLibraryViewPrefs(config.libraryView, tagOverride);
         const nextPrefs = libraryViewPrefsFromFilterState(useFilterStore.getState());
         lastPersistedKeyRef.current = libraryViewPrefsKey(nextPrefs);
@@ -43,11 +56,14 @@ export function useLibraryViewPrefs() {
       })
       .catch(() => {
         if (cancelled || hydratedRef.current) return;
-        useFilterStore.getState().applyLibraryViewPrefs(DEFAULT_LIBRARY_VIEW_PREFS);
+        const tagOverride = takeHashTagOverride();
+        useFilterStore.getState().applyLibraryViewPrefs(DEFAULT_LIBRARY_VIEW_PREFS, tagOverride);
+        const nextPrefs = libraryViewPrefsFromFilterState(useFilterStore.getState());
         lastPersistedKeyRef.current = libraryViewPrefsKey(
-          libraryViewPrefsFromFilterState(useFilterStore.getState()),
+          nextPrefs,
         );
         hydratedRef.current = true;
+        if (tagOverride) void authStore.updateLibraryViewPrefs(nextPrefs);
       });
 
     return () => {
@@ -82,12 +98,18 @@ export function useLibraryViewPrefs() {
       const nextPrefs = normalizeLibraryViewPrefs(nextConfig.libraryView);
       const nextKey = libraryViewPrefsKey(nextPrefs);
       if (nextKey === lastPersistedKeyRef.current) return;
+      const tagOverride = takeHashTagOverride();
 
       applyingStoredChangeRef.current = true;
-      useFilterStore.getState().applyLibraryViewPrefs(nextPrefs);
-      lastPersistedKeyRef.current = nextKey;
-      hydratedRef.current = true;
-      applyingStoredChangeRef.current = false;
+      try {
+        useFilterStore.getState().applyLibraryViewPrefs(nextPrefs, tagOverride);
+        const appliedPrefs = libraryViewPrefsFromFilterState(useFilterStore.getState());
+        lastPersistedKeyRef.current = libraryViewPrefsKey(appliedPrefs);
+        hydratedRef.current = true;
+        if (tagOverride) void authStore.updateLibraryViewPrefs(appliedPrefs);
+      } finally {
+        applyingStoredChangeRef.current = false;
+      }
     };
 
     chrome.storage.onChanged.addListener(listener);

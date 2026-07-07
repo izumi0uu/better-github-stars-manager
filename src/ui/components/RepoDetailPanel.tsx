@@ -11,6 +11,7 @@ import {
 import type { Star, Tag } from "@/types";
 import { suggestTags } from "@/ui/suggest";
 import { bgCall } from "@/utils/messaging";
+import { translateError } from "@/api/errors";
 import { TagEditor } from "./TagEditor";
 import { SaveActionButton, type SaveActionPhase } from "./SaveActionButton";
 import {
@@ -70,6 +71,7 @@ export function RepoDetailPanel({
   const [draftNotes, setDraftNotes] = useState(notes);
   const [tagsSavePhase, setTagsSavePhase] = useState<SaveActionPhase>("idle");
   const [notesSavePhase, setNotesSavePhase] = useState<SaveActionPhase>("idle");
+  const [tagError, setTagError] = useState<string | null>(null);
   const draftTagsRef = useRef(manualTags);
   const draftNotesRef = useRef(notes);
   const loadedRepoRef = useRef(star.full_name);
@@ -101,6 +103,7 @@ export function RepoDetailPanel({
       draftNotesRef.current = notes;
       setDraftTags(manualTags);
       setDraftNotes(notes);
+      setTagError(null);
       resetSavePhase(setTagsSavePhase, tagsTimerRef);
       resetSavePhase(setNotesSavePhase, notesTimerRef);
       return;
@@ -148,6 +151,7 @@ export function RepoDetailPanel({
 
   const updateDraftTags = (nextTags: string[]) => {
     draftTagsRef.current = nextTags;
+    setTagError(null);
     resetSavePhase(setTagsSavePhase, tagsTimerRef);
     setDraftTags(nextTags);
   };
@@ -166,11 +170,14 @@ export function RepoDetailPanel({
 
     let ok = false;
     setTagsSavePhase("busy");
+    setTagError(null);
     try {
       await bgCall("setTags", { full_name: star.full_name, tags: nextTags });
       onDataChanged?.();
       ok = true;
       flashSaved(setTagsSavePhase, tagsTimerRef);
+    } catch (e) {
+      setTagError(m.popup.failed(m.repoDetail.tagsAction, translateError(e, m)));
     } finally {
       if (!ok) setTagsSavePhase("idle");
     }
@@ -198,9 +205,14 @@ export function RepoDetailPanel({
   };
 
   const removeVisibleTag = async (name: string) => {
-    await bgCall("removeVisibleTag", { full_name: star.full_name, name });
-    updateDraftTags(draftTagsRef.current.filter((tagName) => tagName.toLowerCase() !== name.toLowerCase()));
-    onDataChanged?.();
+    setTagError(null);
+    try {
+      await bgCall("removeVisibleTag", { full_name: star.full_name, name });
+      updateDraftTags(draftTagsRef.current.filter((tagName) => tagName.toLowerCase() !== name.toLowerCase()));
+      onDataChanged?.();
+    } catch (e) {
+      setTagError(m.popup.failed(m.repoDetail.tagsAction, translateError(e, m)));
+    }
   };
 
   useEffect(() => {
@@ -382,6 +394,11 @@ export function RepoDetailPanel({
             onChangeTags={updateDraftTags}
             onRemoveVisibleTag={(name) => void removeVisibleTag(name)}
           />
+          {tagError && (
+            <div className="mt-1 text-xs text-destructive" role="alert">
+              {tagError}
+            </div>
+          )}
           <SaveRow
             dirty={tagsDirty}
             phase={tagsSavePhase}

@@ -345,4 +345,65 @@ describe('library view preference persistence', () => {
     }));
     expect(authMocks.updateLibraryViewPrefs).not.toHaveBeenCalled();
   });
+
+  it('keeps a #gsm-tag override when storage hydration wins the initial race', async () => {
+    window.history.replaceState(null, '', '/stars#gsm-tag=vue');
+    const initialConfig = deferred<Config>();
+    authMocks.getConfig.mockReturnValue(initialConfig.promise);
+    mountReact(<Harness />, mountedRoots);
+
+    act(() => {
+      storageListeners.forEach((listener) => listener({
+        gsm_config: {
+          newValue: {
+            libraryView: {
+              version: 1,
+              filters: {
+                languages: ['Rust'],
+                tags: ['systems'],
+                tagMode: 'any',
+                showTombstone: false,
+                onlyFavorite: false,
+                onlyUntagged: true,
+                onlyArchived: false,
+              },
+              sort: {
+                sortKey: 'name',
+                sortDir: 'desc',
+              },
+            },
+          },
+        } as chrome.storage.StorageChange,
+      }, 'local'));
+    });
+    await flush();
+
+    const message = vi.mocked(chrome.runtime.sendMessage).mock.calls[0][0] as unknown as {
+      params: { filter: { tags: string[]; languages: string[]; sortKey: string; onlyUntagged: boolean } };
+    };
+    expect(message.params.filter.tags).toEqual(['vue']);
+    expect(message.params.filter.languages).toEqual(['Rust']);
+    expect(message.params.filter.onlyUntagged).toBe(true);
+    expect(message.params.filter.sortKey).toBe('name');
+    expect(authMocks.updateLibraryViewPrefs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filters: expect.objectContaining({ tags: ['vue'] }),
+      }),
+    );
+    expect(window.location.hash).toBe('');
+
+    act(() => {
+      initialConfig.resolve(baseConfig());
+    });
+    await flush();
+
+    expect(useFilterStore.getState()).toEqual(expect.objectContaining({
+      languages: ['Rust'],
+      tags: ['vue'],
+      onlyUntagged: true,
+      sortKey: 'name',
+      sortDir: 'desc',
+      libraryViewHydrated: true,
+    }));
+  });
 });

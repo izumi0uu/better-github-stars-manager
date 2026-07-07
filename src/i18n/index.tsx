@@ -185,6 +185,7 @@ export interface MessageCatalog {
     acceptAll: string;
     acceptAllTitle: string;
     tags: (count: number) => string;
+    tagsAction: string;
     notes: string;
     notesPlaceholder: string;
     notesSaved: string;
@@ -576,6 +577,7 @@ const messages: Record<Locale, MessageCatalog> = {
       acceptAll: "+ Accept all",
       acceptAllTitle: "Add all suggested tags",
       tags: (count) => `Tags (${count})`,
+      tagsAction: "Tags",
       notes: "Notes",
       notesPlaceholder: "Why did you star this repo?",
       notesSaved: "Saved",
@@ -993,6 +995,7 @@ const messages: Record<Locale, MessageCatalog> = {
       acceptAll: "+ 全部接受",
       acceptAllTitle: "添加所有建议标签",
       tags: (count) => `标签 (${count})`,
+      tagsAction: "标签",
       notes: "笔记",
       notesPlaceholder: "为什么会 star 这个仓库？",
       notesSaved: "已保存",
