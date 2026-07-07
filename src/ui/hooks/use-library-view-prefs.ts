@@ -13,7 +13,12 @@ import {
 function readHashTagOverride(): string | null {
   const match = location.hash.match(/gsm-tag=([^&]+)/);
   if (!match) return null;
-  const tag = decodeURIComponent(match[1]).trim();
+  let tag = '';
+  try {
+    tag = decodeURIComponent(match[1]).trim();
+  } catch {
+    tag = '';
+  }
   history.replaceState(null, '', location.pathname + location.search);
   return tag || null;
 }
