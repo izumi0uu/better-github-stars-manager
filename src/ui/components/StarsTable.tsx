@@ -16,6 +16,7 @@ import type { LayoutResizeLiveAdapter, LayoutResizeLiveState } from '@/ui/layout
 import { StarRow } from '@/ui/components/StarRow';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
+import { visibleTagNames } from '@/tags/tag-model';
 
 const ROW_HEIGHT = 64;
 const noopLayoutViewportChange = () => {};
@@ -365,7 +366,7 @@ export function StarsTable({
               >
                 <StarRow
                   star={star}
-                  tags={tag?.tags ?? []}
+                  tags={visibleTagNames(tag)}
                   hasNotes={!!(tag?.notes && tag.notes.trim())}
                   favorite={favorite}
                   favoriteBusy={favoriteBusy}

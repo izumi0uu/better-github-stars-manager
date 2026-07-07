@@ -7,7 +7,8 @@ import { DEV } from '@/dev';
 import { queryStars, invalidateCache, type QueryParams, type QueryResult } from './query';
 import { countTopicRepoFrequency, suggestTags } from '@/ui/suggest';
 import { translateError } from '@/api/errors';
-import type { TagBulkUpdate } from '@/api/tag-store';
+import type { AutoTagBulkUpdate } from '@/api/tag-store';
+import { addTagNames, dismissedAutoTagNames, manualTagNames, sameTagNames, visibleTagNames } from '@/tags/tag-model';
 import { selectActiveBackfillId } from '@/upgrades/backfill-state';
 import { createBackfillConfigStore, getBackfillTask } from './backfill-config';
 import { createBackfillExecutor } from './backfill-executor';
@@ -40,6 +41,7 @@ type Req =
   | { type: 'setTags'; full_name: string; tags: string[] }
   | { type: 'setNotes'; full_name: string; notes: string }
   | { type: 'setFavorite'; full_name: string; favorite: boolean }
+  | { type: 'removeVisibleTag'; full_name: string; name: string }
   | { type: 'deleteTag'; name: string }
   | { type: 'deleteAllTags' }
   | { type: 'acceptSuggestions'; full_name: string; toAdd: string[] }
@@ -193,7 +195,7 @@ async function autoTagAll(
   const excluded = new Set(await idbTagStore.listExcluded());
   const existingTags = await idbTagStore.getMany(stars.map((star) => star.full_name));
   const topicRepoCounts = countTopicRepoFrequency(stars);
-  const updates: TagBulkUpdate[] = [];
+  const updates: AutoTagBulkUpdate[] = [];
   const total = stars.length;
   console.log(
     '[GSM] autoTag START | stars:',
@@ -209,17 +211,16 @@ async function autoTagAll(
   );
   for (let i = 0; i < stars.length; i++) {
     const star = stars[i];
-    const existing = existingTags.get(star.full_name)?.tags ?? [];
-    const toAdd = suggestTags(star, existing, excluded, {
+    const existing = existingTags.get(star.full_name);
+    const manualTags = manualTagNames(existing);
+    const dismissed = dismissedAutoTagNames(existing);
+    const nextAutoTags = suggestTags(star, [...manualTags, ...dismissed], excluded, {
       limit: cfg.maxTagsPerRepo,
       minRepoCount: cfg.minTopicRepoCount,
       topicRepoCounts,
     });
-    if (toAdd.length > 0) {
-      const merged = Array.from(new Set([...existing, ...toAdd]));
-      if (merged.length !== existing.length) {
-        updates.push({ full_name: star.full_name, tags: merged });
-      }
+    if (!sameTagNames(existing?.autoTags ?? [], nextAutoTags)) {
+      updates.push({ full_name: star.full_name, autoTags: nextAutoTags });
     }
     const done = i + 1;
     if (onProgress && (done === 1 || done === total || done % 100 === 0)) {
@@ -233,7 +234,7 @@ async function autoTagAll(
     if (done % 100 === 0) await Promise.resolve();
   }
   const { updated: tagged } =
-    updates.length > 0 ? await idbTagStore.setTagsBulk(updates) : { updated: 0 };
+    updates.length > 0 ? await idbTagStore.setAutoTagsBulk(updates) : { updated: 0 };
   console.log('[GSM] autoTag END | newly tagged:', tagged, 'of', total);
   return { tagged };
 }
@@ -281,8 +282,9 @@ async function migrateLanguageTags(): Promise<void> {
     const allTags = await db.tags.toArray();
     let changed = 0;
     for (const t of allTags) {
-      const next = t.tags.filter((x) => !toRemove.has(x));
-      if (next.length === t.tags.length) continue; // already clean
+      const manualTags = manualTagNames(t);
+      const next = manualTags.filter((x) => !toRemove.has(x));
+      if (next.length === manualTags.length) continue; // already clean
       // setTags bumps mtime + marks dirty → next gistPush propagates the cleanup.
       await idbTagStore.setTags(t.full_name, next);
       if (++changed % 200 === 0) await Promise.resolve();
@@ -460,6 +462,11 @@ async function handle(req: Req): Promise<Res> {
         await idbTagStore.setFavorite(req.full_name, req.favorite);
         broadcastDataChanged();
         return { ok: true, data: { favorite: req.favorite } };
+      case 'removeVisibleTag': {
+        const r = await idbTagStore.removeVisibleTag(req.full_name, req.name);
+        broadcastDataChanged();
+        return { ok: true, data: r };
+      }
       case 'deleteTag': {
         // Remove this tag from every repo that has it and leave a tombstone.
         const r = await idbTagStore.deleteTag(req.name);
@@ -472,11 +479,12 @@ async function handle(req: Req): Promise<Res> {
         return { ok: true, data: r };
       }
       case 'acceptSuggestions': {
-        const existing = (await idbTagStore.get(req.full_name))?.tags ?? [];
-        const merged = Array.from(new Set([...existing, ...req.toAdd]));
+        const existingTag = await idbTagStore.get(req.full_name);
+        const existing = manualTagNames(existingTag);
+        const merged = addTagNames(existing, req.toAdd);
         await idbTagStore.setTags(req.full_name, merged);
         broadcastDataChanged();
-        return { ok: true, data: { tags: merged } };
+        return { ok: true, data: { tags: visibleTagNames(await idbTagStore.get(req.full_name)) } };
       }
       case 'suggestTags': {
         return { ok: true };
@@ -536,8 +544,8 @@ async function handle(req: Req): Promise<Res> {
         let n = 0;
         for (const item of req.items) {
           if (item.toAdd.length === 0) continue;
-          const existing = (await idbTagStore.get(item.full_name))?.tags ?? [];
-          const merged = Array.from(new Set([...existing, ...item.toAdd]));
+          const existing = manualTagNames(await idbTagStore.get(item.full_name));
+          const merged = addTagNames(existing, item.toAdd);
           if (merged.length !== existing.length) {
             await idbTagStore.setTags(item.full_name, merged);
             n++;

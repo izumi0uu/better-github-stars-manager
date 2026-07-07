@@ -220,7 +220,7 @@ describe('Favorite UI state', () => {
   it('matching committed favorite clears the parent override', () => {
     const overrides = { 'a/ai-tool': { value: true, pending: false } };
     const tags = new Map([
-      ['a/ai-tool', { full_name: 'a/ai-tool', tags: [], notes: '', favorite: true, mtime: '2026-06-26T00:00:00Z' }],
+      ['a/ai-tool', { full_name: 'a/ai-tool', manualTags: [], autoTags: [], dismissedAutoTags: [], manualTagsMtime: '2026-06-26T00:00:00Z', autoTagsMtime: '2026-06-26T00:00:00Z', dismissedAutoTagsMtime: '2026-06-26T00:00:00Z', notes: '', favorite: true, mtime: '2026-06-26T00:00:00Z' }],
     ]);
     const pruned = pruneFavoriteOverrides(overrides, tags, [{ full_name: 'a/ai-tool' }]);
     assert.deepEqual(pruned, {});
@@ -229,7 +229,7 @@ describe('Favorite UI state', () => {
   it('rows filtered out after a favorite change also clear stale overrides', () => {
     const overrides = { 'b/rust-lib': { value: false, pending: false } };
     const tags = new Map([
-      ['b/rust-lib', { full_name: 'b/rust-lib', tags: ['rust'], notes: '', favorite: false, mtime: '2026-06-26T00:00:00Z' }],
+      ['b/rust-lib', { full_name: 'b/rust-lib', manualTags: ['rust'], autoTags: [], dismissedAutoTags: [], manualTagsMtime: '2026-06-26T00:00:00Z', autoTagsMtime: '2026-06-26T00:00:00Z', dismissedAutoTagsMtime: '2026-06-26T00:00:00Z', notes: '', favorite: false, mtime: '2026-06-26T00:00:00Z' }],
     ]);
     const pruned = pruneFavoriteOverrides(overrides, tags, [{ full_name: 'a/ai-tool' }]);
     assert.deepEqual(pruned, {});

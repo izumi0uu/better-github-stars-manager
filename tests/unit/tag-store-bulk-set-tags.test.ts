@@ -7,13 +7,17 @@ import {
   resetDirtyForDev,
   snapshotDirty,
 } from '@/storage/idb-tag-store';
-import type { Tag, TagMeta } from '@/types';
+import { visibleTagNames } from '@/tags/tag-model';
+import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
+import type { TagMeta } from '@/types';
 
 async function seedBulkTags() {
-  await db.tags.bulkPut([
+  const rows = [
     {
       full_name: 'a/react',
-      tags: ['react'],
+      manualTags: ['react'],
+      autoTags: ['hooks'],
+      dismissedAutoTags: ['ui'],
       notes: 'keep notes',
       favorite: true,
       gh_list_id: 42,
@@ -26,7 +30,8 @@ async function seedBulkTags() {
       favorite: false,
       mtime: '2026-07-01T00:00:00Z',
     },
-  ] satisfies Tag[]);
+  ] satisfies LegacyTagRow[];
+  await db.table('tags').bulkPut(rows);
   await db.tagMeta.bulkPut([
     {
       name: 'ui',
@@ -65,7 +70,7 @@ describe('idbTagStore.setTagsBulk', () => {
     await db.close();
   });
 
-  it('updates mixed rows while preserving annotations and clearing only newly re-added tombstones', async () => {
+  it('updates manual rows while preserving annotations and clearing only newly re-added tombstones', async () => {
     const result = await idbTagStore.setTagsBulk([
       { full_name: 'a/react', tags: ['react', 'ui'] },
       { full_name: 'b/infra', tags: ['infra'] },
@@ -74,18 +79,24 @@ describe('idbTagStore.setTagsBulk', () => {
 
     assert.deepEqual(result, { updated: 2 });
 
-    const [react, infra, created] = await Promise.all([
+    const [react, infraRaw, created] = await Promise.all([
       db.tags.get('a/react'),
-      db.tags.get('b/infra'),
+      db.table('tags').get('b/infra') as Promise<LegacyTagRow | undefined>,
       db.tags.get('c/new'),
     ]);
-    assert.deepEqual(react?.tags, ['react', 'ui']);
+    const infra = infraRaw ? normalizeStoredTag(infraRaw) : undefined;
+    assert.deepEqual(react?.manualTags, ['react', 'ui']);
+    assert.deepEqual(react?.autoTags, ['hooks']);
+    assert.deepEqual(react?.dismissedAutoTags, []);
+    assert.deepEqual(visibleTagNames(react), ['react', 'ui', 'hooks']);
     assert.equal(react?.notes, 'keep notes');
     assert.equal(react?.favorite, true);
     assert.equal(react?.gh_list_id, 42);
-    assert.deepEqual(infra?.tags, ['infra']);
+    assert.deepEqual(visibleTagNames(infra), ['infra']);
     assert.equal(infra?.mtime, '2026-07-01T00:00:00Z');
-    assert.deepEqual(created?.tags, ['ui']);
+    assert.deepEqual(created?.manualTags, ['ui']);
+    assert.deepEqual(created?.autoTags, []);
+    assert.deepEqual(created?.dismissedAutoTags, []);
     assert.equal(created?.notes, '');
     assert.equal(created?.favorite, false);
 
@@ -104,10 +115,15 @@ describe('idbTagStore.setTagsBulk', () => {
     assert.equal(snapshotDirty().meta, true);
   });
 
-  it('preserves tag order semantics while dirtying reordered updates', async () => {
+  it('preserves tag order semantics while dirtying reordered manual updates', async () => {
     await db.tags.put({
       full_name: 'a/react',
-      tags: ['react', 'ui'],
+      manualTags: ['react', 'ui'],
+      autoTags: [],
+      dismissedAutoTags: [],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
       notes: 'keep notes',
       favorite: true,
       mtime: '2026-07-01T00:00:00Z',
@@ -118,8 +134,77 @@ describe('idbTagStore.setTagsBulk', () => {
     ]);
 
     assert.deepEqual(result, { updated: 1 });
-    assert.deepEqual((await db.tags.get('a/react'))?.tags, ['ui', 'react']);
+    assert.deepEqual((await db.tags.get('a/react'))?.manualTags, ['ui', 'react']);
     assert.deepEqual(snapshotDirty().names.sort(), ['a/react']);
+  });
+
+  it('replaces only the auto layer in bulk and preserves manual state', async () => {
+    const result = await idbTagStore.setAutoTagsBulk([
+      { full_name: 'a/react', autoTags: ['ui', 'react'] },
+      { full_name: 'b/infra', autoTags: [] },
+    ]);
+
+    assert.deepEqual(result, { updated: 1 });
+    const react = await db.tags.get('a/react');
+    assert.deepEqual(react?.manualTags, ['react']);
+    assert.deepEqual(react?.autoTags, []);
+    assert.deepEqual(react?.dismissedAutoTags, ['ui']);
+    assert.equal(react?.notes, 'keep notes');
+    assert.deepEqual(snapshotDirty().names.sort(), ['a/react']);
+  });
+
+  it('records manually removed tags as dismissed so auto bulk cannot restore them', async () => {
+    await db.tags.put({
+      full_name: 'manual/topic-row',
+      manualTags: ['react', 'ui'],
+      autoTags: [],
+      dismissedAutoTags: [],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
+      notes: '',
+      favorite: false,
+      mtime: '2026-07-01T00:00:00Z',
+    });
+
+    await idbTagStore.setTags('manual/topic-row', ['react']);
+    await idbTagStore.setAutoTagsBulk([{ full_name: 'manual/topic-row', autoTags: ['ui'] }]);
+
+    const row = await idbTagStore.get('manual/topic-row');
+    assert.deepEqual(row?.manualTags, ['react']);
+    assert.deepEqual(row?.autoTags, []);
+    assert.deepEqual(row?.dismissedAutoTags, ['ui']);
+    assert.deepEqual(visibleTagNames(row), ['react']);
+  });
+
+  it('keeps existing dismissals when replacing only the auto layer', async () => {
+    await idbTagStore.setTags('a/react', ['react']);
+    await idbTagStore.setAutoTagsBulk([{ full_name: 'a/react', autoTags: ['ui', 'hooks'] }]);
+
+    const react = await idbTagStore.get('a/react');
+    assert.deepEqual(react?.manualTags, ['react']);
+    assert.deepEqual(react?.autoTags, ['hooks']);
+    assert.deepEqual(react?.dismissedAutoTags, ['ui']);
+    assert.deepEqual(visibleTagNames(react), ['react', 'hooks']);
+  });
+
+  it('records manually removed legacy tags as dismissed so auto bulk cannot restore them', async () => {
+    await db.table('tags').put({
+      full_name: 'legacy/topic-row',
+      tags: ['topic'],
+      notes: '',
+      favorite: false,
+      mtime: '2026-07-01T00:00:00Z',
+    } satisfies LegacyTagRow);
+
+    await idbTagStore.setTags('legacy/topic-row', []);
+    await idbTagStore.setAutoTagsBulk([{ full_name: 'legacy/topic-row', autoTags: ['topic'] }]);
+
+    const row = await idbTagStore.get('legacy/topic-row');
+    assert.deepEqual(row?.manualTags, []);
+    assert.deepEqual(row?.autoTags, []);
+    assert.deepEqual(row?.dismissedAutoTags, ['topic']);
+    assert.deepEqual(visibleTagNames(row), []);
   });
 
   it('does not leak data or dirty state when the transaction aborts', async () => {
@@ -137,8 +222,9 @@ describe('idbTagStore.setTagsBulk', () => {
     );
     bulkPut.mockRestore();
 
-    assert.deepEqual((await db.tags.get('a/react'))?.tags, ['react']);
-    assert.deepEqual((await db.tags.get('b/infra'))?.tags, ['infra']);
+    assert.deepEqual((await db.tags.get('a/react'))?.manualTags, ['react']);
+    const infra = await db.table('tags').get('b/infra') as LegacyTagRow | undefined;
+    assert.deepEqual(visibleTagNames(infra ? normalizeStoredTag(infra) : undefined), ['infra']);
     assert.equal((await db.tagMeta.get('ui'))?.excluded, true);
     assert.deepEqual(snapshotDirty(), dirtyBefore);
   });

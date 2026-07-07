@@ -17,32 +17,44 @@ import { mergeTagNames, normalizeTagNames } from './tag-draft';
  */
 export function TagEditor({
   tags,
+  editableTags = tags,
   selectedTags,
   onToggleTag,
   onChangeTags,
+  onRemoveVisibleTag,
 }: {
   tags: string[];
+  editableTags?: string[];
   selectedTags: string[];
   onToggleTag: (tag: string) => void;
   onChangeTags: (tags: string[]) => void;
+  onRemoveVisibleTag?: (tag: string) => void;
 }) {
   const [bulk, setBulk] = useState(false);
   const addInputRef = useRef<HTMLInputElement | null>(null);
   const addInput = useImeBufferedInput('');
-  const bulkInput = useImeBufferedInput(tags.join(', '));
+  const bulkInput = useImeBufferedInput(editableTags.join(', '));
   const { m } = useI18n();
   const canAdd = !!addInput.value.trim();
-  const canApplyBulk = bulkInput.value !== tags.join(', ');
+  const canApplyBulk = bulkInput.value !== editableTags.join(', ');
 
   const removeTag = (t: string) => {
-    onChangeTags(tags.filter((x) => x !== t));
+    if (editableTags.some((tag) => tag.toLowerCase() === t.toLowerCase())) {
+      onChangeTags(editableTags.filter((x) => x.toLowerCase() !== t.toLowerCase()));
+      return;
+    }
+    if (onRemoveVisibleTag) {
+      onRemoveVisibleTag(t);
+      return;
+    }
+    onChangeTags(editableTags.filter((x) => x.toLowerCase() !== t.toLowerCase()));
   };
 
   const addTag = () => {
     const v = addInput.value.trim();
     if (!v) return;
 
-    onChangeTags(mergeTagNames(tags, [v]));
+    onChangeTags(mergeTagNames(editableTags, [v]));
     addInput.commit('');
     addInputRef.current?.focus();
   };
@@ -97,7 +109,7 @@ export function TagEditor({
               variant="ghost"
               size="sm"
               onClick={() => {
-                bulkInput.commit(tags.join(', '));
+                bulkInput.commit(editableTags.join(', '));
                 setBulk(true);
               }}
               title={m.tagEditor.bulkEditTitle}
@@ -118,7 +130,7 @@ export function TagEditor({
                 commitBulk();
               }
               if (e.key === 'Escape') {
-                bulkInput.commit(tags.join(', '));
+                bulkInput.commit(editableTags.join(', '));
                 setBulk(false);
               }
             }}
@@ -132,7 +144,7 @@ export function TagEditor({
               variant="ghost"
               size="sm"
               onClick={() => {
-                bulkInput.commit(tags.join(', '));
+                bulkInput.commit(editableTags.join(', '));
                 setBulk(false);
               }}
             >

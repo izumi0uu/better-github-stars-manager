@@ -7,13 +7,19 @@ import {
   resetDirtyForDev,
   snapshotDirty,
 } from '@/storage/idb-tag-store';
+import { visibleTagNames } from '@/tags/tag-model';
 import type { Tag, TagMeta } from '@/types';
 
 async function seedDeleteTagRows() {
   await db.tags.bulkPut([
     {
       full_name: 'a/react',
-      tags: ['react', 'ui'],
+      manualTags: ['react', 'ui'],
+      autoTags: ['topic'],
+      dismissedAutoTags: [],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
       notes: 'keep notes',
       favorite: true,
       gh_list_id: 42,
@@ -21,14 +27,24 @@ async function seedDeleteTagRows() {
     },
     {
       full_name: 'b/infra',
-      tags: ['ui', 'infra'],
+      manualTags: ['infra'],
+      autoTags: ['ui'],
+      dismissedAutoTags: [],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
       notes: 'keep infra',
       favorite: false,
       mtime: '2026-07-01T00:00:00Z',
     },
     {
       full_name: 'c/empty',
-      tags: [],
+      manualTags: [],
+      autoTags: [],
+      dismissedAutoTags: [],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
       notes: 'untouched',
       favorite: true,
       mtime: '2026-07-01T00:00:00Z',
@@ -75,14 +91,17 @@ describe('idbTagStore.deleteTag', () => {
       db.tags.get('b/infra'),
       db.tags.get('c/empty'),
     ]);
-    assert.deepEqual(react?.tags, ['react']);
+    assert.deepEqual(react?.manualTags, ['react']);
+    assert.deepEqual(react?.autoTags, ['topic']);
     assert.equal(react?.notes, 'keep notes');
     assert.equal(react?.favorite, true);
     assert.equal(react?.gh_list_id, 42);
-    assert.deepEqual(infra?.tags, ['infra']);
+    assert.deepEqual(infra?.manualTags, ['infra']);
+    assert.deepEqual(infra?.autoTags, []);
+    assert.deepEqual(infra?.dismissedAutoTags, ['ui']);
     assert.equal(infra?.notes, 'keep infra');
     assert.equal(infra?.favorite, false);
-    assert.deepEqual(empty?.tags, []);
+    assert.deepEqual(visibleTagNames(empty), []);
     assert.equal(empty?.notes, 'untouched');
     assert.equal(empty?.favorite, true);
 
@@ -101,13 +120,35 @@ describe('idbTagStore.deleteTag', () => {
     const result = await idbTagStore.deleteTag('missing-tag');
 
     assert.deepEqual(result, { removed: 0 });
-    assert.deepEqual((await db.tags.get('a/react'))?.tags, ['react', 'ui']);
-    assert.deepEqual((await db.tags.get('b/infra'))?.tags, ['ui', 'infra']);
+    assert.deepEqual(visibleTagNames(await db.tags.get('a/react')), ['react', 'ui', 'topic']);
+    assert.deepEqual(visibleTagNames(await db.tags.get('b/infra')), ['infra', 'ui']);
 
     const missingMeta = await db.tagMeta.get('missing-tag');
     assert.equal(missingMeta?.excluded, true);
     assert.equal(missingMeta?.dimension, null);
     assert.equal(missingMeta?.color, null);
     assert.deepEqual(snapshotDirty(), { names: [], meta: true });
+  });
+
+  it('removes one visible tag and records row-level auto dismissal', async () => {
+    const result = await idbTagStore.removeVisibleTag('b/infra', 'ui');
+
+    assert.deepEqual(result, { removed: true });
+    const infra = await db.tags.get('b/infra');
+    assert.deepEqual(infra?.manualTags, ['infra']);
+    assert.deepEqual(infra?.autoTags, []);
+    assert.deepEqual(infra?.dismissedAutoTags, ['ui']);
+    assert.deepEqual(snapshotDirty().names, ['b/infra']);
+  });
+
+  it('records row-level dismissal when removing a manual-only visible tag', async () => {
+    const result = await idbTagStore.removeVisibleTag('a/react', 'ui');
+
+    assert.deepEqual(result, { removed: true });
+    const react = await db.tags.get('a/react');
+    assert.deepEqual(react?.manualTags, ['react']);
+    assert.deepEqual(react?.autoTags, ['topic']);
+    assert.deepEqual(react?.dismissedAutoTags, ['ui']);
+    assert.deepEqual(snapshotDirty().names, ['a/react']);
   });
 });

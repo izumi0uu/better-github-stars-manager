@@ -60,14 +60,30 @@ beforeEach(async () => {
     },
   ] as Star[]);
   await db.tags.bulkPut([
-    { full_name: 'a/ai', tags: ['ai'], notes: '', mtime: '2026-06-22T10:00:00Z' },
-    { full_name: 'b/rust', tags: ['rust'], notes: 'fast', favorite: true, mtime: '2026-06-22T10:00:00Z' },
+    tagRow('a/ai', ['ai'], { notes: '' }),
+    tagRow('b/rust', ['rust'], { notes: 'fast', favorite: true }),
   ] as Tag[]);
   await db.tagMeta.bulkPut([
     { name: 'ai', dimension: '领域', color: null, mtime: '2026-06-22T10:00:00Z' },
   ] as TagMeta[]);
   invalidateCache();
 });
+
+function tagRow(full_name: string, manualTags: string[], overrides: Partial<Tag> = {}): Tag {
+  const mtime = '2026-06-22T10:00:00Z';
+  return {
+    full_name,
+    manualTags,
+    autoTags: [],
+    dismissedAutoTags: [],
+    manualTagsMtime: mtime,
+    autoTagsMtime: mtime,
+    dismissedAutoTagsMtime: mtime,
+    notes: '',
+    mtime,
+    ...overrides,
+  };
+}
 
 afterAll(async () => {
   await db.close();

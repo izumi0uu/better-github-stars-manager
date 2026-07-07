@@ -2,6 +2,20 @@ import type { Tag } from '@/types';
 import type { CountProgressCallback, TagStore } from '@/api/tag-store';
 import { gistTagStore } from '@/sync/gist-tag-store';
 import { db } from './db';
+import {
+  addTagNames,
+  autoTagNames,
+  dismissedAutoTagNames,
+  includesTagName,
+  manualTagNames,
+  sameTagNames,
+  visibleTagNames,
+  withoutTagName,
+} from '@/tags/tag-model';
+import {
+  normalizeStoredTag,
+  type LegacyTagRow,
+} from './tag-shape';
 
 /**
  * Local source of truth for the tag/notes layer. Every write updates mtime +
@@ -35,23 +49,44 @@ function markMetaDirty(): void {
 }
 
 function emptyTag(full_name: string): Tag {
+  const ts = now();
   return {
     full_name,
-    tags: [],
+    manualTags: [],
+    autoTags: [],
+    dismissedAutoTags: [],
+    manualTagsMtime: ts,
+    autoTagsMtime: ts,
+    dismissedAutoTagsMtime: ts,
     notes: '',
     favorite: false,
-    mtime: now(),
+    mtime: ts,
   };
 }
 
-function touch(full_name: string): string {
-  markDirty(full_name);
-  return now();
+async function getNormalized(full_name: string): Promise<Tag | undefined> {
+  const row = await db.tags.get(full_name) as LegacyTagRow | undefined;
+  return row ? normalizeStoredTag(row) : undefined;
+}
+
+function buildManualTagReplacement(existing: Tag, tags: string[]) {
+  const existingManualTags = manualTagNames(existing);
+  const manualTags = addTagNames([], tags);
+  const removedManualTags = existingManualTags.filter((name) => !includesTagName(manualTags, name));
+  const existingDismissedAutoTags = dismissedAutoTagNames(existing);
+  const dismissedAutoTags = addTagNames(existingDismissedAutoTags, removedManualTags)
+    .filter((name) => !includesTagName(manualTags, name));
+  return {
+    existingManualTags,
+    manualTags,
+    dismissedAutoTags,
+    dismissedAutoTagsChanged: !sameTagNames(existingDismissedAutoTags, dismissedAutoTags),
+  };
 }
 
 export const idbTagStore: TagStore = {
   async get(full_name) {
-    return db.tags.get(full_name);
+    return getNormalized(full_name);
   },
 
   async getMeta(name) {
@@ -67,16 +102,28 @@ export const idbTagStore: TagStore = {
     const out = new Map<string, Tag>();
     // each() is cheaper than N get() calls.
     await db.tags.each((t) => {
-      if (set.has(t.full_name)) out.set(t.full_name, t);
+      if (set.has(t.full_name)) out.set(t.full_name, normalizeStoredTag(t as LegacyTagRow));
     });
     return out;
   },
 
   async setTags(full_name, tags) {
-    const existing = (await db.tags.get(full_name)) ?? emptyTag(full_name);
-    await db.tags.put({ ...existing, favorite: existing.favorite ?? false, tags, mtime: touch(full_name) });
-    // (Re)typing a previously-deleted (excluded) tag clears its tombstone so auto-assign stops skipping it.
-    const newlyAdded = tags.filter((t) => !existing.tags.includes(t));
+    const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
+    const replacement = buildManualTagReplacement(existing, tags);
+    const ts = now();
+    await db.tags.put(normalizeStoredTag({
+      ...existing,
+      favorite: existing.favorite ?? false,
+      manualTags: replacement.manualTags,
+      dismissedAutoTags: replacement.dismissedAutoTags,
+      manualTagsMtime: ts,
+      dismissedAutoTagsMtime: replacement.dismissedAutoTagsChanged ? ts : existing.dismissedAutoTagsMtime,
+      mtime: ts,
+    }));
+    markDirty(full_name);
+    // (Re)typing a previously-deleted global tag clears its tombstone.
+    const newlyAdded = replacement.manualTags
+      .filter((t) => !includesTagName(replacement.existingManualTags, t));
     for (const name of newlyAdded) {
       const meta = await db.tagMeta.get(name);
       if (meta?.excluded) {
@@ -94,21 +141,28 @@ export const idbTagStore: TagStore = {
     await db.transaction('rw', db.tags, db.tagMeta, async () => {
       const tagRecords: Tag[] = [];
       for (const update of updates) {
-        const existing = (await db.tags.get(update.full_name)) ?? emptyTag(update.full_name);
-        const existingTags = existing.tags ?? [];
-        if (existingTags.length === update.tags.length && existingTags.every((tag, i) => tag === update.tags[i])) {
+        const existing = (await getNormalized(update.full_name)) ?? emptyTag(update.full_name);
+        const replacement = buildManualTagReplacement(existing, update.tags);
+        if (
+          sameTagNames(replacement.existingManualTags, replacement.manualTags) &&
+          !replacement.dismissedAutoTagsChanged
+        ) {
           continue;
         }
 
-        tagRecords.push({
+        tagRecords.push(normalizeStoredTag({
           ...existing,
           favorite: existing.favorite ?? false,
-          tags: update.tags,
+          manualTags: replacement.manualTags,
+          dismissedAutoTags: replacement.dismissedAutoTags,
+          manualTagsMtime: ts,
+          dismissedAutoTagsMtime: replacement.dismissedAutoTagsChanged ? ts : existing.dismissedAutoTagsMtime,
           mtime: ts,
-        });
+        }));
         touchedNames.push(update.full_name);
 
-        const newlyAdded = update.tags.filter((tag) => !existingTags.includes(tag));
+        const newlyAdded = replacement.manualTags
+          .filter((tag) => !includesTagName(replacement.existingManualTags, tag));
         for (const name of newlyAdded) {
           const meta = await db.tagMeta.get(name);
           if (meta?.excluded) {
@@ -125,18 +179,84 @@ export const idbTagStore: TagStore = {
     return { updated: touchedNames.length };
   },
 
+  async setAutoTagsBulk(updates) {
+    const touchedNames: string[] = [];
+    const ts = now();
+
+    await db.transaction('rw', db.tags, async () => {
+      const tagRecords: Tag[] = [];
+      for (const update of updates) {
+        const existing = (await getNormalized(update.full_name)) ?? emptyTag(update.full_name);
+        const manualTags = manualTagNames(existing);
+        const dismissedAutoTags = dismissedAutoTagNames(existing);
+        const autoTags = addTagNames([], update.autoTags)
+          .filter((name) => (
+            !includesTagName(manualTags, name) && !includesTagName(dismissedAutoTags, name)
+          ));
+        if (sameTagNames(autoTagNames(existing), autoTags)) continue;
+        tagRecords.push(normalizeStoredTag({
+          ...existing,
+          favorite: existing.favorite ?? false,
+          autoTags,
+          autoTagsMtime: ts,
+        }));
+        touchedNames.push(update.full_name);
+      }
+      if (tagRecords.length > 0) await db.tags.bulkPut(tagRecords);
+    });
+
+    for (const fullName of touchedNames) markDirty(fullName);
+    return { updated: touchedNames.length };
+  },
+
+  async removeVisibleTag(full_name, name) {
+    let removed = false;
+    let touched = false;
+    const ts = now();
+
+    await db.transaction('rw', db.tags, async () => {
+      const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
+      const hadManual = includesTagName(existing.manualTags, name);
+      const hadAuto = includesTagName(existing.autoTags, name);
+      if (!hadManual && !hadAuto) return;
+      const manualTags = withoutTagName(existing.manualTags, name);
+      const autoTags = withoutTagName(existing.autoTags, name);
+      const dismissedAutoTags = addTagNames(existing.dismissedAutoTags, [name]);
+      await db.tags.put(normalizeStoredTag({
+        ...existing,
+        favorite: existing.favorite ?? false,
+        manualTags,
+        autoTags,
+        dismissedAutoTags,
+        manualTagsMtime: hadManual ? ts : existing.manualTagsMtime,
+        autoTagsMtime: hadAuto ? ts : existing.autoTagsMtime,
+        dismissedAutoTagsMtime: sameTagNames(existing.dismissedAutoTags, dismissedAutoTags)
+          ? existing.dismissedAutoTagsMtime
+          : ts,
+        mtime: ts,
+      }));
+      removed = true;
+      touched = true;
+    });
+
+    if (touched) markDirty(full_name);
+    return { removed };
+  },
+
   async setNotes(full_name, notes) {
-    const existing = (await db.tags.get(full_name)) ?? emptyTag(full_name);
-    await db.tags.put({ ...existing, favorite: existing.favorite ?? false, notes, mtime: touch(full_name) });
+    const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
+    await db.tags.put(normalizeStoredTag({ ...existing, favorite: existing.favorite ?? false, notes, mtime: now() }));
+    markDirty(full_name);
   },
 
   async setFavorite(full_name, favorite) {
-    const existing = (await db.tags.get(full_name)) ?? emptyTag(full_name);
-    await db.tags.put({ ...existing, favorite, mtime: touch(full_name) });
+    const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
+    await db.tags.put(normalizeStoredTag({ ...existing, favorite, mtime: now() }));
+    markDirty(full_name);
   },
 
   async upsert(tag) {
-    await db.tags.put({ ...tag, favorite: tag.favorite ?? false });
+    await db.tags.put({ ...normalizeStoredTag(tag), favorite: tag.favorite ?? false });
     markDirty(tag.full_name);
   },
 
@@ -146,15 +266,32 @@ export const idbTagStore: TagStore = {
   },
 
   async deleteTag(name) {
+    return idbTagStore.deleteTagEverywhere(name);
+  },
+
+  async deleteTagEverywhere(name) {
     let removed = 0;
-    // Every repo currently carrying this tag — via the *tags multiEntry index.
-    const hits = await db.tags.where('tags').equals(name).toArray();
+    const touchedNames: string[] = [];
     const ts = now();
     await db.transaction('rw', db.tags, db.tagMeta, async () => {
-      for (const t of hits) {
-        const next = t.tags.filter((x) => x !== name);
-        if (next.length === t.tags.length) continue; // wasn't there (shouldn't happen)
-        await db.tags.put({ ...t, tags: next, mtime: touch(t.full_name) });
+      const rows = await db.tags.toArray() as LegacyTagRow[];
+      for (const row of rows) {
+        const t = normalizeStoredTag(row);
+        const hadManual = includesTagName(t.manualTags, name);
+        const hadAuto = includesTagName(t.autoTags, name);
+        if (!hadManual && !hadAuto) continue;
+        await db.tags.put(normalizeStoredTag({
+          ...t,
+          manualTags: withoutTagName(t.manualTags, name),
+          autoTags: withoutTagName(t.autoTags, name),
+          dismissedAutoTags: hadAuto ? addTagNames(t.dismissedAutoTags, [name]) : t.dismissedAutoTags,
+          favorite: t.favorite ?? false,
+          manualTagsMtime: hadManual ? ts : t.manualTagsMtime,
+          autoTagsMtime: hadAuto ? ts : t.autoTagsMtime,
+          dismissedAutoTagsMtime: hadAuto ? ts : t.dismissedAutoTagsMtime,
+          mtime: ts,
+        }));
+        touchedNames.push(t.full_name);
         removed++;
       }
       // Persist a delete tombstone (not a hard delete) so auto-assign can't resurrect the tag on the next sync; preserve any existing dimension/color.
@@ -167,6 +304,7 @@ export const idbTagStore: TagStore = {
         mtime: ts,
       });
     });
+    for (const fullName of touchedNames) markDirty(fullName);
     markMetaDirty();
     return { removed };
   },
@@ -178,13 +316,25 @@ export const idbTagStore: TagStore = {
     const ts = now();
 
     await db.transaction('rw', db.tags, async () => {
-      const rows = await db.tags.toArray();
-      for (const tag of rows) {
-        if (tag.tags.length === 0) continue;
-        assignmentsRemoved += tag.tags.length;
+      const rows = await db.tags.toArray() as LegacyTagRow[];
+      for (const row of rows) {
+        const tag = normalizeStoredTag(row);
+        const visible = visibleTagNames(tag);
+        if (visible.length === 0 && tag.dismissedAutoTags.length === 0) continue;
+        assignmentsRemoved += visible.length;
         touchedNames.push(tag.full_name);
-        for (const name of tag.tags) removedNames.add(name);
-        await db.tags.put({ ...tag, tags: [], favorite: tag.favorite ?? false, mtime: ts });
+        for (const name of visible) removedNames.add(name);
+        await db.tags.put(normalizeStoredTag({
+          ...tag,
+          manualTags: [],
+          autoTags: [],
+          dismissedAutoTags: [],
+          manualTagsMtime: tag.manualTags.length > 0 ? ts : tag.manualTagsMtime,
+          autoTagsMtime: tag.autoTags.length > 0 ? ts : tag.autoTagsMtime,
+          dismissedAutoTagsMtime: tag.dismissedAutoTags.length > 0 ? ts : tag.dismissedAutoTagsMtime,
+          favorite: tag.favorite ?? false,
+          mtime: ts,
+        }));
       }
     });
 
@@ -202,7 +352,7 @@ export const idbTagStore: TagStore = {
 
   async syncPush(onProgress?: CountProgressCallback) {
     const dirtySnapshot = snapshotDirtyForPush();
-    return gistTagStore.push(new Set(), false, onProgress, dirtySnapshot);
+    return gistTagStore.push(dirtySnapshot, onProgress);
   },
 
   async syncPull(onProgress?: CountProgressCallback) {
@@ -212,25 +362,14 @@ export const idbTagStore: TagStore = {
 };
 
 /** Internal hooks for the Gist transport to clear only the dirty versions it pushed. */
-export function clearDirty(snapshot: DirtySnapshot): void;
-export function clearDirty(names: Iterable<string>, meta: boolean): void;
-export function clearDirty(namesOrSnapshot: DirtySnapshot | Iterable<string>, meta = false) {
-  if (typeof namesOrSnapshot === 'object' && 'names' in namesOrSnapshot) {
-    for (const { name, version } of namesOrSnapshot.names) {
-      if (dirtyVersions.get(name) === version) {
-        dirty.delete(name);
-        dirtyVersions.delete(name);
-      }
+export function clearDirty(snapshot: DirtySnapshot): void {
+  for (const { name, version } of snapshot.names) {
+    if (dirtyVersions.get(name) === version) {
+      dirty.delete(name);
+      dirtyVersions.delete(name);
     }
-    if (namesOrSnapshot.meta && dirtyMetaVersion === namesOrSnapshot.metaVersion) dirtyMeta = false;
-    return;
   }
-
-  for (const name of namesOrSnapshot) {
-    dirty.delete(name);
-    dirtyVersions.delete(name);
-  }
-  if (meta) dirtyMeta = false;
+  if (snapshot.meta && dirtyMetaVersion === snapshot.metaVersion) dirtyMeta = false;
 }
 
 export function snapshotDirty(): { names: string[]; meta: boolean } {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it } from 'vitest';
 import { invalidateCache, queryStars } from '../../../src/background/query';
 import { db } from '../../../src/storage/db';
+import { visibleTagNames } from '../../../src/tags/tag-model';
 import type { Star, Tag, TagMeta } from '../../../src/types';
 
 const baseStar = {
@@ -29,7 +30,12 @@ function star(overrides: Partial<Star> & Pick<Star, 'full_name' | 'starred_at'>)
 function tag(full_name: string, tags: string[], overrides: Partial<Tag> = {}): Tag {
   return {
     full_name,
-    tags,
+    manualTags: tags,
+    autoTags: [],
+    dismissedAutoTags: [],
+    manualTagsMtime: '2026-01-01T00:00:00Z',
+    autoTagsMtime: '2026-01-01T00:00:00Z',
+    dismissedAutoTagsMtime: '2026-01-01T00:00:00Z',
     notes: '',
     favorite: false,
     mtime: '2026-01-01T00:00:00Z',
@@ -146,7 +152,7 @@ describe('Query cache and semantics regressions', () => {
     assert.equal(result.total, 3);
     assert.deepEqual(result.rows.map((row) => row.full_name), ['b/bravo']);
     assert.deepEqual(Object.keys(result.tagsForRows), ['b/bravo']);
-    assert.deepEqual(result.tagsForRows['b/bravo']?.tags, ['second']);
+    assert.deepEqual(visibleTagNames(result.tagsForRows['b/bravo']), ['second']);
     assert.equal(result.tagsForRows['b/bravo']?.notes, 'visible page');
   });
 

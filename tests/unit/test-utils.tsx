@@ -77,7 +77,12 @@ export function fakeStar(overrides: Partial<Star> = {}): Star {
 export function fakeTag(overrides: Partial<Tag> = {}): Tag {
   return {
     full_name: 'owner/repo',
-    tags: ['ui'],
+    manualTags: ['ui'],
+    autoTags: [],
+    dismissedAutoTags: [],
+    manualTagsMtime: '2024-03-02T00:00:00Z',
+    autoTagsMtime: '2024-03-02T00:00:00Z',
+    dismissedAutoTagsMtime: '2024-03-02T00:00:00Z',
     notes: 'draft',
     mtime: '2024-03-02T00:00:00Z',
     ...overrides,

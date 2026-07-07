@@ -19,6 +19,7 @@ import {
   shouldAdoptIncomingTagDraft,
   shouldAdoptIncomingTextDraft,
 } from "./tag-draft";
+import { autoTagNames, manualTagNames, visibleTagNames } from "@/tags/tag-model";
 import { Badge } from "@/ui/shadcn/badge";
 import { Button } from "@/ui/shadcn/button";
 import { Textarea } from "@/ui/shadcn/textarea";
@@ -58,20 +59,21 @@ export function RepoDetailPanel({
   hasNext: boolean;
   interactionLocked?: boolean;
 }) {
-  const myTags = tag?.tags ?? [];
-  const myTagsKey = myTags.join("\u0000");
+  const manualTags = manualTagNames(tag);
+  const autoTags = autoTagNames(tag);
+  const myTagsKey = manualTags.join("\u0000");
   const notes = tag?.notes ?? "";
   const { m } = useI18n();
 
   const [excluded, setExcluded] = useState<string[]>([]);
-  const [draftTags, setDraftTags] = useState(myTags);
+  const [draftTags, setDraftTags] = useState(manualTags);
   const [draftNotes, setDraftNotes] = useState(notes);
   const [tagsSavePhase, setTagsSavePhase] = useState<SaveActionPhase>("idle");
   const [notesSavePhase, setNotesSavePhase] = useState<SaveActionPhase>("idle");
-  const draftTagsRef = useRef(myTags);
+  const draftTagsRef = useRef(manualTags);
   const draftNotesRef = useRef(notes);
   const loadedRepoRef = useRef(star.full_name);
-  const loadedTagsRef = useRef(myTags);
+  const loadedTagsRef = useRef(manualTags);
   const loadedNotesRef = useRef(notes);
   const tagsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -93,11 +95,11 @@ export function RepoDetailPanel({
 
     if (repoChanged) {
       loadedRepoRef.current = star.full_name;
-      loadedTagsRef.current = myTags;
+      loadedTagsRef.current = manualTags;
       loadedNotesRef.current = notes;
-      draftTagsRef.current = myTags;
+      draftTagsRef.current = manualTags;
       draftNotesRef.current = notes;
-      setDraftTags(myTags);
+      setDraftTags(manualTags);
       setDraftNotes(notes);
       resetSavePhase(setTagsSavePhase, tagsTimerRef);
       resetSavePhase(setNotesSavePhase, notesTimerRef);
@@ -108,11 +110,11 @@ export function RepoDetailPanel({
       shouldAdoptIncomingTagDraft(
         draftTagsRef.current,
         loadedTagsRef.current,
-        myTags,
+        manualTags,
       )
     ) {
-      draftTagsRef.current = myTags;
-      setDraftTags(myTags);
+      draftTagsRef.current = manualTags;
+      setDraftTags(manualTags);
       resetSavePhase(setTagsSavePhase, tagsTimerRef);
     }
 
@@ -128,7 +130,7 @@ export function RepoDetailPanel({
       resetSavePhase(setNotesSavePhase, notesTimerRef);
     }
 
-    loadedTagsRef.current = myTags;
+    loadedTagsRef.current = manualTags;
     loadedNotesRef.current = notes;
   }, [star.full_name, myTagsKey, notes]);
 
@@ -140,8 +142,8 @@ export function RepoDetailPanel({
     [],
   );
 
-  const suggestions = suggestTags(star, draftTags, excluded);
-  const tagsDirty = !sameTagNames(draftTags, myTags);
+  const suggestions = suggestTags(star, [...draftTags, ...autoTags], excluded);
+  const tagsDirty = !sameTagNames(draftTags, manualTags);
   const notesDirty = draftNotes !== notes;
 
   const updateDraftTags = (nextTags: string[]) => {
@@ -160,7 +162,7 @@ export function RepoDetailPanel({
 
   const saveTags = async () => {
     const nextTags = draftTagsRef.current;
-    if (sameTagNames(nextTags, myTags)) return;
+    if (sameTagNames(nextTags, manualTags)) return;
 
     let ok = false;
     setTagsSavePhase("busy");
@@ -193,6 +195,12 @@ export function RepoDetailPanel({
   const acceptSuggestions = () => {
     if (suggestions.length === 0) return;
     updateDraftTags(mergeTagNames(draftTagsRef.current, suggestions));
+  };
+
+  const removeVisibleTag = async (name: string) => {
+    await bgCall("removeVisibleTag", { full_name: star.full_name, name });
+    updateDraftTags(draftTagsRef.current.filter((tagName) => tagName.toLowerCase() !== name.toLowerCase()));
+    onDataChanged?.();
   };
 
   useEffect(() => {
@@ -365,12 +373,14 @@ export function RepoDetailPanel({
         )}
 
         <Separator />
-        <Section title={m.repoDetail.tags(draftTags.length)}>
+        <Section title={m.repoDetail.tags(visibleTagNames({ manualTags: draftTags, autoTags }).length)}>
           <TagEditor
-            tags={draftTags}
+            tags={visibleTagNames({ manualTags: draftTags, autoTags })}
+            editableTags={draftTags}
             selectedTags={selectedTags}
             onToggleTag={onToggleTag}
             onChangeTags={updateDraftTags}
+            onRemoveVisibleTag={(name) => void removeVisibleTag(name)}
           />
           <SaveRow
             dirty={tagsDirty}

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it } from 'vitest';
 import { queryStars, invalidateCache, type QueryParams, type QueryResult } from '@/background/query';
 import { db } from '@/storage/db';
+import { visibleTagNames } from '@/tags/tag-model';
+import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
 import type { Star, Tag, TagMeta } from '@/types';
 import type { SortKey } from '@/ui/filter-store';
 import { createRng, fuzzCases, fuzzFailure, type SeededRng } from '../../helpers/seeded-fuzz';
@@ -161,19 +163,30 @@ function makeStar(fullName: string, index: number, rng: SeededRng, overrides: Pa
 }
 
 function makeTag(fullName: string, selected: string[], index: number, rng: SeededRng): Tag {
+  const dismissedAutoTags = rng.subset(tagNames.filter((tag) => !selected.includes(tag)), 1);
+  const mtime = iso(index + 500);
   return {
     full_name: fullName,
-    tags: selected,
+    manualTags: selected,
+    autoTags: rng.subset(tagNames.filter((tag) => (
+      !selected.includes(tag) && !dismissedAutoTags.includes(tag)
+    )), 2),
+    dismissedAutoTags,
+    manualTagsMtime: mtime,
+    autoTagsMtime: mtime,
+    dismissedAutoTagsMtime: mtime,
     notes: rng.bool(0.35) ? `note ${rng.pick(words)}` : '',
     favorite: rng.bool(0.2),
     gh_list_id: rng.bool(0.2) ? rng.int(1, 20) : null,
-    mtime: iso(index + 500),
+    mtime,
   };
 }
 
 function referenceQuery(input: GeneratedQueryCase): QueryResult {
   const indexedStars = [...input.stars].sort((a, b) => a.full_name.localeCompare(b.full_name));
-  const indexedTags = [...input.tags].sort((a, b) => a.full_name.localeCompare(b.full_name));
+  const indexedTags = input.tags
+    .map((tag) => normalizeStoredTag(tag as LegacyTagRow))
+    .sort((a, b) => a.full_name.localeCompare(b.full_name));
   const tagMap = new Map(indexedTags.map((tag) => [tag.full_name, tag]));
   const excluded = new Set(input.tagMeta.filter((meta) => meta.excluded).map((meta) => meta.name));
   const q = input.params.filter.query.trim().toLowerCase();
@@ -184,7 +197,7 @@ function referenceQuery(input: GeneratedQueryCase): QueryResult {
     if (input.params.filter.onlyArchived && !star.archived) return false;
     if (langSet && (star.language === null || !langSet.has(star.language))) return false;
     const tagRecord = tagMap.get(star.full_name);
-    const myTags = tagRecord?.tags ?? [];
+    const myTags = visibleTagNames(tagRecord);
     if (input.params.filter.onlyFavorite && !tagRecord?.favorite) return false;
     if (input.params.filter.onlyUntagged && myTags.length > 0) return false;
     if (tagSet) {
@@ -264,7 +277,7 @@ function countLanguages(stars: Star[]): Map<string, number> {
 function countTags(tags: Tag[], excluded: Set<string>): Map<string, number> {
   const counts = new Map<string, number>();
   for (const row of tags) {
-    for (const tag of row.tags) {
+    for (const tag of visibleTagNames(row)) {
       if (!excluded.has(tag)) counts.set(tag, (counts.get(tag) ?? 0) + 1);
     }
   }
@@ -300,7 +313,7 @@ function summarizeResult(result: QueryResult) {
     rows: result.rows.map((row) => row.full_name),
     total: result.total,
     grandTotal: result.grandTotal,
-    tagsForRows: Object.fromEntries(Object.entries(result.tagsForRows).map(([name, tag]) => [name, tag?.tags ?? null])),
+    tagsForRows: Object.fromEntries(Object.entries(result.tagsForRows).map(([name, tag]) => [name, tag ? visibleTagNames(tag) : null])),
     languages: result.languages,
     tagTree: result.tagTree,
     tagTotal: result.tagTotal,
@@ -320,7 +333,7 @@ function summarizeCase(input: GeneratedQueryCase) {
       created_at: star.created_at,
       pushed_at: star.pushed_at,
     })),
-    tags: input.tags.map((tag) => ({ full_name: tag.full_name, tags: tag.tags, favorite: tag.favorite, notes: tag.notes })),
+    tags: input.tags.map((tag) => ({ full_name: tag.full_name, tags: visibleTagNames(tag), favorite: tag.favorite, notes: tag.notes })),
     excluded: input.tagMeta.filter((meta) => meta.excluded).map((meta) => meta.name),
   };
 }

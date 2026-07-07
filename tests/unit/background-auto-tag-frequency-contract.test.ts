@@ -15,8 +15,9 @@ describe('background auto-tag frequency contract', () => {
   });
 
   it('uses split auto-tag policy fields for cap and minimum repo coverage', () => {
-    const block = backgroundSource.match(/const toAdd = suggestTags\([\s\S]*?\n    \}\);/)?.[0] ?? '';
+    const block = backgroundSource.match(/const nextAutoTags = suggestTags\([\s\S]*?\n    \}\);/)?.[0] ?? '';
     assert.ok(block, 'autoTagAll should call suggestTags with a policy object');
+    assert.match(block, /\.\.\.manualTags, \.\.\.dismissed/);
     assert.match(block, /limit: cfg\.maxTagsPerRepo/);
     assert.match(block, /minRepoCount: cfg\.minTopicRepoCount/);
     assert.match(block, /topicRepoCounts/);
@@ -25,17 +26,17 @@ describe('background auto-tag frequency contract', () => {
 
   it('computes the full update plan before one bulk write', () => {
     const block = autoTagAllBlock();
-    const bulkWrites = block.match(/idbTagStore\.setTagsBulk\(/g) ?? [];
+    const bulkWrites = block.match(/idbTagStore\.setAutoTagsBulk\(/g) ?? [];
     const perRepoWrites = block.match(/idbTagStore\.setTags\(/g) ?? [];
 
     assert.equal(bulkWrites.length, 1, 'autoTagAll should have exactly one bulk write site');
     assert.equal(perRepoWrites.length, 0, 'autoTagAll should not use per-repo setTags writes');
-    assert.match(block, /const updates: TagBulkUpdate\[\] = \[\];/);
-    assert.match(block, /updates\.push\(\{ full_name: star\.full_name, tags: merged \}\);/);
-    assert.match(block, /updates\.length > 0 \? await idbTagStore\.setTagsBulk\(updates\) : \{ updated: 0 \}/);
+    assert.match(block, /const updates: AutoTagBulkUpdate\[\] = \[\];/);
+    assert.match(block, /updates\.push\(\{ full_name: star\.full_name, autoTags: nextAutoTags \}\);/);
+    assert.match(block, /updates\.length > 0 \? await idbTagStore\.setAutoTagsBulk\(updates\) : \{ updated: 0 \}/);
     assert.ok(
-      block.indexOf('updates.push({ full_name: star.full_name, tags: merged });') <
-        block.indexOf('await idbTagStore.setTagsBulk(updates)'),
+      block.indexOf('updates.push({ full_name: star.full_name, autoTags: nextAutoTags });') <
+        block.indexOf('await idbTagStore.setAutoTagsBulk(updates)'),
       'autoTagAll should finish planning changed rows before the storage write',
     );
   });

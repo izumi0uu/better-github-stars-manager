@@ -73,7 +73,12 @@ export interface Star {
 /** The user's annotation record for a repo. */
 export interface Tag {
   full_name: string;
-  tags: string[];
+  manualTags: string[];
+  autoTags: string[];
+  dismissedAutoTags: string[];
+  manualTagsMtime: string;
+  autoTagsMtime: string;
+  dismissedAutoTagsMtime: string;
   notes: string;
   favorite?: boolean;
   mtime: string;
@@ -147,13 +152,43 @@ export interface CryptoMeta {
   salt: string; // base64
 }
 
-/** Serialized tag transport stored in the sync gist. */
-export interface GistPayload {
+export type GistTagRowV1 = {
+  tags: string[];
+  notes: string;
+  favorite?: boolean;
+  mtime: string;
+  gh_list_id?: number | null;
+};
+
+export type GistTagRowV2 = {
+  manualTags: string[];
+  autoTags: string[];
+  dismissedAutoTags: string[];
+  manualTagsMtime: string;
+  autoTagsMtime: string;
+  dismissedAutoTagsMtime: string;
+  notes: string;
+  favorite?: boolean;
+  mtime: string;
+  gh_list_id?: number | null;
+};
+
+export interface GistPayloadV1 {
   v: 1;
-  tags: Record<string, Omit<Tag, 'full_name'>>;
+  tags: Record<string, GistTagRowV1>;
   tagMeta: Record<string, Omit<TagMeta, 'name'>>;
   exportedAt: string;
 }
+
+export interface GistPayloadV2 {
+  v: 2;
+  tags: Record<string, GistTagRowV2>;
+  tagMeta: Record<string, Omit<TagMeta, 'name'>>;
+  exportedAt: string;
+}
+
+/** Serialized tag transport stored in the sync gist. */
+export type GistPayload = GistPayloadV1 | GistPayloadV2;
 
 /** A suggested tag derived from repo metadata. */
 export interface TagSuggestion {

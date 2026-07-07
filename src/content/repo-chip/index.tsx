@@ -3,6 +3,7 @@ import { authStore } from '@/auth/auth-store';
 import { messageFor } from '@/i18n';
 import { bgCall } from '@/utils/messaging';
 import { parseRepoFromPathname } from './repo-path';
+import { manualTagNames, visibleTagNames } from '@/tags/tag-model';
 
 /**
  * Repo-page content script. Injects a tag chip beside a repo title on
@@ -83,7 +84,7 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
   root.appendChild(box);
 
   let editing = false;
-  let draft = (tag?.tags ?? []).join(', ');
+  let draft = manualTagNames(tag).join(', ');
 
   function render() {
     box.innerHTML = '';
@@ -104,14 +105,25 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
         await bgCall('setTags', { full_name, tags });
         editing = false;
         const got = await bgCall<{ tag: Tag | null }>('getTag', { full_name });
-        tag = got.tag ?? { full_name, tags, notes: '', mtime: new Date().toISOString() };
+        const ts = new Date().toISOString();
+        tag = got.tag ?? {
+          full_name,
+          manualTags: tags,
+          autoTags: [],
+          dismissedAutoTags: [],
+          manualTagsMtime: ts,
+          autoTagsMtime: ts,
+          dismissedAutoTagsMtime: ts,
+          notes: '',
+          mtime: ts,
+        };
         render();
       };
       editor.appendChild(input);
       editor.appendChild(save);
       wrap.appendChild(editor);
     } else {
-      const tags = tag?.tags ?? [];
+      const tags = visibleTagNames(tag);
       if (tags.length === 0) {
         const none = document.createElement('span');
         none.className = 'none';
@@ -141,7 +153,7 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
       edit.title = m.repoChip.editTags;
       edit.onclick = () => {
         editing = true;
-        draft = (tag?.tags ?? []).join(', ');
+        draft = manualTagNames(tag).join(', ');
         render();
       };
       wrap.appendChild(edit);

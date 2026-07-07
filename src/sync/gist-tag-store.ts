@@ -1,14 +1,19 @@
-import type { GistPayload, Tag, TagMeta } from '@/types';
+import type { GistPayload, GistPayloadV1, GistPayloadV2, Tag, TagMeta } from '@/types';
 import type { CountProgressCallback } from '@/api/tag-store';
 import { db } from '@/storage/db';
 import { authStore } from '@/auth/auth-store';
 import { clearDirty, type DirtySnapshot } from '@/storage/idb-tag-store';
 import { GIST_NO_TOKEN, GIST_CREATE_FAILED, GIST_PUSH_FAILED, GIST_PULL_FAILED } from '@/api/errors';
+import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
 
 /**
  * Gist as a zero-server cross-device sync channel, storing one tags+tagMeta
- * JSON snapshot. push writes the full snapshot; pull merges per-repo by mtime
- * LWW (newer wins).
+ * JSON snapshot. push writes the full snapshot; pull merges tag assignment
+ * layers independently so auto-tag reconciliation cannot overwrite newer
+ * manual tags from another device.
+ *
+ * Pull can import the released v1 `tags[]` payload shape. Mixed-version writes
+ * from unpublished/development builds are not a supported compatibility mode.
  */
 
 const GIST_FILENAME = 'better-github-stars-manager-tags.json';
@@ -36,7 +41,7 @@ async function createGist(): Promise<string> {
     body: JSON.stringify({
       description: GIST_DESC,
       public: false,
-      files: { [GIST_FILENAME]: { content: JSON.stringify({ v: 1, tags: {}, tagMeta: {}, exportedAt: new Date().toISOString() }) } },
+      files: { [GIST_FILENAME]: { content: JSON.stringify({ v: 2, tags: {}, tagMeta: {}, exportedAt: new Date().toISOString() }) } },
     }),
   });
   if (!res.ok) throw new Error(GIST_CREATE_FAILED);
@@ -85,13 +90,24 @@ type PullResult = {
 
 async function buildPayload(onProgress?: CountProgressCallback): Promise<{ payload: GistPayload; total: number }> {
   const total = (await db.tags.count()) + (await db.tagMeta.count());
-  const tags: GistPayload['tags'] = {};
+  const tags: GistPayloadV2['tags'] = {};
   let done = 0;
   const tick = () => onProgress?.(done, total);
   tick();
   await db.tags.each((t) => {
-    const { full_name: _fn, ...rest } = t;
-    tags[t.full_name] = rest;
+    const normalized = normalizeStoredTag(t as LegacyTagRow);
+    tags[normalized.full_name] = {
+      manualTags: normalized.manualTags,
+      autoTags: normalized.autoTags,
+      dismissedAutoTags: normalized.dismissedAutoTags,
+      manualTagsMtime: normalized.manualTagsMtime,
+      autoTagsMtime: normalized.autoTagsMtime,
+      dismissedAutoTagsMtime: normalized.dismissedAutoTagsMtime,
+      notes: normalized.notes,
+      favorite: normalized.favorite,
+      gh_list_id: normalized.gh_list_id,
+      mtime: normalized.mtime,
+    };
     done++;
     if (done === total || done % 50 === 0) tick();
   });
@@ -103,7 +119,7 @@ async function buildPayload(onProgress?: CountProgressCallback): Promise<{ paylo
     if (done === total || done % 50 === 0) tick();
   });
   tick();
-  return { payload: { v: 1, tags, tagMeta, exportedAt: new Date().toISOString() }, total };
+  return { payload: { v: 2, tags, tagMeta, exportedAt: new Date().toISOString() }, total };
 }
 
 export const gistTagStore = {
@@ -112,13 +128,11 @@ export const gistTagStore = {
    * (Full-snapshot push is simpler than diffing and the payload is ~600KB < 1MB.)
    */
   async push(
-    dirtyNames: Set<string>,
-    dirtyMeta: boolean,
+    dirtySnapshot: DirtySnapshot,
     onProgress?: CountProgressCallback,
-    dirtySnapshot?: DirtySnapshot,
   ): Promise<{ pushed: number; snapshot: number; recreated: boolean }> {
-    const pushedNames = dirtySnapshot ? new Set(dirtySnapshot.names.map(({ name }) => name)) : new Set(dirtyNames);
-    const pushingMeta = dirtySnapshot ? dirtySnapshot.meta : dirtyMeta;
+    const pushedNames = new Set(dirtySnapshot.names.map(({ name }) => name));
+    const pushingMeta = dirtySnapshot.meta;
     const hasLocalChanges = pushedNames.size > 0 || pushingMeta;
     const pushed = pushedNames.size + (pushingMeta ? 1 : 0);
     const { id, recreated } = await ensureWritableGist();
@@ -137,17 +151,15 @@ export const gistTagStore = {
       }),
     });
     if (!res.ok) throw new Error(GIST_PUSH_FAILED);
-    if (dirtySnapshot) clearDirty(dirtySnapshot);
-    else clearDirty(pushedNames, pushingMeta);
+    clearDirty(dirtySnapshot);
     await authStore.update({ gistSyncCursor: payload.exportedAt });
     onProgress?.(total, total);
     return { pushed, snapshot: total, recreated };
   },
 
   /**
-   * Pull: read the gist and merge each record by `mtime`. Returns the count of
-   * records
-   * that were updated locally from the remote.
+   * Pull: read the gist and merge tag assignment layers independently. Notes,
+   * favorite, and gh_list_id keep row-level mtime conflict resolution.
    */
   async pull(onProgress?: CountProgressCallback): Promise<PullResult> {
     const cfg = await authStore.getConfig();
@@ -164,14 +176,26 @@ export const gistTagStore = {
     const tick = () => onProgress?.(done, total);
     tick();
 
-    // Merge tags per-repo by mtime.
+    // Merge each assignment layer independently. Released v1 payloads are
+    // adapted at the import boundary; v2 rows must already be explicit layers.
     for (const [full_name, remoteTag] of Object.entries(remote.tags)) {
-      const local = await db.tags.get(full_name);
-      const remoteMtime = remoteTag.mtime;
-      if (!local || remoteMtime > local.mtime) {
-        const mergedTag: Tag = { full_name, ...remoteTag, favorite: remoteTag.favorite ?? false };
-        await db.tags.put(mergedTag);
+      const localRow = await db.tags.get(full_name) as LegacyTagRow | undefined;
+      const local = localRow ? normalizeStoredTag(localRow) : undefined;
+      const remoteNormalized = normalizeGistTag(full_name, remoteTag, remote.v);
+      if (!remoteNormalized) {
+        done++;
+        if (done === total || done % 50 === 0) tick();
+        continue;
+      }
+      if (!local) {
+        await db.tags.put(remoteNormalized);
         merged++;
+      } else {
+        const next = mergeTagRowsByLayer(local, remoteNormalized);
+        if (next.changed) {
+          await db.tags.put(next.tag);
+          merged++;
+        }
       }
       done++;
       if (done === total || done % 50 === 0) tick();
@@ -193,3 +217,72 @@ export const gistTagStore = {
     return { merged, total, missing: false };
   },
 };
+
+function normalizeGistTag(
+  full_name: string,
+  remoteTag: GistPayloadV1['tags'][string] | GistPayloadV2['tags'][string],
+  version: GistPayload['v'],
+): Tag | null {
+  if (version === 1) return normalizeStoredTag({ full_name, ...remoteTag });
+  const row = remoteTag as Partial<GistPayloadV2['tags'][string]>;
+  if (!isStringArray(row.manualTags)) return null;
+  if (!isStringArray(row.autoTags)) return null;
+  if (!isStringArray(row.dismissedAutoTags)) return null;
+  if (
+    typeof row.manualTagsMtime !== 'string' ||
+    typeof row.autoTagsMtime !== 'string' ||
+    typeof row.dismissedAutoTagsMtime !== 'string' ||
+    typeof row.notes !== 'string' ||
+    typeof row.mtime !== 'string'
+  ) {
+    return null;
+  }
+  return normalizeStoredTag({
+    full_name,
+    manualTags: row.manualTags,
+    autoTags: row.autoTags,
+    dismissedAutoTags: row.dismissedAutoTags,
+    manualTagsMtime: row.manualTagsMtime,
+    autoTagsMtime: row.autoTagsMtime,
+    dismissedAutoTagsMtime: row.dismissedAutoTagsMtime,
+    notes: row.notes,
+    favorite: row.favorite,
+    gh_list_id: row.gh_list_id,
+    mtime: row.mtime,
+  });
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function mergeTagRowsByLayer(local: Tag, remote: Tag): { tag: Tag; changed: boolean } {
+  let changed = false;
+  const next: Tag = { ...local };
+
+  if (remote.manualTagsMtime > local.manualTagsMtime) {
+    next.manualTags = remote.manualTags;
+    next.manualTagsMtime = remote.manualTagsMtime;
+    changed = true;
+  }
+  if (remote.autoTagsMtime > local.autoTagsMtime) {
+    next.autoTags = remote.autoTags;
+    next.autoTagsMtime = remote.autoTagsMtime;
+    changed = true;
+  }
+  if (remote.dismissedAutoTagsMtime > local.dismissedAutoTagsMtime) {
+    next.dismissedAutoTags = remote.dismissedAutoTags;
+    next.dismissedAutoTagsMtime = remote.dismissedAutoTagsMtime;
+    changed = true;
+  }
+  if (remote.mtime > local.mtime) {
+    next.notes = remote.notes;
+    next.favorite = remote.favorite;
+    next.gh_list_id = remote.gh_list_id;
+    next.mtime = remote.mtime;
+    changed = true;
+  }
+
+  const normalized = normalizeStoredTag(next);
+  return { tag: normalized, changed };
+}

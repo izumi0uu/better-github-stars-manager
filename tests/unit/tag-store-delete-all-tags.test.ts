@@ -7,13 +7,19 @@ import {
   resetDirtyForDev,
   snapshotDirty,
 } from '@/storage/idb-tag-store';
+import { visibleTagNames } from '@/tags/tag-model';
 import type { Tag, TagMeta } from '@/types';
 
 async function seedTags() {
   await db.tags.bulkPut([
     {
       full_name: 'a/react',
-      tags: ['react', 'ui'],
+      manualTags: ['react', 'ui'],
+      autoTags: ['topic'],
+      dismissedAutoTags: ['old-auto'],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
       notes: 'keep notes',
       favorite: true,
       gh_list_id: 42,
@@ -21,14 +27,24 @@ async function seedTags() {
     },
     {
       full_name: 'b/infra',
-      tags: ['ui', 'infra'],
+      manualTags: ['infra'],
+      autoTags: ['ui'],
+      dismissedAutoTags: [],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
       notes: 'keep infra',
       favorite: false,
       mtime: '2026-07-01T00:00:00Z',
     },
     {
       full_name: 'c/empty',
-      tags: [],
+      manualTags: [],
+      autoTags: [],
+      dismissedAutoTags: ['dismissed-only'],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
       notes: 'untouched',
       favorite: true,
       mtime: '2026-07-01T00:00:00Z',
@@ -69,8 +85,8 @@ describe('idbTagStore.deleteAllTags', () => {
     const result = await idbTagStore.deleteAllTags();
 
     assert.deepEqual(result, {
-      assignmentsRemoved: 4,
-      distinctTagsRemoved: 3,
+      assignmentsRemoved: 5,
+      distinctTagsRemoved: 4,
     });
 
     const [react, infra, empty] = await Promise.all([
@@ -78,14 +94,19 @@ describe('idbTagStore.deleteAllTags', () => {
       db.tags.get('b/infra'),
       db.tags.get('c/empty'),
     ]);
-    assert.deepEqual(react?.tags, []);
+    assert.deepEqual(react?.manualTags, []);
+    assert.deepEqual(react?.autoTags, []);
+    assert.deepEqual(react?.dismissedAutoTags, []);
     assert.equal(react?.notes, 'keep notes');
     assert.equal(react?.favorite, true);
     assert.equal(react?.gh_list_id, 42);
-    assert.deepEqual(infra?.tags, []);
+    assert.deepEqual(infra?.manualTags, []);
+    assert.deepEqual(infra?.autoTags, []);
+    assert.deepEqual(infra?.dismissedAutoTags, []);
     assert.equal(infra?.notes, 'keep infra');
     assert.equal(infra?.favorite, false);
-    assert.deepEqual(empty?.tags, []);
+    assert.deepEqual(visibleTagNames(empty), []);
+    assert.deepEqual(empty?.dismissedAutoTags, []);
     assert.equal(empty?.notes, 'untouched');
     assert.equal(empty?.favorite, true);
 
@@ -98,7 +119,7 @@ describe('idbTagStore.deleteAllTags', () => {
     assert.equal(metaByName.get('manual-excluded')?.excluded, true);
 
     const dirty = snapshotDirty();
-    assert.deepEqual(dirty.names.sort(), ['a/react', 'b/infra']);
+    assert.deepEqual(dirty.names.sort(), ['a/react', 'b/infra', 'c/empty']);
     assert.equal(dirty.meta, false);
     assert.deepEqual(await idbTagStore.listExcluded(), ['manual-excluded']);
   });
@@ -120,8 +141,8 @@ describe('idbTagStore.deleteAllTags', () => {
     await assert.rejects(() => idbTagStore.deleteAllTags(), /abort bulk delete/);
     put.mockRestore();
 
-    assert.deepEqual((await db.tags.get('a/react'))?.tags, ['react', 'ui']);
-    assert.deepEqual((await db.tags.get('b/infra'))?.tags, ['ui', 'infra']);
+    assert.deepEqual(visibleTagNames(await db.tags.get('a/react')), ['react', 'ui', 'topic']);
+    assert.deepEqual(visibleTagNames(await db.tags.get('b/infra')), ['infra', 'ui']);
     assert.deepEqual(snapshotDirty(), dirtyBefore);
   });
 });
