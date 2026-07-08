@@ -62,7 +62,7 @@ beforeEach(async () => {
   await db.tags.bulkPut([
     tagRow('a/ai', ['ai'], { notes: '' }),
     tagRow('b/rust', ['rust'], { notes: 'fast', favorite: true }),
-  ] as Tag[]);
+  ] as unknown as Tag[]);
   await db.tagMeta.bulkPut([
     { name: 'ai', dimension: '领域', color: null, mtime: '2026-06-22T10:00:00Z' },
   ] as TagMeta[]);
@@ -99,6 +99,8 @@ function defaultFilter() {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyWatched: false,
+    watchReasons: [],
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
   };
@@ -170,6 +172,53 @@ describe('Integration (real query engine + Dexie)', () => {
     assert.equal(r.tagsForRows['b/rust']?.favorite, true);
   });
 
+  it('filters watched repos and computes live watch summary facets', async () => {
+    await db.tags.bulkPut([
+      {
+        full_name: 'a/ai',
+        tags: ['ai'],
+        notes: '',
+        watch: { enabled: true, reasons: ['security', 'releases'] },
+        mtime: '2026-06-23T10:00:00Z',
+      },
+      {
+        full_name: 'b/rust',
+        tags: ['rust'],
+        notes: 'fast',
+        favorite: true,
+        watch: { enabled: true, reasons: [] },
+        mtime: '2026-06-23T10:00:00Z',
+      },
+      {
+        full_name: 'c/gone',
+        tags: [],
+        notes: '',
+        watch: { enabled: true, reasons: ['security'] },
+        mtime: '2026-06-23T10:00:00Z',
+      },
+    ] as unknown as Tag[]);
+    invalidateCache();
+
+    const watched = await queryStars({
+      filter: { ...defaultFilter(), onlyWatched: true },
+      offset: 0,
+      limit: 100,
+    });
+    assert.deepEqual(watched.rows.map((s) => s.full_name), ['b/rust', 'a/ai']);
+    assert.equal(watched.watchedTotal, 2);
+    assert.deepEqual(watched.watchReasons, [
+      { reason: 'releases', count: 1 },
+      { reason: 'security', count: 1 },
+    ]);
+
+    const security = await queryStars({
+      filter: { ...defaultFilter(), watchReasons: ['security'] },
+      offset: 0,
+      limit: 100,
+    });
+    assert.deepEqual(security.rows.map((s) => s.full_name), ['a/ai']);
+  });
+
   it('onlyArchived keeps archived repos only', async () => {
     const r = await queryStars({
       filter: { ...defaultFilter(), onlyArchived: true },
@@ -219,6 +268,38 @@ describe('Integration (real query engine + Dexie)', () => {
       limit: 100,
     });
     assert.deepEqual(r.rows.map((s) => s.full_name), ['b/rust', 'a/ai', 'c/gone', 'd/no-created', 'e/legacy']);
+  });
+
+  it('sort by pushed date tolerates null legacy values and keeps them last', async () => {
+    await db.stars.put({
+      ...base,
+      full_name: 'd/no-push',
+      description: 'never pushed',
+      language: 'Go',
+      topics: [],
+      starred_at: '2026-06-22',
+      stargazers_count: 20,
+      pushed_at: null,
+      created_at: '2026-06-20',
+    } as Star);
+    await db.stars.put({
+      ...base,
+      full_name: 'e/legacy-no-push',
+      description: 'legacy missing pushed_at',
+      language: 'JavaScript',
+      topics: [],
+      starred_at: '2026-06-23',
+      stargazers_count: 2,
+      pushed_at: undefined,
+      created_at: '2026-06-21',
+    } as unknown as Star);
+    invalidateCache();
+    const r = await queryStars({
+      filter: { ...defaultFilter(), showTombstone: true, sortKey: 'pushed_at', sortDir: 'desc' },
+      offset: 0,
+      limit: 100,
+    });
+    assert.deepEqual(r.rows.map((s) => s.full_name), ['b/rust', 'a/ai', 'c/gone', 'd/no-push', 'e/legacy-no-push']);
   });
 
   it('offset/limit windowing', async () => {

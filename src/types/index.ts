@@ -45,6 +45,8 @@ export interface LibraryViewPrefs {
     onlyFavorite: boolean;
     onlyUntagged: boolean;
     onlyArchived: boolean;
+    onlyWatched: boolean;
+    watchReasons: WatchReason[];
   };
   sort: {
     sortKey: LibraryViewSortKey;
@@ -70,7 +72,15 @@ export interface Star {
   synced_at: string;
 }
 
-/** The user's annotation record for a repo. */
+/** Fixed local watch reasons for Phase 1. Remote signal/feed data lives elsewhere. */
+export const WATCH_REASONS = ['releases', 'security', 'roadmap', 'architecture', 'maintenance'] as const;
+export type WatchReason = (typeof WATCH_REASONS)[number];
+
+export interface WatchIntent {
+  enabled: boolean;
+  reasons: WatchReason[];
+}
+
 export interface Tag {
   full_name: string;
   manualTags: string[];
@@ -81,6 +91,7 @@ export interface Tag {
   dismissedAutoTagsMtime: string;
   notes: string;
   favorite?: boolean;
+  watch?: WatchIntent;
   mtime: string;
   /** Reserved for a possible future GitHub-native Lists integration. */
   gh_list_id?: number | null;
@@ -156,6 +167,7 @@ export type GistTagRowV1 = {
   tags: string[];
   notes: string;
   favorite?: boolean;
+  watch?: WatchIntent;
   mtime: string;
   gh_list_id?: number | null;
 };
@@ -169,6 +181,7 @@ export type GistTagRowV2 = {
   dismissedAutoTagsMtime: string;
   notes: string;
   favorite?: boolean;
+  watch?: WatchIntent;
   mtime: string;
   gh_list_id?: number | null;
 };

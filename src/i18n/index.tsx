@@ -1,10 +1,11 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { authStore, CONFIG_STORAGE_KEY } from "@/auth/auth-store";
-import type { Locale, SyncProgress } from "@/types";
+import type { Locale, SyncProgress, WatchReason } from "@/types";
 
 export interface MessageCatalog {
   localeName: string;
+  watchReasonLabels: Record<WatchReason, string>;
   common: {
     untagged: string;
     remove: string;
@@ -76,6 +77,8 @@ export interface MessageCatalog {
     gistLinkTitle: string;
     moreTitle: string;
     shownTotal: (shown: number, total: number) => string;
+    watchSummary: (count: number) => string;
+    watchSummaryTitle: string;
     noToken: string;
     accountTitle: (username: string) => string;
     columnRepository: string;
@@ -124,6 +127,8 @@ export interface MessageCatalog {
     onlyFavorite: string;
     onlyUntagged: string;
     onlyArchived: string;
+    onlyWatched: string;
+    watchReason: (label: string) => string;
     summary: (count: number) => string;
     clearOne: string;
     clearAll: string;
@@ -136,6 +141,10 @@ export interface MessageCatalog {
     onlyUntaggedHint: string;
     onlyArchivedLabel: string;
     onlyArchivedHint: string;
+    onlyWatchedLabel: string;
+    onlyWatchedHint: string;
+    watchReasons: (count: number) => string;
+    watchReasonsEmpty: string;
     showTombstoneLabel: string;
     showTombstoneHint: string;
     languages: (count: number) => string;
@@ -180,6 +189,8 @@ export interface MessageCatalog {
     unstarDone: (fullName: string) => string;
     unstarFailed: (fullName: string, error: string) => string;
     alreadyUnstarred: string;
+    watched: string;
+    watchedReasonCount: (count: number) => string;
   };
   repoDetail: {
     previousTitle: string;
@@ -201,6 +212,11 @@ export interface MessageCatalog {
     stars: string;
     updated: string;
     starred: string;
+    watch: string;
+    watchEnabled: string;
+    watchReasonNudge: string;
+    watchSaved: string;
+    watchUnsaved: string;
   };
   tagEditor: {
     noTags: string;
@@ -392,6 +408,13 @@ export interface MessageCatalog {
 const messages: Record<Locale, MessageCatalog> = {
   en: {
     localeName: "English",
+    watchReasonLabels: {
+      releases: "Releases",
+      security: "Security",
+      roadmap: "Roadmap",
+      architecture: "Architecture",
+      maintenance: "Maintenance",
+    },
     common: {
       untagged: "Untagged",
       remove: "Remove",
@@ -471,6 +494,8 @@ const messages: Record<Locale, MessageCatalog> = {
       gistLinkTitle: "Open your tag-sync Gist on github.com",
       moreTitle: "More actions",
       shownTotal: (shown, total) => `${shown} shown / ${total} total`,
+      watchSummary: (count) => `${count} watched`,
+      watchSummaryTitle: "Filter watched repositories",
       noToken: "No token configured",
       accountTitle: (username) => `Signed in as @${username}`,
       columnRepository: "Repository",
@@ -520,6 +545,8 @@ const messages: Record<Locale, MessageCatalog> = {
       onlyFavorite: "Favorites",
       onlyUntagged: "Untagged only",
       onlyArchived: "Archived",
+      onlyWatched: "Watched",
+      watchReason: (label) => `Watch: ${label}`,
       summary: (count) => `${count} results · filtered`,
       clearOne: "Remove this filter",
       clearAll: "Clear all filters",
@@ -532,6 +559,10 @@ const messages: Record<Locale, MessageCatalog> = {
       onlyUntaggedHint: "",
       onlyArchivedLabel: "Archived",
       onlyArchivedHint: "",
+      onlyWatchedLabel: "Watched",
+      onlyWatchedHint: "",
+      watchReasons: (count) => `Watch reasons (${count})`,
+      watchReasonsEmpty: "No watched repos yet.",
       showTombstoneLabel: "Show unstarred",
       showTombstoneHint: "tombstoned repos",
       languages: (count) => `Languages${count > 0 ? ` · ${count}` : ""}`,
@@ -579,6 +610,8 @@ const messages: Record<Locale, MessageCatalog> = {
       unstarDone: (fullName) => `${fullName} removed from the current list`,
       unstarFailed: (fullName, error) => `Could not remove ${fullName}: ${error}`,
       alreadyUnstarred: "Already unstarred",
+      watched: "Watched",
+      watchedReasonCount: (count) => `${count} watch reasons`,
     },
     repoDetail: {
       previousTitle: "Previous ([)",
@@ -600,6 +633,11 @@ const messages: Record<Locale, MessageCatalog> = {
       stars: "Stars",
       updated: "Updated",
       starred: "Starred",
+      watch: "Watch",
+      watchEnabled: "Watch this repo",
+      watchReasonNudge: "Pick a reason so future filtering stays useful.",
+      watchSaved: "Watch saved",
+      watchUnsaved: "Unsaved watch changes",
     },
     tagEditor: {
       noTags: "No tags yet",
@@ -819,6 +857,13 @@ const messages: Record<Locale, MessageCatalog> = {
   },
   "zh-CN": {
     localeName: "中文",
+    watchReasonLabels: {
+      releases: "发布",
+      security: "安全",
+      roadmap: "路线图",
+      architecture: "架构",
+      maintenance: "维护",
+    },
     common: {
       untagged: "未标注",
       remove: "移除",
@@ -896,6 +941,8 @@ const messages: Record<Locale, MessageCatalog> = {
       gistLinkTitle: "在 github.com 打开你的标签同步 Gist",
       moreTitle: "更多操作",
       shownTotal: (shown, total) => `${shown} 已显示 / ${total} 总计`,
+      watchSummary: (count) => `${count} 个 Watch`,
+      watchSummaryTitle: "筛选 Watch 仓库",
       noToken: "未配置 token",
       accountTitle: (username) => `已登录为 @${username}`,
       columnRepository: "仓库",
@@ -945,6 +992,8 @@ const messages: Record<Locale, MessageCatalog> = {
       onlyFavorite: "收藏",
       onlyUntagged: "仅未标注",
       onlyArchived: "已归档",
+      onlyWatched: "Watch",
+      watchReason: (label) => `Watch: ${label}`,
       summary: (count) => `${count} 个结果 · 已筛选`,
       clearOne: "移除该筛选",
       clearAll: "清除全部筛选",
@@ -957,6 +1006,10 @@ const messages: Record<Locale, MessageCatalog> = {
       onlyUntaggedHint: "",
       onlyArchivedLabel: "已归档",
       onlyArchivedHint: "",
+      onlyWatchedLabel: "Watch",
+      onlyWatchedHint: "",
+      watchReasons: (count) => `Watch 原因 (${count})`,
+      watchReasonsEmpty: "还没有 Watch 仓库。",
       showTombstoneLabel: "显示已 unstar",
       showTombstoneHint: "tombstoned repos",
       languages: (count) => `Languages${count > 0 ? ` · ${count}` : ""}`,
@@ -1004,6 +1057,8 @@ const messages: Record<Locale, MessageCatalog> = {
       unstarDone: (fullName) => `已从当前列表移除 ${fullName}`,
       unstarFailed: (fullName, error) => `移除 ${fullName} 失败：${error}`,
       alreadyUnstarred: "已取消 Star",
+      watched: "已 Watch",
+      watchedReasonCount: (count) => `${count} 个 Watch 原因`,
     },
     repoDetail: {
       previousTitle: "上一个 ([)",
@@ -1025,6 +1080,11 @@ const messages: Record<Locale, MessageCatalog> = {
       stars: "Stars",
       updated: "更新",
       starred: "Star 时间",
+      watch: "Watch",
+      watchEnabled: "Watch 这个仓库",
+      watchReasonNudge: "选择一个原因，后续筛选会更有用。",
+      watchSaved: "Watch 已保存",
+      watchUnsaved: "Watch 有未保存更改",
     },
     tagEditor: {
       noTags: "尚无标签",

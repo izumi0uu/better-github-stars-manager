@@ -1,8 +1,4 @@
-import type {
-  LibraryViewPrefs,
-  LibraryViewSortDir,
-  LibraryViewSortKey,
-} from '@/types';
+import { WATCH_REASONS, type LibraryViewPrefs, type LibraryViewSortDir, type LibraryViewSortKey, type WatchReason } from '@/types';
 
 export const DEFAULT_AUTO_TAG_LIMIT = 5;
 export const MIN_AUTO_TAG_LIMIT = 1;
@@ -28,6 +24,8 @@ export const DEFAULT_LIBRARY_VIEW_PREFS: LibraryViewPrefs = {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyWatched: false,
+    watchReasons: [],
   },
   sort: {
     sortKey: 'starred_at',
@@ -82,6 +80,12 @@ function uniqueStrings(value: unknown): string[] {
   return out;
 }
 
+
+function normalizeWatchReasons(value: unknown): WatchReason[] {
+  const selected = new Set(uniqueStrings(value));
+  return WATCH_REASONS.filter((reason) => selected.has(reason));
+}
+
 function normalizeSortKey(value: unknown): LibraryViewSortKey {
   return typeof value === 'string' && SORT_KEYS.includes(value as LibraryViewSortKey)
     ? value as LibraryViewSortKey
@@ -114,6 +118,8 @@ export function normalizeLibraryViewPrefs(value: unknown): LibraryViewPrefs {
       onlyFavorite: filters.onlyFavorite === true,
       onlyUntagged: filters.onlyUntagged === true,
       onlyArchived: filters.onlyArchived === true,
+      onlyWatched: filters.onlyWatched === true,
+      watchReasons: normalizeWatchReasons(filters.watchReasons),
     },
     sort: {
       sortKey: normalizeSortKey(sort.sortKey),

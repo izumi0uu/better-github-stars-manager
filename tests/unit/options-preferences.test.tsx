@@ -60,6 +60,8 @@ function config(overrides: Partial<Config> = {}): Config {
         onlyFavorite: false,
         onlyUntagged: false,
         onlyArchived: false,
+        onlyWatched: false,
+        watchReasons: [],
       },
       sort: {
         sortKey: 'starred_at',

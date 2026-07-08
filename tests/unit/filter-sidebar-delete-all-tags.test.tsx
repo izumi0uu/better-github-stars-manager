@@ -37,6 +37,8 @@ function makeFilterState(order: string[], tags = ['react', 'ui']): FilterState {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyWatched: false,
+    watchReasons: [],
     sortKey: 'starred_at',
     sortDir: 'desc',
     libraryViewHydrated: true,
@@ -49,6 +51,8 @@ function makeFilterState(order: string[], tags = ['react', 'ui']): FilterState {
     setOnlyFavorite: vi.fn(),
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
+    setOnlyWatched: vi.fn(),
+    toggleWatchReason: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
@@ -95,6 +99,7 @@ describe('FilterSidebar delete-all-tags control', () => {
       <FilterSidebar
         f={makeFilterState([])}
         languages={[]}
+        watchReasons={[]}
         tagTree={{ total: tags.length, tags }}
       />,
     );
@@ -162,6 +167,7 @@ describe('FilterSidebar delete-all-tags control', () => {
       <FilterSidebar
         f={f}
         languages={[]}
+        watchReasons={[]}
         tagTree={{ total: tags.length, tags }}
       />,
     );
@@ -204,6 +210,7 @@ describe('FilterSidebar delete-all-tags control', () => {
       <FilterSidebar
         f={makeFilterState([])}
         languages={[]}
+        watchReasons={[]}
         tagTree={{ total: tags.length, tags }}
       />,
     );
@@ -234,6 +241,7 @@ describe('FilterSidebar delete-all-tags control', () => {
       <FilterSidebar
         f={makeFilterState([])}
         languages={[]}
+        watchReasons={[]}
         tagTree={{ total: tags.length, tags }}
       />,
     );
@@ -273,6 +281,7 @@ describe('FilterSidebar delete-all-tags control', () => {
       <FilterSidebar
         f={f}
         languages={[]}
+        watchReasons={[]}
         tagTree={{ total: 2, tags: [{ name: 'react', count: 2 }, { name: 'ui', count: 1 }] }}
         onTagMutationMessage={onTagMutationMessage}
         onTagMutationSuccess={onTagMutationSuccess}
@@ -310,6 +319,7 @@ describe('FilterSidebar delete-all-tags control', () => {
       <FilterSidebar
         f={f}
         languages={[]}
+        watchReasons={[]}
         tagTree={{ total: 2, tags: [{ name: 'react', count: 2 }, { name: 'ui', count: 1 }] }}
         onTagMutationSuccess={onTagMutationSuccess}
       />,
@@ -340,6 +350,7 @@ describe('FilterSidebar delete-all-tags control', () => {
       <FilterSidebar
         f={f}
         languages={[]}
+        watchReasons={[]}
         tagTree={{ total: 2, tags: [{ name: 'react', count: 2 }, { name: 'ui', count: 1 }] }}
         onTagMutationMessage={onTagMutationMessage}
         onTagMutationSuccess={onTagMutationSuccess}
@@ -365,6 +376,7 @@ describe('FilterSidebar delete-all-tags control', () => {
       <FilterSidebar
         f={makeFilterState([])}
         languages={[]}
+        watchReasons={[]}
         tagTree={{ total: 0, tags: [] }}
       />,
     );
@@ -382,6 +394,7 @@ describe('FilterSidebar delete-all-tags control', () => {
       <FilterSidebar
         f={f}
         languages={[]}
+        watchReasons={[]}
         tagTree={{ total: 1, tags: [{ name: 'react', count: 2 }] }}
         onTagMutationMessage={onTagMutationMessage}
         onTagMutationSuccess={onTagMutationSuccess}

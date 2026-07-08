@@ -63,6 +63,8 @@ function filter() {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyWatched: false,
+    watchReasons: [],
     sortKey: 'name' as const,
     sortDir: 'asc' as const,
   };

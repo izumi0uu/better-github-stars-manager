@@ -13,7 +13,7 @@ import { selectActiveBackfillId } from '@/upgrades/backfill-state';
 import { createBackfillConfigStore, getBackfillTask } from './backfill-config';
 import { createBackfillExecutor } from './backfill-executor';
 import { createSerializedRunner } from './serialized-runner';
-import type { OnboardingStage, SyncProgress } from '@/types';
+import type { OnboardingStage, SyncProgress, WatchIntent } from '@/types';
 import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
@@ -41,6 +41,7 @@ type Req =
   | { type: 'setTags'; full_name: string; tags: string[] }
   | { type: 'setNotes'; full_name: string; notes: string }
   | { type: 'setFavorite'; full_name: string; favorite: boolean }
+  | { type: 'setWatch'; full_name: string; watch: WatchIntent }
   | { type: 'markUnstarred'; full_name: string }
   | { type: 'removeVisibleTag'; full_name: string; name: string }
   | { type: 'deleteTag'; name: string }
@@ -463,6 +464,10 @@ async function handle(req: Req): Promise<Res> {
         await idbTagStore.setFavorite(req.full_name, req.favorite);
         broadcastDataChanged();
         return { ok: true, data: { favorite: req.favorite } };
+      case 'setWatch':
+        await idbTagStore.setWatch(req.full_name, req.watch);
+        broadcastDataChanged();
+        return { ok: true, data: { watch: req.watch } };
       case 'markUnstarred': {
         const result = await run(async () => {
           const star = await db.stars.get(req.full_name);

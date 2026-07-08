@@ -75,7 +75,7 @@ console.log(`   ✓ syncFull returned ${JSON.stringify(syncResult)} | DB now hol
 
 invalidateCache();
 const result = await queryStars({
-  filter: { query: '', languages: [], tags: [], tagMode: 'any', showTombstone: false, onlyFavorite: false, onlyUntagged: false, onlyArchived: false, sortKey: 'starred_at', sortDir: 'desc' },
+  filter: { query: '', languages: [], tags: [], tagMode: 'any', showTombstone: false, onlyFavorite: false, onlyUntagged: false, onlyArchived: false, onlyWatched: false, watchReasons: [], sortKey: 'starred_at', sortDir: 'desc' },
   offset: 0,
   limit: 5,
 });

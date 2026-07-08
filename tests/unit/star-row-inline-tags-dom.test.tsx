@@ -67,6 +67,8 @@ function rowWithColumns(
       hasNotes={false}
       favorite={false}
       favoriteBusy={false}
+      watched={false}
+      watchReasonCount={0}
       selectedTags={[]}
       onToggleTag={callbacks.onToggleTag ?? vi.fn()}
       onToggleFavorite={vi.fn(async () => undefined)}
@@ -95,6 +97,8 @@ function ControlledUnstarRow({
       hasNotes={false}
       favorite={false}
       favoriteBusy={false}
+      watched={false}
+      watchReasonCount={0}
       selectedTags={[]}
       onToggleTag={vi.fn()}
       onToggleFavorite={vi.fn(async () => undefined)}
@@ -196,6 +200,8 @@ describe('star row inline tag fitting', () => {
         hasNotes={false}
         favorite={false}
         favoriteBusy={false}
+        watched={false}
+        watchReasonCount={0}
         selectedTags={[]}
         onToggleTag={vi.fn()}
         onToggleFavorite={vi.fn(async () => undefined)}

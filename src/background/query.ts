@@ -1,5 +1,5 @@
 import { db } from '@/storage/db';
-import type { Star, Tag } from '@/types';
+import { WATCH_REASONS, type Star, type Tag, type WatchReason } from '@/types';
 import type { FilterState, SortKey } from '@/ui/filter-store';
 import { visibleTagNames } from '@/tags/tag-model';
 import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
@@ -12,7 +12,7 @@ import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
 export interface QueryParams {
   filter: Pick<
     FilterState,
-    'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyFavorite' | 'onlyUntagged' | 'onlyArchived' | 'sortKey' | 'sortDir'
+    'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyFavorite' | 'onlyUntagged' | 'onlyArchived' | 'onlyWatched' | 'watchReasons' | 'sortKey' | 'sortDir'
   >;
   offset: number;
   limit: number;
@@ -24,12 +24,15 @@ export interface QueryResult {
   grandTotal: number; // all stars in DB
   tagsForRows: Record<string, Tag | undefined>;
   languages: [string, number][]; // facet over ALL stars
+  watchReasons: { reason: WatchReason; count: number }[];
+  watchedTotal: number;
   tagTree: { name: string; count: number }[];
   tagTotal: number;
 }
 
 let cache: { stars: Star[]; tags: Map<string, Tag>; excluded: Set<string>; version: number } | null = null;
 let cacheVersion = 0;
+const watchReasonOrder = new Map<WatchReason, number>(WATCH_REASONS.map((reason, index) => [reason, index]));
 
 /** Invalidate the in-memory cache (called after any sync/write). */
 export function invalidateCache() {
@@ -106,6 +109,7 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
   const q = filter.query.trim().toLowerCase();
   const langSet = filter.languages.length ? new Set(filter.languages) : null;
   const tagSet = filter.tags.length ? new Set(filter.tags) : null;
+  const watchReasonSet = filter.watchReasons.length ? new Set(filter.watchReasons) : null;
 
   const filtered = stars.filter((s) => {
     if (!filter.showTombstone && s.tombstone) return false;
@@ -113,8 +117,12 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
     if (langSet && (s.language === null || !langSet.has(s.language))) return false;
     const tagRecord = tags.get(s.full_name);
     const myTags = visibleTagNames(tagRecord);
+    const watch = tagRecord?.watch;
+    const watchReasons = watch?.reasons ?? [];
     if (filter.onlyFavorite && !tagRecord?.favorite) return false;
     if (filter.onlyUntagged && myTags.length > 0) return false;
+    if (filter.onlyWatched && watch?.enabled !== true) return false;
+    if (watchReasonSet && (watch?.enabled !== true || !watchReasons.some((reason) => watchReasonSet.has(reason)))) return false;
     if (tagSet) {
       if (filter.tagMode === 'all') {
         if (!filter.tags.every((t) => myTags.includes(t))) return false;
@@ -136,6 +144,21 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
   const languages: [string, number][] = [...langCounts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 40);
+
+  const watchReasonCounts = new Map<WatchReason, number>();
+  let watchedTotal = 0;
+  for (const s of stars) {
+    if (s.tombstone) continue;
+    const watch = tags.get(s.full_name)?.watch;
+    if (watch?.enabled !== true) continue;
+    watchedTotal++;
+    for (const reason of watch.reasons ?? []) {
+      watchReasonCounts.set(reason, (watchReasonCounts.get(reason) ?? 0) + 1);
+    }
+  }
+  const watchReasons: QueryResult['watchReasons'] = [...watchReasonCounts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || (watchReasonOrder.get(a.reason) ?? 0) - (watchReasonOrder.get(b.reason) ?? 0));
 
   // Tag tree facet over ALL stars' tags. Excluded (deleted) tags are omitted from
   // the sidebar tree — they're tombstones, not live filters. The tree is a flat
@@ -163,6 +186,8 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
     grandTotal: stars.length,
     tagsForRows,
     languages,
+    watchReasons,
+    watchedTotal,
     tagTree,
     tagTotal: tagCounts.size,
   };

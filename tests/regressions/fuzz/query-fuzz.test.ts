@@ -134,6 +134,8 @@ function generateQueryCase(rng: SeededRng, options: { forceStars?: number } = {}
       onlyFavorite: rng.bool(0.2),
       onlyUntagged: rng.bool(0.2),
       onlyArchived: rng.bool(0.2),
+      onlyWatched: false,
+      watchReasons: [],
       sortKey: rng.pick(sortKeys),
       sortDir: rng.pick(['asc', 'desc'] as const),
     },
@@ -226,6 +228,8 @@ function referenceQuery(input: GeneratedQueryCase): QueryResult {
     grandTotal: input.stars.length,
     tagsForRows,
     languages: languagesFacet,
+    watchReasons: [],
+    watchedTotal: 0,
     tagTree,
     tagTotal: tagCounts.size,
   };

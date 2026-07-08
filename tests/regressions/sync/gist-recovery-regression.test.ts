@@ -571,4 +571,82 @@ describe('Gist recovery regressions', () => {
     assert.deepEqual(layered?.manualTagsMtime, '2026-06-24T12:10:00.000Z');
     assert.deepEqual(layered?.autoTagsMtime, '2026-06-24T12:20:00.000Z');
   });
+
+  it('pulls legacy gist tag records without watch intent', async () => {
+    await resetState();
+    await storeSyntheticToken();
+    await authStore.update({ gistId: 'bound-gist' });
+    const payload: GistPayload = {
+      v: 1,
+      exportedAt: '2026-06-24T12:00:00.000Z',
+      tags: {
+        'owner/repo': {
+          tags: ['alpha'],
+          notes: 'hello',
+          mtime: '2026-06-24T12:00:00.000Z',
+        },
+      },
+      tagMeta: {},
+    };
+
+    globalThis.fetch = gistGet(payload);
+
+    const result = await gistTagStore.pull();
+    assert.deepEqual(result, { merged: 1, total: 1, missing: false });
+    const tag = await db.tags.get('owner/repo');
+    assert.equal(tag?.watch, undefined);
+  });
+
+  it('pushes and pulls gist tag records with watch intent', async () => {
+    await resetState();
+    await storeSyntheticToken();
+    await authStore.update({ gistId: 'bound-gist' });
+    await idbTagStore.upsert({
+      full_name: 'owner/repo',
+      manualTags: ['alpha'],
+      autoTags: [],
+      dismissedAutoTags: [],
+      manualTagsMtime: '2026-06-24T12:00:00.000Z',
+      autoTagsMtime: '2026-06-24T12:00:00.000Z',
+      dismissedAutoTagsMtime: '2026-06-24T12:00:00.000Z',
+      notes: 'hello',
+      favorite: false,
+      watch: { enabled: true, reasons: ['releases', 'security'] },
+      mtime: '2026-06-24T12:00:00.000Z',
+    });
+    let pushedPayload: GistPayload | null = null;
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/gists/bound-gist') && method === 'GET') {
+        if (pushedPayload) {
+          return response(200, {
+            files: {
+              'better-github-stars-manager-tags.json': {
+                content: JSON.stringify(pushedPayload),
+              },
+            },
+          });
+        }
+        return response(200, {});
+      }
+      if (url.endsWith('/gists/bound-gist') && method === 'PATCH') {
+        pushedPayload = parsePatchedPayload(init);
+        return response(200, {});
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    const pushResult = await gistTagStore.push(snapshotDirtyForPush());
+    assert.equal(pushResult.pushed, 1);
+    assert.deepEqual((pushedPayload as GistPayload | null)?.tags['owner/repo'].watch, { enabled: true, reasons: ['releases', 'security'] });
+
+    await db.tags.clear();
+    const pullResult = await gistTagStore.pull();
+    assert.deepEqual(pullResult, { merged: 1, total: 1, missing: false });
+    const pulled = await db.tags.get('owner/repo');
+    assert.deepEqual(pulled?.watch, { enabled: true, reasons: ['releases', 'security'] });
+  });
+
 });

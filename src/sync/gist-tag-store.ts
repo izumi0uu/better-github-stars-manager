@@ -105,6 +105,7 @@ async function buildPayload(onProgress?: CountProgressCallback): Promise<{ paylo
       dismissedAutoTagsMtime: normalized.dismissedAutoTagsMtime,
       notes: normalized.notes,
       favorite: normalized.favorite,
+      watch: normalized.watch,
       gh_list_id: normalized.gh_list_id,
       mtime: normalized.mtime,
     };
@@ -239,6 +240,7 @@ function normalizeGistTag(
     typeof row.notes !== 'string' ||
     typeof row.mtime !== 'string' ||
     (row.favorite !== undefined && typeof row.favorite !== 'boolean') ||
+    (row.watch !== undefined && !isGistWatchIntent(row.watch)) ||
     (row.gh_list_id !== undefined && row.gh_list_id !== null && typeof row.gh_list_id !== 'number')
   ) {
     return null;
@@ -253,9 +255,17 @@ function normalizeGistTag(
     dismissedAutoTagsMtime: row.dismissedAutoTagsMtime,
     notes: row.notes,
     favorite: row.favorite,
+    watch: row.watch,
     gh_list_id: row.gh_list_id,
     mtime: row.mtime,
   });
+}
+
+
+function isGistWatchIntent(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as { enabled?: unknown; reasons?: unknown };
+  return typeof candidate.enabled === 'boolean' && isStringArray(candidate.reasons);
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -284,6 +294,7 @@ function mergeTagRowsByLayer(local: Tag, remote: Tag): { tag: Tag; changed: bool
   if (remote.mtime > local.mtime) {
     next.notes = remote.notes;
     next.favorite = remote.favorite;
+    next.watch = remote.watch;
     next.gh_list_id = remote.gh_list_id;
     next.mtime = remote.mtime;
     changed = true;
