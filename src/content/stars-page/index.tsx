@@ -10,6 +10,7 @@ import {
   resetPanelToggle,
   showPanel,
 } from '@/content/stars-page/panel-toggle';
+import { browserRuntime, isBrowserStorageAvailable } from '@/platform/browser-runtime';
 import cssText from '@/ui/styles/index.css?inline';
 
 /**
@@ -111,6 +112,36 @@ function ejectPanel(): void {
   unlockPageScroll();
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function createFabIcon(): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('width', '22');
+  svg.setAttribute('height', '22');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+
+  const rect = document.createElementNS(SVG_NS, 'rect');
+  rect.setAttribute('x', '3');
+  rect.setAttribute('y', '3');
+  rect.setAttribute('width', '18');
+  rect.setAttribute('height', '18');
+  rect.setAttribute('rx', '2');
+  svg.appendChild(rect);
+
+  for (const d of ['M3 9h18', 'M9 21V9']) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', d);
+    svg.appendChild(path);
+  }
+
+  return svg;
+}
+
 // Vanilla shadow-root FAB shown only while the session-local panel hide is active.
 function injectFab(): void {
   if (document.getElementById('gsm-fab')) return; // idempotent
@@ -160,7 +191,9 @@ function injectFab(): void {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'btn';
-  btn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>`;
+  btn.appendChild(createFabIcon());
+  btn.setAttribute('data-tip', 'Better GitHub Stars Manager');
+  btn.setAttribute('aria-label', 'Better GitHub Stars Manager');
   btn.onclick = showPanel;
   shadow.appendChild(btn);
   document.body.appendChild(host);
@@ -204,15 +237,17 @@ document.addEventListener('turbo:load', sync);
 document.addEventListener('turbo:render', sync);
 window.addEventListener('popstate', sync);
 
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]) return;
-  const oldCfg = changes[CONFIG_STORAGE_KEY].oldValue as
-    | { starsPanelDefaultEnabled?: boolean }
-    | undefined;
-  const newCfg = changes[CONFIG_STORAGE_KEY].newValue as
-    | { starsPanelDefaultEnabled?: boolean }
-    | undefined;
-  if (oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled) return;
-  resetPanelToggle();
-  void sync();
-});
+if (isBrowserStorageAvailable()) {
+  browserRuntime.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]) return;
+    const oldCfg = changes[CONFIG_STORAGE_KEY].oldValue as
+      | { starsPanelDefaultEnabled?: boolean }
+      | undefined;
+    const newCfg = changes[CONFIG_STORAGE_KEY].newValue as
+      | { starsPanelDefaultEnabled?: boolean }
+      | undefined;
+    if (oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled) return;
+    resetPanelToggle();
+    void sync();
+  });
+}

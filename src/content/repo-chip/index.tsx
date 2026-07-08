@@ -12,14 +12,32 @@ import { parseRepoFromPathname } from './repo-path';
 
 const injected = new Map<string, { el: HTMLElement; rerender: () => void }>(); // url → host element, for idempotency
 
-/**
- * Inline SVG (shadow root has no React, so lucide-react isn't available);
- * sized/styled to match the lucide set.
- */
-function iconSvg(name: 'check' | 'pencil'): string {
-  const common = 'width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
-  if (name === 'check') return `<svg ${common}><path d="M20 6 9 17l-5-5"/></svg>`;
-  return `<svg ${common}><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function appendIconPath(svg: SVGSVGElement, d: string): void {
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', d);
+  svg.appendChild(path);
+}
+
+/** Inline SVG (shadow root has no React, so lucide-react isn't available). */
+function createIconSvg(name: 'check' | 'pencil'): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('width', '12');
+  svg.setAttribute('height', '12');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  if (name === 'check') {
+    appendIconPath(svg, 'M20 6 9 17l-5-5');
+  } else {
+    appendIconPath(svg, 'M12 20h9');
+    appendIconPath(svg, 'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z');
+  }
+  return svg;
 }
 
 function parseRepoFromUrl(): { owner: string; repo: string } | null {
@@ -86,7 +104,7 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
   let draft = (tag?.tags ?? []).join(', ');
 
   function render() {
-    box.innerHTML = '';
+    box.replaceChildren();
     const wrap = document.createElement('span');
     wrap.className = 'chip';
     if (editing) {
@@ -97,7 +115,7 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
       input.placeholder = m.tagEditor.bulkPlaceholder;
       input.oninput = () => (draft = input.value);
       const save = document.createElement('button');
-      save.innerHTML = iconSvg('check');
+      save.appendChild(createIconSvg('check'));
       save.setAttribute('aria-label', 'Save');
       save.onclick = async () => {
         const tags = draft.split(',').map((t) => t.trim()).filter(Boolean);
@@ -136,7 +154,7 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
       }
       const edit = document.createElement('span');
       edit.className = 'edit';
-      edit.innerHTML = iconSvg('pencil');
+      edit.appendChild(createIconSvg('pencil'));
       edit.setAttribute('aria-label', m.repoChip.editTags);
       edit.title = m.repoChip.editTags;
       edit.onclick = () => {

@@ -62,11 +62,13 @@ function installChromeMock() {
 async function loadContentScript({
   config,
   getConfig,
+  getLocale,
   initialBodyOverflow = '',
   initialHtmlOverflow = '',
 }: {
   config?: Config;
   getConfig?: () => Promise<Config>;
+  getLocale?: () => Promise<'en' | 'zh-CN'>;
   initialBodyOverflow?: string;
   initialHtmlOverflow?: string;
 } = {}) {
@@ -86,7 +88,9 @@ async function loadContentScript({
   let currentConfig = config ?? { starsPanelDefaultEnabled: true };
   const getConfigFn = vi.fn(getConfig ?? (() => Promise.resolve(currentConfig)));
   const getUsernameMock = vi.fn(() => Promise.resolve('idah'));
-  const getLocaleMock = vi.fn(() => Promise.resolve('en'));
+  const getLocaleMock = vi.fn(getLocale ?? (() => Promise.resolve('en')));
+  const createElementSpy = vi.spyOn(document, 'createElement');
+  const createElementNsSpy = vi.spyOn(document, 'createElementNS');
 
   vi.doMock('@/auth/auth-store', () => ({
     CONFIG_STORAGE_KEY,
@@ -116,6 +120,8 @@ async function loadContentScript({
 
   return {
     chromeMock,
+    createdElementNames: createElementSpy.mock.calls.map(([name]) => name),
+    createdElementNsNames: createElementNsSpy.mock.calls.map(([, name]) => name),
     setConfig(next: Config) {
       currentConfig = next;
     },
@@ -249,5 +255,33 @@ describe('stars-page mount and toggle invariants', () => {
     assert.equal(document.querySelectorAll('#gsm-fab').length, 1);
     assert.equal(document.documentElement.style.overflow, 'scroll');
     assert.equal(document.body.style.overflow, 'auto');
+  });
+
+  it('builds the fallback FAB as an accessible SVG icon button', async () => {
+    const loaded = await loadContentScript({ config: { starsPanelDefaultEnabled: false } });
+    await waitFor(() => document.getElementById('gsm-fab') !== null);
+
+    const button = document.getElementById('gsm-fab')?.shadowRoot?.querySelector('button');
+    assert.ok(button);
+    const svg = button.querySelector('svg');
+    assert.ok(svg);
+    assert.equal(svg.namespaceURI, 'http://www.w3.org/2000/svg');
+    assert.equal(svg.getAttribute('viewBox'), '0 0 24 24');
+    assert.equal(svg.querySelectorAll('rect,path').length, 3);
+    assert.ok(loaded.createdElementNsNames.includes('svg'));
+    assert.equal(loaded.createdElementNsNames.filter((name) => name === 'path').length, 2);
+  });
+
+  it('keeps a fallback FAB label when locale loading fails', async () => {
+    await loadContentScript({
+      config: { starsPanelDefaultEnabled: false },
+      getLocale: () => Promise.reject(new Error('storage down')),
+    });
+    await waitFor(() => document.getElementById('gsm-fab') !== null);
+
+    const button = document.getElementById('gsm-fab')?.shadowRoot?.querySelector('button');
+    assert.ok(button);
+    assert.equal(button.getAttribute('aria-label'), 'Better GitHub Stars Manager');
+    assert.equal(button.getAttribute('data-tip'), 'Better GitHub Stars Manager');
   });
 });
