@@ -20,7 +20,7 @@ describe('layout edit interaction lock invariants', () => {
     const motion = read('src/ui/styles/motion.css');
 
     expect(source).toContain('key={helperInfoKey(info, unstarFeedback)}');
-    expect(source).toContain('gsm-helper-text-update gsm-flash-col inline-block rounded-sm px-1 transition-[background-color,opacity,transform] duration-150');
+    expect(source).toContain('gsm-helper-text-update inline-block rounded-sm px-1 transition-[background-color,opacity,transform] duration-150');
     expect(motion).toContain('.gsm-helper-text-update');
     expect(motion).toContain('gsm-flash-col var(--gsm-duration-flash) var(--gsm-ease-linearized) var(--gsm-delay-flash);');
   });
