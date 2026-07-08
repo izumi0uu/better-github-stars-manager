@@ -7,6 +7,7 @@ import { Separator } from '@/ui/shadcn/separator';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { REPO_URL } from '@/lib/links';
 import { useI18n } from '@/i18n';
+import { browserRuntime } from '@/platform/browser-runtime';
 
 interface ConnResult {
   status: number;
@@ -67,10 +68,10 @@ export function Popup() {
 
   const openStars = async () => {
     const u = await bgCall<{ username: string | null }>('getUsername');
-    chrome.tabs.create({ url: u.username ? `https://github.com/${u.username}?tab=stars` : 'https://github.com/stars' });
+    await browserRuntime.tabs.create({ url: u.username ? `https://github.com/${u.username}?tab=stars` : 'https://github.com/stars' });
   };
 
-  const openOptions = () => chrome.runtime.openOptionsPage();
+  const openOptions = () => browserRuntime.runtime.openOptionsPage();
 
   const testConn = async () => {
     setPendingAction('testConnection');

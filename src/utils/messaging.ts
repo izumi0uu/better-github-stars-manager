@@ -4,6 +4,7 @@ import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
 } from '@/onboarding/state';
+import { browserRuntime } from '@/platform/browser-runtime';
 import { normalizeBackfillMap, selectActiveBackfillId } from '@/upgrades/backfill-state';
 import type { BackfillId, BackfillMap, OnboardingStage } from '@/types';
 
@@ -115,7 +116,7 @@ export function mergeStatusSnapshot(current: SyncStatus | null, snapshot: SyncSt
 }
 
 export async function bgCall<T = unknown>(type: string, extra?: Record<string, unknown>): Promise<T> {
-  const res = (await chrome.runtime.sendMessage({ type, ...extra })) as
+  const res = (await browserRuntime.runtime.sendMessage({ type, ...extra })) as
     | { ok: true; data?: T }
     | { ok: false; error: string };
   if (!res.ok) throw new Error(res.error);
@@ -123,9 +124,10 @@ export async function bgCall<T = unknown>(type: string, extra?: Record<string, u
 }
 
 export function onProgress(cb: (p: SyncStatus['progress']) => void): () => void {
-  const listener = (msg: { type?: string; progress?: SyncStatus['progress'] }) => {
-    if (msg.type === 'progress' && msg.progress) cb(msg.progress);
+  const listener = (msg: unknown) => {
+    const message = msg as { type?: string; progress?: SyncStatus['progress'] };
+    if (message.type === 'progress' && message.progress) cb(message.progress);
   };
-  chrome.runtime.onMessage.addListener(listener);
-  return () => chrome.runtime.onMessage.removeListener(listener);
+  browserRuntime.runtime.onMessage.addListener(listener);
+  return () => browserRuntime.runtime.onMessage.removeListener(listener);
 }

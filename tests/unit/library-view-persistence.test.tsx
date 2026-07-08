@@ -164,7 +164,7 @@ describe('library view preference persistence', () => {
     await flush();
 
     expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(1);
-    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+    expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.map((call) => call[0])).toContainEqual({
       type: 'query',
       params: {
         filter: {

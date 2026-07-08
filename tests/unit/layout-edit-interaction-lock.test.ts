@@ -73,7 +73,8 @@ describe('layout edit interaction lock invariants', () => {
     expect(hook).toContain('setLayoutConfigReady(true);');
     expect(hook).toContain('setLayoutEditReady(true);');
     expect(hook).toContain('authStore.getConfig().then((config) => applyConfig(config, { hydrate: true }))');
-    expect(hook).toContain('applyConfig(changes[CONFIG_STORAGE_KEY].newValue, { hydrate: false });');
+    expect(hook).toContain('const nextConfig = changes[CONFIG_STORAGE_KEY]?.newValue as Config | undefined;');
+    expect(hook).toContain('applyConfig(nextConfig, { hydrate: false });');
     expect(hook).toMatch(/if \(shouldHydrateBrowseLayout\) \{\s+setRenderedBrowseLayout\(cloneColumnLayout\(nextBrowseLayout\)\);\s+setLayoutFaded\(false\);\s+\}/);
   });
 

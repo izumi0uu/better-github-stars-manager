@@ -1,7 +1,7 @@
 import type { CryptoMeta } from '@/types';
 
 /**
- * Defense-in-depth: the PAT is AES-GCM encrypted in chrome.storage, not stored
+ * Defense-in-depth: the PAT is AES-GCM encrypted in extension storage, not stored
  * as plaintext. The key is PBKDF2-derived from a fixed app secret — this is not
  * OS-keychain-grade, but raises the bar over plaintext in a zero-server model.
  */

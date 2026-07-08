@@ -23,6 +23,7 @@ import { getLockedAnchorProps } from '@/ui/interaction-lock';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { LAYOUT_PREVIEW_HOVER_DELAY_MS } from '@/ui/layout-edit-constants';
+import { browserRuntime, isBrowserStorageAvailable, type BrowserStorageChange } from '@/platform/browser-runtime';
 
 /** Top toolbar for the stars page. */
 type Account = { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null };
@@ -165,7 +166,7 @@ export function Toolbar({
       }
     })();
 
-    const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+    const listener = (changes: Record<string, BrowserStorageChange>, areaName: string) => {
       if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]) return;
       const oldCfg = changes[CONFIG_STORAGE_KEY].oldValue as Account | undefined;
       const newCfg = changes[CONFIG_STORAGE_KEY].newValue as Account | undefined;
@@ -178,11 +179,16 @@ export function Toolbar({
       void refreshAccount();
     };
 
-    chrome.storage.onChanged.addListener(listener);
+    const listenerRegistered = isBrowserStorageAvailable();
+    if (listenerRegistered) {
+      browserRuntime.storage.onChanged.addListener(listener);
+    }
 
     return () => {
       cancelled = true;
-      chrome.storage.onChanged.removeListener(listener);
+      if (listenerRegistered) {
+        browserRuntime.storage.onChanged.removeListener(listener);
+      }
     };
   }, []);
 

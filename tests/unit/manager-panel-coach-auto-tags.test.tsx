@@ -264,6 +264,70 @@ describe('ManagerPanel Auto Tags coach step', () => {
       expect(container.querySelector('[data-coach-target="auto-tags"]')).not.toBeNull();
       expect(container.textContent).not.toContain('Quick tour');
       expect(container.textContent).not.toContain('Step 1 of 5');
+<<<<<<< HEAD
+=======
+      expect(container.textContent).not.toContain("What's new in this update");
+    });
+  });
+
+  it('keeps release notes hidden while the post-sync coach is active', async () => {
+    const { container } = mountPanel('coach');
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('Quick tour');
+      expect(container.textContent).not.toContain("What's new in this update");
+    });
+  });
+
+  it('shows and dismisses release notes only after onboarding is done', async () => {
+    const { container } = mountPanel('done');
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("What's new in this update");
+      expect(container.textContent).toContain('Custom Table Layout');
+    });
+
+    const dismissButton = container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss release notes"]');
+    expect(dismissButton).not.toBeNull();
+
+    act(() => {
+      dismissButton!.click();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).not.toContain("What's new in this update");
+    });
+    expect(sendMessage.mock.calls.map((call) => call[0])).toContainEqual({
+      type: 'dismissReleaseNotes',
+      id: RELEASE_NOTES_ID,
+    });
+  });
+
+  it('keeps release notes hidden after their bundle was dismissed', async () => {
+    const { container } = mountPanel('done', { releaseNotesDismissedId: RELEASE_NOTES_ID });
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="stars-table"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("What's new in this update");
+    });
+  });
+
+  it('restores release notes when dismiss persistence fails', async () => {
+    dismissReleaseNotesFails = true;
+    const { container } = mountPanel('done');
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("What's new in this update");
+    });
+
+    const dismissButton = container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss release notes"]');
+    act(() => {
+      dismissButton!.click();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("What's new in this update");
+      expect(container.textContent).toContain('Dismiss release notes: storage down');
     });
   });
 });

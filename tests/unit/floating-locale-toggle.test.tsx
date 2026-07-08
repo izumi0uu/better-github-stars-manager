@@ -64,7 +64,7 @@ describe('FloatingLocaleToggle', () => {
 
     await click(devClearButton(container));
     expect(container.textContent).toContain('Clear failed: network-down');
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'devClearLocalData' });
+    expect(sendMessage.mock.calls.map((call) => call[0])).toContainEqual({ type: 'devClearLocalData' });
 
     await click(devClearButton(container));
     expect(container.textContent).toContain('Confirm clear');

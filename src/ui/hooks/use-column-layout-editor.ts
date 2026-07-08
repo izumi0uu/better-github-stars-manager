@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { useI18n } from '@/i18n';
+import type { Config } from '@/types';
+import { browserRuntime, isBrowserStorageAvailable, type BrowserStorageChange } from '@/platform/browser-runtime';
 import {
   COLUMN_DEFS,
   DEFAULT_COLUMN_LAYOUT,
@@ -178,7 +180,7 @@ export function useColumnLayoutEditor(
   useEffect(() => {
     let cancelled = false;
     const applyConfig = (
-      config: Awaited<ReturnType<typeof authStore.getConfig>>,
+      config: Config,
       options: { hydrate: boolean },
     ) => {
       if (cancelled) return;
@@ -213,14 +215,20 @@ export function useColumnLayoutEditor(
 
     void authStore.getConfig().then((config) => applyConfig(config, { hydrate: true })).catch(recoverConfigSync);
 
-    const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
-      if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]?.newValue) return;
-      applyConfig(changes[CONFIG_STORAGE_KEY].newValue, { hydrate: false });
+    const listener = (changes: Record<string, BrowserStorageChange>, areaName: string) => {
+      const nextConfig = changes[CONFIG_STORAGE_KEY]?.newValue as Config | undefined;
+      if (areaName !== 'local' || !nextConfig) return;
+      applyConfig(nextConfig, { hydrate: false });
     };
-    chrome.storage.onChanged.addListener(listener);
+    if (!isBrowserStorageAvailable()) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    browserRuntime.storage.onChanged.addListener(listener);
     return () => {
       cancelled = true;
-      chrome.storage.onChanged.removeListener(listener);
+      browserRuntime.storage.onChanged.removeListener(listener);
     };
   }, []);
 

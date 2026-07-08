@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { REPO_URL } from "@/lib/links";
 import { useImeBufferedInput } from "@/ui/hooks/use-ime-input";
 import { useI18n } from "@/i18n";
+import { browserRuntime, isBrowserStorageAvailable, type BrowserStorageChange } from "@/platform/browser-runtime";
 import {
   MAX_AUTO_TAG_LIMIT,
   MIN_AUTO_TAG_LIMIT,
@@ -149,7 +150,7 @@ export function Options() {
 
   useEffect(() => {
     const listener = (
-      changes: Record<string, chrome.storage.StorageChange>,
+      changes: Record<string, BrowserStorageChange>,
       areaName: string,
     ) => {
       if (areaName !== "local" || !changes[CONFIG_STORAGE_KEY]) return;
@@ -168,8 +169,9 @@ export function Options() {
       void refresh();
     };
 
-    chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
+    if (!isBrowserStorageAvailable()) return undefined;
+    browserRuntime.storage.onChanged.addListener(listener);
+    return () => browserRuntime.storage.onChanged.removeListener(listener);
   }, []);
 
   return (

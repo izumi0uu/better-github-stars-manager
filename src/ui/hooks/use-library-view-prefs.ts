@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
+import { browserRuntime, isBrowserStorageAvailable, type BrowserStorageChange } from '@/platform/browser-runtime';
 import {
   DEFAULT_LIBRARY_VIEW_PREFS,
   normalizeLibraryViewPrefs,
@@ -69,9 +70,9 @@ export function useLibraryViewPrefs() {
   }, []);
 
   useEffect(() => {
-    if (typeof chrome === 'undefined' || !chrome.storage?.onChanged) return;
+    if (!isBrowserStorageAvailable()) return undefined;
     const listener = (
-      changes: Record<string, chrome.storage.StorageChange>,
+      changes: Record<string, BrowserStorageChange>,
       areaName: string,
     ) => {
       if (areaName !== 'local') return;
@@ -90,7 +91,7 @@ export function useLibraryViewPrefs() {
       applyingStoredChangeRef.current = false;
     };
 
-    chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
+    browserRuntime.storage.onChanged.addListener(listener);
+    return () => browserRuntime.storage.onChanged.removeListener(listener);
   }, []);
 }

@@ -13,6 +13,10 @@ const sendMessage = vi.fn();
 let latest: ReturnType<typeof useManagerSyncActions> | null = null;
 let messageListeners: Array<(message: { type?: string }) => void> = [];
 
+function sentMessages(): unknown[] {
+  return sendMessage.mock.calls.map((call) => call[0]);
+}
+
 function baseStatus(patch: Partial<SyncStatus> = {}): SyncStatus {
   const backfills = patch.backfills ?? {};
   return {
@@ -129,14 +133,14 @@ describe('useManagerSyncActions', () => {
     const hook = mountHook(refreshStars);
 
     await waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith({ type: 'syncFull' });
+      expect(sentMessages()).toContainEqual({ type: 'syncFull' });
       expect(refreshStars).toHaveBeenCalledTimes(1);
       expect(hook.current.status?.onboardingStage).toBe('coach');
       expect(hook.current.pendingAction).toBeNull();
     });
 
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'setOnboardingStage', stage: 'syncing' });
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'setOnboardingStage', stage: 'coach' });
+    expect(sentMessages()).toContainEqual({ type: 'setOnboardingStage', stage: 'syncing' });
+    expect(sentMessages()).toContainEqual({ type: 'setOnboardingStage', stage: 'coach' });
   });
 
   it('keeps sync failure visible and marks onboarding as failed', async () => {
@@ -156,8 +160,8 @@ describe('useManagerSyncActions', () => {
       await hook.current.doSync('syncFull', 'Full sync');
     });
 
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'setOnboardingStage', stage: 'syncing' });
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'setOnboardingStage', stage: 'sync_failed' });
+    expect(sentMessages()).toContainEqual({ type: 'setOnboardingStage', stage: 'syncing' });
+    expect(sentMessages()).toContainEqual({ type: 'setOnboardingStage', stage: 'sync_failed' });
     expect(hook.current.status?.onboardingStage).toBe('sync_failed');
     expect(hook.current.info).toContain('network-down');
     expect(hook.current.pendingAction).toBeNull();
@@ -204,7 +208,7 @@ describe('useManagerSyncActions', () => {
       await hook.current.runBackfill('repo_data_sync_v1');
     });
 
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'runBackfill', id: 'repo_data_sync_v1' });
+    expect(sentMessages()).toContainEqual({ type: 'runBackfill', id: 'repo_data_sync_v1' });
     expect(refreshStars).toHaveBeenCalledTimes(1);
     expect(hook.current.successAction).toBe('backfill:repo_data_sync_v1');
     expect(hook.current.pendingAction).toBeNull();
@@ -246,7 +250,7 @@ describe('useManagerSyncActions', () => {
       await hook.current.autoAssignTags();
     });
 
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'autoAssignTags' });
+    expect(sentMessages()).toContainEqual({ type: 'autoAssignTags' });
     expect(refreshStars).toHaveBeenCalledTimes(1);
     expect(hook.current.successAction).toBe('autoAssignTags');
     expect(hook.current.pendingAction).toBeNull();

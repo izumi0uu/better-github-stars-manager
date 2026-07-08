@@ -4,6 +4,8 @@ import { useLibraryViewPrefs } from './hooks/use-library-view-prefs';
 import type { Star, Tag } from '@/types';
 import type { QueryResult } from '@/background/query';
 import { classifyStarsQueryTrigger } from './stars-refresh';
+import { bgCall } from '@/utils/messaging';
+import { browserRuntime } from '@/platform/browser-runtime';
 
 // Transition timings for the list fade-out → swap → fade-in (see FADE_PHASE).
 const FADE_OUT_MS = 120;
@@ -67,20 +69,17 @@ export function useStars() {
 
     const runQuery = () => {
       if (cancelled) return;
-      chrome.runtime
-        .sendMessage({ type: 'query', params: { filter, offset: 0, limit: Number.MAX_SAFE_INTEGER } })
-        .then((res: { ok: boolean; data?: QueryResult; error?: string }) => {
+      bgCall<QueryResult>('query', { params: { filter, offset: 0, limit: Number.MAX_SAFE_INTEGER } })
+        .then((result) => {
           if (cancelled) return;
-          if (res?.ok && res.data) {
-            setCommitted(res.data);
-            if (shouldFade) {
-              setPhase('fading-in');
-              fadeIn = setTimeout(() => {
-                if (!cancelled) setPhase('idle');
-              }, FADE_IN_MS);
-            } else {
-              setPhase('idle');
-            }
+          setCommitted(result);
+          if (shouldFade) {
+            setPhase('fading-in');
+            fadeIn = setTimeout(() => {
+              if (!cancelled) setPhase('idle');
+            }, FADE_IN_MS);
+          } else {
+            setPhase('idle');
           }
           setLoading(false);
         })
@@ -108,13 +107,14 @@ export function useStars() {
 
   // Live refresh when background signals data changed (sync/write).
   useEffect(() => {
-    const listener = (msg: { type?: string }) => {
-      if (msg.type === 'dataChanged') {
+    const listener = (msg: unknown) => {
+      const message = msg as { type?: string };
+      if (message.type === 'dataChanged') {
         setRefreshKey((key) => key + 1);
       }
     };
-    chrome.runtime.onMessage.addListener(listener);
-    return () => chrome.runtime.onMessage.removeListener(listener);
+    browserRuntime.runtime.onMessage.addListener(listener);
+    return () => browserRuntime.runtime.onMessage.removeListener(listener);
   }, []);
 
   const rows: Star[] = committed?.rows ?? [];

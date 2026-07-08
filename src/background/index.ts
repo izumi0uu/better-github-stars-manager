@@ -13,6 +13,7 @@ import { createBackfillConfigStore, getBackfillTask } from './backfill-config';
 import { createBackfillExecutor } from './backfill-executor';
 import { createSerializedRunner } from './serialized-runner';
 import type { OnboardingStage, SyncProgress } from '@/types';
+import { browserRuntime } from '@/platform/browser-runtime';
 import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
@@ -99,7 +100,7 @@ function setProgress(p: SyncProgress) {
   const prev = lastProgress;
   lastProgress = p;
   scheduleProgressPersist(prev, p);
-  chrome.runtime.sendMessage({ type: 'progress', progress: p }).catch(() => {});
+  browserRuntime.runtime.sendMessage({ type: 'progress', progress: p }).catch(() => {});
 }
 
 function setIdleMessage(message: string) {
@@ -108,7 +109,7 @@ function setIdleMessage(message: string) {
 
 function broadcastDataChanged() {
   invalidateCache();
-  chrome.runtime.sendMessage({ type: 'dataChanged' }).catch(() => {});
+  browserRuntime.runtime.sendMessage({ type: 'dataChanged' }).catch(() => {});
 }
 
 async function clearLocalDataForDev() {
@@ -121,7 +122,7 @@ async function clearLocalDataForDev() {
   resetDirtyForDev();
   await db.delete();
   await db.open();
-  await chrome.storage.local.clear();
+  await browserRuntime.storage.local.clear();
   invalidateCache();
   broadcastDataChanged();
   return {
@@ -509,7 +510,7 @@ async function handle(req: Req): Promise<Res> {
       }
       case 'openOptions': {
         // Content scripts have a restricted chrome.runtime without openOptionsPage, so they ask the background.
-        await chrome.runtime.openOptionsPage();
+        await browserRuntime.runtime.openOptionsPage();
         return { ok: true };
       }
       case 'devClearLocalData': {
@@ -554,12 +555,12 @@ async function handle(req: Req): Promise<Res> {
   }
 }
 
-chrome.runtime.onMessage.addListener((req: Req, _sender, sendResponse) => {
-  handle(req).then(sendResponse);
+browserRuntime.runtime.onMessage.addListener((req, _sender, sendResponse) => {
+  handle(req as Req).then(sendResponse);
   return true; // async response
 });
 
-chrome.runtime.onInstalled.addListener(() => {
+browserRuntime.runtime.onInstalled.addListener(() => {
   setProgress({ phase: 'idle', done: 0, total: null, message: '' });
   void backfillConfig.reconcileStoredBackfills().catch(() => {});
 });

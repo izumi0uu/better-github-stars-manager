@@ -94,7 +94,7 @@ export interface TagMeta {
   excluded?: boolean;
 }
 
-/** Light config kept in chrome.storage.local. */
+/** Light config kept in extension local storage. */
 export interface Config {
   tokenEncrypted: string | null;
   tokenCryptoMeta: CryptoMeta | null;

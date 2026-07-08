@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { authStore, CONFIG_STORAGE_KEY } from "@/auth/auth-store";
+import { browserRuntime, isBrowserStorageAvailable, type BrowserStorageChange } from "@/platform/browser-runtime";
 import type { Locale, SyncProgress } from "@/types";
 
 export interface MessageCatalog {
@@ -1236,7 +1237,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         .catch(() => {});
     };
     const listener = (
-      changes: Record<string, chrome.storage.StorageChange>,
+      changes: Record<string, BrowserStorageChange>,
       areaName: string,
     ) => {
       if (areaName !== "local" || !changes[CONFIG_STORAGE_KEY]) return;
@@ -1247,8 +1248,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     };
 
     syncLocale();
-    chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
+    if (!isBrowserStorageAvailable()) return undefined;
+    browserRuntime.storage.onChanged.addListener(listener);
+    return () => browserRuntime.storage.onChanged.removeListener(listener);
   }, []);
 
   const setLocale = async (next: Locale) => {

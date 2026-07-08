@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
+import { browserRuntime, isBrowserStorageAvailable, type BrowserStorageChange } from '@/platform/browser-runtime';
 
 /**
  * Returns a className fragment ('dark' | ''), not a documentElement toggle: the
@@ -13,7 +14,7 @@ export function useTheme() {
     const syncTheme = () => {
       authStore.getTheme().then((t) => setThemeState(t)).catch(() => {});
     };
-    const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+    const listener = (changes: Record<string, BrowserStorageChange>, areaName: string) => {
       if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]) return;
       const oldCfg = changes[CONFIG_STORAGE_KEY].oldValue as Record<string, unknown> | undefined;
       const newCfg = changes[CONFIG_STORAGE_KEY].newValue as Record<string, unknown> | undefined;
@@ -22,8 +23,9 @@ export function useTheme() {
     };
 
     syncTheme();
-    chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
+    if (!isBrowserStorageAvailable()) return undefined;
+    browserRuntime.storage.onChanged.addListener(listener);
+    return () => browserRuntime.storage.onChanged.removeListener(listener);
   }, []);
 
   const toggle = useCallback(() => {
