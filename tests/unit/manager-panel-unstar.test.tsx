@@ -194,7 +194,7 @@ vi.mock('@/ui/components/FloatingLocaleToggle', () => ({
 }));
 
 vi.mock('@/ui/components/RepoDetailPanel', () => ({
-  RepoDetailPanel: () => null,
+  RepoDetailPanel: ({ star }: { star: Star }) => <aside data-testid="repo-detail">{star.full_name}</aside>,
 }));
 
 vi.mock('@/ui/components/LayoutEditChrome', () => ({
@@ -204,10 +204,28 @@ vi.mock('@/ui/components/LayoutEditChrome', () => ({
 }));
 
 vi.mock('@/ui/components/StarsTable', () => ({
-  StarsTable: ({ onConfirmUnstar }: { onConfirmUnstar?: (fullName: string) => void }) => (
-    <button type="button" data-testid="confirm-unstar" onClick={() => onConfirmUnstar?.('owner/repo')}>
-      confirm unstar
-    </button>
+  StarsTable: ({
+    onConfirmUnstar,
+    onSelect,
+    selectedFullName,
+  }: {
+    onConfirmUnstar?: (fullName: string) => void;
+    onSelect?: (fullName: string) => void;
+    selectedFullName?: string | null;
+  }) => (
+    <>
+      <button
+        type="button"
+        data-testid="select-row"
+        aria-pressed={selectedFullName === 'owner/repo'}
+        onClick={() => onSelect?.('owner/repo')}
+      >
+        select row
+      </button>
+      <button type="button" data-testid="confirm-unstar" onClick={() => onConfirmUnstar?.('owner/repo')}>
+        confirm unstar
+      </button>
+    </>
   ),
 }));
 
@@ -255,6 +273,34 @@ describe('ManagerPanel unstar flow', () => {
 
     expect(managerMocks.bgCall).toHaveBeenCalledWith('markUnstarred', { full_name: 'owner/repo' });
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('shows done feedback and clears an open detail drawer after unstar succeeds', async () => {
+    const unstarPromise = Promise.resolve();
+    managerMocks.bgCall.mockReturnValueOnce(unstarPromise);
+    const { container } = mountPanel();
+    const select = container.querySelector<HTMLButtonElement>('[data-testid="select-row"]');
+    const confirm = container.querySelector<HTMLButtonElement>('[data-testid="confirm-unstar"]');
+    if (!select) throw new Error('Expected mocked row selector');
+    if (!confirm) throw new Error('Expected mocked unstar control');
+
+    act(() => {
+      select.click();
+    });
+
+    expect(container.querySelector('[data-testid="repo-detail"]')?.textContent).toBe('owner/repo');
+
+    await act(async () => {
+      confirm.click();
+      await unstarPromise;
+      await Promise.resolve();
+    });
+
+    const helper = container.querySelector<HTMLDivElement>('.gsm-helper-text');
+    const repoBadge = helper?.querySelector<HTMLSpanElement>('span span');
+    expect(repoBadge?.textContent).toBe('owner/repo');
+    expect(helper?.textContent).toContain('removed from the current list');
+    expect(container.querySelector('[data-testid="repo-detail"]')).toBeNull();
   });
 
   it('renders failed unstar repo names as a helper badge without optimistic removal', async () => {

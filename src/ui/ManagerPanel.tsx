@@ -398,7 +398,7 @@ export function ManagerPanel() {
           <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">
             <span
               key={helperInfoKey(info, unstarFeedback)}
-              className="gsm-helper-text-update gsm-flash-col inline-block rounded-sm px-1 transition-[background-color,opacity,transform] duration-150"
+              className="gsm-helper-text-update inline-block rounded-sm px-1 transition-[background-color,opacity,transform] duration-150"
             >
               <HelperInfoText info={info} unstarFeedback={unstarFeedback} m={m} />
             </span>

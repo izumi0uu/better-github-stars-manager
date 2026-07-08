@@ -296,6 +296,21 @@ describe('githubStarSource unstar contract', () => {
     vi.restoreAllMocks();
   });
 
+  it('rejects malformed full names before calling GitHub', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      throw new Error('unexpected network request');
+    });
+
+    for (const fullName of ['/repo', 'owner/', 'owner/repo/extra']) {
+      await assert.rejects(
+        () => githubStarSource.unstar(fullName),
+        (error: unknown) => error instanceof Error && error.message === `Invalid repository name: ${fullName}`,
+      );
+    }
+
+    assert.equal(fetchSpy.mock.calls.length, 0);
+  });
+
   it('deletes the authenticated GitHub star resource for the selected repo', async () => {
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
     vi.spyOn(authStore, 'getToken').mockResolvedValue('github_pat_synthetic');
@@ -313,5 +328,32 @@ describe('githubStarSource unstar contract', () => {
     const headers = new Headers(requests[0].init?.headers);
     assert.equal(headers.get('authorization'), 'Bearer github_pat_synthetic');
     assert.equal(headers.get('accept'), 'application/vnd.github+json');
+  });
+
+  it('accepts delete 404 only after confirming the repo is accessible', async () => {
+    const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
+    vi.spyOn(authStore, 'getToken').mockResolvedValue('github_pat_synthetic');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(null, { status: requests.length === 1 ? 404 : 200 });
+    });
+
+    await githubStarSource.unstar('octo/repo');
+
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].url, 'https://api.github.com/user/starred/octo/repo');
+    assert.equal(requests[0].init?.method, 'DELETE');
+    assert.equal(requests[1].url, 'https://api.github.com/repos/octo/repo');
+    assert.equal(requests[1].init?.method, 'GET');
+  });
+
+  it('rejects delete 404 when the repo cannot be verified as accessible', async () => {
+    vi.spyOn(authStore, 'getToken').mockResolvedValue('github_pat_synthetic');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
+
+    await assert.rejects(
+      () => githubStarSource.unstar('octo/repo'),
+      (error: unknown) => error instanceof Error && error.message === 'GH_PAGE_STATUS:404',
+    );
   });
 });
