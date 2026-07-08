@@ -11,7 +11,6 @@ import { StarsTable } from '@/ui/components/StarsTable';
 import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
 import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
-import { hasVisibleActiveFilters } from '@/ui/active-filter-state';
 import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
@@ -96,19 +95,7 @@ function helperInfoKey(info: string | null, unstarFeedback: UnstarFeedback | nul
 }
 
 export function ManagerPanel() {
-  const {
-    rows,
-    total,
-    grandTotal,
-    loading,
-    phase,
-    languages,
-    watchReasons,
-    watchedTotal,
-    tagTree,
-    tagsByFullName,
-    refresh: refreshStars,
-  } = useStars();
+  const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
   const f = useFilterStore();
   const {
     status,
@@ -303,7 +290,8 @@ export function ManagerPanel() {
     setOpenUnstarFullName((current) => nextOpenUnstarFullName(current, fullName, sourceFullName));
   };
 
-  const hasActiveFilter = hasVisibleActiveFilters(f);
+  const hasActiveFilter =
+    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged || f.onlyArchived;
   const activeBackfillId = status?.activeBackfillId ?? null;
   const activeBackfillState = activeBackfillId ? status?.backfills[activeBackfillId] ?? null : null;
 
@@ -358,7 +346,6 @@ export function ManagerPanel() {
           listPhase={phase}
           total={visibleTotal}
           grandTotal={visibleGrandTotal}
-          watchedTotal={watchedTotal}
           busy={busy}
           pendingAction={pendingAction}
           successAction={successAction}
@@ -422,7 +409,6 @@ export function ManagerPanel() {
           <FilterSidebar
             f={f}
             languages={languages}
-            watchReasons={watchReasons}
             tagTree={tagTree}
             interactionLocked={interactionLocked}
             onTagMutationMessage={(message) => {

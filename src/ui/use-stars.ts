@@ -35,8 +35,6 @@ export function useStars() {
     onlyFavorite: f.onlyFavorite,
     onlyUntagged: f.onlyUntagged,
     onlyArchived: f.onlyArchived,
-    onlyWatched: f.onlyWatched,
-    watchReasons: f.watchReasons,
     sortKey: f.sortKey,
     sortDir: f.sortDir,
   };
@@ -83,15 +81,13 @@ export function useStars() {
             } else {
               setPhase('idle');
             }
-          } else {
-            setPhase('idle');
           }
           setLoading(false);
         })
         .catch(() => {
           if (!cancelled) {
             setLoading(false);
-            setPhase('idle');
+            if (!shouldFade) setPhase('idle');
           }
         });
     };
@@ -137,8 +133,6 @@ export function useStars() {
     loading,
     phase,
     languages: committed?.languages ?? [],
-    watchReasons: committed?.watchReasons ?? [],
-    watchedTotal: committed?.watchedTotal ?? 0,
     tagTree: { tags: committed?.tagTree ?? [], total: committed?.tagTotal ?? 0 },
     tagsByFullName,
     refresh,

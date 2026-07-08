@@ -76,7 +76,6 @@ export function Toolbar({
   listPhase,
   total,
   grandTotal,
-  watchedTotal,
   busy,
   pendingAction,
   successAction,
@@ -105,7 +104,6 @@ export function Toolbar({
   listPhase: 'idle' | 'fading-out' | 'fading-in';
   total: number;
   grandTotal: number;
-  watchedTotal: number;
   busy: boolean;
   pendingAction: string | null;
   successAction: string | null;
@@ -146,7 +144,7 @@ export function Toolbar({
     onClose: () => onPreviewCustomChange(false),
   });
   const segmentItemClass = (active: boolean) => cn(
-    'gsm-segment-item',
+    'gsm-touch-target relative inline-flex h-6 items-center gap-1.5 rounded-md px-2 font-medium text-muted-foreground transition-[background-color,color,box-shadow] duration-150 hover:text-foreground',
     { 'bg-background text-foreground shadow-sm': active },
   );
 
@@ -463,19 +461,6 @@ export function Toolbar({
               m.toolbar.shownTotal(total, grandTotal)
             )}
           </span>
-          {watchedTotal > 0 && (
-            <button
-              type="button"
-              onClick={() => f.setOnlyWatched(true)}
-              className={cn('tabular-nums transition-colors hover:text-foreground', {
-                'text-foreground': f.onlyWatched,
-                'text-muted-foreground': !f.onlyWatched,
-              })}
-              title={m.toolbar.watchSummaryTitle}
-            >
-              {m.toolbar.watchSummary(watchedTotal)}
-            </button>
-          )}
           {syncing && phase && (
             <span className="inline-flex items-center gap-2 text-primary">
               <Spinner className="size-3" />
@@ -535,7 +520,7 @@ export function Toolbar({
                 onClick={onStartLayoutEdit}
                 title={m.toolbar.editLayout}
                 aria-label={m.toolbar.editLayout}
-                className="gsm-compact-icon-button"
+                className="gsm-touch-target grid h-6 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground disabled:pointer-events-none"
               >
                 <Pencil className="size-3.5" />
               </button>

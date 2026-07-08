@@ -40,13 +40,6 @@ export class StarsDB extends Dexie {
       const rows = await table.toArray() as LegacyTagRow[];
       await table.bulkPut(rows.map((row) => normalizeStoredTag(row)));
     });
-    // v4: tags gained optional local watch intent. No index added — watch
-    // filters join via the in-memory tag map, matching favorite/notes behavior.
-    this.version(4).stores({
-      stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
-      tags: 'full_name, *tags, mtime',
-      tagMeta: 'name, dimension, mtime',
-    });
   }
 }
 

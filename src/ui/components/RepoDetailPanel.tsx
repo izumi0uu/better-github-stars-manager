@@ -8,7 +8,7 @@ import {
   Star as StarIcon,
   Check,
 } from "lucide-react";
-import { WATCH_REASONS, type Star, type Tag, type WatchIntent } from "@/types";
+import type { Star, Tag } from "@/types";
 import { suggestTags } from "@/ui/suggest";
 import { bgCall } from "@/utils/messaging";
 import { translateError } from "@/api/errors";
@@ -24,7 +24,6 @@ import { autoTagNames, manualTagNames, visibleTagNames } from "@/tags/tag-model"
 import { Badge } from "@/ui/shadcn/badge";
 import { Button } from "@/ui/shadcn/button";
 import { Textarea } from "@/ui/shadcn/textarea";
-import { Checkbox } from "@/ui/shadcn/checkbox";
 import { Separator } from "@/ui/shadcn/separator";
 import { useImeBufferedInput } from "@/ui/hooks/use-ime-input";
 import { cn } from "@/lib/utils";
@@ -34,9 +33,8 @@ import {
   getLockedRegionProps,
   shouldIgnorePanelShortcut,
 } from "@/ui/interaction-lock";
-import { ACTION_SUCCESS_FEEDBACK_MS } from "@/ui/ui-feedback-constants";
 
-/** Single-repo detail drawer; tag/note/suggest editing stays here so rows remain compact. */
+/** single-repo detail drawer (tag/note/suggest deep-edit lives here so rows stay compact); flex aside, no portal. */
 export function RepoDetailPanel({
   star,
   tag,
@@ -66,28 +64,21 @@ export function RepoDetailPanel({
   const autoTags = autoTagNames(tag);
   const myTagsKey = manualTags.join("\u0000");
   const notes = tag?.notes ?? "";
-  const watch = normalizeWatch(tag?.watch);
-  const watchKey = watchIntentKey(watch);
   const { m } = useI18n();
 
   const [excluded, setExcluded] = useState<string[]>([]);
   const [draftTags, setDraftTags] = useState(manualTags);
   const [draftNotes, setDraftNotes] = useState(notes);
-  const [draftWatch, setDraftWatch] = useState(watch);
   const [tagsSavePhase, setTagsSavePhase] = useState<SaveActionPhase>("idle");
   const [notesSavePhase, setNotesSavePhase] = useState<SaveActionPhase>("idle");
-  const [watchSavePhase, setWatchSavePhase] = useState<SaveActionPhase>("idle");
   const [tagError, setTagError] = useState<string | null>(null);
   const draftTagsRef = useRef(manualTags);
   const draftNotesRef = useRef(notes);
-  const draftWatchRef = useRef(watch);
   const loadedRepoRef = useRef(star.full_name);
   const loadedTagsRef = useRef(manualTags);
   const loadedNotesRef = useRef(notes);
-  const loadedWatchRef = useRef(watch);
   const tagsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const watchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,17 +99,13 @@ export function RepoDetailPanel({
       loadedRepoRef.current = star.full_name;
       loadedTagsRef.current = manualTags;
       loadedNotesRef.current = notes;
-      loadedWatchRef.current = watch;
       draftTagsRef.current = manualTags;
       draftNotesRef.current = notes;
-      draftWatchRef.current = watch;
       setDraftTags(manualTags);
       setDraftNotes(notes);
-      setDraftWatch(watch);
       setTagError(null);
       resetSavePhase(setTagsSavePhase, tagsTimerRef);
       resetSavePhase(setNotesSavePhase, notesTimerRef);
-      resetSavePhase(setWatchSavePhase, watchTimerRef);
       return;
     }
 
@@ -146,22 +133,14 @@ export function RepoDetailPanel({
       resetSavePhase(setNotesSavePhase, notesTimerRef);
     }
 
-    if (sameWatchIntent(draftWatchRef.current, loadedWatchRef.current) && !sameWatchIntent(loadedWatchRef.current, watch)) {
-      draftWatchRef.current = watch;
-      setDraftWatch(watch);
-      resetSavePhase(setWatchSavePhase, watchTimerRef);
-    }
-
     loadedTagsRef.current = manualTags;
     loadedNotesRef.current = notes;
-    loadedWatchRef.current = watch;
-  }, [star.full_name, myTagsKey, notes, watchKey]);
+  }, [star.full_name, myTagsKey, notes]);
 
   useEffect(
     () => () => {
       if (tagsTimerRef.current) clearTimeout(tagsTimerRef.current);
       if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
-      if (watchTimerRef.current) clearTimeout(watchTimerRef.current);
     },
     [],
   );
@@ -169,7 +148,6 @@ export function RepoDetailPanel({
   const suggestions = suggestTags(star, [...draftTags, ...autoTags], excluded);
   const tagsDirty = !sameTagNames(draftTags, manualTags);
   const notesDirty = draftNotes !== notes;
-  const watchDirty = !sameWatchIntent(draftWatch, watch);
 
   const updateDraftTags = (nextTags: string[]) => {
     draftTagsRef.current = nextTags;
@@ -182,13 +160,6 @@ export function RepoDetailPanel({
     draftNotesRef.current = nextNotes;
     resetSavePhase(setNotesSavePhase, notesTimerRef);
     setDraftNotes(nextNotes);
-  };
-
-  const updateDraftWatch = (nextWatch: WatchIntent) => {
-    const normalized = normalizeWatch(nextWatch);
-    draftWatchRef.current = normalized;
-    resetSavePhase(setWatchSavePhase, watchTimerRef);
-    setDraftWatch(normalized);
   };
 
   const notesInput = useImeBufferedInput(draftNotes, updateDraftNotes);
@@ -225,22 +196,6 @@ export function RepoDetailPanel({
       flashSaved(setNotesSavePhase, notesTimerRef);
     } finally {
       if (!ok) setNotesSavePhase("idle");
-    }
-  };
-
-  const saveWatch = async () => {
-    const nextWatch = draftWatchRef.current;
-    if (sameWatchIntent(nextWatch, watch)) return;
-
-    let ok = false;
-    setWatchSavePhase('busy');
-    try {
-      await bgCall('setWatch', { full_name: star.full_name, watch: nextWatch });
-      onDataChanged?.();
-      ok = true;
-      flashSaved(setWatchSavePhase, watchTimerRef);
-    } finally {
-      if (!ok) setWatchSavePhase('idle');
     }
   };
 
@@ -455,55 +410,6 @@ export function RepoDetailPanel({
         </Section>
 
         <Separator />
-        <Section title={m.repoDetail.watch}>
-          <label className="mb-2 flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs text-foreground hover:bg-muted/40">
-            <Checkbox
-              checked={draftWatch.enabled}
-              onCheckedChange={(checked) => updateDraftWatch({ ...draftWatchRef.current, enabled: checked === true })}
-            />
-            <span>{m.repoDetail.watchEnabled}</span>
-          </label>
-          <div className="flex flex-wrap gap-1">
-            {WATCH_REASONS.map((reason) => {
-              const on = draftWatch.reasons.includes(reason);
-              return (
-                <button
-                  key={reason}
-                  type="button"
-                  onClick={() => {
-                    const current = draftWatchRef.current;
-                    const reasons = on
-                      ? current.reasons.filter((value) => value !== reason)
-                      : [...current.reasons, reason];
-                    updateDraftWatch({ enabled: true, reasons });
-                  }}
-                >
-                  <Badge
-                    variant={on ? 'tagActive' : 'tag'}
-                    className={cn('cursor-pointer hover:opacity-80', {
-                      'opacity-60': !draftWatch.enabled,
-                    })}
-                  >
-                    {m.watchReasonLabels[reason]}
-                  </Badge>
-                </button>
-              );
-            })}
-          </div>
-          {draftWatch.enabled && draftWatch.reasons.length === 0 && (
-            <div className="gsm-helper-text mt-2">{m.repoDetail.watchReasonNudge}</div>
-          )}
-          <SaveRow
-            dirty={watchDirty}
-            phase={watchSavePhase}
-            savedLabel={m.repoDetail.watchSaved}
-            unsavedLabel={m.repoDetail.watchUnsaved}
-            saveLabel={m.common.save}
-            onSave={() => void saveWatch()}
-          />
-        </Section>
-
-        <Separator />
         <Section title={m.repoDetail.notes}>
           <Textarea
             {...notesInput.inputProps}
@@ -522,23 +428,6 @@ export function RepoDetailPanel({
       </div>
     </div>
   );
-}
-
-function normalizeWatch(watch: WatchIntent | undefined): WatchIntent {
-  if (!watch) return { enabled: false, reasons: [] };
-  const selected = new Set(watch.reasons);
-  return {
-    enabled: watch.enabled === true,
-    reasons: WATCH_REASONS.filter((reason) => selected.has(reason)),
-  };
-}
-
-function watchIntentKey(watch: WatchIntent): string {
-  return `${watch.enabled ? '1' : '0'}:${watch.reasons.join('\u0000')}`;
-}
-
-function sameWatchIntent(a: WatchIntent, b: WatchIntent): boolean {
-  return a.enabled === b.enabled && a.reasons.length === b.reasons.length && a.reasons.every((reason, index) => reason === b.reasons[index]);
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -610,7 +499,7 @@ function flashSaved(
   timerRef.current = setTimeout(() => {
     setPhase("idle");
     timerRef.current = null;
-  }, ACTION_SUCCESS_FEEDBACK_MS);
+  }, 1300);
 }
 
 function Meta({ label, value }: { label: string; value: ReactNode }) {

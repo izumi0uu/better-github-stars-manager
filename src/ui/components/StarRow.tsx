@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Archive, Bell, Star as StarIcon, StickyNote } from 'lucide-react';
+import { Archive, Star as StarIcon, StickyNote } from 'lucide-react';
 import type { Star } from '@/types';
 import { Badge } from '@/ui/shadcn/badge';
 import { Button } from '@/ui/shadcn/button';
@@ -27,8 +27,6 @@ export const StarRow = memo(function StarRow({
   hasNotes,
   favorite,
   favoriteBusy,
-  watched,
-  watchReasonCount,
   selectedTags,
   onToggleTag,
   onToggleFavorite,
@@ -49,8 +47,6 @@ export const StarRow = memo(function StarRow({
   hasNotes: boolean;
   favorite: boolean;
   favoriteBusy: boolean;
-  watched: boolean;
-  watchReasonCount: number;
   selectedTags: string[];
   onToggleTag: (tag: string) => void;
   onToggleFavorite: (full_name: string, favorite: boolean) => Promise<void>;
@@ -156,16 +152,6 @@ export const StarRow = memo(function StarRow({
               <div key={column} data-row-col={column} className={cn('flex items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
                 <span className="truncate text-primary">{star.full_name}</span>
                 {star.archived && <Archive className="size-3 shrink-0 text-warning" aria-label={m.starRow.archived} />}
-                {watched && (
-                  <span
-                    className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-primary/15 bg-primary/5 px-1 text-[10px] font-medium text-primary"
-                    title={watchReasonCount > 0 ? m.starRow.watchedReasonCount(watchReasonCount) : m.starRow.watched}
-                    aria-label={m.starRow.watched}
-                  >
-                    <Bell className="size-2.5" />
-                    {watchReasonCount > 0 && <span className="tabular-nums">{watchReasonCount}</span>}
-                  </span>
-                )}
               </div>
             );
           case 'description':

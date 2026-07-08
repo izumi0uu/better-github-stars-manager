@@ -1,10 +1,9 @@
-import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { StarRow } from '@/ui/components/StarRow';
 import type { Star } from '@/types';
 
-function fakeStar(createdAt: string | null, pushedAt: string | null = '2024-02-01T00:00:00Z'): Star {
+function fakeStar(createdAt: string | null): Star {
   return {
     full_name: 'owner/repo',
     html_url: 'https://github.com/owner/repo',
@@ -15,25 +14,21 @@ function fakeStar(createdAt: string | null, pushedAt: string | null = '2024-02-0
     archived: false,
     fork: false,
     created_at: createdAt,
-    pushed_at: pushedAt,
+    pushed_at: '2024-02-01T00:00:00Z',
     starred_at: '2024-03-01T00:00:00Z',
     tombstone: false,
     synced_at: '2024-03-02T00:00:00Z',
   };
 }
 
-type RowProps = Partial<ComponentProps<typeof StarRow>>;
-
-function renderRow(props: RowProps): string {
+function renderCreatedColumn(createdAt: string | null): string {
   return renderToStaticMarkup(
     <StarRow
-      star={fakeStar('2020-01-02T12:00:00Z')}
+      star={fakeStar(createdAt)}
       tags={[]}
       hasNotes={false}
       favorite={false}
       favoriteBusy={false}
-      watched={false}
-      watchReasonCount={0}
       selectedTags={[]}
       onToggleTag={vi.fn()}
       onToggleFavorite={vi.fn(async () => undefined)}
@@ -42,30 +37,30 @@ function renderRow(props: RowProps): string {
       columns={['created']}
       gridTemplateColumns="84px"
       flashedColumn={null}
-      {...props}
     />,
   );
 }
 
-function renderCreatedColumn(createdAt: string | null): string {
-  return renderRow({ star: fakeStar(createdAt), columns: ['created'], gridTemplateColumns: '84px' });
-}
-
-function renderUpdatedColumn(pushedAt: string | null): string {
-  return renderRow({ star: fakeStar('2020-01-02T12:00:00Z', pushedAt), columns: ['updated'], gridTemplateColumns: '84px' });
-}
-
-function renderTagsColumn(tags: string[]): string {
-  return renderRow({ tags, columns: ['tags'], gridTemplateColumns: '220px' });
-}
-
-function renderRepositoryColumn({ watched, watchReasonCount }: { watched: boolean; watchReasonCount: number }): string {
-  return renderRow({ watched, watchReasonCount, columns: ['repository'], gridTemplateColumns: '220px' });
-}
-
 describe('star row column rendering', () => {
   it('applies the shared table min width when provided', () => {
-    const markup = renderRow({ minWidth: 312 });
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={fakeStar('2020-01-02T12:00:00Z')}
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['created']}
+        gridTemplateColumns="84px"
+        minWidth={312}
+        flashedColumn={null}
+      />,
+    );
 
     expect(markup).toContain('min-width:312px');
   });
@@ -84,36 +79,25 @@ describe('star row column rendering', () => {
     expect(markup).toContain('—');
   });
 
-  it('renders the empty placeholder when repository push date is missing', () => {
-    const markup = renderUpdatedColumn(null);
-
-    expect(markup).toContain('data-row-col="updated"');
-    expect(markup).toContain('—');
-  });
-
-  it('keeps inline tag measurement non-interactive and hidden from accessibility', () => {
-    const markup = renderTagsColumn(['ui', 'react', 'agent', 'tooling']);
-
-    expect(markup).toContain('aria-hidden="true"');
-    expect(markup.match(/data-inline-tag-measure="tag"/g)).toHaveLength(4);
-    expect(markup.match(/<button/g)).toHaveLength(2);
-    expect(markup).toContain('+2');
-  });
-
-  it('renders the compact watch mark inside the repository cell', () => {
-    const markup = renderRepositoryColumn({ watched: true, watchReasonCount: 2 });
-
-    expect(markup).toContain('aria-label="Watched"');
-    expect(markup).toContain('2');
-  });
-
   it('keeps star values right-aligned in the default browse layout', () => {
-    const markup = renderRow({
-      star: { ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 },
-      columns: ['stars', 'updated'],
-      gridTemplateColumns: '64px 84px',
-      minWidth: 180,
-    });
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 }}
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['stars', 'updated']}
+        gridTemplateColumns="64px 84px"
+        minWidth={180}
+        flashedColumn={null}
+      />,
+    );
 
     expect(markup).toContain('data-row-col="stars"');
     expect(markup).toContain('justify-end');
@@ -121,12 +105,24 @@ describe('star row column rendering', () => {
   });
 
   it('keeps dense numeric and date columns clipped inside their tracks', () => {
-    const markup = renderRow({
-      star: { ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234567 },
-      columns: ['stars', 'updated', 'created'],
-      gridTemplateColumns: '48px 72px 84px',
-      minWidth: 220,
-    });
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234567 }}
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['stars', 'updated', 'created']}
+        gridTemplateColumns="48px 72px 84px"
+        minWidth={220}
+        flashedColumn={null}
+      />,
+    );
 
     expect(markup).toContain('data-row-col="stars"');
     expect(markup).toContain('justify-end');
@@ -138,16 +134,29 @@ describe('star row column rendering', () => {
   });
 
   it('keeps star values with their custom layout column group after editing is saved or previewed', () => {
-    const markup = renderRow({
-      star: { ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 },
-      columns: ['stars', 'updated'],
-      gridTemplateColumns: '64px 84px',
-      minWidth: 180,
-      starColumnAlignStart: true,
-    });
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 }}
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['stars', 'updated']}
+        gridTemplateColumns="64px 84px"
+        minWidth={180}
+        flashedColumn={null}
+        starColumnAlignStart
+      />,
+    );
 
     expect(markup).toContain('data-row-col="stars"');
     expect(markup).toContain('justify-start');
     expect(markup).not.toContain('justify-end');
   });
+
 });

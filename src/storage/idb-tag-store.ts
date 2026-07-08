@@ -1,4 +1,4 @@
-import { WATCH_REASONS, type Tag } from '@/types';
+import type { Tag } from '@/types';
 import type { CountProgressCallback, TagStore } from '@/api/tag-store';
 import { gistTagStore } from '@/sync/gist-tag-store';
 import { db } from './db';
@@ -252,21 +252,6 @@ export const idbTagStore: TagStore = {
   async setFavorite(full_name, favorite) {
     const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
     await db.tags.put(normalizeStoredTag({ ...existing, favorite, mtime: now() }));
-    markDirty(full_name);
-  },
-
-  async setWatch(full_name, watch) {
-    const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
-    const selected = new Set(watch.reasons);
-    await db.tags.put(normalizeStoredTag({
-      ...existing,
-      favorite: existing.favorite ?? false,
-      watch: {
-        enabled: watch.enabled,
-        reasons: WATCH_REASONS.filter((reason) => selected.has(reason)),
-      },
-      mtime: now(),
-    }));
     markDirty(full_name);
   },
 

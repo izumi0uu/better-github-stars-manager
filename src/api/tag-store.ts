@@ -1,4 +1,4 @@
-import type { Tag, TagMeta, WatchIntent } from '@/types';
+import type { Tag, TagMeta } from '@/types';
 
 export type CountProgressCallback = (done: number, total: number | null) => void;
 
@@ -42,7 +42,6 @@ export interface TagStore {
   removeVisibleTag(full_name: string, name: string): Promise<{ removed: boolean }>;
   setNotes(full_name: string, notes: string): Promise<void>;
   setFavorite(full_name: string, favorite: boolean): Promise<void>;
-  setWatch(full_name: string, watch: WatchIntent): Promise<void>;
   /** Upsert a full Tag record (used by Gist merge-in). */
   upsert(tag: Tag): Promise<void>;
   upsertMeta(meta: TagMeta): Promise<void>;

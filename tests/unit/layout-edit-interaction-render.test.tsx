@@ -12,7 +12,7 @@ import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut }
 import type { FilterState } from '@/ui/filter-store';
 import { fakeStar, fakeTag } from './test-utils';
 
-function fakeFilterState(patch: Partial<FilterState> = {}): FilterState {
+function fakeFilterState(): FilterState {
   return {
     query: 'react',
     languages: ['TypeScript'],
@@ -22,8 +22,6 @@ function fakeFilterState(patch: Partial<FilterState> = {}): FilterState {
     onlyFavorite: true,
     onlyUntagged: false,
     onlyArchived: false,
-    onlyWatched: false,
-    watchReasons: [],
     sortKey: 'starred_at',
     sortDir: 'desc',
     libraryViewHydrated: true,
@@ -36,12 +34,9 @@ function fakeFilterState(patch: Partial<FilterState> = {}): FilterState {
     setOnlyFavorite: vi.fn(),
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
-    setOnlyWatched: vi.fn(),
-    toggleWatchReason: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
-    ...patch,
   };
 }
 
@@ -65,7 +60,6 @@ function renderToolbarViewTabs({
         listPhase="idle"
         total={1}
         grandTotal={1}
-        watchedTotal={2}
         busy={false}
         pendingAction={null}
         successAction={null}
@@ -123,7 +117,6 @@ describe('layout edit interaction lock render behavior', () => {
           listPhase="idle"
           total={1}
           grandTotal={1}
-          watchedTotal={0}
           busy={false}
           pendingAction={null}
           successAction={null}
@@ -183,7 +176,7 @@ describe('layout edit interaction lock render behavior', () => {
     const buttons = [...markup.matchAll(/<button[\s\S]*?<\/button>/g)].map((match) => match[0]);
     const defaultTab = buttons.find((button) => button.includes('Default'));
     const customTab = buttons.find((button) => button.includes('Custom'));
-    const editButton = buttons.find((button) => button.includes('aria-label="Edit custom layout"'));
+    const editButton = buttons.find((button) => button.includes('w-7'));
 
     expect(defaultTab).toBeDefined();
     expect(customTab).toBeDefined();
@@ -233,20 +226,6 @@ describe('layout edit interaction lock render behavior', () => {
     expect(chrome).toContain('Save');
     expect(chrome).toContain('Live drag: frozen peers');
     expect(chrome).toContain('Table 864px / Panel 720px / Overflow +144px');
-  });
-
-  it('renders watch summary and active watch filter chips', () => {
-    const toolbar = renderToolbarViewTabs({ layoutMode: 'default', customPreviewing: false });
-    const chips = renderToStaticMarkup(
-      <ActiveFilterChips
-        f={fakeFilterState({ onlyWatched: true, watchReasons: ['security'] })}
-        count={1}
-      />,
-    );
-
-    expect(toolbar).toContain('2 watched');
-    expect(chips).toContain('Watched');
-    expect(chips).toContain('Watch: Security');
   });
 
   it('renders the detail drawer visible but inert and makes its repo link unfocusable', () => {

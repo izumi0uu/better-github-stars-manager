@@ -16,8 +16,6 @@ function emptyFilter() {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
-    onlyWatched: false,
-    watchReasons: [],
     sortKey: 'starred_at',
     sortDir: 'desc',
   };

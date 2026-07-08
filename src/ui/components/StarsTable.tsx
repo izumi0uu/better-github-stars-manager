@@ -378,8 +378,6 @@ export function StarsTable({
                   hasNotes={!!(tag?.notes && tag.notes.trim())}
                   favorite={favorite}
                   favoriteBusy={favoriteBusy}
-                  watched={tag?.watch?.enabled === true}
-                  watchReasonCount={tag?.watch?.reasons?.length ?? 0}
                   selectedTags={selectedTags}
                   onToggleTag={onToggleTag}
                   onToggleFavorite={onToggleFavorite}

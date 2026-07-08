@@ -1,4 +1,4 @@
-import { WATCH_REASONS, type Tag, type WatchIntent, type WatchReason } from '@/types';
+import type { Tag } from '@/types';
 import { includesTagName, normalizeTagNames } from '@/tags/tag-model';
 
 export type LegacyTagRow = Partial<Omit<Tag, 'manualTags' | 'autoTags' | 'dismissedAutoTags'>> & {
@@ -8,16 +8,6 @@ export type LegacyTagRow = Partial<Omit<Tag, 'manualTags' | 'autoTags' | 'dismis
   autoTags?: unknown;
   dismissedAutoTags?: unknown;
 };
-
-
-function normalizeWatchIntent(value: unknown): WatchIntent | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const candidate = value as Partial<WatchIntent>;
-  if (typeof candidate.enabled !== 'boolean') return undefined;
-  const selected = new Set(Array.isArray(candidate.reasons) ? candidate.reasons : []);
-  const reasons = WATCH_REASONS.filter((reason): reason is WatchReason => selected.has(reason));
-  return { enabled: candidate.enabled, reasons };
-}
 
 function legacyManualTagNames(tagLike: Partial<LegacyTagRow> | undefined | null): string[] {
   if (!tagLike) return [];
@@ -42,7 +32,6 @@ export function normalizeStoredTag(row: LegacyTagRow): Tag {
     dismissedAutoTagsMtime: typeof row.dismissedAutoTagsMtime === 'string' ? row.dismissedAutoTagsMtime : mtime,
     notes: typeof row.notes === 'string' ? row.notes : '',
     favorite: row.favorite ?? false,
-    watch: normalizeWatchIntent(row.watch),
     mtime,
     gh_list_id: row.gh_list_id ?? null,
   };

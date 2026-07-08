@@ -54,8 +54,6 @@ describe('preferences persistence', () => {
           onlyFavorite: true,
           onlyUntagged: false,
           onlyArchived: true,
-          onlyWatched: false,
-          watchReasons: [],
         },
         sort: {
           sortKey: 'created_at',
@@ -102,8 +100,6 @@ describe('preferences persistence', () => {
           onlyFavorite: false,
           onlyUntagged: false,
           onlyArchived: false,
-          onlyWatched: false,
-          watchReasons: [],
         },
         sort: {
           sortKey: 'starred_at',
@@ -129,8 +125,6 @@ describe('preferences persistence', () => {
         onlyFavorite: true,
         onlyUntagged: true,
         onlyArchived: true,
-        onlyWatched: false,
-        watchReasons: [],
       },
       sort: {
         sortKey: 'name',

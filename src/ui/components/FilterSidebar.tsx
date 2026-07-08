@@ -2,7 +2,6 @@ import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ArrowDownAZ, ArrowUpAZ, ChevronRight, ListRestart, Search, Trash2, X, Check } from 'lucide-react';
 import type { FilterState } from '@/ui/filter-store';
-import { WATCH_REASONS, type WatchReason } from '@/types';
 import { Checkbox } from '@/ui/shadcn/checkbox';
 import { Input } from '@/ui/shadcn/input';
 import { ActionIcon } from '@/ui/shadcn/action-icon';
@@ -20,7 +19,6 @@ import { getLockedRegionProps } from '@/ui/interaction-lock';
 export function FilterSidebar({
   f,
   languages,
-  watchReasons,
   tagTree,
   interactionLocked = false,
   onTagMutationMessage,
@@ -28,7 +26,6 @@ export function FilterSidebar({
 }: {
   f: FilterState;
   languages: [string, number][];
-  watchReasons: { reason: WatchReason; count: number }[];
   tagTree: { tags: { name: string; count: number }[]; total: number };
   interactionLocked?: boolean;
   /** Called after a tag mutation to surface a manager info/error banner. */
@@ -66,12 +63,6 @@ export function FilterSidebar({
           label={m.filterSidebar.onlyArchivedLabel}
           hint={m.filterSidebar.onlyArchivedHint}
         />
-        <FilterToggle
-          checked={f.onlyWatched}
-          onChange={() => f.setOnlyWatched(!f.onlyWatched)}
-          label={m.filterSidebar.onlyWatchedLabel}
-          hint={m.filterSidebar.onlyWatchedHint}
-        />
         {/* "Show unstarred" (tombstone) — disabled for now; keep commented to re-enable later.
         <FilterToggle
           checked={f.showTombstone}
@@ -85,8 +76,6 @@ export function FilterSidebar({
       {/* Languages — collapsible, collapsed by default */}
       <LanguagesSection f={f} languages={languages} />
 
-      <WatchReasonsSection f={f} watchReasons={watchReasons} />
-
       {/* Tags — flat list in incoming order; optional name sort and search live inside.
           tagMode (any/all) sits in the header. */}
       <TagsSection
@@ -95,54 +84,6 @@ export function FilterSidebar({
         onTagMutationMessage={onTagMutationMessage}
         onTagMutationSuccess={onTagMutationSuccess}
       />
-    </div>
-  );
-}
-
-
-function WatchReasonsSection({
-  f,
-  watchReasons,
-}: {
-  f: FilterState;
-  watchReasons: { reason: WatchReason; count: number }[];
-}) {
-  const { m } = useI18n();
-  const [open, setOpen] = useState(true);
-  const countByReason = new Map(watchReasons.map(({ reason, count }) => [reason, count]));
-  const visible = WATCH_REASONS.filter((reason) => countByReason.has(reason) || f.watchReasons.includes(reason));
-
-  return (
-    <div>
-      <SectionTitle
-        title={m.filterSidebar.watchReasons(watchReasons.length)}
-        open={open}
-        onToggle={() => setOpen((v) => !v)}
-      />
-      {open && (visible.length === 0 ? (
-        <div className="gsm-sidebar-body-in px-1.5 py-2 text-xs text-muted-foreground">{m.filterSidebar.watchReasonsEmpty}</div>
-      ) : (
-        <div className="gsm-sidebar-body-in flex flex-col gap-1">
-          {visible.map((reason) => {
-            const on = f.watchReasons.includes(reason);
-            const count = countByReason.get(reason) ?? 0;
-            return (
-              <label
-                key={reason}
-                className={cn('gsm-sidebar-row flex cursor-pointer items-center gap-1.5 px-1.5 py-0.5 hover:bg-muted/40', {
-                  'text-foreground': on,
-                  'bg-muted/30': on,
-                  'text-muted-foreground': !on,
-                })}
-              >
-                <Checkbox checked={on} onCheckedChange={() => f.toggleWatchReason(reason)} />
-                <span className="flex-1 truncate">{m.watchReasonLabels[reason]}</span>
-                <span className="gsm-muted-count-soft tabular-nums">{count}</span>
-              </label>
-            );
-          })}
-        </div>
-      ))}
     </div>
   );
 }

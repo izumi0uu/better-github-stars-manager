@@ -25,14 +25,8 @@ export function ActiveFilterChips({
   if (f.onlyFavorite) active.push({ label: m.activeFilters.onlyFavorite, clear: () => f.setOnlyFavorite(false), kind: 'special' });
   if (f.onlyUntagged) active.push({ label: m.activeFilters.onlyUntagged, clear: () => f.setOnlyUntagged(false), kind: 'special' });
   if (f.onlyArchived) active.push({ label: m.activeFilters.onlyArchived, clear: () => f.setOnlyArchived(false), kind: 'special' });
-  if (f.onlyWatched) active.push({ label: m.activeFilters.onlyWatched, clear: () => f.setOnlyWatched(false), kind: 'special' });
-  for (const reason of f.watchReasons) {
-    active.push({
-      label: m.activeFilters.watchReason(m.watchReasonLabels[reason]),
-      clear: () => f.toggleWatchReason(reason),
-      kind: 'special',
-    });
-  }
+  // "Show unstarred" (tombstone) chip — disabled for now.
+  // if (f.showTombstone) active.push({ label: m.filterSidebar.showTombstoneLabel, clear: () => f.setShowTombstone(false), kind: 'special' });
 
   return (
     <div

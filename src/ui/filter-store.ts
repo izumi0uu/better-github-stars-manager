@@ -3,7 +3,7 @@ import {
   DEFAULT_LIBRARY_VIEW_PREFS,
   normalizeLibraryViewPrefs,
 } from '@/preferences';
-import type { LibraryViewPrefs, WatchReason } from '@/types';
+import type { LibraryViewPrefs } from '@/types';
 
 export type SortKey = 'starred_at' | 'pushed_at' | 'created_at' | 'stargazers_count' | 'name';
 export type SortDir = 'asc' | 'desc';
@@ -17,8 +17,6 @@ export interface FilterState {
   onlyFavorite: boolean;
   onlyUntagged: boolean;
   onlyArchived: boolean;
-  onlyWatched: boolean;
-  watchReasons: WatchReason[];
   sortKey: SortKey;
   sortDir: SortDir;
   libraryViewHydrated: boolean;
@@ -31,8 +29,6 @@ export interface FilterState {
   setOnlyFavorite: (v: boolean) => void;
   setOnlyUntagged: (v: boolean) => void;
   setOnlyArchived: (v: boolean) => void;
-  setOnlyWatched: (v: boolean) => void;
-  toggleWatchReason: (reason: WatchReason) => void;
   setSort: (k: SortKey, d?: SortDir) => void;
   applyLibraryViewPrefs: (prefs: LibraryViewPrefs, tagOverride?: string | null) => void;
   resetFilters: () => void;
@@ -47,8 +43,6 @@ export function libraryViewPrefsFromFilterState(state: Pick<
   | 'onlyFavorite'
   | 'onlyUntagged'
   | 'onlyArchived'
-  | 'onlyWatched'
-  | 'watchReasons'
   | 'sortKey'
   | 'sortDir'
 >): LibraryViewPrefs {
@@ -62,8 +56,6 @@ export function libraryViewPrefsFromFilterState(state: Pick<
       onlyFavorite: state.onlyFavorite,
       onlyUntagged: state.onlyUntagged,
       onlyArchived: state.onlyArchived,
-      onlyWatched: state.onlyWatched,
-      watchReasons: state.watchReasons,
     },
     sort: {
       sortKey: state.sortKey,
@@ -85,8 +77,6 @@ export const useFilterStore = create<FilterState>((set) => ({
   onlyFavorite: false,
   onlyUntagged: false,
   onlyArchived: false,
-  onlyWatched: false,
-  watchReasons: [],
   sortKey: 'starred_at',
   sortDir: 'desc',
   libraryViewHydrated: false,
@@ -107,13 +97,6 @@ export const useFilterStore = create<FilterState>((set) => ({
   setOnlyFavorite: (onlyFavorite) => set({ onlyFavorite }),
   setOnlyUntagged: (onlyUntagged) => set({ onlyUntagged }),
   setOnlyArchived: (onlyArchived) => set({ onlyArchived }),
-  setOnlyWatched: (onlyWatched) => set({ onlyWatched }),
-  toggleWatchReason: (reason) =>
-    set((s) => ({
-      watchReasons: s.watchReasons.includes(reason)
-        ? s.watchReasons.filter((r) => r !== reason)
-        : [...s.watchReasons, reason],
-    })),
   setSort: (sortKey, sortDir) => set((s) => ({ sortKey, sortDir: sortDir ?? s.sortDir })),
   applyLibraryViewPrefs: (prefs, tagOverride) => {
     const normalized = normalizeLibraryViewPrefs(prefs ?? DEFAULT_LIBRARY_VIEW_PREFS);
@@ -125,23 +108,11 @@ export const useFilterStore = create<FilterState>((set) => ({
       onlyFavorite: normalized.filters.onlyFavorite,
       onlyUntagged: normalized.filters.onlyUntagged,
       onlyArchived: normalized.filters.onlyArchived,
-      onlyWatched: normalized.filters.onlyWatched,
-      watchReasons: normalized.filters.watchReasons,
       sortKey: normalized.sort.sortKey,
       sortDir: normalized.sort.sortDir,
       libraryViewHydrated: true,
     });
   },
   resetFilters: () =>
-    set({
-      query: '',
-      languages: [],
-      tags: [],
-      watchReasons: [],
-      showTombstone: false,
-      onlyFavorite: false,
-      onlyUntagged: false,
-      onlyArchived: false,
-      onlyWatched: false,
-    }),
+    set({ query: '', languages: [], tags: [], showTombstone: false, onlyFavorite: false, onlyUntagged: false, onlyArchived: false }),
 }));

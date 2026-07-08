@@ -203,8 +203,6 @@ function fakeFilterState(): FilterState {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
-    onlyWatched: false,
-    watchReasons: [],
     sortKey: 'starred_at',
     sortDir: 'desc',
     libraryViewHydrated: true,
@@ -217,8 +215,6 @@ function fakeFilterState(): FilterState {
     setOnlyFavorite: vi.fn(),
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
-    setOnlyWatched: vi.fn(),
-    toggleWatchReason: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
@@ -293,7 +289,6 @@ function LayoutToolbarHarness() {
           listPhase="idle"
           total={1}
           grandTotal={1}
-          watchedTotal={0}
           busy={false}
           pendingAction={null}
           successAction={null}
