@@ -21,6 +21,11 @@ import {
   normalizeColumnLayoutMode,
   normalizeStoredColumnLayoutPreference,
 } from "@/ui/column-layout";
+import {
+  browserRuntime,
+  isBrowserStorageAvailable,
+} from "@/platform/browser-runtime";
+import { discoverExistingSyncGist } from "@/sync/gist-discovery";
 
 /**
  * Owns the fine-grained PAT lifecycle.
@@ -28,7 +33,7 @@ import {
  * The options page collects a token, verifies the GitHub capabilities this
  * extension needs, captures account identity, and only then persists the token.
  * Plaintext stays in memory; the stored copy is AES-GCM encrypted in
- * `chrome.storage.local`.
+ * extension local storage.
  */
 
 export const CONFIG_STORAGE_KEY = "gsm_config";
@@ -109,14 +114,14 @@ async function read(): Promise<Config> {
 }
 
 async function readStoredConfig(): Promise<Config> {
-  const raw = await chrome.storage.local.get(CONFIG_STORAGE_KEY);
+  const raw = await browserRuntime.storage.local.get(CONFIG_STORAGE_KEY);
   const stored = (raw[CONFIG_STORAGE_KEY] ?? {}) as Partial<Config>;
   return withNormalizedOnboarding(mergeStoredConfig(stored));
 }
 
 async function write(next: Config): Promise<void> {
   const normalized = withNormalizedOnboarding(next);
-  await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: normalized });
+  await browserRuntime.storage.local.set({ [CONFIG_STORAGE_KEY]: normalized });
   cache = normalized;
 }
 
@@ -128,8 +133,8 @@ async function readDecryptedToken(): Promise<string | null> {
   return plaintextToken;
 }
 
-if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
-  chrome.storage.onChanged.addListener((changes, areaName) => {
+if (isBrowserStorageAvailable()) {
+  browserRuntime.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
     const change = changes[CONFIG_STORAGE_KEY];
     if (!change) return;
@@ -217,12 +222,17 @@ export const authStore = {
 
     const { cipher, meta } = await encrypt(clean);
     const current = await read();
+    const discovery = current.gistId
+      ? { status: "none" as const }
+      : await discoverExistingSyncGist(clean).catch(() => ({ status: "unavailable" as const, reason: "network" }));
+    const discoveredGistId = discovery.status === "found" ? discovery.id : null;
     const onboardingStage =
       current.onboardingStage === "done" ? "done" : "awaiting_sync";
     await write({
       ...current,
       tokenEncrypted: cipher,
       tokenCryptoMeta: meta,
+      gistId: current.gistId ?? discoveredGistId,
       username: login,
       avatarUrl,
       displayName,

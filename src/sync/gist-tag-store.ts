@@ -4,6 +4,8 @@ import { db } from '@/storage/db';
 import { authStore } from '@/auth/auth-store';
 import { clearDirty, type DirtySnapshot } from '@/storage/idb-tag-store';
 import { GIST_NO_TOKEN, GIST_CREATE_FAILED, GIST_PUSH_FAILED, GIST_PULL_FAILED } from '@/api/errors';
+import { GIST_DESC, GIST_FILENAME } from '@/sync/gist-contract';
+import { discoverExistingSyncGist } from '@/sync/gist-discovery';
 
 /**
  * Gist as a zero-server cross-device sync channel, storing one tags+tagMeta
@@ -11,18 +13,19 @@ import { GIST_NO_TOKEN, GIST_CREATE_FAILED, GIST_PUSH_FAILED, GIST_PULL_FAILED }
  * LWW (newer wins).
  */
 
-const GIST_FILENAME = 'better-github-stars-manager-tags.json';
-const GIST_DESC = 'Better GitHub Stars Manager — tag sync (do not edit)';
+async function getGistToken(): Promise<string> {
+  const token = await authStore.getToken();
+  if (!token) throw new Error(GIST_NO_TOKEN);
+  return token;
+}
 
-function gistHeaders(): Promise<HeadersInit> {
-  return authStore.getToken().then((token) => {
-    if (!token) throw new Error(GIST_NO_TOKEN);
-    return {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-    };
-  });
+async function gistHeaders(): Promise<HeadersInit> {
+  const token = await getGistToken();
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github+json',
+    'Content-Type': 'application/json',
+  };
 }
 
 async function clearBoundGist(): Promise<void> {
@@ -45,6 +48,15 @@ async function createGist(): Promise<string> {
   return body.id;
 }
 
+async function discoverAndBindGist(errorCode: string): Promise<string | null> {
+  const token = await getGistToken();
+  const discovery = await discoverExistingSyncGist(token);
+  if (discovery.status === 'unavailable') throw new Error(errorCode);
+  if (discovery.status === 'none') return null;
+  await authStore.update({ gistId: discovery.id, gistSyncCursor: discovery.exportedAt });
+  return discovery.id;
+}
+
 async function ensureWritableGist(): Promise<{ id: string; recreated: boolean }> {
   const cfg = await authStore.getConfig();
   if (cfg.gistId) {
@@ -55,6 +67,8 @@ async function ensureWritableGist(): Promise<{ id: string; recreated: boolean }>
     if (res.status !== 404) throw new Error(GIST_PUSH_FAILED);
     await clearBoundGist();
   }
+  const discovered = await discoverAndBindGist(GIST_PUSH_FAILED);
+  if (discovered) return { id: discovered, recreated: false };
   return { id: await createGist(), recreated: true };
 }
 
@@ -151,11 +165,12 @@ export const gistTagStore = {
    */
   async pull(onProgress?: CountProgressCallback): Promise<PullResult> {
     const cfg = await authStore.getConfig();
-    if (!cfg.gistId) {
-      // No gist yet — nothing to pull. (First device to sync pushes first.)
+    const gistId = cfg.gistId ?? await discoverAndBindGist(GIST_PULL_FAILED);
+    if (!gistId) {
+      // No gist exists after a successful discovery pass.
       return { merged: 0, total: 0, missing: false };
     }
-    const { payload: remote, missing } = await readGist(cfg.gistId);
+    const { payload: remote, missing } = await readGist(gistId);
     if (!remote) return { merged: 0, total: 0, missing };
     const total = Object.keys(remote.tags).length + Object.keys(remote.tagMeta).length;
 

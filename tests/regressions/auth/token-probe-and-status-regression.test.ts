@@ -9,6 +9,7 @@ import {
   translateError,
 } from '../../../src/api/errors';
 import { probeTokenCapabilities } from '../../../src/auth/token-probe';
+import { GIST_FILENAME } from '../../../src/sync/gist-contract';
 import { mergeStatusPatch, mergeStatusSnapshot, type SyncStatus } from '../../../src/utils/messaging';
 
 function fakeMessages() {
@@ -241,6 +242,72 @@ describe('Status/token regressions', () => {
     const cfg = await authStore.getConfig();
     assert.equal(cfg.tokenEncrypted, null);
     assert.equal(cfg.username, null);
+  });
+
+  it('authStore.setToken binds an existing sync gist discovered from the account', async () => {
+    await authStore.clearToken();
+    await authStore.update({
+      gistId: null,
+      gistSyncCursor: null,
+      username: null,
+      avatarUrl: null,
+      displayName: null,
+    });
+
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      calls.push(`${method} ${url}`);
+      if (url.endsWith('/user') && method === 'GET') {
+        return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+      }
+      if (url.includes('/user/starred?per_page=1&page=1') && method === 'GET') return response(200, []);
+      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-discovery' });
+      if (url.endsWith('/gists/probe-discovery') && method === 'DELETE') return response(204);
+      if (url.endsWith('/gists/existing-sync-gist') && method === 'GET') {
+        return response(200, {
+          files: {
+            [GIST_FILENAME]: {
+              content: JSON.stringify({
+                v: 2,
+                tags: {},
+                tagMeta: {},
+                exportedAt: '2026-02-01T00:00:00.000Z',
+              }),
+            },
+          },
+        });
+      }
+      if (url.endsWith('/gists?per_page=100&page=1') && method === 'GET') {
+        return response(200, [
+          {
+            id: 'ordinary-gist',
+            updated_at: '2026-01-01T00:00:00Z',
+            files: { 'notes.md': {} },
+          },
+          {
+            id: 'existing-sync-gist',
+            updated_at: '2026-02-01T00:00:00Z',
+            files: { [GIST_FILENAME]: {} },
+          },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    await authStore.setToken('github_pat_discovery');
+
+    const cfg = await authStore.getConfig();
+    assert.equal(cfg.gistId, 'existing-sync-gist');
+    assert.deepEqual(calls, [
+      'GET https://api.github.com/user',
+      'GET https://api.github.com/user/starred?per_page=1&page=1',
+      'POST https://api.github.com/gists',
+      'DELETE https://api.github.com/gists/probe-discovery',
+      'GET https://api.github.com/gists?per_page=100&page=1',
+      'GET https://api.github.com/gists/existing-sync-gist',
+    ]);
   });
 
   it('authStore normalizes new behavior defaults for legacy configs', async () => {
