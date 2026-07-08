@@ -74,4 +74,4 @@ const [versionHash] = versionHashCandidates.size === 1 ? versionHashCandidates :
 
 console.log(`✅ Packaged ${path.relative(root, zipPath)}`);
 console.log(`✅ Wrote ${path.relative(root, checksumPath)}`);
-if (versionHash) console.log(`✅ DEV ${versionHash}`);
+if (versionHash) console.log(`✅ BUILD ${versionHash}`);

@@ -62,32 +62,34 @@ export function FloatingLocaleToggle({
       {...getLockedRegionProps(interactionLocked)}
     >
       <div className="flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-1.5 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <span className="rounded-full bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] text-warning">
-          {m.dev.version(VERSION_HASH)}
-        </span>
         {DEV && (
-          <button
-            type="button"
-            disabled={clearing || interactionLocked}
-            onClick={() => void clearLocalData()}
-            className={cn(
-              'rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-60',
-              {
-                'bg-destructive text-destructive-foreground hover:bg-destructive/90': confirmClear,
-                'bg-destructive/10 text-destructive hover:bg-destructive/15': clearError !== null && !confirmClear,
-                'text-muted-foreground hover:bg-destructive/10 hover:text-destructive': !confirmClear && clearError === null,
-              },
-            )}
-            title={clearError ? m.dev.clearLocalDataFailed(clearError) : confirmClear ? m.dev.confirmClearLocalData : m.dev.clearLocalData}
-          >
-            {clearing
-              ? m.dev.clearingLocalData
-              : clearError
-                ? m.dev.clearLocalDataFailed(clearError)
-                : confirmClear
-                  ? m.dev.confirmClearLocalData
-                  : m.dev.clearLocalData}
-          </button>
+          <>
+            <span className="rounded-full bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] text-warning">
+              {m.dev.version(VERSION_HASH)}
+            </span>
+            <button
+              type="button"
+              disabled={clearing || interactionLocked}
+              onClick={() => void clearLocalData()}
+              className={cn(
+                'rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-60',
+                {
+                  'bg-destructive text-destructive-foreground hover:bg-destructive/90': confirmClear,
+                  'bg-destructive/10 text-destructive hover:bg-destructive/15': clearError !== null && !confirmClear,
+                  'text-muted-foreground hover:bg-destructive/10 hover:text-destructive': !confirmClear && clearError === null,
+                },
+              )}
+              title={clearError ? m.dev.clearLocalDataFailed(clearError) : confirmClear ? m.dev.confirmClearLocalData : m.dev.clearLocalData}
+            >
+              {clearing
+                ? m.dev.clearingLocalData
+                : clearError
+                  ? m.dev.clearLocalDataFailed(clearError)
+                  : confirmClear
+                    ? m.dev.confirmClearLocalData
+                    : m.dev.clearLocalData}
+            </button>
+          </>
         )}
         <span className="pl-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
           {m.options.languageLabel}

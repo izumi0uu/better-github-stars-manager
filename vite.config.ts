@@ -35,7 +35,7 @@ export default defineConfig(({ command }) => {
       {
         name: 'gsm-build-info',
         closeBundle() {
-          if (command === 'build') console.log(`✅ DEV ${VERSION_HASH}`);
+          if (command === 'build') console.log(`✅ BUILD ${VERSION_HASH}`);
         },
       },
     ],
