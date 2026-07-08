@@ -1,4 +1,4 @@
-import { type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { type PointerEvent as ReactPointerEvent, type Ref, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Columns3, EyeOff, GripVertical, Maximize2, RotateCcw, Ruler, X } from 'lucide-react';
 import { useI18n } from '@/i18n';
@@ -130,6 +130,7 @@ export function LayoutEditChrome({
   trayDropReady,
   dropReadyLabel,
   editColumnsButtonRef,
+  hideDropZoneRef,
   onToggleColumnMenu,
   onFitWidths,
   onResetWidths,
@@ -151,6 +152,7 @@ export function LayoutEditChrome({
   trayDropReady: boolean;
   dropReadyLabel: string | null;
   editColumnsButtonRef: RefObject<HTMLButtonElement>;
+  hideDropZoneRef: Ref<HTMLDivElement>;
   onToggleColumnMenu: () => void;
   onFitWidths: () => void;
   onResetWidths: () => void;
@@ -177,7 +179,7 @@ export function LayoutEditChrome({
       className={cn('gsm-edit-chrome-wrap', { open: editing })}
       aria-hidden={!editing}
     >
-      <div>
+      <div ref={hideDropZoneRef}>
         <div className="flex flex-wrap items-center gap-2 border-b border-layout-edit-border bg-layout-edit px-3 py-1.5 text-xs text-layout-edit-foreground">
           <span className="inline-flex items-center gap-1.5 font-medium text-layout-edit-foreground">
             <span className="gsm-edit-dot size-2 rounded-full bg-layout-edit-accent" />
