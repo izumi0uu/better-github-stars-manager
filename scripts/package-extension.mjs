@@ -13,6 +13,7 @@ const artifactsDir = path.resolve(root, 'artifacts');
 if (process.env.GSM_SKIP_PACKAGE_BUILD !== 'true') {
   execFileSync('pnpm', ['build'], {
     cwd: root,
+    env: { ...process.env, GSM_RELEASE: 'true', GSM_DEV: 'false' },
     stdio: 'inherit',
   });
 }
@@ -70,8 +71,14 @@ for (const entry of existsSync(assetDir) ? readdirSync(assetDir) : []) {
     versionHashCandidates.add(match[0]);
   }
 }
-const [versionHash] = versionHashCandidates.size === 1 ? versionHashCandidates : [];
+if (versionHashCandidates.size > 0) {
+  rmSync(zipPath, { force: true });
+  rmSync(checksumPath, { force: true });
+  console.error(`❌ Release package contains development build hash: ${Array.from(versionHashCandidates).join(', ')}`);
+  console.error('Run pnpm package:extension without GSM_SKIP_PACKAGE_BUILD, or rebuild with GSM_RELEASE=true.');
+  process.exit(1);
+}
 
 console.log(`✅ Packaged ${path.relative(root, zipPath)}`);
 console.log(`✅ Wrote ${path.relative(root, checksumPath)}`);
-if (versionHash) console.log(`✅ BUILD ${versionHash}`);
+console.log('✅ Release package contains no development build hash');
