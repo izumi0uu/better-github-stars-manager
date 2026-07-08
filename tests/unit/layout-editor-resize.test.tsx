@@ -44,7 +44,10 @@ function baseConfig(): Config {
   } as Config;
 }
 
-function eventWithPointer(type: string, init: { pointerId: number; clientX: number; button?: number; isPrimary?: boolean }) {
+function eventWithPointer(
+  type: string,
+  init: { pointerId: number; clientX: number; clientY?: number; button?: number; isPrimary?: boolean },
+) {
   const event = new Event(type, { bubbles: true, cancelable: true }) as Event & {
     pointerId: number;
     clientX: number;
@@ -54,7 +57,7 @@ function eventWithPointer(type: string, init: { pointerId: number; clientX: numb
   };
   event.pointerId = init.pointerId;
   event.clientX = init.clientX;
-  event.clientY = 10;
+  event.clientY = init.clientY ?? 10;
   event.button = init.button ?? 0;
   event.isPrimary = init.isPrimary ?? true;
   return event;
@@ -98,6 +101,7 @@ function mountResizeHarness(
     return (
       <div ref={rootRef}>
         <div ref={stageRef} data-testid="layout-stage" />
+        <div ref={editor.hiddenTrayRef} data-testid="hidden-tray" />
         <div
           ref={editor.headerRef}
           data-testid="header"
@@ -155,6 +159,19 @@ function mountResizeHarness(
       bottom: 32,
       width: 1200,
       height: 32,
+      toJSON: () => ({}),
+    }));
+    const tray = container.querySelector<HTMLElement>('[data-testid="hidden-tray"]');
+    if (!tray) throw new Error('Expected hidden tray');
+    tray.getBoundingClientRect = vi.fn(() => ({
+      x: 0,
+      y: -48,
+      left: 0,
+      top: -48,
+      right: 600,
+      bottom: -8,
+      width: 600,
+      height: 40,
       toJSON: () => ({}),
     }));
     let left = 0;
@@ -504,6 +521,99 @@ describe('layout editor column resize', () => {
     expect(harness.current.layoutResize?.id).toBe('description');
     expect(harness.current.layoutDrag).toBeNull();
     expect(dragHandle.setPointerCapture).not.toHaveBeenCalled();
+  });
+
+  it('keeps a dragged header visible when the opened tray overlaps its original header bounds', async () => {
+    const harness = mountResizeHarness();
+    await hydrateAndEdit(harness);
+    const dragHandle = harness.container.querySelector<HTMLButtonElement>('button[aria-label="drag-repository"]');
+    const tray = harness.container.querySelector<HTMLElement>('[data-testid="hidden-tray"]');
+    if (!dragHandle || !tray) throw new Error('Expected repository drag handle and hidden tray');
+    dragHandle.setPointerCapture = vi.fn();
+    dragHandle.hasPointerCapture = vi.fn(() => true);
+    dragHandle.releasePointerCapture = vi.fn();
+
+    act(() => {
+      dragHandle.dispatchEvent(eventWithPointer('pointerdown', { pointerId: 33, clientX: 120, clientY: 16 }));
+    });
+    tray.getBoundingClientRect = vi.fn(() => ({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 600,
+      bottom: 32,
+      width: 600,
+      height: 32,
+      toJSON: () => ({}),
+    }));
+
+    expect(harness.current.trayOpen).toBe(false);
+    expect(harness.current.trayDropReady).toBe(false);
+
+    act(() => {
+      window.dispatchEvent(eventWithPointer('pointermove', { pointerId: 33, clientX: 120, clientY: 16 }));
+    });
+
+    expect(harness.current.trayDropReady).toBe(false);
+    expect(harness.current.layoutDrag?.kind).toBe('column');
+    if (harness.current.layoutDrag?.kind !== 'column') throw new Error('Expected column drag');
+    expect(harness.current.layoutDrag.hideIntent).toBe(false);
+
+    act(() => {
+      window.dispatchEvent(eventWithPointer('pointerup', { pointerId: 33, clientX: 120, clientY: 16 }));
+    });
+
+    expect(harness.current.layoutDrag).toBeNull();
+    expect(harness.current.draftLayout.hidden).not.toContain('repository');
+    expect(dragHandle.releasePointerCapture).toHaveBeenCalledWith(33);
+  });
+
+  it('opens the hidden-column tray and marks drop ready when a dragged header enters the tray', async () => {
+    const harness = mountResizeHarness();
+    await hydrateAndEdit(harness);
+    const dragHandle = harness.container.querySelector<HTMLButtonElement>('button[aria-label="drag-repository"]');
+    if (!dragHandle) throw new Error('Expected repository drag handle');
+    dragHandle.setPointerCapture = vi.fn();
+    dragHandle.hasPointerCapture = vi.fn(() => true);
+    dragHandle.releasePointerCapture = vi.fn();
+
+    act(() => {
+      dragHandle.dispatchEvent(eventWithPointer('pointerdown', { pointerId: 31, clientX: 120, clientY: 16 }));
+    });
+
+    expect(harness.current.trayOpen).toBe(false);
+    expect(harness.current.trayDropReady).toBe(false);
+
+    act(() => {
+      window.dispatchEvent(eventWithPointer('pointermove', { pointerId: 31, clientX: 120, clientY: -20 }));
+    });
+
+    expect(harness.current.trayOpen).toBe(true);
+    expect(harness.current.trayDropReady).toBe(true);
+    expect(harness.current.layoutDrag?.kind).toBe('column');
+    if (harness.current.layoutDrag?.kind !== 'column') throw new Error('Expected column drag');
+    expect(harness.current.layoutDrag.hideIntent).toBe(true);
+  });
+
+  it('does not mark drop ready when a dragged header is outside the hidden-column tray', async () => {
+    const harness = mountResizeHarness();
+    await hydrateAndEdit(harness);
+    const dragHandle = harness.container.querySelector<HTMLButtonElement>('button[aria-label="drag-repository"]');
+    if (!dragHandle) throw new Error('Expected repository drag handle');
+    dragHandle.setPointerCapture = vi.fn();
+    dragHandle.hasPointerCapture = vi.fn(() => true);
+    dragHandle.releasePointerCapture = vi.fn();
+
+    act(() => {
+      dragHandle.dispatchEvent(eventWithPointer('pointerdown', { pointerId: 32, clientX: 120, clientY: 16 }));
+    });
+    act(() => {
+      window.dispatchEvent(eventWithPointer('pointermove', { pointerId: 32, clientX: 120, clientY: 120 }));
+    });
+
+    expect(harness.current.trayOpen).toBe(true);
+    expect(harness.current.trayDropReady).toBe(false);
   });
 
   it('does not let a second resize preempt the active resize gesture', async () => {

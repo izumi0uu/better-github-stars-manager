@@ -17,7 +17,6 @@ import {
   gridTemplateFor,
   hiddenColumnIdsInCanonicalOrder,
   hideColumn,
-  isColumnHideIntent,
   layoutsEqual,
   moveColumn,
   normalizedColumnWidth,
@@ -72,6 +71,10 @@ type LayoutDrag =
       headerTop: number;
       headerBottom: number;
       insertIndex: number | null;
+      headerLeft: number;
+      headerRight: number;
+      startY: number;
+      trayIntent: boolean;
       hideIntent: boolean;
       x: number;
       y: number;
@@ -126,6 +129,7 @@ export function useColumnLayoutEditor(
   const preEditMode = useRef<ColumnLayoutMode>('default');
   const headerRef = useRef<HTMLDivElement>(null);
   const editColumnsButtonRef = useRef<HTMLButtonElement>(null);
+  const hiddenTrayRef = useRef<HTMLDivElement>(null);
   const layoutDragRef = useRef<LayoutDrag | null>(null);
   const layoutResizeRef = useRef<LayoutResize | null>(null);
   const layoutResizeToolRef = useRef<LayoutResizeTool | null>(null);
@@ -167,7 +171,7 @@ export function useColumnLayoutEditor(
       : {},
     [layoutDrag],
   );
-  const trayOpen = draftLayout.hidden.length > 0 || (layoutDrag?.kind === 'column' && layoutDrag.hideIntent);
+  const trayOpen = draftLayout.hidden.length > 0 || (layoutDrag?.kind === 'column' && layoutDrag.trayIntent);
   const trayDropReady = layoutDrag?.kind === 'column' && layoutDrag.hideIntent;
   const trayCaretX = layoutDrag?.kind === 'tray' ? layoutDrag.caretX : null;
 
@@ -414,6 +418,27 @@ export function useColumnLayoutEditor(
     };
   };
 
+  const isColumnHideIntent = (drag: Extract<LayoutDrag, { kind: 'column' }>, clientX: number, clientY: number) => {
+    if (Math.abs(clientY - drag.startY) <= TRAY_RESTORE_HEADER_BUFFER_PX) return false;
+    if (
+      clientY >= drag.headerTop &&
+      clientY <= drag.headerBottom &&
+      clientX >= drag.headerLeft &&
+      clientX <= drag.headerRight
+    ) {
+      return false;
+    }
+    const tray = hiddenTrayRef.current;
+    if (!tray) return false;
+    const rect = tray.getBoundingClientRect();
+    return rect.width > 0 &&
+      rect.height > 0 &&
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom;
+  };
+
   const measureResizeSnapshot = () => {
     const measured = measureHeader();
     return measured ? widthsFromRects(measured.rects) : null;
@@ -472,6 +497,10 @@ export function useColumnLayoutEditor(
       rects: measured.rects,
       headerTop: measured.headerTop,
       headerBottom: measured.headerBottom,
+      headerLeft: measured.headerLeft,
+      headerRight: measured.headerRight,
+      startY: e.clientY,
+      trayIntent: false,
       insertIndex: null,
       hideIntent: false,
       x: e.clientX,
@@ -656,11 +685,13 @@ export function useColumnLayoutEditor(
         if (!current) return null;
         if (e.pointerId !== current.pointerId) return current;
         if (current.kind === 'column') {
-          const hideIntent = isColumnHideIntent(e.clientY, current.headerTop, current.headerBottom);
+          const trayIntent = Math.abs(e.clientY - current.startY) > TRAY_RESTORE_HEADER_BUFFER_PX;
+          const hideIntent = trayIntent && isColumnHideIntent(current, e.clientX, e.clientY);
           return {
             ...current,
             x: e.clientX,
             y: e.clientY,
+            trayIntent,
             hideIntent,
             insertIndex: hideIntent ? null : dragInsertIndex(current.rects, current.id, e.clientX),
           };
@@ -764,6 +795,7 @@ export function useColumnLayoutEditor(
     columnMenuOpen,
     columnMenuPosition,
     headerRef,
+    hiddenTrayRef,
     editColumnsButtonRef,
     setBrowseLayoutMode,
     previewCustomLayout,

@@ -205,6 +205,7 @@ describe('layout edit interaction lock render behavior', () => {
         trayDropReady={false}
         dropReadyLabel={null}
         editColumnsButtonRef={createRef<HTMLButtonElement>()}
+        hiddenTrayRef={createRef<HTMLDivElement>()}
         onToggleColumnMenu={vi.fn()}
         onFitWidths={vi.fn()}
         onResetWidths={vi.fn()}

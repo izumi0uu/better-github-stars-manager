@@ -1,4 +1,4 @@
-import { type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { type PointerEvent as ReactPointerEvent, type Ref, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Columns3, EyeOff, GripVertical, Maximize2, RotateCcw, Ruler, X } from 'lucide-react';
 import { useI18n } from '@/i18n';
@@ -130,6 +130,7 @@ export function LayoutEditChrome({
   trayDropReady,
   dropReadyLabel,
   editColumnsButtonRef,
+  hiddenTrayRef,
   onToggleColumnMenu,
   onFitWidths,
   onResetWidths,
@@ -151,6 +152,7 @@ export function LayoutEditChrome({
   trayDropReady: boolean;
   dropReadyLabel: string | null;
   editColumnsButtonRef: RefObject<HTMLButtonElement>;
+  hiddenTrayRef: Ref<HTMLDivElement>;
   onToggleColumnMenu: () => void;
   onFitWidths: () => void;
   onResetWidths: () => void;
@@ -235,6 +237,7 @@ export function LayoutEditChrome({
         <div className={cn('gsm-tray-zone', { open: trayOpen })}>
           <div>
             <div
+              ref={hiddenTrayRef}
               className={cn(
                 'flex min-h-9 flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground',
                 { 'gsm-tray-drop-ready bg-destructive/10 text-destructive': trayDropReady },
