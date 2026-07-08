@@ -1,6 +1,12 @@
-# Chrome Web Store Submission Notes
+# Chrome Web Store Submission Checklist
 
-This document collects the store listing copy, permission justifications, and reviewer instructions for the first Chrome Web Store submission.
+This document is the Chrome Web Store-specific submission worksheet for Better GitHub Stars Manager. It is not packaged into the extension ZIP; use it to fill the Chrome Web Store Developer Dashboard and reviewer notes.
+
+## Official References
+
+- [Complete your listing information](https://developer.chrome.com/docs/webstore/cws-dashboard-listing): Chrome listing fields, screenshots, promotional images, homepage URL, and support URL.
+- [Privacy Policies](https://developer.chrome.com/docs/webstore/program-policies/privacy/): privacy policy requirements and the Developer Dashboard privacy policy URL field.
+- [Chrome Web Store Program Policies](https://developer.chrome.com/docs/webstore/program-policies/policies): policy source for privacy, spam, disclosure, and user-data review expectations.
 
 ## Public URLs
 
@@ -8,19 +14,29 @@ This document collects the store listing copy, permission justifications, and re
 - Privacy policy: https://github.com/izumi0uu/better-github-stars-manager/blob/master/docs/privacy-policy.md
 - Support/issues: https://github.com/izumi0uu/better-github-stars-manager/issues
 
-Note: the privacy policy URL above only works after this document is committed and pushed to the public repository.
+Note: the privacy policy URL only works after `docs/privacy-policy.md` is committed and pushed to the public repository.
 
-## Candidate listing copy
+## Package
 
-### Store name
+- Build command: `pnpm build:chrome`
+- Package command: `pnpm package:chrome`
+- Upload ZIP: `artifacts/chrome/better-github-stars-manager-<version>.zip`
+- Compatibility check: `pnpm check:chrome-output`
+- Capability ledger: `pnpm capability:chrome`
+
+Before upload, confirm the ZIP root directly contains `manifest.json`.
+
+## Listing Copy
+
+### Store Name
 
 Better GitHub Stars Manager
 
-### Short description
+### Short Description
 
 Organize GitHub stars with search, tags, notes, filters, and optional Gist sync.
 
-### Detailed description
+### Detailed Description
 
 Better GitHub Stars Manager upgrades GitHub's native stars page into a fast, local-first workspace for heavy stars users.
 
@@ -34,13 +50,13 @@ Use it to:
 
 The extension works only on GitHub and uses GitHub's own APIs. It does not require a separate account or a custom backend.
 
-## Suggested store category
+## Category
 
 Developer Tools
 
-## Suggested screenshots
+## Graphic Assets
 
-Chrome Web Store screenshots must be `1280x800` or `640x400` pixels.
+Chrome's listing guide says the Store Listing tab includes a 128x128 store icon, at least one 1280x800 screenshot, a 440x280 small promo tile, and an optional 1400x560 marquee promo tile.
 
 Prepared store screenshots:
 
@@ -48,22 +64,18 @@ Prepared store screenshots:
 - `public/store/screenshots/screenshot-options.png`
 - `public/store/screenshots/screenshot-detail-panel.png`
 
-The token tutorial images remain useful for README and onboarding, but they are not the primary store screenshots:
+Token tutorial images remain useful for README and onboarding, but they are not the primary store screenshots:
 
 - `public/tutorial/img_01.png`
 - `public/tutorial/img_02.png`
 - `public/tutorial/img_03.png`
-
-## Promotional images
-
-Chrome Web Store requires one small promotional image at `440x280`.
 
 Prepared promo assets derived from `public/poster/img_01.png`:
 
 - `public/store/promo/small-tile.png` (`440x280`)
 - `public/store/promo/marquee.png` (`1400x560`)
 
-## Permission justification
+## Permission Justification
 
 ### `storage`
 
@@ -71,16 +83,17 @@ Used to store local configuration, encrypted token material, query state, and an
 
 ### `https://github.com/*`
 
-Used to mount the manager UI on GitHub stars pages and repository pages where the repo tag chip appears.
-The match pattern is broad because MV3 match patterns cannot target query strings such as `?tab=stars`, so the content script matches GitHub pages and then gates at runtime.
+Used to mount the manager UI on GitHub stars pages and repository pages where the repo tag chip appears. The match pattern is broad because MV3 match patterns cannot target query strings such as `?tab=stars`, so the content script matches GitHub pages and then gates at runtime.
 
 ### `https://api.github.com/*`
 
 Used to authenticate the provided token, fetch the authenticated user's starred repositories, and optionally sync annotations through the user's own secret GitHub Gist.
 
-## Privacy practices form notes
+## Privacy Practices Notes
 
-When filling the Chrome Web Store privacy section, the current codebase supports these answers:
+Chrome's privacy policy rules require an accurate public privacy policy when the product handles user data, and the policy link must be provided in the Developer Dashboard privacy policy field.
+
+Use `docs/privacy-policy.md` as the canonical policy text. Dashboard answers should stay consistent with these statements:
 
 - User data is used only to provide the extension's core functionality.
 - Data is not sold.
@@ -92,7 +105,7 @@ When filling the Chrome Web Store privacy section, the current codebase supports
 
 If the dashboard asks for a Limited Use statement, reuse the language from `docs/privacy-policy.md`.
 
-## Reviewer test instructions
+## Reviewer Test Instructions
 
 1. Open the extension Options page.
 2. Paste a GitHub fine-grained personal access token.
@@ -104,16 +117,16 @@ If the dashboard asks for a Limited Use statement, reuse the language from `docs
 8. Verify that repositories appear, search works, and notes or tags can be added.
 9. Click `Push` to create or update the dedicated secret sync Gist, then click `Pull` to fetch it back.
 
-## Pre-submit checklist
+## Pre-Submit Checklist
 
-- `pnpm build`
-- `pnpm test`
-- `pnpm package:extension`
-- confirm the ZIP in `artifacts/` contains `manifest.json` at its root
+- `pnpm build:chrome`
+- `pnpm check:chrome-output`
+- `pnpm package:chrome`
+- confirm the ZIP in `artifacts/chrome/` contains `manifest.json` at its root
 - confirm the public GitHub repository contains `docs/privacy-policy.md` and the URL opens without authentication
 - provide a support email in the Chrome Web Store dashboard
 - upload the 128x128 store icon
-- upload at least 1 screenshot sized `1280x800` or `640x400`
+- upload at least one screenshot sized `1280x800`
 - upload the required `440x280` small promotional image
 - upload final screenshots that show the real stars-page UI
 - paste the privacy policy URL from this document into the listing
