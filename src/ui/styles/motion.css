@@ -136,6 +136,7 @@
   .gsm-tray-zone > div {
     min-height: 0;
     overflow: hidden;
+    scrollbar-gutter: auto;
   }
 
   .gsm-gear-in {
