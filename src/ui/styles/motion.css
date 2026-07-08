@@ -109,8 +109,10 @@
     transition:
       grid-template-columns var(--gsm-duration-layout) var(--gsm-ease-linearized),
       opacity var(--gsm-duration-table) var(--gsm-ease-standard),
-      background-color var(--gsm-duration-fast) var(--gsm-ease-linearized);
+      background-color var(--gsm-duration-fast) var(--gsm-ease-linearized),
+      transform var(--gsm-duration-table) var(--gsm-ease-standard);
   }
+
 
   .gsm-layout-table-shell {
     transition: opacity var(--gsm-table-opacity-duration, var(--gsm-duration-table)) var(--gsm-ease-standard);
@@ -310,6 +312,24 @@
     }
   }
 
+
+  .gsm-helper-text-update {
+    animation:
+      gsm-helper-text-update var(--gsm-duration-base) var(--gsm-ease-standard),
+      gsm-flash-col var(--gsm-duration-flash) var(--gsm-ease-linearized) var(--gsm-delay-flash);
+  }
+
+  @keyframes gsm-helper-text-update {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
   .gsm-drag-hide-intent {
     opacity: 0.25;
   }
@@ -349,6 +369,7 @@
     .gsm-gear-in,
     .gsm-tray-chip,
     .gsm-flash-col,
+    .gsm-helper-text-update,
     .gsm-edit-dot,
     .gsm-sidebar-body-in,
     .success-check-path,

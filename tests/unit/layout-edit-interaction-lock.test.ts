@@ -8,11 +8,21 @@ describe('layout edit interaction lock invariants', () => {
     const source = read('src/ui/ManagerPanel.tsx');
 
     expect(source).toMatch(/const\s+interactionLocked\s*=\s*editingLayout;/);
-    expect(source).toMatch(/useLayoutEffect\(\(\)\s*=>\s*\{\s*if \(!editingLayout\) return;\s*setSelected\(null\);\s*\}, \[editingLayout\]\);/);
+    expect(source).toMatch(/useLayoutEffect\(\(\)\s*=>\s*\{\s*if \(!editingLayout\) return;\s*setSelected\(null\);\s*setOpenUnstarFullName\(null\);\s*\}, \[editingLayout\]\);/);
     expect(source).toMatch(/shouldIgnorePanelShortcut\(interactionLocked,\s*e\.target\)/);
     expect(source).toMatch(/<ActiveFilterChips[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
     expect(source).toMatch(/<FloatingLocaleToggle[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
     expect(source).toMatch(/disabled=\{actionBusy\s*\|\|\s*interactionLocked\}/);
+  });
+
+  it('reuses table restore flash motion for helper text updates', () => {
+    const source = read('src/ui/ManagerPanel.tsx');
+    const motion = read('src/ui/styles/motion.css');
+
+    expect(source).toContain('key={helperInfoKey(info, unstarFeedback)}');
+    expect(source).toContain('gsm-helper-text-update gsm-flash-col inline-block rounded-sm px-1 transition-[background-color,opacity,transform] duration-150');
+    expect(motion).toContain('.gsm-helper-text-update');
+    expect(motion).toContain('gsm-flash-col var(--gsm-duration-flash) var(--gsm-ease-linearized) var(--gsm-delay-flash);');
   });
 
   it('keeps the active-filter row mounted while collapsing it when no filters are selected', () => {
@@ -23,7 +33,7 @@ describe('layout edit interaction lock invariants', () => {
     expect(source).toContain("className={cn('gsm-active-filter-row', { open: hasActiveFilter })}");
     expect(source).toContain('aria-hidden={!hasActiveFilter}');
     expect(source).toContain('{...getLockedRegionProps(!hasActiveFilter)}');
-    expect(source).toMatch(/<ActiveFilterChips\b[\s\S]*?\bf=\{f\}[\s\S]*?\bcount=\{total\}[\s\S]*?\binteractionLocked=\{interactionLocked\}[\s\S]*?\/>/);
+    expect(source).toMatch(/<ActiveFilterChips\b[\s\S]*?\bf=\{f\}[\s\S]*?\bcount=\{visibleTotal\}[\s\S]*?\binteractionLocked=\{interactionLocked\}[\s\S]*?\/>/);
     expect(source).not.toContain('{hasActiveFilter && (');
     expect(chips).not.toContain('if (active.length === 0) return null;');
     expect(motion).toContain('.gsm-active-filter-row');
