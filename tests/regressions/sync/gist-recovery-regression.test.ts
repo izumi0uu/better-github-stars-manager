@@ -162,7 +162,7 @@ describe('Gist recovery regressions', () => {
       }
       if (url.endsWith('/gists/existing-sync-gist') && method === 'GET') {
         return response(200, {
-          files: { [GIST_FILENAME]: { content: JSON.stringify({ v: 2, tags: {}, tagMeta: {}, exportedAt: '2026-06-24T12:00:00.000Z' }) } },
+          files: { [GIST_FILENAME]: { content: JSON.stringify({ v: 1, tags: {}, tagMeta: {}, exportedAt: '2026-06-24T12:00:00.000Z' }) } },
         });
       }
       if (url.endsWith('/gists/existing-sync-gist') && method === 'PATCH') {
@@ -175,14 +175,14 @@ describe('Gist recovery regressions', () => {
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }) as typeof fetch;
 
-    const result = await gistTagStore.push(snapshotDirtyForPush());
+    const result = await gistTagStore.push(new Set(), false, undefined, snapshotDirtyForPush());
 
     assert.equal(result.pushed, 1);
     assert.equal(result.recreated, false);
     const uploaded = patchedPayload as GistPayload | null;
     assert.ok(uploaded);
-    assert.equal(uploaded.v, 2);
-    assert.equal(uploaded.tags['owner/repo']?.manualTags[0], 'alpha');
+    assert.equal(uploaded.v, 1);
+    assert.equal(uploaded.tags['owner/repo']?.tags[0], 'alpha');
     const cfg = await authStore.getConfig();
     assert.equal(cfg.gistId, 'existing-sync-gist');
     assert.equal(calls.includes('POST https://api.github.com/gists'), false);
@@ -213,7 +213,7 @@ describe('Gist recovery regressions', () => {
       }) as typeof fetch;
 
       await assert.rejects(
-        () => gistTagStore.push(snapshotDirtyForPush()),
+        () => gistTagStore.push(new Set(), false, undefined, snapshotDirtyForPush()),
         (e: unknown) => e instanceof Error && e.message === GIST_PUSH_FAILED,
       );
       assert.deepEqual(calls, ['GET https://api.github.com/gists?per_page=100&page=1']);
@@ -255,12 +255,12 @@ describe('Gist recovery regressions', () => {
       }
       if (url.endsWith('/gists/stale-valid-gist') && method === 'GET') {
         return response(200, {
-          files: { [GIST_FILENAME]: { content: JSON.stringify({ v: 2, tags: {}, tagMeta: {}, exportedAt: '2026-06-20T12:00:00.000Z' }) } },
+          files: { [GIST_FILENAME]: { content: JSON.stringify({ v: 1, tags: {}, tagMeta: {}, exportedAt: '2026-06-20T12:00:00.000Z' }) } },
         });
       }
       if (url.endsWith('/gists/newest-export-valid-gist') && method === 'GET') {
         return response(200, {
-          files: { [GIST_FILENAME]: { content: JSON.stringify({ v: 2, tags: {}, tagMeta: {}, exportedAt: '2026-06-25T12:00:00.000Z' }) } },
+          files: { [GIST_FILENAME]: { content: JSON.stringify({ v: 1, tags: {}, tagMeta: {}, exportedAt: '2026-06-25T12:00:00.000Z' }) } },
         });
       }
       if (url.endsWith('/gists/newest-export-valid-gist') && method === 'PATCH') {
@@ -273,7 +273,7 @@ describe('Gist recovery regressions', () => {
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }) as typeof fetch;
 
-    await gistTagStore.push(snapshotDirtyForPush());
+    await gistTagStore.push(new Set(), false, undefined, snapshotDirtyForPush());
 
     assert.equal(patchedId, 'newest-export-valid-gist');
     const cfg = await authStore.getConfig();

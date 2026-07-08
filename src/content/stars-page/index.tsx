@@ -199,9 +199,13 @@ function injectFab(): void {
   document.body.appendChild(host);
 
   // No React here; localize after mount and let the CSS bubble wait for data-tip.
-  void authStore.getLocale().then((locale) => {
-    applyFabLabel(btn, locale);
-  });
+  void authStore.getLocale()
+    .then((locale) => {
+      applyFabLabel(btn, locale);
+    })
+    .catch(() => {
+      // Keep the default label when storage is unavailable.
+    });
 }
 
 function ejectFab(): void {
