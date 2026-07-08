@@ -2,7 +2,9 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'rea
 import { Archive, Star as StarIcon, StickyNote } from 'lucide-react';
 import type { Star } from '@/types';
 import { Badge } from '@/ui/shadcn/badge';
+import { Button } from '@/ui/shadcn/button';
 import { FavoriteButton } from '@/ui/components/FavoriteButton';
+import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
 import { getLockedRegionProps } from '@/ui/interaction-lock';
@@ -36,6 +38,9 @@ export const StarRow = memo(function StarRow({
   interactionLocked = false,
   starColumnAlignStart = false,
   minWidth,
+  onConfirmUnstar,
+  unstarPopoverOpen,
+  onUnstarPopoverOpenChange,
 }: {
   star: Star;
   tags: string[];
@@ -53,6 +58,9 @@ export const StarRow = memo(function StarRow({
   interactionLocked?: boolean;
   starColumnAlignStart?: boolean;
   minWidth?: number;
+  onConfirmUnstar?: (fullName: string) => void;
+  unstarPopoverOpen?: boolean;
+  onUnstarPopoverOpenChange?: (open: boolean) => void;
 }) {
   const selectedSet = useMemo(() => new Set(selectedTags), [selectedTags]);
   const tagCellRef = useRef<HTMLDivElement | null>(null);
@@ -60,6 +68,12 @@ export const StarRow = memo(function StarRow({
   const tagsKey = useMemo(() => tags.join('\u0000'), [tags]);
   const hasTagsColumn = columns.includes('tags');
   const [tagFit, setTagFit] = useState<{ tagsKey: string; visibleCount: number } | null>(null);
+  const [uncontrolledUnstarOpen, setUncontrolledUnstarOpen] = useState(false);
+  const unstarOpen = unstarPopoverOpen ?? uncontrolledUnstarOpen;
+  const setUnstarOpen = onUnstarPopoverOpenChange ?? setUncontrolledUnstarOpen;
+  const handlePopoverOpenChange = (open: boolean) => {
+    setUnstarOpen(open);
+  };
   const initialVisibleCount = Math.min(INITIAL_VISIBLE_TAGS, tags.length);
   const fittedVisibleCount = tagFit?.tagsKey === tagsKey ? tagFit.visibleCount : initialVisibleCount;
   const visibleCount = Math.max(0, Math.min(tags.length, fittedVisibleCount));
@@ -249,6 +263,73 @@ export const StarRow = memo(function StarRow({
                       })}
                     </div>
                   </>
+                )}
+              </div>
+            );
+          case 'starAction':
+            return (
+              <div key={column} data-row-col={column} className={cn('flex justify-center rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+                {star.tombstone || !onConfirmUnstar ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="grid size-8 place-items-center rounded-md text-muted-foreground/45"
+                    title={m.starRow.alreadyUnstarred}
+                    aria-label={m.starRow.alreadyUnstarred}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <StarIcon className="size-4" />
+                  </button>
+                ) : (
+                  <Popover open={unstarOpen} onOpenChange={handlePopoverOpenChange}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        disabled={interactionLocked}
+                        className="grid size-7 place-items-center text-primary transition-colors hover:text-foreground/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                        title={m.starRow.unstarTitle(star.full_name)}
+                        aria-label={m.starRow.unstarTitle(star.full_name)}
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                        }}
+                      >
+                        <StarIcon className="size-3.5 fill-current" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className="flex w-auto items-center gap-1 rounded-lg border-0 p-1.5 shadow-lg data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 origin-[--radix-popover-content-transform-origin]"
+                      onClick={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onInteractOutside={() => setUnstarOpen(false)}
+                    >
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-5 px-1.5 text-[10px]"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setUnstarOpen(false);
+                        }}
+                      >
+                        {m.starRow.unstarCancel}
+                      </Button>
+                      <Button
+                        type="button"
+                        className="h-5 px-1.5 text-[10px]"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setUnstarOpen(false);
+                          onConfirmUnstar(star.full_name);
+                        }}
+                      >
+                        {m.starRow.unstar}
+                      </Button>
+                    </PopoverContent>
+                  </Popover>
                 )}
               </div>
             );

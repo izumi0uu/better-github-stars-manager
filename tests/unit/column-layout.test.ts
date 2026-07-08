@@ -48,8 +48,9 @@ describe('column layout editing', () => {
     { id: 'repository', left: 0, width: 180, mid: 90 },
     { id: 'description', left: 188, width: 220, mid: 298 },
     { id: 'language', left: 416, width: 80, mid: 456 },
-    { id: 'favorite', left: 504, width: 28, mid: 518 },
-    { id: 'notes', left: 540, width: 20, mid: 550 },
+    { id: 'starAction', left: 504, width: 32, mid: 520 },
+    { id: 'favorite', left: 544, width: 28, mid: 558 },
+    { id: 'notes', left: 580, width: 20, mid: 590 },
   ];
 
   it('starts custom layout equivalent to default until the user saves a change', () => {
@@ -65,6 +66,7 @@ describe('column layout editing', () => {
       'updated',
       'created',
       'tags',
+      'starAction',
       'favorite',
       'notes',
     ]);
@@ -141,7 +143,7 @@ describe('column layout editing', () => {
     });
 
     expect(stored).toEqual({
-      order: ['tags', 'repository', 'description', 'language', 'stars', 'updated', 'created', 'favorite', 'notes'],
+      order: ['tags', 'repository', 'description', 'language', 'stars', 'updated', 'created', 'starAction', 'favorite', 'notes'],
       hidden: ['description'],
     });
   });
@@ -158,6 +160,7 @@ describe('column layout editing', () => {
       'updated',
       'tags',
       'created',
+      'starAction',
       'favorite',
       'notes',
     ]);
@@ -217,7 +220,7 @@ describe('column layout editing', () => {
     const hidden = hideColumn(DEFAULT_COLUMN_LAYOUT, 'description');
 
     expect(visibleColumnIds(hidden)).not.toContain('description');
-    expect(visibleColumnIds(hidden).slice(-2)).toEqual(['favorite', 'notes']);
+    expect(visibleColumnIds(hidden).slice(-3)).toEqual(['starAction', 'favorite', 'notes']);
 
     const restored = restoreColumn(hidden, 'description');
 
@@ -247,7 +250,7 @@ describe('column layout editing', () => {
   it('keeps locked columns at the end when reordering', () => {
     const moved = moveColumn(DEFAULT_COLUMN_LAYOUT, 'language', DEFAULT_COLUMN_LAYOUT.order.length);
 
-    expect(visibleColumnIds(moved).slice(-3)).toEqual(['language', 'favorite', 'notes']);
+    expect(visibleColumnIds(moved).slice(-4)).toEqual(['language', 'starAction', 'favorite', 'notes']);
   });
 
   it('restores tray columns at an explicit insertion point before locked columns', () => {
@@ -255,7 +258,7 @@ describe('column layout editing', () => {
     const restored = restoreColumn(hidden, 'tags', 1);
 
     expect(visibleColumnIds(restored).slice(0, 3)).toEqual(['repository', 'tags', 'description']);
-    expect(visibleColumnIds(restored).slice(-2)).toEqual(['favorite', 'notes']);
+    expect(visibleColumnIds(restored).slice(-3)).toEqual(['starAction', 'favorite', 'notes']);
   });
 
   it('detects drag-out hide intent only beyond the configured header boundary', () => {
@@ -274,6 +277,7 @@ describe('column layout editing', () => {
 
     expect(shifts.repository).toBe(88);
     expect(shifts.description).toBe(88);
+    expect(shifts.starAction).toBeUndefined();
     expect(shifts.favorite).toBeUndefined();
     expect(shifts.notes).toBeUndefined();
   });
@@ -287,8 +291,9 @@ describe('column layout editing', () => {
       { id: 'updated', left: 576, width: 84, mid: 618 },
       { id: 'created', left: 668, width: 84, mid: 710 },
       { id: 'tags', left: 760, width: 160, mid: 840 },
-      { id: 'favorite', left: 928, width: 28, mid: 942 },
-      { id: 'notes', left: 964, width: 20, mid: 974 },
+      { id: 'starAction', left: 928, width: 32, mid: 944 },
+      { id: 'favorite', left: 968, width: 28, mid: 982 },
+      { id: 'notes', left: 1004, width: 20, mid: 1014 },
     ];
     const snapshot = widthsFromRects(fullRects);
     const layout = normalizeColumnLayout({ ...DEFAULT_COLUMN_LAYOUT, widths: snapshot });
@@ -303,7 +308,7 @@ describe('column layout editing', () => {
       tags: 160,
     });
     expect(gridTemplateFor(layout)).toContain('180px 220px 80px');
-    expect(tableMinWidthFor(layout)).toBe(180 + 220 + 80 + 64 + 84 + 84 + 160 + 28 + 20 + 24 + 8 * COLUMN_GAP_PX);
+    expect(tableMinWidthFor(layout)).toBe(180 + 220 + 80 + 64 + 84 + 84 + 160 + 32 + 28 + 20 + 24 + 9 * COLUMN_GAP_PX);
   });
 
   it('resizes a frozen snapshot by changing only the active column', () => {

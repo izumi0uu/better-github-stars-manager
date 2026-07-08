@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { GripVertical, Heart, StickyNote } from 'lucide-react';
+import { GripVertical, Heart, Star as StarIcon, StickyNote } from 'lucide-react';
 import type { Star, Tag } from '@/types';
 import { COLUMN_DEFS, type ColumnId } from '@/ui/column-layout';
 import { resolveFavoriteState, type FavoriteOverrideState } from '@/ui/favorite-state';
@@ -58,6 +58,9 @@ export function StarsTable({
   onSelect,
   onToggleTag,
   onToggleFavorite,
+  onConfirmUnstar,
+  openUnstarFullName,
+  onOpenUnstarChange,
   onBeginColumnResize = () => {},
   onResizeColumnByKeyboard = () => {},
   onAutoFitColumnWidth = () => {},
@@ -84,6 +87,9 @@ export function StarsTable({
   onSelect: (fullName: string) => void;
   onToggleTag: (tag: string) => void;
   onToggleFavorite: (fullName: string, favorite: boolean) => Promise<void>;
+  onConfirmUnstar?: (fullName: string) => void;
+  openUnstarFullName?: string | null;
+  onOpenUnstarChange?: (fullName: string | null, sourceFullName: string) => void;
   onBeginColumnResize?: (event: PointerEvent<HTMLElement>, id: ColumnId) => void;
   onResizeColumnByKeyboard?: (id: ColumnId, direction: -1 | 1, largeStep?: boolean) => void;
   onAutoFitColumnWidth?: (id: ColumnId) => void;
@@ -305,7 +311,9 @@ export function StarsTable({
                   <span className="sr-only">{m.toolbar.dragColumnTitle(label)}</span>
                 </button>
               )}
-              {id === 'favorite' ? (
+              {id === 'starAction' ? (
+                <StarIcon className="size-3" aria-label={label} />
+              ) : id === 'favorite' ? (
                 <Heart className="size-3" aria-label={label} />
               ) : id === 'notes' ? (
                 <StickyNote className="size-3" aria-label={label} />
@@ -373,6 +381,9 @@ export function StarsTable({
                   selectedTags={selectedTags}
                   onToggleTag={onToggleTag}
                   onToggleFavorite={onToggleFavorite}
+                  onConfirmUnstar={onConfirmUnstar}
+                  unstarPopoverOpen={onOpenUnstarChange ? openUnstarFullName === star.full_name : undefined}
+                  onUnstarPopoverOpenChange={(open) => onOpenUnstarChange?.(open ? star.full_name : null, star.full_name)}
                   selected={selectedFullName === star.full_name}
                   onSelect={onSelect}
                   columns={visibleColumns}

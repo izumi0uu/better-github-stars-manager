@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { act, type ReactElement } from 'react';
+import { act, useState, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Star } from '@/types';
@@ -19,13 +19,15 @@ class ImmediateResizeObserver {
     this.callback([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver);
   }
 
+  unobserve() {}
+
   disconnect() {}
 }
 
-function fakeStar(): Star {
+function fakeStar(fullName = 'owner/repo'): Star {
   return {
-    full_name: 'owner/repo',
-    html_url: 'https://github.com/owner/repo',
+    full_name: fullName,
+    html_url: `https://github.com/${fullName}`,
     description: 'A repository',
     language: 'TypeScript',
     stargazers_count: 1200,
@@ -73,6 +75,37 @@ function rowWithColumns(
       columns={columns}
       gridTemplateColumns={columns.map(() => '220px').join(' ')}
       flashedColumn={null}
+    />
+  );
+}
+
+function ControlledUnstarRow({
+  onSelect,
+  onConfirmUnstar,
+}: {
+  onSelect: (fullName: string) => void;
+  onConfirmUnstar: (fullName: string) => void;
+}): ReactElement {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <StarRow
+      star={fakeStar()}
+      tags={[]}
+      hasNotes={false}
+      favorite={false}
+      favoriteBusy={false}
+      selectedTags={[]}
+      onToggleTag={vi.fn()}
+      onToggleFavorite={vi.fn(async () => undefined)}
+      selected={false}
+      onSelect={onSelect}
+      columns={['starAction']}
+      gridTemplateColumns="32px"
+      flashedColumn={null}
+      onConfirmUnstar={onConfirmUnstar}
+      unstarPopoverOpen={open}
+      onUnstarPopoverOpenChange={setOpen}
     />
   );
 }
@@ -152,4 +185,75 @@ describe('star row inline tag fitting', () => {
     expect(onToggleTag).toHaveBeenCalledWith('ui');
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  it('confirms unstar from the row star action without selecting the row', async () => {
+    const onSelect = vi.fn();
+    const onConfirmUnstar = vi.fn();
+    mount(
+      <StarRow
+        star={fakeStar()}
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={onSelect}
+        columns={['starAction']}
+        gridTemplateColumns="32px"
+        flashedColumn={null}
+        onConfirmUnstar={onConfirmUnstar}
+      />,
+    );
+
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Unstar owner/repo"]');
+    if (!trigger) throw new Error('Expected row star action button');
+
+    await act(async () => {
+      trigger.click();
+      await Promise.resolve();
+    });
+
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Confirm'));
+    if (!confirm) throw new Error('Expected unstar confirmation button');
+
+    await act(async () => {
+      confirm.click();
+      await Promise.resolve();
+    });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onConfirmUnstar).toHaveBeenCalledWith('owner/repo');
+  });
+
+  it('lets a controlled unstar popover close from a trigger re-click without selecting the row', async () => {
+    const onSelect = vi.fn();
+    const onConfirmUnstar = vi.fn();
+    mount(<ControlledUnstarRow onSelect={onSelect} onConfirmUnstar={onConfirmUnstar} />);
+
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Unstar owner/repo"]');
+    if (!trigger) throw new Error('Expected row star action button');
+
+    await act(async () => {
+      trigger.click();
+      await Promise.resolve();
+    });
+
+    expect([...document.querySelectorAll<HTMLButtonElement>('button')]
+      .some((button) => button.textContent?.includes('Confirm'))).toBe(true);
+
+    await act(async () => {
+      trigger.click();
+      await Promise.resolve();
+    });
+
+    expect([...document.querySelectorAll<HTMLButtonElement>('button')]
+      .some((button) => button.textContent?.includes('Confirm'))).toBe(false);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onConfirmUnstar).not.toHaveBeenCalled();
+  });
+
 });
