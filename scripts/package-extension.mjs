@@ -9,6 +9,7 @@ import pkg from '../package.json' with { type: 'json' };
 const root = process.cwd();
 const distDir = path.resolve(root, 'dist');
 const artifactsDir = path.resolve(root, 'artifacts');
+const chromeArtifactsDir = path.join(artifactsDir, 'chrome');
 
 if (process.env.GSM_SKIP_PACKAGE_BUILD !== 'true') {
   execFileSync('pnpm', ['build'], {
@@ -23,14 +24,19 @@ if (!existsSync(path.join(distDir, 'manifest.json'))) {
 }
 
 mkdirSync(artifactsDir, { recursive: true });
+mkdirSync(chromeArtifactsDir, { recursive: true });
 
 const baseName = `better-github-stars-manager-${pkg.version}`;
 const zipPath = path.join(artifactsDir, `${baseName}.zip`);
 const checksumPath = path.join(artifactsDir, `${baseName}.zip.sha256`);
+const chromeZipPath = path.join(chromeArtifactsDir, `${baseName}.zip`);
+const chromeChecksumPath = path.join(chromeArtifactsDir, `${baseName}.zip.sha256`);
 const stageDir = mkdtempSync(path.join(os.tmpdir(), 'bgsm-package-'));
 
 rmSync(zipPath, { force: true });
 rmSync(checksumPath, { force: true });
+rmSync(chromeZipPath, { force: true });
+rmSync(chromeChecksumPath, { force: true });
 
 try {
   cpSync(distDir, stageDir, {
@@ -60,6 +66,8 @@ try {
 
 const digest = createHash('sha256').update(readFileSync(zipPath)).digest('hex');
 writeFileSync(checksumPath, `${digest}  ${path.basename(zipPath)}\n`);
+cpSync(zipPath, chromeZipPath);
+writeFileSync(chromeChecksumPath, `${digest}  ${path.basename(chromeZipPath)}\n`);
 
 const versionHashPattern = /\b(?:[0-9a-f]{8}|unknown)-(?:clean|[0-9a-f]{6})-[0-9a-f]{6}\b/;
 const assetDir = path.join(distDir, 'assets');
@@ -74,4 +82,6 @@ const [versionHash] = versionHashCandidates.size === 1 ? versionHashCandidates :
 
 console.log(`✅ Packaged ${path.relative(root, zipPath)}`);
 console.log(`✅ Wrote ${path.relative(root, checksumPath)}`);
+console.log(`✅ Packaged ${path.relative(root, chromeZipPath)}`);
+console.log(`✅ Wrote ${path.relative(root, chromeChecksumPath)}`);
 if (versionHash) console.log(`✅ DEV ${versionHash}`);
