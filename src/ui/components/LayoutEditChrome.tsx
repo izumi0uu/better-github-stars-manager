@@ -130,7 +130,7 @@ export function LayoutEditChrome({
   trayDropReady,
   dropReadyLabel,
   editColumnsButtonRef,
-  hiddenTrayRef,
+  hideDropZoneRef,
   onToggleColumnMenu,
   onFitWidths,
   onResetWidths,
@@ -152,7 +152,7 @@ export function LayoutEditChrome({
   trayDropReady: boolean;
   dropReadyLabel: string | null;
   editColumnsButtonRef: RefObject<HTMLButtonElement>;
-  hiddenTrayRef: Ref<HTMLDivElement>;
+  hideDropZoneRef: Ref<HTMLDivElement>;
   onToggleColumnMenu: () => void;
   onFitWidths: () => void;
   onResetWidths: () => void;
@@ -179,7 +179,7 @@ export function LayoutEditChrome({
       className={cn('gsm-edit-chrome-wrap', { open: editing })}
       aria-hidden={!editing}
     >
-      <div>
+      <div ref={hideDropZoneRef}>
         <div className="flex flex-wrap items-center gap-2 border-b border-layout-edit-border bg-layout-edit px-3 py-1.5 text-xs text-layout-edit-foreground">
           <span className="inline-flex items-center gap-1.5 font-medium text-layout-edit-foreground">
             <span className="gsm-edit-dot size-2 rounded-full bg-layout-edit-accent" />
@@ -237,7 +237,6 @@ export function LayoutEditChrome({
         <div className={cn('gsm-tray-zone', { open: trayOpen })}>
           <div>
             <div
-              ref={hiddenTrayRef}
               className={cn(
                 'flex min-h-9 flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground',
                 { 'gsm-tray-drop-ready bg-destructive/10 text-destructive': trayDropReady },

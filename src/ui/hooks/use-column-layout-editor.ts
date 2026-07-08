@@ -129,7 +129,7 @@ export function useColumnLayoutEditor(
   const preEditMode = useRef<ColumnLayoutMode>('default');
   const headerRef = useRef<HTMLDivElement>(null);
   const editColumnsButtonRef = useRef<HTMLButtonElement>(null);
-  const hiddenTrayRef = useRef<HTMLDivElement>(null);
+  const hideDropZoneRef = useRef<HTMLDivElement>(null);
   const layoutDragRef = useRef<LayoutDrag | null>(null);
   const layoutResizeRef = useRef<LayoutResize | null>(null);
   const layoutResizeToolRef = useRef<LayoutResizeTool | null>(null);
@@ -428,9 +428,9 @@ export function useColumnLayoutEditor(
     ) {
       return false;
     }
-    const tray = hiddenTrayRef.current;
-    if (!tray) return false;
-    const rect = tray.getBoundingClientRect();
+    const dropZone = hideDropZoneRef.current;
+    if (!dropZone) return false;
+    const rect = dropZone.getBoundingClientRect();
     return rect.width > 0 &&
       rect.height > 0 &&
       clientX >= rect.left &&
@@ -795,7 +795,7 @@ export function useColumnLayoutEditor(
     columnMenuOpen,
     columnMenuPosition,
     headerRef,
-    hiddenTrayRef,
+    hideDropZoneRef,
     editColumnsButtonRef,
     setBrowseLayoutMode,
     previewCustomLayout,

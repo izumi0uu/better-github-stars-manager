@@ -101,7 +101,7 @@ function mountResizeHarness(
     return (
       <div ref={rootRef}>
         <div ref={stageRef} data-testid="layout-stage" />
-        <div ref={editor.hiddenTrayRef} data-testid="hidden-tray" />
+        <div ref={editor.hideDropZoneRef} data-testid="hide-drop-zone" />
         <div
           ref={editor.headerRef}
           data-testid="header"
@@ -161,8 +161,8 @@ function mountResizeHarness(
       height: 32,
       toJSON: () => ({}),
     }));
-    const tray = container.querySelector<HTMLElement>('[data-testid="hidden-tray"]');
-    if (!tray) throw new Error('Expected hidden tray');
+    const tray = container.querySelector<HTMLElement>('[data-testid="hide-drop-zone"]');
+    if (!tray) throw new Error('Expected hide drop zone');
     tray.getBoundingClientRect = vi.fn(() => ({
       x: 0,
       y: -48,
@@ -527,8 +527,8 @@ describe('layout editor column resize', () => {
     const harness = mountResizeHarness();
     await hydrateAndEdit(harness);
     const dragHandle = harness.container.querySelector<HTMLButtonElement>('button[aria-label="drag-repository"]');
-    const tray = harness.container.querySelector<HTMLElement>('[data-testid="hidden-tray"]');
-    if (!dragHandle || !tray) throw new Error('Expected repository drag handle and hidden tray');
+    const tray = harness.container.querySelector<HTMLElement>('[data-testid="hide-drop-zone"]');
+    if (!dragHandle || !tray) throw new Error('Expected repository drag handle and hide drop zone');
     dragHandle.setPointerCapture = vi.fn();
     dragHandle.hasPointerCapture = vi.fn(() => true);
     dragHandle.releasePointerCapture = vi.fn();
@@ -569,7 +569,7 @@ describe('layout editor column resize', () => {
     expect(dragHandle.releasePointerCapture).toHaveBeenCalledWith(33);
   });
 
-  it('opens the hidden-column tray and marks drop ready when a dragged header enters the tray', async () => {
+  it('opens the hidden-column tray and marks drop ready when a dragged header enters the shared edit chrome drop zone', async () => {
     const harness = mountResizeHarness();
     await hydrateAndEdit(harness);
     const dragHandle = harness.container.querySelector<HTMLButtonElement>('button[aria-label="drag-repository"]');
@@ -587,6 +587,37 @@ describe('layout editor column resize', () => {
 
     act(() => {
       window.dispatchEvent(eventWithPointer('pointermove', { pointerId: 31, clientX: 120, clientY: -20 }));
+    });
+
+    expect(harness.current.trayOpen).toBe(true);
+    expect(harness.current.trayDropReady).toBe(true);
+    expect(harness.current.layoutDrag?.kind).toBe('column');
+    if (harness.current.layoutDrag?.kind !== 'column') throw new Error('Expected column drag');
+    expect(harness.current.layoutDrag.hideIntent).toBe(true);
+  });
+
+  it('uses the edit chrome wrapper as a hide drop zone before any columns are hidden', async () => {
+    const harness = mountResizeHarness({
+      ...baseConfig(),
+      customColumnLayout: {
+        ...DEFAULT_COLUMN_LAYOUT,
+        hidden: [],
+      },
+    } as Config);
+    await hydrateAndEdit(harness);
+    expect(harness.current.hiddenColumnCount).toBe(0);
+    expect(harness.current.trayOpen).toBe(false);
+    const dragHandle = harness.container.querySelector<HTMLButtonElement>('button[aria-label="drag-repository"]');
+    if (!dragHandle) throw new Error('Expected repository drag handle');
+    dragHandle.setPointerCapture = vi.fn();
+    dragHandle.hasPointerCapture = vi.fn(() => true);
+    dragHandle.releasePointerCapture = vi.fn();
+
+    act(() => {
+      dragHandle.dispatchEvent(eventWithPointer('pointerdown', { pointerId: 34, clientX: 120, clientY: 16 }));
+    });
+    act(() => {
+      window.dispatchEvent(eventWithPointer('pointermove', { pointerId: 34, clientX: 120, clientY: -20 }));
     });
 
     expect(harness.current.trayOpen).toBe(true);

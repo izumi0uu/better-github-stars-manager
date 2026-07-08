@@ -82,7 +82,7 @@ export function ManagerPanel() {
     columnMenuOpen,
     columnMenuPosition,
     headerRef,
-    hiddenTrayRef,
+    hideDropZoneRef,
     editColumnsButtonRef,
     setBrowseLayoutMode,
     previewCustomLayout,
@@ -214,7 +214,7 @@ export function ManagerPanel() {
       trayDropReady={trayDropReady}
       dropReadyLabel={layoutDrag?.kind === 'column' ? m.toolbar.dragHideHint(layoutDrag.label) : null}
       editColumnsButtonRef={editColumnsButtonRef}
-      hiddenTrayRef={hiddenTrayRef}
+      hideDropZoneRef={hideDropZoneRef}
       onToggleColumnMenu={toggleColumnMenu}
       onFitWidths={fitLayoutWidths}
       onResetWidths={resetLayoutWidths}
