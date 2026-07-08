@@ -21,13 +21,78 @@ import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut }
 import { bgCall, type SyncStatus } from '@/utils/messaging';
 import { hidePanel } from '@/content/stars-page/panel-toggle';
 import { cn } from '@/lib/utils';
-import { useI18n } from '@/i18n';
+import { useI18n, type MessageCatalog } from '@/i18n';
 import type { BackfillState } from '@/types';
 import { COLUMN_DEFS } from '@/ui/column-layout';
 import { layoutViewportFromMeasurements, type LayoutViewportState } from '@/ui/layout-resize-surface';
 import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
+import { nextOpenUnstarFullName } from '@/ui/unstar-popover-state';
 
 export { layoutViewportFromMeasurements };
+
+
+type UnstarFeedback =
+  | { kind: 'done'; fullName: string }
+  | { kind: 'failed'; fullName: string; error: string };
+
+const REPO_MARKER = '__GSM_REPO__';
+const TOKEN_SETTINGS_LABEL = 'github.com/settings/tokens';
+const TOKEN_SETTINGS_URL = `https://${TOKEN_SETTINGS_LABEL}`;
+
+function renderTextWithTokenLink(text: string) {
+  const linkIndex = text.indexOf(TOKEN_SETTINGS_LABEL);
+  if (linkIndex < 0) return text;
+
+  return (
+    <>
+      {text.slice(0, linkIndex)}
+      <a
+        href={TOKEN_SETTINGS_URL}
+        target="_blank"
+        rel="noreferrer"
+        className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {TOKEN_SETTINGS_LABEL}
+      </a>
+      {text.slice(linkIndex + TOKEN_SETTINGS_LABEL.length)}
+    </>
+  );
+}
+
+
+function renderRepoMessage(template: string, fullName: string) {
+  const markerIndex = template.indexOf(REPO_MARKER);
+  if (markerIndex < 0) return renderTextWithTokenLink(template);
+
+  return (
+    <>
+      {template.slice(0, markerIndex)}
+      <span className="inline-flex items-center rounded-md border border-border bg-foreground px-1.5 py-0.5 font-mono text-[10px] leading-none text-background shadow-sm">
+        {fullName}
+      </span>
+      {renderTextWithTokenLink(template.slice(markerIndex + REPO_MARKER.length))}
+    </>
+  );
+}
+
+function UnstarFeedbackText({ feedback, m }: { feedback: UnstarFeedback; m: MessageCatalog }) {
+  const template = feedback.kind === 'done'
+    ? m.starRow.unstarDone(REPO_MARKER)
+    : m.starRow.unstarFailed(REPO_MARKER, feedback.error);
+
+  return <>{renderRepoMessage(template, feedback.fullName)}</>;
+}
+
+function HelperInfoText({ info, unstarFeedback, m }: { info: string | null; unstarFeedback: UnstarFeedback | null; m: MessageCatalog }) {
+  if (unstarFeedback) return <UnstarFeedbackText feedback={unstarFeedback} m={m} />;
+  return <>{info}</>;
+}
+
+function helperInfoKey(info: string | null, unstarFeedback: UnstarFeedback | null): string {
+  if (unstarFeedback) return `${unstarFeedback.kind}:${unstarFeedback.fullName}:${unstarFeedback.kind === 'failed' ? unstarFeedback.error : ''}`;
+  return info ?? '';
+}
 
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
@@ -51,6 +116,8 @@ export function ManagerPanel() {
   const [selected, setSelected] = useState<string | null>(null);
   const [coachStep, setCoachStep] = useState<number | null>(null);
   const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
+  const [unstarFeedback, setUnstarFeedback] = useState<UnstarFeedback | null>(null);
+  const [openUnstarFullName, setOpenUnstarFullName] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -105,11 +172,23 @@ export function ManagerPanel() {
   const interactionLocked = editingLayout;
   const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;
   const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
+  const visibleRows = rows;
+  const visibleTotal = total;
+  const visibleGrandTotal = grandTotal;
 
+  useEffect(() => {
+    if (info) setUnstarFeedback(null);
+  }, [info]);
   useLayoutEffect(() => {
     if (!editingLayout) return;
     setSelected(null);
+    setOpenUnstarFullName(null);
   }, [editingLayout]);
+
+  useEffect(() => {
+    const currentNames = new Set(rows.map((row) => row.full_name));
+    setOpenUnstarFullName((current) => (current && !currentNames.has(current) ? null : current));
+  }, [rows]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -147,14 +226,14 @@ export function ManagerPanel() {
   };
 
   const selectedIdx = useMemo(
-    () => (selected ? rows.findIndex((r) => r.full_name === selected) : -1),
-    [selected, rows],
+    () => (selected ? visibleRows.findIndex((r) => r.full_name === selected) : -1),
+    [selected, visibleRows],
   );
-  const selectedStar = selectedIdx >= 0 ? rows[selectedIdx] : null;
+  const selectedStar = selectedIdx >= 0 ? visibleRows[selectedIdx] : null;
   const selectedTag = selectedStar ? tagsByFullName.get(selectedStar.full_name) : undefined;
   useEffect(() => {
-    setFavoriteOverrides((current) => pruneFavoriteOverrides(current, tagsByFullName, rows));
-  }, [rows, tagsByFullName]);
+    setFavoriteOverrides((current) => pruneFavoriteOverrides(current, tagsByFullName, visibleRows));
+  }, [visibleRows, tagsByFullName]);
 
   const handleSelect = (full_name: string) => {
     setSelected((cur) => (cur === full_name ? null : full_name));
@@ -171,6 +250,7 @@ export function ManagerPanel() {
         ...current,
         [full_name]: { value: favorite, pending: false },
       }));
+      setUnstarFeedback(null);
       setInfo(null);
     } catch (e) {
       setFavoriteOverrides((current) => {
@@ -179,9 +259,35 @@ export function ManagerPanel() {
         delete next[full_name];
         return next;
       });
+      setUnstarFeedback(null);
       setInfo(m.manager.syncFailed(m.toolbar.columnFavorite, e instanceof Error ? e.message : String(e)));
       throw e;
     }
+  };
+
+  const handleConfirmUnstar = (fullName: string) => {
+    if (interactionLocked) return;
+
+    setOpenUnstarFullName(null);
+    setUnstarFeedback(null);
+    setInfo(null);
+
+    bgCall('markUnstarred', { full_name: fullName })
+      .then(() => {
+        setSelected((current) => (current === fullName ? null : current));
+        setUnstarFeedback({ kind: 'done', fullName });
+      })
+      .catch((error) => {
+        setUnstarFeedback({
+          kind: 'failed',
+          fullName,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  };
+
+  const handleOpenUnstarChange = (fullName: string | null, sourceFullName: string) => {
+    setOpenUnstarFullName((current) => nextOpenUnstarFullName(current, fullName, sourceFullName));
   };
 
   const hasActiveFilter =
@@ -238,8 +344,8 @@ export function ManagerPanel() {
           status={status}
           loading={loading}
           listPhase={phase}
-          total={total}
-          grandTotal={grandTotal}
+          total={visibleTotal}
+          grandTotal={visibleGrandTotal}
           busy={busy}
           pendingAction={pendingAction}
           successAction={successAction}
@@ -284,12 +390,19 @@ export function ManagerPanel() {
           {...getLockedRegionProps(!hasActiveFilter)}
         >
           <div>
-            <ActiveFilterChips f={f} count={total} interactionLocked={interactionLocked} />
+            <ActiveFilterChips f={f} count={visibleTotal} interactionLocked={interactionLocked} />
           </div>
         </div>
 
-        {info && (
-          <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">{info}</div>
+        {(info || unstarFeedback) && (
+          <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">
+            <span
+              key={helperInfoKey(info, unstarFeedback)}
+              className="gsm-helper-text-update inline-block rounded-sm px-1 transition-[background-color,opacity,transform] duration-150"
+            >
+              <HelperInfoText info={info} unstarFeedback={unstarFeedback} m={m} />
+            </span>
+          </div>
         )}
 
         <div className="flex min-h-0 flex-1">
@@ -300,6 +413,7 @@ export function ManagerPanel() {
             interactionLocked={interactionLocked}
             onTagMutationMessage={(message) => {
               if (message) setInfo(message);
+              if (message) setUnstarFeedback(null);
             }}
             onTagMutationSuccess={refreshStars}
           />
@@ -328,7 +442,7 @@ export function ManagerPanel() {
               />
             ) : (
               <StarsTable
-                rows={rows}
+                rows={visibleRows}
                 loading={loading}
                 phase={phase}
                 tagsByFullName={tagsByFullName}
@@ -360,6 +474,9 @@ export function ManagerPanel() {
                 onSelect={handleSelect}
                 onToggleTag={f.toggleTag}
                 onToggleFavorite={handleToggleFavorite}
+                onConfirmUnstar={handleConfirmUnstar}
+                openUnstarFullName={openUnstarFullName}
+                onOpenUnstarChange={handleOpenUnstarChange}
                 onBeginColumnResize={beginColumnResize}
                 onResizeColumnByKeyboard={resizeColumnByKeyboard}
                 onAutoFitColumnWidth={autoFitColumnWidth}
@@ -379,10 +496,10 @@ export function ManagerPanel() {
                 onToggleTag={f.toggleTag}
                 onDataChanged={refreshStars}
                 onClose={() => setSelected(null)}
-                onPrev={() => selectedIdx > 0 && setSelected(rows[selectedIdx - 1].full_name)}
-                onNext={() => selectedIdx >= 0 && selectedIdx < rows.length - 1 && setSelected(rows[selectedIdx + 1].full_name)}
+                onPrev={() => selectedIdx > 0 && setSelected(visibleRows[selectedIdx - 1].full_name)}
+                onNext={() => selectedIdx >= 0 && selectedIdx < visibleRows.length - 1 && setSelected(visibleRows[selectedIdx + 1].full_name)}
                 hasPrev={selectedIdx > 0}
-                hasNext={selectedIdx >= 0 && selectedIdx < rows.length - 1}
+                hasNext={selectedIdx >= 0 && selectedIdx < visibleRows.length - 1}
                 interactionLocked={interactionLocked}
               />
             )}

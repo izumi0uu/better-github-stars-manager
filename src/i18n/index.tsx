@@ -85,6 +85,7 @@ export interface MessageCatalog {
     columnUpdated: string;
     columnCreated: string;
     columnTags: string;
+    columnStarAction: string;
     columnFavorite: string;
     columnNotes: string;
     viewLabel: string;
@@ -173,6 +174,12 @@ export interface MessageCatalog {
     noNotes: string;
     markFavorite: string;
     removeFavorite: string;
+    unstar: string;
+    unstarTitle: (fullName: string) => string;
+    unstarCancel: string;
+    unstarDone: (fullName: string) => string;
+    unstarFailed: (fullName: string, error: string) => string;
+    alreadyUnstarred: string;
   };
   repoDetail: {
     previousTitle: string;
@@ -473,6 +480,7 @@ const messages: Record<Locale, MessageCatalog> = {
       columnUpdated: "Updated",
       columnCreated: "Created",
       columnTags: "Tags",
+      columnStarAction: "Unstar",
       columnFavorite: "Favorite",
       columnNotes: "Notes",
       viewLabel: "View",
@@ -565,6 +573,12 @@ const messages: Record<Locale, MessageCatalog> = {
       noNotes: "No notes",
       markFavorite: "Mark as favorite",
       removeFavorite: "Remove favorite",
+      unstar: "Confirm",
+      unstarTitle: (fullName) => `Unstar ${fullName}`,
+      unstarCancel: "Cancel",
+      unstarDone: (fullName) => `${fullName} removed from the current list`,
+      unstarFailed: (fullName, error) => `Could not remove ${fullName}: ${error}`,
+      alreadyUnstarred: "Already unstarred",
     },
     repoDetail: {
       previousTitle: "Previous ([)",
@@ -642,7 +656,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenLinkLabel: "github.com/settings/tokens",
       tokenIntroSuffix: "Required permissions:",
       tokenPublicRepos:
-        "Account · Public Repositories (read starred repos via /user/starred)",
+        "Account · Starring (read/write, for sync and unstar)",
       tokenGists: "Account · Gists (read/write, for cross-device tag sync)",
       tokenGistNote:
         "Note: GitHub Gist scope is account-wide (no per-gist isolation for fine-grained tokens). We create one dedicated secret gist for sync.",
@@ -654,7 +668,7 @@ const messages: Record<Locale, MessageCatalog> = {
       clearCachedAuth: "Clear cached auth",
       saveVerify: "Save & verify",
       verifying: "Verifying…",
-      tokenVerified: (username) => `Token verified. Logged in as ${username}.`,
+      tokenVerified: (username) => `Token verified. Logged in as ${username}. Sync and Gist access checked; unstar also needs Starring read/write.`,
       tokenRemoved: "Token removed.",
       tokenStepsTitle: "How to create the token (fine-grained PAT)",
       tokenStep1:
@@ -664,14 +678,14 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenStep3:
         'Repository access → select "All public repositories" (the extension reads your starred public repos).',
       tokenStep4:
-        'Account permissions → enable "Public Repositories (read)" and "Gists (read and write)". Leave everything else off.',
+        'Account permissions → enable "Starring (read and write)" and "Gists (read and write)". Leave everything else off.',
       tokenStep5:
         "Generate → copy the token (starts with github_pat_…) → paste it above → Save & verify.",
       shotNewToken: 'Screenshot: the "Generate new token" form',
       shotRepoAccess:
         "Screenshot: repository access set to all public repositories",
       shotPermissions:
-        "Screenshot: account permissions — Public Repositories (read) + Gists (read and write)",
+        "Screenshot: account permissions — Starring (read/write) + Gists (read and write)",
       languageLabel: "Language",
       gistHeading: "2. Gist sync",
       gistBoundPrefix: "Bound to gist",
@@ -718,7 +732,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenRejected:
         "GitHub rejected this token. Check that you copied the whole value.",
       tokenStarsForbidden:
-        'This token can read your profile but lacks "Public Repositories (read)". Re-create it with that permission.',
+        'This token can read your profile but lacks "Starring (read/write)". Re-create it with that permission.',
       tokenGistsForbidden:
         'This token can read your profile but lacks "Gists (read/write)". Re-create it with that permission.',
       tokenProfileStatus: (status) =>
@@ -744,7 +758,7 @@ const messages: Record<Locale, MessageCatalog> = {
       ghTokenRejected: "GitHub rejected the saved token. Re-add it in Options.",
       ghRateLimit: "GitHub rate limit reached. Wait a minute and retry.",
       ghForbidden:
-        "GitHub refused the request (403). The token may lack permissions or repository access.",
+        "GitHub refused the request (403). The token may lack permissions (for unstar, Starring read/write) or repository access. Token settings: github.com/settings/tokens.",
       ghTimeout: (page) =>
         `GitHub took too long to respond (page ${page}). Retry shortly.`,
       ghNetwork: (detail) =>
@@ -891,6 +905,7 @@ const messages: Record<Locale, MessageCatalog> = {
       columnUpdated: "更新",
       columnCreated: "创建",
       columnTags: "标签",
+      columnStarAction: "取消 Star",
       columnFavorite: "收藏",
       columnNotes: "备注",
       viewLabel: "视图",
@@ -983,6 +998,12 @@ const messages: Record<Locale, MessageCatalog> = {
       noNotes: "无笔记",
       markFavorite: "收藏该仓库",
       removeFavorite: "取消收藏",
+      unstar: "确定",
+      unstarTitle: (fullName) => `取消 Star ${fullName}`,
+      unstarCancel: "取消",
+      unstarDone: (fullName) => `已从当前列表移除 ${fullName}`,
+      unstarFailed: (fullName, error) => `移除 ${fullName} 失败：${error}`,
+      alreadyUnstarred: "已取消 Star",
     },
     repoDetail: {
       previousTitle: "上一个 ([)",
@@ -1059,7 +1080,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenLinkLabel: "github.com/settings/tokens",
       tokenIntroSuffix: "所需权限：",
       tokenPublicRepos:
-        "Account · Public Repositories（通过 /user/starred 读取 stars）",
+        "Account · Starring（读写，用于同步和 unstar）",
       tokenGists: "Account · Gists（读写，用于跨设备标签同步）",
       tokenGistNote:
         "注意：GitHub Gist 权限是账号级的（细粒度 token 不能按 gist 隔离）。我们会为同步创建一个专用 secret gist。",
@@ -1071,7 +1092,7 @@ const messages: Record<Locale, MessageCatalog> = {
       clearCachedAuth: "清除缓存认证",
       saveVerify: "保存并验证",
       verifying: "验证中…",
-      tokenVerified: (username) => `Token 验证成功，当前登录为 ${username}。`,
+      tokenVerified: (username) => `Token 验证成功，当前登录为 ${username}。已检查同步和 Gist 权限；取消 Star 还需要 Starring read/write。`,
       tokenRemoved: "Token 已移除。",
       tokenStepsTitle: "如何创建 token(fine-grained PAT)",
       tokenStep1:
@@ -1080,13 +1101,13 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenStep3:
         "Repository access → 选「All public repositories」(扩展只读你 star 的公开仓库)。",
       tokenStep4:
-        "Account permissions → 开启「Public Repositories (read)」和「Gists (read and write)」,其余全部关闭。",
+        "Account permissions → 开启「Starring (read and write)」和「Gists (read and write)」,其余全部关闭。",
       tokenStep5:
         "Generate → 复制 token(以 github_pat_ 开头)→ 粘贴到上面 → 保存并验证。",
       shotNewToken: "截图:「Generate new token」表单",
       shotRepoAccess: "截图:仓库访问设为所有公开仓库",
       shotPermissions:
-        "截图:账号权限 —— Public Repositories (read) + Gists (read and write)",
+        "截图:账号权限 —— Starring (read/write) + Gists (read and write)",
       languageLabel: "语言",
       gistHeading: "2. Gist 同步",
       gistBoundPrefix: "已绑定 gist",
@@ -1130,7 +1151,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenEmpty: "请先粘贴 token。",
       tokenRejected: "GitHub 拒绝了该 token,请确认是否完整复制。",
       tokenStarsForbidden:
-        "该 token 能读取个人资料,但缺少「Public Repositories (read)」权限,请重新创建并勾选该权限。",
+        "该 token 能读取个人资料,但缺少「Starring (read/write)」权限,请重新创建并勾选该权限。",
       tokenGistsForbidden:
         "该 token 能读取个人资料,但缺少「Gists (read/write)」权限,请重新创建并勾选该权限。",
       tokenProfileStatus: (status) =>
@@ -1154,7 +1175,7 @@ const messages: Record<Locale, MessageCatalog> = {
       ghTokenRejected: "GitHub 拒绝了已保存的 token,请在选项页重新添加。",
       ghRateLimit: "已达到 GitHub 速率限制,请稍候重试。",
       ghForbidden:
-        "GitHub 拒绝了请求 (403)。token 可能缺少权限或仓库访问权限。",
+        "GitHub 拒绝了请求 (403)。token 可能缺少权限（取消 Star 需要 Starring read/write）或仓库访问权限。设置链接：github.com/settings/tokens。",
       ghTimeout: (page) => `GitHub 响应超时(第 ${page} 页),请稍后重试。`,
       ghNetwork: (detail) => `无法连接 GitHub(${detail}),请检查网络。`,
       ghPageStatus: (status) =>

@@ -31,6 +31,7 @@ const rectWidths: Record<ColumnId, number> = {
   updated: 84,
   created: 84,
   tags: 180,
+  starAction: 32,
   favorite: 28,
   notes: 20,
 };
@@ -310,7 +311,7 @@ describe('layout editor column resize', () => {
       harness.current.autoFitColumnWidth('description');
     });
 
-    expect(harness.current.gridTemplateColumns).toBe('240px 438px 80px 64px 84px 84px 180px 28px 20px');
+    expect(harness.current.gridTemplateColumns).toBe('240px 438px 80px 64px 84px 84px 180px 32px 28px 20px');
     expect(harness.current.draftLayout.widths).toMatchObject({
       repository: 240,
       description: 438,
@@ -467,7 +468,7 @@ describe('layout editor column resize', () => {
     act(() => {
       harness.current.moveColumnByKeyboard('tags', 1);
     });
-    expect(harness.current.visibleColumns.slice(-3)).toEqual(['tags', 'favorite', 'notes']);
+    expect(harness.current.visibleColumns.slice(-4)).toEqual(['tags', 'starAction', 'favorite', 'notes']);
 
     act(() => {
       harness.current.moveColumnByKeyboard('description', -1);

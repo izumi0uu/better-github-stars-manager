@@ -15,6 +15,9 @@ export interface StarSource {
   /** Rescan: re-pull everything; tombstone local repos absent from the API (soft delete, tags/notes preserved). */
   syncRescan(onProgress?: (p: SyncProgress) => void): Promise<{ tombstoned: number; revived: number }>;
 
+  /** Remote unstar: DELETE the GitHub star, then callers may tombstone local annotations-preserving rows. */
+  unstar(fullName: string): Promise<void>;
+
   /** GitHub username backing this source (from the token's /user). */
   getUsername(): Promise<string>;
 }

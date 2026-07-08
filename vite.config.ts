@@ -25,7 +25,10 @@ function versionHash(): string {
 }
 
 export default defineConfig(({ command }) => {
-  const DEV = command === 'serve' || process.env.GSM_DEV === 'true';
+  // Chrome extension development loads `dist/` directly, so the normal build
+  // keeps dev-only helpers unless the Web Store packaging path opts out.
+  const RELEASE = process.env.GSM_RELEASE === 'true';
+  const DEV = !RELEASE && (command === 'serve' || command === 'build' || process.env.GSM_DEV === 'true');
   const VERSION_HASH = versionHash();
 
   return {
@@ -35,7 +38,7 @@ export default defineConfig(({ command }) => {
       {
         name: 'gsm-build-info',
         closeBundle() {
-          if (command === 'build') console.log(`✅ DEV ${VERSION_HASH}`);
+          if (command === 'build') console.log(`✅ BUILD ${VERSION_HASH}`);
         },
       },
     ],

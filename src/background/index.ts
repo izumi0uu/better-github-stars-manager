@@ -41,6 +41,7 @@ type Req =
   | { type: 'setTags'; full_name: string; tags: string[] }
   | { type: 'setNotes'; full_name: string; notes: string }
   | { type: 'setFavorite'; full_name: string; favorite: boolean }
+  | { type: 'markUnstarred'; full_name: string }
   | { type: 'removeVisibleTag'; full_name: string; name: string }
   | { type: 'deleteTag'; name: string }
   | { type: 'deleteAllTags' }
@@ -462,6 +463,18 @@ async function handle(req: Req): Promise<Res> {
         await idbTagStore.setFavorite(req.full_name, req.favorite);
         broadcastDataChanged();
         return { ok: true, data: { favorite: req.favorite } };
+      case 'markUnstarred': {
+        const result = await run(async () => {
+          const star = await db.stars.get(req.full_name);
+          if (!star) return null;
+          await githubStarSource.unstar(req.full_name);
+          await db.stars.put({ ...star, tombstone: true });
+          return { full_name: req.full_name, tombstone: true };
+        });
+        if (!result) return { ok: false, error: `Unknown repo: ${req.full_name}` };
+        broadcastDataChanged();
+        return { ok: true, data: result };
+      }
       case 'removeVisibleTag': {
         const r = await idbTagStore.removeVisibleTag(req.full_name, req.name);
         broadcastDataChanged();

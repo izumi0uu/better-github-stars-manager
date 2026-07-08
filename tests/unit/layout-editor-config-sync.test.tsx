@@ -978,7 +978,7 @@ describe('layout editor config sync', () => {
     const row = rowCell.closest<HTMLElement>('.gsm-layout-grid');
     if (!header || !row) throw new Error('Expected header and row grids');
 
-    expect(header.style.gridTemplateColumns).toBe('240px 438px 80px 64px 84px 84px 180px 28px 20px');
+    expect(header.style.gridTemplateColumns).toBe('240px 438px 80px 64px 84px 84px 180px 32px 28px 20px');
     expect(row.style.gridTemplateColumns).toBe(header.style.gridTemplateColumns);
     expect(header.style.minWidth).toBe(row.style.minWidth);
   });

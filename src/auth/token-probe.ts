@@ -46,9 +46,9 @@ async function fetchWithCode(
 }
 
 /**
- * Probe the exact GitHub capabilities this extension needs before a token is
- * persisted: authenticate, read /user/starred, create a secret gist, then prove
- * the probe gist was actually cleaned up.
+ * Probe the non-destructive GitHub capabilities before a token is persisted:
+ * authenticate, read /user/starred, create a secret gist, then prove the probe
+ * gist was actually cleaned up. Starring writes are enforced by the unstar call.
  */
 export async function probeTokenCapabilities(
   token: string,

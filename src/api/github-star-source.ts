@@ -34,12 +34,12 @@ interface StarredRepoPayload {
   };
 }
 
-async function authHeaders(): Promise<HeadersInit> {
+async function authHeaders(accept = 'application/vnd.github.star+json'): Promise<HeadersInit> {
   const token = await authStore.getToken();
   if (!token) throw new Error(GH_NO_TOKEN);
   return {
     Authorization: `Bearer ${token}`,
-    Accept: 'application/vnd.github.star+json', // includes starred_at in each item
+    Accept: accept,
   };
 }
 
@@ -96,6 +96,66 @@ async function fetchPage(page: number): Promise<{ items: StarredRepoPayload[]; l
     throw new Error(GH_BAD_SHAPE);
   }
   return { items, link: res.headers.get('link') };
+}
+
+function splitFullName(fullName: string): { owner: string; repo: string } {
+  const slash = fullName.indexOf('/');
+  if (slash <= 0 || slash === fullName.length - 1 || fullName.indexOf('/', slash + 1) !== -1) {
+    throw new Error(`Invalid repository name: ${fullName}`);
+  }
+  return { owner: fullName.slice(0, slash), repo: fullName.slice(slash + 1) };
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const { signal, cancel } = withTimeout(30_000);
+  try {
+    return await fetch(url, { ...init, signal });
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error(`${GH_NETWORK}request timed out`);
+    }
+    throw new Error(`${GH_NETWORK}${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    cancel();
+  }
+}
+
+async function assertRepoAccessible(owner: string, repo: string, headers: HeadersInit): Promise<void> {
+  const res = await fetchWithTimeout(`${API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
+    method: 'GET',
+    headers,
+    cache: 'no-store',
+  });
+  if (res.ok || res.status === 304) return;
+  if (res.status === 401) throw new Error(GH_TOKEN_REJECTED);
+  if (res.status === 403) {
+    const remaining = res.headers.get('x-ratelimit-remaining');
+    if (remaining === '0') throw new Error(GH_RATE_LIMIT);
+    throw new Error(GH_FORBIDDEN);
+  }
+  throw new Error(`${GH_PAGE_STATUS}${res.status}`);
+}
+
+async function deleteStar(fullName: string): Promise<void> {
+  const { owner, repo } = splitFullName(fullName);
+  const headers = await authHeaders('application/vnd.github+json');
+  const res = await fetchWithTimeout(`${API}/user/starred/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
+    method: 'DELETE',
+    headers,
+    cache: 'no-store',
+  });
+  if (res.status === 204 || res.status === 304) return;
+  if (res.status === 404) {
+    await assertRepoAccessible(owner, repo, headers);
+    return;
+  }
+  if (res.status === 401) throw new Error(GH_TOKEN_REJECTED);
+  if (res.status === 403) {
+    const remaining = res.headers.get('x-ratelimit-remaining');
+    if (remaining === '0') throw new Error(GH_RATE_LIMIT);
+    throw new Error(GH_FORBIDDEN);
+  }
+  throw new Error(`${GH_PAGE_STATUS}${res.status}`);
 }
 
 function retryableErrorCode(raw: string): boolean {
@@ -256,6 +316,10 @@ export const githubStarSource: StarSource = {
     // the skipped window because the old cursor remains in place.
     if (newestStarredAt && crossedCursor) await authStore.update({ lastSyncStarredAt: newestStarredAt });
     return { added };
+  },
+
+  async unstar(fullName: string) {
+    await deleteStar(fullName);
   },
 
   async syncRescan(onProgress) {

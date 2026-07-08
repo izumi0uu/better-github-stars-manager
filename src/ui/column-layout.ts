@@ -13,6 +13,7 @@ export const COLUMN_IDS = [
   'updated',
   'created',
   'tags',
+  'starAction',
   'favorite',
   'notes',
 ] as const;
@@ -103,6 +104,14 @@ export const COLUMN_DEFS: Record<ColumnId, ColumnDefinition> = {
     width: '1.6fr',
     minWidth: 100,
     label: (m) => m.toolbar.columnTags,
+  },
+  starAction: {
+    id: 'starAction',
+    width: '32px',
+    minWidth: 32,
+    locked: true,
+    align: 'center',
+    label: (m) => m.toolbar.columnStarAction,
   },
   favorite: {
     id: 'favorite',
