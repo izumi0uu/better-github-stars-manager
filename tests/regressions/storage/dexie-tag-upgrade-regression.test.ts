@@ -64,6 +64,22 @@ describe('Dexie tag schema upgrades', () => {
         assert.equal(row.gh_list_id, 42);
         assert.equal('tags' in row, false);
         assert.equal(current.tags.schema.indexes.some((index) => index.name === 'tags'), false);
+        assert.deepEqual(
+          current.tables.map((table) => table.name).sort(),
+          [
+            'organizeApplies',
+            'organizeApplyRows',
+            'organizeItems',
+            'organizeJobs',
+            'organizeTaxonomies',
+            'stars',
+            'tagDirtyOutbox',
+            'tagMeta',
+            'tags',
+          ].sort(),
+        );
+        assert.equal(await current.organizeJobs.count(), 0);
+        assert.equal(await current.tagDirtyOutbox.count(), 0);
       } finally {
         await current.close();
         await Dexie.delete(DB_NAME);

@@ -4,8 +4,10 @@
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Options } from '@/options/Options';
+import { getMessages } from '@/i18n';
 import type { Config } from '@/types';
 import {
+  click,
   cleanupMountedRootsAndBody,
   mountReact,
   setInputValue,
@@ -17,6 +19,9 @@ const authMocks = vi.hoisted(() => ({
   hasToken: vi.fn(),
   setToken: vi.fn(),
   clearToken: vi.fn(),
+  updateAgentProviderConfig: vi.fn(),
+  acceptAgentDataDisclosure: vi.fn(),
+  clearAgentProviderApiKey: vi.fn(),
   setTheme: vi.fn(),
   update: vi.fn(),
   updateAutoTagPolicy: vi.fn(),
@@ -30,27 +35,63 @@ vi.mock('@/auth/auth-store', () => ({
 const mountedRoots: MountedRoot[] = [];
 const storageListeners: Array<(changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void> = [];
 const runtimeListeners: Array<(message: { type?: string }) => void> = [];
+const permissionAddedListeners: Array<(permissions: chrome.permissions.Permissions) => void> = [];
+const permissionRemovedListeners: Array<(permissions: chrome.permissions.Permissions) => void> = [];
 
 function config(overrides: Partial<Config> = {}): Config {
+  const defaultAgentProvider = {
+    provider: 'openai',
+    protocol: null,
+    baseUrl: null,
+    model: 'gpt-5.4',
+    declaredContextWindow: null,
+    workingContextWindow: null,
+    apiKeyEncrypted: null,
+    apiKeyCryptoMeta: null,
+    credentialScope: null,
+    credentialRevision: null,
+    capability: null,
+  } as const;
   return {
-    tokenEncrypted: 'cipher',
-    tokenCryptoMeta: { iv: 'iv', salt: 'salt' },
-    theme: 'dark',
-    locale: 'en',
-    defaultView: 'table',
-    lastSyncStarredAt: null,
-    gistId: null,
-    gistSyncCursor: null,
-    username: 'idah',
-    avatarUrl: null,
-    displayName: null,
-    onboardingStage: 'done',
-    seenOnboarding: true,
-    seenTooltips: 0,
-    autoTagLimit: 5,
-    maxTagsPerRepo: 5,
-    minTopicRepoCount: 3,
-    libraryView: {
+    ...overrides,
+    tokenEncrypted: overrides.tokenEncrypted ?? 'cipher',
+    tokenCryptoMeta: overrides.tokenCryptoMeta ?? { iv: 'iv', salt: 'salt' },
+    agentProvider: overrides.agentProvider
+      ? {
+          declaredContextWindow: overrides.agentProvider.provider === 'custom-openai-compatible'
+            || (overrides.agentProvider.provider === 'openrouter'
+              && overrides.agentProvider.model === 'openrouter/auto')
+            ? 32_768
+            : null,
+          workingContextWindow: null,
+          ...overrides.agentProvider,
+        }
+      : defaultAgentProvider,
+    agentDataDisclosureAcceptance: Object.hasOwn(overrides, 'agentDataDisclosureAcceptance')
+      ? overrides.agentDataDisclosureAcceptance ?? null
+      : {
+          version: 2,
+          provider: 'openai',
+          origin: 'https://api.openai.com',
+          acceptedAt: 1,
+        },
+    theme: overrides.theme ?? 'dark',
+    locale: overrides.locale ?? 'en',
+    defaultView: overrides.defaultView ?? 'table',
+    lastSyncStarredAt: overrides.lastSyncStarredAt ?? null,
+    gistId: overrides.gistId ?? null,
+    gistSyncCursor: overrides.gistSyncCursor ?? null,
+    username: overrides.username ?? 'idah',
+    avatarUrl: overrides.avatarUrl ?? null,
+    displayName: overrides.displayName ?? null,
+    onboardingStage: overrides.onboardingStage ?? 'done',
+    seenOnboarding: overrides.seenOnboarding ?? true,
+    seenTooltips: overrides.seenTooltips ?? 0,
+    autoTagAgentPromptSeen: overrides.autoTagAgentPromptSeen ?? false,
+    autoTagLimit: overrides.autoTagLimit ?? 5,
+    maxTagsPerRepo: overrides.maxTagsPerRepo ?? 5,
+    minTopicRepoCount: overrides.minTopicRepoCount ?? 3,
+    libraryView: overrides.libraryView ?? {
       version: 1,
       filters: {
         languages: [],
@@ -66,13 +107,18 @@ function config(overrides: Partial<Config> = {}): Config {
         sortDir: 'desc',
       },
     },
-    starsPanelDefaultEnabled: true,
-    columnLayoutMode: 'default',
-    customColumnLayout: null,
-    langTagMigrationDone: true,
-    lastSyncProgress: { phase: 'idle', done: 0, total: null, message: '' },
-    backfills: {},
-    ...overrides,
+    starsPanelDefaultEnabled: overrides.starsPanelDefaultEnabled ?? true,
+    columnLayoutMode: overrides.columnLayoutMode ?? 'default',
+    customColumnLayout: overrides.customColumnLayout ?? null,
+    langTagMigrationDone: overrides.langTagMigrationDone ?? true,
+    lastSyncProgress:
+      overrides.lastSyncProgress ?? {
+        phase: 'idle',
+        done: 0,
+        total: null,
+        message: '',
+      },
+    backfills: overrides.backfills ?? {},
   };
 }
 
@@ -97,26 +143,45 @@ describe('Options preferences', () => {
     authMocks.hasToken.mockReset();
     authMocks.setToken.mockReset();
     authMocks.clearToken.mockReset();
+    authMocks.updateAgentProviderConfig.mockReset();
+    authMocks.acceptAgentDataDisclosure.mockReset();
+    authMocks.clearAgentProviderApiKey.mockReset();
     authMocks.setTheme.mockReset();
     authMocks.update.mockReset();
     authMocks.updateAutoTagPolicy.mockReset();
     storageListeners.length = 0;
     runtimeListeners.length = 0;
+    permissionAddedListeners.length = 0;
+    permissionRemovedListeners.length = 0;
     vi.stubGlobal('chrome', {
       runtime: {
-        sendMessage: vi.fn(() => Promise.resolve({
-          ok: true,
-          data: {
-            progress: { phase: 'idle', done: 0, total: null, message: '' },
-            hasToken: true,
-            onboardingStage: 'done',
-            seenOnboarding: true,
-            seenTooltips: 0,
-            backfills: {},
-            activeBackfillId: null,
-            inFlight: false,
-          },
-        })),
+        sendMessage: vi.fn((message: unknown) => {
+          const request = (message ?? {}) as { type?: string; model?: string };
+          if (request.type === 'testAgentProviderConnection') {
+            return Promise.resolve({
+              ok: true,
+              data: {
+                providerLabel: 'OpenAI',
+                model: request.model ?? 'gpt-5.4',
+                latencyMs: 123,
+                preview: 'OK',
+              },
+            });
+          }
+          return Promise.resolve({
+            ok: true,
+            data: {
+              progress: { phase: 'idle', done: 0, total: null, message: '' },
+              hasToken: true,
+              onboardingStage: 'done',
+              seenOnboarding: true,
+              seenTooltips: 0,
+              backfills: {},
+              activeBackfillId: null,
+              inFlight: false,
+            },
+          });
+        }),
         onMessage: {
           addListener: vi.fn((listener) => runtimeListeners.push(listener)),
           removeListener: vi.fn((listener) => {
@@ -131,6 +196,24 @@ describe('Options preferences', () => {
           removeListener: vi.fn((listener) => {
             const index = storageListeners.indexOf(listener);
             if (index >= 0) storageListeners.splice(index, 1);
+          }),
+        },
+      },
+      permissions: {
+        contains: vi.fn(() => Promise.resolve(false)),
+        request: vi.fn(() => Promise.resolve(true)),
+        onAdded: {
+          addListener: vi.fn((listener) => permissionAddedListeners.push(listener)),
+          removeListener: vi.fn((listener) => {
+            const index = permissionAddedListeners.indexOf(listener);
+            if (index >= 0) permissionAddedListeners.splice(index, 1);
+          }),
+        },
+        onRemoved: {
+          addListener: vi.fn((listener) => permissionRemovedListeners.push(listener)),
+          removeListener: vi.fn((listener) => {
+            const index = permissionRemovedListeners.indexOf(listener);
+            if (index >= 0) permissionRemovedListeners.splice(index, 1);
           }),
         },
       },
@@ -234,5 +317,708 @@ describe('Options preferences', () => {
     });
 
     expect(document.querySelector('a[href="https://github.com/idah?tab=stars"]')).toBeNull();
+  });
+
+  it('saves and automatically tests BGSM Agent settings with the saved key', async () => {
+    authMocks.getConfig.mockResolvedValue(config());
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
+
+    await renderOptions();
+
+    const modelInput = document.querySelector<HTMLInputElement>('#agent-model');
+    const keyInput = document.querySelector<HTMLInputElement>('#agent-api-key');
+    const saveButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'Save & test');
+
+    expect(modelInput).not.toBeNull();
+    expect(keyInput).not.toBeNull();
+    expect(saveButton).toBeInstanceOf(HTMLButtonElement);
+
+    await setInputValue(modelInput!, 'gpt-5');
+    await setInputValue(keyInput!, 'sk-test');
+    await click(saveButton as HTMLButtonElement);
+
+    expect(authMocks.updateAgentProviderConfig).toHaveBeenCalledWith({
+      provider: 'openai',
+      protocol: null,
+      baseUrl: null,
+      model: 'gpt-5',
+      declaredContextWindow: null,
+      workingContextWindow: null,
+      apiKey: 'sk-test',
+    });
+    expect(keyInput?.value).toBe('');
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'testAgentProviderConnection',
+      provider: 'openai',
+      protocol: null,
+      baseUrl: null,
+      model: 'gpt-5',
+      declaredContextWindow: null,
+      workingContextWindow: null,
+      apiKey: undefined,
+    });
+    const status = document.querySelector('[data-testid="agent-connection-status"]');
+    expect(status?.getAttribute('role')).toBe('status');
+    expect(status?.textContent).toContain('Saved · Connected to OpenAI · gpt-5 (123 ms)');
+  });
+
+  it('keeps saved settings and shows an inline error when automatic testing fails', async () => {
+    authMocks.getConfig.mockResolvedValue(config());
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
+    vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: unknown) => {
+      const request = (message ?? {}) as { type?: string };
+      if (request.type === 'testAgentProviderConnection') {
+        return Promise.resolve({
+          ok: false,
+          error: 'Something went wrong: AI provider rejected the request (401).',
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        data: {
+          progress: { phase: 'idle', done: 0, total: null, message: '' },
+          hasToken: true,
+          onboardingStage: 'done',
+          seenOnboarding: true,
+          seenTooltips: 0,
+          backfills: {},
+          activeBackfillId: null,
+          inFlight: false,
+        },
+      });
+    }) as typeof chrome.runtime.sendMessage);
+
+    await renderOptions();
+    const keyInput = document.querySelector<HTMLInputElement>('#agent-api-key');
+    const saveButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'Save & test');
+    await setInputValue(keyInput!, 'sk-timeout');
+    await click(saveButton as HTMLButtonElement);
+
+    expect(authMocks.updateAgentProviderConfig).toHaveBeenCalledOnce();
+    expect(keyInput?.value).toBe('');
+    const status = document.querySelector('[data-testid="agent-connection-status"]');
+    expect(status?.getAttribute('role')).toBe('alert');
+    expect(status?.textContent).toContain('Settings saved, but the connection test failed:');
+    expect(status?.textContent).toContain('Something went wrong: AI provider rejected the request (401).');
+    expect(status?.textContent).not.toContain('Something went wrong: Something went wrong:');
+  });
+
+  it.each([
+    ['openai', 'gpt-5.4', 'https://api.openai.com'],
+    ['openrouter', 'openrouter/auto', 'https://openrouter.ai'],
+    ['anthropic', 'claude-sonnet-4-5', 'https://api.anthropic.com'],
+  ] as const)(
+    'keeps protocol and Base URL out of the ordinary %s service form',
+    async (provider, model, origin) => {
+      authMocks.getConfig.mockResolvedValue(config({
+        agentProvider: {
+          provider,
+          protocol: null,
+          baseUrl: null,
+          model,
+          apiKeyEncrypted: null,
+          apiKeyCryptoMeta: null,
+          credentialScope: null,
+          credentialRevision: null,
+          capability: null,
+        },
+        agentDataDisclosureAcceptance: {
+          version: 2,
+          provider,
+          origin,
+          acceptedAt: 1,
+        },
+      }));
+      authMocks.hasToken.mockResolvedValue(true);
+
+      await renderOptions();
+
+      expect(document.querySelector('#agent-provider')).not.toBeNull();
+      expect(document.querySelector('#agent-model')).not.toBeNull();
+      expect(document.querySelector('#agent-api-key')).not.toBeNull();
+      const advanced = document.querySelector<HTMLDetailsElement>(
+        '[data-testid="agent-advanced-settings"]',
+      );
+      expect(advanced).not.toBeNull();
+      expect(advanced?.open).toBe(false);
+      expect(advanced?.querySelector('#agent-working-context-window')).not.toBeNull();
+      expect(advanced?.querySelector('#agent-provider-context-window') !== null)
+        .toBe(provider === 'openrouter');
+      expect(document.querySelector('#agent-base-url')).toBeNull();
+      expect(document.body.textContent).not.toContain('API protocol');
+    },
+  );
+
+  it('saves a custom AI service without requesting host access', async () => {
+    authMocks.getConfig.mockResolvedValue(config({
+      agentProvider: {
+        provider: 'custom-openai-compatible',
+        protocol: 'chat-completions',
+        baseUrl: 'https://relay.example.com/v1',
+        model: 'custom-model',
+        apiKeyEncrypted: null,
+        apiKeyCryptoMeta: null,
+        credentialScope: null,
+        credentialRevision: null,
+        capability: null,
+      },
+    }));
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
+
+    await renderOptions();
+
+    const baseUrlInput = document.querySelector<HTMLInputElement>('#agent-base-url');
+    const keyInput = document.querySelector<HTMLInputElement>('#agent-api-key');
+    const saveButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'Save & test');
+
+    expect(baseUrlInput).not.toBeNull();
+    expect(keyInput).not.toBeNull();
+    expect(saveButton).toBeInstanceOf(HTMLButtonElement);
+    const advanced = document.querySelector<HTMLDetailsElement>(
+      '[data-testid="agent-advanced-settings"]',
+    );
+    expect(advanced).not.toBeNull();
+    expect(advanced?.open).toBe(false);
+
+    await setInputValue(baseUrlInput!, 'https://proxy.example.dev/v1');
+    await setInputValue(keyInput!, 'sk-custom');
+    await click(saveButton as HTMLButtonElement);
+
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
+    expect(authMocks.updateAgentProviderConfig).toHaveBeenCalledWith({
+      provider: 'custom-openai-compatible',
+      protocol: 'chat-completions',
+      baseUrl: 'https://proxy.example.dev/v1',
+      model: 'custom-model',
+      declaredContextWindow: 32_768,
+      workingContextWindow: null,
+      apiKey: 'sk-custom',
+    });
+    expect(document.querySelector('[data-testid="agent-connection-status"]')?.textContent)
+      .toContain('Settings saved. Grant host access, then test the connection.');
+  });
+
+  it('uses an exact Custom model preset without requiring capacity and allows an override', async () => {
+    authMocks.getConfig.mockResolvedValue(config({
+      agentProvider: {
+        provider: 'custom-openai-compatible',
+        protocol: 'responses',
+        baseUrl: 'https://relay.example.com/v1',
+        model: 'gpt-5.4',
+        declaredContextWindow: null,
+        workingContextWindow: null,
+        apiKeyEncrypted: null,
+        apiKeyCryptoMeta: null,
+        credentialScope: null,
+        credentialRevision: null,
+        capability: null,
+      },
+    }));
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
+    vi.mocked(chrome.permissions.contains).mockImplementation(
+      () => Promise.resolve(true) as never,
+    );
+
+    await renderOptions();
+    const providerWindow = document.querySelector<HTMLInputElement>(
+      '#agent-provider-context-window',
+    );
+    const workingWindow = document.querySelector<HTMLInputElement>(
+      '#agent-working-context-window',
+    );
+    const keyInput = document.querySelector<HTMLInputElement>('#agent-api-key');
+    const saveButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'Save & test') as HTMLButtonElement;
+
+    expect(providerWindow?.required).toBe(false);
+    expect(providerWindow?.placeholder).toBe('1050000');
+    expect(document.body.textContent).toContain('Known model IDs use an exact built-in preset.');
+    await setInputValue(keyInput!, 'sk-preset');
+    expect(saveButton.disabled).toBe(false);
+
+    await setInputValue(workingWindow!, '2000000');
+    expect(saveButton.disabled).toBe(true);
+    await setInputValue(providerWindow!, '2000000');
+    expect(saveButton.disabled).toBe(false);
+    await setInputValue(providerWindow!, '');
+    expect(saveButton.disabled).toBe(true);
+
+    await setInputValue(providerWindow!, '65536');
+    await setInputValue(workingWindow!, '64000');
+    await click(saveButton);
+    expect(authMocks.updateAgentProviderConfig).toHaveBeenCalledWith({
+      provider: 'custom-openai-compatible',
+      protocol: 'responses',
+      baseUrl: 'https://relay.example.com/v1',
+      model: 'gpt-5.4',
+      declaredContextWindow: 65_536,
+      workingContextWindow: 64_000,
+      apiKey: 'sk-preset',
+    });
+  });
+
+  it('requires unknown service capacity, validates both window ranges, and sends normalized values', async () => {
+    authMocks.getConfig.mockResolvedValue(config({
+      agentProvider: {
+        provider: 'custom-openai-compatible',
+        protocol: 'chat-completions',
+        baseUrl: 'https://relay.example.com/v1',
+        model: 'custom-model',
+        declaredContextWindow: null,
+        workingContextWindow: null,
+        apiKeyEncrypted: null,
+        apiKeyCryptoMeta: null,
+        credentialScope: null,
+        credentialRevision: null,
+        capability: null,
+      },
+    }));
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
+    vi.mocked(chrome.permissions.contains).mockImplementation(
+      () => Promise.resolve(true) as never,
+    );
+
+    await renderOptions();
+    const advanced = document.querySelector<HTMLDetailsElement>(
+      '[data-testid="agent-advanced-settings"]',
+    );
+    const providerWindow = document.querySelector<HTMLInputElement>(
+      '#agent-provider-context-window',
+    );
+    const workingWindow = document.querySelector<HTMLInputElement>(
+      '#agent-working-context-window',
+    );
+    const keyInput = document.querySelector<HTMLInputElement>('#agent-api-key');
+    const saveButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'Save & test') as HTMLButtonElement;
+
+    expect(advanced?.open).toBe(false);
+    expect(providerWindow?.required).toBe(true);
+    expect(providerWindow?.min).toBe('4096');
+    expect(providerWindow?.max).toBe('2000000');
+    expect(workingWindow?.required).toBe(false);
+    expect(saveButton.disabled).toBe(true);
+
+    await setInputValue(providerWindow!, '4095');
+    expect(providerWindow?.getAttribute('aria-invalid')).toBe('true');
+    expect(document.body.textContent).toContain('Enter a whole number from 4,096 to 2,000,000.');
+    expect(saveButton.disabled).toBe(true);
+
+    await setInputValue(providerWindow!, '128000');
+    await setInputValue(workingWindow!, '2000001');
+    expect(workingWindow?.getAttribute('aria-invalid')).toBe('true');
+    expect(saveButton.disabled).toBe(true);
+
+    await setInputValue(workingWindow!, '256000');
+    expect(workingWindow?.getAttribute('aria-invalid')).toBe('true');
+    expect(document.body.textContent).toContain('The working window cannot exceed the service window.');
+    expect(saveButton.disabled).toBe(true);
+
+    await setInputValue(workingWindow!, '64000');
+    await setInputValue(keyInput!, 'sk-context');
+    expect(saveButton.disabled).toBe(false);
+    await click(saveButton);
+
+    expect(authMocks.updateAgentProviderConfig).toHaveBeenCalledWith({
+      provider: 'custom-openai-compatible',
+      protocol: 'chat-completions',
+      baseUrl: 'https://relay.example.com/v1',
+      model: 'custom-model',
+      declaredContextWindow: 128_000,
+      workingContextWindow: 64_000,
+      apiKey: 'sk-context',
+    });
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'testAgentProviderConnection',
+      provider: 'custom-openai-compatible',
+      protocol: 'chat-completions',
+      baseUrl: 'https://relay.example.com/v1',
+      model: 'custom-model',
+      declaredContextWindow: 128_000,
+      workingContextWindow: 64_000,
+      apiKey: undefined,
+    });
+  });
+
+  it('keeps same-origin setup state across protocol changes and sends Responses in save and test payloads', async () => {
+    authMocks.getConfig.mockResolvedValue(config({
+      agentProvider: {
+        provider: 'custom-openai-compatible',
+        protocol: 'responses',
+        baseUrl: 'https://relay.example.com/v1',
+        model: 'custom-model',
+        apiKeyEncrypted: 'saved-cipher',
+        apiKeyCryptoMeta: { iv: 'saved-iv', salt: 'saved-salt' },
+        credentialScope: {
+          provider: 'custom-openai-compatible',
+          origin: 'https://relay.example.com',
+        },
+        credentialRevision: 'cr:v1:saved',
+        capability: null,
+      },
+      agentDataDisclosureAcceptance: null,
+    }));
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
+    vi.mocked(chrome.permissions.contains).mockImplementation(
+      () => Promise.resolve(true) as never,
+    );
+
+    await renderOptions();
+
+    const chatProtocol = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'Chat Completions');
+    const responsesProtocol = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'Responses API');
+    const saveButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'Save & test');
+    const testButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Test connection')) as HTMLButtonElement;
+
+    expect(chatProtocol).toBeInstanceOf(HTMLButtonElement);
+    expect(responsesProtocol).toBeInstanceOf(HTMLButtonElement);
+    expect(responsesProtocol?.getAttribute('aria-pressed')).toBe('true');
+    expect(document.body.textContent).toContain('A saved key is already on this device.');
+    expect(document.body.textContent).not.toContain('Accept disclosure');
+    expect(document.body.textContent).toContain('Host access granted');
+    expect(testButton.disabled).toBe(false);
+
+    await click(chatProtocol as HTMLButtonElement);
+
+    expect(chatProtocol?.getAttribute('aria-pressed')).toBe('true');
+    expect(document.body.textContent).toContain('A saved key is already on this device.');
+    expect(document.body.textContent).not.toContain('Accept disclosure');
+    expect(document.body.textContent).toContain('Host access granted');
+    expect(testButton.disabled).toBe(false);
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
+
+    await click(responsesProtocol as HTMLButtonElement);
+    await click(saveButton as HTMLButtonElement);
+    expect(authMocks.updateAgentProviderConfig).toHaveBeenCalledWith({
+      provider: 'custom-openai-compatible',
+      protocol: 'responses',
+      baseUrl: 'https://relay.example.com/v1',
+      model: 'custom-model',
+      declaredContextWindow: 32_768,
+      workingContextWindow: null,
+      apiKey: '',
+    });
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
+
+    await click(testButton);
+    const providerMessages = vi.mocked(chrome.runtime.sendMessage).mock.calls
+      .map(([message]) => message as unknown as Record<string, unknown>)
+      .filter((message) => message.type === 'testAgentProviderConnection');
+    expect(providerMessages).toContainEqual({
+      type: 'testAgentProviderConnection',
+      provider: 'custom-openai-compatible',
+      protocol: 'responses',
+      baseUrl: 'https://relay.example.com/v1',
+      model: 'custom-model',
+      declaredContextWindow: 32_768,
+      workingContextWindow: null,
+      apiKey: undefined,
+    });
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
+  });
+
+  it('defines matching English and Chinese Custom advanced-setting copy', () => {
+    const english = getMessages('en').options;
+    const chinese = getMessages('zh-CN').options;
+
+    expect([
+      english.agentAdvancedSettings,
+      english.agentProtocolLabel,
+      english.agentProtocolChat,
+      english.agentProtocolResponses,
+    ]).toEqual(['Advanced settings', 'API protocol', 'Chat Completions', 'Responses API']);
+    expect([
+      chinese.agentAdvancedSettings,
+      chinese.agentProtocolLabel,
+      chinese.agentProtocolChat,
+      chinese.agentProtocolResponses,
+    ]).toEqual(['高级设置', 'API 协议', 'Chat Completions', 'Responses API']);
+    expect([
+      english.agentProviderContextWindowLabel,
+      english.agentWorkingContextWindowLabel,
+      chinese.agentProviderContextWindowLabel,
+      chinese.agentWorkingContextWindowLabel,
+    ]).toEqual([
+      'Service context window',
+      'Working context window',
+      '服务上下文窗口',
+      '工作上下文窗口',
+    ]);
+    expect(english.agentWorkingContextWindowHint).toContain('only reduce');
+    expect(chinese.agentWorkingContextWindowHint).toContain('只能降低');
+  });
+
+  it('preserves custom settings but makes no test request when host permission is denied', async () => {
+    authMocks.getConfig.mockResolvedValue(config({
+      agentProvider: {
+        provider: 'custom-openai-compatible',
+        protocol: 'chat-completions',
+        baseUrl: 'https://relay.example.com/v1',
+        model: 'custom-model',
+        apiKeyEncrypted: null,
+        apiKeyCryptoMeta: null,
+        credentialScope: null,
+        credentialRevision: null,
+        capability: null,
+      },
+    }));
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
+    vi.mocked(chrome.permissions.request).mockImplementation(
+      () => Promise.resolve(false) as never,
+    );
+
+    await renderOptions();
+    const keyInput = document.querySelector<HTMLInputElement>('#agent-api-key');
+    const saveButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === 'Save & test');
+    const testButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Test connection'));
+    await setInputValue(keyInput!, 'transient-secret');
+    await click(saveButton as HTMLButtonElement);
+    const grantButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Grant access'));
+    expect(grantButton).toBeInstanceOf(HTMLButtonElement);
+    await click(grantButton as HTMLButtonElement);
+    await click(testButton as HTMLButtonElement);
+
+    expect(authMocks.updateAgentProviderConfig).toHaveBeenCalledOnce();
+    expect(authMocks.acceptAgentDataDisclosure).not.toHaveBeenCalled();
+    const providerMessages = vi.mocked(chrome.runtime.sendMessage).mock.calls
+      .map(([message]) => message as { type?: string })
+      .filter((message) => message.type === 'testAgentProviderConnection');
+    expect(providerMessages).toHaveLength(0);
+  });
+
+  it('disables Test and restores Grant access when custom host permission is revoked', async () => {
+    authMocks.getConfig.mockResolvedValue(config({
+      agentProvider: {
+        provider: 'custom-openai-compatible',
+        protocol: 'chat-completions',
+        baseUrl: 'https://relay.example.com/v1',
+        model: 'custom-model',
+        apiKeyEncrypted: 'saved-cipher',
+        apiKeyCryptoMeta: { iv: 'saved-iv', salt: 'saved-salt' },
+        credentialScope: {
+          provider: 'custom-openai-compatible',
+          origin: 'https://relay.example.com',
+        },
+        credentialRevision: 'cr:v1:saved',
+        capability: null,
+      },
+      agentDataDisclosureAcceptance: {
+        version: 2,
+        provider: 'custom-openai-compatible',
+        origin: 'https://relay.example.com',
+        acceptedAt: 1,
+      },
+    }));
+    authMocks.hasToken.mockResolvedValue(true);
+    vi.mocked(chrome.permissions.contains).mockImplementation(
+      () => Promise.resolve(true) as never,
+    );
+
+    await renderOptions();
+    const testButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Test connection')) as HTMLButtonElement;
+    expect(testButton.disabled).toBe(false);
+    expect([...document.querySelectorAll('button')]
+      .some((button) => button.textContent?.includes('Grant access'))).toBe(false);
+
+    vi.mocked(chrome.permissions.contains).mockImplementation(
+      () => Promise.resolve(false) as never,
+    );
+    await act(async () => {
+      permissionRemovedListeners[0]?.({ origins: ['https://relay.example.com/*'] });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(testButton.disabled).toBe(true);
+    expect([...document.querySelectorAll('button')]
+      .some((button) => button.textContent?.includes('Grant access'))).toBe(true);
+  });
+
+  it('refreshes custom host access after a failed connection test', async () => {
+    authMocks.getConfig.mockResolvedValue(config({
+      agentProvider: {
+        provider: 'custom-openai-compatible',
+        protocol: 'chat-completions',
+        baseUrl: 'https://relay.example.com/v1',
+        model: 'custom-model',
+        apiKeyEncrypted: 'saved-cipher',
+        apiKeyCryptoMeta: { iv: 'saved-iv', salt: 'saved-salt' },
+        credentialScope: {
+          provider: 'custom-openai-compatible',
+          origin: 'https://relay.example.com',
+        },
+        credentialRevision: 'cr:v1:saved',
+        capability: null,
+      },
+      agentDataDisclosureAcceptance: {
+        version: 2,
+        provider: 'custom-openai-compatible',
+        origin: 'https://relay.example.com',
+        acceptedAt: 1,
+      },
+    }));
+    authMocks.hasToken.mockResolvedValue(true);
+    vi.mocked(chrome.permissions.contains)
+      .mockImplementationOnce(() => Promise.resolve(true) as never)
+      .mockImplementation(() => Promise.resolve(false) as never);
+    vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: unknown) => {
+      const typedMessage = (message ?? {}) as { type?: string };
+      if (typedMessage.type === 'testAgentProviderConnection') {
+        return Promise.reject(new Error('AGENT_HOST_PERMISSION_DENIED'));
+      }
+      return Promise.resolve({ ok: true, data: null });
+    }) as typeof chrome.runtime.sendMessage);
+
+    await renderOptions();
+    const testButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Test connection')) as HTMLButtonElement;
+    expect(testButton.disabled).toBe(false);
+    await click(testButton);
+
+    expect(testButton.disabled).toBe(true);
+    expect([...document.querySelectorAll('button')]
+      .some((button) => button.textContent?.includes('Grant access'))).toBe(true);
+  });
+
+  it('tests BGSM Agent connection with the current form values', async () => {
+    authMocks.getConfig.mockResolvedValue(config({ agentDataDisclosureAcceptance: null }));
+    authMocks.hasToken.mockResolvedValue(true);
+    vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: unknown) => {
+      const typedMessage = (message ?? {}) as {
+        type?: string;
+        [key: string]: unknown;
+      };
+      if (typedMessage.type === 'testAgentProviderConnection') {
+        return Promise.resolve({
+          ok: true,
+          data: {
+            providerLabel: 'OpenAI',
+            model: 'gpt-5.4',
+            latencyMs: 321,
+            preview: 'OK',
+          },
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        data: {
+          progress: { phase: 'idle', done: 0, total: null, message: '' },
+          hasToken: true,
+          onboardingStage: 'done',
+          seenOnboarding: true,
+          seenTooltips: 0,
+          backfills: {},
+          activeBackfillId: null,
+          inFlight: false,
+        },
+      });
+    }) as typeof chrome.runtime.sendMessage);
+
+    await renderOptions();
+
+    const keyInput = document.querySelector<HTMLInputElement>('#agent-api-key');
+    const testButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Test connection'));
+
+    expect(keyInput).not.toBeNull();
+    expect(testButton).toBeInstanceOf(HTMLButtonElement);
+
+    await setInputValue(keyInput!, 'sk-live');
+    await click(testButton as HTMLButtonElement);
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'testAgentProviderConnection',
+      provider: 'openai',
+      protocol: null,
+      baseUrl: null,
+      model: 'gpt-5.4',
+      declaredContextWindow: null,
+      workingContextWindow: null,
+      apiKey: 'sk-live',
+    });
+    expect(document.body.textContent).toContain(
+      'Connected to OpenAI · gpt-5.4 (321 ms)',
+    );
+  });
+
+  it('ignores legacy disclosure acceptance changes without resetting provider drafts', async () => {
+    const initial = config({ agentDataDisclosureAcceptance: null });
+    const accepted = config({
+      agentDataDisclosureAcceptance: {
+        version: 2,
+        provider: 'openai',
+        origin: 'https://api.openai.com',
+        acceptedAt: 2,
+      },
+    });
+    authMocks.getConfig.mockResolvedValueOnce(initial).mockResolvedValue(accepted);
+    authMocks.hasToken.mockResolvedValue(true);
+
+    await renderOptions();
+    const modelInput = document.querySelector<HTMLInputElement>('#agent-model');
+    await setInputValue(modelInput!, 'draft-model-not-yet-saved');
+    await act(async () => {
+      storageListeners[0]?.({
+        gsm_config: { oldValue: initial, newValue: accepted },
+      }, 'local');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(modelInput?.value).toBe('draft-model-not-yet-saved');
+    expect(document.body.textContent).not.toContain('Accept disclosure');
+  });
+
+  it('lets the user remove a saved BGSM Agent key', async () => {
+    authMocks.getConfig.mockResolvedValue(config({
+      agentProvider: {
+        provider: 'openai',
+        protocol: null,
+        baseUrl: null,
+        model: 'gpt-5-mini',
+        apiKeyEncrypted: 'saved-cipher',
+        apiKeyCryptoMeta: { iv: 'saved-iv', salt: 'saved-salt' },
+        credentialScope: {
+          provider: 'openai',
+          origin: 'https://api.openai.com',
+        },
+        credentialRevision: 'cr:v1:saved',
+        capability: null,
+      },
+    }));
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.clearAgentProviderApiKey.mockResolvedValue(undefined);
+
+    await renderOptions();
+
+    expect(document.body.textContent).toContain(
+      'A saved key is already on this device.',
+    );
+
+    const clearButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Remove saved key'));
+    expect(clearButton).toBeInstanceOf(HTMLButtonElement);
+
+    await click(clearButton as HTMLButtonElement);
+
+    expect(authMocks.clearAgentProviderApiKey).toHaveBeenCalledTimes(1);
   });
 });

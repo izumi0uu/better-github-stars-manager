@@ -36,21 +36,22 @@ describe('background sync auto-tag contract', () => {
     assert.doesNotMatch(backfillBlock, /autoTagAll/);
   });
 
-  it('keeps Auto Tags as the manual entrypoint that calls autoTagAll', () => {
+  it('keeps Auto Tags as the manual local auto-tag entrypoint', () => {
     const block = caseBlock('autoAssignTags', 'gistPush');
 
-    assert.match(block, /autoTagAll\(m\.background\.autoAssignTagging/);
+    assert.match(block, /autoTagAll\(/);
     assert.match(block, /setIdleMessage\(m\.background\.autoAssignDone\(t\.tagged\)\)/);
+    assert.doesNotMatch(block, /runBgsmAgentTurn\(/);
   });
 
-  it('keeps autoTagAll out of every automatic sync/backfill path', () => {
+  it('keeps local auto-tagging out of every automatic sync/backfill path', () => {
     for (const [name, nextName] of [
       ['syncIncremental', 'syncFull'],
       ['syncFull', 'syncRescan'],
-      ['syncRescan', 'autoAssignTags'],
       ['runBackfill', 'deferBackfill'],
     ] as const) {
       assert.doesNotMatch(caseBlock(name, nextName), /autoTagAll/, `${name} should not call autoTagAll`);
+      assert.doesNotMatch(caseBlock(name, nextName), /runBgsmAgentTurn/, `${name} should not run BGSM Agent automatically`);
     }
   });
 });

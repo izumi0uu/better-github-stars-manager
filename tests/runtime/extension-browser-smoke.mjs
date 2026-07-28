@@ -5,12 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { launchExtensionBrowser } from './puppeteer-runtime.mjs';
 
-const DIST = path.resolve(process.cwd(), 'dist');
+const DIST = path.resolve(process.cwd(), process.env.GSM_DIST_DIR ?? 'dist');
 const OPTIONS_PATH = '/src/options/index.html';
 const POPUP_PATH = '/src/popup/index.html';
 const INVALID_TOKEN = 'github_pat_invalid_extension_browser_smoke';
 const STARS_URL = 'https://github.com/smoke-user?tab=stars';
 const REPO_URL = 'https://github.com/smoke-user/smoke-repo';
+const DOM_POLLING_MS = 100;
 
 if (!existsSync(path.join(DIST, 'manifest.json'))) {
   console.error(`No dist/manifest.json found at ${DIST}. Run "pnpm build" first.`);
@@ -41,8 +42,7 @@ try {
 
   step('1) Popup no-token path opens Options');
   const popup = await openExtensionPage(extId, POPUP_PATH, 'popup');
-  await waitForBodyText(popup, 'No token configured');
-  await waitForButtonByText(popup, /^Add PAT$/i);
+  await waitForPopupNoTokenState(popup);
 
   const openedOptions = waitForExtensionPage(`${OPTIONS_PATH}`);
   await clickButtonByText(popup, /^Add PAT$/i);
@@ -54,22 +54,20 @@ try {
   step('2) Options rejects invalid token without persisting auth');
   await interceptGitHubApi(optionsFromPopup, invalidTokenApiResponse);
   await assertInvalidTokenApiStub(optionsFromPopup);
-  await withTimeout(
-    async () => {
-      await saveToken(optionsFromPopup, INVALID_TOKEN);
-      await waitForBodyText(
-        optionsFromPopup,
-        'GitHub rejected this token. Check that you copied the whole value.',
-        8_000,
-      );
-    },
-    15_000,
-    async () => `invalid-token UI did not complete. Page text:\n${await pageText(optionsFromPopup)}`,
+  await saveToken(optionsFromPopup, INVALID_TOKEN);
+  await waitForBodyText(
+    optionsFromPopup,
+    'GitHub rejected this token. Check that you copied the whole value.',
+    8_000,
   );
   await assertNoAuthenticatedBanner(optionsFromPopup);
   ok('invalid token was rejected and no authenticated banner appeared');
 
-  step('3) Stars page fixture does not inject panel without owner proof');
+  step('3) Agent disclosure is collapsed and does not gate Test');
+  await assertAgentDisclosureInfo(optionsFromPopup);
+  ok('real Options kept disclosure collapsed while allowing Test without acceptance');
+
+  step('4) Stars page fixture does not inject panel without owner proof');
   const noTokenStars = await browser.newPage();
   hookPageDiagnostics(noTokenStars, 'stars-no-token');
   await interceptGitHubPages(noTokenStars);
@@ -78,7 +76,7 @@ try {
   await expectNoManager(noTokenStars);
   ok('stars fixture loaded and manager stayed absent without token/user identity');
 
-  step('4) Stars page injects panel and toggles FAB when local config has matching owner');
+  step('5) Stars page injects panel and toggles FAB when local config has matching owner');
   await seedConfig(extId, {
     username: 'smoke-user',
     tokenEncrypted: 'smoke-ciphertext',
@@ -90,20 +88,26 @@ try {
   await interceptGitHubPages(ownStars);
   await ownStars.goto(STARS_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   await waitForManagerRoot(ownStars);
+  await assertAgentAndAutoTagsRemainSeparate(ownStars);
+  await assertAutoTagAgentFirstClickChoice(ownStars);
+  await assertAgentDrawerA11y(ownStars);
   await assertScrollLocked(ownStars);
   await clickShadowButton(ownStars, '[data-coach-target="hide-panel"]');
   await waitForFab(ownStars);
   await clickFab(ownStars);
   await waitForManagerRoot(ownStars);
-  ok('manager injected for own stars page, hide shows FAB, FAB restores panel');
+  ok('manager injected, first Auto Tags click offered Agent, drawer opened accessibly, and panel toggle worked');
 
-  step('5) Turbo-style navigation does not duplicate extension hosts');
+  step('6) Turbo-style navigation does not duplicate extension hosts');
   await ownStars.evaluate(() => {
     history.pushState({}, '', '/smoke-user?tab=stars&smoke=turbo');
     document.dispatchEvent(new Event('turbo:load'));
     document.dispatchEvent(new Event('turbo:render'));
   });
-  await ownStars.waitForFunction(() => document.querySelectorAll('#gsm-manager-host').length === 1, { timeout: 10_000 });
+  await ownStars.waitForFunction(
+    () => document.querySelectorAll('#gsm-manager-host').length === 1,
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
   const counts = await ownStars.evaluate(() => ({
     panels: document.querySelectorAll('#gsm-manager-host').length,
     fabs: document.querySelectorAll('#gsm-fab').length,
@@ -111,7 +115,7 @@ try {
   assert.deepEqual(counts, { panels: 1, fabs: 0 });
   ok('turbo events kept a single manager host and no duplicate FAB');
 
-  step('6) Repo page fixture gets tag-chip host only on repo-shaped path');
+  step('7) Repo page fixture gets tag-chip host only on repo-shaped path');
   const repoPage = await browser.newPage();
   hookPageDiagnostics(repoPage, 'repo');
   await interceptGitHubPages(repoPage);
@@ -125,14 +129,25 @@ try {
       cursor = cursor.nextElementSibling;
     }
     return false;
-  }, { timeout: 10_000 });
+  }, { polling: DOM_POLLING_MS, timeout: 10_000 });
   ok('repo fixture received a shadow-root tag chip');
 
   if (pageIssues.length) {
     failures.push(`unexpected browser diagnostics:\n${pageIssues.join('\n')}`);
   }
 } catch (error) {
-  failures.push(error instanceof Error ? error.stack ?? error.message : String(error));
+  const errorText = error instanceof Error ? error.stack ?? error.message : String(error);
+  const browserState = browser
+    ? await captureDiagnostic(
+        () => describeBrowserState(browser),
+        'browser diagnostic capture',
+        5_000,
+      )
+    : 'browser was not launched';
+  const issueText = pageIssues.length
+    ? `\nPage issues:\n${pageIssues.join('\n')}`
+    : '';
+  failures.push(`${errorText}\n\nBrowser state at failure:\n${browserState}${issueText}`);
 } finally {
   await browser?.close().catch(() => {});
   rmSync(profile, { recursive: true, force: true });
@@ -147,26 +162,62 @@ console.log('\nExtension browser smoke passed.');
 
 async function detectExtensionId(browser) {
   const deadline = Date.now() + 20_000;
+  let lastState = 'extension discovery returned no data';
   while (Date.now() < deadline) {
     const extensions = await browser.extensions().catch(() => null);
-    const installed = extensions?.values().next().value;
-    if (installed?.id) return installed.id;
+    const installed = [...(extensions?.values() ?? [])].find((extension) =>
+      extension.enabled && path.resolve(extension.path) === DIST,
+    );
+    const workerTarget = installed
+      ? browser.targets().find((candidate) =>
+          candidate.type() === 'service_worker' &&
+          candidate.url().startsWith(`chrome-extension://${installed.id}/`),
+        )
+      : null;
 
-    const target = browser.targets().find((candidate) => {
-      return (candidate.type() === 'service_worker' || candidate.type() === 'page') &&
-        candidate.url().startsWith('chrome-extension://');
-    });
-    const extId = target?.url().match(/chrome-extension:\/\/([a-z]+)/i)?.[1];
-    if (extId) return extId;
-    await delay(500);
+    if (installed && workerTarget) {
+      try {
+        const worker = await workerTarget.worker();
+        const runtimeId = await worker?.evaluate(() => chrome.runtime.id);
+        if (runtimeId === installed.id) return installed.id;
+        lastState = `service worker returned unexpected runtime ID: ${String(runtimeId)}`;
+      } catch (error) {
+        lastState = `service worker was present but not executable: ${formatError(error)}`;
+      }
+    } else {
+      lastState = JSON.stringify({
+        extensions: [...(extensions?.values() ?? [])].map((extension) => ({
+          id: extension.id,
+          name: extension.name,
+          path: extension.path,
+          enabled: extension.enabled,
+        })),
+        extensionTargets: browser.targets()
+          .filter((candidate) => candidate.url().startsWith('chrome-extension://'))
+          .map((candidate) => ({ type: candidate.type(), url: candidate.url() })),
+      });
+    }
+    await delay(250);
   }
-  throw new Error('could not determine extension ID after waiting for MV3 extension load');
+  throw new Error(
+    `current dist extension did not become ready after waiting for MV3 service worker load. Last state: ${lastState}`,
+  );
 }
 
 async function openExtensionPage(extId, pagePath, label) {
   const page = await browser.newPage();
   hookPageDiagnostics(page, label);
-  await page.goto(`chrome-extension://${extId}${pagePath}`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  const expectedUrl = `chrome-extension://${extId}${pagePath}`;
+  await page.goto(expectedUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  try {
+    await page.waitForFunction(
+      (url) => location.href === url && document.readyState !== 'loading' && !!document.getElementById('root'),
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+      expectedUrl,
+    );
+  } catch (error) {
+    throw await pageWaitError(page, `extension document did not become ready at ${expectedUrl}`, error);
+  }
   return page;
 }
 
@@ -210,6 +261,36 @@ async function invalidTokenApiResponse(request) {
     headers: { 'x-oauth-scopes': '' },
     body: JSON.stringify({ message: 'Bad credentials' }),
   });
+}
+
+async function assertAgentDisclosureInfo(page) {
+  await page.waitForSelector('[data-testid="agent-data-disclosure"]', { timeout: 10_000 });
+  const initial = await page.evaluate(() => ({
+    categoryCount: document.querySelectorAll('[data-disclosure-category]').length,
+    collapsed: document.querySelector('[data-testid="agent-data-disclosure"] details')?.open === false,
+    originVisible: document.querySelector('[data-testid="agent-data-disclosure"]')
+      ?.textContent?.includes('https://api.openai.com') ?? false,
+  }));
+  assert.deepEqual(initial, { categoryCount: 4, collapsed: true, originVisible: true });
+
+  await page.$eval('#agent-api-key', (input) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, 'transient-smoke-key');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  const disabledWithoutAcceptance = await page.evaluate(() => {
+    const button = [...document.querySelectorAll('button')]
+      .find((candidate) => candidate.textContent?.includes('Test connection'));
+    return button?.disabled ?? null;
+  });
+  assert.equal(disabledWithoutAcceptance, false);
+
+  const acceptance = await page.evaluate(async () => {
+    const stored = await chrome.storage.local.get('gsm_config');
+    return stored.gsm_config?.agentDataDisclosureAcceptance ?? null;
+  });
+  assert.equal(acceptance, null);
 }
 
 async function assertInvalidTokenApiStub(page) {
@@ -280,25 +361,60 @@ function repoPageHtml() {
 }
 
 async function saveToken(page, token) {
-  await page.click('textarea', { clickCount: 3 }).catch(() => {});
-  await page.keyboard.press('Backspace').catch(() => {});
-  await page.type('textarea', token);
-  await clickButtonByText(page, /save|verify/i);
+  const textarea = await page.waitForSelector('textarea:not([disabled])', {
+    visible: true,
+    timeout: 10_000,
+  });
+  assert.ok(textarea, 'GitHub token textarea did not become editable');
+  await textarea.evaluate((element) => {
+    element.focus();
+    element.select();
+  });
+  await page.keyboard.type(token);
+  try {
+    await page.waitForFunction(
+      (expected) => document.querySelector('textarea')?.value === expected,
+      { polling: DOM_POLLING_MS, timeout: 5_000 },
+      token,
+    );
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('button')].some((button) =>
+        /^Save & verify$/i.test((button.textContent || '').trim()) && !button.disabled,
+      ),
+      { polling: DOM_POLLING_MS, timeout: 5_000 },
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'GitHub token input did not enable Save & verify', error);
+  }
+  await clickButtonByText(page, /^Save & verify$/i);
 }
 
 async function waitForBodyText(page, text, timeout = 20_000) {
-  await page.waitForFunction((expected) => document.body.innerText.includes(expected), { timeout }, text);
+  try {
+    await page.waitForFunction(
+      (expected) => document.body?.innerText.includes(expected),
+      { polling: DOM_POLLING_MS, timeout },
+      text,
+    );
+  } catch (error) {
+    throw await pageWaitError(page, `body did not contain ${JSON.stringify(text)}`, error);
+  }
 }
 
-async function waitForButtonByText(page, matcher, timeout = 20_000) {
-  await page.waitForFunction(
-    (source) => {
-      const regex = new RegExp(source.pattern, source.flags);
-      return [...document.querySelectorAll('button')].some((node) => regex.test((node.textContent || '').trim()));
-    },
-    { timeout },
-    { pattern: matcher.source, flags: matcher.flags },
-  );
+async function waitForPopupNoTokenState(page, timeout = 20_000) {
+  try {
+    await page.waitForFunction(
+      () => {
+        const hasNoTokenText = document.body?.innerText.includes('No token configured');
+        const hasAddPatButton = [...document.querySelectorAll('button')]
+          .some((node) => /^Add PAT$/i.test((node.textContent || '').trim()));
+        return hasNoTokenText && hasAddPatButton;
+      },
+      { polling: DOM_POLLING_MS, timeout },
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'popup did not render the no-token text and Add PAT button together', error);
+  }
 }
 
 async function clickButtonByText(page, matcher) {
@@ -321,28 +437,6 @@ async function assertNoAuthenticatedBanner(page) {
   assert.equal(text.includes('Authenticated as @'), false, 'token unexpectedly persisted after rejected validation');
 }
 
-async function withTimeout(task, timeoutMs, describeFailure) {
-  let timeout;
-  try {
-    return await Promise.race([
-      task(),
-      new Promise((_, reject) => {
-        timeout = setTimeout(async () => {
-          let detail;
-          try {
-            detail = await describeFailure();
-          } catch (err) {
-            detail = `timed out after ${timeoutMs}ms (diagnostic capture failed: ${err instanceof Error ? err.message : String(err)})`;
-          }
-          reject(new Error(detail));
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function expectNoManager(page) {
   await delay(1000);
   const present = await page.evaluate(() => !!document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root'));
@@ -352,7 +446,7 @@ async function expectNoManager(page) {
 async function waitForManagerRoot(page) {
   await page.waitForFunction(
     () => !!document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root'),
-    { timeout: 20_000 },
+    { polling: DOM_POLLING_MS, timeout: 20_000 },
   );
 }
 
@@ -362,6 +456,146 @@ async function assertScrollLocked(page) {
     body: document.body.style.overflow,
   }));
   assert.deepEqual(overflow, { html: 'hidden', body: 'hidden' });
+}
+
+async function assertAgentAndAutoTagsRemainSeparate(page) {
+  const result = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const autoTags = root?.querySelector('[data-coach-target="auto-tags"]');
+    const agent = root?.querySelector('[data-coach-target="agent"]');
+    return {
+      autoTagsText: autoTags?.textContent?.trim() ?? null,
+      agentText: agent?.textContent?.trim() ?? null,
+      nested: !!(autoTags?.contains(agent) || agent?.contains(autoTags)),
+      retryPresent: /Retry failed only/i.test(root?.textContent ?? ''),
+    };
+  });
+  assert.equal(result.autoTagsText, 'Auto Tags');
+  assert.equal(result.agentText, 'Agent');
+  assert.equal(result.nested, false);
+  assert.equal(result.retryPresent, false);
+}
+
+async function assertAutoTagAgentFirstClickChoice(page) {
+  await clickShadowButton(page, '[data-coach-target="auto-tags"]');
+  await page.waitForFunction(
+    () => !!document
+      .getElementById('gsm-manager-host')
+      ?.shadowRoot
+      ?.querySelector('[data-testid="auto-tag-agent-prompt"] [role="dialog"]'),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+  const initial = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const prompt = root?.querySelector('[data-testid="auto-tag-agent-prompt"]');
+    return {
+      titleVisible: prompt?.textContent?.includes('Try Agent for smarter tagging?') ?? false,
+      yesVisible: prompt?.textContent?.includes('Yes, open Agent') ?? false,
+      noVisible: prompt?.textContent?.includes('No, use Auto Tags') ?? false,
+      focusedText: root?.activeElement?.textContent?.trim() ?? null,
+    };
+  });
+  assert.deepEqual(initial, {
+    titleVisible: true,
+    yesVisible: true,
+    noVisible: true,
+    focusedText: 'Yes, open Agent',
+  });
+
+  const choseLocal = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const button = [...(root?.querySelectorAll('[data-testid="auto-tag-agent-prompt"] button') ?? [])]
+      .find((candidate) => candidate.textContent?.includes('No, use Auto Tags'));
+    button?.click();
+    return !!button;
+  });
+  assert.equal(choseLocal, true);
+  await page.waitForFunction(
+    () => !document
+      .getElementById('gsm-manager-host')
+      ?.shadowRoot
+      ?.querySelector('[data-testid="auto-tag-agent-prompt"]'),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+  const agentDrawerOpened = await page.evaluate(() => !!document
+    .getElementById('gsm-manager-host')
+    ?.shadowRoot
+    ?.querySelector('#gsm-agent-dialog-title'));
+  assert.equal(agentDrawerOpened, false, 'choosing local Auto Tags should not open Agent');
+}
+
+async function assertAgentDrawerA11y(page) {
+  await clickShadowButton(page, '[data-coach-target="agent"]');
+  await page.waitForFunction(
+    () => !!document
+      .getElementById('gsm-manager-host')
+      ?.shadowRoot
+      ?.querySelector('[role="dialog"][aria-modal="true"]'),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+  const state = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const dialog = root?.querySelector('[role="dialog"]');
+    return {
+      labelledBy: dialog?.getAttribute('aria-labelledby') ?? null,
+      title: root?.getElementById('gsm-agent-dialog-title')?.textContent?.trim() ?? null,
+      focusedLabel: root?.activeElement?.getAttribute('aria-label') ?? null,
+      setupVisible: !!root?.querySelector('[data-testid="agent-setup-gate"]'),
+      composerVisible: !!root?.querySelector('textarea'),
+    };
+  });
+  assert.deepEqual(state, {
+    labelledBy: 'gsm-agent-dialog-title',
+    title: 'BGSM Agent',
+    focusedLabel: 'Close BGSM Agent',
+    setupVisible: false,
+    composerVisible: true,
+  });
+  await clickShadowButton(page, 'button[aria-label="Functions"]');
+  await page.waitForFunction(
+    () => !!document
+      .getElementById('gsm-manager-host')
+      ?.shadowRoot
+      ?.querySelector('[role="group"][aria-label="Available functions"]'),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+  const functionLabels = await page.evaluate(() => [...(
+    document
+      .getElementById('gsm-manager-host')
+      ?.shadowRoot
+      ?.querySelectorAll('[role="group"][aria-label="Available functions"] button') ?? []
+  )].map((item) => item.querySelector('span > span')?.textContent?.trim() ?? ''));
+  assert.deepEqual(functionLabels, [
+    'Summarize current scope',
+    'Find similar tools',
+    'Organize full library',
+    'Review tag names',
+  ]);
+  await clickShadowButton(page, 'button[aria-label="Functions"]');
+  const originalViewport = page.viewport() ?? { width: 800, height: 600, deviceScaleFactor: 1 };
+  await page.setViewport({ width: 360, height: 720, deviceScaleFactor: 1 });
+  const narrow = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const dialog = root?.querySelector('[role="dialog"]');
+    const close = root?.querySelector('button[aria-label="Close BGSM Agent"]');
+    const dialogRect = dialog?.getBoundingClientRect();
+    const closeRect = close?.getBoundingClientRect();
+    return {
+      dialogLeft: dialogRect?.left ?? -1,
+      dialogRight: dialogRect?.right ?? -1,
+      dialogWidth: dialogRect?.width ?? -1,
+      dialogOverflow: dialog ? dialog.scrollWidth - dialog.clientWidth : -1,
+      closeRight: closeRect?.right ?? -1,
+      viewportWidth: innerWidth,
+    };
+  });
+  assert.equal(narrow.dialogLeft >= 0, true);
+  assert.equal(narrow.dialogRight <= narrow.viewportWidth, true);
+  assert.equal(narrow.dialogWidth <= narrow.viewportWidth, true);
+  assert.equal(narrow.dialogOverflow <= 1, true);
+  assert.equal(narrow.closeRight <= narrow.viewportWidth, true);
+  await page.setViewport(originalViewport);
+  await clickShadowButton(page, 'button[aria-label="Close BGSM Agent"]');
 }
 
 async function clickShadowButton(page, selector) {
@@ -375,7 +609,10 @@ async function clickShadowButton(page, selector) {
 }
 
 async function waitForFab(page) {
-  await page.waitForFunction(() => !!document.getElementById('gsm-fab')?.shadowRoot?.querySelector('button'), { timeout: 10_000 });
+  await page.waitForFunction(
+    () => !!document.getElementById('gsm-fab')?.shadowRoot?.querySelector('button'),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
   const hasPanel = await page.evaluate(() => !!document.getElementById('gsm-manager-host'));
   assert.equal(hasPanel, false, 'panel host should be removed while FAB is visible');
 }
@@ -395,14 +632,90 @@ function hookPageDiagnostics(page, label) {
     const text = message.text();
     if (label === OPTIONS_PATH && text.includes('api.github.com') && text.includes('401')) return;
     if (label === OPTIONS_PATH && text.includes('Failed to load resource') && text.includes('401')) return;
-    recordPageIssue(label, `console.error: ${text}`);
+    const location = message.location();
+    recordPageIssue(label, `console.error: ${text}${location.url ? ` (${location.url})` : ''}`);
   });
   page.on('requestfailed', (request) => {
     const url = request.url();
-    if (url.startsWith('https://github.com/') || url.startsWith('https://api.github.com/')) {
+    if (
+      url.startsWith('chrome-extension://') ||
+      url.startsWith('https://github.com/') ||
+      url.startsWith('https://api.github.com/')
+    ) {
       recordPageIssue(label, `request failed: ${url} ${request.failure()?.errorText ?? ''}`);
     }
   });
+  page.on('pageerror', (error) => {
+    recordPageIssue(label, `page error: ${formatError(error)}`);
+  });
+}
+
+async function pageWaitError(page, message, cause) {
+  const state = await captureDiagnostic(
+    () => describePageState(page),
+    'page diagnostic capture',
+    3_000,
+  );
+  return new Error(`${message}: ${formatError(cause)}\nPage state:\n${state}`);
+}
+
+async function describeBrowserState(browser) {
+  const pages = await browser.pages();
+  const pageStates = await Promise.all(pages.map(async (page, index) => {
+    const state = await describePageState(page).catch((error) =>
+      `page diagnostic capture failed: ${formatError(error)}`,
+    );
+    return `page[${index}]:\n${state}`;
+  }));
+  const targets = browser.targets().map((target) => ({
+    type: target.type(),
+    url: target.url(),
+  }));
+  return `${pageStates.join('\n')}\ntargets: ${JSON.stringify(targets, null, 2)}`;
+}
+
+async function describePageState(page) {
+  if (page.isClosed()) return 'closed=true';
+  const state = await page.evaluate(() => ({
+    url: location.href,
+    title: document.title,
+    readyState: document.readyState,
+    visibilityState: document.visibilityState,
+    bodyText: (document.body?.innerText ?? '').slice(0, 4_000),
+    rootHtml: (document.getElementById('root')?.innerHTML ?? '').slice(0, 4_000),
+    buttons: [...document.querySelectorAll('button')].map((button) => ({
+      text: (button.textContent || '').trim(),
+      disabled: button.disabled,
+      ariaLabel: button.getAttribute('aria-label'),
+    })),
+    textareas: [...document.querySelectorAll('textarea')].map((textarea) => ({
+      disabled: textarea.disabled,
+      valueLength: textarea.value.length,
+      placeholder: textarea.placeholder,
+    })),
+    scripts: [...document.scripts].map((script) => script.src || '<inline>'),
+  }));
+  return JSON.stringify(state, null, 2);
+}
+
+function formatError(error) {
+  return error instanceof Error ? error.stack ?? error.message : String(error);
+}
+
+async function captureDiagnostic(task, label, timeoutMs) {
+  let timeout;
+  try {
+    return await Promise.race([
+      Promise.resolve()
+        .then(task)
+        .catch((error) => `${label} failed: ${formatError(error)}`),
+      new Promise((resolve) => {
+        timeout = setTimeout(() => resolve(`${label} timed out after ${timeoutMs}ms`), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function delay(ms) {

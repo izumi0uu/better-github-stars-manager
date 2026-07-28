@@ -1,20 +1,19 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'vitest';
-
-const source = readFileSync(new URL('../../src/background/index.ts', import.meta.url), 'utf8');
+import { backgroundSource, caseBlock } from '../helpers/background-case-block';
 
 describe('background deleteAllTags contract', () => {
   it('declares and handles deleteAllTags as a first-class request', () => {
-    assert.match(source, /\|\s*\{\s*type:\s*'deleteAllTags'\s*\}/);
-    assert.match(source, /case 'deleteAllTags': \{/);
-    assert.match(source, /const r = await run\(\(\) => idbTagStore\.deleteAllTags\(\)\);/);
-    assert.match(source, /return \{ ok: true, data: r \};/);
+    const block = caseBlock('deleteAllTags', 'acceptSuggestions');
+
+    assert.match(backgroundSource, /\|\s*\{\s*type:\s*["']deleteAllTags["']\s*\}/);
+    assert.match(block, /const r = await run\(\(\) => idbTagStore\.deleteAllTags\(\)\);/);
+    assert.match(block, /return \{ ok: true, data: r \};/);
   });
 
   it('broadcasts dataChanged once after the bulk store call', () => {
-    const block = source.match(/case 'deleteAllTags': \{[\s\S]*?\n      \}/)?.[0] ?? '';
-    assert.ok(block, 'deleteAllTags case block should exist');
+    const block = caseBlock('deleteAllTags', 'acceptSuggestions');
+
     assert.ok(
       block.indexOf('run(() => idbTagStore.deleteAllTags())') < block.indexOf('broadcastDataChanged()'),
       'bulk delete should complete before broadcasting dataChanged',

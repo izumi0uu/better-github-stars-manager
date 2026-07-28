@@ -1,13 +1,17 @@
 import { spawnSync } from 'node:child_process';
 
-const pnpmBin = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+const pnpmExecPath = process.env.npm_execpath;
+const pnpmBin = pnpmExecPath
+  ? process.execPath
+  : process.platform === 'win32' ? 'corepack.cmd' : 'corepack';
 const commands = [
   ['test:vitest'],
   ['test:runtime'],
 ];
 
 for (const args of commands) {
-  const result = spawnSync(pnpmBin, args, {
+  const commandArgs = pnpmExecPath ? [pnpmExecPath, ...args] : ['pnpm', ...args];
+  const result = spawnSync(pnpmBin, commandArgs, {
     stdio: 'inherit',
   });
 
