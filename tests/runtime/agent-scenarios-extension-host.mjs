@@ -28,6 +28,7 @@ const SCENARIO_EXPECTATIONS = {
 };
 const DIAGNOSTICS_PATH = '/src/dev-agent/index.html';
 const TIMEOUT_MS = 30_000;
+const SCENARIO_TIMEOUT_MS = 60_000;
 const root = process.cwd();
 const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'bgsm-agent-scenarios-'));
 const dist = path.join(tempRoot, 'dist');
@@ -93,18 +94,9 @@ try {
       });
     }
     await page.select('[data-testid="agent-diagnostics-scenario-id"]', scenarioId);
-    await page.click('[data-testid="agent-diagnostics-run-scenario"]');
+    await clickSelector(page, '[data-testid="agent-diagnostics-run-scenario"]');
     try {
-      await page.waitForFunction(
-        (minimumRoots) => {
-          const traces = [...document.querySelectorAll('[role="tab"]')]
-            .find((element) => element.textContent === 'Traces');
-          const runs = document.querySelectorAll('[data-testid="agent-diagnostics-runs"] > li');
-          return traces?.getAttribute('aria-selected') === 'true' && runs.length >= minimumRoots;
-        },
-        { timeout: TIMEOUT_MS },
-        index + 1,
-      );
+      await waitForScenarioCompletion(page, index + 1);
     } catch (error) {
       throw new Error(`Scenario Lab fixture ${scenarioId} did not complete: ${JSON.stringify(await readDiagnosticsState(page, pageIssues, workerIssues))}`, {
         cause: error,
@@ -177,7 +169,7 @@ async function verifyRawCaptureLifecycle(page) {
     () => document.querySelector('[data-testid="agent-diagnostics-toggle-raw-capture"]')?.disabled === false,
     { timeout: TIMEOUT_MS },
   );
-  await page.click('[data-testid="agent-diagnostics-toggle-raw-capture"]');
+  await clickSelector(page, '[data-testid="agent-diagnostics-toggle-raw-capture"]');
   await page.waitForFunction(
     () => document.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent?.includes('Armed for the next real Agent run'),
     { timeout: TIMEOUT_MS },
@@ -189,12 +181,12 @@ async function verifyRawCaptureLifecycle(page) {
     () => document.querySelector('[data-testid="agent-diagnostics-toggle-raw-capture"]')?.disabled === false,
     { timeout: TIMEOUT_MS },
   );
-  await page.click('[data-testid="agent-diagnostics-toggle-raw-capture"]');
+  await clickSelector(page, '[data-testid="agent-diagnostics-toggle-raw-capture"]');
   await page.waitForFunction(
     () => document.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent?.includes('Armed for the next real Agent run'),
     { timeout: TIMEOUT_MS },
   );
-  await page.click('[data-testid="agent-diagnostics-toggle-raw-capture"]');
+  await clickSelector(page, '[data-testid="agent-diagnostics-toggle-raw-capture"]');
   await page.waitForFunction(
     () => document.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent?.includes('Not armed'),
     { timeout: TIMEOUT_MS },
@@ -259,6 +251,31 @@ function canonicalPath(value) {
   } catch {
     return path.resolve(value);
   }
+}
+
+async function clickSelector(page, selector) {
+  await page.evaluate((targetSelector) => {
+    const element = document.querySelector(targetSelector);
+    if (!(element instanceof HTMLElement)) {
+      throw new Error(`Missing clickable diagnostics control: ${targetSelector}`);
+    }
+    element.click();
+  }, selector);
+}
+
+async function waitForScenarioCompletion(page, minimumRoots) {
+  const deadline = Date.now() + SCENARIO_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const completed = await page.evaluate((expectedRoots) => {
+      const traces = [...document.querySelectorAll('[role="tab"]')]
+        .find((element) => element.textContent === 'Traces');
+      const runs = document.querySelectorAll('[data-testid="agent-diagnostics-runs"] > li');
+      return traces?.getAttribute('aria-selected') === 'true' && runs.length >= expectedRoots;
+    }, minimumRoots);
+    if (completed) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for ${minimumRoots} retained Scenario Lab operation(s).`);
 }
 
 async function selectTab(page, label) {
