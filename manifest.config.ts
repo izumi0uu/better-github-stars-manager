@@ -19,8 +19,19 @@ export default defineManifest({
     48: 'icons/icon-48.png',
     128: 'icons/icon-128.png',
   },
-  permissions: ['storage'],
-  host_permissions: ['https://api.github.com/*', 'https://github.com/*'],
+  permissions: ['storage', 'alarms'],
+  host_permissions: [
+    'https://api.github.com/*',
+    'https://api.openai.com/*',
+    'https://api.anthropic.com/*',
+    'https://github.com/*',
+    'https://openrouter.ai/*',
+  ],
+  optional_host_permissions: [
+    'https://*/*',
+    'http://localhost/*',
+    'http://127.0.0.1/*',
+  ],
   background: {
     service_worker: 'src/background/index.ts',
     type: 'module',

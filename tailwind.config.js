@@ -3,7 +3,10 @@ import tailwindcssAnimate from 'tailwindcss-animate';
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: ['class'],
-  content: ['./src/**/*.{ts,tsx,html}'],
+  content: [
+    './src/**/*.{ts,tsx,html}',
+    './node_modules/streamdown/dist/*.js',
+  ],
   // preflight ON: shadcn components depend on it. Safe because the content
   // script's Tailwind CSS is injected into a SHADOW ROOT via `?inline`
   // (adoptedStyleSheets), NOT into the github.com light DOM — so preflight's

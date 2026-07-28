@@ -4,7 +4,11 @@ import { GripVertical, Heart, Star as StarIcon, StickyNote } from 'lucide-react'
 import type { Star, Tag } from '@/types';
 import { COLUMN_DEFS, type ColumnId } from '@/ui/column-layout';
 import { resolveFavoriteState, type FavoriteOverrideState } from '@/ui/favorite-state';
-import { BROWSE_LAYOUT_TABLE_OPACITY_MS } from '@/ui/layout-edit-constants';
+import {
+  BROWSE_LAYOUT_TABLE_OPACITY_MS,
+  LAYOUT_MODE_TABLE_TRANSITION_MS,
+  type LayoutModeTableTransitionPhase,
+} from '@/ui/layout-edit-constants';
 import {
   LayoutResizeSurface,
   layoutViewportFromMeasurements,
@@ -26,6 +30,7 @@ export type StarsTablePhase = 'idle' | 'fading-out' | 'fading-in';
 export interface StarsTableLayoutEdit {
   editing: boolean;
   faded: boolean;
+  transitionPhase?: LayoutModeTableTransitionPhase;
   draggedColumnId: ColumnId | null;
   draggedColumnHideIntent: boolean;
   columnShifts: Partial<Record<ColumnId, number>>;
@@ -49,7 +54,6 @@ export function StarsTable({
   interactionLocked,
   layoutEdit,
   layoutResize,
-  customColumnLayoutActive,
   scrollRef,
   rootRef,
   headerRef,
@@ -78,7 +82,6 @@ export function StarsTable({
   interactionLocked: boolean;
   layoutEdit: StarsTableLayoutEdit;
   layoutResize?: LayoutResizeLiveState | null;
-  customColumnLayoutActive?: boolean;
   scrollRef: RefObject<HTMLElement>;
   rootRef?: RefObject<HTMLElement>;
   headerRef: RefObject<HTMLDivElement>;
@@ -116,6 +119,8 @@ export function StarsTable({
     overscan: 12,
   });
   const virtualItems = rowVirtualizer.getVirtualItems();
+  const layoutModeTransitionPhase = layoutEdit.transitionPhase ?? 'idle';
+  const layoutModePreEnter = layoutModeTransitionPhase === 'pre-enter';
   const virtualRowsSignature = layoutResize
     ? virtualItems.map((item) => `${item.index}:${item.start}`).join('|')
     : '';
@@ -256,9 +261,13 @@ export function StarsTable({
     <div
       ref={tableShellRef}
       className="gsm-layout-table-shell relative"
+      data-layout-mode-transition={layoutModeTransitionPhase}
       style={{
-        opacity: phase === 'fading-out' || layoutEdit.faded ? 0 : 1,
-        '--gsm-table-opacity-duration': `${phase === 'fading-out' ? 120 : BROWSE_LAYOUT_TABLE_OPACITY_MS}ms`,
+        opacity: phase === 'fading-out' || layoutEdit.faded ? 0 : layoutModePreEnter ? 0.35 : 1,
+        transform: layoutModePreEnter ? 'translate3d(0, 2px, 0) scale(0.998)' : 'translate3d(0, 0, 0) scale(1)',
+        '--gsm-table-opacity-duration': `${layoutModeTransitionPhase === 'idle'
+          ? phase === 'fading-out' ? 120 : BROWSE_LAYOUT_TABLE_OPACITY_MS
+          : LAYOUT_MODE_TABLE_TRANSITION_MS}ms`,
       } as CSSProperties & Record<'--gsm-table-opacity-duration', string>}
     >
       <div ref={headerSentinelRef} data-table-head-sentinel className="h-px" aria-hidden="true" />
@@ -285,7 +294,8 @@ export function StarsTable({
               className={cn(
                 'gsm-hdr-cell group relative flex min-w-0 items-center gap-1 overflow-visible rounded-sm transition-[background-color,opacity,transform] duration-150',
                 {
-                  'justify-end text-right': def.align === 'end' && !customColumnLayoutActive,
+                  'justify-start text-left': def.align === 'start',
+                  'justify-end text-right': def.align === 'end',
                   'justify-center': def.align === 'center',
                   'gsm-active-resize-col': layoutResize?.id === id,
                   'opacity-[0.35]': layoutEdit.draggedColumnId === id,
@@ -391,7 +401,6 @@ export function StarsTable({
                   minWidth={tableMinWidth}
                   flashedColumn={layoutEdit.flashedColumn}
                   interactionLocked={interactionLocked}
-                  starColumnAlignStart={customColumnLayoutActive}
                 />
               </div>
             );

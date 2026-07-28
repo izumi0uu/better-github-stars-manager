@@ -34,6 +34,10 @@ export interface MessageCatalog {
     syncFailed: (label: string, error: string) => string;
     autoAssignDone: (count: number) => string;
     autoAssignFailed: (error: string) => string;
+    autoTagAgentPromptTitle: string;
+    autoTagAgentPromptBody: string;
+    autoTagAgentPromptYes: string;
+    autoTagAgentPromptNo: string;
     deleteTagFailed: (error: string) => string;
     deleteAllTagsFailed: (error: string) => string;
     noTokenBanner: string;
@@ -69,6 +73,12 @@ export interface MessageCatalog {
     starRepoTitle: string;
     autoAssignTitle: string;
     autoAssignButton: string;
+    agentTitle: string;
+    agentButton: string;
+    gistTitle: string;
+    gistButton: string;
+    gistPushing: string;
+    gistPulling: string;
     gistPushTitle: string;
     gistPushButton: string;
     gistPullTitle: string;
@@ -119,6 +129,314 @@ export interface MessageCatalog {
     resizeDeltaCurrentOnly: string;
     resizeWidthReadout: (tableWidth: number, panelWidth: number, overflow: number) => string;
     resizeLiveWidthReadout: (label: string, width: number, delta: number, tableWidth: number, panelWidth: number, overflow: number) => string;
+  };
+  agentPanel: {
+    title: string;
+    chatInputLabel: string;
+    chatHeaderIdle: string;
+    chatIntro: string;
+    chatPlaceholder: string;
+    chatPlaceholderScoped: (count: number) => string;
+    chatWorking: string;
+    autoAssignPrompt: string;
+    summarizeScopePrompt: string;
+    findSimilarPrompt: string;
+    cleanupTagsPrompt: string;
+    searchCodePrompt: string;
+    reviewNotesPrompt: string;
+    quickFindSimilar: string;
+    quickOrganizeUntagged: string;
+    quickCleanupTags: string;
+    functionMenuLabel: string;
+    functionMenuTitle: string;
+    functionSummarize: string;
+    functionSummarizeDescription: string;
+    functionFindSimilar: string;
+    functionFindSimilarDescription: string;
+    functionOrganizeUntagged: string;
+    functionOrganizeUntaggedDescription: string;
+    functionReviewTags: string;
+    functionReviewTagsDescription: string;
+    functionSearchCode: string;
+    functionSearchCodeDescription: string;
+    functionReviewNotes: string;
+    functionReviewNotesDescription: string;
+    askingAboutCurrentView: (count: number) => string;
+    askingAboutSelectedRepository: string;
+    askingAboutAllLiveStars: (count?: number) => string;
+    agentChanged: (count: number) => string;
+    turnFailed: string;
+    attemptStateLost: string;
+    answerReady: string;
+    providerErrorTitle: string;
+    providerErrorSubtitle: string;
+    providerErrorBody: string;
+    retry: string;
+    noLocalDataModified: string;
+    contextSettingsTitle: string;
+    contextSettingsMessage: string;
+    contextPromptTooLargeTitle: string;
+    contextPromptTooLargeMessage: string;
+    contextAdjustSettings: string;
+    contextEditPrompt: string;
+    composerPausedContextRecovery: string;
+    startNewConversation: string;
+    hideWhileRunning: string;
+    runContinuesWhileHidden: string;
+    confirmScopeHeader: string;
+    analyzingHeader: (processed: number, total: number) => string;
+    analyzingTitle: string;
+    analyzingMeta: (processed: number, remaining: number, batches: number) => string;
+    frozenScopeNote: (count: number) => string;
+    pendingConfirmationNote: (count: number) => string;
+    turnFrozenScopeNote: (count: number) => string;
+    conversationFrozenScope: (label: string, count: number) => string;
+    readOnlyResultTitle: string;
+    readOnlyResultSubtitle: string;
+    noTagChangesProposed: string;
+    hideAgent: string;
+    stop: string;
+    cancel: string;
+    applyingHeader: (done: number, total: number) => string;
+    applyingTitle: string;
+    applyingSubtitle: string;
+    applyingMeta: (done: number, total: number) => string;
+    applyingButton: string;
+    applyingStopbar: string;
+    composerPausedApplying: string;
+    budgetExhaustedHeader: string;
+    budgetExhaustedTitle: (reason: string) => string;
+    budgetExhaustedSubtitle: (processed: number, total: number) => string;
+    budgetExhaustedBody: string;
+    continueRemainingCount: (count: number) => string;
+    nothingToAnalyzeHeader: string;
+    nothingToAnalyzeTitle: string;
+    nothingToAnalyzeBody: string;
+    emptyScopeCount: string;
+    handoffHeader: string;
+    handoffTitle: string;
+    handoffSubtitle: (count: number) => string;
+    handoffBody: string;
+    handoffAsk: (count: number) => string;
+    handoffOrganize: (count: number) => string;
+    handoffAmbiguous: string;
+    handoffExamples: string;
+    handoffScopeNote: (count: number) => string;
+    destructiveHeader: string;
+    destructiveTitle: string;
+    destructiveSubtitle: string;
+    destructiveBody: string;
+    destructiveUnavailable: string;
+    partialReceiptHeader: string;
+    resolvingScopeHeader: string;
+    resolvingScopeBody: string;
+    resolvingScopeMeta: string;
+    scopeNotFrozenYet: string;
+    reviewFollowUpNote: string;
+    reviewFollowUpPlaceholder: string;
+    reviewConversationDetails: string;
+    stopMidAnalyzeHeader: string;
+    stopMidAnalyzeTitle: string;
+    stopMidAnalyzeSubtitle: string;
+    stopMidAnalyzeBody: (processed: number, remaining: number) => string;
+    stopMidAnalyzeResume: string;
+    stopMidAnalyzeDiscard: string;
+    staleSourceTitle: string;
+    staleSourceBody: string;
+    providerAuthHeader: string;
+    providerAuthTitle: string;
+    providerAuthSubtitle: string;
+    providerAuthBody: string;
+    providerAuthOpenOptions: string;
+    providerAuthRetry: string;
+    completedNoChangesHeader: string;
+    completedNoChangesTitle: string;
+    completedNoChangesSubtitle: (inspected: number) => string;
+    completedNoChangesBody: string;
+    unknownOutcomeComposer: string;
+    applyTerminalUnknownComposer: string;
+    agentQueued: string;
+    agentCompacting: string;
+    agentStarting: string;
+    agentThinking: string;
+    agentWriting: string;
+    agentReadingData: string;
+    agentSearchingCode: string;
+    agentApplyingChanges: string;
+    agentDone: string;
+    agentStopped: string;
+    agentToolQueued: string;
+    agentToolRunning: string;
+    agentToolCompleted: string;
+    agentToolFailed: string;
+    agentToolDone: string;
+    codeSearchStatus: (status: string, count: number) => string;
+    codeSearchUntrusted: string;
+    repositoryCodeReadOnly: string;
+    codeSearchOpenSource: string;
+    resumeConversationFollow: string;
+    reasoningAgentTurn: string;
+    toolResult: string;
+    emptyAgentMessage: string;
+    chatSuggestionsReady: (count: number) => string;
+    chatNoSuggestions: string;
+    chatLimitedCapability: string;
+    reasoningSuggestTags: string;
+    reasoningStreaming: string;
+    reasoningDone: (duration: number) => string;
+    reviewTitle: string;
+    send: string;
+    noSuggestionsReady: string;
+    readySummary: (add: number, remove: number, deleteCount: number) => string;
+    refreshTitle: string;
+    closeTitle: string;
+    suggestTags: string;
+    agentSettings: string;
+    cleanupTags: string;
+    selectAllPage: string;
+    selectedOnPage: (count: number) => string;
+    nothingToApply: string;
+    loadingSuggestions: string;
+    emptyTitle: string;
+    emptyBody: string;
+    applied: (count: number) => string;
+    loadFailed: string;
+    created: (count: number) => string;
+    noneFound: string;
+    createFailed: string;
+    groupAdd: string;
+    groupRemove: string;
+    groupDelete: string;
+    groupSelection: (selected: number, total: number) => string;
+    addTitle: (fullName: string) => string;
+    removeTitle: (fullName: string) => string;
+    deleteTitle: (tag: string) => string;
+    more: (count: number) => string;
+    range: (start: number, end: number, total: number) => string;
+    zeroSuggestions: string;
+    toolbarApplying: string;
+    toolbarReview: string;
+    toolbarInterrupted: string;
+    scopeReady: string;
+    runStateLabel: (value: string) => string;
+    needsReviewFollowUp: string;
+    needsReviewSelected: (count: number) => string;
+    appliedTagChanges: (count: number) => string;
+    followUpAboutScope: string;
+    askingAboutCurrentViewUnknown: string;
+    handoffAutoTagsUpdated: string;
+    agentActivityLabel: string;
+    workbench: {
+      resolvingSubtitle: string;
+      resolvingBody: string;
+      resolvingHint: string;
+      confirmScopeTitle: string;
+      repositoriesFrozen: (count: number) => string;
+      startAnalysis: string;
+      nothingToAnalyzeBody: string;
+      dismiss: string;
+      confirmRequestedScope: string;
+      candidateRepositories: (count: number) => string;
+      continue: string;
+      analyzingFrozenScope: string;
+      progressSummary: (processed: number, remaining: number, batches: number) => string;
+      runProgressLabel: string;
+      processed: string;
+      remaining: string;
+      batches: string;
+      providerAttempts: string;
+      analysisBlockedTitle: string;
+      analysisCoverage: (processed: number, total: number) => string;
+      analysisBlockedBody: (failed: number) => string;
+      restartWholeLibrary: string;
+      discardAnalysis: string;
+      runStateRefreshed: string;
+      analysisReady: string;
+      preparedReady: string;
+      preparedPaused: string;
+      budgetExhausted: (reason: string) => string;
+      budgetSubtitle: (processed: number, total: number) => string;
+      budgetProgress: (processed: number, remaining: number, attempts: number) => string;
+      budgetBody: string;
+      continueRemainingCount: (count: number) => string;
+      moreRemain: string;
+      moreRemainBody: string;
+      continueCreatesRun: string;
+      continueRemaining: string;
+      proposalSummary: (actionable: number, nonActionable: number) => string;
+      proposalSelectionNote: string;
+      reviewSuggestions: string;
+      reviewCoverageComplete: (count: number) => string;
+      proposalCounts: (actionable: number, nonActionable: number, selected: number) => string;
+      finishReviewFirst: string;
+      selectRepository: (repositoryId: string) => string;
+      applyingSelectedChanges: string;
+      selectedRowsLocked: (count: number) => string;
+      applying: string;
+      applySelected: (count: number) => string;
+      applyTagImpact: (tags: number, repositories: number) => string;
+      selectAll: string;
+      clear: string;
+      previousPage: string;
+      nextPage: string;
+      reviewPageRange: (start: number, end: number, total: number) => string;
+      applyingSubtitle: string;
+      rowsSelectedLocked: (selected: number, total: number) => string;
+      receiptPartial: (changed: number, skipped: number, failed: number) => string;
+      receiptSingle: string;
+      receiptComplete: (changed: number) => string;
+      mutationReceipt: string;
+      receiptSubtitle: string;
+      receiptCountsLabel: string;
+      changed: string;
+      skipped: string;
+      failed: string;
+      unchanged: string;
+      receiptCountSummary: (changed: number, skipped: number, failed: number) => string;
+      unchangedCount: (count: number) => string;
+      receiptRowsLabel: string;
+      viewAllRows: string;
+      viewFailedChanged: string;
+      viewChanged: string;
+      connectionInterrupted: string;
+      workerLost: string;
+      timelineLabel: (state: string) => string;
+      runStepsLabel: string;
+      runStepScope: string;
+      runStepAnalyze: string;
+      runStepReview: string;
+      runStepApply: string;
+      runStepReceipt: string;
+      reviewEvidence: string;
+      reviewExistingTag: string;
+      reviewNewTag: string;
+      reviewOpenRepository: string;
+      reviewExpandRow: string;
+      reviewCollapseRow: string;
+      reviewReject: string;
+      reviewUndoReject: string;
+      reviewRejectedWithReason: (reason: string) => string;
+      reviewRejectWrongRepo: string;
+      reviewRejectTooBroad: string;
+      reviewRejectAlreadyCovered: string;
+      reviewRejectNotUseful: string;
+      reviewEditTag: string;
+      reviewEditTagLabel: (repositoryId: string, tag: string) => string;
+      reviewSaveEdit: string;
+      reviewCancelEdit: string;
+      reviewEditInvalidEmpty: string;
+      reviewEditInvalidNormalized: string;
+      reviewEditInvalidDuplicate: string;
+      reviewEditInvalidTooLong: string;
+      reviewCorrectedTo: (tag: string) => string;
+      reviewNeedsReanalysis: string;
+      reviewAskRevise: string;
+      reviewReviseRejected: (count: number) => string;
+      reviewReviseRejectedPrompt: (details: string) => string;
+      reviewEditCorrectionPrompt: (repositoryId: string, fromTag: string, toTag: string) => string;
+      reviewRejectCorrectionPrompt: (repositoryId: string, reason: string) => string;
+      reviewLocalOnlyNote: string;
+    };
   };
   activeFilters: {
     onlyFavorite: string;
@@ -243,6 +561,56 @@ export interface MessageCatalog {
     title: string;
     /** Label for the prominent "Star the project" CTA button. */
     starRepoButton: string;
+    agentHeading: string;
+    agentIntro: string;
+    agentServiceLabel: string;
+    agentServiceHint: string;
+    agentAdvancedSettings: string;
+    agentProtocolLabel: string;
+    agentProtocolHint: string;
+    agentProtocolChat: string;
+    agentProtocolResponses: string;
+    agentBaseUrlLabel: string;
+    agentBaseUrlHint: string;
+    agentBaseUrlPlaceholder: string;
+    agentProviderContextWindowLabel: string;
+    agentProviderContextWindowHint: string;
+    agentProviderContextWindowRequired: string;
+    agentWorkingContextWindowLabel: string;
+    agentWorkingContextWindowHint: string;
+    agentWorkingContextWindowPlaceholder: string;
+    agentWorkingContextWindowTooLarge: string;
+    agentContextWindowRange: string;
+    agentModelLabel: string;
+    agentModelHint: string;
+    agentApiKeyLabel: string;
+    agentApiKeyHint: string;
+    agentApiKeyPlaceholder: string;
+    agentSavedKeyHint: string;
+    agentSave: string;
+    agentSaving: string;
+    agentSavedAndTested: (provider: string, model: string, latencyMs: number) => string;
+    agentSavedTestFailed: (error: string) => string;
+    agentSavedNeedsHostAccess: string;
+    agentTest: string;
+    agentTesting: string;
+    agentTestOk: (provider: string, model: string, latencyMs: number) => string;
+    agentRemoveKey: string;
+    agentKeyRemoved: string;
+    agentDisclosureHeading: string;
+    agentDisclosureIntro: (provider: string, origin: string) => string;
+    agentDisclosureSentHeading: string;
+    agentDisclosureSentPrompt: string;
+    agentDisclosureSentCode: string;
+    agentDisclosureSentProtocol: string;
+    agentDisclosureNotSentHeading: string;
+    agentDisclosureNotSentSecrets: string;
+    agentDisclosureKeyException: string;
+    agentDisclosureBuiltInAccess: string;
+    agentDisclosureCustomAccess: string;
+    agentGrantAccess: string;
+    agentAccessGranted: string;
+    agentHostAccessRequired: string;
     behaviorHeading: string;
     maxTagsPerRepoLabel: string;
     maxTagsPerRepoHint: string;
@@ -347,6 +715,18 @@ export interface MessageCatalog {
     gistCreateFailed: string;
     gistPushFailed: string;
     gistPullFailed: string;
+    agentApiKeyEmpty: string;
+    agentModelEmpty: string;
+    agentBaseUrlEmpty: string;
+    agentBaseUrlInvalid: string;
+    agentHostPermissionDenied: string;
+    agentProviderUnsupported: string;
+    agentProviderTimeout: string;
+    agentProviderIdentityChanged: string;
+    agentProviderResponseInvalid: string;
+    agentDataDisclosureRequired: string;
+    agentContextCapabilityRequired: string;
+    agentContextCapabilityInfeasible: string;
     unknown: (raw: string) => string;
   };
   /** First-run onboarding card (ManagerPanel). Context-aware: shows until the
@@ -429,6 +809,11 @@ const messages: Record<Locale, MessageCatalog> = {
       autoAssignDone: (count) =>
         `Auto-assigned tags from repo topics for ${count} repos`,
       autoAssignFailed: (error) => `auto-assign tags: ${error}`,
+      autoTagAgentPromptTitle: "Try Agent for smarter tagging?",
+      autoTagAgentPromptBody:
+        "Agent can inspect repository details and suggest manual tags. Auto Tags stays local and assigns labels from synced topics.",
+      autoTagAgentPromptYes: "Yes, open Agent",
+      autoTagAgentPromptNo: "No, use Auto Tags",
       deleteTagFailed: (error) => `delete tag: ${error}`,
       deleteAllTagsFailed: (error) => `delete all tags: ${error}`,
       noTokenBanner: "No GitHub token configured — data cannot load.",
@@ -463,7 +848,13 @@ const messages: Record<Locale, MessageCatalog> = {
       starRepoTitle: "Like the project? Leave a star:)",
       autoAssignTitle:
         "Auto-assign tags from each repo's topics (experimental)",
-      autoAssignButton: "Auto assign tags",
+      autoAssignButton: "Auto Tags",
+      agentTitle: "Open the optional AI tag assistant",
+      agentButton: "Agent",
+      gistTitle: "Gist backup actions",
+      gistButton: "Gist",
+      gistPushing: "Gist · Pushing",
+      gistPulling: "Gist · Pulling",
       gistPushTitle: "Push tags to your Gist backup",
       gistPushButton: "Push",
       gistPullTitle: "Pull tags from your Gist backup",
@@ -515,6 +906,377 @@ const messages: Record<Locale, MessageCatalog> = {
       resizeWidthReadout: (tableWidth, panelWidth, overflow) => `Table ${tableWidth}px / Panel ${panelWidth}px${overflow > 0 ? ` / Overflow +${overflow}px` : ''}`,
       resizeLiveWidthReadout: (label, width, delta, tableWidth, panelWidth, overflow) =>
         `${label} ${width}px (${delta >= 0 ? '+' : ''}${delta}px) / Table ${tableWidth}px / Panel ${panelWidth}px${overflow > 0 ? ` / Overflow +${overflow}px` : ''}`,
+    },
+    agentPanel: {
+      title: "BGSM Agent",
+      chatInputLabel: "Message BGSM Agent",
+      chatHeaderIdle: "Ready",
+      chatIntro:
+        "I can inspect, compare, and organize repositories in your current scope. Auto Tags stays local and one-click — this chat is for judgment calls.",
+      chatPlaceholder: "Ask about these repositories…",
+      chatPlaceholderScoped: (count) => (
+        count === 1
+          ? "Ask about this repository…"
+          : `Ask about these ${count} repositories…`
+      ),
+      chatWorking: "BGSM Agent is working...",
+      autoAssignPrompt:
+        "Organize untagged repositories across the entire starred library with useful semantic tags. Inspect every live star first, add manual tags only when repository topics, names, descriptions, or existing tags provide clear evidence, then return one complete review before applying anything.",
+      summarizeScopePrompt:
+        "Inspect the repositories in the current scope and summarize what they are for, the strongest patterns, and notable differences. Use local repository metadata and do not change tags.",
+      findSimilarPrompt:
+        "Find similar tools in this scope and compare the strongest options with clear evidence from local repository metadata.",
+      cleanupTagsPrompt:
+        "Review tag names in this scope and suggest cleanup opportunities. Do not remove or delete tags; only explain candidates and ask before any later review path.",
+      searchCodePrompt:
+        "Search the selected repository code for its main architecture and explain the key implementation files. Do not change tags.",
+      reviewNotesPrompt:
+        "Read the private notes for the selected repository and summarize the useful context. Do not change tags.",
+      quickFindSimilar: "Find similar tools",
+      quickOrganizeUntagged: "Organize full library",
+      quickCleanupTags: "Clean up tag names",
+      functionMenuLabel: "Functions",
+      functionMenuTitle: "Available functions",
+      functionSummarize: "Summarize current scope",
+      functionSummarizeDescription: "Inspect repository metadata and explain the main patterns.",
+      functionFindSimilar: "Find similar tools",
+      functionFindSimilarDescription: "Compare the strongest alternatives in this scope.",
+      functionOrganizeUntagged: "Organize full library",
+      functionOrganizeUntaggedDescription: "Analyze every live star and prepare one complete tag review.",
+      functionReviewTags: "Review tag names",
+      functionReviewTagsDescription: "Find duplicates and naming cleanup opportunities without deleting.",
+      functionSearchCode: "Search repository code",
+      functionSearchCodeDescription: "Inspect indexed public code for the selected repository.",
+      functionReviewNotes: "Review repository notes",
+      functionReviewNotesDescription: "Read the private notes attached to the selected repository.",
+      askingAboutCurrentView: (count) => (
+        count === 1
+          ? "Asking about current view · 1 repository"
+          : `Asking about current view · ${count} repositories`
+      ),
+      askingAboutSelectedRepository: "Asking about selected repository · 1",
+      askingAboutAllLiveStars: (count) => (
+        typeof count === "number"
+          ? (count === 1
+            ? "Asking about all live stars · 1 repository"
+            : `Asking about all live stars · ${count} repositories`)
+          : "Asking about all live stars"
+      ),
+      agentChanged: (count) => `${count} tag update${count === 1 ? '' : 's'} applied`,
+      turnFailed: "Turn failed",
+      attemptStateLost: "The extension restarted before this turn could be recovered. Review any completed changes, then retry.",
+      answerReady: "Answer ready",
+      providerErrorTitle: "Provider error",
+      providerErrorSubtitle: "No local data was modified",
+      providerErrorBody: "Your prompt is still in the thread. Retry the same question or start a new conversation.",
+      retry: "Retry",
+      noLocalDataModified: "No local data was modified",
+      contextSettingsTitle: "AI service settings need attention",
+      contextSettingsMessage: "Adjust this service's context settings before continuing. Your draft is preserved.",
+      contextPromptTooLargeTitle: "This request is too large",
+      contextPromptTooLargeMessage: "Shorten the draft, or increase the configured context limit if your AI service supports it.",
+      contextAdjustSettings: "Adjust AI service settings",
+      contextEditPrompt: "Edit prompt",
+      composerPausedContextRecovery: "Draft preserved · choose a recovery action above",
+      startNewConversation: "Start new conversation",
+      hideWhileRunning: "Hide BGSM Agent",
+      runContinuesWhileHidden: "You can hide this panel; the turn continues.",
+      confirmScopeHeader: "Confirm scope",
+      analyzingHeader: (processed, total) => `Analyzing · ${processed}/${total}`,
+      analyzingTitle: "Analyzing frozen scope",
+      analyzingMeta: (processed, remaining, batches) => (
+        `${processed} processed · ${remaining} remaining · ${batches} batch${batches === 1 ? '' : 'es'}`
+      ),
+      frozenScopeNote: (count) => (
+        count === 1
+          ? "Frozen scope · 1 repository"
+          : `Frozen scope · ${count} repositories`
+      ),
+      pendingConfirmationNote: (count) => (
+        count === 1
+          ? "Pending confirmation · 1 repository"
+          : `Pending confirmation · ${count} repositories`
+      ),
+      turnFrozenScopeNote: (count) => (
+        count === 1
+          ? "Current view · 1 repository · frozen for this turn"
+          : `Current view · ${count} repositories · frozen for this turn`
+      ),
+      conversationFrozenScope: (label, count) => (
+        count === 1
+          ? `${label} · 1 repository · frozen for this conversation`
+          : `${label} · ${count} repositories · frozen for this conversation`
+      ),
+      readOnlyResultTitle: "Read-only answer",
+      readOnlyResultSubtitle: "No tag changes proposed",
+      noTagChangesProposed: "No tag changes proposed",
+      hideAgent: "Hide BGSM Agent",
+      stop: "Stop",
+      cancel: "Cancel",
+      applyingHeader: (done, total) => `Applying · ${done}/${total}`,
+      applyingTitle: "Applying selected changes",
+      applyingSubtitle: "Manual tag layer · frozen scope still locked",
+      applyingMeta: (done, total) => `${done} of ${total} rows committed · checkboxes locked`,
+      applyingButton: "Applying…",
+      applyingStopbar: "Apply can’t be interrupted mid-row; hide is still allowed.",
+      composerPausedApplying: "Composer paused while applying",
+      budgetExhaustedHeader: "Budget exhausted",
+      budgetExhaustedTitle: (reason) => `Budget exhausted · ${reason}`,
+      budgetExhaustedSubtitle: (processed, total) => `Processed ${processed} / ${total} · remaining were not auto-continued`,
+      budgetExhaustedBody: "No remaining work was processed or replayed automatically. Continuing creates a new run with new budgets and a new frozen cursor.",
+      continueRemainingCount: (count) => `Continue remaining ${count}`,
+      nothingToAnalyzeHeader: "Nothing to analyze",
+      nothingToAnalyzeTitle: "Nothing to analyze",
+      nothingToAnalyzeBody: "Either every visible repo already has tags, or the active filters hide the candidates. Change filters or broaden scope, then ask again.",
+      emptyScopeCount: "0 repositories match this scope.",
+      handoffHeader: "Handoff · still untagged",
+      handoffTitle: "From Auto Tags",
+      handoffSubtitle: (count) => `Deterministic pass finished · ${count} still untagged`,
+      handoffBody: "Auto Tags already updated topic-based auto tags. This chat starts on the remaining untagged set only. It will not overwrite Auto Tags results unless you later apply manual tags.",
+      handoffAsk: (count) => `I can help classify the ${count} repositories Auto Tags left untagged. Want me to propose careful manual tags for this set?`,
+      handoffOrganize: (count) => `Yes — organize these ${count}`,
+      handoffAmbiguous: "Only show the ambiguous ones",
+      handoffExamples: "Explain a few examples first",
+      handoffScopeNote: (count) => (
+        count === 1
+          ? "Still untagged after Auto Tags · 1 repository"
+          : `Still untagged after Auto Tags · ${count} repositories`
+      ),
+      destructiveHeader: "Confirm destructive changes",
+      destructiveTitle: "Confirm tag library changes",
+      destructiveSubtitle: "Destructive · review required · not auto-applied",
+      destructiveBody: "Rename, merge, and delete stay off the free-chat tool path. A dedicated confirm + Apply flow is required before any library cleanup writes.",
+      destructiveUnavailable: "Not available in first-safe release",
+      partialReceiptHeader: "Applied with conflicts",
+      resolvingScopeHeader: "Resolving scope…",
+      resolvingScopeBody: "I’m freezing exact repository IDs for this turn so later filter changes can’t silently expand the job.",
+      resolvingScopeMeta: "Usually quick · cancel if you picked the wrong filters",
+      scopeNotFrozenYet: "Scope not frozen yet",
+      reviewFollowUpNote: "Review still open · follow-ups allowed",
+      reviewFollowUpPlaceholder: "Ask about this review…",
+      reviewConversationDetails: "Conversation details",
+      stopMidAnalyzeHeader: "Stopped by you",
+      stopMidAnalyzeTitle: "Run stopped",
+      stopMidAnalyzeSubtitle: "User abort · no writes were in flight",
+      stopMidAnalyzeBody: (processed, remaining) => (
+        `Pending analysis cancelled. Completed reads: ${processed}. Not started: ${remaining}. Committed writes: 0.`
+      ),
+      stopMidAnalyzeResume: "Resume remaining as new run",
+      stopMidAnalyzeDiscard: "Discard",
+      staleSourceTitle: "Source changed after proposal",
+      staleSourceBody: "Apply left stale rows untouched. Refresh conflicts only — don’t re-run the whole library blindly.",
+      providerAuthHeader: "Provider auth failed",
+      providerAuthTitle: "OpenAI-compatible auth failed",
+      providerAuthSubtitle: "API key rejected or missing host permission",
+      providerAuthBody: "I couldn’t call your configured provider. Your prompt and scope are preserved. No secrets are shown here.",
+      providerAuthOpenOptions: "Open Options",
+      providerAuthRetry: "Retry after fix",
+      completedNoChangesHeader: "Completed · no changes",
+      completedNoChangesTitle: "Completed · no changes",
+      completedNoChangesSubtitle: (inspected) => `0 actionable proposals · ${inspected} inspected`,
+      completedNoChangesBody: "Everything already matches a clear taxonomy or lacked enough evidence to propose a safe manual tag. Nothing to apply.",
+      unknownOutcomeComposer: "Apply terminal · unknown outcome · chat available",
+      applyTerminalUnknownComposer: "Apply terminal · unknown outcome · chat available",
+      agentQueued: "Preparing your request...",
+      agentCompacting: "Organizing conversation context…",
+      agentStarting: "Preparing context...",
+      agentThinking: "Thinking...",
+      agentWriting: "Responding...",
+      agentReadingData: "Checking local data...",
+      agentSearchingCode: "Inspecting repository code...",
+      agentApplyingChanges: "Applying tag changes...",
+      agentDone: "Done",
+      agentStopped: "Stopped",
+      agentToolQueued: "Queued",
+      agentToolRunning: "Running",
+      agentToolCompleted: "Completed",
+      agentToolFailed: "Failed",
+      agentToolDone: "Done",
+      codeSearchStatus: (status, count) => (
+        status === 'complete'
+          ? `${count} indexed code match${count === 1 ? '' : 'es'}`
+          : status === 'no_indexed_matches'
+            ? 'No indexed matches'
+            : `${count} indexed match${count === 1 ? '' : 'es'} · results may be incomplete`
+      ),
+      codeSearchUntrusted: "Repository code is untrusted content and cannot authorize tag changes.",
+      repositoryCodeReadOnly: "This conversation is now read-only; start a new conversation to change tags.",
+      codeSearchOpenSource: "Open pinned source",
+      resumeConversationFollow: "Jump to latest",
+      reasoningAgentTurn:
+        "I will call the model provider, inspect local stars with tools, and apply tag changes through controlled extension tools.",
+      toolResult: "Tool result",
+      emptyAgentMessage: "Done.",
+      chatSuggestionsReady: (count) => `I prepared ${count} tag suggestions. Review them below before applying.`,
+      chatNoSuggestions: "I did not find new tag suggestions from the current local data.",
+      chatLimitedCapability:
+        "I can help organize your stars with the configured AI service.",
+      reasoningSuggestTags:
+        "I will inspect local repository topics and existing tags, skip excluded tags, and apply conservative tag changes.",
+      reasoningStreaming: "Running agent...",
+      reasoningDone: (duration) => `Checked local tags in ${duration}s`,
+      reviewTitle: "Review tag suggestions",
+      send: "Send",
+      noSuggestionsReady: "No suggestions ready",
+      readySummary: (add, remove, deleteCount) => {
+        const parts = [
+          add > 0 ? `${add} add` : null,
+          remove > 0 ? `${remove} remove` : null,
+          deleteCount > 0 ? `${deleteCount} delete` : null,
+        ].filter((part): part is string => part !== null);
+        return parts.length === 0 ? "No suggestions ready" : parts.join(" · ");
+      },
+      refreshTitle: "Refresh suggestions",
+      closeTitle: "Close BGSM Agent",
+      suggestTags: "Organize untagged here",
+      agentSettings: "Agent settings",
+      cleanupTags: "Clean up tags",
+      selectAllPage: "Select all suggestions on this page",
+      selectedOnPage: (count) => `${count} selected on this page`,
+      nothingToApply: "Nothing to apply",
+      loadingSuggestions: "Loading suggestions",
+      emptyTitle: "No suggestions yet.",
+      emptyBody: "Suggestions will appear here.",
+      applied: (count) => `${count} suggestions applied.`,
+      loadFailed: "Could not load suggestions.",
+      created: (count) => `${count} suggestions ready.`,
+      noneFound: "No new suggestions found.",
+      createFailed: "Could not create suggestions.",
+      groupAdd: "Add tags",
+      groupRemove: "Remove tags from repos",
+      groupDelete: "Delete tags",
+      groupSelection: (selected, total) => `${selected}/${total}`,
+      addTitle: (fullName) => `Add tags to ${fullName}`,
+      removeTitle: (fullName) => `Remove tags from ${fullName}`,
+      deleteTitle: (tag) => `Delete ${tag}`,
+      more: (count) => `+${count} more`,
+      range: (start, end, total) => `${start}-${end} of ${total}`,
+      zeroSuggestions: "0 suggestions",
+      toolbarApplying: "Applying",
+      toolbarReview: "Review",
+      toolbarInterrupted: "Interrupted",
+      scopeReady: "Scope ready",
+      runStateLabel: (value) => value.replaceAll("_", " ").replace(/^./u, (character) => character.toUpperCase()),
+      needsReviewFollowUp: "Needs review · answering follow-up",
+      needsReviewSelected: (count) => `Needs review · ${count} selected`,
+      appliedTagChanges: (count) => `Applied ${count} tag ${count === 1 ? "change" : "changes"}`,
+      followUpAboutScope: "Ask a follow-up about this scope",
+      askingAboutCurrentViewUnknown: "Asking about current view",
+      handoffAutoTagsUpdated: "Auto Tags already updated topic-based auto tags.",
+      agentActivityLabel: "Agent activity",
+      workbench: {
+        resolvingSubtitle: "Preparing one job for the complete starred library",
+        resolvingBody: "I’m freezing every live starred repository so filters and the selected row cannot narrow this organization job.",
+        resolvingHint: "Usually quick · no tags are changed during this step",
+        confirmScopeTitle: "Confirm analysis scope",
+        repositoriesFrozen: (count) => `${count} repositories will be frozen for this run.`,
+        startAnalysis: "Start analysis",
+        nothingToAnalyzeBody: "Either every visible repo already has tags, or the active filters hide the candidates. Change filters or broaden scope, then ask again.",
+        dismiss: "Dismiss",
+        confirmRequestedScope: "Confirm requested scope",
+        candidateRepositories: (count) => `${count} candidate repositories.`,
+        continue: "Continue",
+        analyzingFrozenScope: "Analyzing frozen scope",
+        progressSummary: (processed, remaining) => `${processed} analyzed · ${remaining} remaining`,
+        runProgressLabel: "Run progress",
+        processed: "Processed",
+        remaining: "Remaining",
+        batches: "Batches",
+        providerAttempts: "Provider attempts",
+        analysisBlockedTitle: "Full-library analysis did not finish",
+        analysisCoverage: (processed, total) => `${processed} of ${total} repositories analyzed`,
+        analysisBlockedBody: (failed) => failed > 0
+          ? `${failed} ${failed === 1 ? "repository" : "repositories"} could not be analyzed. No partial suggestions are shown or applied. Continue the failed items or restart the full-library analysis to produce one complete review.`
+          : "No partial suggestions are shown or applied. Continue the remaining items or restart the full-library analysis to produce one complete review.",
+        restartWholeLibrary: "Restart full-library analysis",
+        discardAnalysis: "Discard this analysis",
+        runStateRefreshed: "The saved analysis state changed. Its latest progress has been restored; try continuing again or restart the full-library analysis.",
+        analysisReady: "Analysis ready",
+        preparedReady: "The selected scope is prepared.",
+        preparedPaused: "The selected scope is prepared and paused until the current run stops.",
+        budgetExhausted: (reason) => `Budget exhausted · ${reason}`,
+        budgetSubtitle: (processed, total) => `Processed ${processed} / ${total} · remaining were not auto-continued`,
+        budgetProgress: (processed, remaining, attempts) => `${processed} processed · ${remaining} remaining · ${attempts} provider attempts used`,
+        budgetBody: "No remaining work was processed or replayed automatically. Continuing creates a new run with new budgets and a new frozen cursor.",
+        continueRemainingCount: (count) => `Continue remaining ${count}`,
+        moreRemain: "More repositories remain",
+        moreRemainBody: "The current review is settled. Remaining repositories were not processed automatically.",
+        continueCreatesRun: "Continuing creates a new run with new budgets.",
+        continueRemaining: "Continue remaining",
+        proposalSummary: (actionable, nonActionable) => `I prepared ${actionable} actionable tag suggestions. ${nonActionable} repositories stayed non-actionable (already clear or insufficient evidence).`,
+        proposalSelectionNote: "Only checked rows will become manual tags.",
+        reviewSuggestions: "Review actionable suggestions",
+        reviewCoverageComplete: (count) => `Full library covered · ${count} repositories analyzed`,
+        proposalCounts: (actionable, nonActionable, selected) => `${actionable} actionable · ${nonActionable} non-actionable · ${selected} selected`,
+        finishReviewFirst: "More repositories remain. Finish this review before continuing.",
+        selectRepository: (repositoryId) => `Select ${repositoryId}`,
+        applyingSelectedChanges: "Applying selected changes",
+        selectedRowsLocked: (count) => `${count} rows selected · checkboxes locked`,
+        applying: "Applying…",
+        applySelected: (count) => `Apply ${count} selected`,
+        applyTagImpact: (tags, repositories) => `Apply ${tags} tags to ${repositories} repositories`,
+        selectAll: "Select all",
+        clear: "Clear",
+        previousPage: "Previous page",
+        nextPage: "Next page",
+        reviewPageRange: (start, end, total) => `${start}-${end} of ${total}`,
+        applyingSubtitle: "Manual tag layer · frozen scope still locked",
+        rowsSelectedLocked: (selected, total) => `${selected} of ${total} rows selected · checkboxes locked`,
+        receiptPartial: (changed, skipped, failed) => `${changed} rows applied. ${skipped} skipped. ${failed} failed a precondition and were left untouched.`,
+        receiptSingle: "Applied the 1 selected row as manual tags. Nothing was pushed to Gist.",
+        receiptComplete: (changed) => `Applied the ${changed} selected rows as manual tags. Nothing was pushed to Gist.`,
+        mutationReceipt: "Library update receipt",
+        receiptSubtitle: "One authoritative result · local manual tags · Gist not pushed",
+        receiptCountsLabel: "Available receipt counts",
+        changed: "Changed",
+        skipped: "Skipped",
+        failed: "Failed",
+        unchanged: "Unchanged",
+        receiptCountSummary: (changed, skipped, failed) => `${changed} changed · ${skipped} skipped · ${failed} failed`,
+        unchangedCount: (count) => `${count} unchanged`,
+        receiptRowsLabel: "Available receipt rows",
+        viewAllRows: "View all rows",
+        viewFailedChanged: "View failed & changed",
+        viewChanged: "View changed",
+        connectionInterrupted: "Agent connection was interrupted. Reconnecting…",
+        workerLost: "The extension worker restarted, so this run can no longer continue. Start a new analysis.",
+        timelineLabel: (state) => state.replaceAll("_", " ").replace(/^./u, (character) => character.toUpperCase()),
+        runStepsLabel: "Agent run steps",
+        runStepScope: "Scope",
+        runStepAnalyze: "Analyze",
+        runStepReview: "Review",
+        runStepApply: "Apply",
+        runStepReceipt: "Receipt",
+        reviewEvidence: "Evidence",
+        reviewExistingTag: "Existing",
+        reviewNewTag: "New",
+        reviewOpenRepository: "Open repository on GitHub",
+        reviewExpandRow: "Show review details",
+        reviewCollapseRow: "Hide review details",
+        reviewReject: "Reject",
+        reviewUndoReject: "Undo reject",
+        reviewRejectedWithReason: (reason) => `Rejected · ${reason}`,
+        reviewRejectWrongRepo: "Wrong repository",
+        reviewRejectTooBroad: "Tag too broad",
+        reviewRejectAlreadyCovered: "Already covered",
+        reviewRejectNotUseful: "Not useful",
+        reviewEditTag: "Edit tag",
+        reviewEditTagLabel: (repositoryId, tag) => `Edit tag ${tag} for ${repositoryId}`,
+        reviewSaveEdit: "Save correction",
+        reviewCancelEdit: "Cancel edit",
+        reviewEditInvalidEmpty: "Enter a non-empty tag.",
+        reviewEditInvalidNormalized: "Tag must stay NFKC-normalized.",
+        reviewEditInvalidDuplicate: "Tag duplicates another action on this row.",
+        reviewEditInvalidTooLong: "Tag exceeds 256 UTF-8 bytes.",
+        reviewCorrectedTo: (tag) => `Corrected to ${tag}`,
+        reviewNeedsReanalysis: "Needs re-analysis before apply",
+        reviewAskRevise: "Ask to revise",
+        reviewReviseRejected: (count) => `Ask to revise rejected (${count})`,
+        reviewReviseRejectedPrompt: (details) => `Revise this tag review before any apply. Keep the frozen scope unchanged, skip rejected rows, and re-analyze only the corrected intent. Rejections/corrections:\n${details}`,
+        reviewEditCorrectionPrompt: (repositoryId, fromTag, toTag) => `For ${repositoryId}, do not apply the reviewed tag "${fromTag}". Re-analyze that repository with the corrected tag intent "${toTag}" and return a fresh review row before any apply.`,
+        reviewRejectCorrectionPrompt: (repositoryId, reason) => `For ${repositoryId}, reject the current suggestion (${reason}). Re-analyze that repository with this correction in mind and return a fresh review row before any apply.`,
+        reviewLocalOnlyNote: "Rejects and edits are local review decisions. Apply still sends only checked rows with their reviewed actions.",
+      },
     },
     activeFilters: {
       onlyFavorite: "Favorites",
@@ -641,7 +1403,70 @@ const messages: Record<Locale, MessageCatalog> = {
     options: {
       title: "Better GitHub Stars Manager — Options",
       starRepoButton: "Like the project? Leave a star:)",
-      behaviorHeading: "3. Preference",
+      agentHeading: "2. BGSM Agent",
+      agentIntro:
+        "Connect your own AI service so BGSM Agent can suggest tags without leaving the extension.",
+      agentServiceLabel: "AI service",
+      agentServiceHint: "Choose where BGSM Agent should run.",
+      agentAdvancedSettings: "Advanced settings",
+      agentProtocolLabel: "API protocol",
+      agentProtocolHint: "Choose the API supported by this custom service.",
+      agentProtocolChat: "Chat Completions",
+      agentProtocolResponses: "Responses API",
+      agentBaseUrlLabel: "Base URL",
+      agentBaseUrlHint:
+        "Enter the /v1 Base URL provided by this service. BGSM only contacts its configured origin.",
+      agentBaseUrlPlaceholder: "https://api.example.com/v1",
+      agentProviderContextWindowLabel: "Service context window",
+      agentProviderContextWindowHint:
+        "Known model IDs use an exact built-in preset. Enter a value to override it, or to configure an unknown model.",
+      agentProviderContextWindowRequired: "Enter this service's supported context window.",
+      agentWorkingContextWindowLabel: "Working context window",
+      agentWorkingContextWindowHint:
+        "Optional. Set a smaller working window for this model. This can only reduce the service limit.",
+      agentWorkingContextWindowPlaceholder: "Use the service limit",
+      agentWorkingContextWindowTooLarge: "The working window cannot exceed the service window.",
+      agentContextWindowRange: "Enter a whole number from 4,096 to 2,000,000.",
+      agentModelLabel: "Model",
+      agentModelHint: "Use any model ID supported by this service.",
+      agentApiKeyLabel: "API key",
+      agentApiKeyHint: "Stored encrypted on this device.",
+      agentApiKeyPlaceholder: "Paste a key to save or test",
+      agentSavedKeyHint:
+        "A saved key is already on this device. Leave this blank to keep using it.",
+      agentSave: "Save & test",
+      agentSaving: "Saving and testing…",
+      agentSavedAndTested: (provider, model, latencyMs) =>
+        `Saved · Connected to ${provider} · ${model} (${latencyMs} ms)`,
+      agentSavedTestFailed: (error) =>
+        `Settings saved, but the connection test failed: ${error}`,
+      agentSavedNeedsHostAccess:
+        "Settings saved. Grant host access, then test the connection.",
+      agentTest: "Test connection",
+      agentTesting: "Testing…",
+      agentTestOk: (provider, model, latencyMs) =>
+        `Connected to ${provider} · ${model} (${latencyMs} ms)`,
+      agentRemoveKey: "Remove saved key",
+      agentKeyRemoved: "Saved BGSM Agent key removed.",
+      agentDisclosureHeading: "How BGSM Agent uses data",
+      agentDisclosureIntro: (provider, origin) =>
+        `${provider} · ${origin} · direct connection`,
+      agentDisclosureSentHeading: "May send",
+      agentDisclosureSentPrompt: "Your prompt, scoped public repository metadata, and visible tags",
+      agentDisclosureSentCode: "Requested code snippets or private notes from that scope",
+      agentDisclosureSentProtocol: "Bounded tool results and conversation summaries",
+      agentDisclosureNotSentHeading: "Never sent",
+      agentDisclosureNotSentSecrets: "GitHub token, credentials in model data, or stars outside the active scope",
+      agentDisclosureKeyException:
+        "The AI service API key is used only as an Authorization header for this exact origin.",
+      agentDisclosureBuiltInAccess:
+        "This service is covered by the extension's built-in host access.",
+      agentDisclosureCustomAccess:
+        "Custom services also require separate Chrome host access.",
+      agentGrantAccess: "Grant access",
+      agentAccessGranted: "Host access granted",
+      agentHostAccessRequired: "Grant host access to test or use this custom service.",
+      behaviorHeading: "4. Preference",
       maxTagsPerRepoLabel: "Max Auto Tags per repo",
       maxTagsPerRepoHint:
         "When you run Auto Tags, each repo can receive at most this many topic tags.",
@@ -687,7 +1512,7 @@ const messages: Record<Locale, MessageCatalog> = {
       shotPermissions:
         "Screenshot: account permissions — Starring (read/write) + Gists (read and write)",
       languageLabel: "Language",
-      gistHeading: "2. Gist sync",
+      gistHeading: "3. Gist sync",
       gistBoundPrefix: "Bound to gist",
       gistBoundSuffix:
         "Tags sync to and from this gist. If the same repo is edited in two places, the newer change wins.",
@@ -775,6 +1600,26 @@ const messages: Record<Locale, MessageCatalog> = {
         "Could not write to the sync Gist. Check the token has Gists (read/write).",
       gistPullFailed:
         "Could not read the sync Gist. It may have been deleted, or the token lacks Gists (read).",
+      agentApiKeyEmpty: "Add an API key before testing the connection.",
+      agentModelEmpty: "Enter a model before testing the connection.",
+      agentBaseUrlEmpty: "Enter the Base URL from your AI service.",
+      agentBaseUrlInvalid:
+        "Enter a valid HTTPS Base URL, or a local http://localhost URL.",
+      agentHostPermissionDenied:
+        "Allow this AI service before saving or testing it.",
+      agentProviderUnsupported: "This AI service isn't supported yet.",
+      agentProviderTimeout:
+        "The AI service did not respond in time. Try again, or use a smaller request.",
+      agentProviderIdentityChanged:
+        "AI service settings changed during the test. Review them and test the connection again.",
+      agentProviderResponseInvalid:
+        "The AI service returned an incompatible response. Check the service settings and try again.",
+      agentDataDisclosureRequired:
+        "Review and accept the Agent data-sharing disclosure before connecting.",
+      agentContextCapabilityRequired:
+        "AI service capability is not ready. Check the context window and test the connection before using Agent tools.",
+      agentContextCapabilityInfeasible:
+        "Increase the context window in Advanced settings before using the Agent.",
       unknown: (raw) => `Something went wrong: ${raw}`,
     },
     onboarding: {
@@ -856,6 +1701,11 @@ const messages: Record<Locale, MessageCatalog> = {
       autoAssignDone: (count) =>
         `已从仓库 topics 为 ${count} 个仓库自动分配标签`,
       autoAssignFailed: (error) => `自动分配标签失败: ${error}`,
+      autoTagAgentPromptTitle: "要试试让 Agent 帮你分配标签吗？",
+      autoTagAgentPromptBody:
+        "Agent 可以查看仓库详情并建议 manual tags；Auto Tags 会留在本地，根据已同步的 topics 一键分配。",
+      autoTagAgentPromptYes: "是，打开 Agent",
+      autoTagAgentPromptNo: "不，使用 Auto Tags",
       deleteTagFailed: (error) => `删除标签失败: ${error}`,
       deleteAllTagsFailed: (error) => `删除全部标签失败: ${error}`,
       noTokenBanner: "未配置 GitHub token — 无法加载数据。",
@@ -888,7 +1738,13 @@ const messages: Record<Locale, MessageCatalog> = {
       hidePanelTitle: "隐藏面板（用 GitHub 原生列表）",
       starRepoTitle: "点个Star~",
       autoAssignTitle: "根据每个仓库的 topics 自动分配标签（实验性功能）",
-      autoAssignButton: "自动分配标签",
+      autoAssignButton: "Auto Tags",
+      agentTitle: "打开可选的 AI 标签助手",
+      agentButton: "Agent",
+      gistTitle: "Gist 备份操作",
+      gistButton: "Gist",
+      gistPushing: "Gist · 推送中",
+      gistPulling: "Gist · 拉取中",
       gistPushTitle: "推送标签到你的 Gist 备份",
       gistPushButton: "Push",
       gistPullTitle: "从你的 Gist 备份拉取标签",
@@ -940,6 +1796,420 @@ const messages: Record<Locale, MessageCatalog> = {
       resizeWidthReadout: (tableWidth, panelWidth, overflow) => `总宽 ${tableWidth}px / 面板 ${panelWidth}px${overflow > 0 ? ` / 溢出 +${overflow}px` : ''}`,
       resizeLiveWidthReadout: (label, width, delta, tableWidth, panelWidth, overflow) =>
         `${label} ${width}px（${delta >= 0 ? '+' : ''}${delta}px） / 总宽 ${tableWidth}px / 面板 ${panelWidth}px${overflow > 0 ? ` / 溢出 +${overflow}px` : ''}`,
+    },
+    agentPanel: {
+      title: "BGSM Agent",
+      chatInputLabel: "向 BGSM Agent 提问",
+      chatHeaderIdle: "就绪",
+      chatIntro:
+        "我可以检查、对比并整理当前范围内的仓库。Auto Tags 仍是本地一键操作——这个对话负责需要判断的部分。",
+      chatPlaceholder: "问这些仓库…",
+      chatPlaceholderScoped: (count) => (
+        count === 1
+          ? "问这个仓库…"
+          : `问这 ${count} 个仓库…`
+      ),
+      chatWorking: "BGSM Agent 正在处理...",
+      autoAssignPrompt:
+        "整理整个 starred 资料库中尚未标注的仓库。先检查全部仍在收藏的仓库，只在 topics、名称、描述或已有标签有明确依据时添加 manual tags；完成全库分析后只返回一次完整审阅，再应用任何变更。",
+      summarizeScopePrompt:
+        "检查当前范围内的仓库，总结它们的用途、主要模式和值得注意的差异。使用本地仓库元数据，不要修改标签。",
+      findSimilarPrompt:
+        "在当前范围内找相似工具，并用本地仓库元数据给出有证据的对比。",
+      cleanupTagsPrompt:
+        "检查当前范围内的标签命名，并建议清理机会。不要移除或删除标签；只说明候选，后续如需删除走独立确认路径。",
+      searchCodePrompt:
+        "搜索选中仓库的代码，分析它的主要架构并说明关键实现文件。不要修改标签。",
+      reviewNotesPrompt:
+        "读取选中仓库的私人笔记，并总结其中有用的上下文。不要修改标签。",
+      quickFindSimilar: "找相似工具",
+      quickOrganizeUntagged: "整理整个资料库",
+      quickCleanupTags: "清理标签命名",
+      functionMenuLabel: "功能",
+      functionMenuTitle: "可用功能",
+      functionSummarize: "总结当前范围",
+      functionSummarizeDescription: "检查仓库元数据并说明主要模式。",
+      functionFindSimilar: "查找相似工具",
+      functionFindSimilarDescription: "对比当前范围内最值得关注的替代方案。",
+      functionOrganizeUntagged: "整理整个资料库",
+      functionOrganizeUntaggedDescription: "分析全部仍在收藏的仓库并准备一次完整标签审阅。",
+      functionReviewTags: "检查标签命名",
+      functionReviewTagsDescription: "查找重复和命名清理机会，不直接删除。",
+      functionSearchCode: "搜索仓库代码",
+      functionSearchCodeDescription: "检查选中仓库的公开代码索引。",
+      functionReviewNotes: "查看仓库笔记",
+      functionReviewNotesDescription: "读取选中仓库关联的私人笔记。",
+      askingAboutCurrentView: (count) => (
+        count === 1
+          ? "正在询问当前视图 · 1 个仓库"
+          : `正在询问当前视图 · ${count} 个仓库`
+      ),
+      askingAboutSelectedRepository: "正在询问选中仓库 · 1",
+      askingAboutAllLiveStars: (count) => (
+        typeof count === "number"
+          ? (count === 1
+            ? "正在询问全部 live stars · 1 个仓库"
+            : `正在询问全部 live stars · ${count} 个仓库`)
+          : "正在询问全部 live stars"
+      ),
+      agentChanged: (count) => `已应用 ${count} 次标签更新`,
+      turnFailed: "本轮失败",
+      attemptStateLost: "扩展重启后无法恢复本轮执行。请先检查已完成的变更，再重试。",
+      answerReady: "回答已就绪",
+      providerErrorTitle: "服务商错误",
+      providerErrorSubtitle: "本地数据未被修改",
+      providerErrorBody: "你的问题仍在对话里。可以重试同一问题，或开始新对话。",
+      retry: "重试",
+      noLocalDataModified: "本地数据未被修改",
+      contextSettingsTitle: "AI 服务设置需要调整",
+      contextSettingsMessage: "请先调整此服务的上下文设置。你的草稿已保留。",
+      contextPromptTooLargeTitle: "本次请求内容过多",
+      contextPromptTooLargeMessage: "请缩短草稿；如果 AI 服务支持，也可以调高已配置的上下文上限。",
+      contextAdjustSettings: "调整 AI 服务设置",
+      contextEditPrompt: "编辑提示词",
+      composerPausedContextRecovery: "草稿已保留 · 请从上方选择恢复方式",
+      startNewConversation: "开始新对话",
+      hideWhileRunning: "隐藏 BGSM Agent",
+      runContinuesWhileHidden: "可以隐藏面板；本轮会继续。",
+      confirmScopeHeader: "确认范围",
+      analyzingHeader: (processed, total) => `分析中 · ${processed}/${total}`,
+      analyzingTitle: "正在分析冻结范围",
+      analyzingMeta: (processed, remaining, batches) => (
+        `已处理 ${processed} · 剩余 ${remaining} · ${batches} 批`
+      ),
+      frozenScopeNote: (count) => (
+        count === 1
+          ? "冻结范围 · 1 个仓库"
+          : `冻结范围 · ${count} 个仓库`
+      ),
+      pendingConfirmationNote: (count) => (
+        count === 1
+          ? "待确认 · 1 个仓库"
+          : `待确认 · ${count} 个仓库`
+      ),
+      turnFrozenScopeNote: (count) => (
+        count === 1
+          ? "当前视图 · 1 个仓库 · 本轮冻结"
+          : `当前视图 · ${count} 个仓库 · 本轮冻结`
+      ),
+      conversationFrozenScope: (label, count) => (
+        count === 1
+          ? `${label} · 1 个仓库 · 本对话范围已冻结`
+          : `${label} · ${count} 个仓库 · 本对话范围已冻结`
+      ),
+      readOnlyResultTitle: "只读回答",
+      readOnlyResultSubtitle: "未提出标签变更",
+      noTagChangesProposed: "未提出标签变更",
+      hideAgent: "隐藏 BGSM Agent",
+      stop: "停止",
+      cancel: "取消",
+      applyingHeader: (done, total) => `应用中 · ${done}/${total}`,
+      applyingTitle: "正在应用选中变更",
+      applyingSubtitle: "仅 manual 标签层 · 冻结范围仍锁定",
+      applyingMeta: (done, total) => `已提交 ${done}/${total} 行 · 复选框已锁定`,
+      applyingButton: "应用中…",
+      applyingStopbar: "单行应用中不可中断；仍可隐藏面板。",
+      composerPausedApplying: "应用期间暂停输入",
+      budgetExhaustedHeader: "预算已用尽",
+      budgetExhaustedTitle: (reason) => `预算已用尽 · ${reason}`,
+      budgetExhaustedSubtitle: (processed, total) => `已处理 ${processed} / ${total} · 剩余不会自动继续`,
+      budgetExhaustedBody: "剩余工作不会自动处理或重放。继续会创建新的 run，并使用新的预算与冻结游标。",
+      continueRemainingCount: (count) => `继续剩余 ${count}`,
+      nothingToAnalyzeHeader: "没有可分析内容",
+      nothingToAnalyzeTitle: "没有可分析内容",
+      nothingToAnalyzeBody: "可见仓库可能都已有标签，或当前筛选隐藏了候选。请调整筛选或扩大范围后再问。",
+      emptyScopeCount: "此范围匹配 0 个仓库。",
+      handoffHeader: "交接 · 仍未标注",
+      handoffTitle: "来自 Auto Tags",
+      handoffSubtitle: (count) => `确定性整理已完成 · 仍有 ${count} 个未标注`,
+      handoffBody: "Auto Tags 已更新基于 topic 的 auto tags。此对话只针对剩余未标注集合；除非你之后应用 manual tags，否则不会覆盖 Auto Tags 结果。",
+      handoffAsk: (count) => `我可以帮你整理 Auto Tags 留下的 ${count} 个未标注仓库。要不要为这批提出谨慎的 manual tags？`,
+      handoffOrganize: (count) => `好 — 整理这 ${count} 个`,
+      handoffAmbiguous: "只看不明确的",
+      handoffExamples: "先解释几个例子",
+      handoffScopeNote: (count) => (
+        count === 1
+          ? "Auto Tags 后仍未标注 · 1 个仓库"
+          : `Auto Tags 后仍未标注 · ${count} 个仓库`
+      ),
+      destructiveHeader: "确认破坏性变更",
+      destructiveTitle: "确认标签库变更",
+      destructiveSubtitle: "破坏性 · 需要审阅 · 不会自动应用",
+      destructiveBody: "重命名、合并、删除不在自由聊天工具路径上。在写入标签库清理前，需要独立的确认 + Apply 流程。",
+      destructiveUnavailable: "首个安全版本暂不可用",
+      partialReceiptHeader: "已应用，但有冲突",
+      resolvingScopeHeader: "正在解析范围…",
+      resolvingScopeBody: "我会为本轮冻结确切的仓库 ID，避免之后改筛选时静默扩大任务范围。",
+      resolvingScopeMeta: "通常很快 · 若选错筛选可取消",
+      scopeNotFrozenYet: "范围尚未冻结",
+      reviewFollowUpNote: "审阅仍打开 · 可继续追问",
+      reviewFollowUpPlaceholder: "就本次审阅继续提问…",
+      reviewConversationDetails: "对话细节",
+      stopMidAnalyzeHeader: "已由你停止",
+      stopMidAnalyzeTitle: "运行已停止",
+      stopMidAnalyzeSubtitle: "用户中止 · 没有进行中的写入",
+      stopMidAnalyzeBody: (processed, remaining) => (
+        `待处理分析已取消。已完成读取：${processed}。未开始：${remaining}。已提交写入：0。`
+      ),
+      stopMidAnalyzeResume: "以新 run 继续剩余",
+      stopMidAnalyzeDiscard: "丢弃",
+      staleSourceTitle: "提案后源数据已变化",
+      staleSourceBody: "过期行被留下未改。只刷新冲突即可，不要盲目整库重跑。",
+      providerAuthHeader: "服务商鉴权失败",
+      providerAuthTitle: "OpenAI 兼容鉴权失败",
+      providerAuthSubtitle: "API key 被拒或缺少 host permission",
+      providerAuthBody: "无法调用你配置的服务商。提示词与范围已保留。此处不展示任何密钥。",
+      providerAuthOpenOptions: "打开选项",
+      providerAuthRetry: "修复后重试",
+      completedNoChangesHeader: "已完成 · 无变更",
+      completedNoChangesTitle: "已完成 · 无变更",
+      completedNoChangesSubtitle: (inspected) => `0 条可操作提案 · 已检查 ${inspected}`,
+      completedNoChangesBody: "全部已有清晰分类，或证据不足无法安全提出 manual tag。无需应用。",
+      unknownOutcomeComposer: "应用已结束 · 结果未知 · 可继续对话",
+      applyTerminalUnknownComposer: "应用已结束 · 结果未知 · 可继续对话",
+      agentQueued: "正在准备这次请求...",
+      agentCompacting: "正在整理对话上下文…",
+      agentStarting: "正在准备上下文...",
+      agentThinking: "思考中...",
+      agentWriting: "回复中...",
+      agentReadingData: "正在检查本地数据...",
+      agentSearchingCode: "正在检查仓库代码...",
+      agentApplyingChanges: "正在应用标签变更...",
+      agentDone: "完成",
+      agentStopped: "已停止",
+      agentToolQueued: "等待中",
+      agentToolRunning: "执行中",
+      agentToolCompleted: "已完成",
+      agentToolFailed: "失败",
+      agentToolDone: "完成",
+      codeSearchStatus: (status, count) => (
+        status === 'complete'
+          ? `${count} 条索引代码匹配`
+          : status === 'no_indexed_matches'
+            ? '没有索引匹配'
+            : `${count} 条索引匹配 · 结果可能不完整`
+      ),
+      codeSearchUntrusted: "仓库代码属于不可信内容，不能授权标签写入。",
+      repositoryCodeReadOnly: "本对话现已保持只读；如需修改标签，请开始新对话。",
+      codeSearchOpenSource: "打开固定版本源码",
+      resumeConversationFollow: "跳到最新消息",
+      reasoningAgentTurn:
+        "我会调用模型服务，用工具检查本地 stars，并通过插件受控工具应用标签变更。",
+      toolResult: "工具结果",
+      emptyAgentMessage: "完成。",
+      chatSuggestionsReady: (count) => `我准备了 ${count} 条标签建议。应用前可以先在下面确认。`,
+      chatNoSuggestions: "基于当前本地数据，暂时没有找到新的标签建议。",
+      chatLimitedCapability:
+        "我可以用你配置的 AI 服务帮你整理 stars。",
+      reasoningSuggestTags:
+        "我会查看本地仓库 topics 和现有标签，跳过已排除的标签，并保守地应用标签变更。",
+      reasoningStreaming: "正在运行 agent...",
+      reasoningDone: (duration) => `已检查本地标签，用时 ${duration}s`,
+      reviewTitle: "确认标签建议",
+      send: "发送",
+      noSuggestionsReady: "暂无建议",
+      readySummary: (add, remove, deleteCount) => {
+        const parts = [
+          add > 0 ? `${add} 个添加` : null,
+          remove > 0 ? `${remove} 个移除` : null,
+          deleteCount > 0 ? `${deleteCount} 个删除` : null,
+        ].filter((part): part is string => part !== null);
+        return parts.length === 0 ? "暂无建议" : parts.join(" · ");
+      },
+      refreshTitle: "刷新建议",
+      closeTitle: "关闭 BGSM Agent",
+      suggestTags: "整理这里的未标注",
+      agentSettings: "Agent 设置",
+      cleanupTags: "整理标签",
+      selectAllPage: "选择当前页全部建议",
+      selectedOnPage: (count) => `当前页已选 ${count} 个`,
+      nothingToApply: "暂无可应用内容",
+      loadingSuggestions: "正在加载建议",
+      emptyTitle: "还没有建议。",
+      emptyBody: "建议会显示在这里。",
+      applied: (count) => `已应用 ${count} 条建议。`,
+      loadFailed: "无法加载建议。",
+      created: (count) => `已准备 ${count} 条建议。`,
+      noneFound: "没有找到新的建议。",
+      createFailed: "无法生成建议。",
+      groupAdd: "添加标签",
+      groupRemove: "从仓库移除标签",
+      groupDelete: "删除标签",
+      groupSelection: (selected, total) => `${selected}/${total}`,
+      addTitle: (fullName) => `为 ${fullName} 添加标签`,
+      removeTitle: (fullName) => `从 ${fullName} 移除标签`,
+      deleteTitle: (tag) => `删除 ${tag}`,
+      more: (count) => `还有 ${count} 个`,
+      range: (start, end, total) => `${start}-${end} / ${total}`,
+      zeroSuggestions: "0 条建议",
+      toolbarApplying: "正在应用",
+      toolbarReview: "待审阅",
+      toolbarInterrupted: "已中断",
+      scopeReady: "范围已就绪",
+      runStateLabel: (value) => ({
+        frozen: "范围已冻结",
+        prepared: "分析已准备",
+        checking_provider: "正在检查 AI 服务",
+        analyzing: "正在分析",
+        analysis_blocked: "分析已阻断",
+        review: "待审阅",
+        applying: "正在应用",
+        paused: "已暂停",
+        completed: "已完成",
+        budget_exhausted: "预算已用尽",
+        cancelled: "已取消",
+        failed: "失败",
+        interrupted: "已中断",
+        consumed_positions: "已达到仓库处理上限",
+        provider_attempts: "已达到服务调用上限",
+        analyzer_batches: "已达到分析批次上限",
+        elapsed_ms: "已达到运行时限",
+        user_stopped: "用户已停止",
+        user_aborted: "用户已取消",
+        no_changes: "没有变更",
+        stale_source: "源数据已变化",
+        worker_lost: "扩展后台已重启",
+        port_disconnected: "连接已中断",
+        internal_error: "内部错误",
+        analysis_failed: "分析失败",
+        budget: "运行预算",
+        changed: "已变更",
+        skipped: "已跳过",
+        unchanged: "未变化",
+      }[value] ?? value.replaceAll("_", " ")),
+      needsReviewFollowUp: "待审阅 · 正在回答追问",
+      needsReviewSelected: (count) => `待审阅 · 已选择 ${count} 条`,
+      appliedTagChanges: (count) => `已应用 ${count} 项标签变更`,
+      followUpAboutScope: "继续询问此范围",
+      askingAboutCurrentViewUnknown: "正在询问当前视图",
+      handoffAutoTagsUpdated: "自动标签已更新基于主题的标签。",
+      agentActivityLabel: "Agent 活动",
+      workbench: {
+        resolvingSubtitle: "正在为完整 starred 资料库准备一个作业",
+        resolvingBody: "正在冻结全部仍在收藏的仓库；筛选条件和当前选中行都不会缩小本次整理范围。",
+        resolvingHint: "通常很快 · 此步骤不会修改标签",
+        confirmScopeTitle: "确认分析范围",
+        repositoriesFrozen: (count) => `本轮将冻结 ${count} 个仓库。`,
+        startAnalysis: "开始分析",
+        nothingToAnalyzeBody: "可见仓库可能都已有标签，或当前筛选隐藏了候选项。请调整筛选或扩大范围后重试。",
+        dismiss: "关闭",
+        confirmRequestedScope: "确认请求的范围",
+        candidateRepositories: (count) => `${count} 个候选仓库。`,
+        continue: "继续",
+        analyzingFrozenScope: "正在分析已冻结范围",
+        progressSummary: (processed, remaining) => `已分析 ${processed} · 剩余 ${remaining}`,
+        runProgressLabel: "运行进度",
+        processed: "已处理",
+        remaining: "剩余",
+        batches: "批次",
+        providerAttempts: "服务调用",
+        analysisBlockedTitle: "全库分析未完成",
+        analysisCoverage: (processed, total) => `已分析 ${processed} / ${total} 个仓库`,
+        analysisBlockedBody: (failed) => failed > 0
+          ? `${failed} 个仓库分析失败。不会展示或应用部分建议；可以继续处理失败项，或重新分析整个资料库，以生成一次完整审阅。`
+          : "不会展示或应用部分建议。可以继续处理剩余项，或重新分析整个资料库，以生成一次完整审阅。",
+        restartWholeLibrary: "重新分析整个资料库",
+        discardAnalysis: "放弃本次分析",
+        runStateRefreshed: "已恢复最新的分析进度。请再次继续，或重新分析整个资料库。",
+        analysisReady: "分析已就绪",
+        preparedReady: "所选范围已准备就绪。",
+        preparedPaused: "所选范围已准备就绪，将在当前运行停止后开始。",
+        budgetExhausted: (reason) => `预算已用尽 · ${reason}`,
+        budgetSubtitle: (processed, total) => `已处理 ${processed} / ${total} · 剩余项未自动继续`,
+        budgetProgress: (processed, remaining, attempts) => `已处理 ${processed} · 剩余 ${remaining} · 已使用 ${attempts} 次服务调用`,
+        budgetBody: "剩余工作没有被自动处理或重放。继续将使用新的预算和新的冻结游标创建一次新运行。",
+        continueRemainingCount: (count) => `继续处理剩余 ${count} 项`,
+        moreRemain: "仍有仓库待处理",
+        moreRemainBody: "当前审阅已结束，剩余仓库没有被自动处理。",
+        continueCreatesRun: "继续将使用新预算创建一次新运行。",
+        continueRemaining: "继续处理剩余项",
+        proposalSummary: (actionable, nonActionable) => `已准备 ${actionable} 条可执行标签建议。另有 ${nonActionable} 个仓库无需操作或证据不足。`,
+        proposalSelectionNote: "只有勾选的行会写入手动标签。",
+        reviewSuggestions: "审阅可执行建议",
+        reviewCoverageComplete: (count) => `已覆盖完整资料库 · 已分析 ${count} 个仓库`,
+        proposalCounts: (actionable, nonActionable, selected) => `${actionable} 条可执行 · ${nonActionable} 条不可执行 · 已选择 ${selected} 条`,
+        finishReviewFirst: "仍有仓库待处理。请先完成当前审阅再继续。",
+        selectRepository: (repositoryId) => `选择 ${repositoryId}`,
+        applyingSelectedChanges: "正在应用所选变更",
+        selectedRowsLocked: (count) => `已选择 ${count} 行 · 复选框已锁定`,
+        applying: "正在应用…",
+        applySelected: (count) => `应用所选 ${count} 项`,
+        applyTagImpact: (tags, repositories) => `将 ${tags} 个标签应用到 ${repositories} 个仓库`,
+        selectAll: "全选",
+        clear: "清除",
+        previousPage: "上一页",
+        nextPage: "下一页",
+        reviewPageRange: (start, end, total) => `${start}-${end} / ${total}`,
+        applyingSubtitle: "手动标签层 · 冻结范围仍锁定",
+        rowsSelectedLocked: (selected, total) => `已选择 ${selected} / ${total} 行 · 复选框已锁定`,
+        receiptPartial: (changed, skipped, failed) => `已应用 ${changed} 行，跳过 ${skipped} 行，${failed} 行前置条件失败且未改动。`,
+        receiptSingle: "已将所选 1 行应用为手动标签，未推送到 Gist。",
+        receiptComplete: (changed) => `已将所选 ${changed} 行应用为手动标签，未推送到 Gist。`,
+        mutationReceipt: "资料库更新回执",
+        receiptSubtitle: "一个权威结果 · 本地手动标签 · 未推送 Gist",
+        receiptCountsLabel: "回执计数",
+        changed: "已变更",
+        skipped: "已跳过",
+        failed: "失败",
+        unchanged: "未变化",
+        receiptCountSummary: (changed, skipped, failed) => `已变更 ${changed} · 已跳过 ${skipped} · 失败 ${failed}`,
+        unchangedCount: (count) => `${count} 行未变化`,
+        receiptRowsLabel: "回执行",
+        viewAllRows: "查看全部行",
+        viewFailedChanged: "查看失败和已变更项",
+        viewChanged: "查看已变更项",
+        connectionInterrupted: "Agent 连接已中断，正在重新连接…",
+        workerLost: "扩展后台已重启，本次运行无法继续。请开始新的分析。",
+        timelineLabel: (state) => ({
+          preflight: "正在解析范围",
+          frozen: "范围已冻结",
+          prepared: "分析已准备",
+          checking_provider: "正在检查 AI 服务",
+          analyzing: "正在分析",
+          review: "待审阅",
+          applying: "正在应用",
+          completed: "已完成",
+          budget_exhausted: "预算已用尽",
+          cancelled: "已取消",
+          failed: "失败",
+          interrupted: "已中断",
+        }[state] ?? state.replaceAll("_", " ")),
+        runStepsLabel: "Agent 运行步骤",
+        runStepScope: "范围",
+        runStepAnalyze: "分析",
+        runStepReview: "审阅",
+        runStepApply: "应用",
+        runStepReceipt: "回执",
+        reviewEvidence: "证据",
+        reviewExistingTag: "已有",
+        reviewNewTag: "新建",
+        reviewOpenRepository: "在 GitHub 打开仓库",
+        reviewExpandRow: "展开审阅细节",
+        reviewCollapseRow: "收起审阅细节",
+        reviewReject: "拒绝",
+        reviewUndoReject: "撤销拒绝",
+        reviewRejectedWithReason: (reason) => `已拒绝 · ${reason}`,
+        reviewRejectWrongRepo: "仓库不匹配",
+        reviewRejectTooBroad: "标签过宽",
+        reviewRejectAlreadyCovered: "已被覆盖",
+        reviewRejectNotUseful: "价值不高",
+        reviewEditTag: "编辑标签",
+        reviewEditTagLabel: (repositoryId, tag) => `编辑 ${repositoryId} 的标签 ${tag}`,
+        reviewSaveEdit: "保存修正",
+        reviewCancelEdit: "取消编辑",
+        reviewEditInvalidEmpty: "请输入非空标签。",
+        reviewEditInvalidNormalized: "标签必须保持 NFKC 规范化。",
+        reviewEditInvalidDuplicate: "标签与该行其他动作重复。",
+        reviewEditInvalidTooLong: "标签超过 256 个 UTF-8 字节。",
+        reviewCorrectedTo: (tag) => `已修正为 ${tag}`,
+        reviewNeedsReanalysis: "需重新分析后才能应用",
+        reviewAskRevise: "要求修正",
+        reviewReviseRejected: (count) => `要求修正已拒绝项（${count}）`,
+        reviewReviseRejectedPrompt: (details) => `请在任何应用前修正这次标签审阅。保持冻结范围不变，跳过已拒绝行，只按修正后的意图重新分析。拒绝/修正：\n${details}`,
+        reviewEditCorrectionPrompt: (repositoryId, fromTag, toTag) => `对于 ${repositoryId}，不要应用已审阅标签「${fromTag}」。请按修正后的标签意图「${toTag}」重新分析该仓库，并在任何应用前返回新的审阅行。`,
+        reviewRejectCorrectionPrompt: (repositoryId, reason) => `对于 ${repositoryId}，拒绝当前建议（${reason}）。请带着这个修正重新分析该仓库，并在任何应用前返回新的审阅行。`,
+        reviewLocalOnlyNote: "拒绝和编辑只是本地审阅决定。应用仍只发送勾选行及其已审阅动作。",
+      },
     },
     activeFilters: {
       onlyFavorite: "收藏",
@@ -1065,7 +2335,70 @@ const messages: Record<Locale, MessageCatalog> = {
     options: {
       title: "Better GitHub Stars Manager — 选项",
       starRepoButton: "点个Star~",
-      behaviorHeading: "3. 偏好",
+      agentHeading: "2. BGSM Agent",
+      agentIntro:
+        "连接你自己的 AI 服务，这样 BGSM Agent 就能在插件里直接给出 tag 建议。",
+      agentServiceLabel: "AI 服务",
+      agentServiceHint: "选择 BGSM Agent 要使用的服务。",
+      agentAdvancedSettings: "高级设置",
+      agentProtocolLabel: "API 协议",
+      agentProtocolHint: "选择这个自定义服务支持的 API。",
+      agentProtocolChat: "Chat Completions",
+      agentProtocolResponses: "Responses API",
+      agentBaseUrlLabel: "Base URL",
+      agentBaseUrlHint:
+        "填写服务提供的 /v1 Base URL。BGSM 只会访问其配置的 origin。",
+      agentBaseUrlPlaceholder: "https://api.example.com/v1",
+      agentProviderContextWindowLabel: "服务上下文窗口",
+      agentProviderContextWindowHint:
+        "已知 model ID 会精确匹配内置预置；也可填写此值覆盖预置，未知模型则必须填写。",
+      agentProviderContextWindowRequired: "请填写此服务支持的上下文窗口。",
+      agentWorkingContextWindowLabel: "工作上下文窗口",
+      agentWorkingContextWindowHint:
+        "可选。为此模型设置更小的工作窗口；该值只能降低服务上限。",
+      agentWorkingContextWindowPlaceholder: "使用服务上限",
+      agentWorkingContextWindowTooLarge: "工作窗口不能超过服务窗口。",
+      agentContextWindowRange: "请输入 4,096 到 2,000,000 之间的整数。",
+      agentModelLabel: "模型",
+      agentModelHint: "填写这个服务支持的 model ID，之后也可以再改。",
+      agentApiKeyLabel: "API Key",
+      agentApiKeyHint: "只保存在本机，并会加密存储。",
+      agentApiKeyPlaceholder: "粘贴 key 后即可保存或测试",
+      agentSavedKeyHint:
+        "这台设备里已经保存过 key。留空即可继续使用当前 key。",
+      agentSave: "保存并测试",
+      agentSaving: "正在保存并测试…",
+      agentSavedAndTested: (provider, model, latencyMs) =>
+        `已保存 · ${provider} · ${model} 已连接（${latencyMs} ms）`,
+      agentSavedTestFailed: (error) =>
+        `设置已保存，但连接测试失败：${error}`,
+      agentSavedNeedsHostAccess:
+        "设置已保存。请先授予 host 访问权限，然后测试连接。",
+      agentTest: "测试连接",
+      agentTesting: "测试中…",
+      agentTestOk: (provider, model, latencyMs) =>
+        `${provider} · ${model} 已连接（${latencyMs} ms）`,
+      agentRemoveKey: "移除已保存 key",
+      agentKeyRemoved: "已移除保存的 BGSM Agent key。",
+      agentDisclosureHeading: "BGSM Agent 数据使用",
+      agentDisclosureIntro: (provider, origin) =>
+        `${provider} · ${origin} · 直接连接`,
+      agentDisclosureSentHeading: "可能发送",
+      agentDisclosureSentPrompt: "你的提示词、当前范围内的公开仓库元数据和可见标签",
+      agentDisclosureSentCode: "你明确请求的范围内代码片段或私人笔记",
+      agentDisclosureSentProtocol: "有界工具结果和对话摘要",
+      agentDisclosureNotSentHeading: "不会发送",
+      agentDisclosureNotSentSecrets: "GitHub token、模型任务数据中的凭据，或当前范围外的 stars",
+      agentDisclosureKeyException:
+        "AI 服务 API Key 只会作为 Authorization header 用于这个精确 origin。",
+      agentDisclosureBuiltInAccess:
+        "此服务已包含在扩展的内置 host 访问范围中。",
+      agentDisclosureCustomAccess:
+        "自定义服务还需要单独授予 Chrome host 访问权限。",
+      agentGrantAccess: "授予访问权限",
+      agentAccessGranted: "已授予 host 访问权限",
+      agentHostAccessRequired: "测试或使用此自定义服务前，请先授予 host 访问权限。",
+      behaviorHeading: "4. 偏好",
       maxTagsPerRepoLabel: "每个仓库最多自动标签数",
       maxTagsPerRepoHint:
         "点击 Auto Tags 时，单个仓库最多自动添加这么多个 topic 标签。",
@@ -1109,7 +2442,7 @@ const messages: Record<Locale, MessageCatalog> = {
       shotPermissions:
         "截图:账号权限 —— Starring (read/write) + Gists (read and write)",
       languageLabel: "语言",
-      gistHeading: "2. Gist 同步",
+      gistHeading: "3. Gist 同步",
       gistBoundPrefix: "已绑定 gist",
       gistBoundSuffix:
         "标签会与该 gist 双向同步；如果同一仓库在两处被改动，较新的改动会生效。",
@@ -1189,6 +2522,26 @@ const messages: Record<Locale, MessageCatalog> = {
         "无法写入同步用 Gist,请确认 token 具有「Gists (read/write)」权限。",
       gistPullFailed:
         "无法读取同步用 Gist。它可能已被删除,或 token 缺少「Gists (read)」权限。",
+      agentApiKeyEmpty: "测试连接前请先填写 API Key。",
+      agentModelEmpty: "测试连接前请先填写模型。",
+      agentBaseUrlEmpty: "请先填写这个 AI 服务的 Base URL。",
+      agentBaseUrlInvalid:
+        "请填写有效的 HTTPS Base URL，或本机 http://localhost 地址。",
+      agentHostPermissionDenied:
+        "保存或测试前，请先允许插件访问这个 AI 服务。",
+      agentProviderUnsupported: "当前还不支持这个 AI 服务。",
+      agentProviderTimeout:
+        "AI 服务没有及时响应。可以重试，或换一个更小的请求。",
+      agentProviderIdentityChanged:
+        "测试期间 AI 服务设置已变化。请检查设置后重新测试连接。",
+      agentProviderResponseInvalid:
+        "AI 服务返回了不兼容的响应。请检查服务设置后重试。",
+      agentDataDisclosureRequired:
+        "连接前请先查看并接受 Agent 数据共享说明。",
+      agentContextCapabilityRequired:
+        "AI 服务能力尚未就绪。请检查上下文窗口并测试连接后再使用 Agent 工具。",
+      agentContextCapabilityInfeasible:
+        "请先在高级设置中增大上下文窗口，再使用 Agent。",
       unknown: (raw) => `出错了:${raw}`,
     },
     onboarding: {
@@ -1253,6 +2606,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>("en");
 
   useEffect(() => {
+    if (!hasExtensionStorage()) {
+      setLocaleState(navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en");
+      return;
+    }
     const syncLocale = () => {
       authStore
         .getLocale()
@@ -1277,7 +2634,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const setLocale = async (next: Locale) => {
     setLocaleState(next);
-    await authStore.setLocale(next);
+    if (hasExtensionStorage()) await authStore.setLocale(next);
   };
 
   return (
@@ -1289,4 +2646,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
 export function useI18n(): I18nValue {
   return useContext(I18nContext);
+}
+
+function hasExtensionStorage(): boolean {
+  return typeof chrome !== "undefined"
+    && chrome.storage?.onChanged !== undefined;
 }

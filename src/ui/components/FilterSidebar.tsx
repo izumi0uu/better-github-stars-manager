@@ -38,7 +38,7 @@ export function FilterSidebar({
   return (
     <div
       data-coach-target="tags"
-      className={cn('flex w-52 shrink-0 flex-col gap-3 overflow-auto border-r border-border bg-card p-2 text-sm', {
+      className={cn('gsm-scrollbar-stable flex w-52 shrink-0 flex-col gap-3 overflow-auto border-r border-border bg-card p-2 text-sm', {
         'opacity-55': interactionLocked,
       })}
       {...getLockedRegionProps(interactionLocked)}

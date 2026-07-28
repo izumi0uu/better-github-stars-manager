@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Star, Plug, FlaskConical } from 'lucide-react';
 import { bgCall, mergeProgressStatus, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
+import { DEV } from '@/dev';
 import { Button } from '@/ui/shadcn/button';
 import { Progress } from '@/ui/shadcn/progress';
 import { Separator } from '@/ui/shadcn/separator';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { REPO_URL } from '@/lib/links';
 import { useI18n } from '@/i18n';
+import { getAgentDiagnosticsMessages } from '@/dev-agent/messages';
 
 interface ConnResult {
   status: number;
@@ -18,26 +20,12 @@ interface ConnResult {
   sample: string | null;
 }
 
-interface DebugResult {
-  hasUsableToken: boolean;
-  hasStoredCipher: boolean;
-  hasCryptoMeta: boolean;
-  username: string | null;
-  lastSyncStarredAt: string | null;
-  gistId: string | null;
-  starCount: number;
-  liveStarCount: number;
-  tombstoneCount: number;
-  newestSample: string | null;
-}
-
 export function Popup() {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [connResult, setConnResult] = useState<string | null>(null);
-  const [debugResult, setDebugResult] = useState<string | null>(null);
-  const { m } = useI18n();
+  const { locale, m } = useI18n();
 
   const refresh = () =>
     bgCall<SyncStatus>('getStatus')
@@ -95,17 +83,8 @@ export function Popup() {
     }
   };
 
-  const showDebug = async () => {
-    setPendingAction('debugState');
-    setDebugResult(m.common.loading);
-    try {
-      const r = await bgCall<DebugResult>('getDebugStatus');
-      setDebugResult(JSON.stringify(r, null, 2));
-    } catch (e) {
-      setDebugResult(`${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setPendingAction((cur) => (cur === 'debugState' ? null : cur));
-    }
+  const openDiagnostics = () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('src/dev-agent/index.html') });
   };
 
   const p = status?.progress;
@@ -183,15 +162,20 @@ export function Popup() {
         <Separator className="my-1" />
         <Button onClick={() => void testConn()} disabled={actionBusy}>{buttonLabel(m.popup.testConnection, pendingAction === 'testConnection', <Plug className="size-4" data-icon="inline-start" />)}</Button>
         {connResult && (
-          <pre className="m-0 max-h-[150px] overflow-auto rounded border border-border bg-muted/40 p-1.5 text-[10px] text-foreground whitespace-pre-wrap">
+          <pre className="gsm-scrollbar-stable m-0 max-h-[150px] overflow-auto rounded border border-border bg-muted/40 p-1.5 text-[10px] text-foreground whitespace-pre-wrap">
             {connResult}
           </pre>
         )}
-        <Button onClick={() => void showDebug()} disabled={actionBusy}>{buttonLabel(m.popup.debugState, pendingAction === 'debugState', <FlaskConical className="size-4" data-icon="inline-start" />)}</Button>
-        {debugResult && (
-          <pre className="m-0 max-h-[180px] overflow-auto rounded border border-border bg-muted/40 p-1.5 text-[10px] text-foreground whitespace-pre-wrap">
-            {debugResult}
-          </pre>
+        {DEV && (
+          <Button
+            variant="outline"
+            size="icon"
+            title={getAgentDiagnosticsMessages(locale).openAgentDiagnostics}
+            aria-label={getAgentDiagnosticsMessages(locale).openAgentDiagnostics}
+            onClick={openDiagnostics}
+          >
+            <FlaskConical className="size-4" />
+          </Button>
         )}
         <Separator className="my-1" />
         <Button variant="ghost" onClick={openStars}>{m.popup.openStars}</Button>

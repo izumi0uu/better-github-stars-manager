@@ -17,6 +17,74 @@
     flex-shrink: 0;
   }
 
+  .gsm-agent-drawer-scrim {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      opacity var(--gsm-duration-base) var(--gsm-ease-drawer),
+      visibility 0s linear var(--gsm-duration-base);
+  }
+
+  .gsm-agent-drawer-scrim[data-state='open'] {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition:
+      opacity var(--gsm-duration-layout) var(--gsm-ease-drawer),
+      visibility 0s linear 0s;
+  }
+
+  .gsm-agent-drawer {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translate3d(24px, 0, 0);
+    transition:
+      opacity var(--gsm-duration-base) var(--gsm-ease-drawer),
+      transform var(--gsm-duration-layout) var(--gsm-ease-drawer),
+      visibility 0s linear var(--gsm-duration-layout);
+  }
+
+  .gsm-agent-drawer[data-state='open'] {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translate3d(0, 0, 0);
+    transition:
+      opacity var(--gsm-duration-layout) var(--gsm-ease-drawer),
+      transform var(--gsm-duration-emphasis) var(--gsm-ease-drawer),
+      visibility 0s linear 0s;
+  }
+
+  .gsm-agent-message-bubble {
+    --gsm-agent-message-enter-x: 0px;
+
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    transform-origin: left bottom;
+    transition:
+      opacity var(--gsm-duration-base) var(--gsm-ease-drawer),
+      transform var(--gsm-duration-control) var(--gsm-ease-drawer);
+  }
+
+  [data-role='user'] .gsm-agent-message-bubble {
+    --gsm-agent-message-enter-x: 8px;
+
+    transform-origin: right bottom;
+  }
+
+  [data-role='assistant'] .gsm-agent-message-bubble {
+    --gsm-agent-message-enter-x: -8px;
+  }
+
+  @starting-style {
+    .gsm-agent-message-bubble {
+      opacity: 0;
+      transform: translate3d(var(--gsm-agent-message-enter-x), 5px, 0) scale(0.985);
+    }
+  }
+
   .gsm-active-filter-row {
     display: grid;
     grid-template-rows: 0fr;
@@ -105,9 +173,9 @@
     }
   }
 
+  /* Column tracks settle atomically; the table shell owns layout-mode motion. */
   .gsm-layout-grid {
     transition:
-      grid-template-columns var(--gsm-duration-layout) var(--gsm-ease-linearized),
       opacity var(--gsm-duration-table) var(--gsm-ease-standard),
       background-color var(--gsm-duration-fast) var(--gsm-ease-linearized),
       transform var(--gsm-duration-table) var(--gsm-ease-standard);
@@ -115,7 +183,40 @@
 
 
   .gsm-layout-table-shell {
-    transition: opacity var(--gsm-table-opacity-duration, var(--gsm-duration-table)) var(--gsm-ease-standard);
+    transform-origin: 50% 0;
+    transition:
+      opacity var(--gsm-table-opacity-duration, var(--gsm-duration-table)) var(--gsm-ease-enter),
+      transform var(--gsm-table-opacity-duration, var(--gsm-duration-table)) var(--gsm-ease-enter);
+  }
+
+  .gsm-layout-table-shell[data-layout-mode-transition='pre-enter'],
+  .gsm-layout-table-shell[data-layout-mode-transition='entering'] {
+    pointer-events: none;
+    will-change: opacity, transform;
+  }
+
+  .gsm-layout-table-shell[data-layout-mode-transition='entering'] {
+    animation: gsm-layout-mode-table-enter var(--gsm-table-opacity-duration) var(--gsm-ease-enter) both;
+  }
+
+  @keyframes gsm-layout-mode-table-enter {
+    from {
+      opacity: 0.35;
+      transform: translate3d(0, 2px, 0) scale(0.998);
+    }
+
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+  }
+
+  .gsm-layout-table-shell[data-layout-mode-transition='pre-enter'] .gsm-layout-grid,
+  .gsm-layout-table-shell[data-layout-mode-transition='entering'] .gsm-layout-grid {
+    transition:
+      opacity var(--gsm-duration-table) var(--gsm-ease-standard),
+      background-color var(--gsm-duration-fast) var(--gsm-ease-linearized),
+      transform var(--gsm-duration-table) var(--gsm-ease-standard);
   }
 
   .gsm-table-head-stuck {
@@ -138,7 +239,6 @@
   .gsm-tray-zone > div {
     min-height: 0;
     overflow: hidden;
-    scrollbar-gutter: auto;
   }
 
   .gsm-gear-in {
@@ -362,7 +462,19 @@
     .gsm-tray-chip,
     .drawer-anim,
     .gsm-insert-caret,
-    .gsm-drag-ghost {
+    .gsm-drag-ghost,
+    .gsm-agent-drawer,
+    .gsm-agent-drawer-scrim {
+      transition: none !important;
+    }
+
+    .gsm-agent-drawer {
+      transform: none;
+    }
+
+    .gsm-agent-message-bubble {
+      opacity: 1 !important;
+      transform: none !important;
       transition: none !important;
     }
 
@@ -370,6 +482,7 @@
     .gsm-tray-chip,
     .gsm-flash-col,
     .gsm-helper-text-update,
+    .gsm-layout-table-shell,
     .gsm-edit-dot,
     .gsm-sidebar-body-in,
     .success-check-path,
