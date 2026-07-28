@@ -45,9 +45,24 @@ export const GIST_CREATE_FAILED = 'GIST_CREATE_FAILED';
 export const GIST_PUSH_FAILED = 'GIST_PUSH_FAILED';
 export const GIST_PULL_FAILED = 'GIST_PULL_FAILED';
 
+// Agent provider config / connectivity codes.
+export const AGENT_API_KEY_EMPTY = 'AGENT_API_KEY_EMPTY';
+export const AGENT_MODEL_EMPTY = 'AGENT_MODEL_EMPTY';
+export const AGENT_BASE_URL_EMPTY = 'AGENT_BASE_URL_EMPTY';
+export const AGENT_BASE_URL_INVALID = 'AGENT_BASE_URL_INVALID';
+export const AGENT_HOST_PERMISSION_DENIED = 'AGENT_HOST_PERMISSION_DENIED';
+export const AGENT_PROVIDER_UNSUPPORTED = 'AGENT_PROVIDER_UNSUPPORTED';
+export const AGENT_PROVIDER_TIMEOUT = 'AGENT_PROVIDER_TIMEOUT';
+export const AGENT_PROVIDER_ORIGIN_MISMATCH = 'AGENT_PROVIDER_ORIGIN_MISMATCH';
+export const AGENT_PROVIDER_IDENTITY_CHANGED = 'AGENT_PROVIDER_IDENTITY_CHANGED';
+export const AGENT_DATA_DISCLOSURE_REQUIRED = 'AGENT_DATA_DISCLOSURE_REQUIRED';
+export const AGENT_CONTEXT_CAPABILITY_REQUIRED = 'AGENT_CONTEXT_CAPABILITY_REQUIRED';
+export const AGENT_CONTEXT_CAPABILITY_INFEASIBLE = 'AGENT_CONTEXT_CAPABILITY_INFEASIBLE';
+
 /** Map a thrown value to a localized, human-friendly string. Pure. */
 export function translateError(e: unknown, m: MessageCatalog): string {
   const raw = e instanceof Error ? e.message : String(e);
+  const providerErrorCode = readProviderErrorCode(e);
 
   // Auth / probe codes.
   if (raw === TOKEN_EMPTY) return m.errors.tokenEmpty;
@@ -81,6 +96,30 @@ export function translateError(e: unknown, m: MessageCatalog): string {
   if (raw === GIST_PUSH_FAILED) return m.errors.gistPushFailed;
   if (raw === GIST_PULL_FAILED) return m.errors.gistPullFailed;
 
+  // Agent provider config / connectivity codes.
+  if (raw === AGENT_API_KEY_EMPTY) return m.errors.agentApiKeyEmpty;
+  if (raw === AGENT_MODEL_EMPTY) return m.errors.agentModelEmpty;
+  if (raw === AGENT_BASE_URL_EMPTY) return m.errors.agentBaseUrlEmpty;
+  if (raw === AGENT_BASE_URL_INVALID) return m.errors.agentBaseUrlInvalid;
+  if (raw === AGENT_HOST_PERMISSION_DENIED) return m.errors.agentHostPermissionDenied;
+  if (raw === AGENT_PROVIDER_UNSUPPORTED) return m.errors.agentProviderUnsupported;
+  if (raw === AGENT_PROVIDER_TIMEOUT) return m.errors.agentProviderTimeout;
+  if (raw === AGENT_PROVIDER_IDENTITY_CHANGED) return m.errors.agentProviderIdentityChanged;
+  if (raw === AGENT_DATA_DISCLOSURE_REQUIRED) return m.errors.agentDataDisclosureRequired;
+  if (raw === AGENT_CONTEXT_CAPABILITY_REQUIRED) return m.errors.agentContextCapabilityRequired;
+  if (raw === AGENT_CONTEXT_CAPABILITY_INFEASIBLE) {
+    return m.errors.agentContextCapabilityInfeasible;
+  }
+  if (providerErrorCode === 'protocol_error' || providerErrorCode === 'parse_error') {
+    return m.errors.agentProviderResponseInvalid;
+  }
+
   // Passthrough — keep the raw tail so nothing is silently lost.
   return m.errors.unknown(raw);
+}
+
+function readProviderErrorCode(value: unknown): unknown {
+  return value && typeof value === 'object' && 'code' in value
+    ? (value as { code?: unknown }).code
+    : undefined;
 }
