@@ -2,7 +2,12 @@ import type { GistPayload, GistPayloadV1, GistPayloadV2, Tag, TagMeta } from '@/
 import type { CountProgressCallback } from '@/api/tag-store';
 import { db } from '@/storage/db';
 import { authStore } from '@/auth/auth-store';
-import { clearDirty, type DirtySnapshot } from '@/storage/idb-tag-store';
+import {
+  clearDirty,
+  clearTagDirtyOutbox,
+  snapshotTagDirtyOutbox,
+  type DirtySnapshot,
+} from '@/storage/idb-tag-store';
 import { GIST_NO_TOKEN, GIST_CREATE_FAILED, GIST_PUSH_FAILED, GIST_PULL_FAILED } from '@/api/errors';
 import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
 
@@ -131,8 +136,13 @@ export const gistTagStore = {
     dirtySnapshot: DirtySnapshot,
     onProgress?: CountProgressCallback,
   ): Promise<{ pushed: number; snapshot: number; recreated: boolean }> {
-    const pushedNames = new Set(dirtySnapshot.names.map(({ name }) => name));
-    const pushingMeta = dirtySnapshot.meta;
+    const durableSnapshot = await snapshotTagDirtyOutbox();
+    const pushedNames = new Set([
+      ...dirtySnapshot.names.map(({ name }) => name),
+      ...durableSnapshot.filter((row) => row.kind === 'tag').map((row) => row.key),
+    ]);
+    const pushingMeta = dirtySnapshot.meta
+      || durableSnapshot.some((row) => row.kind === 'meta');
     const hasLocalChanges = pushedNames.size > 0 || pushingMeta;
     const pushed = pushedNames.size + (pushingMeta ? 1 : 0);
     const { id, recreated } = await ensureWritableGist();
@@ -152,6 +162,7 @@ export const gistTagStore = {
     });
     if (!res.ok) throw new Error(GIST_PUSH_FAILED);
     clearDirty(dirtySnapshot);
+    await clearTagDirtyOutbox(durableSnapshot);
     await authStore.update({ gistSyncCursor: payload.exportedAt });
     onProgress?.(total, total);
     return { pushed, snapshot: total, recreated };

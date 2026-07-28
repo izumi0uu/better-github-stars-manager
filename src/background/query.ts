@@ -3,6 +3,10 @@ import type { Star, Tag } from '@/types';
 import type { FilterState, SortKey } from '@/ui/filter-store';
 import { visibleTagNames } from '@/tags/tag-model';
 import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
+import {
+  validateLaunchCandidateContract,
+  type LaunchCandidateContract,
+} from '@/bgsm-agent/scope';
 
 /**
  * Star query engine (runs in the SW, owns IDB); returns a filtered+sorted window
@@ -18,6 +22,11 @@ export interface QueryParams {
   limit: number;
 }
 
+type QueryFilter = Omit<QueryParams['filter'], 'languages' | 'tags'> & Readonly<{
+  languages: readonly string[];
+  tags: readonly string[];
+}>;
+
 export interface QueryResult {
   rows: Star[];
   total: number; // filtered total
@@ -27,6 +36,18 @@ export interface QueryResult {
   tagTree: { name: string; count: number }[];
   tagTotal: number;
 }
+
+export interface ResolvedLaunchCandidate {
+  contract: LaunchCandidateContract;
+  repositoryIds: string[];
+  label: string;
+  filterSnapshot: string;
+}
+
+export type ResultSubsetResolver = (
+  runId: string,
+  generation: number,
+) => readonly string[] | null;
 
 let cache: { stars: Star[]; tags: Map<string, Tag>; excluded: Set<string>; version: number } | null = null;
 let cacheVersion = 0;
@@ -99,10 +120,11 @@ function sortRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Star[] {
   });
 }
 
-export async function queryStars(params: QueryParams): Promise<QueryResult> {
-  const { filter, offset, limit } = params;
-  const { stars, tags, excluded } = await ensureCache();
-
+function filterAndSortRows(
+  stars: readonly Star[],
+  tags: ReadonlyMap<string, Tag>,
+  filter: QueryFilter,
+): Star[] {
   const q = filter.query.trim().toLowerCase();
   const langSet = filter.languages.length ? new Set(filter.languages) : null;
   const tagSet = filter.tags.length ? new Set(filter.tags) : null;
@@ -128,7 +150,85 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
     return true;
   });
 
-  sortRows(filtered, filter.sortKey, filter.sortDir);
+  return sortRows(filtered, filter.sortKey, filter.sortDir);
+}
+
+/** Resolves every matching repository ID using the same authoritative filter/sort semantics as queryStars. */
+export async function queryAllMatchingStarIds(filter: QueryParams['filter']): Promise<string[]> {
+  const { stars, tags } = await ensureCache();
+  return filterAndSortRows(stars, tags, filter).map((star) => star.full_name);
+}
+
+export async function resolveLaunchCandidate(
+  contract: LaunchCandidateContract,
+  resolveResultSubset?: ResultSubsetResolver,
+): Promise<ResolvedLaunchCandidate> {
+  validateLaunchCandidateContract(contract);
+  const { stars, tags } = await ensureCache();
+  let repositoryIds: string[];
+  let label: string;
+  let filterSnapshot: string;
+
+  if (contract.kind === 'current_view') {
+    repositoryIds = filterAndSortRows(stars, tags, contract.filter).map((star) => star.full_name);
+    label = 'Current view';
+    filterSnapshot = JSON.stringify(contract.filter);
+  } else if (contract.kind === 'selected_repository') {
+    const selected = stars.find((star) => (
+      star.full_name === contract.selectedRepositoryIdHint && !star.tombstone
+    ));
+    repositoryIds = selected ? [selected.full_name] : [];
+    label = selected?.full_name ?? contract.selectedRepositoryIdHint;
+    filterSnapshot = `Selected repository: ${contract.selectedRepositoryIdHint}`;
+  } else if (contract.kind === 'all_live_stars') {
+    repositoryIds = stars
+      .filter((star) => !star.tombstone)
+      .sort((a, b) => a.full_name.localeCompare(b.full_name))
+      .map((star) => star.full_name);
+    label = 'All starred repositories';
+    filterSnapshot = 'All live stars';
+  } else if (contract.kind === 'still_untagged_after_auto_tags') {
+    repositoryIds = stars
+      .filter((star) => !star.tombstone && visibleTagNames(tags.get(star.full_name)).length === 0)
+      .sort((a, b) => a.full_name.localeCompare(b.full_name))
+      .map((star) => star.full_name);
+    label = 'Still untagged';
+    filterSnapshot = 'Live stars with no visible tags after Auto Tags';
+  } else {
+    repositoryIds = [...(resolveResultSubset?.(contract.sourceRunId, contract.sourceGeneration) ?? [])];
+    label = 'Remaining results';
+    filterSnapshot = `Result subset from ${contract.sourceRunId} generation ${contract.sourceGeneration}`;
+  }
+
+  return {
+    contract,
+    repositoryIds: [...new Set(repositoryIds)],
+    label,
+    filterSnapshot,
+  };
+}
+
+export async function resolveLiveLaunchCandidate(
+  contract: LaunchCandidateContract,
+  resolveResultSubset?: ResultSubsetResolver,
+): Promise<ResolvedLaunchCandidate> {
+  const resolved = await resolveLaunchCandidate(contract, resolveResultSubset);
+  const { stars } = await ensureCache();
+  const liveRepositoryIds = new Set(
+    stars.filter((star) => !star.tombstone).map((star) => star.full_name),
+  );
+  return {
+    ...resolved,
+    repositoryIds: resolved.repositoryIds.filter((repositoryId) => (
+      liveRepositoryIds.has(repositoryId)
+    )),
+  };
+}
+
+export async function queryStars(params: QueryParams): Promise<QueryResult> {
+  const { filter, offset, limit } = params;
+  const { stars, tags, excluded } = await ensureCache();
+  const filtered = filterAndSortRows(stars, tags, filter);
 
   // Languages facet over ALL stars (stable sidebar regardless of filter).
   const langCounts = new Map<string, number>();
