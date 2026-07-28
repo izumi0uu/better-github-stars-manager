@@ -13,7 +13,7 @@
 Install from the Chrome Web Store:
 [Get it on the Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 
-![Better GitHub Stars Manager](public/poster/img_01.png)
+![Better GitHub Stars Manager](store-assets/poster/img_01.png)
 
 ## Table of Contents
 
@@ -72,8 +72,8 @@ Better GitHub Stars Manager makes GitHub Stars genuinely manageable for heavy us
 ## Screenshots
 
 <p align="center">
-  <img src="public/poster/img_02.png" alt="Better GitHub Stars Manager running on GitHub Stars" width="920">
-  <img src="public/store/screenshots/screenshot-plugin.png" alt="Better GitHub Stars Manager Plugin" width="300">
+  <img src="store-assets/poster/img_02.png" alt="Better GitHub Stars Manager running on GitHub Stars" width="920">
+  <img src="store-assets/screenshots/screenshot-plugin.png" alt="Better GitHub Stars Manager Plugin" width="300">
 </p>
 
 ## How to Use

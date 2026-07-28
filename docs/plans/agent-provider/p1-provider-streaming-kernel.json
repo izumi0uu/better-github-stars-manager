@@ -1,0 +1,90 @@
+{
+  "schema": "plan-bundle/v1",
+  "bundle_id": "bgsm-provider-streaming-kernel",
+  "revision": 2,
+  "mode": "plan",
+  "status": "ready",
+  "title": "P1 Provider Streaming Kernel",
+  "goal": "Introduce a bounded provider-neutral streaming contract and prove it by migrating OpenAI Chat Completions without breaking final-response consumers.",
+  "context": {
+    "repository": "/Users/idah/projects/github-stars-manager-worktree-2",
+    "base_revision": "326fc5fa9e0a35f9449618153e8eb700df16e107",
+    "generated_at": "2026-07-14T03:34:58Z"
+  },
+  "facts": [
+    {
+      "text": "ModelProvider and PreparedModelRequest currently return only a final ModelResponse.",
+      "evidence": ["src/agent-harness/provider.ts:26", "src/agent-harness/provider.ts:34", "src/agent-harness/provider.ts:40"]
+    },
+    {
+      "text": "The existing Chat Completions adapter explicitly sends stream:false.",
+      "evidence": ["src/agent-harness/providers/openai-compatible.ts:311"]
+    },
+    {
+      "text": "OrganizeJob requires exact serialized request bytes and single-use prepared execution; Compaction consumes a final response silently.",
+      "evidence": ["src/bgsm-agent/organize-proposal-analyzer.ts:138", "src/bgsm-agent/organize-proposal-analyzer.ts:252", "src/bgsm-agent/compaction.ts:128"]
+    },
+    {
+      "text": "The Pi comparison source defines typed lifecycle events and final-result aggregation but its generic EventStream queues events without a BGSM resource bound.",
+      "evidence": ["/Users/idah/Projects-combined/pi/packages/ai/src/types.ts:362", "/Users/idah/Projects-combined/pi/packages/ai/src/utils/event-stream.ts:3", "docs/plans/agent-provider/pi-source-reference.md"]
+    }
+  ],
+  "scope": {
+    "in": ["Provider-neutral stream events", "Bounded SSE and UTF-8 decoding", "Final ModelResponse aggregation", "Chat Completions streaming", "Abort, timeout, usage and terminal normalization", "OrganizeJob and Compaction compatibility"],
+    "out": ["Background Port and UI rendering", "OpenAI Responses", "Anthropic Messages", "Provider Options and registry", "Pi package or SDK dependencies"]
+  },
+  "constraints": [
+    "Use browser-native fetch, ReadableStream, TextDecoder and AbortSignal.",
+    "Unexpected EOF or a missing provider terminal event fails closed.",
+    "Tool argument deltas are never executable until complete JSON and tool schemas validate.",
+    "Prepared request bytes must equal the transmitted body and execution remains single-use.",
+    "OrganizeJob and Compaction consume the assembled final response without presentation deltas.",
+    "Before implementation, review every P1 Pi source listed in docs/plans/agent-provider/pi-source-reference.md at the pinned commit and update its comparison record.",
+    "Use Pi only to compare lifecycle and adapter boundaries; BGSM invariants and the current official Chat Completions schema remain authoritative."
+  ],
+  "artifacts": [],
+  "requirements": [
+    {"id": "REQ-001", "text": "Define bounded normalized provider stream events with exactly one terminal outcome.", "priority": "must"},
+    {"id": "REQ-002", "text": "Aggregate normalized events into the existing ModelResponse contract.", "priority": "must"},
+    {"id": "REQ-003", "text": "Migrate Chat Completions text, tool calls, usage and finish reasons to streaming.", "priority": "must"},
+    {"id": "REQ-004", "text": "Preserve prepared request, OrganizeJob and Compaction invariants.", "priority": "must"},
+    {"id": "REQ-005", "text": "Complete the pinned Pi source comparison and record adopted, adapted and rejected behavior before the kernel is considered complete.", "priority": "must"}
+  ],
+  "acceptance_criteria": [
+    {"id": "AC-001", "text": "Arbitrary byte chunks, CRLF, multiline data, comments, split UTF-8 and a final event decode deterministically within byte and event limits.", "requirements": ["REQ-001"], "proof": "Chunk-boundary and limit fixtures pass."},
+    {"id": "AC-002", "text": "Every stream resolves to one validated ModelResponse or one bounded typed error; malformed data, overflow and missing termination never produce success.", "requirements": ["REQ-002"], "proof": "Aggregation, EOF, protocol-error, abort and timeout tests pass."},
+    {"id": "AC-003", "text": "Chat text deltas and indexed tool argument deltas assemble correctly, require a real finish reason and expose usage without executing partial tools.", "requirements": ["REQ-003"], "proof": "Chat text, tools, usage, refusal, truncation and error fixtures pass."},
+    {"id": "AC-004", "text": "Prepared request byte accounting and single-use execution remain exact, while OrganizeJob and Compaction receive only final validated results.", "requirements": ["REQ-004"], "proof": "Prepared request, OrganizeJob and Compaction regressions remain green."},
+    {"id": "AC-005", "text": "The P1 comparison record names the reviewed Pi commit, records adopted/adapted/rejected choices, confirms the official Chat Completions schema check and has no Pending status.", "requirements": ["REQ-005"], "proof": "Review docs/plans/agent-provider/pi-source-reference.md and the implementation against the prohibited-import rules."}
+  ],
+  "design": {
+    "summary": "Make the normalized event stream the source of truth. generate() and prepared execute() aggregate that stream into ModelResponse; optional observers receive bounded deltas.",
+    "boundaries": ["Core owns events, limits, aggregation and typed errors.", "Chat adapter owns request and provider-event conversion.", "Agent loop owns tool validation and execution.", "UI transport is deferred to P2."],
+    "contracts": ["Events cover response start, text delta, tool start/arguments/end, usage, response end and error.", "A stream has exactly one terminal outcome.", "Complete tool calls alone enter ModelResponse.", "Observers are opt-in per request."],
+    "compatibility": ["Preserve ModelResponse and PreparedModelRequest callers.", "Keep OpenAI, OpenRouter and Custom Chat profiles working.", "Review the pinned Pi lifecycle and Chat adapter sources, but do not import Pi runtime code, copy its unbounded queue, or add Node SDKs."],
+    "rollout": ["Add core stream primitives and tests.", "Migrate Chat adapter.", "Lock final-response consumers before P2-P5."],
+    "rollback": ["Revert the Chat migration and core together.", "No persisted data shape changes are introduced."],
+    "observability": ["Record protocol, duration, byte counts, event counts, finish category and bounded error code.", "Never record bodies, deltas, tool arguments or credentials."]
+  },
+  "decision_record": null,
+  "steps": [
+    {"id": "STEP-000", "text": "Review the pinned P1 Pi sources, confirm current official Chat Completions streaming behavior and update the comparison record before coding.", "depends_on": [], "files": ["docs/plans/agent-provider/pi-source-reference.md"], "requirements": ["REQ-005"], "verification": ["VER-005"]},
+    {"id": "STEP-001", "text": "Add normalized events, bounded SSE decoding, aggregation and terminal/error rules.", "depends_on": ["STEP-000"], "files": ["src/agent-harness/provider.ts"], "requirements": ["REQ-001", "REQ-002"], "verification": ["VER-001"]},
+    {"id": "STEP-002", "text": "Migrate OpenAI-compatible Chat Completions to the shared stream implementation.", "depends_on": ["STEP-001"], "files": ["src/agent-harness/providers/openai-compatible.ts", "src/agent-harness/agent-loop.ts"], "requirements": ["REQ-003"], "verification": ["VER-002"]},
+    {"id": "STEP-003", "text": "Preserve exact prepared execution and silent final aggregation for OrganizeJob and Compaction.", "depends_on": ["STEP-002"], "files": ["src/bgsm-agent/organize-proposal-analyzer.ts", "src/bgsm-agent/compaction.ts"], "requirements": ["REQ-004"], "verification": ["VER-003", "VER-004"]}
+  ],
+  "verification": [
+    {"id": "VER-001", "level": "unit", "procedure": "Run deterministic SSE, chunking, overflow, EOF, abort, timeout and aggregation tests.", "covers": ["AC-001", "AC-002"]},
+    {"id": "VER-002", "level": "unit", "procedure": "Run tests/unit/agent-provider-openai-compatible.test.ts with streaming text, tool, usage and terminal fixtures.", "covers": ["AC-003"]},
+    {"id": "VER-003", "level": "integration", "procedure": "Run prepared-request, OrganizeJob and Compaction unit/regression suites.", "covers": ["AC-004"]},
+    {"id": "VER-004", "level": "static", "procedure": "Run pnpm typecheck and pnpm test:logic.", "covers": ["AC-001", "AC-002", "AC-003", "AC-004"]},
+    {"id": "VER-005", "level": "review", "procedure": "Verify the P1 comparison record cites the pinned Pi revision, current official Chat schema check and explicit adopt/adapt/reject decisions; verify no Pi or Node SDK import was added.", "covers": ["AC-005"]}
+  ],
+  "risks": [
+    {"id": "RISK-001", "risk": "A partial tool call becomes executable.", "trigger": "Argument deltas enter ModelResponse before terminal validation.", "mitigation": "Keep partial calls internal and expose only complete schema-valid calls."},
+    {"id": "RISK-002", "risk": "Streaming breaks OrganizeJob budget accounting.", "trigger": "The transmitted body differs from serializedRequestBody or execute becomes reusable.", "mitigation": "Retain byte equality and single-use regression tests."},
+    {"id": "RISK-003", "risk": "An unbounded stream consumes service-worker memory.", "trigger": "No event, response-byte or tool-argument cap is enforced, or Pi's generic queue is copied without a BGSM bound.", "mitigation": "Apply explicit budgets before buffering, avoid an unbounded observer queue and fail closed on overflow."},
+    {"id": "RISK-004", "risk": "Pi behavior is mistaken for the wire-protocol authority.", "trigger": "Implementation copies Pi fields or SDK behavior without checking current official Chat Completions documentation.", "mitigation": "Use the pinned source only for comparison, record divergences and derive protocol fixtures from current official schemas."}
+  ],
+  "open_decisions": []
+}

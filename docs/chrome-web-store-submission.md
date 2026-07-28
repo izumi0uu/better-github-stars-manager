@@ -18,7 +18,7 @@ Better GitHub Stars Manager
 
 ### Short description
 
-Organize GitHub stars with search, tags, notes, filters, and optional Gist sync.
+Organize GitHub stars with search, tags, notes, filters, optional Gist sync, and a review-first AI Agent.
 
 ### Detailed description
 
@@ -31,8 +31,9 @@ Use it to:
 - organize repos with custom tags and notes
 - filter by language, tags, and untagged items
 - sync only your annotation layer across devices through your own secret GitHub Gist
+- use your own OpenAI, OpenRouter, Anthropic, or compatible AI service to analyze a frozen repository scope and review additive tag suggestions before applying them
 
-The extension works only on GitHub and uses GitHub's own APIs. It does not require a separate account or a custom backend.
+The extension UI runs on GitHub. GitHub/Gist requests go directly to GitHub, and optional Agent requests go directly to the AI service the user selects. The developer operates no proxy or custom backend.
 
 ## Suggested store category
 
@@ -45,8 +46,9 @@ Chrome Web Store screenshots must be `1280x800` or `640x400` pixels.
 Prepared store screenshots:
 
 - `public/store/screenshots/screenshot-main-stars.png`
-- `public/store/screenshots/screenshot-options.png`
 - `public/store/screenshots/screenshot-detail-panel.png`
+- `public/store/screenshots/screenshot-agent-disclosure-light-1280x800.png`
+- `public/store/screenshots/screenshot-agent-disclosure-dark-640x400.png`
 
 The token tutorial images remain useful for README and onboarding, but they are not the primary store screenshots:
 
@@ -58,10 +60,10 @@ The token tutorial images remain useful for README and onboarding, but they are 
 
 Chrome Web Store requires one small promotional image at `440x280`.
 
-Prepared promo assets derived from `public/poster/img_01.png`:
+Prepared promo assets derived from `store-assets/poster/img_01.png`:
 
-- `public/store/promo/small-tile.png` (`440x280`)
-- `public/store/promo/marquee.png` (`1400x560`)
+- `store-assets/promo/small-tile.png` (`440x280`)
+- `store-assets/promo/marquee.png` (`1400x560`)
 
 ## Permission justification
 
@@ -76,7 +78,23 @@ The match pattern is broad because MV3 match patterns cannot target query string
 
 ### `https://api.github.com/*`
 
-Used to authenticate the provided token, fetch the authenticated user's starred repositories, and optionally sync annotations through the user's own secret GitHub Gist.
+Used to authenticate the provided token, fetch the authenticated user's starred repositories, optionally search bounded public code through GitHub's index, and optionally sync annotations through the user's own secret GitHub Gist.
+
+### `https://api.openai.com/*`
+
+Required in the current package so a user who explicitly configures OpenAI can test the connection and run BGSM Agent. Options shows the exact service origin in a collapsed data-use notice.
+
+### `https://openrouter.ai/*`
+
+Required in the current package so a user who explicitly configures OpenRouter can test the connection and run BGSM Agent. Options shows the exact service origin in a collapsed data-use notice.
+
+### `https://api.anthropic.com/*`
+
+Required in the current package so a user who explicitly configures Anthropic can test the connection and run BGSM Agent. Options shows the exact service origin in a collapsed data-use notice.
+
+### Optional custom AI-service hosts
+
+The manifest declares broad HTTPS plus localhost/127.0.0.1 development patterns as optional host permissions because a custom compatible service cannot be known at install time. Options requests access only from an explicit **Grant access** user action for the configured hostname. Chrome's permission pattern may cover ports, while BGSM's credential and fetch gates remain exact-origin and port-sensitive.
 
 ## Privacy practices form notes
 
@@ -87,8 +105,12 @@ When filling the Chrome Web Store privacy section, the current codebase supports
 - Data is not used for personalized advertising.
 - Data is not used for creditworthiness or lending purposes.
 - Data is not shared with third-party analytics or ad SDKs.
-- Remote services contacted by the extension are limited to GitHub and the GitHub API.
+- Remote services are GitHub/Gist plus, only when enabled, the user's selected OpenAI, OpenRouter, Anthropic, or custom OpenAI-compatible origin.
 - The extension stores star metadata locally and optionally stores user-created annotations in the user's own secret GitHub Gist.
+- Agent task data may include the prompt or bounded task instruction, scoped public repository metadata, bounded public code snippets and file paths when indexed code search is requested, private notes for scoped repositories only when the current prompt asks to use them, visible, bounded tag taxonomy, and protocol observations. Indexed search can be partial and is not presented as an exhaustive repository scan. Requested notes and code snippets are untrusted and may remain in the in-memory conversation for follow-ups or summaries with the same AI service.
+- Agent task data excludes private notes the user did not ask BGSM Agent to use, credentials or secrets, the GitHub token, and unrelated or out-of-scope stars by default.
+- The selected AI-provider API key is sent only to its bound origin as an authorization header, never as model-visible prompt/tool data or logs.
+- No developer-operated proxy receives the traffic; provider requests go directly from the extension to the selected service.
 
 If the dashboard asks for a Limited Use statement, reuse the language from `docs/privacy-policy.md`.
 
@@ -97,18 +119,22 @@ If the dashboard asks for a Limited Use statement, reuse the language from `docs
 1. Open the extension Options page.
 2. Paste a GitHub fine-grained personal access token.
 3. Grant `Public repositories` repository access.
-4. Add `Starring: Read-only` and `Gists: Read and write` for full-feature testing.
+4. Add `Starring: Read and write` and `Gists: Read and write` for full-feature testing.
 5. Save the token and confirm the extension shows the authenticated account.
 6. Open `https://github.com/{your-username}?tab=stars`.
 7. Click `Sync` to import stars into the local database.
 8. Verify that repositories appear, search works, and notes or tags can be added.
 9. Click `Push` to create or update the dedicated secret sync Gist, then click `Pull` to fetch it back.
+10. In Options, choose OpenAI, OpenRouter, or Anthropic and confirm the collapsed data-use notice names the service and exact origin.
+11. Enter a model and test API key, then confirm **Test connection** is available without a separate disclosure acknowledgement.
+12. For a custom compatible Base URL, click the separate **Grant access** control and verify denial makes no provider request.
+13. Open the Agent workbench, start a bounded tag analysis, review selected rows, and apply only the chosen additive tag suggestions.
 
 ## Pre-submit checklist
 
-- `pnpm build`
-- `pnpm test`
-- `pnpm package:extension`
+- `corepack pnpm build`
+- `corepack pnpm test`
+- `corepack pnpm package:extension`
 - confirm the ZIP in `artifacts/` contains `manifest.json` at its root
 - confirm the public GitHub repository contains `docs/privacy-policy.md` and the URL opens without authentication
 - provide a support email in the Chrome Web Store dashboard
@@ -120,3 +146,5 @@ If the dashboard asks for a Limited Use statement, reuse the language from `docs
 - complete the privacy practices questionnaire to match the statements above
 - prepare reviewer notes that mention required GitHub token scopes
 - confirm the permission disclosures match the current manifest
+- inspect the generated release-evidence JSON for source revision/dirty state, package version, file checksums, ZIP-root manifest, and packaged required/optional permission summaries
+- do not claim dashboard submission from local package evidence
