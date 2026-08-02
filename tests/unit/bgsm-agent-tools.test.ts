@@ -100,6 +100,83 @@ describe('BGSM Agent tools', () => {
     assert.equal(optInNames.includes('delete_tag_everywhere'), true);
   });
 
+  it('exposes opt-in, argument-free full-library confirmation and start handoffs without writes', async () => {
+    const requested: string[] = [];
+    const disabled = createBgsmAgentTools({ repositoryScope: [star.full_name] });
+    assert.throws(() => createBgsmAgentTools({
+      repositoryScope: [star.full_name],
+      enableOrganizeLibraryHandoff: true,
+    }), /requires an execution callback/u);
+    const enabled = createBgsmAgentTools({
+      repositoryScope: [star.full_name],
+      enableOrganizeLibraryHandoff: true,
+      requestOrganizeLibraryHandoff: (action) => {
+        requested.push(action);
+        return { status: 'accepted' };
+      },
+    });
+    assert.equal(disabled.some((tool) => tool.name === 'request_full_library_organization'), false);
+    const handoff = enabled.find((tool) => tool.name === 'request_full_library_organization');
+    assert.ok(handoff);
+    assert.equal(handoff.risk, 'suggest');
+    assert.equal(handoff.requiresExclusiveEnvelope, true);
+    assert.deepEqual(handoff.validate?.({}), {});
+    assert.throws(() => handoff.validate?.({ scope: 'selected' }), /accepts no arguments/u);
+
+    const result = await handoff.execute({}, { sessionId: 'handoff', callId: 'handoff-call' });
+
+    assert.deepEqual(requested, ['request_confirmation']);
+    assert.deepEqual(result, {
+      status: 'confirmation_requested',
+      scope: 'all_current_starred_repositories',
+      writesPerformed: false,
+    });
+    assert.equal(await db.tags.get(star.full_name), undefined);
+
+    const start = enabled.find((tool) => tool.name === 'start_full_library_analysis');
+    assert.ok(start);
+    assert.equal(start.risk, 'suggest');
+    assert.equal(start.requiresExclusiveEnvelope, true);
+    assert.deepEqual(start.validate?.({}), {});
+    assert.throws(() => start.validate?.({ confirmed: true }), /accepts no arguments/u);
+    assert.deepEqual(
+      await start.execute({}, { sessionId: 'handoff', callId: 'start-call' }),
+      {
+        status: 'start_requested',
+        scope: 'all_current_starred_repositories',
+        writesPerformed: false,
+      },
+    );
+    assert.deepEqual(requested, ['request_confirmation', 'start_analysis']);
+    assert.equal(await db.tags.get(star.full_name), undefined);
+  });
+
+  it('returns a structured block instead of emitting a full-library handoff over an active job', async () => {
+    const enabled = createBgsmAgentTools({
+      repositoryScope: [star.full_name],
+      enableOrganizeLibraryHandoff: true,
+      requestOrganizeLibraryHandoff: () => ({
+        status: 'blocked_by_existing_job',
+        activeJobStatus: 'review',
+      }),
+    });
+    const request = enabled.find((tool) => tool.name === 'request_full_library_organization');
+    const start = enabled.find((tool) => tool.name === 'start_full_library_analysis');
+    assert.ok(request);
+    assert.ok(start);
+
+    assert.deepEqual(await request.execute({}, { sessionId: 'blocked', callId: 'request' }), {
+      status: 'blocked_by_existing_job',
+      activeJobStatus: 'review',
+      writesPerformed: false,
+    });
+    assert.deepEqual(await start.execute({}, { sessionId: 'blocked', callId: 'start' }), {
+      status: 'blocked_by_existing_job',
+      activeJobStatus: 'review',
+      writesPerformed: false,
+    });
+  });
+
   it('registers repository list/search/read only when explicitly enabled with frozen-scope schemas', () => {
     const disabled = createBgsmAgentTools({ repositoryScope: [star.full_name] });
     const enabled = createBgsmAgentTools({

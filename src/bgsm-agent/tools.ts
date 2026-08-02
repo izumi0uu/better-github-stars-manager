@@ -13,7 +13,7 @@ import {
 } from '@/storage/idb-tag-store';
 import { db } from '@/storage/db';
 import { includesTagName, visibleTagNames } from '@/tags/tag-model';
-import type { Star, Tag } from '@/types';
+import type { OrganizeStoredJobStatus, Star, Tag } from '@/types';
 import {
   MAX_SEMANTIC_TAG_NAME_BYTES,
   TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT,
@@ -112,6 +112,28 @@ export type BgsmAgentManualTagWriter = (
   context: ToolExecutionContext,
 ) => Promise<BgsmAgentManualTagAdditionResult>;
 
+export const REQUEST_FULL_LIBRARY_ORGANIZATION_TOOL_NAME =
+  'request_full_library_organization';
+export const START_FULL_LIBRARY_ANALYSIS_TOOL_NAME =
+  'start_full_library_analysis';
+
+export type BgsmAgentOrganizeLibraryAction =
+  | 'request_confirmation'
+  | 'start_analysis';
+
+export type BgsmAgentOrganizeLibraryHandoffDecision =
+  | Readonly<{ status: 'accepted' }>
+  | Readonly<{
+      status: 'blocked_by_existing_job';
+      activeJobStatus: OrganizeStoredJobStatus;
+    }>;
+
+export type BgsmAgentOrganizeLibraryHandoff = Readonly<{
+  type: 'organize_whole_library';
+  action: BgsmAgentOrganizeLibraryAction;
+  instruction: string;
+}>;
+
 export function createBgsmAgentTools(options: Readonly<{
   repositoryScope: readonly string[];
   scopeFingerprint?: string;
@@ -119,10 +141,17 @@ export function createBgsmAgentTools(options: Readonly<{
   enableRepositoryCodeSearch?: boolean;
   repositoryCodeRefAuthority?: RepositoryCodeRefAuthority;
   enableRepositoryNotes?: boolean;
+  enableOrganizeLibraryHandoff?: boolean;
+  requestOrganizeLibraryHandoff?: (
+    action: BgsmAgentOrganizeLibraryAction,
+  ) => BgsmAgentOrganizeLibraryHandoffDecision | Promise<BgsmAgentOrganizeLibraryHandoffDecision>;
   assignManualTags?: BgsmAgentManualTagWriter;
   /** Opt-in only. Default false: first safe release is additive manual tags. */
   allowDestructiveWrites?: boolean;
 }>): AgentTool[] {
+  if (options.enableOrganizeLibraryHandoff && !options.requestOrganizeLibraryHandoff) {
+    throw new TypeError('Full-library handoff requires an execution callback.');
+  }
   const repositoryScope = new Set(options.repositoryScope);
   const repositorySearchScope = createRepositorySearchScope(
     repositoryScope,
@@ -130,6 +159,12 @@ export function createBgsmAgentTools(options: Readonly<{
     options.scopeFingerprint,
   );
   const tools: AgentTool[] = [
+    ...(options.enableOrganizeLibraryHandoff
+      ? [
+          requestFullLibraryOrganizationTool(options.requestOrganizeLibraryHandoff!),
+          startFullLibraryAnalysisTool(options.requestOrganizeLibraryHandoff!),
+        ]
+      : []),
     listTagsTool(),
     listStarsTool(repositorySearchScope),
     getStarTool(repositorySearchScope),
@@ -154,6 +189,88 @@ export function createBgsmAgentTools(options: Readonly<{
     tools.push(removeRepoTagTool(repositoryScope), deleteTagEverywhereTool());
   }
   return tools;
+}
+
+function requestFullLibraryOrganizationTool(
+  requestHandoff: (
+    action: BgsmAgentOrganizeLibraryAction,
+  ) => BgsmAgentOrganizeLibraryHandoffDecision | Promise<BgsmAgentOrganizeLibraryHandoffDecision>,
+): AgentTool<Record<string, never>> {
+  return {
+    name: REQUEST_FULL_LIBRARY_ORGANIZATION_TOOL_NAME,
+    description:
+      'Request the dedicated full-library Organize workflow when the user explicitly asks to classify, organize, tag, or label their entire starred repository library. Call this tool by itself and without first paging through list_stars. It only opens scope confirmation; it does not read repositories or write tags. Do not call it for questions, summaries, hypothetical requests, selected/current/filtered subsets, or one repository.',
+    risk: 'suggest',
+    requiresExclusiveEnvelope: true,
+    parameters: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+    validate(input) {
+      const value = expectObject(input);
+      if (Object.keys(value).length > 0) {
+        throw new TypeError(`${REQUEST_FULL_LIBRARY_ORGANIZATION_TOOL_NAME} accepts no arguments.`);
+      }
+      return {};
+    },
+    async execute() {
+      const decision = await requestHandoff('request_confirmation');
+      if (decision.status === 'blocked_by_existing_job') {
+        return {
+          status: decision.status,
+          activeJobStatus: decision.activeJobStatus,
+          writesPerformed: false,
+        };
+      }
+      return {
+        status: 'confirmation_requested',
+        scope: 'all_current_starred_repositories',
+        writesPerformed: false,
+      };
+    },
+  };
+}
+
+function startFullLibraryAnalysisTool(
+  requestHandoff: (
+    action: BgsmAgentOrganizeLibraryAction,
+  ) => BgsmAgentOrganizeLibraryHandoffDecision | Promise<BgsmAgentOrganizeLibraryHandoffDecision>,
+): AgentTool<Record<string, never>> {
+  return {
+    name: START_FULL_LIBRARY_ANALYSIS_TOOL_NAME,
+    description:
+      'Start the dedicated full-library analysis only when the user explicitly says to start, begin, proceed with, or confirm that analysis now. If a scope confirmation is already visible, this confirms it. Otherwise the UI freezes the full library and starts automatically. This analyzes repository metadata but does not apply tag changes. Do not call it for an initial organization request that still needs confirmation, for a vague acknowledgement, or while an existing Organize job is under review or running.',
+    risk: 'suggest',
+    requiresExclusiveEnvelope: true,
+    parameters: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+    validate(input) {
+      const value = expectObject(input);
+      if (Object.keys(value).length > 0) {
+        throw new TypeError(`${START_FULL_LIBRARY_ANALYSIS_TOOL_NAME} accepts no arguments.`);
+      }
+      return {};
+    },
+    async execute() {
+      const decision = await requestHandoff('start_analysis');
+      if (decision.status === 'blocked_by_existing_job') {
+        return {
+          status: decision.status,
+          activeJobStatus: decision.activeJobStatus,
+          writesPerformed: false,
+        };
+      }
+      return {
+        status: 'start_requested',
+        scope: 'all_current_starred_repositories',
+        writesPerformed: false,
+      };
+    },
+  };
 }
 
 export async function loadLiveBgsmAgentRepositoryScope(): Promise<string[]> {

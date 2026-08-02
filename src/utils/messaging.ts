@@ -28,6 +28,7 @@ import type {
   OrganizeJobRunSnapshot,
 } from '@/bgsm-agent/events';
 import type { ProposalAction } from '@/bgsm-agent/proposal';
+import type { BgsmAgentOrganizeLibraryHandoff } from '@/bgsm-agent/tools';
 import {
   COMMIT_RECEIPT_OUTCOMES,
   COMMIT_RECEIPT_REASONS,
@@ -88,6 +89,7 @@ export interface BgsmAgentTurnResult {
   candidateCheckpoint?: BgsmAgentCompactionCheckpoint;
   candidateActiveProjection?: BgsmAgentActiveProjection | null;
   contextFailureReason?: AgentContextFailureReason;
+  organizeLibraryHandoff?: BgsmAgentOrganizeLibraryHandoff;
 }
 
 type BgsmAgentDeliveryIdentity = {
@@ -1462,6 +1464,7 @@ function validateAgentTurnResult(value: unknown): asserts value is BgsmAgentTurn
     ...(value.candidateCheckpoint === undefined ? [] : ['candidateCheckpoint']),
     ...(value.candidateActiveProjection === undefined ? [] : ['candidateActiveProjection']),
     ...(value.contextFailureReason === undefined ? [] : ['contextFailureReason']),
+    ...(value.organizeLibraryHandoff === undefined ? [] : ['organizeLibraryHandoff']),
   ];
   assertAgentExactKeys(value, keys);
   validateAgentStopReason(value.reason);
@@ -1480,6 +1483,27 @@ function validateAgentTurnResult(value: unknown): asserts value is BgsmAgentTurn
   }
   if (value.candidateActiveProjection !== undefined && value.candidateActiveProjection !== null) {
     validateAgentActiveProjection(value.candidateActiveProjection);
+  }
+  if (value.organizeLibraryHandoff !== undefined) {
+    if (!isAgentRecord(value.organizeLibraryHandoff)) {
+      throw new TypeError('Agent organize-library handoff is invalid.');
+    }
+    assertAgentExactKeys(value.organizeLibraryHandoff, ['type', 'action', 'instruction']);
+    if (value.organizeLibraryHandoff.type !== 'organize_whole_library') {
+      throw new TypeError('Agent organize-library handoff type is invalid.');
+    }
+    if (
+      value.organizeLibraryHandoff.action !== 'request_confirmation'
+      && value.organizeLibraryHandoff.action !== 'start_analysis'
+    ) {
+      throw new TypeError('Agent organize-library handoff action is invalid.');
+    }
+    assertAgentText(
+      value.organizeLibraryHandoff.instruction,
+      'organizeLibraryHandoff.instruction',
+      256 * 1024,
+      true,
+    );
   }
 }
 

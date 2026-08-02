@@ -178,12 +178,20 @@ describe('BGSM Agent messaging', () => {
       changedCount: 0,
       newMessages: input.history,
       candidateActiveProjection,
+      organizeLibraryHandoff: {
+        type: 'organize_whole_library',
+        action: 'request_confirmation',
+        instruction: 'Organize everything in my saved projects.',
+      },
     };
     messageListener?.({ type: 'bgsmAgentTurnResult', sequence: 0, result });
 
     expect(onResult).toHaveBeenCalledWith(result);
     expect(onResult.mock.calls[0]?.[0].newMessages[0].toolCalls[0].id).toBe('call-1');
     expect(onResult.mock.calls[0]?.[0].candidateActiveProjection).toEqual(candidateActiveProjection);
+    expect(onResult.mock.calls[0]?.[0].organizeLibraryHandoff).toEqual(
+      result.organizeLibraryHandoff,
+    );
     expect(onResult.mock.calls[0]?.[0].newMessages[1].toolCallId).toBe('call-1');
     control.acknowledge({ disposition: 'applied', appliedRevision: 8 });
     expect(postMessage).toHaveBeenCalledWith({

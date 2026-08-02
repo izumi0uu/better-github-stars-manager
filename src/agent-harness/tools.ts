@@ -56,6 +56,8 @@ export type AgentTool<TArgs = unknown, TResult = unknown> = {
   name: string;
   description: string;
   risk: ToolRisk;
+  /** Reject an entire multi-call envelope before any sibling tool can execute. */
+  requiresExclusiveEnvelope?: boolean;
   parameters?: Record<string, unknown>;
   validate?: (input: unknown) => TArgs;
   writeEffectPlan?: WriteEffectPlan<any, any>;

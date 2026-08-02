@@ -25,6 +25,8 @@ export function assertBgsmAgentContextCapabilityFeasible(input: Readonly<{
     scopeFingerprint: 'context-capability-preflight',
     enableRepositoryCodeSearch: true,
     enableRepositoryNotes: true,
+    enableOrganizeLibraryHandoff: true,
+    requestOrganizeLibraryHandoff: () => ({ status: 'accepted' }),
   }).map(toToolDefinition);
   const preflight = preflightContextRequest({
     messages: [

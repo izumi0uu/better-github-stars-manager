@@ -42,6 +42,10 @@ describe('background agent turn contract', () => {
     assert.doesNotMatch(backgroundSource, /interactionScope|interactionParent|scope_selector/);
     assert.match(backgroundSource, /enableRepositoryCodeSearch: repositoryCodeAccess/);
     assert.match(backgroundSource, /enableRepositoryNotes: promptIntent\.capabilities\.repositoryNotes/);
+    assert.match(backgroundSource, /enableOrganizeLibraryHandoff: !repositoryCodeReadOnly/);
+    assert.match(backgroundSource, /requestOrganizeLibraryHandoff: async \(action\) =>/);
+    assert.match(backgroundSource, /status: 'blocked_by_existing_job'/);
+    assert.match(backgroundSource, /organizeLibraryHandoffRequested \?\?= action/);
     assert.match(backgroundSource, /tool\.risk !== 'write'/);
     assert.match(
       backgroundSource,
@@ -53,6 +57,9 @@ describe('background agent turn contract', () => {
     assert.match(backgroundSource, /emit: options\.emit/);
 
     assert.match(backgroundSource, /buildBgsmAgentTerminalPayload\(/);
+    assert.match(backgroundSource, /organizeLibraryHandoffRequested && result\.reason !== 'aborted'/);
+    assert.match(backgroundSource, /action: organizeLibraryHandoffRequested/);
+    assert.match(backgroundSource, /instruction: prompt/);
     assert.match(backgroundSource, /runTurn: \(input, options\) => runBgsmAgentTurn\(input, options\)/);
     assert.doesNotMatch(backgroundSource, /runTurn: \(input, options\) => run\(/);
     assert.match(turnPortSource, /function deliveryEvent[\s\S]*?turnAttemptId: input\.turnAttemptId,[\s\S]*?sessionId: input\.sessionId,[\s\S]*?baseRevision: input\.baseRevision/);
@@ -121,7 +128,10 @@ describe('background agent turn contract', () => {
   it('uses the liveness-normalized reason for both status and terminal message selection', () => {
     assert.match(backgroundSource, /createAgentTurnLiveness\(\{[\s\S]*?onTimeout: \(reason\) => controller\.abort\(reason\)/);
     assert.match(backgroundSource, /reason: timeoutReason \? ['"]provider_error['"] : ['"]aborted['"]/);
-    assert.match(backgroundSource, /const effectiveReason = result\.reason/);
+    assert.match(
+      backgroundSource,
+      /const effectiveReason = organizeLibraryHandoff \? 'final_answer' : result\.reason/,
+    );
     assert.match(backgroundSource, /reason: effectiveReason,[\s\S]*?buildBgsmAgentTerminalPayload\(\s*\{ \.\.\.result, reason: effectiveReason \}/);
   });
 

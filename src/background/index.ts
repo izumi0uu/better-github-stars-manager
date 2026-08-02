@@ -55,6 +55,8 @@ import {
   selectBgsmAgentRawTurnNewMessages,
   type BgsmAgentActiveProjection,
   type BgsmAgentCompactionCheckpoint,
+  type BgsmAgentOrganizeLibraryAction,
+  type BgsmAgentOrganizeLibraryHandoff,
   type RepositoryCodeRefAuthority,
   type BgsmAgentTurnInput,
   type OrganizeJobRunSnapshot,
@@ -1033,6 +1035,7 @@ type BgsmAgentTurnResult = {
   candidateCheckpoint?: BgsmAgentCompactionCheckpoint;
   candidateActiveProjection?: BgsmAgentActiveProjection | null;
   contextFailureReason?: AgentContextFailureReason;
+  organizeLibraryHandoff?: BgsmAgentOrganizeLibraryHandoff;
 };
 
 async function clearLocalDataForDev() {
@@ -1198,13 +1201,15 @@ async function runBgsmAgentTurn(
     const scopeLabel = conversation.binding.label;
     const scopeFingerprint = conversation.binding.scopeFingerprint;
     const executionLedger = new AgentExecutionLedger();
+    let organizeLibraryHandoffRequested: BgsmAgentOrganizeLibraryAction | null = null;
     const repositoryCodeRefAuthority = repositoryCodeAccess
       ? repositoryCodeRefAuthorityFor(
           sessionId,
           scopeFingerprint,
         )
       : undefined;
-    const organizeApplyActive = organizeApplyBlocksAgentWrites(await getActiveOrganizeJob());
+    const activeOrganizeJob = await getActiveOrganizeJob();
+    const organizeApplyActive = organizeApplyBlocksAgentWrites(activeOrganizeJob);
     if (liveness.signal.aborted) return terminalAfterAbort();
     const tools = authorization.wrapTools(createBgsmAgentTools({
       repositoryScope,
@@ -1213,6 +1218,18 @@ async function runBgsmAgentTurn(
       enableRepositoryCodeSearch: repositoryCodeAccess,
       repositoryCodeRefAuthority,
       enableRepositoryNotes: promptIntent.capabilities.repositoryNotes,
+      enableOrganizeLibraryHandoff: !repositoryCodeReadOnly,
+      requestOrganizeLibraryHandoff: async (action) => {
+        const currentOrganizeJob = await getActiveOrganizeJob();
+        if (currentOrganizeJob) {
+          return {
+            status: 'blocked_by_existing_job',
+            activeJobStatus: currentOrganizeJob.status,
+          };
+        }
+        organizeLibraryHandoffRequested ??= action;
+        return { status: 'accepted' };
+      },
       assignManualTags: agentManualTagWriter,
     }).filter((tool) => (
       tool.risk !== 'write'
@@ -1353,8 +1370,17 @@ async function runBgsmAgentTurn(
 
     if (changed) broadcastDataChanged();
 
-    const effectiveReason = result.reason;
-    const contextFailureReason = result.contextFailureReason;
+    const organizeLibraryHandoff = organizeLibraryHandoffRequested && result.reason !== 'aborted'
+      ? Object.freeze({
+          type: 'organize_whole_library' as const,
+          action: organizeLibraryHandoffRequested,
+          instruction: prompt,
+        })
+      : undefined;
+    const effectiveReason = organizeLibraryHandoff ? 'final_answer' : result.reason;
+    const contextFailureReason = organizeLibraryHandoff
+      ? undefined
+      : result.contextFailureReason;
     if (
       contextFailureReason === 'provider_context_overflow'
       || contextFailureReason === 'provider_context_overflow_repeated'
@@ -1372,6 +1398,7 @@ async function runBgsmAgentTurn(
       changed,
       changedCount,
       ...(contextFailureReason ? { contextFailureReason } : {}),
+      ...(organizeLibraryHandoff ? { organizeLibraryHandoff } : {}),
       ...buildBgsmAgentTerminalPayload(
         { ...result, reason: effectiveReason },
         effectiveInput,

@@ -159,6 +159,8 @@ const WRITE_EFFECT_PLAN_REQUIRED_MESSAGE =
   'Write execution is unavailable because its replay safety contract is missing.';
 const WRITE_REPLAY_BLOCKED_MESSAGE =
   'Write execution is blocked because an earlier outcome is not safely replayable.';
+const EXCLUSIVE_TOOL_ENVELOPE_REQUIRED_MESSAGE =
+  'This tool must be requested by itself. Retry it without sibling tool calls.';
 const CONTEXT_LIMIT_EXCEEDED_MESSAGE = 'Context limit exceeded.';
 const TOOL_RESULT_MEMORY_LIMIT_MESSAGE =
   'The Agent could not free enough internal tool-result memory to continue.';
@@ -904,6 +906,9 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
       emit({ type: 'agent_error', sessionId: input.sessionId, message });
       return finishWithRaw('protocol_error', input.sessionId, messages, emit);
     }
+    const violatesExclusiveToolEnvelope = toolCalls.length > 1 && toolCalls.some((call) => (
+      toolMap.get(call.name)?.requiresExclusiveEnvelope === true
+    ));
     let recoveredToolMemoryBeforeExecution = false;
     if (
       input.contextPolicy
@@ -1077,7 +1082,14 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
         );
       }
       let outcome: ExecuteToolCallOutcome;
-      if (pendingStopReason) {
+      if (violatesExclusiveToolEnvelope) {
+        outcome = {
+          result: errorToolResult(
+            'exclusive_tool_envelope_required',
+            EXCLUSIVE_TOOL_ENVELOPE_REQUIRED_MESSAGE,
+          ),
+        };
+      } else if (pendingStopReason) {
         outcome = {
           result: stopSiblingResult(pendingStopReason),
         };

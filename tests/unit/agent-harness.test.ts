@@ -1045,6 +1045,53 @@ describe('agent harness agent loop', () => {
     );
   });
 
+  it('rejects a mixed exclusive envelope before any sibling tool can execute', async () => {
+    const executed: string[] = [];
+    const writeTool: AgentTool = {
+      name: 'write_before_handoff',
+      description: 'Mutate durable state',
+      risk: 'write',
+      async execute() {
+        executed.push('write');
+        return { changed: true };
+      },
+    };
+    const handoffTool: AgentTool = {
+      name: 'exclusive_handoff',
+      description: 'Transfer control to a dedicated workflow',
+      risk: 'suggest',
+      requiresExclusiveEnvelope: true,
+      async execute() {
+        executed.push('handoff');
+        return { status: 'accepted' };
+      },
+    };
+    const result = await runAgentLoop({
+      sessionId: 's-exclusive-envelope',
+      messages: [baseMessage],
+      provider: new MockProvider([
+        {
+          toolCalls: [
+            { id: 'call-write', name: writeTool.name, arguments: {} },
+            { id: 'call-handoff', name: handoffTool.name, arguments: {} },
+          ],
+        },
+        { content: 'Retried safely.' },
+      ]),
+      tools: [writeTool, handoffTool],
+      permissions: async () => ({ type: 'allow' }),
+    });
+
+    assert.equal(result.reason, 'final_answer');
+    assert.deepEqual(executed, []);
+    assert.deepEqual(
+      result.messages
+        .filter((message) => message.role === 'tool')
+        .map((message) => JSON.parse(message.content).error.code),
+      ['exclusive_tool_envelope_required', 'exclusive_tool_envelope_required'],
+    );
+  });
+
   it('pairs every declared call when the permission evaluator rejects', async () => {
     const secret = 'permission-secret-do-not-expose';
     const result = await runAgentLoop({
