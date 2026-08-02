@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import Dexie from 'dexie';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createDevTraceRecorder,
@@ -226,6 +227,66 @@ describe('Agent observability development store', () => {
     databases.push(reopened);
     expect((await reopened.roots.get('root-reload'))?.terminalState).toBe('completed');
     expect(await reopened.events.count()).toBe(2);
+  });
+
+  it('atomically clears version 1 traces with legacy acknowledgement dispositions', async () => {
+    const name = `bgsm-agent-dev-traces-test-legacy-ack-${crypto.randomUUID()}`;
+    const legacy = new Dexie(name);
+    legacy.version(1).stores({
+      roots: '&rootOperationId, startedAt, endedAt, operationKind, sessionId',
+      spans: '&spanId, rootOperationId, [rootOperationId+createdRevision]',
+      events: '&eventId, [rootOperationId+sequence], rootOperationId, wallTimeMs, kind',
+      meta: '&key',
+    });
+    await legacy.transaction(
+      'rw',
+      legacy.table('roots'),
+      legacy.table('spans'),
+      legacy.table('events'),
+      legacy.table('meta'),
+      async () => {
+        await legacy.table('roots').add({
+          rootOperationId: 'legacy-root',
+          operationKind: 'agent_turn',
+          sessionId: 'legacy-session',
+          startedAt: 100,
+          endedAt: 110,
+        });
+        await legacy.table('spans').add({
+          spanId: 'legacy-root:span',
+          rootOperationId: 'legacy-root',
+          createdRevision: 1,
+        });
+        await legacy.table('events').add({
+          eventId: 'legacy-acknowledgement',
+          rootOperationId: 'legacy-root',
+          operationKind: 'agent_turn',
+          spanId: 'legacy-root:span',
+          sequence: 1,
+          wallTimeMs: 110,
+          kind: 'result_acknowledged',
+          data: { disposition: 'not_applied', appliedRevision: null },
+        });
+        await legacy.table('meta').add({ key: 'accounting', totalBytes: 1 });
+      },
+    );
+    legacy.close();
+
+    const upgraded = new DevTraceDB(name);
+    databases.push(upgraded);
+    await upgraded.open();
+
+    expect(upgraded.verno).toBe(2);
+    expect(await Promise.all([
+      upgraded.roots.count(),
+      upgraded.spans.count(),
+      upgraded.events.count(),
+      upgraded.meta.count(),
+    ])).toEqual([0, 0, 0, 0]);
+
+    await completedRoot(upgraded, 'new-root', 200);
+    expect((await upgraded.roots.get('new-root'))?.terminalState).toBe('completed');
+    expect(await upgraded.events.count()).toBe(2);
   });
 
   it('resumes one compatible root with its original clock and preserves the first terminal state', async () => {

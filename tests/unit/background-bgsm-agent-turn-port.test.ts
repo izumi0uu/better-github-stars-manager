@@ -6,7 +6,10 @@ import {
   type BgsmAgentTurnInput,
 } from '@/bgsm-agent';
 import { attachBgsmAgentTurnPort } from '@/background/bgsm-agent-turn-port';
-import type { BgsmAgentTurnResult } from '@/utils/messaging';
+import type {
+  BgsmAgentTurnAckDisposition,
+  BgsmAgentTurnResult,
+} from '@/utils/messaging';
 import { AGENT_CONTEXT_CAPABILITY_REQUIRED } from '@/api/errors';
 
 type Listener<T> = (value: T) => void;
@@ -63,7 +66,13 @@ function fakePort() {
         ...input,
       }));
     },
-    acknowledge(input: BgsmAgentTurnInput, appliedRevision: number | null = null) {
+    acknowledge(
+      input: BgsmAgentTurnInput,
+      appliedRevision: number | null = null,
+      disposition: BgsmAgentTurnAckDisposition = appliedRevision === null
+        ? 'no_transition'
+        : 'applied',
+    ) {
       const hello = posted[0] as { executionEpochId: string };
       messageListeners.forEach((listener) => listener({
         type: 'ackBgsmAgentTurnResult',
@@ -71,7 +80,7 @@ function fakePort() {
         turnAttemptId: input.turnAttemptId,
         sessionId: input.sessionId,
         baseRevision: input.baseRevision,
-        disposition: appliedRevision === null ? 'not_applied' : 'applied',
+        disposition,
         appliedRevision,
       }));
       if (!posted.some((message) => (
@@ -122,6 +131,48 @@ describe('BGSM Agent turn Port ownership', () => {
       'bgsmAgentTurnHello',
     ]);
   });
+
+  it.each(['no_transition', 'transition_rejected', 'detached'] as const)(
+    'accepts and confirms a %s result acknowledgement without a revision',
+    async (disposition) => {
+      const transport = fakePort();
+      attachBgsmAgentTurnPort(transport.port, {
+        translateError: async () => 'failed',
+        async runTurn(input) {
+          return {
+            turnAttemptId: input.turnAttemptId,
+            sessionId: input.sessionId,
+            baseRevision: input.baseRevision,
+            reason: 'final_answer',
+            changed: false,
+            changedCount: 0,
+            newMessages: [],
+          };
+        },
+      });
+      const input: BgsmAgentTurnInput = {
+        turnAttemptId: `turn-attempt-ack-${disposition}`,
+        sessionId: `session-ack-${disposition}`,
+        baseRevision: 0,
+        prompt: 'Acknowledge the terminal result',
+        history: [],
+        binding: conversationBinding,
+      };
+
+      transport.start(input);
+      await waitUntil(() => messagesOfType(transport.posted, 'bgsmAgentTurnResult').length === 1);
+      transport.acknowledge(input, null, disposition);
+
+      assert.deepEqual(messagesOfType(transport.posted, 'bgsmAgentTurnAck')[0], {
+        type: 'bgsmAgentTurnAck',
+        turnAttemptId: input.turnAttemptId,
+        sessionId: input.sessionId,
+        baseRevision: input.baseRevision,
+        disposition,
+        appliedRevision: null,
+      });
+    },
+  );
 
   it('carries a validated completed split-turn projection through the Port', async () => {
     const transport = fakePort();

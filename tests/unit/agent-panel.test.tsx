@@ -970,11 +970,50 @@ describe('AgentPanel', () => {
     });
 
     expect(acknowledge).toHaveBeenCalledWith({
-      disposition: 'not_applied',
+      disposition: 'no_transition',
       appliedRevision: null,
     });
     expect(container.textContent).toContain('The extension restarted before this turn could be recovered');
     expect(container.textContent).not.toContain('Starting');
+  });
+
+  it('acknowledges a rejected Session transition separately from a result with no transition', async () => {
+    let turn: { input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers } | undefined;
+    const acknowledge = vi.fn();
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
+      turn = { input, handlers };
+      return { stop: vi.fn(), acknowledge };
+    });
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Commit this answer');
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+
+    await act(async () => {
+      turn?.handlers.onResult?.({
+        ...deliveryIdentity(turn.input),
+        reason: 'final_answer',
+        changed: false,
+        changedCount: 0,
+        candidateCheckpoint: {
+          schemaVersion: 1,
+          summary: 'Invalid checkpoint evidence',
+          summarizedMessageCount: 2,
+          summarizedThroughMessageId: 'missing-message',
+        },
+        newMessages: [
+          { id: 'rejected-user', role: 'user', content: turn.input.prompt, createdAt: 1 },
+          { id: 'rejected-answer', role: 'agent', content: 'Uncommitted answer', createdAt: 2 },
+        ],
+      });
+      await Promise.resolve();
+    });
+
+    expect(acknowledge).toHaveBeenCalledWith({
+      disposition: 'transition_rejected',
+      appliedRevision: null,
+    });
+    expect(container.textContent).not.toContain('Uncommitted answer');
+    expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
   });
 
   it('ignores stale event, result, and error delivery before changing any UI state', async () => {

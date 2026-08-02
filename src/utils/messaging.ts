@@ -166,9 +166,18 @@ export type BgsmAgentTurnHandlers = {
   onError?: (error: BgsmAgentTurnError) => void;
 };
 
+export type BgsmAgentTurnAckDisposition =
+  | 'applied'
+  | 'no_transition'
+  | 'transition_rejected'
+  | 'detached';
+
 export type BgsmAgentTurnAck = Readonly<
   | { disposition: 'applied'; appliedRevision: number }
-  | { disposition: 'not_applied'; appliedRevision: null }
+  | {
+      disposition: Exclude<BgsmAgentTurnAckDisposition, 'applied'>;
+      appliedRevision: null;
+    }
 >;
 
 export type BgsmOrganizeJobControllerIdentity = Readonly<{
@@ -901,7 +910,7 @@ type BgsmAgentTurnPortMessage =
       turnAttemptId: string;
       sessionId: string;
       baseRevision: number;
-      disposition: 'applied' | 'not_applied';
+      disposition: BgsmAgentTurnAckDisposition;
       appliedRevision: number | null;
     }
   | { type: 'bgsmAgentTurnEvent'; sequence: number; event: BgsmAgentTurnEvent }
@@ -1136,14 +1145,16 @@ export function startBgsmAgentTurn(
       if (message.type === 'bgsmAgentTurnResult') {
         if (!detached) handlers.onResult?.(message.result);
         if (detached || !handlers.onResult) {
-          pendingAcknowledgement = { disposition: 'not_applied', appliedRevision: null };
+          pendingAcknowledgement = { disposition: 'detached', appliedRevision: null };
           postAcknowledgement();
         }
         return;
       }
       if (!detached) handlers.onError?.(message.error);
       if (detached || !handlers.onError) {
-        pendingAcknowledgement = { disposition: 'not_applied', appliedRevision: null };
+        pendingAcknowledgement = detached
+          ? { disposition: 'detached', appliedRevision: null }
+          : { disposition: 'no_transition', appliedRevision: null };
         postAcknowledgement();
       }
     });

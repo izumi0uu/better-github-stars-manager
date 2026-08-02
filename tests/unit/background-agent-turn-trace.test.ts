@@ -113,6 +113,7 @@ describe('BGSM Agent turn trace boundary', () => {
         execution: { emit() { throw new Error('trace unavailable'); } },
         recordAgentEvent() { throw new Error('trace unavailable'); },
         recordDelivery() { throw new Error('trace unavailable'); },
+        recordAcknowledgement() { throw new Error('trace unavailable'); },
         recordCancellation() { throw new Error('trace unavailable'); },
         recordAttemptRejected() { throw new Error('trace unavailable'); },
         recordDisconnect() { throw new Error('trace unavailable'); },
@@ -394,6 +395,7 @@ describe('BGSM Agent turn trace boundary', () => {
 
     await waitUntil(async () => (await db.events.where('kind').equals('port_disconnected').count()) === 1);
     expect(messagesOfType(failedLive.posted, 'bgsmAgentTurnResult')).toHaveLength(0);
+    expect(failedLive.disconnectCalls).toBe(1);
     const disconnect = (await db.events.where('kind').equals('port_disconnected').first())?.data;
     expect(disconnect).toMatchObject({ lastDeliverySequence: 0, attemptState: 'terminal' });
 
@@ -463,6 +465,8 @@ describe('BGSM Agent turn trace boundary', () => {
       .where('rootOperationId')
       .equals(`agent_turn:${turn.turnAttemptId}`)
       .toArray();
+    expect(acknowledgedEvents.find((event) => event.kind === 'result_acknowledged')?.data)
+      .toEqual({ disposition: 'applied', appliedRevision: turn.baseRevision + 1 });
     expect(acknowledgedEvents.find((event) => event.kind === 'attempt_rejected')?.data)
       .toEqual({ reason: 'acknowledged_attempt' });
     expect((await db.roots.get(`agent_turn:${turn.turnAttemptId}`))?.terminalState).toBe('completed');
@@ -481,6 +485,7 @@ function fakePort(options: Readonly<{ failDeliverySequence?: number }> = {}) {
   const messageListeners: Array<(message: unknown) => void> = [];
   const disconnectListeners: Array<() => void> = [];
   const posted: unknown[] = [];
+  let disconnectCalls = 0;
   return {
     port: {
       postMessage(message: unknown) {
@@ -492,7 +497,10 @@ function fakePort(options: Readonly<{ failDeliverySequence?: number }> = {}) {
         ) throw new Error('simulated Port delivery failure');
         posted.push(message);
       },
-      disconnect() { disconnectListeners.forEach((listener) => listener()); },
+      disconnect() {
+        disconnectCalls += 1;
+        disconnectListeners.forEach((listener) => listener());
+      },
       onMessage: {
         addListener(listener: (message: unknown) => void) { messageListeners.push(listener); },
       },
@@ -501,6 +509,7 @@ function fakePort(options: Readonly<{ failDeliverySequence?: number }> = {}) {
       },
     },
     posted,
+    get disconnectCalls() { return disconnectCalls; },
     deliver(message: unknown) {
       for (const listener of messageListeners) listener(message);
     },

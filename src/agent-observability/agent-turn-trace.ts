@@ -238,6 +238,13 @@ function createAgentTurnTrace(
       }), true);
     },
 
+    recordAcknowledgement(acknowledgement) {
+      schedule((root) => emit(root, root.rootSpanId, {
+        kind: 'result_acknowledged',
+        data: acknowledgement,
+      }), true);
+    },
+
     recordCancellation(source) {
       if (cancellationRecorded) return;
       cancellationRecorded = true;

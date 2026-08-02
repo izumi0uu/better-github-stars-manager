@@ -613,8 +613,16 @@ function collectFindings(
       ));
     }
   }
+  const terminalStateByRoot = new Map(roots.map((root) => [
+    root.rootOperationId,
+    root.terminalState,
+  ]));
   for (const request of requests) {
     if (request.state === 'error') {
+      if (
+        terminalStateByRoot.get(request.rootOperationId) === 'cancelled'
+        && request.outcome.errorCode === 'caller_abort'
+      ) continue;
       const suffix = request.outcome.httpStatus === null ? '' : ` (HTTP ${request.outcome.httpStatus})`;
       findings.push(finding(
         'provider_request_failed',
@@ -639,7 +647,9 @@ function collectFindings(
       ));
     }
   }
-  for (const event of events) addEventFinding(findings, event);
+  for (const event of events) {
+    addEventFinding(findings, event);
+  }
   return findings.sort((left, right) => (
     severityRank(left.severity) - severityRank(right.severity)
     || (right.sequence ?? -1) - (left.sequence ?? -1)
@@ -684,7 +694,10 @@ function addCompletenessFindings(findings: AgentDiagnosticFinding[], artifact: T
   }
 }
 
-function addEventFinding(findings: AgentDiagnosticFinding[], event: DevTraceEvent): void {
+function addEventFinding(
+  findings: AgentDiagnosticFinding[],
+  event: DevTraceEvent,
+): void {
   if (event.kind === 'context_preflight') {
     const data = eventData(event, 'context_preflight');
     if (data.decision === 'irreducible') pushEventFinding(findings, event, 'context_irreducible', 'error', `Context preflight could not admit or reduce request ${data.requestId}.`, data.requestId);
@@ -707,6 +720,9 @@ function addEventFinding(findings: AgentDiagnosticFinding[], event: DevTraceEven
   } else if (event.kind === 'port_disconnected') {
     const data = eventData(event, 'port_disconnected');
     if (data.attemptState === 'active') pushEventFinding(findings, event, 'active_port_disconnected', 'warning', 'The Agent Port disconnected while its attempt was active.');
+  } else if (event.kind === 'result_acknowledged') {
+    const data = eventData(event, 'result_acknowledged');
+    if (data.disposition === 'transition_rejected') pushEventFinding(findings, event, 'session_transition_not_applied', 'error', 'The UI rejected the Agent result because its session transition could not be applied.');
   } else if (event.kind === 'trace_storage_state') {
     const data = eventData(event, 'trace_storage_state');
     if (data.state === 'append_failed' || data.state === 'capacity_exhausted') pushEventFinding(findings, event, 'trace_storage_failure', 'error', `Trace storage entered ${data.state}.`);

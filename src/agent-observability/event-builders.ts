@@ -86,6 +86,7 @@ function copyAllowlistedData(kind: DevTraceEventKind, input: unknown): DevTraceE
     case 'organize_progress': return pick(value, ['phase', 'durableRevision', 'batchStart', 'batchEnd', 'frozen', 'analyzed', 'selected', 'applied', 'failed']);
     case 'attempt_rejected': return pick(value, ['reason']);
     case 'delivery_state': return pick(value, ['connectionEpochId', 'deliverySequence', 'deliveryKind', 'durableRevision']);
+    case 'result_acknowledged': return pick(value, ['disposition', 'appliedRevision']);
     case 'port_disconnected': return pick(value, ['connectionEpochId', 'lastDeliverySequence', 'attemptState']);
     case 'trace_storage_state': return pick(value, ['state', 'affectedEvents', 'affectedRoots', 'reasonCode']);
   }

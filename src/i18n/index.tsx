@@ -262,6 +262,7 @@ export interface MessageCatalog {
     agentWriting: string;
     agentReadingData: string;
     agentSearchingCode: string;
+    agentPreparingOrganizationScope: string;
     agentApplyingChanges: string;
     agentDone: string;
     agentStopped: string;
@@ -1084,6 +1085,7 @@ const messages: Record<Locale, MessageCatalog> = {
       agentWriting: "Responding...",
       agentReadingData: "Checking local data...",
       agentSearchingCode: "Inspecting repository code...",
+      agentPreparingOrganizationScope: "Preparing full-library scope...",
       agentApplyingChanges: "Applying tag changes...",
       agentDone: "Done",
       agentStopped: "Stopped",
@@ -1974,6 +1976,7 @@ const messages: Record<Locale, MessageCatalog> = {
       agentWriting: "回复中...",
       agentReadingData: "正在检查本地数据...",
       agentSearchingCode: "正在检查仓库代码...",
+      agentPreparingOrganizationScope: "正在准备全库整理范围...",
       agentApplyingChanges: "正在应用标签变更...",
       agentDone: "完成",
       agentStopped: "已停止",

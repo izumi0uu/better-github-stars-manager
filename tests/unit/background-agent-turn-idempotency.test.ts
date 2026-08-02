@@ -227,7 +227,7 @@ describe('BGSM Agent turn single-flight registry', () => {
       turnAttemptId: turn.turnAttemptId,
       sessionId: turn.sessionId,
       baseRevision: turn.baseRevision,
-      disposition: 'not_applied',
+      disposition: 'no_transition',
       appliedRevision: null,
     });
     assert.equal(messagesOfType(conflicting.posted, 'bgsmAgentTurnAck').length, 1);

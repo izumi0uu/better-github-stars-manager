@@ -245,4 +245,122 @@ describe('Agent-readable diagnostic report', () => {
     expect(serialized).not.toContain('apiKey');
     expect(serialized).not.toContain('authorizationHeader');
   });
+
+  it('reports when the UI receives a result but cannot apply its session transition', () => {
+    const artifact = reportArtifact();
+    const acknowledgement = event(15, 'result_acknowledged', {
+      disposition: 'transition_rejected',
+      appliedRevision: null,
+    });
+    const report = createAgentDiagnosticReport({
+      ...artifact,
+      roots: artifact.roots.map((root) => ({
+        ...root,
+        lastSequence: 15,
+        eventCount: root.eventCount + 1,
+      })),
+      events: [...artifact.events, acknowledgement],
+      aggregates: { ...artifact.aggregates, eventCount: artifact.aggregates.eventCount + 1 },
+      integrity: { ...artifact.integrity, eventCount: artifact.integrity.eventCount + 1 },
+    });
+
+    expect(report.findings).toContainEqual(expect.objectContaining({
+      code: 'session_transition_not_applied',
+      severity: 'error',
+      evidence: { disposition: 'transition_rejected', appliedRevision: null },
+    }));
+  });
+
+  it.each(['no_transition', 'detached'] as const)(
+    'does not report a Session transition failure for %s acknowledgements',
+    (disposition) => {
+      const artifact = reportArtifact();
+      const acknowledgement = event(15, 'result_acknowledged', {
+        disposition,
+        appliedRevision: null,
+      });
+      const report = createAgentDiagnosticReport({
+        ...artifact,
+        roots: artifact.roots.map((root) => ({
+          ...root,
+          lastSequence: 15,
+          eventCount: root.eventCount + 1,
+        })),
+        events: [...artifact.events, acknowledgement],
+        aggregates: { ...artifact.aggregates, eventCount: artifact.aggregates.eventCount + 1 },
+        integrity: { ...artifact.integrity, eventCount: artifact.integrity.eventCount + 1 },
+      });
+
+      expect(report.findings.map((finding) => finding.code))
+        .not.toContain('session_transition_not_applied');
+    },
+  );
+
+  it('treats a caller-aborted Provider request as expected evidence for a cancelled turn', () => {
+    const source = reportArtifact();
+    const events: DevTraceEvent[] = [
+      event(1, 'root_started', {
+        executionEpochId: 'epoch-cancelled',
+        attemptId: 'attempt-cancelled',
+        sessionId: 'session-cancelled',
+        baseRevision: 8,
+      }),
+      event(2, 'provider_request_prepared', {
+        requestId: 'provider:cancelled',
+        requestKind: 'turn',
+        providerStep: 0,
+        requestAttempt: 1,
+        providerClass: 'custom',
+        protocol: 'responses',
+        modelCapabilityRevision: 'capability:cancelled',
+        requestBytes: 1_024,
+        historyBytes: 512,
+        estimatedInputTokens: 256,
+        maxOutputTokens: 1_024,
+      }),
+      event(3, 'provider_error', {
+        requestId: 'provider:cancelled',
+        requestKind: 'turn',
+        providerStep: 0,
+        requestAttempt: 1,
+        code: 'caller_abort',
+        status: null,
+        retryable: false,
+        overflow: false,
+      }),
+      event(4, 'root_terminal', {
+        state: 'cancelled',
+        reasonCode: 'aborted',
+        durationMs: 200,
+      }),
+      event(5, 'result_acknowledged', {
+        disposition: 'no_transition',
+        appliedRevision: null,
+      }),
+    ];
+    const report = createAgentDiagnosticReport({
+      ...source,
+      completeness: {
+        ...source.completeness,
+        droppedEventCount: 0,
+      },
+      roots: [{
+        ...source.roots[0],
+        terminalState: 'cancelled',
+        firstSequence: 1,
+        lastSequence: 5,
+        eventCount: 5,
+      }],
+      events,
+      aggregates: { rootCount: 1, eventCount: 5, failedRootCount: 0 },
+      integrity: { rootCount: 1, spanCount: 1, eventCount: 5 },
+    });
+
+    expect(report.summary).toEqual(expect.objectContaining({
+      status: 'healthy',
+      providerErrorCount: 1,
+      findingCounts: { error: 0, warning: 0, info: 0 },
+    }));
+    expect(report.findings).toEqual([]);
+  });
 });

@@ -25,6 +25,7 @@ export type AgentTurnTrace = Readonly<{
     deliverySequence: number;
     deliveryKind: 'live' | 'replay' | 'authoritative_snapshot';
   }>): void;
+  recordAcknowledgement(input: DevTraceEventDataByKind['result_acknowledged']): void;
   recordCancellation(source: 'user' | 'port' | 'runtime' | 'scenario'): void;
   recordAttemptRejected(reason: DevTraceEventDataByKind['attempt_rejected']['reason']): void;
   recordDisconnect(input: DevTraceEventDataByKind['port_disconnected']): void;

@@ -49,6 +49,7 @@ export const DEV_TRACE_EVENT_KINDS = [
   'organize_progress',
   'attempt_rejected',
   'delivery_state',
+  'result_acknowledged',
   'port_disconnected',
   'trace_storage_state',
 ] as const;
@@ -372,6 +373,10 @@ export type DevTraceEventDataByKind = Readonly<{
     deliveryKind: 'live' | 'replay' | 'authoritative_snapshot';
     durableRevision: number | null;
   }>;
+  result_acknowledged: Readonly<{
+    disposition: 'applied' | 'no_transition' | 'transition_rejected' | 'detached';
+    appliedRevision: number | null;
+  }>;
   port_disconnected: Readonly<{
     connectionEpochId: string;
     lastDeliverySequence: number | null;
@@ -618,6 +623,12 @@ function validateEventData(kind: DevTraceEventKind, value: unknown): void {
       throw new TypeError('OrganizeJobRun receipt page coordinates do not match its state.');
     }
   }
+  if (kind === 'result_acknowledged') {
+    const applied = data.disposition === 'applied';
+    if (applied !== (data.appliedRevision !== null)) {
+      throw new TypeError('Agent result acknowledgement revision does not match its disposition.');
+    }
+  }
 }
 
 type FieldValidator = (value: unknown, label: string) => void;
@@ -833,6 +844,10 @@ const EVENT_DATA_SCHEMAS: Readonly<Record<DevTraceEventKind, Readonly<Record<str
     reason: oneOf(['execution_epoch_mismatch', 'acknowledged_attempt', 'completed_revision', 'active_session_conflict', 'identity_conflict']),
   },
   delivery_state: { connectionEpochId: requiredString, deliverySequence: nonNegativeInteger, deliveryKind: oneOf(['live', 'replay', 'authoritative_snapshot']), durableRevision: nullableInteger },
+  result_acknowledged: {
+    disposition: oneOf(['applied', 'no_transition', 'transition_rejected', 'detached']),
+    appliedRevision: nullableInteger,
+  },
   port_disconnected: { connectionEpochId: requiredString, lastDeliverySequence: nullableInteger, attemptState: oneOf(['active', 'terminal', 'rejected']) },
   trace_storage_state: { state: oneOf(['flushed', 'evicted', 'capacity_exhausted', 'append_failed', 'reconciled']), affectedEvents: nonNegativeInteger, affectedRoots: nonNegativeInteger, reasonCode: nullableString },
 };

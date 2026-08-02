@@ -90,6 +90,13 @@ const DEFAULT_POLICY: DevTraceRetentionPolicy = Object.freeze({
   maxBytes: DEV_TRACE_TOTAL_BYTES_LIMIT,
 });
 
+const DEV_TRACE_STORES = {
+  roots: '&rootOperationId, startedAt, endedAt, operationKind, sessionId',
+  spans: '&spanId, rootOperationId, [rootOperationId+createdRevision]',
+  events: '&eventId, [rootOperationId+sequence], rootOperationId, wallTimeMs, kind',
+  meta: '&key',
+} as const;
+
 const artifactRootLeases = new Map<string, number>();
 let retentionTail = Promise.resolve();
 
@@ -105,11 +112,15 @@ export class DevTraceDB extends Dexie {
   ) {
     super(name);
     validatePolicy(policy);
-    this.version(1).stores({
-      roots: '&rootOperationId, startedAt, endedAt, operationKind, sessionId',
-      spans: '&spanId, rootOperationId, [rootOperationId+createdRevision]',
-      events: '&eventId, [rootOperationId+sequence], rootOperationId, wallTimeMs, kind',
-      meta: '&key',
+    this.version(1).stores(DEV_TRACE_STORES);
+    // Retained diagnostics embed contract unions, so incompatible trace payload changes require a clean dev store.
+    this.version(2).stores(DEV_TRACE_STORES).upgrade(async (transaction) => {
+      await Promise.all([
+        transaction.table('roots').clear(),
+        transaction.table('spans').clear(),
+        transaction.table('events').clear(),
+        transaction.table('meta').clear(),
+      ]);
     });
   }
 
@@ -682,6 +693,7 @@ const POST_TERMINAL_EVENT_KINDS = new Set<DevTraceEvent['kind']>([
   'attempt_rejected',
   'organize_receipt_state',
   'delivery_state',
+  'result_acknowledged',
   'port_disconnected',
   'trace_storage_state',
 ]);

@@ -18,7 +18,10 @@ import {
   type AgentEvent,
   type ModelToolCall,
 } from '@/agent-harness';
-import type { BgsmAgentTurnResult } from '@/utils/messaging';
+import type {
+  BgsmAgentTurnAckDisposition,
+  BgsmAgentTurnResult,
+} from '@/utils/messaging';
 import type {
   AgentTurnTrace,
   AgentTurnTraceFactory,
@@ -55,7 +58,7 @@ type AgentTurnServerMessage =
       turnAttemptId: string;
       sessionId: string;
       baseRevision: number;
-      disposition: 'applied' | 'not_applied';
+      disposition: BgsmAgentTurnAckDisposition;
       appliedRevision: number | null;
     }
   | { type: 'bgsmAgentTurnEvent'; sequence: number; event: Record<string, unknown> }
@@ -154,6 +157,14 @@ export function createBgsmAgentTurnRegistry(
   const highestCompletedBaseRevision = new Map<string, number>();
   const connectionStateByPort = new WeakMap<AgentTurnPort, AgentTurnPortTraceState>();
 
+  const disconnectPort = (port: AgentTurnPort) => {
+    try {
+      port.disconnect();
+    } catch {
+      // Delivery failure usually means Chrome already closed the Port.
+    }
+  };
+
   const markDisconnected = (port: AgentTurnPort, state: AgentTurnPortTraceState) => {
     if (state.disconnected) return;
     state.disconnected = true;
@@ -177,6 +188,7 @@ export function createBgsmAgentTurnRegistry(
     const state = connectionStateByPort.get(port);
     if (!safePost(port, delivery)) {
       if (state) markDisconnected(port, state);
+      disconnectPort(port);
       return false;
     }
     if (state) state.lastDeliverySequence = delivery.sequence;
@@ -417,6 +429,10 @@ export function createBgsmAgentTurnRegistry(
     }
     tombstones.delete(message.turnAttemptId);
     tombstones.set(message.turnAttemptId, true);
+    observeTrace(() => attempt.trace?.recordAcknowledgement({
+      disposition: message.disposition,
+      appliedRevision: message.appliedRevision,
+    }));
     if (attempt.trace) acknowledgedTraceByAttempt.set(message.turnAttemptId, attempt.trace);
     while (tombstones.size > RECENT_ATTEMPT_TOMBSTONE_LIMIT) {
       const oldest = tombstones.keys().next().value as string | undefined;
@@ -460,7 +476,10 @@ export function createBgsmAgentTurnRegistry(
         disconnected: false,
       };
       connectionStateByPort.set(port, connectionState);
-      safePost(port, { type: 'bgsmAgentTurnHello', executionEpochId });
+      if (!safePost(port, { type: 'bgsmAgentTurnHello', executionEpochId })) {
+        disconnectPort(port);
+        return;
+      }
       port.onDisconnect.addListener(() => {
         markDisconnected(port, connectionState);
       });
@@ -578,6 +597,9 @@ export function createDeferredBgsmAgentTurnTraceFactory(
       recordDelivery(delivery) {
         forward((trace) => trace.recordDelivery(delivery));
       },
+      recordAcknowledgement(acknowledgement) {
+        forward((trace) => trace.recordAcknowledgement(acknowledgement));
+      },
       recordCancellation(source) {
         forward((trace) => trace.recordCancellation(source));
       },
@@ -611,7 +633,7 @@ function confirmAcknowledgement(
     turnAttemptId: string;
     sessionId: string;
     baseRevision: number;
-    disposition: 'applied' | 'not_applied';
+    disposition: BgsmAgentTurnAckDisposition;
     appliedRevision: number | null;
   }>,
 ): void {
@@ -703,7 +725,7 @@ function isAckMessage(value: Record<string, unknown>, executionEpochId: string):
   turnAttemptId: string;
   sessionId: string;
   baseRevision: number;
-  disposition: 'applied' | 'not_applied';
+  disposition: BgsmAgentTurnAckDisposition;
   appliedRevision: number | null;
 } {
   if (!hasExactKeys(value, [
@@ -722,7 +744,10 @@ function isAckMessage(value: Record<string, unknown>, executionEpochId: string):
     || !Number.isSafeInteger(value.baseRevision)
     || Number(value.baseRevision) < 0
   ) return false;
-  if (value.disposition === 'not_applied') return value.appliedRevision === null;
+  if (value.disposition !== 'applied') {
+    return ['no_transition', 'transition_rejected', 'detached'].includes(String(value.disposition))
+      && value.appliedRevision === null;
+  }
   return value.disposition === 'applied'
     && Number.isSafeInteger(value.appliedRevision)
     && Number(value.appliedRevision) === Number(value.baseRevision) + 1;

@@ -259,14 +259,14 @@ describe('BGSM Agent messaging', () => {
     };
     messageListener?.({ type: 'bgsmAgentTurnError', sequence: 1, error });
     expect(onError).toHaveBeenCalledWith(error);
-    firstControl.acknowledge({ disposition: 'not_applied', appliedRevision: null });
+    firstControl.acknowledge({ disposition: 'no_transition', appliedRevision: null });
     expect(port.postMessage).toHaveBeenCalledWith({
       type: 'ackBgsmAgentTurnResult',
       executionEpochId: 'worker-epoch-1',
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
       baseRevision: input.baseRevision,
-      disposition: 'not_applied',
+      disposition: 'no_transition',
       appliedRevision: null,
     });
     messageListener?.({
@@ -274,7 +274,7 @@ describe('BGSM Agent messaging', () => {
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
       baseRevision: input.baseRevision,
-      disposition: 'not_applied',
+      disposition: 'no_transition',
       appliedRevision: null,
     });
 
@@ -441,13 +441,13 @@ describe('BGSM Agent messaging', () => {
     restarted.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
 
     expect(onResult).toHaveBeenCalledWith(result);
-    control.acknowledge({ disposition: 'not_applied', appliedRevision: null });
+    control.acknowledge({ disposition: 'no_transition', appliedRevision: null });
     restarted.deliver({
       type: 'bgsmAgentTurnAck',
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
       baseRevision: input.baseRevision,
-      disposition: 'not_applied',
+      disposition: 'no_transition',
       appliedRevision: null,
     });
     expect(restarted.port.disconnect).toHaveBeenCalledOnce();
@@ -545,7 +545,7 @@ describe('BGSM Agent messaging', () => {
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
       baseRevision: input.baseRevision,
-      disposition: 'not_applied',
+      disposition: 'detached',
       appliedRevision: null,
     });
   });

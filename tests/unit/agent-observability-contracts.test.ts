@@ -170,6 +170,46 @@ describe('Agent observability contracts', () => {
     expect(JSON.stringify([rejected, disconnected])).not.toMatch(/private|prompt|rawError/u);
   });
 
+  it('validates result acknowledgement revision semantics and strips unrelated UI state', () => {
+    const envelope = {
+      eventId: 'event-acknowledgement',
+      rootOperationId: 'root-1',
+      operationKind: 'agent_turn' as const,
+      spanId: 'span-1',
+      parentSpanId: null,
+      sequence: 1,
+      wallTimeMs: 101,
+      clockSegmentId: 'clock-1',
+      monotonicOffsetMs: 1,
+    };
+    const source = {
+      disposition: 'applied' as const,
+      appliedRevision: 4,
+      assistantMessage: 'private reply',
+    };
+    const applied = buildDevTraceEvent(envelope, {
+      kind: 'result_acknowledged',
+      data: source,
+    });
+
+    expect(applied.data).toEqual({ disposition: 'applied', appliedRevision: 4 });
+    expect(JSON.stringify(applied)).not.toContain('private reply');
+    for (const disposition of ['no_transition', 'transition_rejected', 'detached'] as const) {
+      expect(buildDevTraceEvent(envelope, {
+        kind: 'result_acknowledged',
+        data: { disposition, appliedRevision: null },
+      }).data).toEqual({ disposition, appliedRevision: null });
+    }
+    expect(() => buildDevTraceEvent(envelope, {
+      kind: 'result_acknowledged',
+      data: { disposition: 'transition_rejected', appliedRevision: 4 },
+    })).toThrow(/revision does not match/u);
+    expect(() => buildDevTraceEvent(envelope, {
+      kind: 'result_acknowledged',
+      data: { disposition: 'applied', appliedRevision: null },
+    })).toThrow(/revision does not match/u);
+  });
+
   it('keeps OrganizeJobRun batch and Provider attempt evidence metadata-only', () => {
     const envelope = {
       eventId: 'event-organize-attempt',
