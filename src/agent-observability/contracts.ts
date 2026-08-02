@@ -189,7 +189,7 @@ export type DevTraceEventDataByKind = Readonly<{
   context_reduction_started: Readonly<{
     providerStep: number | null;
     episode: number;
-    trigger: 'threshold' | 'provider_overflow' | 'history_bytes' | 'request_bytes';
+    trigger: 'threshold' | 'provider_overflow' | 'history_bytes' | 'request_bytes' | 'tool_memory';
     splitActiveTurn: boolean | null;
   }>;
   context_reduction_finished: Readonly<{
@@ -703,7 +703,7 @@ const EVENT_DATA_SCHEMAS: Readonly<Record<DevTraceEventKind, Readonly<Record<str
     decision: oneOf(['admit', 'reduce', 'irreducible']),
     reasonCode: nullableString,
   },
-  context_reduction_started: { providerStep: nullableInteger, episode: positiveInteger, trigger: oneOf(['threshold', 'provider_overflow', 'history_bytes', 'request_bytes']), splitActiveTurn: nullableBoolean },
+  context_reduction_started: { providerStep: nullableInteger, episode: positiveInteger, trigger: oneOf(['threshold', 'provider_overflow', 'history_bytes', 'request_bytes', 'tool_memory']), splitActiveTurn: nullableBoolean },
   context_reduction_finished: { providerStep: nullableInteger, episode: positiveInteger, outcome: oneOf(['summary', 'corrected_summary', 'fallback', 'failed', 'cancelled']), projectedTokens: nullableInteger, projectedBytes: nullableInteger },
   continuation_started: { providerStep: nonNegativeInteger, episode: positiveInteger, attempt: positiveInteger, reason: requiredString },
   continuation_finished: { providerStep: nonNegativeInteger, episode: positiveInteger, attempt: positiveInteger, outcome: oneOf(['continued', 'failed', 'cancelled', 'exhausted']) },

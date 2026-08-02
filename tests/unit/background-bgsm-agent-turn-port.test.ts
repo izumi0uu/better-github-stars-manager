@@ -138,7 +138,7 @@ describe('BGSM Agent turn Port ownership', () => {
           changed: false,
           changedCount: 0,
           newMessages: [],
-          candidateActiveProjection: input.activeProjection,
+          candidateActiveProjection: input.activeProjections?.[0],
         };
       },
     });
@@ -182,14 +182,14 @@ describe('BGSM Agent turn Port ownership', () => {
           createdAt: 4,
         },
       ],
-      activeProjection,
+      activeProjections: [activeProjection],
       binding: conversationBinding,
     };
 
     transport.start(input);
     await waitUntil(() => messagesOfType(transport.posted, 'bgsmAgentTurnResult').length === 1);
 
-    assert.deepEqual(received?.activeProjection, activeProjection);
+    assert.deepEqual(received?.activeProjections, [activeProjection]);
     assert.deepEqual(
       messagesOfType(transport.posted, 'bgsmAgentTurnResult')[0]?.result.candidateActiveProjection,
       activeProjection,

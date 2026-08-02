@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { describe, it } from 'vitest';
 import {
+  MAX_TOOL_RESULT_BYTES,
   MIN_TOOL_RESULT_ENVELOPE_BYTES,
   estimateContext,
   estimateContextWithUsage,
@@ -13,6 +14,7 @@ import {
   AgentProviderError,
   type ContextBudgetPolicy,
   type ModelGenerateInput,
+  type ModelProvider,
   type ModelResponse,
   type ModelUsage,
   type ToolResultAllowance,
@@ -126,6 +128,36 @@ function assertProjectionWithinPolicy(
 }
 
 describe('agent tool context budget invariants', () => {
+  it('uses the unsummarized memory segment instead of a fixed 8 KiB cap in a large context', async () => {
+    const policy = contextPolicy(1_050_000);
+    const allowances: ToolResultAllowance[] = [];
+    const tool = createBudgetAwareTool(
+      'read_large_context_page',
+      allowances,
+      (allowance) => allowance.maxSerializedBytes,
+    );
+    let providerCalls = 0;
+
+    const result = await runAgentLoop({
+      sessionId: 'large-context-stable-result-ceiling',
+      messages: [baseMessage],
+      tools: [tool],
+      contextPolicy: policy,
+      maxOutputTokens: policy.requestedOutputTokens,
+      provider: {
+        async generate() {
+          providerCalls += 1;
+          return providerCalls === 1
+            ? { toolCalls: [{ id: 'large-context-call', name: tool.name, arguments: { page: 1 } }] }
+            : { content: 'The bounded page was enough.' };
+        },
+      },
+    });
+
+    assert.equal(result.reason, 'final_answer');
+    assert.equal(allowances[0]?.maxSerializedBytes, policy.memoryResultCeilingBytes);
+  });
+
   it.each([32_768, 131_072])(
     'continues a short two-result turn near the former 8 KiB cap in a %i-token window',
     async (contextWindow) => {
@@ -359,6 +391,232 @@ describe('agent tool context budget invariants', () => {
     ]);
   });
 
+  it('reduces active tool memory and historical Provider bytes at the same boundary', async () => {
+    const memoryResultCeilingBytes = 400;
+    const policy = contextPolicy(32_768, { memoryResultCeilingBytes });
+    const allowances: ToolResultAllowance[] = [];
+    const continuationTriggers: string[] = [];
+    const historicalUser: AgentMessage = {
+      id: 'historical-user',
+      role: 'user',
+      content: 'Historical request.',
+      createdAt: -1,
+    };
+    const historicalAssistant: AgentMessage = {
+      id: 'historical-assistant',
+      role: 'agent',
+      content: 'HISTORICAL_BYTE_PRESSURE',
+      createdAt: 0,
+    };
+    const initialMessages = [historicalUser, historicalAssistant, baseMessage];
+    const tool = createBudgetAwareTool(
+      'read_before_combined_compaction',
+      allowances,
+      () => 300,
+    );
+    let providerCalls = 0;
+
+    const result = await runAgentLoop({
+      sessionId: 'tool-memory-before-byte-compaction',
+      messages: initialMessages,
+      rawMessages: initialMessages,
+      tools: [tool],
+      contextPolicy: policy,
+      maxOutputTokens: policy.requestedOutputTokens,
+      provider: {
+        inspectRequest(request) {
+          const containsHistoricalBytes = request.messages.some((message) => (
+            message.content.includes('HISTORICAL_BYTE_PRESSURE')
+          ));
+          const containsToolResult = request.messages.some((message) => message.role === 'tool');
+          const accepted = providerCalls === 0
+            || (!containsHistoricalBytes && !containsToolResult);
+          return {
+            serializedHistoryBytes: accepted ? 100 : 1_001,
+            serializedRequestBytes: accepted ? 200 : 2_001,
+            historyByteLimit: 1_000,
+            requestByteLimit: 2_000,
+            accepted,
+            ...(!accepted
+              ? { failure: 'provider_history_too_large' as const }
+              : {}),
+          };
+        },
+        async generate() {
+          providerCalls += 1;
+          return providerCalls === 1
+            ? {
+                toolCalls: [{
+                  id: 'combined-pressure-call',
+                  name: tool.name,
+                  arguments: { page: 1 },
+                }],
+              }
+            : { content: 'Recovered after compacting the active tool segment.' };
+        },
+      },
+      async onToolEnvelopeSettled(continuation) {
+        continuationTriggers.push(continuation.trigger);
+        return continuation.trigger === 'tool_result_memory_pressure'
+          ? { kind: 'ready', messages: initialMessages }
+          : { kind: 'ready', messages: [baseMessage] };
+      },
+    });
+
+    assert.equal(result.reason, 'final_answer');
+    assert.equal(providerCalls, 2);
+    assert.deepEqual(continuationTriggers, [
+      'tool_result_memory_pressure',
+      'provider_request_byte_limit',
+    ]);
+    assert.equal(allowances[0]?.maxSerializedBytes, MIN_TOOL_RESULT_ENVELOPE_BYTES);
+  });
+
+  it('reduces active tool memory before compacting simultaneous historical token pressure', async () => {
+    const policy = contextPolicy(8_192, { memoryResultCeilingBytes: 400 });
+    const continuationTriggers: string[] = [];
+    const tool = createBudgetAwareTool(
+      'read_before_combined_token_compaction',
+      [],
+      () => 300,
+    );
+    let providerCalls = 0;
+
+    const result = await runAgentLoop({
+      sessionId: 'tool-memory-before-token-compaction',
+      messages: [baseMessage],
+      rawMessages: [baseMessage],
+      tools: [tool],
+      contextPolicy: policy,
+      maxOutputTokens: policy.requestedOutputTokens,
+      provider: {
+        async generate() {
+          providerCalls += 1;
+          return providerCalls === 1
+            ? {
+                toolCalls: [{
+                  id: 'combined-token-pressure-call',
+                  name: tool.name,
+                  arguments: { page: 1 },
+                }],
+              }
+            : { content: 'Recovered after both compaction stages.' };
+        },
+      },
+      async onToolEnvelopeSettled(continuation) {
+        continuationTriggers.push(continuation.trigger);
+        return continuation.trigger === 'tool_result_memory_pressure'
+          ? {
+              kind: 'ready',
+              messages: [
+                baseMessage,
+                {
+                  id: 'oversized-historical-answer',
+                  role: 'agent',
+                  content: 'x'.repeat(40_000),
+                  createdAt: 2,
+                },
+              ],
+            }
+          : { kind: 'ready', messages: [baseMessage] };
+      },
+    });
+
+    assert.equal(result.reason, 'final_answer');
+    assert.equal(providerCalls, 2);
+    assert.deepEqual(continuationTriggers, [
+      'tool_result_memory_pressure',
+      'completed_tool_envelope',
+    ]);
+  });
+
+  it('uses one internal continuation when the final Provider preflight is over its hard limit', async () => {
+    const policy = contextPolicy(8_192);
+    const oversizedMessage = { ...baseMessage, content: 'x'.repeat(40_000) };
+    const continuationTriggers: string[] = [];
+    let providerCalls = 0;
+
+    const result = await runAgentLoop({
+      sessionId: 'hard-preflight-continuation',
+      messages: [oversizedMessage],
+      rawMessages: [oversizedMessage],
+      tools: [],
+      contextPolicy: policy,
+      maxOutputTokens: policy.requestedOutputTokens,
+      provider: {
+        async generate() {
+          providerCalls += 1;
+          return { content: 'Recovered before dispatch.' };
+        },
+      },
+      async onContextOverflow(continuation) {
+        continuationTriggers.push(continuation.trigger);
+        return { kind: 'ready', messages: [baseMessage] };
+      },
+    });
+
+    assert.equal(result.reason, 'final_answer');
+    assert.equal(providerCalls, 1);
+    assert.deepEqual(continuationTriggers, ['context_preflight']);
+  });
+
+  it('classifies irreducible context and Provider allowances without blaming tool memory', async () => {
+    async function runWithProvider(provider: ModelProvider) {
+      let toolExecutions = 0;
+      const result = await runAgentLoop({
+        sessionId: 'typed-result-allowance',
+        messages: [baseMessage],
+        tools: [{
+          name: 'typed_allowance_read',
+          description: 'Read after a typed allowance check.',
+          risk: 'read',
+          async execute() {
+            toolExecutions += 1;
+            return { page: 1 };
+          },
+        }],
+        contextPolicy: contextPolicy(8_192),
+        maxOutputTokens: 1_024,
+        provider,
+      });
+      assert.equal(toolExecutions, 0);
+      return result;
+    }
+
+    const contextResult = await runWithProvider({
+      async generate() {
+        return {
+          content: 'x'.repeat(24_000),
+          toolCalls: [{ id: 'context-limited-call', name: 'typed_allowance_read', arguments: {} }],
+        };
+      },
+    });
+    assert.equal(contextResult.contextFailureReason, 'current_turn_too_large');
+
+    let providerCalls = 0;
+    const providerResult = await runWithProvider({
+      inspectRequest(request) {
+        const accepted = !request.messages.some((message) => message.role === 'assistant');
+        return {
+          serializedHistoryBytes: accepted ? 100 : 1_001,
+          serializedRequestBytes: accepted ? 200 : 2_001,
+          historyByteLimit: 1_000,
+          requestByteLimit: 2_000,
+          accepted,
+          ...(!accepted ? { failure: 'provider_history_too_large' as const } : {}),
+        };
+      },
+      async generate() {
+        providerCalls += 1;
+        return {
+          toolCalls: [{ id: 'provider-limited-call', name: 'typed_allowance_read', arguments: {} }],
+        };
+      },
+    });
+    assert.equal(providerCalls, 1);
+    assert.equal(providerResult.contextFailureReason, 'provider_request_byte_limit');
+  });
+
   it('measures Unicode results by UTF-8 bytes while honoring the separate memory ceiling', async () => {
     const maxOutputTokens = 256;
     const memoryResultCeilingBytes = 700;
@@ -490,15 +748,15 @@ describe('agent tool context budget invariants', () => {
     }
 
     const smaller = await allowanceFor({ inputTokens: 100, outputTokens: 20, totalTokens: 120 });
-    const larger = await allowanceFor({ inputTokens: 10_000, outputTokens: 500, totalTokens: 10_500 });
+    const larger = await allowanceFor({ inputTokens: 14_500, outputTokens: 100, totalTokens: 14_600 });
     assert.ok(larger.contextRemainingTokens < smaller.contextRemainingTokens);
     assert.ok(larger.maxSerializedBytes < smaller.maxSerializedBytes);
   });
 
   it('invokes continuation only after a complete active tool envelope', async () => {
-    const policy = contextPolicy(24_000, { memoryResultCeilingBytes: 64 * 1024 });
+    const policy = contextPolicy(24_000, { memoryResultCeilingBytes: MAX_TOOL_RESULT_BYTES });
     const allowances: ToolResultAllowance[] = [];
-    const tool = createBudgetAwareTool('read_large_page', allowances, () => 55_000);
+    const tool = createBudgetAwareTool('read_large_page', allowances, () => MAX_TOOL_RESULT_BYTES);
     const continuations: AgentMessage[][] = [];
     let call = 0;
 
@@ -519,7 +777,7 @@ describe('agent tool context budget invariants', () => {
       },
       async onToolEnvelopeSettled({ messages }) {
         continuations.push([...messages]);
-        return { kind: 'ready', messages: [...messages] };
+        return { kind: 'ready', messages: [baseMessage] };
       },
     });
 
@@ -534,10 +792,10 @@ describe('agent tool context budget invariants', () => {
   });
 
   it('does not dispatch another Provider request when cancellation wins after continuation returns', async () => {
-    const policy = contextPolicy(24_000, { memoryResultCeilingBytes: 64 * 1024 });
+    const policy = contextPolicy(24_000, { memoryResultCeilingBytes: MAX_TOOL_RESULT_BYTES });
     const controller = new AbortController();
     const allowances: ToolResultAllowance[] = [];
-    const tool = createBudgetAwareTool('read_large_page', allowances, () => 55_000);
+    const tool = createBudgetAwareTool('read_large_page', allowances, () => MAX_TOOL_RESULT_BYTES);
     let providerCalls = 0;
     let continuations = 0;
 
@@ -574,14 +832,14 @@ describe('agent tool context budget invariants', () => {
   });
 
   it('retains every settled first-turn envelope when compaction replaces the Provider projection', async () => {
-    const policy = contextPolicy(24_000, { memoryResultCeilingBytes: 64 * 1024 });
+    const policy = contextPolicy(24_000, { memoryResultCeilingBytes: MAX_TOOL_RESULT_BYTES });
     const tool: AgentTool = {
       name: 'read_page',
       description: 'Read one page.',
       risk: 'read',
       async execute(args) {
         const page = (args as { page: number }).page;
-        return { payload: 'x'.repeat(page === 1 ? 55_000 : 20) };
+        return page === 1 ? dataForSerializedBytes(MAX_TOOL_RESULT_BYTES) : { payload: 'x'.repeat(20) };
       },
     };
     let providerCalls = 0;
@@ -629,6 +887,198 @@ describe('agent tool context budget invariants', () => {
       ['first-call', 'second-call'],
     );
     assert.equal(result.messages.some((message) => message.toolCallId === 'first-call'), false);
+  });
+
+  it('continues when the unsummarized tool-result segment is full and recounts the replacement projection', async () => {
+    const memoryResultCeilingBytes = 900;
+    const policy = contextPolicy(1_050_000, { memoryResultCeilingBytes });
+    const allowances: ToolResultAllowance[] = [];
+    const tool = createBudgetAwareTool('read_inventory_page', allowances, () => 700);
+    let providerCalls = 0;
+    let continuationCalls = 0;
+
+    const result = await runAgentLoop({
+      sessionId: 'tool-memory-segment-continuation',
+      messages: [baseMessage],
+      rawMessages: [baseMessage],
+      tools: [tool],
+      contextPolicy: policy,
+      maxOutputTokens: policy.requestedOutputTokens,
+      idFactory: sequentialIdFactory('tool-memory'),
+      provider: {
+        async generate() {
+          providerCalls += 1;
+          if (providerCalls <= 2) {
+            return {
+              toolCalls: [{
+                id: `inventory-call-${providerCalls}`,
+                name: tool.name,
+                arguments: { page: providerCalls },
+              }],
+            };
+          }
+          return { content: 'All inventory pages were inspected.' };
+        },
+      },
+      async onToolEnvelopeSettled(continuation) {
+        continuationCalls += 1;
+        assert.equal(continuation.trigger, 'tool_result_memory_pressure');
+        return { kind: 'ready', messages: [baseMessage] };
+      },
+    });
+
+    assert.equal(result.reason, 'final_answer');
+    assert.equal(providerCalls, 3);
+    assert.equal(continuationCalls, 2);
+    assert.deepEqual(
+      allowances.map((allowance) => allowance.memoryRemainingBytes),
+      [memoryResultCeilingBytes, memoryResultCeilingBytes],
+    );
+    assert.ok(result.rawMessages);
+    const rawToolResults = result.rawMessages
+      .filter((message) => message.role === 'tool')
+      .map((message) => JSON.parse(message.content) as { ok: boolean });
+    assert.deepEqual(rawToolResults.map((entry) => entry.ok), [true, true]);
+  });
+
+  it('stops with the internal memory reason when continuation makes no measurable progress', async () => {
+    const policy = contextPolicy(1_050_000, { memoryResultCeilingBytes: 900 });
+    const tool = createBudgetAwareTool('read_without_memory_progress', [], () => 700);
+    let providerCalls = 0;
+    let continuationCalls = 0;
+
+    const result = await runAgentLoop({
+      sessionId: 'tool-memory-no-progress',
+      messages: [baseMessage],
+      rawMessages: [baseMessage],
+      tools: [tool],
+      contextPolicy: policy,
+      maxOutputTokens: policy.requestedOutputTokens,
+      provider: {
+        async generate() {
+          providerCalls += 1;
+          return {
+            toolCalls: [{
+              id: 'no-progress-call',
+              name: tool.name,
+              arguments: { page: 1 },
+            }],
+          };
+        },
+      },
+      async onToolEnvelopeSettled(continuation) {
+        continuationCalls += 1;
+        return { kind: 'ready', messages: [...continuation.messages] };
+      },
+    });
+
+    assert.equal(result.reason, 'context_limit');
+    assert.equal(result.contextFailureReason, 'tool_result_memory_limit');
+    assert.equal(providerCalls, 1);
+    assert.equal(continuationCalls, 1);
+  });
+
+  it('recovers before executing a tool when a resumed projection enters the low-water reserve', async () => {
+    const memoryResultCeilingBytes = 10_000;
+    const policy = contextPolicy(1_050_000, { memoryResultCeilingBytes });
+    const priorAssistant: AgentMessage = {
+      id: 'prior-assistant',
+      role: 'agent',
+      content: '',
+      createdAt: 2,
+      toolCalls: [{ id: 'prior-call', name: 'read_inventory_page', arguments: { page: 1 } }],
+    };
+    const priorTool: AgentMessage = {
+      id: 'prior-tool',
+      role: 'tool',
+      content: JSON.stringify({ ok: true, data: { payload: 'x'.repeat(2_200) } }),
+      createdAt: 3,
+      toolCallId: 'prior-call',
+      toolName: 'read_inventory_page',
+    };
+    let providerCalls = 0;
+    let toolExecutions = 0;
+    let continuationCalls = 0;
+
+    const result = await runAgentLoop({
+      sessionId: 'tool-memory-pre-execution-recovery',
+      messages: [baseMessage, priorAssistant, priorTool],
+      rawMessages: [baseMessage, priorAssistant, priorTool],
+      tools: [{
+        name: 'read_inventory_page',
+        description: 'Read one inventory page.',
+        risk: 'read',
+        async execute() {
+          toolExecutions += 1;
+          return { page: 2 };
+        },
+      }],
+      contextPolicy: policy,
+      maxOutputTokens: policy.requestedOutputTokens,
+      provider: {
+        async generate() {
+          providerCalls += 1;
+          return providerCalls === 1
+            ? { toolCalls: [{ id: 'resumed-call', name: 'read_inventory_page', arguments: { page: 2 } }] }
+            : { content: 'The resumed page completed.' };
+        },
+      },
+      async onToolEnvelopeSettled(continuation) {
+        continuationCalls += 1;
+        assert.equal(continuation.trigger, 'tool_result_memory_pressure');
+        return { kind: 'ready', messages: [baseMessage] };
+      },
+    });
+
+    assert.equal(result.reason, 'final_answer');
+    assert.equal(continuationCalls, 1);
+    assert.equal(toolExecutions, 1);
+  });
+
+  it('reports an irreducible internal tool-memory limit without blaming the user prompt', async () => {
+    const memoryResultCeilingBytes = 180;
+    const policy = contextPolicy(1_050_000, { memoryResultCeilingBytes });
+    const priorAssistant: AgentMessage = {
+      id: 'memory-limit-assistant',
+      role: 'agent',
+      content: '',
+      createdAt: 2,
+      toolCalls: [{ id: 'memory-limit-prior-call', name: 'read_inventory_page', arguments: {} }],
+    };
+    const priorTool: AgentMessage = {
+      id: 'memory-limit-tool',
+      role: 'tool',
+      content: JSON.stringify({ ok: true, data: { payload: 'x'.repeat(80) } }),
+      createdAt: 3,
+      toolCallId: 'memory-limit-prior-call',
+      toolName: 'read_inventory_page',
+    };
+    let toolExecutions = 0;
+
+    const result = await runAgentLoop({
+      sessionId: 'irreducible-tool-memory-limit',
+      messages: [baseMessage, priorAssistant, priorTool],
+      tools: [{
+        name: 'read_inventory_page',
+        description: 'Read one inventory page.',
+        risk: 'read',
+        async execute() {
+          toolExecutions += 1;
+          return { page: 2 };
+        },
+      }],
+      contextPolicy: policy,
+      maxOutputTokens: policy.requestedOutputTokens,
+      provider: {
+        async generate() {
+          return { toolCalls: [{ id: 'memory-limit-next-call', name: 'read_inventory_page', arguments: {} }] };
+        },
+      },
+    });
+
+    assert.equal(result.reason, 'context_limit');
+    assert.equal(result.contextFailureReason, 'tool_result_memory_limit');
+    assert.equal(toolExecutions, 0);
   });
 
   it('emits content-free context diagnostics without prompt, tool, repository, or secret data', async () => {

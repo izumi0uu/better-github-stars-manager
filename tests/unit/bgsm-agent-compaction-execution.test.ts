@@ -129,7 +129,7 @@ function inspectingRecordingProvider(
 
 function completedToolEnvelope(
   input: BgsmAgentTurnInput,
-  checkpoint: BgsmAgentCompactionCheckpoint,
+  checkpoint?: BgsmAgentCompactionCheckpoint,
   resultChars = 2_500,
 ) {
   const messages = buildBgsmAgentTurnMessages({ ...input, checkpoint }, 'fresh');
@@ -463,7 +463,7 @@ describe('BGSM Agent compaction execution', () => {
       maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
     });
 
-    assert.deepEqual(result, { kind: 'context_limit', reason: 'current_turn_too_large' });
+    assert.deepEqual(result, { kind: 'context_limit', reason: 'provider_request_byte_limit' });
     assert.equal(calls.length, 0);
   });
 
@@ -620,6 +620,155 @@ describe('BGSM Agent compaction execution', () => {
       }
       assert.equal(result.messages.at(-1)?.content, suffix[2]?.content);
     }
+  });
+
+  it('compacts the active turn first when tool-result memory is under pressure', async () => {
+    const history = completeTurns(5);
+    const input = turn(history);
+    const completed = completedToolEnvelope(input, undefined, 2_000);
+    const { provider, calls } = recordingProvider({
+      content: validSummary('Paged inventory progress'),
+      finishReason: 'stop',
+    });
+
+    const result = await compactBgsmAgentCompletedToolEnvelope({
+      turn: input,
+      systemPrompt: 'fresh',
+      provider,
+      tools: completedEnvelopeTools,
+      profile: CONTEXT_PROFILE_8192,
+      maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
+      currentProjectedMessages: completed.messages,
+      currentCheckpoint: undefined,
+      rawMessages: completed.suffix,
+      force: true,
+      trigger: 'tool_result_memory_pressure',
+    });
+
+    assert.equal(result.kind, 'ready');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.messages.some((message) => message.content === history[0]?.content), false);
+    assert.equal(calls[0]?.messages.some((message) => message.content === input.prompt), false);
+    if (result.kind !== 'ready') return;
+    assert.equal(result.candidateCheckpoint, undefined);
+    assert.equal(result.activeProjection?.currentUserMessageId, completed.suffix[0]?.id);
+    assert.equal(result.activeProjection?.summarizedThroughMessageId, completed.suffix[2]?.id);
+    assert.equal(result.messages.some((message) => message.content === input.prompt), true);
+    assert.equal(result.messages.some((message) => message.content.includes('Active-turn progress summary')), true);
+    assert.equal(result.messages.some((message) => message.id === completed.suffix[1]?.id), false);
+    assert.doesNotThrow(() => validateProviderProtocolHistory(result.messages.map(toModelMessage)));
+  });
+
+  it('allows a memory-only active projection before oversized history is compacted separately', async () => {
+    const input = turn(completeTurns(1));
+    const completed = completedToolEnvelope(input, undefined, 2_000);
+    const oversizedSystemPrompt = `system:${'x'.repeat(40_000)}`;
+    completed.messages[0] = { ...completed.messages[0]!, content: oversizedSystemPrompt };
+    const { provider } = recordingProvider({
+      content: validSummary('Memory-only intermediate projection'),
+      finishReason: 'stop',
+    });
+
+    const result = await compactBgsmAgentCompletedToolEnvelope({
+      turn: input,
+      systemPrompt: oversizedSystemPrompt,
+      provider,
+      tools: completedEnvelopeTools,
+      profile: CONTEXT_PROFILE_8192,
+      maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
+      currentProjectedMessages: completed.messages,
+      currentCheckpoint: undefined,
+      rawMessages: completed.suffix,
+      force: true,
+      trigger: 'tool_result_memory_pressure',
+    });
+
+    assert.equal(result.kind, 'ready');
+    if (result.kind !== 'ready') return;
+    assert.equal(result.activeProjection?.summarizedThroughMessageId, completed.suffix[2]?.id);
+    assert.equal(preflightContextRequest({
+      messages: result.messages.map(toModelMessage),
+      toolSchemas: completedEnvelopeTools,
+      maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
+    }, CONTEXT_PROFILE_8192).accepted, false);
+  });
+
+  it('removes enough active envelopes to exit the memory reserve before reducing old history bytes', async () => {
+    const history = completeTurns(1, 120);
+    const input = turn(history);
+    const baseline = buildBgsmAgentTurnMessages(input, 'fresh');
+    const currentUser = baseline.at(-1)!;
+    const rawMessages: AgentMessage[] = [currentUser];
+    for (let index = 1; index <= 3; index += 1) {
+      rawMessages.push({
+        id: `memory-assistant-${index}`,
+        role: 'agent',
+        content: `Reading page ${index}.`,
+        createdAt: 100 + index * 2,
+        toolCalls: [{
+          id: `memory-call-${index}`,
+          name: 'search_stars',
+          arguments: { query: 'agent', page: index },
+        }],
+      }, {
+        id: `memory-result-${index}`,
+        role: 'tool',
+        content: JSON.stringify({ ok: true, data: { text: 'x'.repeat(3_000) } }),
+        createdAt: 101 + index * 2,
+        toolCallId: `memory-call-${index}`,
+        toolName: 'search_stars',
+      });
+    }
+    const currentProjectedMessages = [...baseline, ...rawMessages.slice(1)];
+    const profile = resolveContextBudgetPolicy({
+      capability: trustedAgentModelContextCapability('openai', 'gpt-5.4')!,
+      requestedOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
+      memoryResultCeilingBytes: 10_000,
+    });
+    const calls: Parameters<ModelProvider['generate']>[0][] = [];
+    const provider: ModelProvider = {
+      inspectRequest(request) {
+        const accepted = request.messages[0]?.content === BGSM_AGENT_SUMMARY_INSTRUCTION
+          || !request.messages.some((message) => message.content.includes('u1:'));
+        return {
+          serializedHistoryBytes: accepted ? 100 : 1_001,
+          serializedRequestBytes: accepted ? 200 : 2_001,
+          historyByteLimit: 1_000,
+          requestByteLimit: 2_000,
+          accepted,
+          ...(!accepted ? { failure: 'provider_history_too_large' as const } : {}),
+        };
+      },
+      async generate(request) {
+        calls.push(request);
+        return { content: validSummary('All three pages retained'), finishReason: 'stop' };
+      },
+    };
+
+    const result = await compactBgsmAgentCompletedToolEnvelope({
+      turn: input,
+      systemPrompt: 'fresh',
+      provider,
+      tools: completedEnvelopeTools,
+      profile,
+      maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
+      currentProjectedMessages,
+      currentCheckpoint: undefined,
+      rawMessages,
+      force: true,
+      trigger: 'tool_result_memory_pressure',
+    });
+
+    assert.equal(result.kind, 'ready');
+    assert.equal(calls.length, 1);
+    if (result.kind !== 'ready') return;
+    assert.equal(result.activeProjection?.summarizedThroughMessageId, 'memory-result-3');
+    assert.equal(result.messages.some((message) => message.role === 'tool'), false);
+    assert.equal(provider.inspectRequest?.({
+      messages: result.messages.map(toModelMessage),
+      tools: completedEnvelopeTools,
+      maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
+    }).accepted, false);
   });
 
   it('returns context_limit without summary traffic when no older legal boundary can advance', async () => {
@@ -1358,6 +1507,38 @@ describe('BGSM Agent compaction execution', () => {
     }
   });
 
+  it('classifies an irreducible Provider byte limit separately from token pressure', async () => {
+    const provider: ModelProvider = {
+      inspectRequest() {
+        return {
+          serializedHistoryBytes: 1_001,
+          serializedRequestBytes: 2_001,
+          historyByteLimit: 1_000,
+          requestByteLimit: 2_000,
+          accepted: false,
+          failure: 'provider_history_too_large',
+        };
+      },
+      async generate() {
+        throw new Error('An irreducible request must not reach the Provider.');
+      },
+    };
+
+    const result = await prepareBgsmAgentTurn({
+      turn: turn([]),
+      systemPrompt: 'fresh',
+      provider,
+      tools: [],
+      profile: CONTEXT_PROFILE_8192,
+      maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
+    });
+
+    assert.deepEqual(result, {
+      kind: 'context_limit',
+      reason: 'provider_request_byte_limit',
+    });
+  });
+
   it('returns aborted before inspecting a completed envelope when its signal is already cancelled', async () => {
     const history = completeTurns(2);
     const checkpoint: BgsmAgentCompactionCheckpoint = {
@@ -1980,7 +2161,7 @@ describe('BGSM Agent compaction execution', () => {
     };
     const input: BgsmAgentTurnInput = {
       ...turn([...projectedTurn, ...tailTurn]),
-      activeProjection: inheritedProjection,
+      activeProjections: [inheritedProjection],
     };
     // Pre-turn compaction already advanced the checkpoint past the projected
     // turn and rebuilt the live projection without the inherited projection.
@@ -1991,7 +2172,7 @@ describe('BGSM Agent compaction execution', () => {
       summarizedThroughMessageId: 'proj-final',
     };
     const projected = buildBgsmAgentTurnMessages(
-      { ...input, checkpoint: advancedCheckpoint, activeProjection: undefined },
+      { ...input, checkpoint: advancedCheckpoint, activeProjections: undefined },
       'fresh',
     );
     const envelope = [
@@ -2073,7 +2254,7 @@ describe('BGSM Agent compaction execution', () => {
     };
     const input: BgsmAgentTurnInput = {
       ...turn([...projectedTurn, ...tail]),
-      activeProjection: inheritedProjection,
+      activeProjections: [inheritedProjection],
     };
     // No checkpoint advancement yet: the live projection retains the inherited
     // projection, exactly how the loop entered this attempt.

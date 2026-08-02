@@ -22,6 +22,8 @@ export type AgentContextDiagnosticTrigger =
   | 'completed_tool_envelope_soft_limit'
   | 'completed_tool_envelope_byte_limit'
   | 'forced_completed_tool_envelope'
+  | 'tool_result_memory_pressure'
+  | 'context_preflight'
   | 'provider_context_overflow'
   | 'provider_request_byte_limit';
 
@@ -33,6 +35,7 @@ export type AgentContextDiagnosticCategory =
   | 'summary_invalid'
   | 'fallback_too_large'
   | 'final_preflight_failed'
+  | 'tool_result_memory_limit'
   | 'capability_unresolved'
   | 'provider_context_overflow'
   | 'provider_context_overflow_repeated'
@@ -105,6 +108,7 @@ export type AgentContextFailureReason =
   | 'summary_invalid'
   | 'fallback_too_large'
   | 'final_preflight_failed'
+  | 'tool_result_memory_limit'
   | 'provider_context_overflow'
   | 'provider_context_overflow_repeated'
   | 'provider_request_byte_limit'

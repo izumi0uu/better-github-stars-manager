@@ -3,6 +3,7 @@ import {
   BGSM_AGENT_HISTORICAL_SUMMARY_PREAMBLE,
   buildBgsmAgentActiveSummaryProjectionMessage,
   buildBgsmAgentTurnMessages,
+  selectBgsmAgentActiveProjectionsAfterCheckpoint,
   selectBgsmAgentRawTurnNewMessages,
   type BgsmAgentActiveProjection,
   type BgsmAgentCompactionCheckpoint,
@@ -10,6 +11,7 @@ import {
 } from './session';
 import {
   MESSAGE_FRAMING_TOKENS,
+  MAX_TOOL_RESULT_BYTES,
   SUMMARY_MAX_OUTPUT_TOKENS,
   SUMMARY_SAFETY_TOKENS,
   estimateContext,
@@ -77,6 +79,7 @@ export type BgsmAgentCompactionFailureReason =
   | 'summary_invalid'
   | 'fallback_too_large'
   | 'final_preflight_failed'
+  | 'tool_result_memory_limit'
   | 'provider_context_overflow'
   | 'provider_request_byte_limit';
 
@@ -192,9 +195,8 @@ export async function prepareBgsmAgentTurn(input: {
     }),
   });
   if (!candidate) {
-    const reason = isRequestBaseTooLarge(agentRequestBase, toolSchemas, input)
-      ? 'current_turn_too_large'
-      : 'no_candidate';
+    const reason = requestBaseFailureReason(agentRequestBase, toolSchemas, input)
+      ?? 'no_candidate';
     input.emit?.({
       type: 'context_compaction_end',
       sessionId: input.turn.sessionId,
@@ -289,6 +291,8 @@ export async function compactBgsmAgentCompletedToolEnvelope(input: {
   force?: boolean;
   trigger?:
     | 'completed_tool_envelope'
+    | 'tool_result_memory_pressure'
+    | 'context_preflight'
     | 'provider_context_overflow'
     | 'provider_request_byte_limit';
   signal?: AbortSignal;
@@ -348,6 +352,19 @@ export async function compactBgsmAgentCompletedToolEnvelope(input: {
     throw new TypeError('Completed tool-envelope projection must retain the active user suffix.');
   }
 
+  if (input.trigger === 'tool_result_memory_pressure') {
+    input.emit?.({ type: 'context_compaction_start', sessionId: input.turn.sessionId });
+    input.liveness?.markAgentProgress();
+    const activeOutcome = await compactBgsmAgentActiveTurn({
+      ...input,
+      baselineProjection,
+    });
+    if (activeOutcome) return activeOutcome;
+    emitFailedCompaction(input);
+    emitCompactionDiagnostic(input, 'terminal', { category: 'tool_result_memory_limit' });
+    return { kind: 'context_limit', reason: 'tool_result_memory_limit' };
+  }
+
   if (input.trigger === 'completed_tool_envelope') {
     emitCompactionDiagnostic(input, 'triggered', {
       trigger: input.force
@@ -402,6 +419,14 @@ export async function compactBgsmAgentCompletedToolEnvelope(input: {
       toolSchemas,
       maxOutputTokens: input.maxOutputTokens,
     }, input.profile);
+    const baseFailureReason = requestBaseFailureReason(
+      [
+        { role: 'system', content: input.systemPrompt },
+        ...activeSuffix.map(toModelMessage),
+      ],
+      toolSchemas,
+      input,
+    );
     const outcome: PreparedBgsmAgentTurn = currentPreflight.accepted
       && currentBytesAccepted
       && input.trigger !== 'provider_context_overflow'
@@ -419,18 +444,10 @@ export async function compactBgsmAgentCompletedToolEnvelope(input: {
           kind: 'context_limit',
           reason: input.trigger === 'provider_context_overflow'
             ? 'provider_context_overflow'
-            : isRequestBaseTooLarge(
-            [
-              { role: 'system', content: input.systemPrompt },
-              ...activeSuffix.map(toModelMessage),
-            ],
-            toolSchemas,
-            input,
-          )
-            ? 'current_turn_too_large'
-            : input.trigger === 'provider_request_byte_limit'
+            : baseFailureReason
+              ?? (input.trigger === 'provider_request_byte_limit'
               ? 'provider_request_byte_limit'
-              : 'no_candidate',
+              : 'no_candidate'),
         };
     emitCompactionDiagnostic(input, 'terminal', {
       category: outcome.kind === 'context_limit' ? outcome.reason : 'no_candidate',
@@ -522,7 +539,17 @@ function turnForCheckpoint(
   checkpoint: BgsmAgentCompactionCheckpoint | undefined,
 ): BgsmAgentTurnInput {
   return checkpoint !== turn.checkpoint
-    ? { ...turn, checkpoint, activeProjection: undefined }
+    ? {
+        ...turn,
+        checkpoint,
+        activeProjections: checkpoint
+          ? selectBgsmAgentActiveProjectionsAfterCheckpoint(
+              turn.history,
+              turn.activeProjections ?? [],
+              checkpoint,
+            )
+          : turn.activeProjections,
+      }
     : turn;
 }
 
@@ -543,6 +570,9 @@ async function compactBgsmAgentActiveTurn(input: Parameters<typeof compactBgsmAg
     input.profile,
   );
   const toolSchemas = input.tools.map(toToolDefinition);
+  const memoryReliefRequired = input.trigger === 'tool_result_memory_pressure';
+  const retainedToolResultLimit = input.profile.memoryResultCeilingBytes
+    - Math.min(MAX_TOOL_RESULT_BYTES, input.profile.memoryResultCeilingBytes);
   const candidate = selectActiveTurnCompactionCandidate({
     rawMessages,
     start: activeStart,
@@ -559,16 +589,21 @@ async function compactBgsmAgentActiveTurn(input: Parameters<typeof compactBgsmAg
     projectedSummaryOverheadTokens:
       MESSAGE_FRAMING_TOKENS + estimateUtf8Tokens(`${BGSM_AGENT_ACTIVE_TURN_SUMMARY_PREAMBLE}\n\n`),
     allowOversizedSummaryInput: true,
-    acceptCandidate: (candidate) => isProviderRequestWithinByteLimits({
-      provider: input.provider,
-      messages: [
-        ...input.baselineProjection.map(toModelMessage),
-        projectedSummaryMessage(BGSM_AGENT_ACTIVE_TURN_SUMMARY_PREAMBLE),
-        ...candidate.retainedHistory.map(toModelMessage),
-      ],
-      toolSchemas,
-      maxOutputTokens: input.maxOutputTokens,
-    }),
+    allowOversizedAgentProjection: memoryReliefRequired,
+    acceptCandidate: (candidate) => (
+      (!memoryReliefRequired
+        || retainedToolResultBytes(candidate.retainedHistory) <= retainedToolResultLimit)
+      && (memoryReliefRequired || isProviderRequestWithinByteLimits({
+        provider: input.provider,
+        messages: [
+          ...input.baselineProjection.map(toModelMessage),
+          projectedSummaryMessage(BGSM_AGENT_ACTIVE_TURN_SUMMARY_PREAMBLE),
+          ...candidate.retainedHistory.map(toModelMessage),
+        ],
+        toolSchemas,
+        maxOutputTokens: input.maxOutputTokens,
+      }))
+    ),
   });
   if (!candidate) return null;
 
@@ -624,13 +659,13 @@ async function compactBgsmAgentActiveTurn(input: Parameters<typeof compactBgsmAg
     maxOutputTokens: input.maxOutputTokens,
   }, input.profile);
   if (
-    !finalPreflight.accepted
-    || !isProviderRequestWithinByteLimits({
+    (!memoryReliefRequired && !finalPreflight.accepted)
+    || (!memoryReliefRequired && !isProviderRequestWithinByteLimits({
       provider: input.provider,
       messages: messages.map(toModelMessage),
       toolSchemas,
       maxOutputTokens: input.maxOutputTokens,
-    })
+    }))
   ) {
     emitFailedCompaction(input);
     emitCompactionDiagnostic(input, 'terminal', { category: 'final_preflight_failed' });
@@ -650,6 +685,13 @@ async function compactBgsmAgentActiveTurn(input: Parameters<typeof compactBgsmAg
     ...(input.currentCheckpoint ? { candidateCheckpoint: input.currentCheckpoint } : {}),
     activeProjection,
   };
+}
+
+function retainedToolResultBytes(messages: readonly AgentMessage[]): number {
+  return messages.reduce(
+    (total, message) => total + (message.role === 'tool' ? utf8ByteLength(message.content) : 0),
+    0,
+  );
 }
 
 function activeProjectionStart(
@@ -1156,24 +1198,28 @@ function isProviderRequestWithinByteLimits(input: Readonly<{
   }
 }
 
-function isRequestBaseTooLarge(
+function requestBaseFailureReason(
   messages: ModelMessage[],
   toolSchemas: readonly ReturnType<typeof toToolDefinition>[],
   input: Pick<
     Parameters<typeof prepareBgsmAgentTurn>[0],
     'profile' | 'maxOutputTokens' | 'provider'
   >,
-): boolean {
-  return !preflightContextRequest({
+): 'current_turn_too_large' | 'provider_request_byte_limit' | null {
+  const preflight = preflightContextRequest({
     messages,
     toolSchemas,
     maxOutputTokens: input.maxOutputTokens,
-  }, input.profile).accepted || !isProviderRequestWithinByteLimits({
+  }, input.profile);
+  if (!preflight.accepted) return 'current_turn_too_large';
+  return !isProviderRequestWithinByteLimits({
     provider: input.provider,
     messages,
     toolSchemas,
     maxOutputTokens: input.maxOutputTokens,
-  });
+  })
+    ? 'provider_request_byte_limit'
+    : null;
 }
 
 function emitFailedCompaction(input: Pick<

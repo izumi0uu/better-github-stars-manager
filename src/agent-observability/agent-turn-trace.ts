@@ -568,8 +568,9 @@ function isExecutionSpanTerminal(event: AgentExecutionTraceEvent): boolean {
 
 function reductionTrigger(
   trigger: AgentContextDiagnosticTrigger,
-): 'threshold' | 'provider_overflow' | 'history_bytes' | 'request_bytes' {
+): 'threshold' | 'provider_overflow' | 'history_bytes' | 'request_bytes' | 'tool_memory' {
   if (trigger === 'provider_context_overflow') return 'provider_overflow';
+  if (trigger === 'tool_result_memory_pressure') return 'tool_memory';
   if (
     trigger === 'pre_turn_byte_limit'
     || trigger === 'completed_tool_envelope_byte_limit'

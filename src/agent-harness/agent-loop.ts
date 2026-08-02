@@ -129,16 +129,20 @@ export type RunAgentLoopInput = {
   now?: () => number;
 };
 
+export type AgentContextContinuationTrigger =
+  | 'completed_tool_envelope'
+  | 'tool_result_memory_pressure'
+  | 'context_preflight'
+  | 'provider_context_overflow'
+  | 'provider_request_byte_limit';
+
 export type AgentContextContinuation = (
   input: Readonly<{
     messages: readonly AgentMessage[];
     /** Present only when the caller opted into the append-only turn transcript. */
     rawMessages?: readonly AgentMessage[];
     step: number;
-    trigger:
-      | 'completed_tool_envelope'
-      | 'provider_context_overflow'
-      | 'provider_request_byte_limit';
+    trigger: AgentContextContinuationTrigger;
   }>,
 ) => Promise<
   | Readonly<{ kind: 'ready'; messages: AgentMessage[] }>
@@ -156,6 +160,8 @@ const WRITE_EFFECT_PLAN_REQUIRED_MESSAGE =
 const WRITE_REPLAY_BLOCKED_MESSAGE =
   'Write execution is blocked because an earlier outcome is not safely replayable.';
 const CONTEXT_LIMIT_EXCEEDED_MESSAGE = 'Context limit exceeded.';
+const TOOL_RESULT_MEMORY_LIMIT_MESSAGE =
+  'The Agent could not free enough internal tool-result memory to continue.';
 
 export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopResult> {
   const emit = input.emit ?? (() => {});
@@ -171,9 +177,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
   const tracksRawMessages = input.rawMessages !== undefined;
   const rawMessages = [...(input.rawMessages ?? [])];
   const usedToolCallIds = collectToolCallIds(messages, rawMessages);
-  let cumulativeToolResultBytes = toolResultBytesSinceLatestUser(
-    tracksRawMessages ? rawMessages : messages,
-  );
+  let cumulativeToolResultBytes = toolResultBytesSinceLatestUser(messages);
   let latestUsage: ProviderUsageAnchor | undefined;
   let overflowRecoveryAttempted = false;
   let requestByteRecoveryAttempted = false;
@@ -194,6 +198,165 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
     return finishWithRaw('provider_error', input.sessionId, messages, emit);
   };
 
+  const continueAfterSettledToolBoundary = async (
+    step: number,
+    initialTrigger: Extract<
+      Parameters<AgentContextContinuation>[0]['trigger'],
+      'completed_tool_envelope' | 'tool_result_memory_pressure' | 'provider_request_byte_limit'
+    >,
+  ): Promise<AgentLoopResult | null> => {
+    if (!input.onToolEnvelopeSettled) return null;
+    const attempted = new Set<AgentContextContinuationTrigger>();
+    let trigger = initialTrigger;
+    while (true) {
+      attempted.add(trigger);
+      if (input.contextPolicy && trigger !== 'completed_tool_envelope') {
+        emitContextDiagnostic(emit, input.sessionId, 'compaction', input.contextPolicy, {
+          action: 'triggered',
+          trigger,
+          ...(trigger === 'provider_request_byte_limit'
+            ? { category: 'provider_request_byte_limit' as const }
+            : {}),
+        });
+      }
+      const episode = ++continuationEpisode;
+      traceExecution(input.trace, {
+        kind: 'continuation_started',
+        providerStep: step,
+        episode,
+        attempt: 1,
+        reason: trigger,
+      });
+      let continuation: Awaited<ReturnType<AgentContextContinuation>>;
+      try {
+        continuation = await input.onToolEnvelopeSettled({
+          messages: [...messages],
+          ...(tracksRawMessages ? { rawMessages: [...rawMessages] } : {}),
+          step,
+          trigger,
+        });
+      } catch (error) {
+        const cancelled = signal?.aborted
+          || (error instanceof AgentProviderError && error.code === 'caller_abort');
+        traceExecution(input.trace, {
+          kind: 'continuation_finished',
+          providerStep: step,
+          episode,
+          attempt: 1,
+          outcome: cancelled ? 'cancelled' : 'failed',
+        });
+        if (cancelled) return finishAfterAbort();
+        emit({
+          type: 'agent_error',
+          sessionId: input.sessionId,
+          message: publicAgentProviderErrorMessage(error),
+          category: providerErrorCategory(error),
+        });
+        return finishWithRaw('provider_error', input.sessionId, messages, emit);
+      }
+      if (signal?.aborted || continuation.kind === 'aborted') {
+        traceExecution(input.trace, {
+          kind: 'continuation_finished',
+          providerStep: step,
+          episode,
+          attempt: 1,
+          outcome: 'cancelled',
+        });
+        return finishAfterAbort();
+      }
+      if (continuation.kind === 'context_limit') {
+        traceExecution(input.trace, {
+          kind: 'continuation_finished',
+          providerStep: step,
+          episode,
+          attempt: 1,
+          outcome: 'exhausted',
+        });
+        const reason = continuation.reason ?? (
+          trigger === 'tool_result_memory_pressure'
+            ? 'tool_result_memory_limit'
+            : 'final_preflight_failed'
+        );
+        emit({
+          type: 'agent_error',
+          sessionId: input.sessionId,
+          message: reason === 'tool_result_memory_limit'
+            ? TOOL_RESULT_MEMORY_LIMIT_MESSAGE
+            : CONTEXT_LIMIT_EXCEEDED_MESSAGE,
+        });
+        return finishWithRaw('context_limit', input.sessionId, messages, emit, reason);
+      }
+      traceExecution(input.trace, {
+        kind: 'continuation_finished',
+        providerStep: step,
+        episode,
+        attempt: 1,
+        outcome: 'continued',
+      });
+      messages.splice(0, messages.length, ...continuation.messages);
+      cumulativeToolResultBytes = toolResultBytesSinceLatestUser(messages);
+      latestUsage = undefined;
+      input.liveness?.markAgentProgress();
+
+      const nextPreflight = input.contextPolicy
+        ? preflightContextRequest({
+            messages: messages.map(toModelMessage),
+            toolSchemas: toolDefinitions,
+            maxOutputTokens,
+          }, input.contextPolicy)
+        : null;
+      const memoryPressure = input.contextPolicy
+        ? toolResultMemoryPressure(input.contextPolicy, cumulativeToolResultBytes)
+        : false;
+      const bytePressure = input.provider.inspectRequest?.({
+        messages: messages.map(toModelMessage),
+        tools: toolDefinitions,
+        maxOutputTokens,
+      }).accepted === false;
+      const tokenPressure = input.contextPolicy && nextPreflight
+        ? shouldCompact(nextPreflight, input.contextPolicy)
+        : false;
+      const nextTrigger = memoryPressure && !attempted.has('tool_result_memory_pressure')
+        ? 'tool_result_memory_pressure' as const
+        : bytePressure && !attempted.has('provider_request_byte_limit')
+          ? 'provider_request_byte_limit' as const
+          : tokenPressure && !attempted.has('completed_tool_envelope')
+            ? 'completed_tool_envelope' as const
+            : null;
+      if (nextTrigger) {
+        trigger = nextTrigger;
+        continue;
+      }
+      if (!memoryPressure && !bytePressure && nextPreflight?.accepted !== false) return null;
+
+      const reason = memoryPressure
+        ? 'tool_result_memory_limit' as const
+        : bytePressure
+          ? 'provider_request_byte_limit' as const
+          : 'current_turn_too_large' as const;
+      emit({
+        type: 'agent_error',
+        sessionId: input.sessionId,
+        message: reason === 'tool_result_memory_limit'
+          ? TOOL_RESULT_MEMORY_LIMIT_MESSAGE
+          : CONTEXT_LIMIT_EXCEEDED_MESSAGE,
+      });
+      if (input.contextPolicy) {
+        emitContextDiagnostic(emit, input.sessionId, 'compaction', input.contextPolicy, {
+          action: 'terminal',
+          category: reason,
+        });
+      }
+      return finishWithRaw(
+        'context_limit',
+        input.sessionId,
+        messages,
+        emit,
+        reason,
+      );
+    }
+  };
+
   emit({ type: 'agent_start', sessionId: input.sessionId });
 
   for (let step = 0; step < maxSteps; step++) {
@@ -206,6 +369,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
     let modelMessages: ReturnType<typeof toModelMessage>[];
     let response: Awaited<ReturnType<ModelProvider['generate']>>;
     let requestAttempt = 0;
+    let preflightRecoveryAttempted = false;
     while (true) {
       requestAttempt += 1;
       const providerRequestIdentity = {
@@ -272,6 +436,94 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
         });
       }
       if (contextPreflight && !contextPreflight.accepted) {
+        if (!preflightRecoveryAttempted && input.onContextOverflow) {
+          preflightRecoveryAttempted = true;
+          const episode = ++continuationEpisode;
+          traceExecution(input.trace, {
+            kind: 'continuation_started',
+            providerStep: step,
+            episode,
+            attempt: 1,
+            reason: 'context_preflight',
+          });
+          if (input.contextPolicy) {
+            emitContextDiagnostic(emit, input.sessionId, 'compaction', input.contextPolicy, {
+              action: 'triggered',
+              trigger: 'context_preflight',
+            });
+          }
+          let continuation: Awaited<ReturnType<AgentContextContinuation>>;
+          try {
+            continuation = await input.onContextOverflow({
+              messages: [...messages],
+              ...(tracksRawMessages ? { rawMessages: [...rawMessages] } : {}),
+              step,
+              trigger: 'context_preflight',
+            });
+          } catch (continuationError) {
+            const cancelled = signal?.aborted
+              || (continuationError instanceof AgentProviderError
+                && continuationError.code === 'caller_abort');
+            traceExecution(input.trace, {
+              kind: 'continuation_finished',
+              providerStep: step,
+              episode,
+              attempt: 1,
+              outcome: cancelled ? 'cancelled' : 'failed',
+            });
+            if (cancelled) return finishAfterAbort();
+            emit({
+              type: 'agent_error',
+              sessionId: input.sessionId,
+              message: publicAgentProviderErrorMessage(continuationError),
+              category: providerErrorCategory(continuationError),
+            });
+            return finishWithRaw('provider_error', input.sessionId, messages, emit);
+          }
+          if (signal?.aborted || continuation.kind === 'aborted') {
+            traceExecution(input.trace, {
+              kind: 'continuation_finished',
+              providerStep: step,
+              episode,
+              attempt: 1,
+              outcome: 'cancelled',
+            });
+            return finishAfterAbort();
+          }
+          if (continuation.kind === 'context_limit') {
+            traceExecution(input.trace, {
+              kind: 'continuation_finished',
+              providerStep: step,
+              episode,
+              attempt: 1,
+              outcome: 'exhausted',
+            });
+            emit({
+              type: 'agent_error',
+              sessionId: input.sessionId,
+              message: CONTEXT_LIMIT_EXCEEDED_MESSAGE,
+            });
+            return finishWithRaw(
+              'context_limit',
+              input.sessionId,
+              messages,
+              emit,
+              continuation.reason ?? 'current_turn_too_large',
+            );
+          }
+          traceExecution(input.trace, {
+            kind: 'continuation_finished',
+            providerStep: step,
+            episode,
+            attempt: 1,
+            outcome: 'continued',
+          });
+          messages.splice(0, messages.length, ...continuation.messages);
+          cumulativeToolResultBytes = toolResultBytesSinceLatestUser(messages);
+          latestUsage = undefined;
+          input.liveness?.markAgentProgress();
+          continue;
+        }
         emit({
           type: 'agent_error',
           sessionId: input.sessionId,
@@ -478,6 +730,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
               outcome: 'continued',
             });
             messages.splice(0, messages.length, ...continuation.messages);
+            cumulativeToolResultBytes = toolResultBytesSinceLatestUser(messages);
             continue;
           }
 
@@ -601,6 +854,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
               outcome: 'continued',
             });
             messages.splice(0, messages.length, ...continuation.messages);
+            cumulativeToolResultBytes = toolResultBytesSinceLatestUser(messages);
             continue;
           }
 
@@ -649,6 +903,53 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
         : 'Provider tool calls failed protocol validation.';
       emit({ type: 'agent_error', sessionId: input.sessionId, message });
       return finishWithRaw('protocol_error', input.sessionId, messages, emit);
+    }
+    let recoveredToolMemoryBeforeExecution = false;
+    if (
+      input.contextPolicy
+      && toolCalls.length > 0
+      && (
+        toolResultMemoryPressure(input.contextPolicy, cumulativeToolResultBytes)
+        || !canFitMinimumToolResults(
+          input.contextPolicy,
+          cumulativeToolResultBytes,
+          toolCalls.length,
+        )
+      )
+    ) {
+      if (input.onToolEnvelopeSettled) {
+        const terminal = await continueAfterSettledToolBoundary(
+          step,
+          'tool_result_memory_pressure',
+        );
+        if (terminal) return terminal;
+        recoveredToolMemoryBeforeExecution = true;
+      }
+      if (
+        toolResultMemoryPressure(input.contextPolicy, cumulativeToolResultBytes)
+        || !canFitMinimumToolResults(
+          input.contextPolicy,
+          cumulativeToolResultBytes,
+          toolCalls.length,
+        )
+      ) {
+        emit({
+          type: 'agent_error',
+          sessionId: input.sessionId,
+          message: TOOL_RESULT_MEMORY_LIMIT_MESSAGE,
+        });
+        emitContextDiagnostic(emit, input.sessionId, 'compaction', input.contextPolicy, {
+          action: 'terminal',
+          category: 'tool_result_memory_limit',
+        });
+        return finishWithRaw(
+          'context_limit',
+          input.sessionId,
+          messages,
+          emit,
+          'tool_result_memory_limit',
+        );
+      }
     }
     for (const toolCall of toolCalls) {
       observeAgentContentCapture(input.contentCapture, (capture) => {
@@ -712,7 +1013,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
       return finishWithRaw('final_answer', input.sessionId, messages, emit);
     }
     if (!assistantMessage) throw new Error('Tool calls require an assistant envelope.');
-    const responseUsage = response.usage
+    const responseUsage = response.usage && !recoveredToolMemoryBeforeExecution
       ? {
           usage: response.usage,
           prefixMessageCount: modelMessages.length + 1,
@@ -749,17 +1050,30 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
         }
       } catch (error) {
         if (!(error instanceof ToolResultBudgetError)) throw error;
+        const reason = error.limitingFactor === 'provider'
+          ? 'provider_request_byte_limit' as const
+          : error.limitingFactor === 'context'
+            ? 'current_turn_too_large' as const
+            : 'tool_result_memory_limit' as const;
         emit({
           type: 'agent_error',
           sessionId: input.sessionId,
-          message: 'The model requested more tool calls than the remaining result budget can represent.',
+          message: reason === 'tool_result_memory_limit'
+            ? TOOL_RESULT_MEMORY_LIMIT_MESSAGE
+            : CONTEXT_LIMIT_EXCEEDED_MESSAGE,
         });
+        if (input.contextPolicy) {
+          emitContextDiagnostic(emit, input.sessionId, 'compaction', input.contextPolicy, {
+            action: 'terminal',
+            category: reason,
+          });
+        }
         return finishWithRaw(
           'context_limit',
           input.sessionId,
           messages,
           emit,
-          'current_turn_too_large',
+          reason,
         );
       }
       let outcome: ExecuteToolCallOutcome;
@@ -936,16 +1250,20 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
         maxOutputTokens,
       });
       const bytePressure = nextRequestInspection?.accepted === false;
-      if (shouldCompact(nextProjection, input.contextPolicy) || bytePressure) {
-        if (bytePressure) {
-          emitContextDiagnostic(emit, input.sessionId, 'compaction', input.contextPolicy, {
-            action: 'triggered',
-            trigger: 'provider_request_byte_limit',
-            category: 'provider_request_byte_limit',
-          });
-        }
+      const memoryPressure = toolResultMemoryPressure(
+        input.contextPolicy,
+        cumulativeToolResultBytes,
+      );
+      if (shouldCompact(nextProjection, input.contextPolicy) || bytePressure || memoryPressure) {
         if (!input.onToolEnvelopeSettled) {
           if (!nextProjection.accepted || bytePressure) {
+            if (bytePressure) {
+              emitContextDiagnostic(emit, input.sessionId, 'compaction', input.contextPolicy, {
+                action: 'triggered',
+                trigger: 'provider_request_byte_limit',
+                category: 'provider_request_byte_limit',
+              });
+            }
             emit({
               type: 'agent_error',
               sessionId: input.sessionId,
@@ -960,86 +1278,13 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
             );
           }
         } else {
-          const trigger = bytePressure
-            ? 'provider_request_byte_limit' as const
-            : 'completed_tool_envelope' as const;
-          const episode = ++continuationEpisode;
-          traceExecution(input.trace, {
-            kind: 'continuation_started',
-            providerStep: step,
-            episode,
-            attempt: 1,
-            reason: trigger,
-          });
-          let continuation: Awaited<ReturnType<AgentContextContinuation>>;
-          try {
-            continuation = await input.onToolEnvelopeSettled({
-              messages: [...messages],
-              ...(tracksRawMessages ? { rawMessages: [...rawMessages] } : {}),
-              step,
-              trigger,
-            });
-          } catch (error) {
-            traceExecution(input.trace, {
-              kind: 'continuation_finished',
-              providerStep: step,
-              episode,
-              attempt: 1,
-              outcome: signal?.aborted ? 'cancelled' : 'failed',
-            });
-            throw error;
-          }
-          if (signal?.aborted) {
-            traceExecution(input.trace, {
-              kind: 'continuation_finished',
-              providerStep: step,
-              episode,
-              attempt: 1,
-              outcome: 'cancelled',
-            });
-            return finishAfterAbort();
-          }
-          if (continuation.kind === 'aborted') {
-            traceExecution(input.trace, {
-              kind: 'continuation_finished',
-              providerStep: step,
-              episode,
-              attempt: 1,
-              outcome: 'cancelled',
-            });
-            return finishAfterAbort();
-          }
-          if (continuation.kind === 'context_limit') {
-            traceExecution(input.trace, {
-              kind: 'continuation_finished',
-              providerStep: step,
-              episode,
-              attempt: 1,
-              outcome: 'exhausted',
-            });
-            emit({
-              type: 'agent_error',
-              sessionId: input.sessionId,
-              message: CONTEXT_LIMIT_EXCEEDED_MESSAGE,
-            });
-            return finishWithRaw(
-              'context_limit',
-              input.sessionId,
-              messages,
-              emit,
-              continuation.reason ?? 'final_preflight_failed',
-            );
-          }
-          traceExecution(input.trace, {
-            kind: 'continuation_finished',
-            providerStep: step,
-            episode,
-            attempt: 1,
-            outcome: 'continued',
-          });
-          messages.splice(0, messages.length, ...continuation.messages);
-          latestUsage = undefined;
-          input.liveness?.markAgentProgress();
+          const trigger = memoryPressure
+            ? 'tool_result_memory_pressure' as const
+            : bytePressure
+              ? 'provider_request_byte_limit' as const
+              : 'completed_tool_envelope' as const;
+          const terminal = await continueAfterSettledToolBoundary(step, trigger);
+          if (terminal) return terminal;
         }
       }
     }
@@ -1431,7 +1676,9 @@ function resolveToolResultAllowance(input: Readonly<{
       MAX_TURN_TOOL_RESULT_BYTES - input.cumulativeToolResultBytes - reservedSiblingBytes,
     );
     const maxSerializedBytes = Math.min(MAX_TOOL_RESULT_BYTES, memoryRemainingBytes);
-    if (maxSerializedBytes < MIN_TOOL_RESULT_ENVELOPE_BYTES) throw new ToolResultBudgetError();
+    if (maxSerializedBytes < MIN_TOOL_RESULT_ENVELOPE_BYTES) {
+      throw new ToolResultBudgetError('memory');
+    }
     return {
       maxSerializedBytes,
       contextRemainingTokens: Number.MAX_SAFE_INTEGER,
@@ -1492,7 +1739,7 @@ function resolveToolResultAllowance(input: Readonly<{
     }
   }
   // A complete minimal envelope gives the continuation owner a protocol-safe
-  // boundary to compact. Memory exhaustion remains terminal before execution.
+  // boundary to compact before another Provider request or tool execution.
   const contextAllowanceBytes = !minimum.accepted && input.allowMinimumEnvelopeForContinuation
     ? MIN_TOOL_RESULT_ENVELOPE_BYTES
     : contextRemainingBytes;
@@ -1505,13 +1752,38 @@ function resolveToolResultAllowance(input: Readonly<{
     memoryRemainingBytes,
     providerAllowanceBytes,
   );
-  if (maxSerializedBytes < MIN_TOOL_RESULT_ENVELOPE_BYTES) throw new ToolResultBudgetError();
+  if (maxSerializedBytes < MIN_TOOL_RESULT_ENVELOPE_BYTES) {
+    const factor = memoryRemainingBytes < MIN_TOOL_RESULT_ENVELOPE_BYTES
+      ? 'memory' as const
+      : providerAllowanceBytes < MIN_TOOL_RESULT_ENVELOPE_BYTES
+        ? 'provider' as const
+        : 'context' as const;
+    throw new ToolResultBudgetError(factor);
+  }
   return {
     maxSerializedBytes,
     contextRemainingTokens,
     memoryRemainingBytes,
     ...(providerResultCeilingBytes === undefined ? {} : { providerResultCeilingBytes }),
   };
+}
+
+function canFitMinimumToolResults(
+  policy: Pick<ContextBudgetPolicy, 'memoryResultCeilingBytes'>,
+  cumulativeToolResultBytes: number,
+  pendingToolCallCount: number,
+): boolean {
+  return cumulativeToolResultBytes
+    + pendingToolCallCount * MIN_TOOL_RESULT_ENVELOPE_BYTES
+    <= policy.memoryResultCeilingBytes;
+}
+
+function toolResultMemoryPressure(
+  policy: Pick<ContextBudgetPolicy, 'memoryResultCeilingBytes'>,
+  cumulativeToolResultBytes: number,
+): boolean {
+  const lowWaterMark = Math.min(MAX_TOOL_RESULT_BYTES, policy.memoryResultCeilingBytes);
+  return policy.memoryResultCeilingBytes - cumulativeToolResultBytes < lowWaterMark;
 }
 
 function abortedToolOutcome(

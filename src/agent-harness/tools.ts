@@ -118,8 +118,10 @@ export type FinalizedToolResult = {
 
 export type WriteToolOutcome = 'committed' | 'failed' | 'unknown';
 
+export type ToolResultBudgetLimitingFactor = 'context' | 'memory' | 'provider';
+
 export class ToolResultBudgetError extends Error {
-  constructor() {
+  constructor(readonly limitingFactor?: ToolResultBudgetLimitingFactor) {
     super('Insufficient turn budget for a required tool-result envelope.');
     this.name = 'ToolResultBudgetError';
   }

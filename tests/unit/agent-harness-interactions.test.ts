@@ -872,7 +872,7 @@ describe('agent-loop suspend and orderly settlement surface', () => {
     );
   });
 
-  it('preserves the 16KiB result budget from raw history after compaction and resume', async () => {
+  it('retains compacted raw history without charging it against the resumed projection', async () => {
     const base = checkpointInput(2);
     const largePrefix = base.assistantEnvelope.toolCalls.slice(0, 2).map((call) => {
       const serializedResult = serializeBoundedToolResult(exactSuccess(7_900)).serialized;
@@ -918,9 +918,9 @@ describe('agent-loop suspend and orderly settlement surface', () => {
     const results = resumed.rawMessages!.filter((message) => message.role === 'tool');
     const nextResult = results.find((message) => message.toolCallId === 'next-call');
     assert.ok(nextResult);
-    assert.equal(JSON.parse(nextResult.content).error.code, 'tool_output_too_large');
+    assert.equal(JSON.parse(nextResult.content).ok, true);
     assert.equal(
-      results.reduce((sum, message) => sum + encoder.encode(message.content).byteLength, 0) <=
+      results.reduce((sum, message) => sum + encoder.encode(message.content).byteLength, 0) >
         16 * 1024,
       true,
     );

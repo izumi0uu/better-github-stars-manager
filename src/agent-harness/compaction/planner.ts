@@ -72,6 +72,8 @@ export type SelectActiveTurnCompactionCandidateInput = {
   previousSummaryOverheadTokens?: number;
   /** Allows a deterministic local summary when the Provider summary request cannot fit. */
   allowOversizedSummaryInput?: boolean;
+  /** Allows a memory-only intermediate projection before historical context is reduced. */
+  allowOversizedAgentProjection?: boolean;
   acceptCandidate?: (candidate: CompactionCandidate) => boolean;
 };
 
@@ -217,7 +219,10 @@ export function selectActiveTurnCompactionCandidate(
 
     const projectedAgentInputTokens =
       agentBaseInput + projectedSummaryTokens + retainedHistoryTokens;
-    if (projectedAgentInputTokens > input.profile.hardLimit) continue;
+    if (
+      !input.allowOversizedAgentProjection
+      && projectedAgentInputTokens > input.profile.hardLimit
+    ) continue;
 
     const candidate: CompactionCandidate = {
       boundary,

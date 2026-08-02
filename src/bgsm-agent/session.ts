@@ -45,7 +45,7 @@ export type BgsmAgentSession = {
   revision: number;
   messages: BgsmAgentSessionMessage[];
   compaction?: BgsmAgentCompactionCheckpoint;
-  activeProjection?: BgsmAgentActiveProjection;
+  activeProjections?: BgsmAgentActiveProjection[];
   binding?: BgsmAgentConversationBinding;
 };
 
@@ -56,7 +56,7 @@ export type BgsmAgentTurnInput = {
   prompt: string;
   history: BgsmAgentSessionMessage[];
   checkpoint?: BgsmAgentCompactionCheckpoint;
-  activeProjection?: BgsmAgentActiveProjection;
+  activeProjections?: BgsmAgentActiveProjection[];
   candidateContract?: BgsmAgentConversationCandidate;
   binding?: BgsmAgentConversationBinding;
 };
@@ -113,7 +113,9 @@ export function createBgsmAgentTurnInput(
     prompt,
     history: session.messages.slice(),
     ...(session.compaction ? { checkpoint: { ...session.compaction } } : {}),
-    ...(session.activeProjection ? { activeProjection: { ...session.activeProjection } } : {}),
+    ...(session.activeProjections?.length
+      ? { activeProjections: session.activeProjections.map((projection) => ({ ...projection })) }
+      : {}),
     ...(session.binding
       ? { binding: session.binding }
       : { candidateContract: candidateContract! }),
@@ -138,6 +140,9 @@ export function applyBgsmAgentSessionTransition(
   ) {
     throw new Error('BGSM Agent session transition must commit a checkpoint, projection, or message delta.');
   }
+  if (transition.candidateActiveProjection === null && !transition.candidateCheckpoint) {
+    throw new Error('BGSM Agent active projections can only be cleared by an advancing checkpoint.');
+  }
   if (transition.messageDelta.length > 0) {
     validateBgsmAgentSessionHistory(transition.messageDelta);
   }
@@ -155,12 +160,26 @@ export function applyBgsmAgentSessionTransition(
   }
 
   const nextCheckpoint = transition.candidateCheckpoint ?? session.compaction;
-  const nextActiveProjection = transition.candidateActiveProjection === undefined
-    ? session.activeProjection
-    : transition.candidateActiveProjection ?? undefined;
-  if (nextActiveProjection) {
-    verifyBgsmAgentActiveProjection(nextMessages, nextActiveProjection, nextCheckpoint);
-  }
+  const retainedActiveProjections = transition.candidateCheckpoint
+    ? selectBgsmAgentActiveProjectionsAfterCheckpoint(
+        nextMessages,
+        session.activeProjections ?? [],
+        transition.candidateCheckpoint,
+      )
+    : transition.candidateActiveProjection === null
+      ? []
+      : [...(session.activeProjections ?? [])];
+  const nextActiveProjections = transition.candidateActiveProjection
+    ? [
+        ...retainedActiveProjections.filter(
+          (projection) => projection.currentUserMessageId
+            !== transition.candidateActiveProjection!.currentUserMessageId,
+        ),
+        transition.candidateActiveProjection,
+      ]
+    : retainedActiveProjections;
+  const orderedActiveProjections = orderActiveProjections(nextMessages, nextActiveProjections);
+  verifyBgsmAgentActiveProjections(nextMessages, orderedActiveProjections, nextCheckpoint);
 
   return {
     applied: true,
@@ -176,7 +195,9 @@ export function applyBgsmAgentSessionTransition(
         : session.compaction
           ? { compaction: session.compaction }
           : {}),
-      ...(nextActiveProjection ? { activeProjection: { ...nextActiveProjection } } : {}),
+      ...(orderedActiveProjections.length > 0
+        ? { activeProjections: orderedActiveProjections.map((projection) => ({ ...projection })) }
+        : {}),
     },
   };
 }
@@ -376,28 +397,34 @@ export function verifyBgsmAgentActiveProjection(
   if (history[currentUserIndex]?.role !== 'user' || boundaryIndex <= currentUserIndex) {
     throw new TypeError('BGSM Agent active projection must span a user turn prefix.');
   }
+  const turnEndIndex = nextUserMessageIndex(history, currentUserIndex + 1);
+  if (boundaryIndex >= turnEndIndex) {
+    throw new TypeError('BGSM Agent active projection cannot cross a user turn boundary.');
+  }
   if (history[boundaryIndex]?.role !== 'tool') {
     throw new TypeError('BGSM Agent active projection boundary must identify one settled tool result.');
   }
+  const rawTailIndexAtCreation = currentUserIndex + projection.rawMessageCountAtCreation - 1;
   if (
     !Number.isSafeInteger(projection.rawMessageCountAtCreation)
-    || projection.rawMessageCountAtCreation <= boundaryIndex
-    || projection.rawMessageCountAtCreation > history.length
-    || history[projection.rawMessageCountAtCreation - 1]?.id !== projection.rawTailMessageIdAtCreation
+    || projection.rawMessageCountAtCreation < 1
+    || rawTailIndexAtCreation < boundaryIndex
+    || rawTailIndexAtCreation >= turnEndIndex
+    || history[rawTailIndexAtCreation]?.id !== projection.rawTailMessageIdAtCreation
   ) {
     throw new TypeError('BGSM Agent active projection no longer matches its raw creation prefix.');
   }
 
   const retainedSuffixStart = boundaryIndex + 1;
   if (projection.retainedSuffixFirstMessageId === null) {
-    if (retainedSuffixStart !== projection.rawMessageCountAtCreation) {
+    if (retainedSuffixStart !== rawTailIndexAtCreation + 1) {
       throw new TypeError('BGSM Agent active projection is missing its retained suffix identity.');
     }
   } else if (history[retainedSuffixStart]?.id !== projection.retainedSuffixFirstMessageId) {
     throw new TypeError('BGSM Agent active projection retained suffix no longer matches raw history.');
   }
   if (
-    history[retainedSuffixStart]
+    retainedSuffixStart < turnEndIndex
     && history[retainedSuffixStart]?.role !== 'agent'
   ) {
     throw new TypeError('BGSM Agent active projection suffix must begin with an assistant envelope.');
@@ -405,6 +432,36 @@ export function verifyBgsmAgentActiveProjection(
   validateProviderProtocolHistory(history.slice(currentUserIndex, retainedSuffixStart).map(toModelMessage));
   if (checkpoint && currentUserIndex < verifyBgsmAgentCheckpoint(history, checkpoint)) {
     throw new TypeError('BGSM Agent active projection cannot precede its historical checkpoint.');
+  }
+}
+
+export function verifyBgsmAgentActiveProjections(
+  history: readonly BgsmAgentSessionMessage[],
+  projections: readonly BgsmAgentActiveProjection[],
+  checkpoint?: BgsmAgentCompactionCheckpoint,
+): void {
+  let previousBoundaryIndex = -1;
+  const seenCurrentUsers = new Set<string>();
+  for (const projection of projections) {
+    verifyBgsmAgentActiveProjection(history, projection, checkpoint);
+    if (seenCurrentUsers.has(projection.currentUserMessageId)) {
+      throw new TypeError('BGSM Agent active projections must identify distinct user turns.');
+    }
+    seenCurrentUsers.add(projection.currentUserMessageId);
+    const currentUserIndex = uniqueMessageIndex(
+      history,
+      projection.currentUserMessageId,
+      'current user',
+    );
+    const boundaryIndex = uniqueMessageIndex(
+      history,
+      projection.summarizedThroughMessageId,
+      'summary boundary',
+    );
+    if (currentUserIndex <= previousBoundaryIndex) {
+      throw new TypeError('BGSM Agent active projections must be ordered and non-overlapping.');
+    }
+    previousBoundaryIndex = boundaryIndex;
   }
 }
 
@@ -430,22 +487,62 @@ function projectRetainedHistory(
   now: () => number,
   idFactory: () => string,
 ): AgentMessage[] {
-  if (!input.activeProjection) return retainedHistory;
-  verifyBgsmAgentActiveProjection(input.history, input.activeProjection, input.checkpoint);
-  const currentUserIndex = retainedHistory.findIndex(
-    (message) => message.id === input.activeProjection!.currentUserMessageId,
-  );
-  const boundaryIndex = retainedHistory.findIndex(
-    (message) => message.id === input.activeProjection!.summarizedThroughMessageId,
-  );
-  if (currentUserIndex < 0 || boundaryIndex <= currentUserIndex) {
-    throw new TypeError('BGSM Agent active projection is outside retained history.');
+  const activeProjections = input.activeProjections ?? [];
+  if (activeProjections.length === 0) return retainedHistory;
+  verifyBgsmAgentActiveProjections(input.history, activeProjections, input.checkpoint);
+  const projected: AgentMessage[] = [];
+  let retainedCursor = 0;
+  for (const activeProjection of activeProjections) {
+    const currentUserIndex = retainedHistory.findIndex(
+      (message) => message.id === activeProjection.currentUserMessageId,
+    );
+    const boundaryIndex = retainedHistory.findIndex(
+      (message) => message.id === activeProjection.summarizedThroughMessageId,
+    );
+    if (
+      currentUserIndex < retainedCursor
+      || boundaryIndex <= currentUserIndex
+    ) {
+      throw new TypeError('BGSM Agent active projection is outside retained history.');
+    }
+    projected.push(
+      ...retainedHistory.slice(retainedCursor, currentUserIndex + 1),
+      buildBgsmAgentActiveSummaryProjectionMessage(activeProjection, now, idFactory),
+    );
+    retainedCursor = boundaryIndex + 1;
   }
-  return [
-    ...retainedHistory.slice(0, currentUserIndex + 1),
-    buildBgsmAgentActiveSummaryProjectionMessage(input.activeProjection, now, idFactory),
-    ...retainedHistory.slice(boundaryIndex + 1),
-  ];
+  projected.push(...retainedHistory.slice(retainedCursor));
+  return projected;
+}
+
+export function selectBgsmAgentActiveProjectionsAfterCheckpoint(
+  history: readonly BgsmAgentSessionMessage[],
+  projections: readonly BgsmAgentActiveProjection[],
+  checkpoint: BgsmAgentCompactionCheckpoint,
+): BgsmAgentActiveProjection[] {
+  const retainedStart = verifyBgsmAgentCheckpoint(history, checkpoint);
+  return projections.filter((projection) => (
+    uniqueMessageIndex(history, projection.currentUserMessageId, 'current user') >= retainedStart
+  ));
+}
+
+function orderActiveProjections(
+  history: readonly BgsmAgentSessionMessage[],
+  projections: readonly BgsmAgentActiveProjection[],
+): BgsmAgentActiveProjection[] {
+  const positions = new Map(history.map((message, index) => [message.id, index]));
+  return [...projections].sort((left, right) => (
+    (positions.get(left.currentUserMessageId) ?? Number.MAX_SAFE_INTEGER)
+      - (positions.get(right.currentUserMessageId) ?? Number.MAX_SAFE_INTEGER)
+  ));
+}
+
+function nextUserMessageIndex(
+  history: readonly BgsmAgentSessionMessage[],
+  start: number,
+): number {
+  const relativeIndex = history.slice(start).findIndex((message) => message.role === 'user');
+  return relativeIndex < 0 ? history.length : start + relativeIndex;
 }
 
 export function buildBgsmAgentActiveSummaryProjectionMessage(

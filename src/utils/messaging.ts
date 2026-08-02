@@ -138,8 +138,8 @@ type BgsmAgentTurnEventPayload =
       toolResultBytes?: number;
       toolResultReduced?: boolean;
       action?: 'triggered' | 'summary_retry' | 'fallback' | 'terminal';
-      trigger?: 'pre_turn_soft_limit' | 'pre_turn_byte_limit' | 'completed_tool_envelope_soft_limit' | 'completed_tool_envelope_byte_limit' | 'forced_completed_tool_envelope' | 'provider_context_overflow' | 'provider_request_byte_limit';
-      category?: 'succeeded' | 'current_turn_too_large' | 'no_candidate' | 'summary_provider_failed' | 'summary_invalid' | 'fallback_too_large' | 'final_preflight_failed' | 'capability_unresolved' | 'provider_context_overflow' | 'provider_context_overflow_repeated' | 'provider_request_byte_limit' | 'provider_request_byte_limit_repeated';
+      trigger?: 'pre_turn_soft_limit' | 'pre_turn_byte_limit' | 'completed_tool_envelope_soft_limit' | 'completed_tool_envelope_byte_limit' | 'forced_completed_tool_envelope' | 'tool_result_memory_pressure' | 'context_preflight' | 'provider_context_overflow' | 'provider_request_byte_limit';
+      category?: 'succeeded' | 'current_turn_too_large' | 'no_candidate' | 'summary_provider_failed' | 'summary_invalid' | 'fallback_too_large' | 'final_preflight_failed' | 'tool_result_memory_limit' | 'capability_unresolved' | 'provider_context_overflow' | 'provider_context_overflow_repeated' | 'provider_request_byte_limit' | 'provider_request_byte_limit_repeated';
     }
   | {
       type: 'context_compaction_end';
@@ -1209,7 +1209,10 @@ function parseBgsmAgentTurnPortMessage(value: unknown): BgsmAgentTurnPortMessage
       'appliedRevision',
     ]);
     validateAgentDeliveryIdentity(value);
-    if (value.disposition === 'not_applied') {
+    if (value.disposition !== 'applied') {
+      if (!['no_transition', 'transition_rejected', 'detached'].includes(String(value.disposition))) {
+        throw new TypeError('Agent acknowledgement disposition is invalid.');
+      }
       if (value.appliedRevision !== null) {
         throw new TypeError('Agent acknowledgement revision is invalid.');
       }
@@ -1374,6 +1377,8 @@ function validateAgentTurnEvent(value: unknown): asserts value is BgsmAgentTurnE
         'completed_tool_envelope_soft_limit',
         'completed_tool_envelope_byte_limit',
         'forced_completed_tool_envelope',
+        'tool_result_memory_pressure',
+        'context_preflight',
         'provider_context_overflow',
         'provider_request_byte_limit',
       ].includes(String(value.trigger))) {
@@ -1387,6 +1392,7 @@ function validateAgentTurnEvent(value: unknown): asserts value is BgsmAgentTurnE
         'summary_invalid',
         'fallback_too_large',
         'final_preflight_failed',
+        'tool_result_memory_limit',
         'capability_unresolved',
         'provider_context_overflow',
         'provider_context_overflow_repeated',
@@ -1600,6 +1606,7 @@ function validateAgentContextFailureReason(
     'summary_invalid',
     'fallback_too_large',
     'final_preflight_failed',
+    'tool_result_memory_limit',
     'provider_context_overflow',
     'provider_context_overflow_repeated',
     'provider_request_byte_limit',

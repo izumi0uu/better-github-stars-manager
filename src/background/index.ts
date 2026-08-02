@@ -1233,6 +1233,8 @@ async function runBgsmAgentTurn(
         rawMessages?: readonly import('@/agent-harness').AgentMessage[];
         trigger:
           | 'completed_tool_envelope'
+          | 'tool_result_memory_pressure'
+          | 'context_preflight'
           | 'provider_context_overflow'
           | 'provider_request_byte_limit';
         step: number;

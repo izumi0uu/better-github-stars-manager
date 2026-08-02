@@ -9,7 +9,7 @@ import {
   validateBgsmAgentConversationBinding,
   validateBgsmAgentConversationCandidate,
   validateBgsmAgentSessionHistory,
-  verifyBgsmAgentActiveProjection,
+  verifyBgsmAgentActiveProjections,
   verifyBgsmAgentCheckpoint,
 } from '@/bgsm-agent';
 import {
@@ -752,7 +752,7 @@ function parseStartMessage(value: unknown): BgsmAgentTurnInput | null {
     'prompt',
     'history',
     ...(value.checkpoint === undefined ? [] : ['checkpoint']),
-    ...(value.activeProjection === undefined ? [] : ['activeProjection']),
+    ...(value.activeProjections === undefined ? [] : ['activeProjections']),
     ...(value.candidateContract === undefined ? [] : ['candidateContract']),
     ...(value.binding === undefined ? [] : ['binding']),
   ];
@@ -777,9 +777,16 @@ function parseStartMessage(value: unknown): BgsmAgentTurnInput | null {
       if (!isCheckpoint(value.checkpoint)) return null;
       verifyBgsmAgentCheckpoint(history, value.checkpoint);
     }
-    if (value.activeProjection !== undefined) {
-      if (!isActiveProjection(value.activeProjection)) return null;
-      verifyBgsmAgentActiveProjection(history, value.activeProjection, value.checkpoint);
+    if (value.activeProjections !== undefined) {
+      if (
+        !Array.isArray(value.activeProjections)
+        || !value.activeProjections.every(isActiveProjection)
+      ) return null;
+      verifyBgsmAgentActiveProjections(
+        history,
+        value.activeProjections as BgsmAgentActiveProjection[],
+        value.checkpoint,
+      );
     }
     if (value.candidateContract !== undefined) {
       validateBgsmAgentConversationCandidate(value.candidateContract);
@@ -787,7 +794,7 @@ function parseStartMessage(value: unknown): BgsmAgentTurnInput | null {
         Number(value.baseRevision) !== 0
         || history.length !== 0
         || value.checkpoint !== undefined
-        || value.activeProjection !== undefined
+        || value.activeProjections !== undefined
       ) {
         return null;
       }
@@ -808,9 +815,12 @@ function parseStartMessage(value: unknown): BgsmAgentTurnInput | null {
     ...(value.checkpoint === undefined
       ? {}
       : { checkpoint: value.checkpoint as BgsmAgentCompactionCheckpoint }),
-    ...(value.activeProjection === undefined
+    ...(value.activeProjections === undefined
       ? {}
-      : { activeProjection: value.activeProjection as BgsmAgentActiveProjection }),
+      : {
+          activeProjections: (value.activeProjections as BgsmAgentActiveProjection[])
+            .map((projection) => ({ ...projection })),
+        }),
     ...(value.candidateContract === undefined
       ? {}
       : { candidateContract: value.candidateContract }),

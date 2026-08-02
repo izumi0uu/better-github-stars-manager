@@ -300,7 +300,7 @@ describe('BGSM Agent session', () => {
     );
     assert.equal(accepted.applied, true);
     assert.deepEqual(accepted.session.messages, original);
-    assert.deepEqual(accepted.session.activeProjection, firstActiveProjection);
+    assert.deepEqual(accepted.session.activeProjections, [firstActiveProjection]);
 
     const nextTurn = createBgsmAgentTurnInput(
       accepted.session,
@@ -322,6 +322,152 @@ describe('BGSM Agent session', () => {
     assert.equal(projected.at(-1)?.content, 'What is the final conclusion?');
     assert.doesNotThrow(() => validateProviderProtocolHistory(projected.map(toModelMessage)));
     assert.deepEqual(accepted.session.messages, original);
+  });
+
+  it('commits a later split projection without reviving an earlier compressed turn', () => {
+    const laterTurn: BgsmAgentSessionMessage[] = [
+      { id: 'later-user', role: 'user', content: 'Inspect every page.', createdAt: 10 },
+      {
+        id: 'later-assistant-tool',
+        role: 'agent',
+        content: 'Reading the final page.',
+        createdAt: 11,
+        toolCalls: [{ id: 'later-call', name: 'list_stars', arguments: { cursor: 'last' } }],
+      },
+      {
+        id: 'later-tool',
+        role: 'tool',
+        content: '{"ok":true,"data":{"nextCursor":null}}',
+        createdAt: 12,
+        toolCallId: 'later-call',
+        toolName: 'list_stars',
+      },
+      { id: 'later-answer', role: 'agent', content: 'All pages were inspected.', createdAt: 13 },
+    ];
+    const laterProjection = {
+      ...firstActiveProjection,
+      currentUserMessageId: 'later-user',
+      summarizedThroughMessageId: 'later-tool',
+      retainedSuffixFirstMessageId: 'later-answer',
+      rawMessageCountAtCreation: 3,
+      rawTailMessageIdAtCreation: 'later-tool',
+    };
+    const session = {
+      id: 'session-later-projection',
+      revision: 2,
+      messages: firstTurnMessages,
+      activeProjections: [firstActiveProjection],
+    };
+
+    const accepted = applyBgsmAgentSessionTransition(session, {
+      sessionId: session.id,
+      baseRevision: session.revision,
+      candidateActiveProjection: laterProjection,
+      messageDelta: laterTurn,
+    });
+
+    assert.equal(accepted.applied, true);
+    assert.deepEqual(accepted.session.activeProjections, [firstActiveProjection, laterProjection]);
+    const projected = buildBgsmAgentTurnMessages(
+      createBgsmAgentTurnInput(
+        accepted.session,
+        'Continue from the complete result.',
+        { kind: 'selected_repository', selectedRepositoryIdHint: 'owner/repo' },
+        () => 'later-turn-attempt',
+      ),
+      'system',
+      { now: () => 20, idFactory: () => 'generated-later' },
+    );
+    assert.equal(projected.some((message) => message.id === 'assistant-1'), false);
+    assert.equal(projected.some((message) => message.id === 'tool-1'), false);
+    assert.equal(projected.some((message) => message.id === 'later-assistant-tool'), false);
+    assert.equal(projected.some((message) => message.id === 'later-tool'), false);
+    assert.equal(projected.some((message) => message.id === 'later-answer'), true);
+    assert.equal(
+      projected.filter((message) => message.content.includes('Active-turn progress summary')).length,
+      2,
+    );
+    assert.doesNotThrow(() => validateProviderProtocolHistory(projected.map(toModelMessage)));
+  });
+
+  it('accepts a later-turn projection created before that turn received its final answer', () => {
+    const laterTurn: BgsmAgentSessionMessage[] = [
+      { id: 'later-user', role: 'user', content: 'Inspect every page.', createdAt: 10 },
+      {
+        id: 'later-assistant-tool',
+        role: 'agent',
+        content: '',
+        createdAt: 11,
+        toolCalls: [{ id: 'later-call', name: 'list_stars', arguments: { cursor: 'last' } }],
+      },
+      {
+        id: 'later-tool',
+        role: 'tool',
+        content: '{"ok":true,"data":{"nextCursor":null}}',
+        createdAt: 12,
+        toolCallId: 'later-call',
+        toolName: 'list_stars',
+      },
+      { id: 'later-answer', role: 'agent', content: 'All pages were inspected.', createdAt: 13 },
+    ];
+    const laterProjection = {
+      ...firstActiveProjection,
+      currentUserMessageId: 'later-user',
+      summarizedThroughMessageId: 'later-tool',
+      retainedSuffixFirstMessageId: null,
+      rawMessageCountAtCreation: 3,
+      rawTailMessageIdAtCreation: 'later-tool',
+    };
+    const session = {
+      id: 'session-later-empty-suffix',
+      revision: 2,
+      messages: firstTurnMessages,
+      activeProjections: [firstActiveProjection],
+    };
+
+    const accepted = applyBgsmAgentSessionTransition(session, {
+      sessionId: session.id,
+      baseRevision: session.revision,
+      candidateActiveProjection: laterProjection,
+      messageDelta: laterTurn,
+    });
+
+    assert.equal(accepted.applied, true);
+    assert.deepEqual(accepted.session.activeProjections, [firstActiveProjection, laterProjection]);
+  });
+
+  it('allows a projected turn to end at a settled tool envelope before the next user turn', () => {
+    const terminalToolTurn = firstTurnMessages.slice(0, 3);
+    const history = [...terminalToolTurn, ...secondTurnMessages];
+    const projected = buildBgsmAgentTurnMessages(input({
+      history,
+      activeProjections: [{
+        ...firstActiveProjection,
+        retainedSuffixFirstMessageId: null,
+      }],
+    }), 'system');
+
+    assert.equal(projected.some((message) => message.id === 'assistant-1'), false);
+    assert.equal(projected.some((message) => message.id === 'tool-1'), false);
+    assert.equal(projected.some((message) => message.id === 'user-2'), true);
+    assert.doesNotThrow(() => validateProviderProtocolHistory(projected.map(toModelMessage)));
+  });
+
+  it('rejects an active projection that crosses into a later user turn', () => {
+    const history = [...firstTurnMessages, ...secondTurnMessages];
+    assert.throws(
+      () => buildBgsmAgentTurnMessages(input({
+        history,
+        activeProjections: [{
+          ...firstActiveProjection,
+          summarizedThroughMessageId: 'assistant-3',
+          retainedSuffixFirstMessageId: null,
+          rawMessageCountAtCreation: history.length,
+          rawTailMessageIdAtCreation: 'assistant-3',
+        }],
+      }), 'system'),
+      /cannot cross a user turn boundary/i,
+    );
   });
 
   it('rejects a retained split projection absorbed by its historical checkpoint', () => {
@@ -347,7 +493,7 @@ describe('BGSM Agent session', () => {
       id: 'session-1',
       revision: 1,
       messages: firstTurnMessages,
-      activeProjection: firstActiveProjection,
+      activeProjections: [firstActiveProjection],
     };
     const accepted = applyBgsmAgentSessionTransition(session, {
       sessionId: session.id,
@@ -359,8 +505,26 @@ describe('BGSM Agent session', () => {
 
     assert.equal(accepted.applied, true);
     assert.deepEqual(accepted.session.compaction, firstCheckpoint);
-    assert.equal(accepted.session.activeProjection, undefined);
+    assert.equal(accepted.session.activeProjections, undefined);
     assert.deepEqual(accepted.session.messages, firstTurnMessages);
+  });
+
+  it('rejects clearing active projections without an advancing checkpoint', () => {
+    const session = {
+      id: 'session-1',
+      revision: 1,
+      messages: firstTurnMessages,
+      activeProjections: [firstActiveProjection],
+    };
+    assert.throws(
+      () => applyBgsmAgentSessionTransition(session, {
+        sessionId: session.id,
+        baseRevision: session.revision,
+        candidateActiveProjection: null,
+        messageDelta: secondTurnMessages,
+      }),
+      /only be cleared by an advancing checkpoint/i,
+    );
   });
 
   it('applies a valid checkpoint-only terminal transition without fabricating messages', () => {

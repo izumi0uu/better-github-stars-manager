@@ -40,6 +40,71 @@ afterEach(() => {
 });
 
 describe('BGSM Agent messaging', () => {
+  it('delivers context preflight diagnostics across the Port', () => {
+    const runtime = createRuntimePort();
+    vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
+    const input: BgsmAgentTurnInput = {
+      turnAttemptId: 'turn-attempt-context-preflight',
+      sessionId: 'session-context-preflight',
+      baseRevision: 4,
+      prompt: 'Continue after compaction',
+      history: [],
+    };
+    const onEvent = vi.fn();
+
+    startBgsmAgentTurn(input, { onEvent });
+    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    const event = {
+      type: 'context_diagnostic' as const,
+      turnAttemptId: input.turnAttemptId,
+      sessionId: input.sessionId,
+      baseRevision: input.baseRevision,
+      stage: 'preflight' as const,
+      providerWindow: 272_000,
+      workingWindow: 260_000,
+      softLimit: 234_000,
+      hardLimit: 260_000,
+      capabilitySource: 'builtin-official' as const,
+      capabilityRevision: 'capability-v1',
+      policyRevision: 'policy-v1',
+      action: 'triggered' as const,
+      trigger: 'context_preflight' as const,
+    };
+
+    runtime.deliver({ type: 'bgsmAgentTurnEvent', sequence: 0, event });
+
+    expect(onEvent).toHaveBeenCalledWith(event);
+  });
+
+  it('delivers the internal tool-memory recovery reason across the Port', () => {
+    const runtime = createRuntimePort();
+    vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
+    const input: BgsmAgentTurnInput = {
+      turnAttemptId: 'turn-attempt-tool-memory',
+      sessionId: 'session-tool-memory',
+      baseRevision: 2,
+      prompt: 'List every matching repository',
+      history: [],
+    };
+    const onResult = vi.fn();
+
+    startBgsmAgentTurn(input, { onResult });
+    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    const result: BgsmAgentTurnResult = {
+      turnAttemptId: input.turnAttemptId,
+      sessionId: input.sessionId,
+      baseRevision: input.baseRevision,
+      reason: 'context_limit',
+      contextFailureReason: 'tool_result_memory_limit',
+      changed: false,
+      changedCount: 0,
+      newMessages: [],
+    };
+    runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
+
+    expect(onResult).toHaveBeenCalledWith(result);
+  });
+
   it('preserves complete tool protocol history and results across the Port', () => {
     let messageListener: Listener<unknown> | undefined;
     const postMessage = vi.fn();
