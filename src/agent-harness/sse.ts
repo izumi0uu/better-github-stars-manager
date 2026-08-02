@@ -4,7 +4,7 @@ import {
 } from './provider';
 
 export const MAX_SSE_EVENT_DATA_BYTES = 256 * 1024;
-export const MAX_SSE_EVENTS = 4_096;
+export const MAX_SSE_EVENTS = 65_536;
 
 export type SseEvent = Readonly<{
   data: string;

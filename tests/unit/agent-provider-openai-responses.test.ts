@@ -3,6 +3,10 @@ import {
   createOpenAIResponsesProvider,
   OPENAI_RESPONSES_ENDPOINT,
 } from '@/agent-harness/providers/openai-responses';
+import {
+  MAX_PROVIDER_BUFFERED_RESPONSE_BYTES,
+  MAX_PROVIDER_RESPONSE_BYTES,
+} from '@/agent-harness/provider';
 import type { ModelStreamEvent } from '@/agent-harness/provider-stream';
 import { createAgentTurnLiveness } from '@/agent-harness/liveness';
 
@@ -251,6 +255,31 @@ describe('OpenAI Responses adapter', () => {
       'usage',
       'response_end',
     ]);
+  });
+
+  it('accepts highly fragmented SSE whose wire framing exceeds the decoded payload limit', async () => {
+    const text = 'x'.repeat(7_000);
+    const events = [
+      createdEvent(),
+      outputAdded(0, { id: 'msg_1', type: 'message', status: 'in_progress', role: 'assistant', content: [] }),
+      contentAdded('msg_1', 0, 0, { type: 'output_text', text: '', annotations: [] }),
+      ...[...text].map((delta) => textDelta('msg_1', 0, 0, delta)),
+      textDone('msg_1', 0, 0, text),
+      contentDone('msg_1', 0, 0, { type: 'output_text', text, annotations: [] }),
+      outputDone(0, completedMessage('msg_1', text)),
+      completedEvent(4, 1_250, 1_254),
+    ];
+    const body = responsesSseBody(events);
+    const wireBytes = new TextEncoder().encode(body).byteLength;
+    expect(wireBytes).toBeGreaterThan(MAX_PROVIDER_BUFFERED_RESPONSE_BYTES);
+    expect(wireBytes).toBeLessThan(MAX_PROVIDER_RESPONSE_BYTES);
+
+    const provider = createProvider(async () => rawSseResponse(body));
+    await expect(provider.generate({
+      messages: [{ role: 'user', content: 'List results.' }],
+      tools: [],
+      maxOutputTokens: 2_048,
+    })).resolves.toMatchObject({ content: text, finishReason: 'stop' });
   });
 
   it('assembles interleaved text, reasoning, and function items by stable identity', async () => {
@@ -896,10 +925,11 @@ function responsesSse(
   events: Array<Record<string, unknown>>,
   chunkSizes?: number[],
 ): Response {
-  const body = events
-    .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-    .join('');
-  return rawSseResponse(body, chunkSizes);
+  return rawSseResponse(responsesSseBody(events), chunkSizes);
+}
+
+function responsesSseBody(events: Array<Record<string, unknown>>): string {
+  return events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
 }
 
 function rawSseResponse(body: string, chunkSizes?: number[]): Response {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MAX_PROVIDER_RESPONSE_BYTES } from '@/agent-harness/provider';
 import { createOpenAICompatibleProvider } from '@/agent-harness/providers/openai-compatible';
 import type { ModelStreamEvent } from '@/agent-harness/provider-stream';
 
@@ -280,7 +281,7 @@ describe('OpenAI-compatible streaming adapter', () => {
       }), {
         headers: {
           'Content-Type': 'text/event-stream',
-          'Content-Length': String(1024 * 1024 + 1),
+          'Content-Length': String(MAX_PROVIDER_RESPONSE_BYTES + 1),
         },
       })) as typeof fetch,
     });

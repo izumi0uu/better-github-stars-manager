@@ -807,7 +807,7 @@ describe('openai-compatible agent provider', () => {
       .rejects.toBeInstanceOf(AgentProviderError);
   });
 
-  it('caps streamed raw response bodies at one MiB', async () => {
+  it('caps streamed raw response bodies independently from decoded payload size', async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new Uint8Array(MAX_PROVIDER_RESPONSE_BYTES));

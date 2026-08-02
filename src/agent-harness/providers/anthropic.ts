@@ -947,7 +947,7 @@ function assertDeclaredResponseLength(response: Response): void {
 function responseTooLarge(): AgentProviderError {
   return new AgentProviderError(
     'provider_response_too_large',
-    'Provider response exceeds the 1048576-byte limit.',
+    `Provider response exceeds the ${MAX_PROVIDER_RESPONSE_BYTES}-byte limit.`,
   );
 }
 

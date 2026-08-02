@@ -83,7 +83,11 @@ export type ExactRequestModelProvider = Omit<ModelProvider, 'inspectRequest' | '
 
 export const MAX_PROVIDER_HISTORY_BYTES = 512 * 1024;
 export const MAX_PROVIDER_REQUEST_BYTES = 768 * 1024;
-export const MAX_PROVIDER_RESPONSE_BYTES = 1024 * 1024;
+// SSE framing can be much larger than the decoded model payload when a gateway
+// emits one delta per character. Keep transport and in-memory payload bounds
+// separate so protocol overhead cannot reject an otherwise small response.
+export const MAX_PROVIDER_RESPONSE_BYTES = 16 * 1024 * 1024;
+export const MAX_PROVIDER_BUFFERED_RESPONSE_BYTES = 1024 * 1024;
 export const MAX_PROVIDER_ERROR_BYTES = 4 * 1024;
 export const MAX_PROVIDER_OUTPUT_TOKENS = 8192;
 export const AGENT_PROVIDER_DEADLINE_MS = 45_000;

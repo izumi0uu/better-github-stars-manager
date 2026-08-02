@@ -1,7 +1,7 @@
 import {
   AgentProviderError,
+  MAX_PROVIDER_BUFFERED_RESPONSE_BYTES,
   MAX_PROVIDER_ERROR_BYTES,
-  MAX_PROVIDER_RESPONSE_BYTES,
   type ModelResponse,
   type ModelToolCall,
   type ModelUsage,
@@ -29,11 +29,11 @@ export type ModelStreamLimits = Readonly<{
 }>;
 
 export const DEFAULT_MODEL_STREAM_LIMITS: ModelStreamLimits = Object.freeze({
-  maxEvents: 16_384,
-  maxTextBytes: MAX_PROVIDER_RESPONSE_BYTES,
+  maxEvents: 65_536,
+  maxTextBytes: MAX_PROVIDER_BUFFERED_RESPONSE_BYTES,
   maxRefusalBytes: 64 * 1024,
-  maxToolArgumentBytes: MAX_PROVIDER_RESPONSE_BYTES,
-  maxBufferedBytes: MAX_PROVIDER_RESPONSE_BYTES,
+  maxToolArgumentBytes: MAX_PROVIDER_BUFFERED_RESPONSE_BYTES,
+  maxBufferedBytes: MAX_PROVIDER_BUFFERED_RESPONSE_BYTES,
 });
 
 const MAX_TOOL_CALL_ID_BYTES = 512;
