@@ -162,6 +162,27 @@ describe('Agent observability development store', () => {
     expect(artifact.events).toHaveLength(1);
   });
 
+  it('omits unsupported legacy roots without invalidating the retained artifact', async () => {
+    const db = database('legacy-operation-kind');
+    await completedRoot(db, 'supported-root', 10);
+    await completedRoot(db, 'legacy-root', 20);
+    await db.roots.update('legacy-root', {
+      operationKind: 'bulk_run' as never,
+    });
+
+    const artifact = await db.readArtifact({
+      scope: { kind: 'all_retained', id: null },
+      exporterVersion: 'legacy-filter-test',
+      exportedAt: 30,
+      build: { versionHash: 'hash', extensionVersion: '1.0.8', runtime: 'dev_page', dev: true },
+    });
+
+    expect(artifact.roots.map((root) => root.rootOperationId)).toEqual(['supported-root']);
+    expect(artifact.events.every((event) => event.rootOperationId === 'supported-root')).toBe(true);
+    expect(artifact.completeness.omittedUnsupportedRootCount).toBe(1);
+    expect(artifact.completeness.omittedUnsupportedEventCount).toBeGreaterThan(0);
+  });
+
   it('leases completed roots until a streamed artifact releases them', async () => {
     const db = database('snapshot-lease', {
       maxRoots: 1,

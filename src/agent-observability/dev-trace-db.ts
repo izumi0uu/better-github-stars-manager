@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import {
+  DEV_TRACE_OPERATION_KINDS,
   type DevTraceEvent,
   type DevTraceEventDataByKind,
   type DevTraceOperationKind,
@@ -550,7 +551,12 @@ export class DevTraceDB extends Dexie {
       const eventCount = selectedRoots.reduce((total, root) => total + root.eventCount, 0);
       const failedRootCount = selectedRoots.filter((root) => root.terminalState === 'failed').length;
       const roots = selectedRoots.map(rootProjection);
-      const completeness = artifactCompleteness(selectedRoots, snapshot.accounting);
+      const completeness = artifactCompleteness(
+        selectedRoots,
+        snapshot.accounting,
+        snapshot.omittedUnsupportedRootCount,
+        snapshot.omittedUnsupportedEventCount,
+      );
 
       yield '{"schemaVersion":1,"exporterVersion":';
       yield JSON.stringify(input.exporterVersion);
@@ -660,16 +666,27 @@ export class DevTraceDB extends Dexie {
     fences: readonly DevTraceArtifactRootFence[];
     accounting: DevTraceMetaRecord;
     exportedAt: number;
+    omittedUnsupportedRootCount: number;
+    omittedUnsupportedEventCount: number;
   }>> {
     return withRetentionLock(async () => {
-      const roots = await this.selectedRoots(scope);
+      const selected = await this.selectedRoots(scope);
+      const roots = selected.filter((root) => DEV_TRACE_OPERATION_KINDS.includes(root.operationKind));
+      const supportedRootIds = new Set(roots.map((root) => root.rootOperationId));
+      const omitted = selected.filter((root) => !supportedRootIds.has(root.rootOperationId));
       const accounting = await this.accounting();
       const fences = roots.map((root) => ({
         root,
         spanRevision: root.nextSpanRevision - 1,
       }));
       leaseArtifactRoots(this.name, fences);
-      return { fences, accounting, exportedAt };
+      return {
+        fences,
+        accounting,
+        exportedAt,
+        omittedUnsupportedRootCount: omitted.length,
+        omittedUnsupportedEventCount: omitted.reduce((total, root) => total + root.eventCount, 0),
+      };
     });
   }
 
@@ -813,6 +830,8 @@ function serializedBytes(value: unknown): number {
 function artifactCompleteness(
   selectedRoots: readonly DevTraceRootRecord[],
   accounting: DevTraceMetaRecord,
+  omittedUnsupportedRootCount = 0,
+  omittedUnsupportedEventCount = 0,
 ): TraceArtifactV1['completeness'] {
   return {
     retainedFromMs: selectedRoots[0]?.startedAt ?? null,
@@ -823,6 +842,8 @@ function artifactCompleteness(
     truncatedFieldCount: accounting.truncatedFieldCount
       + selectedRoots.reduce((total, root) => total + root.truncatedFieldCount, 0),
     unknownEventCount: 0,
+    omittedUnsupportedRootCount,
+    omittedUnsupportedEventCount,
     activeBeforeTracing: selectedRoots.some((root) => root.activeBeforeTracing),
     sequenceGaps: selectedRoots.flatMap((root) => root.sequenceGaps),
   };

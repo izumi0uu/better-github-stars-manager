@@ -664,6 +664,8 @@ function addCompletenessFindings(findings: AgentDiagnosticFinding[], artifact: T
     [completeness.droppedEventCount, 'trace_events_dropped', 'trace event(s) were dropped'],
     [completeness.truncatedFieldCount, 'trace_fields_truncated', 'trace field(s) were truncated'],
     [completeness.unknownEventCount, 'trace_events_unknown', 'unknown trace event(s) were retained'],
+    [completeness.omittedUnsupportedRootCount ?? 0, 'trace_legacy_roots_omitted', 'unsupported legacy operation(s) were omitted'],
+    [completeness.omittedUnsupportedEventCount ?? 0, 'trace_legacy_events_omitted', 'unsupported legacy event(s) were omitted'],
   ];
   for (const [count, code, label] of entries) {
     if (count > 0) findings.push(finding(code, 'warning', `${count} ${label}; evidence is incomplete.`, null, null, null, null, { count }));

@@ -466,6 +466,8 @@ export type TraceArtifactV1 = Readonly<{
     droppedEventCount: number;
     truncatedFieldCount: number;
     unknownEventCount: number;
+    omittedUnsupportedRootCount?: number;
+    omittedUnsupportedEventCount?: number;
     activeBeforeTracing: boolean;
     sequenceGaps: readonly TraceSequenceGapV1[];
   }>;
@@ -907,6 +909,12 @@ function validateCompleteness(value: unknown): void {
   nonNegativeInteger(completeness.droppedEventCount, 'droppedEventCount');
   nonNegativeInteger(completeness.truncatedFieldCount, 'truncatedFieldCount');
   nonNegativeInteger(completeness.unknownEventCount, 'unknownEventCount');
+  if (completeness.omittedUnsupportedRootCount !== undefined) {
+    nonNegativeInteger(completeness.omittedUnsupportedRootCount, 'omittedUnsupportedRootCount');
+  }
+  if (completeness.omittedUnsupportedEventCount !== undefined) {
+    nonNegativeInteger(completeness.omittedUnsupportedEventCount, 'omittedUnsupportedEventCount');
+  }
   booleanValue(completeness.activeBeforeTracing, 'activeBeforeTracing');
   for (const candidate of array(completeness.sequenceGaps, 'sequenceGaps')) {
     const gap = record(candidate, 'Trace sequence gap');
