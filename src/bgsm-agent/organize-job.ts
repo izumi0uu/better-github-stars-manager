@@ -423,6 +423,26 @@ export function finalizeAnalysisFailure(
   return finalizeClassifications(state, positions, failed, null, null);
 }
 
+export function finalizeInsufficientEvidenceBatch(
+  state: OrganizeJobRunAnalysisState,
+  positions: readonly OrganizeJobRunPagePosition[],
+): FinalizedBatch {
+  const classifications = new Map<number, AnalyzerBatchProposal['rows'][number]>();
+  for (const position of positions) {
+    if (position.kind !== 'live') continue;
+    classifications.set(position.frozenIndex, {
+      frozenIndex: position.frozenIndex,
+      repositoryId: position.repositoryId,
+      sourceFingerprint: position.repository.sourceFingerprint,
+      classifications: [{
+        kind: 'insufficient_evidence',
+        evidence: 'The AI service did not return a valid classification after isolated retries.',
+      }],
+    });
+  }
+  return finalizeClassifications(state, positions, classifications, null, null);
+}
+
 export function splitPendingAnalyzerBatch(state: OrganizeJobRunAnalysisState): Readonly<{
   state: OrganizeJobRunAnalysisState;
   pendingRanges: readonly OrganizeJobRunAnalysisRange[];
@@ -565,12 +585,9 @@ function finalizeClassifications(
           if (actions.length !== classification.classifications.length) {
             throw new TypeError('Non-actionable classifications cannot be mixed with tag actions.');
           }
-          if (!taxonomyActionsAdmissible(actions, taxonomy)) {
-            // A schema-valid proposal can still collide with taxonomy entries
-            // the analyzer cannot see (user-excluded names are stripped from
-            // its view). Settle only this row as analysis_failed; a throw here
-            // would surface as an unrecoverable whole-run internal_error.
-            nonActionableKind = 'analysis_failed';
+          const reconciledActions = reconcileTaxonomyActions(actions, taxonomy);
+          if (reconciledActions.length === 0) {
+            nonActionableKind = 'unchanged';
           } else {
             proposalRow = Object.freeze({
               proposalRowId: `${state.proposalId}:row:${position.frozenIndex}`,
@@ -578,7 +595,7 @@ function finalizeClassifications(
               repositoryId: position.repositoryId,
               sourceFingerprint: classification.sourceFingerprint,
               taxonomyFingerprint,
-              actions: Object.freeze(actions),
+              actions: reconciledActions,
             });
           }
         }
@@ -640,23 +657,30 @@ function finalizeClassifications(
   });
 }
 
-function taxonomyActionsAdmissible(
+function reconcileTaxonomyActions(
   classifications: readonly ProposalAction[],
   taxonomy: SemanticTaxonomyDto,
-): boolean {
+): readonly ProposalAction[] {
   const entries = new Map(taxonomy.entries.map((entry) => [
-    entry.name.toLocaleLowerCase('en-US'),
+    entry.name.normalize('NFKC').toLocaleLowerCase('en-US'),
     entry,
   ]));
+  const reconciled: ProposalAction[] = [];
   for (const classification of classifications) {
-    const entry = entries.get(classification.tag.toLocaleLowerCase('en-US'));
+    const entry = entries.get(
+      classification.tag.normalize('NFKC').toLocaleLowerCase('en-US'),
+    );
+    if (entry?.excluded) continue;
     if (classification.kind === 'add_existing_tag') {
-      if (!entry?.exists || entry.excluded) return false;
-    } else if (entry?.exists) {
-      return false;
+      if (!entry?.exists) continue;
+      reconciled.push(Object.freeze({ ...classification, tag: entry.name }));
+      continue;
     }
+    reconciled.push(Object.freeze(entry?.exists
+      ? { ...classification, kind: 'add_existing_tag', tag: entry.name }
+      : { ...classification, tag: entry?.name ?? classification.tag }));
   }
-  return true;
+  return Object.freeze(reconciled);
 }
 
 function validateAnalyzerIdentity(

@@ -1,4 +1,5 @@
 import {
+  canDegradeAnalyzerFailure,
   OrganizeProposalAnalyzer,
   shouldSplitAnalyzerFailure,
   type AnalyzerRunResult,
@@ -10,6 +11,7 @@ import {
   createOrganizeProposal,
   createOrganizeJobRunAnalysisState,
   finalizeAnalysisFailure,
+  finalizeInsufficientEvidenceBatch,
   finalizeAnalyzerBatch,
   finalizeLocalOnlyBatch,
   resumeOrganizeJobRunAnalysisState,
@@ -591,6 +593,8 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             dependencies.controller.updateUsage(identity, state.usage);
             continue;
           }
+          const degraded = result.status === 'analysis_failed'
+            && canDegradeAnalyzerFailure(result);
           state = result.status === 'success'
             ? finalizeAnalyzerBatch({
                 state,
@@ -599,7 +603,9 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
                 taxonomy: page.policyTaxonomy,
                 taxonomyFingerprint: page.taxonomyFingerprint,
               }).state
-            : finalizeAnalysisFailure(state, page.positions).state;
+            : degraded
+              ? finalizeInsufficientEvidenceBatch(state, page.positions).state
+              : finalizeAnalysisFailure(state, page.positions).state;
           trace({
             type: 'batch_state',
             identity,
@@ -608,7 +614,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             repositoryCount: page.positions.length,
             localOnlyCount: page.positions.length - batch.repositories.length,
             providerCount: batch.repositories.length,
-            state: result.status === 'success' ? 'provider_completed' : 'analysis_failed',
+            state: result.status === 'success' || degraded ? 'provider_completed' : 'analysis_failed',
           });
         }
         states.set(identity.runId, state);
@@ -803,7 +809,8 @@ async function runAnalyzer(input: Readonly<{
       const attempt = attempts.get(result.attempts);
       if (attempt) record(attempt, 'succeeded', result.value.telemetry, null);
     } else if (result.status === 'analysis_failed') {
-      const attempt = attempts.get(2);
+      const executedAttempts = result.attempts;
+      const attempt = executedAttempts === 0 ? undefined : attempts.get(executedAttempts);
       if (attempt) record(attempt, 'failed', null, 'invalid_or_failed');
     }
     return result;

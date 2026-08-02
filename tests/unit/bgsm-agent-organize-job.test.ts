@@ -3,12 +3,17 @@ import {
   AgentProviderError,
   type AgentExecutionTraceEvent,
 } from '@/agent-harness';
+import { isAgentLivenessManagedSignal } from '@/agent-harness/liveness';
 import type { ModelProvider, ModelResponse } from '@/agent-harness/provider';
 import { createOpenAIResponsesProvider } from '@/agent-harness/providers/openai-responses';
 import { createAnthropicMessagesProvider } from '@/agent-harness/providers/anthropic';
 import {
   analyzerOutputTokensForRepositoryCount,
+  AnalyzerAttemptError,
+  canDegradeAnalyzerFailure,
+  MAX_ANALYZER_RETRY_DETAIL_BYTES,
   OrganizeProposalAnalyzer,
+  shouldSplitAnalyzerFailure,
   type SemanticAnalyzerBatch,
 } from '@/bgsm-agent/organize-proposal-analyzer';
 import {
@@ -365,6 +370,58 @@ describe('OrganizeProposalAnalyzer', () => {
     });
   });
 
+  it('binds the proposal schema to the immutable batch and its exact row count', () => {
+    const batch = analyzerBatch(['a/a', 'b/b']);
+    const prepared = new OrganizeProposalAnalyzer({ provider: preparedProvider([]) })
+      .prepareAttempt(batch);
+    const request = JSON.parse(prepared.serializedRequestBody) as {
+      tools: Array<{
+        parameters: {
+          properties: {
+            version: { const: unknown };
+            runId: { const: unknown };
+            generation: { const: unknown };
+            scopeFingerprint: { const: unknown };
+            rows: {
+              minItems: number;
+              maxItems: number;
+              items: {
+                properties: {
+                  classifications: {
+                    oneOf: Array<{
+                      minItems: number;
+                      maxItems: number;
+                      items: { properties: { kind: { enum: string[] } } };
+                    }>;
+                  };
+                };
+              };
+            };
+          };
+        };
+      }>;
+    };
+    const properties = request.tools[0]!.parameters.properties;
+
+    expect(properties.version.const).toBe(batch.version);
+    expect(properties.runId.const).toBe(batch.runId);
+    expect(properties.generation.const).toBe(batch.generation);
+    expect(properties.scopeFingerprint.const).toBe(batch.scopeFingerprint);
+    expect(properties.rows).toMatchObject({ minItems: 2, maxItems: 2 });
+    expect(properties.rows.items.properties.classifications.oneOf).toMatchObject([
+      {
+        minItems: 1,
+        maxItems: 5,
+        items: { properties: { kind: { enum: ['add_existing_tag', 'propose_new_tag'] } } },
+      },
+      {
+        minItems: 1,
+        maxItems: 1,
+        items: { properties: { kind: { enum: ['unchanged', 'insufficient_evidence'] } } },
+      },
+    ]);
+  });
+
   it('uses a silent Responses prepared request for one validated proposal tool call', async () => {
     const proposal = analyzerProposal([analyzerRow(0, 'a/a')]);
     const argumentsText = JSON.stringify(proposal);
@@ -401,6 +458,92 @@ describe('OrganizeProposalAnalyzer', () => {
       proposal: { rows: [{ frozenIndex: 0, repositoryId: 'a/a' }] },
     });
     expect(sentBody).toBe(prepared.serializedRequestBody);
+  });
+
+  it('uses progress-aware liveness for analyzer Provider requests', async () => {
+    let managedSignal = false;
+    const response = analyzerResponse([analyzerRow(0, 'a/a')]);
+    const provider: ModelProvider = {
+      async generate() {
+        throw new Error('generate should not be used');
+      },
+      prepare(input) {
+        const serializedRequestBody = JSON.stringify(input);
+        return {
+          serializedRequestBody,
+          serializedRequestBytes: new TextEncoder().encode(serializedRequestBody).byteLength,
+          async execute(signal) {
+            managedSignal = isAgentLivenessManagedSignal(signal);
+            input.onStreamEvent?.({ type: 'response_start' });
+            return response;
+          },
+        };
+      },
+    };
+
+    const analyzer = new OrganizeProposalAnalyzer({ provider });
+    await expect(analyzer.prepareAttempt(analyzerBatch(['a/a'])).execute()).resolves.toMatchObject({
+      proposal: { rows: [{ frozenIndex: 0, repositoryId: 'a/a' }] },
+    });
+    expect(managedSignal).toBe(true);
+  });
+
+  it('reports each completed proposal row from fragmented streamed tool arguments', async () => {
+    const batch = analyzerBatch(['a/a', 'b/b']);
+    const response = analyzerResponse([
+      analyzerRow(0, 'a/a'),
+      analyzerRow(1, 'b/b'),
+    ]);
+    const argumentsText = JSON.stringify(response.toolCalls?.[0]?.arguments);
+    const firstRowEnd = argumentsText.indexOf('},{"frozenIndex"') + 1;
+    expect(firstRowEnd).toBeGreaterThan(0);
+    const provider: ModelProvider = {
+      async generate() {
+        throw new Error('generate should not be used');
+      },
+      prepare(input) {
+        const serializedRequestBody = JSON.stringify(input);
+        return {
+          serializedRequestBody,
+          serializedRequestBytes: new TextEncoder().encode(serializedRequestBody).byteLength,
+          async execute() {
+            input.onStreamEvent?.({ type: 'response_start' });
+            input.onStreamEvent?.({
+              type: 'tool_call_start',
+              index: 0,
+              id: 'call-progress',
+              name: 'submit_semantic_tag_batch_proposal',
+            });
+            input.onStreamEvent?.({
+              type: 'tool_call_arguments_delta',
+              index: 0,
+              delta: argumentsText.slice(0, 17),
+            });
+            input.onStreamEvent?.({
+              type: 'tool_call_arguments_delta',
+              index: 0,
+              delta: argumentsText.slice(17, firstRowEnd),
+            });
+            input.onStreamEvent?.({
+              type: 'tool_call_arguments_delta',
+              index: 0,
+              delta: argumentsText.slice(firstRowEnd),
+            });
+            return response;
+          },
+        };
+      },
+    };
+    const progress: number[] = [];
+
+    const result = await new OrganizeProposalAnalyzer({ provider }).analyzeWithSingleRetry(
+      batch,
+      () => ({ status: 'admitted' }),
+      (completedRows) => progress.push(completedRows),
+    );
+
+    expect(result.status).toBe('success');
+    expect(progress).toEqual([1, 2]);
   });
 
   it('uses a silent Anthropic prepared request for one validated proposal tool call', async () => {
@@ -460,9 +603,383 @@ describe('OrganizeProposalAnalyzer', () => {
     const payloads = bodies.map((body) => JSON.parse(body) as {
       messages: Array<{ content: string }>;
     });
-    const firstContent = JSON.parse(payloads[0].messages[1].content) as { batch: unknown };
-    const secondContent = JSON.parse(payloads[1].messages[1].content) as { batch: unknown };
+    const firstContent = JSON.parse(payloads[0].messages[1].content) as { batch: unknown; retry: null };
+    const secondContent = JSON.parse(payloads[1].messages[1].content) as {
+      batch: unknown;
+      retry: {
+        previousResult: string;
+        correction: { category: string; expectedRowCount: number } | null;
+        instruction: string;
+      };
+    };
     expect(secondContent.batch).toEqual(firstContent.batch);
+    expect(firstContent.retry).toBeNull();
+    expect(secondContent.retry).toMatchObject({
+      previousResult: 'invalid_output_contract',
+      correction: {
+        category: 'response_contract',
+        expectedRowCount: 1,
+        rejectionCode: 'response',
+      },
+    });
+    expect(secondContent.retry.instruction).toContain('Correct every listed violation');
+    if (result.status !== 'analysis_failed') throw new Error('expected analyzer failure');
+    expect(result.firstError.diagnostic?.rejectionCode).toBe('response');
+    expect(result.secondError.diagnostic?.rejectionCode).toBe('tool_call_count');
+    expect(shouldSplitAnalyzerFailure(result)).toBe(true);
+    expect(canDegradeAnalyzerFailure(result)).toBe(true);
+  });
+
+  it('returns synchronous request-size preparation failures without reserving Provider budget', async () => {
+    let preparations = 0;
+    let reservations = 0;
+    const provider: ModelProvider = {
+      async generate() {
+        throw new Error('generate should not be used');
+      },
+      prepare() {
+        preparations += 1;
+        throw new AgentProviderError(
+          'provider_request_too_large',
+          'prepared analyzer request exceeded the Provider boundary',
+        );
+      },
+    };
+
+    const result = await new OrganizeProposalAnalyzer({ provider }).analyzeWithSingleRetry(
+      analyzerBatch(['a/a', 'b/b']),
+      () => {
+        reservations += 1;
+        return { status: 'admitted' };
+      },
+    );
+
+    expect(result.status).toBe('analysis_failed');
+    if (result.status !== 'analysis_failed') throw new Error('expected analyzer failure');
+    expect(result.attempts).toBe(0);
+    expect(result.firstError).toMatchObject({
+      failureKind: 'provider',
+      causeValue: { code: 'provider_request_too_large' },
+    });
+    expect(result.secondError).toBe(result.firstError);
+    expect(shouldSplitAnalyzerFailure(result)).toBe(true);
+    expect(canDegradeAnalyzerFailure(result)).toBe(false);
+    expect(preparations).toBe(1);
+    expect(reservations).toBe(0);
+  });
+
+  it('does not normalize local batch validation failures as Provider failures', async () => {
+    let preparations = 0;
+    let reservations = 0;
+    const provider: ModelProvider = {
+      async generate() {
+        throw new Error('generate should not be used');
+      },
+      prepare() {
+        preparations += 1;
+        throw new Error('prepare should not be reached');
+      },
+    };
+    const invalidBatch = {
+      ...analyzerBatch(['a/a']),
+      taskInstruction: ' Classify repositories.',
+    };
+
+    await expect(new OrganizeProposalAnalyzer({ provider }).analyzeWithSingleRetry(
+      invalidBatch,
+      () => {
+        reservations += 1;
+        return { status: 'admitted' };
+      },
+    )).rejects.toThrow('Analyzer task instruction must be trimmed and nonempty.');
+    expect(preparations).toBe(0);
+    expect(reservations).toBe(0);
+  });
+
+  it('returns a retry preparation failure after charging only the executed first attempt', async () => {
+    let preparations = 0;
+    let reservations = 0;
+    const provider: ModelProvider = {
+      async generate() {
+        throw new Error('generate should not be used');
+      },
+      prepare() {
+        preparations += 1;
+        if (preparations === 2) {
+          throw new AgentProviderError(
+            'provider_request_too_large',
+            'retry request exceeded the Provider boundary',
+          );
+        }
+        return {
+          serializedRequestBody: '{}',
+          serializedRequestBytes: 2,
+          async execute() {
+            return { finishReason: 'stop', content: 'invalid' };
+          },
+        };
+      },
+    };
+
+    const result = await new OrganizeProposalAnalyzer({ provider }).analyzeWithSingleRetry(
+      analyzerBatch(['a/a', 'b/b']),
+      () => {
+        reservations += 1;
+        return { status: 'admitted' };
+      },
+    );
+
+    expect(result.status).toBe('analysis_failed');
+    if (result.status !== 'analysis_failed') throw new Error('expected analyzer failure');
+    expect(result.attempts).toBe(1);
+    expect(result.firstError).toMatchObject({ failureKind: 'output_contract' });
+    expect(result.secondError).toMatchObject({
+      failureKind: 'provider',
+      causeValue: { code: 'provider_request_too_large' },
+    });
+    expect(shouldSplitAnalyzerFailure(result)).toBe(true);
+    expect(canDegradeAnalyzerFailure(result)).toBe(false);
+    expect(preparations).toBe(2);
+    expect(reservations).toBe(1);
+  });
+
+  it('classifies response and proposal rejections with bounded host-authored codes', async () => {
+    const batch = analyzerBatch(['a/a']);
+    const mixedClassification = analyzerResponse([{
+      ...analyzerRow(0, 'a/a'),
+      classifications: [
+        { kind: 'unchanged' as const, evidence: 'No change.' },
+        { kind: 'add_existing_tag' as const, tag: 'infra', evidence: 'Relevant.' },
+      ],
+    } as never]);
+    const extraKey = analyzerResponse([analyzerRow(0, 'a/a')]);
+    extraKey.toolCalls![0]!.arguments = {
+      ...analyzerProposal([analyzerRow(0, 'a/a')]),
+      modelAuthoredExtra: 'must-not-be-repeated',
+    };
+    const cases: Array<readonly [ModelResponse, string]> = [
+      [{ ...analyzerResponse([analyzerRow(0, 'a/a')]), content: 'prose' }, 'mixed_content'],
+      [{ finishReason: 'tool_calls', toolCalls: [] }, 'tool_call_count'],
+      [mixedClassification, 'classification'],
+      [extraKey, 'schema'],
+    ];
+
+    for (const [response, rejectionCode] of cases) {
+      const error = await new OrganizeProposalAnalyzer({ provider: preparedProvider([response]) })
+        .prepareAttempt(batch)
+        .execute()
+        .then(() => null, (failure: unknown) => failure);
+      expect(error).toBeInstanceOf(AnalyzerAttemptError);
+      expect(error).toMatchObject({
+        failureKind: 'output_contract',
+        diagnostic: { rejectionCode },
+      });
+      expect(JSON.stringify((error as AnalyzerAttemptError).diagnostic))
+        .not.toContain('must-not-be-repeated');
+    }
+  });
+
+  it('retries a schema-valid proposal that omitted one repository with exact coverage diagnostics', async () => {
+    const batch = analyzerBatch(['a/a', 'b/b', 'c/c']);
+    const provider = preparedProvider([
+      analyzerResponse([analyzerRow(0, 'a/a'), analyzerRow(2, 'c/c')]),
+      analyzerResponse([
+        analyzerRow(0, 'a/a'),
+        analyzerRow(1, 'b/b'),
+        analyzerRow(2, 'c/c'),
+      ]),
+    ]);
+    const analyzer = new OrganizeProposalAnalyzer({ provider });
+    const bodies: string[] = [];
+
+    const result = await analyzer.analyzeWithSingleRetry(batch, (attempt) => {
+      bodies.push(attempt.serializedRequestBody);
+      return { status: 'admitted' };
+    });
+
+    expect(result).toMatchObject({ status: 'success', attempts: 2 });
+    const request = JSON.parse(bodies[1]!) as { messages: Array<{ content: string }> };
+    const content = JSON.parse(request.messages[1]!.content) as {
+      retry: {
+        correction: {
+          category: string;
+          expectedRowCount: number;
+          receivedRowCount: number | null;
+          missingFrozenIndexes: number[];
+          duplicateFrozenIndexes: number[];
+          unexpectedFrozenIndexes: number[];
+          identityMismatchFrozenIndexes: number[];
+          truncated: boolean;
+        };
+      };
+    };
+    expect(content.retry.correction).toMatchObject({
+      category: 'proposal_contract',
+      rejectionCode: 'row_coverage',
+      expectedRowCount: 3,
+      receivedRowCount: 2,
+      missingFrozenIndexes: [1],
+      duplicateFrozenIndexes: [],
+      unexpectedFrozenIndexes: [],
+      identityMismatchFrozenIndexes: [],
+      truncated: false,
+    });
+    expect(new TextEncoder().encode(JSON.stringify(content.retry.correction)).byteLength)
+      .toBeLessThanOrEqual(MAX_ANALYZER_RETRY_DETAIL_BYTES);
+  });
+
+  it('reports duplicate frozen indexes even when strict proposal validation also rejects them', async () => {
+    const batch = analyzerBatch(['a/a', 'b/b']);
+    const provider = preparedProvider([
+      analyzerResponse([analyzerRow(0, 'a/a'), analyzerRow(0, 'b/b')]),
+      analyzerResponse([analyzerRow(0, 'a/a'), analyzerRow(1, 'b/b')]),
+    ]);
+    const analyzer = new OrganizeProposalAnalyzer({ provider });
+    const bodies: string[] = [];
+
+    const result = await analyzer.analyzeWithSingleRetry(batch, (attempt) => {
+      bodies.push(attempt.serializedRequestBody);
+      return { status: 'admitted' };
+    });
+
+    expect(result).toMatchObject({ status: 'success', attempts: 2 });
+    const request = JSON.parse(bodies[1]!) as { messages: Array<{ content: string }> };
+    const content = JSON.parse(request.messages[1]!.content) as {
+      retry: {
+        correction: {
+          category: string;
+          missingFrozenIndexes: number[];
+          duplicateFrozenIndexes: number[];
+          schemaViolation: string;
+        };
+      };
+    };
+    expect(content.retry.correction).toMatchObject({
+      category: 'proposal_contract',
+      rejectionCode: 'row_coverage',
+      missingFrozenIndexes: [1],
+      duplicateFrozenIndexes: [0],
+      schemaViolation: 'Proposal tool arguments did not match the declared schema.',
+    });
+  });
+
+  it('bounds unique model-authored diagnostic indexes before retry serialization', async () => {
+    const response = analyzerResponse(Array.from(
+      { length: 500 },
+      (_, index) => analyzerRow(index + 1, `model/repo-${index}`),
+    ));
+    const error = await new OrganizeProposalAnalyzer({ provider: preparedProvider([response]) })
+      .prepareAttempt(analyzerBatch(['a/a']))
+      .execute()
+      .then(() => null, (failure: unknown) => failure);
+
+    expect(error).toBeInstanceOf(AnalyzerAttemptError);
+    const diagnostic = (error as AnalyzerAttemptError).diagnostic;
+    expect(diagnostic?.unexpectedFrozenIndexes).toHaveLength(64);
+    expect(diagnostic?.truncated).toBe(true);
+    expect(new TextEncoder().encode(JSON.stringify(diagnostic)).byteLength)
+      .toBeLessThanOrEqual(MAX_ANALYZER_RETRY_DETAIL_BYTES);
+  });
+
+  it('re-sanitizes and bounds diagnostics at the retry prompt boundary', () => {
+    const batch = analyzerBatch(['a/a']);
+    const largeIndexes = Array.from(
+      { length: 100 },
+      (_, index) => Number.MAX_SAFE_INTEGER - index,
+    );
+    const externalError = new AnalyzerAttemptError(
+      'external output failure',
+      undefined,
+      'output_contract',
+      {
+        category: 'proposal_contract',
+        rejectionCode: 'model-authored-rejection' as never,
+        expectedRowCount: 999,
+        receivedRowCount: 999,
+        batchIdentityMismatch: true,
+        missingFrozenIndexes: largeIndexes,
+        duplicateFrozenIndexes: largeIndexes,
+        unexpectedFrozenIndexes: largeIndexes,
+        identityMismatchFrozenIndexes: largeIndexes,
+        schemaViolation: 'model-authored secret diagnostic',
+        truncated: false,
+      },
+    );
+
+    const prepared = new OrganizeProposalAnalyzer({ provider: preparedProvider([]) })
+      .prepareAttempt(batch, 2, externalError);
+    const request = JSON.parse(prepared.serializedRequestBody) as {
+      messages: Array<{ content: string }>;
+    };
+    const retryContent = request.messages[1]!.content;
+    const content = JSON.parse(retryContent) as {
+      retry: { correction: { expectedRowCount: number; truncated: boolean } };
+    };
+
+    expect(content.retry.correction.expectedRowCount).toBe(1);
+    expect((content.retry.correction as { rejectionCode?: unknown }).rejectionCode).toBe('schema');
+    expect(content.retry.correction.truncated).toBe(true);
+    expect(new TextEncoder().encode(JSON.stringify(content.retry.correction)).byteLength)
+      .toBeLessThanOrEqual(MAX_ANALYZER_RETRY_DETAIL_BYTES);
+    expect(retryContent).not.toContain('model-authored secret diagnostic');
+  });
+
+  it('retries repository identity drift without echoing model-authored field values', async () => {
+    const batch = analyzerBatch(['a/a']);
+    const invalid = analyzerResponse([analyzerRow(0, 'wrong/model-authored-value')]);
+    const provider = preparedProvider([
+      invalid,
+      analyzerResponse([analyzerRow(0, 'a/a')]),
+    ]);
+    const analyzer = new OrganizeProposalAnalyzer({ provider });
+    const bodies: string[] = [];
+
+    const result = await analyzer.analyzeWithSingleRetry(batch, (attempt) => {
+      bodies.push(attempt.serializedRequestBody);
+      return { status: 'admitted' };
+    });
+
+    expect(result).toMatchObject({ status: 'success', attempts: 2 });
+    const request = JSON.parse(bodies[1]!) as { messages: Array<{ content: string }> };
+    const retryContent = request.messages[1]!.content;
+    const content = JSON.parse(retryContent) as {
+      retry: { correction: { identityMismatchFrozenIndexes: number[] } };
+    };
+    expect(content.retry.correction.identityMismatchFrozenIndexes).toEqual([0]);
+    expect((content.retry.correction as { rejectionCode?: unknown }).rejectionCode).toBe('row_identity');
+    expect(retryContent).not.toContain('wrong/model-authored-value');
+  });
+
+  it('retries batch identity drift without echoing model-authored identity values', async () => {
+    const invalid = analyzerResponse([analyzerRow(0, 'a/a')]);
+    invalid.toolCalls![0]!.arguments = {
+      ...analyzerProposal([analyzerRow(0, 'a/a')]),
+      runId: parseRunId('run:v1:model-authored-secret'),
+    };
+    const provider = preparedProvider([
+      invalid,
+      analyzerResponse([analyzerRow(0, 'a/a')]),
+    ]);
+    const analyzer = new OrganizeProposalAnalyzer({ provider });
+    const bodies: string[] = [];
+
+    const result = await analyzer.analyzeWithSingleRetry(analyzerBatch(['a/a']), (attempt) => {
+      bodies.push(attempt.serializedRequestBody);
+      return { status: 'admitted' };
+    });
+
+    expect(result).toMatchObject({ status: 'success', attempts: 2 });
+    const request = JSON.parse(bodies[1]!) as { messages: Array<{ content: string }> };
+    const retryContent = request.messages[1]!.content;
+    const content = JSON.parse(retryContent) as {
+      retry: { correction: { batchIdentityMismatch: boolean; schemaViolation: string } };
+    };
+    expect(content.retry.correction).toMatchObject({
+      rejectionCode: 'batch_identity',
+      batchIdentityMismatch: true,
+      schemaViolation: 'Proposal run, generation, or scope identity did not match the unchanged batch.',
+    });
+    expect(retryContent).not.toContain('model-authored-secret');
   });
 
   it('does not reserve a retry after the admitted attempt is aborted', async () => {
@@ -549,6 +1066,7 @@ describe('OrganizeProposalAnalyzer', () => {
 
   it('traces the original Provider failure and the successful retry as separate attempts', async () => {
     const events: AgentExecutionTraceEvent[] = [];
+    const bodies: string[] = [];
     let preparation = 0;
     const provider: ModelProvider = {
       async generate() {
@@ -558,6 +1076,7 @@ describe('OrganizeProposalAnalyzer', () => {
         preparation += 1;
         const current = preparation;
         const serializedRequestBody = JSON.stringify(input);
+        bodies.push(serializedRequestBody);
         return {
           serializedRequestBody,
           serializedRequestBytes: new TextEncoder().encode(serializedRequestBody).byteLength,
@@ -601,6 +1120,15 @@ describe('OrganizeProposalAnalyzer', () => {
       requestId: 'provider_request:organize-attempt-2',
       requestAttempt: 2,
     });
+    const secondRequest = JSON.parse(bodies[1]!) as { messages: Array<{ content: string }> };
+    const retryContent = JSON.parse(secondRequest.messages[1]!.content) as {
+      retry: { previousResult: string; correction: unknown };
+    };
+    expect(retryContent.retry).toMatchObject({
+      previousResult: 'provider_error',
+      correction: null,
+    });
+    expect(secondRequest.messages[1]!.content).not.toContain('rate limited');
   });
 
   it('keeps development trace failures outside the analyzer result', async () => {
@@ -799,18 +1327,23 @@ describe('OrganizeJobRun scheduler and row universes', () => {
     });
   });
 
-  it('settles taxonomy-collision rows as analysis_failed instead of failing the whole run', async () => {
-    const state = plannedState(analysisState(['a/a', 'b/b', 'c/c']), 3);
+  it('reconciles taxonomy collisions locally without blocking the whole run', async () => {
+    const state = plannedState(analysisState(['a/a', 'b/b', 'c/c', 'd/d']), 4);
     const policyTaxonomy = buildSemanticPolicyTaxonomyFromStorage([
       tagMeta({ name: 'old-test', excluded: true }),
-    ], []);
+    ], [tag({ manualTags: ['infra'] })]);
     const taxonomyFingerprint = await fingerprintSemanticTaxonomy(policyTaxonomy);
     // The analyzer never sees excluded names, so proposing one as "new" (or
     // adding it as "existing") is reachable from a schema-valid, compliant
     // model response. It must degrade per row, never to an internal_error.
     const result = finalizeAnalyzerBatch({
       state,
-      positions: [livePosition(0, 'a/a'), livePosition(1, 'b/b'), livePosition(2, 'c/c')],
+      positions: [
+        livePosition(0, 'a/a'),
+        livePosition(1, 'b/b'),
+        livePosition(2, 'c/c'),
+        livePosition(3, 'd/d'),
+      ],
       proposal: {
         ...analyzerProposal([]),
         rows: [
@@ -844,6 +1377,16 @@ describe('OrganizeJobRun scheduler and row universes', () => {
               evidence: 'Novel topic.',
             }],
           },
+          {
+            frozenIndex: 3,
+            repositoryId: 'd/d',
+            sourceFingerprint: SOURCE_FINGERPRINT,
+            classifications: [{
+              kind: 'propose_new_tag',
+              tag: 'INFRA',
+              evidence: 'Existing taxonomy name with the wrong action kind.',
+            }],
+          },
         ],
       },
       taxonomy: policyTaxonomy,
@@ -851,19 +1394,22 @@ describe('OrganizeJobRun scheduler and row universes', () => {
     });
 
     expect(result.state.nonActionableAnalysisOutcomes).toEqual([
-      { frozenIndex: 0, repositoryId: 'a/a', kind: 'analysis_failed' },
-      { frozenIndex: 1, repositoryId: 'b/b', kind: 'analysis_failed' },
+      { frozenIndex: 0, repositoryId: 'a/a', kind: 'unchanged' },
+      { frozenIndex: 1, repositoryId: 'b/b', kind: 'unchanged' },
     ]);
-    expect(result.state.actionableProposalRows).toHaveLength(1);
-    expect(result.state.actionableProposalRows[0]).toMatchObject({
-      frozenIndex: 2,
-      repositoryId: 'c/c',
-    });
+    expect(result.state.actionableProposalRows).toMatchObject([
+      { frozenIndex: 2, repositoryId: 'c/c' },
+      {
+        frozenIndex: 3,
+        repositoryId: 'd/d',
+        actions: [{ kind: 'add_existing_tag', tag: 'infra' }],
+      },
+    ]);
     expect(result.state).toMatchObject({
-      status: 'analysis_blocked',
-      stopReason: 'analysis_failed',
+      status: 'review',
+      stopReason: 'scope_complete',
     });
-    expect(result.nextFrozenIndex).toBe(3);
+    expect(result.nextFrozenIndex).toBe(4);
   });
 
   it('analyzes all actionable rows beyond 100 before entering review', () => {

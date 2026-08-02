@@ -33,7 +33,12 @@ import {
   type BgsmOrganizeJobSchedulerTraceEvent,
 } from '@/background/organize-analysis-runner';
 
-type AnalyzerMode = 'success' | 'retry_success' | 'double_failure' | 'retry_blocked_on_seventh';
+type AnalyzerMode =
+  | 'success'
+  | 'retry_success'
+  | 'retry_prepare_failure'
+  | 'double_failure'
+  | 'retry_blocked_on_seventh';
 type ProviderAttemptTraceEvent = Extract<BgsmOrganizeJobSchedulerTraceEvent, { type: 'provider_attempt' }>;
 type WatchdogTraceEvent = Extract<BgsmOrganizeJobSchedulerTraceEvent, { type: 'watchdog_state' }>;
 
@@ -260,6 +265,21 @@ function createHarness(input: Readonly<{
         // Existing failure modes settle the page directly instead of exercising split recovery.
       } else {
         return first.result!;
+      }
+      if (input.analyzerMode === 'retry_prepare_failure') {
+        return {
+          status: 'analysis_failed',
+          attempts: 1,
+          firstError: new AnalyzerAttemptError('Analyzer output contract failed.'),
+          secondError: new AnalyzerAttemptError(
+            'Analyzer Provider preparation failed.',
+            new AgentProviderError(
+              'provider_request_too_large',
+              'Prepared analyzer request exceeded the Provider boundary.',
+            ),
+            'provider',
+          ),
+        };
       }
       counters.reservations += 1;
       const second = await reserve({
@@ -532,7 +552,7 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     assert.ok(run.durableCalls.some((call) => call.startsWith('split:lease:0:0-12,12-25')));
   });
 
-  it('blocks only the isolated singleton while leaving sibling ranges unprocessed', async () => {
+  it('degrades an isolated output-contract singleton and finishes every sibling range', async () => {
     const run = createHarness({
       scopeCount: 25,
       pageKind: 'live',
@@ -542,11 +562,26 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
 
     await run.scheduler.schedule(run.identity);
 
-    assert.deepEqual(run.loadedRanges, ['0-25', '0-12', '0-6', '0-3', '0-1']);
-    assert.equal(run.scheduler.getState(run.identity.runId)?.status, 'analysis_blocked');
-    assert.equal(run.scheduler.getState(run.identity.runId)?.nextFrozenIndex, 1);
-    assert.equal(run.publishedSnapshots[0]?.coverage?.analysisFailed, 1);
-    assert.equal(run.publishedSnapshots[0]?.coverage?.analyzed, 1);
+    assert.deepEqual(run.loadedRanges, [
+      '0-25',
+      '0-12',
+      '0-6',
+      '0-3',
+      '0-1',
+      '1-3',
+      '3-6',
+      '6-12',
+      '12-25',
+    ]);
+    const state = run.scheduler.getState(run.identity.runId);
+    assert.equal(state?.status, 'review');
+    assert.equal(state?.nextFrozenIndex, 25);
+    assert.equal(
+      state?.nonActionableAnalysisOutcomes.filter((row) => row.kind === 'insufficient_evidence').length,
+      1,
+    );
+    assert.equal(state?.nonActionableAnalysisOutcomes.some((row) => row.kind === 'analysis_failed'), false);
+    assert.equal(run.counters.completions, 1);
   });
 
   it('does not split authentication, rate-limit, or network failures', async () => {
@@ -662,6 +697,30 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
         .filter((event) => event.state === 'failed')
         .map((event) => [event.attempt, event.reasonCode]),
       [[1, 'invalid_or_failed'], [2, 'invalid_or_failed']],
+    );
+    assert.equal(
+      run.traceEvents.filter((event) => event.type === 'batch_state').at(-1)?.state,
+      'analysis_failed',
+    );
+  });
+
+  it('terminalizes the executed attempt when retry preparation fails before reservation', async () => {
+    const run = createHarness({
+      scopeCount: 1,
+      pageKind: 'live',
+      analyzerMode: 'retry_prepare_failure',
+    });
+
+    await run.scheduler.schedule(run.identity);
+
+    assert.deepEqual(
+      providerAttemptTraceEvents(run.traceEvents)
+        .map((event) => [event.attempt, event.state, event.reasonCode]),
+      [
+        [1, 'prepared', null],
+        [1, 'admitted', null],
+        [1, 'failed', 'invalid_or_failed'],
+      ],
     );
     assert.equal(
       run.traceEvents.filter((event) => event.type === 'batch_state').at(-1)?.state,
