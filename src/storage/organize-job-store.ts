@@ -8,6 +8,7 @@ import type {
   OrganizeItemRecord,
   OrganizeJobRecord,
   OrganizeProposedAction,
+  OrganizeStoredJobStatus,
   OrganizeTaxonomyRecord,
   Tag,
 } from '@/types';
@@ -23,6 +24,7 @@ import {
   type ProposalId,
   type RunId,
 } from '@/bgsm-agent/identity';
+import { isPreflightToken } from '@/bgsm-agent/scope';
 import { sourceFingerprintV1 } from '@/bgsm-agent/source-fingerprint';
 import { isTaxonomyFingerprintV1 } from '@/bgsm-agent/proposal';
 import {
@@ -40,6 +42,15 @@ export const ORGANIZE_APPLY_CHUNK_MAX = 100;
 export const ORGANIZE_DEFAULT_LEASE_MS = 60_000;
 export const ORGANIZE_ANALYSIS_LEASE_MS = 360_000;
 export const ORGANIZE_ACTIVE_SLOT = 'organize-tags';
+
+const REPLAYABLE_ORGANIZE_PREFLIGHT_STATUSES: ReadonlySet<OrganizeStoredJobStatus> = new Set([
+  'analyzing',
+  'analysis_blocked',
+  'paused',
+  'review',
+  'apply_sealed',
+  'applying',
+]);
 
 export type OrganizeLeaseOptions = Readonly<{
   ownerId: string;
@@ -63,6 +74,12 @@ export type CreateOrganizeJobInput = Readonly<{
   nextFrozenIndex?: number;
   providerBinding?: unknown | null;
   now?: number;
+}>;
+
+export type CreateOrganizePreflightInput = CreateOrganizeJobInput & Readonly<{
+  preflightToken: string;
+  requestId: string;
+  expiresAt: number;
 }>;
 
 export type OrganizeAnalysisOutcome = Readonly<{
@@ -207,6 +224,240 @@ export async function createOrganizeJob(
   return job;
 }
 
+export async function createOrganizePreflight(
+  input: CreateOrganizePreflightInput,
+): Promise<OrganizeJobRecord> {
+  validateCreateInput(input);
+  if (!isPreflightToken(input.preflightToken)) {
+    throw new TypeError('Organize preflight token is malformed.');
+  }
+  if (!input.requestId.trim()) throw new TypeError('Organize preflight requestId must be nonempty.');
+  const now = input.now ?? Date.now();
+  if (!Number.isSafeInteger(input.expiresAt) || input.expiresAt <= now) {
+    throw new TypeError('Organize preflight expiry must be later than its creation time.');
+  }
+  const jobId = input.jobId ?? createOrganizeJobId();
+  const repositoryIds = [...input.frozenScope.repositoryIds];
+  if (repositoryIds.length === 0) {
+    throw new TypeError('Organize preflight requires at least one frozen repository.');
+  }
+  const job: OrganizeJobRecord = {
+    jobId,
+    controllerId: input.controllerId,
+    sessionId: input.sessionId,
+    runId: input.runId,
+    generation: input.generation,
+    proposalId: input.proposalId ?? `proposal:v1:${jobId}`,
+    frozenScope: { ...input.frozenScope, repositoryIds },
+    taskInstruction: input.taskInstruction,
+    budget: input.budget,
+    usage: input.usage,
+    nextFrozenIndex: 0,
+    analysisPendingRanges: [],
+    providerBinding: input.providerBinding ?? null,
+    status: 'preflight_ready',
+    preflight: {
+      token: input.preflightToken,
+      requestId: input.requestId,
+      state: 'ready',
+      expiresAt: input.expiresAt,
+      consumedAt: null,
+    },
+    revision: 1,
+    itemCount: repositoryIds.length,
+    applyId: null,
+    pauseRequested: false,
+    createdAt: now,
+    updatedAt: now,
+    completedAt: null,
+    cancelledAt: null,
+  };
+  const items = buildOrganizeItems(jobId, repositoryIds);
+  const taxonomy: OrganizeTaxonomyRecord = {
+    jobId,
+    fingerprint: input.taxonomy.fingerprint,
+    snapshot: input.taxonomy.snapshot,
+    createdAt: now,
+  };
+
+  await db.transaction(
+    'rw',
+    db.organizeJobs,
+    db.organizeItems,
+    db.organizeTaxonomies,
+    async () => {
+      const obsoletePreflights = (await db.organizeJobs.toArray()).filter((candidate) => (
+        candidate.status === 'preflight_ready'
+        && candidate.preflight?.state === 'ready'
+        && (
+          candidate.preflight.expiresAt <= now
+          || (
+            candidate.controllerId === input.controllerId
+            && candidate.sessionId === input.sessionId
+          )
+        )
+      ));
+      for (const previous of obsoletePreflights) {
+        await db.organizeItems.where('jobId').equals(previous.jobId).delete();
+        await db.organizeTaxonomies.delete(previous.jobId);
+        await db.organizeJobs.delete(previous.jobId);
+      }
+      if (await db.organizeJobs.get(jobId)) {
+        throw new TypeError(`Organize job ${jobId} already exists.`);
+      }
+      await db.organizeJobs.add(job);
+      await db.organizeTaxonomies.add(taxonomy);
+      await db.organizeItems.bulkAdd(items);
+    },
+  );
+  return job;
+}
+
+export async function getReadyOrganizePreflight(input: Readonly<{
+  controllerId: string;
+  sessionId: string;
+  now?: number;
+}>): Promise<OrganizeJobRecord | null> {
+  const now = input.now ?? Date.now();
+  const result = await db.transaction(
+    'rw',
+    db.organizeJobs,
+    db.organizeItems,
+    db.organizeTaxonomies,
+    async () => {
+      const candidates = (await db.organizeJobs.toArray())
+        .filter((job) => (
+          job.status === 'preflight_ready'
+          && job.preflight?.state === 'ready'
+          && job.controllerId === input.controllerId
+          && job.sessionId === input.sessionId
+        ))
+        .sort((left, right) => right.updatedAt - left.updatedAt);
+      const ready = candidates[0];
+      if (!ready) return null;
+      if (ready.preflight!.expiresAt > now) return ready;
+      await deleteOrganizePreflightArtifacts(ready.jobId);
+      return null;
+    },
+  );
+  return result;
+}
+
+export async function getOrganizePreflightByToken(
+  preflightToken: string,
+): Promise<OrganizeJobRecord | null> {
+  if (!isPreflightToken(preflightToken)) {
+    throw new TypeError('Organize preflight token is malformed.');
+  }
+  return (await db.organizeJobs.toArray()).find((job) => (
+    job.preflight?.token === preflightToken
+  )) ?? null;
+}
+
+export async function activateOrganizePreflight(input: Readonly<{
+  preflightToken: string;
+  controllerId: string;
+  sessionId: string;
+  taskInstruction: string;
+  now?: number;
+}>): Promise<Readonly<{
+  disposition: 'started' | 'already_started';
+  job: OrganizeJobRecord;
+}>> {
+  if (!isPreflightToken(input.preflightToken)) {
+    throw new TypeError('Organize preflight token is malformed.');
+  }
+  const now = input.now ?? Date.now();
+  const outcome = await db.transaction(
+    'rw',
+    db.organizeJobs,
+    db.organizeItems,
+    db.organizeTaxonomies,
+    async () => {
+      const job = (await db.organizeJobs.toArray()).find((candidate) => (
+        candidate.preflight?.token === input.preflightToken
+      ));
+      if (!job || !job.preflight) return { kind: 'missing' as const };
+      if (job.controllerId !== input.controllerId || job.sessionId !== input.sessionId) {
+        return { kind: 'wrong_owner' as const };
+      }
+      if (job.taskInstruction !== input.taskInstruction) {
+        return { kind: 'instruction_changed' as const };
+      }
+      if (job.preflight.state === 'consumed') {
+        return REPLAYABLE_ORGANIZE_PREFLIGHT_STATUSES.has(job.status)
+          && job.activeSlot === ORGANIZE_ACTIVE_SLOT
+          ? { kind: 'active' as const, job }
+          : { kind: 'missing' as const };
+      }
+      if (job.status !== 'preflight_ready') return { kind: 'missing' as const };
+      if (job.preflight.expiresAt <= now) {
+        await deleteOrganizePreflightArtifacts(job.jobId);
+        return { kind: 'expired' as const };
+      }
+      const active = await findActiveJob(ORGANIZE_ACTIVE_SLOT);
+      if (active && active.jobId !== job.jobId) return { kind: 'active_conflict' as const };
+      const started: OrganizeJobRecord = {
+        ...job,
+        activeSlot: ORGANIZE_ACTIVE_SLOT,
+        status: 'analyzing',
+        preflight: {
+          ...job.preflight,
+          state: 'consumed',
+          consumedAt: now,
+        },
+        revision: job.revision + 1,
+        updatedAt: now,
+      };
+      await db.organizeJobs.put(started);
+      return { kind: 'started' as const, job: started };
+    },
+  );
+  if (outcome.kind === 'started') {
+    return Object.freeze({ disposition: 'started', job: outcome.job });
+  }
+  if (outcome.kind === 'active') {
+    return Object.freeze({ disposition: 'already_started', job: outcome.job });
+  }
+  if (outcome.kind === 'expired') throw new TypeError('Organize preflight has expired.');
+  if (outcome.kind === 'wrong_owner') {
+    throw new TypeError('Organize preflight belongs to another controller or session.');
+  }
+  if (outcome.kind === 'instruction_changed') {
+    throw new TypeError('Organize preflight instruction changed after the scope was frozen.');
+  }
+  if (outcome.kind === 'active_conflict') {
+    throw new TypeError('An active OrganizeJobRun already exists.');
+  }
+  throw new TypeError('Organize preflight token is invalid or stale.');
+}
+
+export async function cancelOrganizePreflight(input: Readonly<{
+  controllerId: string;
+  sessionId: string;
+  requestId: string;
+  now?: number;
+}>): Promise<boolean> {
+  return db.transaction(
+    'rw',
+    db.organizeJobs,
+    db.organizeItems,
+    db.organizeTaxonomies,
+    async () => {
+      const job = (await db.organizeJobs.toArray()).find((candidate) => (
+        candidate.status === 'preflight_ready'
+        && candidate.preflight?.state === 'ready'
+        && candidate.preflight.requestId === input.requestId
+        && candidate.controllerId === input.controllerId
+        && candidate.sessionId === input.sessionId
+      ));
+      if (!job) return false;
+      await deleteOrganizePreflightArtifacts(job.jobId);
+      return true;
+    },
+  );
+}
+
 export async function getActiveOrganizeJob(
   activeSlot = ORGANIZE_ACTIVE_SLOT,
 ): Promise<OrganizeJobRecord | undefined> {
@@ -241,6 +492,7 @@ export async function attachOrganizeJob(input: Readonly<{
   jobId: string;
   controllerId: string;
   sessionId: string;
+  expectedRevision?: number;
   now?: number;
 }>): Promise<OrganizeJobRecord> {
   if (!input.controllerId.trim() || !input.sessionId.trim()) {
@@ -249,8 +501,14 @@ export async function attachOrganizeJob(input: Readonly<{
   const now = input.now ?? Date.now();
   return db.transaction('rw', db.organizeJobs, async () => {
     const job = await requireJob(input.jobId);
+    if (input.expectedRevision !== undefined) {
+      requireJobRevision(job, input.expectedRevision);
+    }
     if (job.status === 'cancelled') {
       throw new TypeError('Cannot attach to a cancelled organize job.');
+    }
+    if (job.controllerId === input.controllerId && job.sessionId === input.sessionId) {
+      return job;
     }
     const attached = {
       ...job,
@@ -597,11 +855,13 @@ export async function advanceOrganizeJobRun(input: Readonly<{
   sessionId: string;
   runId: RunId;
   generation: number;
+  expectedParent?: Readonly<{ runId: RunId; generation: number }>;
   proposalId: ProposalId;
   budget: RunBudget;
   usage: RunBudgetUsage;
   providerBinding?: unknown;
   startFrozenIndex: number;
+  analysisPendingRanges: readonly OrganizeAnalysisRange[];
   now?: number;
 }>): Promise<OrganizeJobRecord> {
   const now = input.now ?? Date.now();
@@ -610,11 +870,39 @@ export async function advanceOrganizeJobRun(input: Readonly<{
     if (job.status === 'completed' || job.status === 'cancelled' || job.status === 'apply_sealed' || job.status === 'applying') {
       throw new TypeError('A terminal or Apply-stage organize job cannot start another analysis run.');
     }
-    if (input.generation < job.generation) throw new TypeError('Organize run generation cannot move backwards.');
+    const sameDurableIdentity = input.runId === job.runId && input.generation === job.generation;
+    if (!sameDurableIdentity) {
+      if (input.generation < job.generation) {
+        throw new TypeError('Organize run generation cannot move backwards.');
+      }
+      if (input.generation === job.generation) {
+        throw new TypeError('A different organize run cannot replace the current durable identity at the same generation.');
+      }
+      if (!input.expectedParent) {
+        throw new TypeError('A new organize generation requires parent authority.');
+      }
+      if (
+        input.expectedParent.runId !== job.runId
+        || input.expectedParent.generation !== job.generation
+      ) {
+        throw new TypeError('Organize continuation parent authority does not match the current durable identity.');
+      }
+      if (input.generation !== input.expectedParent.generation + 1) {
+        throw new TypeError('Organize continuation generation must advance exactly once from its parent.');
+      }
+    }
     if (input.startFrozenIndex < 0 || input.startFrozenIndex > job.itemCount) {
       throw new RangeError('Organize run start is outside the frozen scope.');
     }
-    if (input.startFrozenIndex < job.nextFrozenIndex) {
+    // Generation and Provider-binding transitions must carry the durable split worklist unchanged.
+    const durablePendingRanges = job.analysisPendingRanges ?? [];
+    validateAnalysisRanges(durablePendingRanges, job.nextFrozenIndex, job.itemCount);
+    validateAnalysisRanges(input.analysisPendingRanges, input.startFrozenIndex, job.itemCount);
+    const rewinding = input.startFrozenIndex < job.nextFrozenIndex;
+    if (rewinding) {
+      if (input.analysisPendingRanges.length > 0) {
+        throw new TypeError('A rewound organize analysis must clear its pending range worklist.');
+      }
       const suffix = await db.organizeItems
         .where('jobId')
         .equals(input.jobId)
@@ -623,6 +911,8 @@ export async function advanceOrganizeJobRun(input: Readonly<{
       await db.organizeItems.bulkPut(suffix.map(resetAnalysisRow));
     } else if (input.startFrozenIndex !== job.nextFrozenIndex) {
       throw new TypeError('Organize continuation must start at the durable cursor.');
+    } else if (!sameAnalysisRanges(input.analysisPendingRanges, durablePendingRanges)) {
+      throw new TypeError('Organize continuation pending range worklist is stale.');
     }
     const next: OrganizeJobRecord = {
       ...job,
@@ -635,7 +925,7 @@ export async function advanceOrganizeJobRun(input: Readonly<{
       usage: input.usage,
       providerBinding: input.providerBinding ?? job.providerBinding,
       nextFrozenIndex: input.startFrozenIndex,
-      analysisPendingRanges: [],
+      analysisPendingRanges: input.analysisPendingRanges.map((range) => ({ ...range })),
       status: 'analyzing',
       revision: job.revision + 1,
       updatedAt: now,
@@ -1528,6 +1818,36 @@ async function findActiveJob(activeSlot: string): Promise<OrganizeJobRecord | un
   return rows
     .filter((row) => row.status !== 'completed' && row.status !== 'cancelled')
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+}
+
+function buildOrganizeItems(
+  jobId: string,
+  repositoryIds: readonly string[],
+): OrganizeItemRecord[] {
+  return repositoryIds.map((fullName, position): OrganizeItemRecord => ({
+    id: itemId(jobId, position),
+    jobId,
+    position,
+    fullName,
+    analysisState: 'pending',
+    proposedActions: [],
+    approvedActions: [],
+    proposedAdditions: [],
+    sourceFingerprint: null,
+    selected: false,
+    retryCount: 0,
+    failure: null,
+    leaseToken: null,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    analyzedAt: null,
+  }));
+}
+
+async function deleteOrganizePreflightArtifacts(jobId: string): Promise<void> {
+  await db.organizeItems.where('jobId').equals(jobId).delete();
+  await db.organizeTaxonomies.delete(jobId);
+  await db.organizeJobs.delete(jobId);
 }
 
 async function requireJob(jobId: string): Promise<OrganizeJobRecord> {

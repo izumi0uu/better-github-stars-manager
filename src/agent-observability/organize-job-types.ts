@@ -32,6 +32,7 @@ export type OrganizeJobRunTrace = Readonly<{
     revision: number;
     source: DevTraceEventDataByKind['organize_durable_state']['source'];
   }>): void;
+  recordRestore(input: DevTraceEventDataByKind['organize_restore_state']): void;
   recordReview(input: DevTraceEventDataByKind['organize_review_state']): void;
   recordSelection(input: DevTraceEventDataByKind['organize_selection_state']): void;
   recordApply(input: DevTraceEventDataByKind['organize_apply_state']): void;

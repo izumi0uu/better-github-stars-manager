@@ -730,6 +730,9 @@ function addEventFinding(
     const data = eventData(event, 'organize_preflight_state');
     if (data.state === 'expired' || data.state === 'disconnected' || data.state === 'worker_lost') pushEventFinding(findings, event, 'organize_preflight_failed', 'error', `OrganizeJobRun preflight ended as ${data.state}.`);
     if (data.state === 'stale') pushEventFinding(findings, event, 'organize_preflight_stale', 'warning', 'OrganizeJobRun preflight evidence became stale.');
+  } else if (event.kind === 'organize_restore_state') {
+    const data = eventData(event, 'organize_restore_state');
+    if (data.state === 'failed') pushEventFinding(findings, event, 'organize_restore_failed', 'error', `OrganizeJobRun restore failed: ${data.reasonCode}.`);
   } else if (event.kind === 'organize_batch_state') {
     const data = eventData(event, 'organize_batch_state');
     if (data.state === 'analysis_failed' || data.state === 'budget_exhausted') pushEventFinding(findings, event, 'organize_batch_failed', 'error', `OrganizeJobRun batch ${data.batchStart}-${data.batchEnd} ended as ${data.state}.`);

@@ -230,9 +230,11 @@ export type BgsmOrganizeReceiptRow = Readonly<{
 export type BgsmOrganizeJobClientMessage =
   | (BgsmOrganizeJobPreflightIdentity & Readonly<{
       type: 'requestBgsmOrganizeJobPreflight';
+      taskInstruction: string;
     }>)
   | (BgsmOrganizeJobControllerIdentity & Readonly<{
       type: 'startBgsmOrganizeJob';
+      requestId: string;
       preflightToken: PreflightToken;
       taskInstruction: string;
     }>)
@@ -328,6 +330,7 @@ export type BgsmOrganizeJobError = Readonly<{
   generation: number | null;
   reason: BgsmOrganizeJobErrorReason;
   message: string;
+  requestId?: string;
 }>;
 
 export type BgsmOrganizeJobDisconnected = Readonly<{
@@ -803,10 +806,10 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
   let expected: string[];
   switch (message.type) {
     case 'requestBgsmOrganizeJobPreflight':
-      expected = preflight;
+      expected = [...preflight, 'taskInstruction'];
       break;
     case 'startBgsmOrganizeJob':
-      expected = [...controller, 'preflightToken', 'taskInstruction'];
+      expected = [...controller, 'requestId', 'preflightToken', 'taskInstruction'];
       break;
     case 'cancelBgsmOrganizeJobPreflight':
       expected = preflight;
@@ -859,7 +862,12 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
       expected = [...run, 'snapshot'];
       break;
     case 'bgsmOrganizeJobRunError':
-      expected = [...run, 'reason', 'message'];
+      expected = [
+        ...run,
+        ...('requestId' in message ? ['requestId'] : []),
+        'reason',
+        'message',
+      ];
       break;
     case 'bgsmOrganizeJobRunDisconnected':
       expected = run;

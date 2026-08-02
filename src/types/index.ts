@@ -110,6 +110,18 @@ export type OrganizeJobStatus =
   | 'completed'
   | 'cancelled';
 
+export type OrganizeStoredJobStatus = OrganizeJobStatus | 'preflight_ready';
+
+export type OrganizePreflightState = 'ready' | 'consumed';
+
+export interface OrganizePreflightAuthority {
+  token: string;
+  requestId: string;
+  state: OrganizePreflightState;
+  expiresAt: number;
+  consumedAt: number | null;
+}
+
 export type OrganizeItemAnalysisState =
   | 'pending'
   | 'leased'
@@ -159,7 +171,8 @@ export interface OrganizeJobRecord {
   /** Depth-first worklist used only while isolating a failed analyzer page. */
   analysisPendingRanges?: OrganizeAnalysisRange[];
   providerBinding: unknown | null;
-  status: OrganizeJobStatus;
+  status: OrganizeStoredJobStatus;
+  preflight?: OrganizePreflightAuthority | null;
   revision: number;
   itemCount: number;
   applyId: string | null;

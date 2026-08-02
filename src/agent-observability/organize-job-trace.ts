@@ -238,6 +238,13 @@ function createOrganizeJobRunTrace(
       });
     },
 
+    recordRestore(restore) {
+      schedule((root) => emit(root, {
+        kind: 'organize_restore_state',
+        data: restore,
+      }));
+    },
+
     recordReview(review) {
       schedule(async (root) => {
         const spanId = `${root.rootOperationId}:review:${traceInstanceId}:${++transitionSpanSequence}`;

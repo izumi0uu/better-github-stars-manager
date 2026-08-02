@@ -271,6 +271,34 @@ describe('Agent-readable diagnostic report', () => {
     }));
   });
 
+  it('reports a durable organize checkpoint restore failure', () => {
+    const artifact = reportArtifact();
+    const restoreFailure = event(15, 'organize_restore_state', {
+      state: 'failed',
+      reasonCode: 'checkpoint_invariant',
+    });
+    const report = createAgentDiagnosticReport({
+      ...artifact,
+      roots: artifact.roots.map((root) => ({
+        ...root,
+        lastSequence: 15,
+        eventCount: root.eventCount + 1,
+      })),
+      events: [...artifact.events, restoreFailure],
+      aggregates: { ...artifact.aggregates, eventCount: artifact.aggregates.eventCount + 1 },
+      integrity: { ...artifact.integrity, eventCount: artifact.integrity.eventCount + 1 },
+    });
+
+    expect(report.findings).toContainEqual(expect.objectContaining({
+      code: 'organize_restore_failed',
+      severity: 'error',
+      evidence: {
+        state: 'failed',
+        reasonCode: 'checkpoint_invariant',
+      },
+    }));
+  });
+
   it.each(['no_transition', 'detached'] as const)(
     'does not report a Session transition failure for %s acknowledgements',
     (disposition) => {

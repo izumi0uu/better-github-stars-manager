@@ -92,6 +92,7 @@ type PreflightRecord = Readonly<{
   candidate: ResolvedLaunchCandidate;
   scopeFingerprint: Awaited<ReturnType<typeof parseScopeFingerprintV1>>;
   capturedAt: number;
+  expiresAt: number;
 }>;
 
 type PreflightAuthority = Readonly<{
@@ -128,7 +129,16 @@ export interface BgsmAgentController {
   getPreflightContext(
     identity: OrganizeJobRunControllerIdentity,
     preflightToken: PreflightToken,
-  ): Readonly<{ jobId: OrganizeJobId; scopeKind: FrozenScopeKind }>;
+  ): Readonly<{
+    jobId: OrganizeJobId;
+    scopeKind: FrozenScopeKind;
+    frozenScope: FrozenScope;
+    expiresAt: number;
+  }>;
+  acknowledgePreflightStarted(
+    identity: OrganizeJobRunControllerIdentity,
+    preflightToken: PreflightToken,
+  ): boolean;
   cancelPreflight(identity: OrganizeJobRunControllerIdentity, requestId: string): boolean;
   findReadyPreflight(identity: OrganizeJobRunControllerIdentity): OrganizeJobRunReadyPreflight | null;
   startRun(
@@ -374,6 +384,7 @@ export function createBgsmAgentController(
       }
       const scopeFingerprint = parseScopeFingerprintV1(`fs:v1:${digest}`);
       const token = parsePreflightToken(`preflight:v1:${randomId()}`);
+      const expiresAt = capturedAt + preflightTtlMs;
       preflights.set(token, Object.freeze({
         token,
         requestId,
@@ -386,6 +397,7 @@ export function createBgsmAgentController(
         }),
         scopeFingerprint,
         capturedAt,
+        expiresAt,
       }));
       const record = preflights.get(token)!;
       preflightTimers.set(token, setTimer(() => closePreflight(record, 'expired'), preflightTtlMs));
@@ -459,7 +471,31 @@ export function createBgsmAgentController(
       return Object.freeze({
         jobId: preflight.jobId,
         scopeKind: preflight.candidate.contract.kind,
+        frozenScope: createFrozenScope({
+          kind: preflight.candidate.contract.kind,
+          label: preflight.candidate.label,
+          filterSnapshot: preflight.candidate.filterSnapshot,
+          repositoryIds: preflight.candidate.repositoryIds,
+          capturedAt: preflight.capturedAt,
+          fingerprint: preflight.scopeFingerprint,
+        }),
+        expiresAt: preflight.expiresAt,
       });
+    },
+
+    acknowledgePreflightStarted(identity, preflightToken) {
+      assertControllerIdentity(identity);
+      const preflight = preflights.get(preflightToken);
+      if (!preflight) return false;
+      if (
+        preflight.controllerId !== identity.controllerId
+        || preflight.sessionId !== identity.sessionId
+      ) {
+        throw new TypeError('OrganizeJobRun preflight token belongs to another controller/session.');
+      }
+      rememberConsumedPreflight(preflightToken);
+      closePreflight(preflight, 'started');
+      return true;
     },
 
     startRun(identity, preflightToken, taskInstruction = 'Organize this scope with useful semantic tags.') {
@@ -831,7 +867,6 @@ export function createBgsmAgentController(
       runs.set(runId, record);
       nextGeneration.set(generationKey, generation);
       continuationChildren.set(continuationCursor, runId);
-      void Promise.resolve().then(() => dependencies.scheduleRun?.(record.identity));
       return snapshot(record);
     },
 

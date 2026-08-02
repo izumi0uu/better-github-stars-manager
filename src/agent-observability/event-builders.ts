@@ -78,6 +78,7 @@ function copyAllowlistedData(kind: DevTraceEventKind, input: unknown): DevTraceE
     case 'organize_batch_state': return pick(value, ['runId', 'generation', 'batchStart', 'batchEnd', 'repositoryCount', 'localOnlyCount', 'providerCount', 'state']);
     case 'organize_provider_attempt': return pick(value, ['runId', 'generation', 'batchStart', 'batchEnd', 'attempt', 'state', 'requestBytes', 'requestedOutputTokens', 'inputTokens', 'outputTokens', 'totalTokens', 'reasonCode']);
     case 'organize_durable_state': return pick(value, ['revision', 'previousRevision', 'observation', 'missingFromRevision', 'missingToRevision', 'source']);
+    case 'organize_restore_state': return pick(value, ['state', 'reasonCode']);
     case 'organize_review_state': return pick(value, ['runId', 'generation', 'revision', 'state', 'actionableRepositories', 'selectedRepositories', 'selectedActions', 'rowOffset', 'rowCount', 'nextRowOffset']);
     case 'organize_selection_state': return pick(value, ['runId', 'generation', 'previousRevision', 'revision', 'mode', 'affectedRepositories', 'selectedRepositories', 'selectedActions']);
     case 'organize_apply_state': return pick(value, ['applyId', 'executionId', 'revision', 'state', 'total', 'settled', 'changed', 'unchanged', 'skipped', 'failed']);

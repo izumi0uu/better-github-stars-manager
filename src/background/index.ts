@@ -57,6 +57,7 @@ import {
   type BgsmAgentCompactionCheckpoint,
   type RepositoryCodeRefAuthority,
   type BgsmAgentTurnInput,
+  type OrganizeJobRunSnapshot,
 } from "@/bgsm-agent";
 import {
   AgentExecutionLedger,
@@ -106,6 +107,7 @@ import {
 import {
   createFrozenScope,
   createFrozenScopeCursor,
+  parsePreflightToken,
   parseScopeFingerprintV1,
 } from "@/bgsm-agent/scope";
 import {
@@ -127,7 +129,12 @@ import {
   type OrganizeJobRunAnalysisState,
   type OrganizeJobRunPagePosition,
 } from "@/bgsm-agent/organize-job";
-import type { RunBudget, RunBudgetUsage } from "@/bgsm-agent/policy";
+import {
+  createEmptyRunBudgetUsage,
+  createProductionRunBudget,
+  type RunBudget,
+  type RunBudgetUsage,
+} from "@/bgsm-agent/policy";
 import {
   loadFrozenScopePage,
   type SemanticRepositoryRecord,
@@ -139,20 +146,25 @@ import {
 } from "@/bgsm-agent/semantic-dto";
 import { normalizeStoredTag, type LegacyTagRow } from "@/storage/tag-shape";
 import {
+  activateOrganizePreflight,
   advanceOrganizeJobRun,
   attachOrganizeJob,
   claimOrganizeApplyChunk,
   checkpointOrganizeAnalysisPage,
   cancelOrganizeJob,
+  cancelOrganizePreflight,
   completeOrganizeJobWithoutApply,
   createOrganizeJob,
+  createOrganizePreflight,
   dismissOrganizeReceipt,
   getOrganizeApplyProgress,
   getActiveOrganizeJob,
   getOrganizeCoverage,
   getOrganizeJob,
   getOrganizeJobForRun,
+  getOrganizePreflightByToken,
   getLatestOrganizeJob,
+  getReadyOrganizePreflight,
   getOrganizeReviewPageAtOffset,
   getOrganizeReceiptPageAtOffset,
   getOrganizeSelectionSummary,
@@ -531,6 +543,24 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
       error instanceof Error ? error.message : "Automatic OrganizeJobRun continuation failed.",
     );
   },
+  async providerSetupFailed(identity, error) {
+    const job = await getOrganizeJobForRun(identity.runId, identity.generation);
+    const usage = job?.usage as Partial<RunBudgetUsage> | undefined;
+    if (
+      job?.status === 'analyzing'
+      && job.preflight?.state === 'consumed'
+      && job.nextFrozenIndex === 0
+      && usage?.consumedFrozenPositions === 0
+    ) {
+      await cancelOrganizeJob(job.jobId);
+      if (pendingDurableOrganizeJobId === job.jobId) pendingDurableOrganizeJobId = null;
+      await organizeAnalysisRecovery.reconcile();
+    }
+    console.error(
+      '[GSM] OrganizeJobRun provider setup failed:',
+      error instanceof Error ? error.message : 'Unknown provider setup failure.',
+    );
+  },
   executionFailed(_identity, error) {
     console.error(
       '[GSM] OrganizeJobRun scheduler failed:',
@@ -566,15 +596,30 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
   },
   async validateDurableProviderBinding({ identity, providerBinding }) {
     const job = await getOrganizeJobForRun(identity.runId, identity.generation);
+    if (!job) return;
+    if (job.providerBinding === null || job.providerBinding === undefined) {
+      await advanceOrganizeJobRun({
+        jobId: job.jobId,
+        controllerId: identity.controllerId,
+        sessionId: identity.sessionId,
+        runId: identity.runId,
+        generation: identity.generation,
+        proposalId: parseProposalId(job.proposalId),
+        budget: job.budget as RunBudget,
+        usage: job.usage as RunBudgetUsage,
+        providerBinding,
+        startFrozenIndex: job.nextFrozenIndex,
+        analysisPendingRanges: job.analysisPendingRanges ?? [],
+      });
+      return;
+    }
     if (
-      job?.providerBinding !== null
-      && job?.providerBinding !== undefined
-      && canonicalJson(job.providerBinding) !== canonicalJson(providerBinding)
+      canonicalJson(job.providerBinding) !== canonicalJson(providerBinding)
     ) {
       throw new TypeError('The AI service or model changed while durable analysis was suspended.');
     }
   },
-  async initializeDurableRun({ identity, state, continuation, providerBinding }) {
+  async initializeDurableRun({ identity, state, continuation, parentIdentity, providerBinding }) {
     if (state.frozenScope.kind !== "all_live_stars") {
       throw new TypeError("OrganizeJobRun only accepts the whole starred library.");
     }
@@ -585,6 +630,7 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
         throw new TypeError("OrganizeJobRun durable identity does not match its preallocated job.");
       }
       if (pendingDurableOrganizeJobId === context.jobId) pendingDurableOrganizeJobId = null;
+      await publishOrganizeJobState(current.jobId);
       await organizeAnalysisRecovery.arm();
       return;
     }
@@ -630,7 +676,7 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
     if (active.frozenScope.fingerprint !== state.frozenScope.fingerprint) {
       throw new TypeError("Another whole-library organize job is already active.");
     }
-    await advanceOrganizeJobRun({
+    const advanced = await advanceOrganizeJobRun({
       jobId: active.jobId,
       controllerId: identity.controllerId,
       sessionId: identity.sessionId,
@@ -641,8 +687,11 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
       usage: state.usage,
       providerBinding,
       startFrozenIndex: state.nextFrozenIndex,
+      analysisPendingRanges: state.analysisPendingRanges,
+      expectedParent: parentIdentity ?? undefined,
     });
     if (pendingDurableOrganizeJobId === context.jobId) pendingDurableOrganizeJobId = null;
+    await publishOrganizeJobState(advanced.jobId);
     await organizeAnalysisRecovery.arm();
   },
   async reserveDurablePage({ identity, state, previousUsage, startFrozenIndex, endFrozenIndexExclusive }) {
@@ -2021,6 +2070,41 @@ chrome.runtime.onConnect.addListener((port) => {
             throw new TypeError("An active OrganizeJobRun already exists.");
           }
           result = resolved;
+          if (result.status === "ready" && result.preflightToken) {
+            const context = organizeJobRunController.getPreflightContext(
+              message,
+              result.preflightToken,
+            );
+            const taxonomyBundle = await loadOrganizeJobRunTaxonomy();
+            await createOrganizePreflight({
+              jobId: context.jobId,
+              controllerId: message.controllerId,
+              sessionId: message.sessionId,
+              runId: parseRunId(`run:v1:${crypto.randomUUID()}`),
+              generation: 1,
+              frozenScope: {
+                kind: context.frozenScope.kind,
+                label: context.frozenScope.label,
+                filterSnapshot: context.frozenScope.filterSnapshot,
+                repositoryIds: [...context.frozenScope.repositoryIds],
+                capturedAt: context.frozenScope.capturedAt,
+                fingerprint: context.frozenScope.fingerprint,
+              },
+              taskInstruction: message.taskInstruction,
+              taxonomy: {
+                fingerprint: taxonomyBundle.fingerprint,
+                snapshot: {
+                  taxonomy: taxonomyBundle.taxonomy,
+                  policyTaxonomy: taxonomyBundle.policyTaxonomy,
+                },
+              },
+              budget: createProductionRunBudget(),
+              usage: createEmptyRunBudgetUsage(),
+              preflightToken: result.preflightToken,
+              requestId: message.requestId,
+              expiresAt: context.expiresAt,
+            });
+          }
         } catch (error) {
           if (
             error instanceof Error &&
@@ -2057,20 +2141,26 @@ chrome.runtime.onConnect.addListener((port) => {
         return;
       }
       if (message.type === "startBgsmOrganizeJob") {
-        const preflight = organizeJobRunController.getPreflightContext(message, message.preflightToken);
+        const preflight = await getOrganizePreflightByToken(message.preflightToken);
+        if (!preflight) throw new TypeError("OrganizeJobRun preflight token is invalid or stale.");
         let replacedJob: Awaited<ReturnType<typeof getActiveOrganizeJob>> = undefined;
-        if (preflight.scopeKind === "all_live_stars") {
+        let reservedPendingDurableJob = false;
+        if (preflight.frozenScope.kind === "all_live_stars") {
           const active = await getActiveOrganizeJob();
+          const sameStartedJob = active?.jobId === preflight.jobId;
           if (
-            (active && !canReplaceBlockedDurableRun(active, message))
+            (active && !sameStartedJob && !canReplaceBlockedDurableRun(active, message))
             || (pendingDurableOrganizeJobId && pendingDurableOrganizeJobId !== preflight.jobId)
           ) {
             throw new TypeError("An active OrganizeJobRun already exists.");
           }
-          replacedJob = active;
-          pendingDurableOrganizeJobId = preflight.jobId;
+          replacedJob = sameStartedJob ? undefined : active;
+          if (!sameStartedJob) {
+            pendingDurableOrganizeJobId = parseOrganizeJobId(preflight.jobId);
+            reservedPendingDurableJob = true;
+          }
         }
-        let snapshot;
+        let activated;
         try {
           if (replacedJob) {
             const replacedIdentity = {
@@ -2079,50 +2169,85 @@ chrome.runtime.onConnect.addListener((port) => {
               runId: parseRunId(replacedJob.runId),
               generation: replacedJob.generation,
             };
-            const restored = await restoreDurableOrganizeJob(replacedIdentity);
+            organizeJobRunScheduler.abort(replacedIdentity.runId);
+            const inMemory = organizeJobRunController.findLatestSnapshot(replacedIdentity);
             if (
-              !restored
-              || restored.runId !== replacedIdentity.runId
-              || restored.generation !== replacedIdentity.generation
+              inMemory?.runId === replacedIdentity.runId
+              && inMemory.generation === replacedIdentity.generation
             ) {
-              throw new TypeError("Blocked OrganizeJobRun replacement authority is unavailable.");
+              organizeJobRunController.stopRun(replacedIdentity);
             }
-            organizeJobRunScheduler.abort(restored.runId);
-            organizeJobRunController.stopRun(restored);
             if (!await cancelOrganizeJob(replacedJob.jobId)) {
               throw new TypeError("Blocked OrganizeJobRun replacement could not cancel the previous job.");
             }
-            organizeJobRunScheduler.release(restored.runId);
+            organizeJobRunScheduler.release(replacedIdentity.runId);
             organizeJobRunTraceCoordinator.cancelFamily(
               parseOrganizeJobId(replacedJob.jobId),
               "user_stopped",
               "user",
             );
           }
-          snapshot = organizeJobRunController.startRun(
-            message,
-            message.preflightToken,
-            message.taskInstruction,
-          );
-        } catch (error) {
-          if (pendingDurableOrganizeJobId === preflight.jobId) pendingDurableOrganizeJobId = null;
-          throw error;
+          activated = await activateOrganizePreflight({
+            preflightToken: message.preflightToken,
+            controllerId: message.controllerId,
+            sessionId: message.sessionId,
+            taskInstruction: message.taskInstruction,
+          });
+        } finally {
+          if (reservedPendingDurableJob && pendingDurableOrganizeJobId === preflight.jobId) {
+            pendingDurableOrganizeJobId = null;
+          }
+          reservedPendingDurableJob = false;
         }
-        organizeJobRunTraceCoordinator.recordGeneration(
-          organizeJobRunController.getExecutionContext(snapshot).jobId,
-          snapshot,
-          {
-            state: "frozen",
-            cause: "initial",
-            parentRunId: null,
-            parentGeneration: null,
-          },
+        const acknowledged = organizeJobRunController.acknowledgePreflightStarted(
+          message,
+          message.preflightToken,
         );
-        safeOrganizeJobRunPost(port, { type: "bgsmOrganizeJobRunSnapshot", snapshot });
+        if (!acknowledged && activated.disposition === 'started') {
+          organizeJobRunTraceCoordinator.recordPreflight({
+            jobId: parseOrganizeJobId(activated.job.jobId),
+            state: 'started',
+            repositoryCount: activated.job.itemCount,
+          });
+        }
+        const runIdentity = {
+          controllerId: message.controllerId,
+          sessionId: message.sessionId,
+          runId: parseRunId(activated.job.runId),
+          generation: activated.job.generation,
+        };
+        const snapshot = await restoreDurableOrganizeJob(runIdentity, {
+          schedule: false,
+        });
+        if (!snapshot) throw new TypeError('Durable OrganizeJobRun could not be restored after start.');
+        if (activated.disposition === 'started') {
+          organizeJobRunTraceCoordinator.recordGeneration(
+            parseOrganizeJobId(activated.job.jobId),
+            snapshot,
+            {
+              state: "frozen",
+              cause: "initial",
+              parentRunId: null,
+              parentGeneration: null,
+            },
+          );
+          await organizeAnalysisRecovery.arm();
+          void organizeJobRunScheduler.schedule(runIdentity);
+        }
+        safeOrganizeJobRunPost(port, { type: "bgsmOrganizeJobRunSnapshot", snapshot }, {
+          kind: 'authoritative_snapshot',
+          durableRevision: activated.job.revision,
+        });
+        await publishOrganizeJobState(
+          activated.job.jobId,
+          port,
+          'authoritative_snapshot',
+        );
         return;
       }
       if (message.type === "cancelBgsmOrganizeJobPreflight") {
         organizeJobRunController.cancelPreflight(message, message.requestId);
+        await cancelOrganizePreflight(message);
         return;
       }
       if (message.type === "requestBgsmActiveOrganizeJob") {
@@ -2327,23 +2452,11 @@ chrome.runtime.onConnect.addListener((port) => {
         if (organizeJob?.status === "analysis_blocked") {
           await retryOrganizeAnalysisFromFirstFailure(organizeJob.jobId);
         }
-        const snapshot = organizeJobRunController.continueRun(
+        await organizeJobRunScheduler.continueRun(
           message,
           cursor.nextFrozenIndex,
           message.continuationCursor,
         );
-        organizeJobRunTraceCoordinator.recordGeneration(
-          organizeJobRunController.getExecutionContext(snapshot).jobId,
-          snapshot,
-          {
-            state: "prepared",
-            cause: "continuation",
-            parentRunId: message.runId,
-            parentGeneration: message.generation,
-          },
-        );
-        organizeJobRunScheduler.seedContinuation(snapshot.runId, parentState);
-        safeOrganizeJobRunPost(port, { type: "bgsmOrganizeJobRunSnapshot", snapshot });
         return;
       }
       if (message.type === "disconnectBgsmOrganizeJob") {
@@ -2467,7 +2580,16 @@ async function replayOrganizeJobRunInMemoryAuthority(
     generation?: number;
   }>,
 ): Promise<void> {
-  const preflight = organizeJobRunController.findReadyPreflight(identity);
+  const inMemoryPreflight = organizeJobRunController.findReadyPreflight(identity);
+  const durablePreflight = inMemoryPreflight
+    ? null
+    : await getReadyOrganizePreflight(identity);
+  const preflight = inMemoryPreflight ?? (durablePreflight?.preflight ? {
+    requestId: durablePreflight.preflight.requestId,
+    preflightToken: parsePreflightToken(durablePreflight.preflight.token),
+    label: durablePreflight.frozenScope.label,
+    count: durablePreflight.itemCount,
+  } : null);
   if (preflight) {
     safeOrganizeJobRunPost(port, {
       type: 'bgsmOrganizeJobRunPreflightResult',
@@ -2484,7 +2606,9 @@ async function replayOrganizeJobRunInMemoryAuthority(
 
 function postOrganizeJobRunError(
   port: chrome.runtime.Port,
-  identity: Pick<BgsmOrganizeJobClientMessage, "controllerId" | "sessionId"> & Partial<OrganizeRunIdentity>,
+  identity: Pick<BgsmOrganizeJobClientMessage, "controllerId" | "sessionId"> & Partial<OrganizeRunIdentity> & Readonly<{
+    requestId?: string;
+  }>,
   reason: BgsmOrganizeJobErrorReason,
   detail: string,
 ): void {
@@ -2496,6 +2620,7 @@ function postOrganizeJobRunError(
     generation: identity.generation ?? null,
     reason,
     message: boundOrganizeJobRunError(detail),
+    ...(identity.requestId ? { requestId: identity.requestId } : {}),
   });
 }
 
@@ -2526,12 +2651,18 @@ async function shouldPreserveDurableOrganizeController(identity: Readonly<{
   sessionId: string;
 }>): Promise<boolean> {
   const job = await getActiveOrganizeJob();
-  return !!job && job.controllerId === identity.controllerId && job.sessionId === identity.sessionId;
+  if (job && job.controllerId === identity.controllerId && job.sessionId === identity.sessionId) {
+    return true;
+  }
+  return !!await getReadyOrganizePreflight(identity);
 }
 
 async function buildOrganizeJobPresentation(
   job: OrganizeJobRecord,
 ): Promise<BgsmOrganizeJobPresentation> {
+  if (job.status === 'preflight_ready') {
+    throw new TypeError('A preflight cannot be presented as an active organize job.');
+  }
   const [coverage, selection, apply] = await Promise.all([
     getOrganizeCoverage(job.jobId),
     getOrganizeSelectionSummary(job.jobId),
@@ -2893,6 +3024,11 @@ async function recoverOrganizeApplyPumpFailure(input: Readonly<{
   );
 }
 
+const organizeJobRestoreFlights = new Map<
+  string,
+  Promise<OrganizeJobRunSnapshot | null>
+>();
+
 async function restoreDurableOrganizeJob(identity: Readonly<{
   controllerId: BgsmOrganizeJobClientMessage['controllerId'];
   sessionId: string;
@@ -2901,7 +3037,8 @@ async function restoreDurableOrganizeJob(identity: Readonly<{
 }>, options: Readonly<{
   force?: boolean;
   schedule?: boolean;
-}> = {}) {
+  coordinated?: boolean;
+}> = {}): Promise<OrganizeJobRunSnapshot | null> {
   const existing = organizeJobRunController.findLatestSnapshot(identity);
   if (
     !options.force &&
@@ -2936,55 +3073,130 @@ async function restoreDurableOrganizeJob(identity: Readonly<{
     throw new TypeError('An active OrganizeJobRun is already connected in another tab.');
   }
 
-  organizeJobRunScheduler.abort(parseRunId(found.runId));
-  organizeJobRunScheduler.release(parseRunId(found.runId));
-  await releaseOrganizeJobLeases(found.jobId);
-  const attached = await attachOrganizeJobForController(found, identity);
-  const restored = await restoreOrganizeAnalysisCheckpoint(attached.jobId);
-  const state = buildRestoredOrganizeAnalysisState(
-    restored.job,
-    restored.items,
-    restored.taxonomy.fingerprint,
-  );
-  const runIdentity: OrganizeRunIdentity = {
-    controllerId: identity.controllerId,
-    sessionId: identity.sessionId,
-    runId: parseRunId(restored.job.runId),
-    generation: restored.job.generation,
-  };
-  const continuationCursor = state.status === 'analysis_blocked'
-    ? await issueContinuationCursor(
-        createFrozenScopeCursor(state.runId, state.generation, restored.resumeFrozenIndex),
-        organizeJobRunCursorAuthKey,
-      )
-    : null;
-  const restoredJobId = parseOrganizeJobId(restored.job.jobId);
-  const snapshot = organizeJobRunController.restoreAnalysisRun({
-    jobId: restoredJobId,
-    identity: runIdentity,
-    state,
-    taskInstruction: restored.job.taskInstruction,
-    continuationCursor,
-  });
+  if (!options.coordinated) {
+    const activeFlight = organizeJobRestoreFlights.get(found.jobId);
+    if (activeFlight) {
+      const snapshot = await activeFlight;
+      if (
+        !snapshot ||
+        (snapshot.controllerId === identity.controllerId && snapshot.sessionId === identity.sessionId)
+      ) return snapshot;
+      return restoreDurableOrganizeJob(identity, { ...options, force: false });
+    }
+    const flight = restoreDurableOrganizeJob(identity, {
+      ...options,
+      coordinated: true,
+    }).finally(() => {
+      if (organizeJobRestoreFlights.get(found.jobId) === flight) {
+        organizeJobRestoreFlights.delete(found.jobId);
+      }
+    });
+    organizeJobRestoreFlights.set(found.jobId, flight);
+    return flight;
+  }
+
+  const restoredJobId = parseOrganizeJobId(found.jobId);
   organizeJobRunTraceCoordinator.resume(restoredJobId);
-  organizeJobRunTraceCoordinator.recordGeneration(
-    restoredJobId,
-    snapshot,
-    {
-      state: "restored",
-      cause: "restore",
-      parentRunId: null,
-      parentGeneration: null,
-    },
-  );
-  organizeJobRunScheduler.seedRestoredState(runIdentity.runId, state);
-  if (state.status === 'analyzing' && options.schedule !== false) {
-    void organizeJobRunScheduler.schedule(runIdentity);
+  organizeJobRunTraceCoordinator.recordRestore(restoredJobId, {
+    state: 'started',
+    reasonCode: null,
+  });
+  try {
+    organizeJobRunScheduler.abort(parseRunId(found.runId));
+    organizeJobRunScheduler.release(parseRunId(found.runId));
+    await releaseOrganizeJobLeases(found.jobId);
+    const restored = await restoreOrganizeAnalysisCheckpoint(found.jobId);
+    const attached = await attachOrganizeJobForController(restored.job, identity);
+    const state = buildRestoredOrganizeAnalysisState(
+      attached,
+      restored.items,
+      restored.taxonomy.fingerprint,
+    );
+    const runIdentity: OrganizeRunIdentity = {
+      controllerId: identity.controllerId,
+      sessionId: identity.sessionId,
+      runId: parseRunId(restored.job.runId),
+      generation: restored.job.generation,
+    };
+    const continuationCursor = state.status === 'analysis_blocked'
+      ? await issueContinuationCursor(
+          createFrozenScopeCursor(state.runId, state.generation, restored.resumeFrozenIndex),
+          organizeJobRunCursorAuthKey,
+        )
+      : null;
+    const snapshot = organizeJobRunController.restoreAnalysisRun({
+      jobId: restoredJobId,
+      identity: runIdentity,
+      state,
+      taskInstruction: restored.job.taskInstruction,
+      continuationCursor,
+    });
+    organizeJobRunTraceCoordinator.recordRestore(restoredJobId, {
+      state: 'succeeded',
+      reasonCode: null,
+    });
+    organizeJobRunTraceCoordinator.recordGeneration(
+      restoredJobId,
+      snapshot,
+      {
+        state: "restored",
+        cause: "restore",
+        parentRunId: null,
+        parentGeneration: null,
+      },
+    );
+    organizeJobRunScheduler.seedRestoredState(runIdentity.runId, state);
+    if (state.status === 'analyzing' && options.schedule !== false) {
+      void organizeJobRunScheduler.schedule(runIdentity);
+    }
+    if (attached.applyId && ['apply_sealed', 'applying'].includes(attached.status)) {
+      void pumpOrganizeApply(attached.applyId);
+    }
+    return snapshot;
+  } catch (error) {
+    const reasonCode = classifyOrganizeRestoreFailure(error);
+    organizeJobRunTraceCoordinator.recordRestore(restoredJobId, {
+      state: 'failed',
+      reasonCode,
+    });
+    if (
+      reasonCode === 'checkpoint_invariant'
+      && found.applyId === null
+      && (found.status === 'analyzing' || found.status === 'analysis_blocked')
+      && await cancelOrganizeJob(found.jobId)
+    ) {
+      organizeJobRunScheduler.abort(parseRunId(found.runId));
+      organizeJobRunScheduler.release(parseRunId(found.runId));
+      if (pendingDurableOrganizeJobId === found.jobId) pendingDurableOrganizeJobId = null;
+      organizeJobRunTraceCoordinator.cancelFamily(
+        restoredJobId,
+        'checkpoint_invalid_discarded',
+        'runtime',
+      );
+      throw new TypeError(
+        'Stored OrganizeJobRun checkpoint was invalid and has been discarded. Start analysis again.',
+      );
+    }
+    await organizeJobRunTraceCoordinator.flush(restoredJobId);
+    throw error;
   }
-  if (restored.job.applyId && ['apply_sealed', 'applying'].includes(restored.job.status)) {
-    void pumpOrganizeApply(restored.job.applyId);
+}
+
+function classifyOrganizeRestoreFailure(
+  error: unknown,
+): 'checkpoint_invariant' | 'checkpoint_missing' | 'storage_unavailable' | 'unknown' {
+  const message = error instanceof Error ? error.message : '';
+  if (/missing|Unknown organize job/u.test(message)) return 'checkpoint_missing';
+  if (
+    error instanceof TypeError
+    || error instanceof RangeError
+    || /invalid|malformed|stale|contiguous|FrozenScope|ledger|fingerprint/u.test(message)
+  ) return 'checkpoint_invariant';
+  const name = error instanceof Error ? error.name : '';
+  if (/Database|Transaction|Quota|Abort|InvalidState|UnknownError/u.test(name)) {
+    return 'storage_unavailable';
   }
-  return snapshot;
+  return 'unknown';
 }
 
 async function attachOrganizeJobForController(
@@ -2995,6 +3207,7 @@ async function attachOrganizeJobForController(
     jobId: job.jobId,
     controllerId: identity.controllerId,
     sessionId: identity.sessionId,
+    expectedRevision: job.revision,
   });
 }
 

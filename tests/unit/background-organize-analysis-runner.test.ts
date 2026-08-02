@@ -15,6 +15,7 @@ import {
   projectFrozenScope,
   type BudgetExhaustionReason,
   type OrganizeJobRunSnapshot,
+  type RunId,
   type RunBudgetUsage,
 } from '@/bgsm-agent';
 import { issueContinuationCursor } from '@/bgsm-agent/continuation-cursor';
@@ -27,7 +28,10 @@ import type {
 import { AnalyzerAttemptError } from '@/bgsm-agent/organize-proposal-analyzer';
 import { AgentProviderError, type AgentProviderErrorCode } from '@/agent-harness/provider';
 import type { OrganizeJobRunPagePosition } from '@/bgsm-agent/organize-job';
-import { createBgsmAgentController } from '@/background/organize-job-controller';
+import {
+  createBgsmAgentController,
+  type OrganizeRunIdentity,
+} from '@/background/organize-job-controller';
 import {
   createBgsmOrganizeJobScheduler,
   type BgsmOrganizeJobSchedulerTraceEvent,
@@ -77,6 +81,10 @@ function createHarness(input: Readonly<{
   traceThrows?: boolean;
   splitFailureRanges?: readonly string[];
   providerFailureCode?: AgentProviderErrorCode;
+  createAnalyzerError?: Error;
+  streamProgressCounts?: readonly number[];
+  continuationInitializationGate?: Promise<void>;
+  scheduleContinuationChildren?: boolean;
 }>) {
   const runId = parseRunId(`run:v1:scheduler-${Math.random()}`);
   const identity = {
@@ -104,6 +112,7 @@ function createHarness(input: Readonly<{
   };
   const publishedSnapshots: OrganizeJobRunSnapshot[] = [];
   const durableCalls: string[] = [];
+  const continuationEvents: string[] = [];
   const traceEvents: BgsmOrganizeJobSchedulerTraceEvent[] = [];
   const loadedRanges: string[] = [];
   let usage: RunBudgetUsage = {
@@ -117,15 +126,21 @@ function createHarness(input: Readonly<{
   let reason: BudgetExhaustionReason | null = null;
   let nextFrozenIndex: number | null = null;
   let analyzerBatchCount = 0;
+  const runStarts = new Map<RunId, number>([[runId, 0]]);
   const controller = {
-    setRunState: () => ({} as never),
-    getExecutionContext: () => ({
+    setRunState: (current: typeof identity) => {
+      if (current.runId !== runId && input.scheduleContinuationChildren !== true) {
+        throw new Error('Continuation execution is disabled by this unit harness.');
+      }
+      return {} as never;
+    },
+    getExecutionContext: (current: typeof identity) => ({
       jobId: parseOrganizeJobId(`organize-job:v1:${runId}`),
       frozenScope,
       budget: createProductionRunBudget(),
       usage,
       taskInstruction: 'Classify repositories.',
-      startFrozenIndex: 0,
+      startFrozenIndex: runStarts.get(current.runId) ?? 0,
     }),
     updateUsage: (_identity: typeof identity, next: RunBudgetUsage) => {
       usage = next;
@@ -173,9 +188,12 @@ function createHarness(input: Readonly<{
     ): OrganizeJobRunSnapshot => {
       counters.continuations += 1;
       if (input.durable) durableCalls.push('continue');
+      continuationEvents.push('prepared');
+      const childRunId = parseRunId(`run:v1:continuation-${counters.continuations}`);
+      runStarts.set(childRunId, _startFrozenIndex);
       return {
         ...identity,
-        runId: parseRunId(`run:v1:continuation-${counters.continuations}`),
+        runId: childRunId,
         generation: identity.generation + counters.continuations,
         state: 'prepared',
         terminalReason: null,
@@ -317,10 +335,19 @@ function createHarness(input: Readonly<{
 
   const scheduler = createBgsmOrganizeJobScheduler({
     controller,
-    createAnalyzer: async () => analyzer,
+    createAnalyzer: async () => {
+      if (input.createAnalyzerError) throw input.createAnalyzerError;
+      return analyzer;
+    },
+    providerSetupFailed: async () => {
+      durableCalls.push('provider-setup-failed');
+    },
     requestedWindowSize: input.requestedWindowSize,
     createProposalId: () => parseProposalId(`proposal:v1:${runId}`),
-    publishSnapshot: (snapshot) => publishedSnapshots.push(snapshot),
+    publishSnapshot: (snapshot) => {
+      if (snapshot.generation > identity.generation) continuationEvents.push('published');
+      publishedSnapshots.push(snapshot);
+    },
     issueContinuationCursor: async (_identity, index) => {
       nextFrozenIndex = index;
       return parseContinuationCursorToken(`cursor:v1:${runId}-${index}`);
@@ -336,8 +363,15 @@ function createHarness(input: Readonly<{
       if (input.traceThrows) throw new Error('trace sink unavailable');
     },
     ...(input.durable ? {
-      async initializeDurableRun({ state }: { state: { nextFrozenIndex: number } }) {
+      async initializeDurableRun({ state, parentIdentity }: {
+        state: { nextFrozenIndex: number };
+        parentIdentity: OrganizeRunIdentity | null;
+      }) {
         durableCalls.push(`initialize:${state.nextFrozenIndex}`);
+        if (parentIdentity) {
+          continuationEvents.push('durable');
+          await input.continuationInitializationGate;
+        }
       },
       async reserveDurablePage({ startFrozenIndex, endFrozenIndexExclusive }: {
         startFrozenIndex: number;
@@ -428,6 +462,7 @@ function createHarness(input: Readonly<{
     counters,
     publishedSnapshots,
     durableCalls,
+    continuationEvents,
     loadedRanges,
     traceEvents,
     get reason() { return reason; },
@@ -436,6 +471,19 @@ function createHarness(input: Readonly<{
 }
 
 describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
+  it('reports provider setup failure so a preactivated durable job can be released', async () => {
+    const run = createHarness({
+      scopeCount: 1,
+      pageKind: 'live',
+      createAnalyzerError: new Error('Provider capability unavailable.'),
+    });
+
+    await run.scheduler.schedule(run.identity);
+
+    assert.deepEqual(run.durableCalls, ['provider-setup-failed']);
+    assert.equal(run.counters.reads, 0);
+  });
+
   it('leases and checkpoints each exact scheduler page before admitting the next page', async () => {
     const run = createHarness({
       scopeCount: 75,
@@ -800,7 +848,7 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
 
   it('automatically publishes a continuation after a progressing generation exhausts its budget', async () => {
     const run = createHarness({
-      scopeCount: 200,
+      scopeCount: 176,
       pageKind: 'live',
       analyzerMode: 'success',
       requestedTokens: 4_096,
@@ -813,8 +861,41 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     assert.equal(run.publishedSnapshots[0]?.state, 'prepared');
   });
 
-  it('reuses one provider runtime across internal continuation generations', async () => {
-    const repositoryIds = Array.from({ length: 76 }, (_, index) => `owner/repo-${index}`);
+  it('does not publish or schedule a continuation until its durable identity is committed', async () => {
+    let releaseInitialization!: () => void;
+    const continuationInitializationGate = new Promise<void>((resolve) => {
+      releaseInitialization = resolve;
+    });
+    const run = createHarness({
+      scopeCount: 176,
+      pageKind: 'live',
+      analyzerMode: 'success',
+      requestedTokens: 4_096,
+      durable: true,
+      continuationInitializationGate,
+    });
+
+    const parent = run.scheduler.schedule(run.identity);
+    for (let index = 0; index < 200 && !run.durableCalls.includes('initialize:175'); index += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+
+    assert.deepEqual(run.durableCalls.slice(-2), ['continue', 'initialize:175']);
+    assert.deepEqual(run.continuationEvents, ['prepared', 'durable']);
+    assert.equal(run.publishedSnapshots.length, 0);
+    assert.equal(run.scheduler.isRunning(parseRunId('run:v1:continuation-1')), false);
+
+    releaseInitialization();
+    await parent;
+    for (let index = 0; index < 20 && run.publishedSnapshots.length === 0; index += 1) {
+      await Promise.resolve();
+    }
+    assert.equal(run.publishedSnapshots[0]?.generation, 2);
+    assert.deepEqual(run.continuationEvents, ['prepared', 'durable', 'published']);
+  });
+
+  it('finishes 305 repositories across internal continuations with one provider runtime', async () => {
+    const repositoryIds = Array.from({ length: 305 }, (_, index) => `owner/repo-${index}`);
     const scheduled: Promise<void>[] = [];
     let scheduler!: ReturnType<typeof createBgsmOrganizeJobScheduler>;
     let createAnalyzerCalls = 0;
@@ -895,10 +976,9 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     assert.ok(preflight.preflightToken);
     controller.startRun(identity, preflight.preflightToken);
 
-    for (let round = 0; round < 10; round += 1) {
-      await Promise.resolve();
+    for (let round = 0; round < 200; round += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       await Promise.all([...scheduled]);
-      await Promise.resolve();
       const latest = controller.findLatestSnapshot(identity);
       if (latest && ['completed', 'failed', 'review'].includes(latest.state)) break;
     }
@@ -906,9 +986,9 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     const latest = controller.findLatestSnapshot(identity);
     assert.ok(latest);
     assert.equal(latest.state, 'completed');
-    assert.equal(latest.generation, 2);
+    assert.equal(latest.generation, 5);
     assert.equal(createAnalyzerCalls, 1);
-    assert.equal(providerExecutions, 9);
+    assert.equal(providerExecutions, 30);
   });
 
   it('does not auto-continue a wall deadline that made no repository progress', async () => {
@@ -1021,7 +1101,8 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     assert.equal(run.counters.reservations, 8);
     assert.equal(run.counters.executes, 7);
     assert.equal(run.nextIndex, 150);
-    assert.deepEqual(run.durableCalls.slice(-2), ['release:lease:150', 'continue']);
+    assert.ok(run.durableCalls.indexOf('release:lease:150') < run.durableCalls.indexOf('continue'));
+    assert.ok(run.durableCalls.indexOf('continue') < run.durableCalls.indexOf('initialize:150'));
   });
 
   it('terminalizes wall expiry during a later DB read without another reservation or execute', async () => {

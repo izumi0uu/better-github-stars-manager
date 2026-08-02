@@ -621,6 +621,8 @@ export function getAgentDiagnosticsFindingText(
       return `OrganizeJobRun 预检以 ${String(evidence.state ?? 'unknown')} 状态结束。`;
     case 'organize_preflight_stale':
       return 'OrganizeJobRun 预检证据已经过期。';
+    case 'organize_restore_failed':
+      return `OrganizeJobRun 恢复失败：${String(evidence.reasonCode ?? 'unknown')}。`;
     case 'organize_batch_failed':
       return `OrganizeJobRun 批次 ${String(evidence.batchStart ?? 'unknown')}-${String(evidence.batchEnd ?? 'unknown')} 以 ${String(evidence.state ?? 'unknown')} 状态结束。`;
     case 'organize_provider_attempt_failed':

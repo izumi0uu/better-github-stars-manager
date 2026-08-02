@@ -310,6 +310,7 @@ export function useBgsmAgentWorkbench(
 
   const requestPreflight = useCallback((taskInstruction: string) => {
     const requestId = `preflight-request:${createNonce()}`;
+    const normalizedInstruction = taskInstruction.trim();
     restoreRunAfterPreflightCancelRef.current = false;
     taskInstructionRef.current = taskInstruction.trim();
     dispatch({ type: 'preflight_requested', requestId });
@@ -318,11 +319,13 @@ export function useBgsmAgentWorkbench(
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
       requestId,
+      taskInstruction: normalizedInstruction,
     });
   }, [post]);
 
   const restartWholeLibrary = useCallback((taskInstruction: string) => {
     const requestId = `preflight-request:${createNonce()}`;
+    const normalizedInstruction = taskInstruction.trim();
     restoreRunAfterPreflightCancelRef.current = true;
     taskInstructionRef.current = taskInstruction.trim();
     dispatch({ type: 'whole_library_restart_requested', requestId });
@@ -331,20 +334,23 @@ export function useBgsmAgentWorkbench(
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
       requestId,
+      taskInstruction: normalizedInstruction,
     });
   }, [post]);
 
   const confirmPreflight = useCallback(() => {
+    const requestId = state.preflight?.requestId;
     const preflightToken = state.preflight?.preflightToken;
-    if (!preflightToken || !taskInstructionRef.current) return;
+    if (!requestId || !preflightToken || !taskInstructionRef.current) return;
     post({
       type: 'startBgsmOrganizeJob',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
+      requestId,
       preflightToken,
       taskInstruction: taskInstructionRef.current,
     });
-  }, [post, state.preflight?.preflightToken]);
+  }, [post, state.preflight?.preflightToken, state.preflight?.requestId]);
 
   const cancelPreflight = useCallback(() => {
     const requestId = state.preflight?.requestId;

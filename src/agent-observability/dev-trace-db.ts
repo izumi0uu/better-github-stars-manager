@@ -691,6 +691,7 @@ export class DevTraceDB extends Dexie {
 
 const POST_TERMINAL_EVENT_KINDS = new Set<DevTraceEvent['kind']>([
   'attempt_rejected',
+  'organize_restore_state',
   'organize_receipt_state',
   'delivery_state',
   'result_acknowledged',

@@ -28,6 +28,7 @@ try {
   });
   const page = await openExtensionPage(browser, extId);
   await page.evaluate(installOrganizeJobRunDeliveryCollector);
+  await page.evaluate(installCorruptOrganizeJobSeeder);
 
   const provider = await installControlledProvider(target);
   await seedRepositories(page, ROW_COUNT);
@@ -52,7 +53,35 @@ try {
   assert.equal(transient.savedCapabilityUnchanged, true);
   console.log('  ✓ transient key completed a real probe without changing saved credential/capability authority');
 
-  console.log('\n2) Full scope, exact RunBudget exhaustion, and automatic continuation');
+  console.log('\n2) An invalid analysis checkpoint is discarded instead of restored forever');
+  const corruptRestore = await page.evaluate(runCorruptActiveRestoreScenario, {
+    timeoutMs: TIMEOUT_MS,
+  });
+  assert.match(corruptRestore.error, /discarded/i);
+  assert.equal(corruptRestore.jobExists, false);
+  console.log('  ✓ invalid Analysis artifacts released the durable slot after one failed restore');
+
+  console.log('\n3) A new Start replaces a same-owner blocked job without restoring it first');
+  provider.analyzerMode = 'unchanged';
+  const corruptReplacement = await page.evaluate(runCorruptBlockedReplacementScenario, {
+    timeoutMs: TIMEOUT_MS,
+  });
+  assert.equal(corruptReplacement.error, null);
+  assert.equal(corruptReplacement.oldJobExists, false);
+  assert.equal(corruptReplacement.jobCount, 1);
+  console.log('  ✓ blocked durable authority was cancelled directly before the new run started');
+
+  console.log('\n4) Replaying the same durable preflight Start is idempotent');
+  provider.analyzerMode = 'actionable-all';
+  const repeatedStart = await page.evaluate(runRepeatedPreflightStartScenario, {
+    timeoutMs: TIMEOUT_MS,
+  });
+  assert.equal(repeatedStart.error, null);
+  assert.equal(repeatedStart.sameRun, true);
+  assert.equal(repeatedStart.jobCount, 1);
+  console.log('  ✓ duplicate Start replayed the same run without creating a second durable job');
+
+  console.log('\n5) Full scope, exact RunBudget exhaustion, and automatic continuation');
   provider.analyzerMode = 'unchanged';
   const beforePreflight = provider.capture.length;
   const preflightOnly = await page.evaluate(runPreflightOnlyScenario, {
@@ -95,7 +124,7 @@ try {
   assert.equal(new Set(organize.deliveryMetadata.map((delivery) => delivery.connectionEpochId)).size, 1);
   console.log('  ✓ requested-token budget stopped before attempt 8 and automatic continuations completed all rows');
 
-  console.log('\n3) Closing the panel does not stop durable Analysis');
+  console.log('\n6) Closing the panel does not stop durable Analysis');
   provider.analyzerMode = 'unchanged';
   provider.stallNextAnalyzer = true;
   const active = await page.evaluate(beginActiveProviderReadScenario, { timeoutMs: TIMEOUT_MS });
@@ -111,7 +140,7 @@ try {
   assert.equal(activeCompletion.removed, true);
   console.log('  ✓ the Port detached immediately and the no-change job released its durable slot');
 
-  console.log('\n4) Durable full-library Review and chunked Apply produce one receipt');
+  console.log('\n7) Durable full-library Review and chunked Apply produce one receipt');
   provider.analyzerMode = 'actionable-all';
   provider.actionTag = 'runtime-full-library';
   const durable = await page.evaluate(runDurableFullLibraryApplyScenario, {
@@ -138,7 +167,7 @@ try {
   assert.equal(durable.deliveryMetadata.some((delivery) => delivery.durableRevision !== null), true);
   console.log('  ✓ active ownership stayed with the first tab; 501 repositories reached one paged Review and one 100/100/100/100/100/1 Apply receipt');
 
-  console.log('\n5) Custom-host denial is fail-closed before provider network');
+  console.log('\n8) Custom-host denial is fail-closed before provider network');
   const beforeDenied = provider.capture.length;
   const denied = await page.evaluate(testDeniedCustomHost);
   const afterDenied = provider.capture.length;
@@ -148,7 +177,7 @@ try {
   console.log('  ✓ missing optional host permission caused zero provider fetches');
 
   if (RUN_WORKER_RECOVERY) {
-    console.log('\n6) A real Chrome alarm resumes Analysis after MV3 worker termination');
+    console.log('\n9) A real Chrome alarm resumes Analysis after MV3 worker termination');
     provider.analyzerMode = 'actionable-all';
     provider.actionTag = 'runtime-worker-recovery';
     provider.stallNextAnalyzer = true;
@@ -161,6 +190,7 @@ try {
     const expiredLease = await page.evaluate(expireActiveAnalysisLeaseForRuntime);
     assert.equal(expiredLease.jobId, recoveryStart.jobId);
     assert.equal(expiredLease.alarmName, 'bgsm-organize-analysis-recovery-v1');
+    await page.evaluate(armWorkerRecoveryReconnect);
 
     const browserClient = await browser.target().createCDPSession();
     const replacementErrors = [];
@@ -229,9 +259,13 @@ try {
     await serviceWorkerClient.send('ServiceWorker.stopWorker', {
       versionId: activeWorkerVersion.versionId,
     });
-    await page.close();
     await replacementReady;
     if (replacementFailure) throw replacementFailure;
+    const reconnect = await page.evaluate(waitForWorkerRecoveryReconnect, {
+      runId: recoveryStart.runId,
+      generation: recoveryStart.generation,
+      timeoutMs: WORKER_RECOVERY_TIMEOUT_MS,
+    });
     await waitUntil(
       () => provider.capture
         .slice(recoveryCaptureStart)
@@ -244,8 +278,7 @@ try {
       flatten: true,
     });
 
-    const recoveryPage = await openExtensionPage(browser, extId);
-    const recovered = await recoveryPage.evaluate(waitForRecoveredOrganizeState, {
+    const recovered = await page.evaluate(waitForRecoveredOrganizeState, {
       jobId: recoveryStart.jobId,
       expectedStatus: 'review',
       timeoutMs: TIMEOUT_MS,
@@ -255,13 +288,28 @@ try {
       entry.batchStart === 0 &&
       entry.batchEnd === 25
     ));
+    const recoveryAttempts = provider.capture.slice(recoveryCaptureStart).filter((entry) => (
+      entry.kind === 'analyzer' || entry.kind === 'analyzer-stall'
+    ));
     assert.equal(recovered.status, 'review');
     assert.equal(recovered.nextFrozenIndex, ROW_COUNT);
+    assert.equal(reconnect.runId, recoveryStart.runId);
+    assert.equal(reconnect.generation, recoveryStart.generation);
     assert.equal(firstPageAttempts.length, 2);
     assert.deepEqual(firstPageAttempts.map((entry) => entry.kind), ['analyzer-stall', 'analyzer']);
+    assert.equal(recovered.settledCount, ROW_COUNT);
+    assert.equal(recovered.uniqueSettledPositionCount, ROW_COUNT);
+    assert.equal(
+      recovered.usage.providerAttempts,
+      recoveryAttempts.filter((entry) => entry.generation === recovered.generation).length,
+    );
+    const settledRequestCount = provider.capture.length;
     await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(provider.capture.length, settledRequestCount);
     assert.deepEqual(replacementErrors, []);
-    console.log('  ✓ alarm restored the expired lease, retried the interrupted first page once, and reached durable Review without UI');
+    await page.evaluate(disconnectWorkerRecoveryReconnect);
+    await page.close();
+    console.log('  ✓ alarm and UI reconnect shared one restore, retried the interrupted first page once, and reached durable Review');
   }
 
   const capture = provider.capture;
@@ -386,6 +434,8 @@ async function installControlledProviderClient(client, existingControl = null) {
         url: event.request.url,
         authorization,
         containsHiddenPolicy: (event.request.postData ?? '').includes('runtime-hidden-policy'),
+        runId: analyzerBatch?.runId ?? null,
+        generation: analyzerBatch?.generation ?? null,
         batchStart: analyzerBatch?.repositories?.[0]?.frozenIndex ?? null,
         batchEnd: analyzerBatch?.repositories?.at(-1)?.frozenIndex + 1 || null,
       });
@@ -702,12 +752,14 @@ async function runMissingCapabilityScenario({ timeoutMs }) {
     controllerId,
     sessionId,
     requestId: 'runtime-capability-denied-preflight',
+    taskInstruction: 'This must stop before provider access.',
   });
   const preflight = await waitFor((message) => message.type === 'bgsmOrganizeJobRunPreflightResult');
   port.postMessage({
     type: 'startBgsmOrganizeJob',
     controllerId,
     sessionId,
+    requestId: preflight.requestId,
     preflightToken: preflight.preflightToken,
     taskInstruction: 'This must stop before provider access.',
   });
@@ -733,6 +785,116 @@ function installOrganizeJobRunDeliveryCollector() {
       eventType: delivery.message.event?.type ?? null,
     });
     messages.push(delivery.message);
+  };
+}
+
+function installCorruptOrganizeJobSeeder() {
+  const openDatabase = () => new Promise((resolve, reject) => {
+    const request = indexedDB.open('better-github-stars-manager');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  globalThis.__seedCorruptOrganizeJob = async ({ controllerId, sessionId, suffix }) => {
+    const database = await openDatabase();
+    const jobId = `organize-job:v1:runtime-corrupt-${suffix}`;
+    const now = Date.now();
+    try {
+      const transaction = database.transaction(
+        ['organizeJobs', 'organizeItems', 'organizeTaxonomies'],
+        'readwrite',
+      );
+      transaction.objectStore('organizeJobs').add({
+        jobId,
+        activeSlot: 'organize-tags',
+        controllerId,
+        sessionId,
+        runId: `run:v1:runtime-corrupt-${suffix}`,
+        generation: 1,
+        proposalId: `proposal:v1:runtime-corrupt-${suffix}`,
+        frozenScope: {
+          kind: 'all_live_stars',
+          label: 'All starred repositories',
+          filterSnapshot: 'All live stars',
+          repositoryIds: ['runtime/repo-000', 'runtime/repo-001'],
+          capturedAt: now,
+          fingerprint: `fs:v1:${'A'.repeat(43)}`,
+        },
+        taskInstruction: 'This corrupt checkpoint must never be resumed.',
+        budget: {
+          wallDeadlineMs: 300_000,
+          maxConsumedFrozenPositions: 500,
+          maxAnalyzerBatches: 20,
+          maxProviderAttempts: 24,
+          maxSerializedOutboundRequestBytes: 8_388_608,
+          maxRequestedOutputTokens: 32_000,
+        },
+        usage: {
+          firstAnalyzerRequestAt: null,
+          consumedFrozenPositions: 0,
+          analyzerBatches: 0,
+          providerAttempts: 0,
+          serializedOutboundRequestBytes: 0,
+          requestedOutputTokens: 0,
+        },
+        nextFrozenIndex: 0,
+        analysisPendingRanges: [],
+        providerBinding: null,
+        status: 'analysis_blocked',
+        revision: 1,
+        itemCount: 1,
+        applyId: null,
+        pauseRequested: false,
+        createdAt: now,
+        updatedAt: now,
+        completedAt: null,
+        cancelledAt: null,
+      });
+      transaction.objectStore('organizeItems').add({
+        id: `${jobId}\u00000`,
+        jobId,
+        position: 0,
+        fullName: 'runtime/repo-000',
+        analysisState: 'failed',
+        proposedActions: [],
+        approvedActions: [],
+        proposedAdditions: [],
+        sourceFingerprint: null,
+        selected: false,
+        retryCount: 0,
+        failure: 'provider_failed',
+        leaseToken: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        analyzedAt: now,
+      });
+      transaction.objectStore('organizeTaxonomies').add({
+        jobId,
+        fingerprint: `tf:v1:${'B'.repeat(43)}`,
+        snapshot: { taxonomy: { entries: [] }, policyTaxonomy: { entries: [] } },
+        createdAt: now,
+      });
+      await new Promise((resolve, reject) => {
+        transaction.oncomplete = resolve;
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+    } finally {
+      database.close();
+    }
+    return { jobId, revision: 1 };
+  };
+  globalThis.__readOrganizeJobs = async () => {
+    const database = await openDatabase();
+    try {
+      const transaction = database.transaction('organizeJobs', 'readonly');
+      const request = transaction.objectStore('organizeJobs').getAll();
+      return await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    } finally {
+      database.close();
+    }
   };
 }
 
@@ -781,6 +943,207 @@ async function testTransientTypedKey() {
   };
 }
 
+async function runCorruptActiveRestoreScenario({ timeoutMs }) {
+  const port = chrome.runtime.connect({ name: 'bgsm-agent-organize-job' });
+  const messages = [];
+  const deliveryMetadata = [];
+  port.onMessage.addListener((delivery) => {
+    globalThis.__recordBgsmOrganizeJobDelivery(delivery, messages, deliveryMetadata);
+  });
+  const controllerId = `controller:v1:runtime-corrupt-restore-${crypto.randomUUID()}`;
+  const sessionId = `runtime-corrupt-restore-${crypto.randomUUID()}`;
+  const seeded = await globalThis.__seedCorruptOrganizeJob({
+    controllerId,
+    sessionId,
+    suffix: crypto.randomUUID(),
+  });
+  port.postMessage({ type: 'requestBgsmActiveOrganizeJob', controllerId, sessionId });
+  const deadline = Date.now() + timeoutMs;
+  let failure = null;
+  while (Date.now() < deadline) {
+    failure = messages.find((message) => message.type === 'bgsmOrganizeJobRunError') ?? null;
+    if (failure) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  if (!failure) {
+    throw new Error(`Corrupt restore did not settle: ${JSON.stringify(messages.slice(-6))}`);
+  }
+  const jobs = await globalThis.__readOrganizeJobs();
+  port.postMessage({ type: 'disconnectBgsmOrganizeJob', controllerId, sessionId });
+  port.disconnect();
+  return {
+    error: failure.message,
+    jobExists: jobs.some((job) => job.jobId === seeded.jobId),
+    finalRevision: jobs.find((job) => job.jobId === seeded.jobId)?.revision ?? null,
+  };
+}
+
+async function runCorruptBlockedReplacementScenario({ timeoutMs }) {
+  const port = chrome.runtime.connect({ name: 'bgsm-agent-organize-job' });
+  const messages = [];
+  const deliveryMetadata = [];
+  port.onMessage.addListener((delivery) => {
+    globalThis.__recordBgsmOrganizeJobDelivery(delivery, messages, deliveryMetadata);
+  });
+  const controllerId = `controller:v1:runtime-corrupt-replace-${crypto.randomUUID()}`;
+  const sessionId = `runtime-corrupt-replace-${crypto.randomUUID()}`;
+  const requestId = `runtime-corrupt-replace-${crypto.randomUUID()}`;
+  const taskInstruction = 'Replace the blocked checkpoint and organize the complete library.';
+  const seeded = await globalThis.__seedCorruptOrganizeJob({
+    controllerId,
+    sessionId,
+    suffix: crypto.randomUUID(),
+  });
+  const waitFor = async (predicate) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const match = [...messages].reverse().find(predicate);
+      if (match) return match;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`Corrupt replacement timed out: ${JSON.stringify(messages.slice(-6))}`);
+  };
+  port.postMessage({
+    type: 'requestBgsmOrganizeJobPreflight',
+    controllerId,
+    sessionId,
+    requestId,
+    taskInstruction,
+  });
+  const preflight = await waitFor((message) => (
+    message.type === 'bgsmOrganizeJobRunPreflightResult' && message.requestId === requestId
+  ));
+  port.postMessage({
+    type: 'startBgsmOrganizeJob',
+    controllerId,
+    sessionId,
+    requestId,
+    preflightToken: preflight.preflightToken,
+    taskInstruction,
+  });
+  const outcome = await waitFor((message) => (
+    message.type === 'bgsmOrganizeJobRunError' && message.requestId === requestId
+  ) || message.type === 'bgsmOrganizeJobRunSnapshot');
+  const jobs = await globalThis.__readOrganizeJobs();
+  if (outcome.type === 'bgsmOrganizeJobRunSnapshot') {
+    port.postMessage({
+      type: 'stopBgsmOrganizeJob',
+      controllerId,
+      sessionId,
+      runId: outcome.snapshot.runId,
+      generation: outcome.snapshot.generation,
+    });
+    await waitFor((message) => (
+      message.type === 'bgsmOrganizeJobRunResult' && message.runId === outcome.snapshot.runId
+    ));
+  }
+  port.postMessage({ type: 'disconnectBgsmOrganizeJob', controllerId, sessionId });
+  port.disconnect();
+  return {
+    error: outcome.type === 'bgsmOrganizeJobRunError' ? outcome.message : null,
+    oldJobExists: jobs.some((job) => job.jobId === seeded.jobId),
+    jobCount: jobs.length,
+  };
+}
+
+async function runRepeatedPreflightStartScenario({ timeoutMs }) {
+  const port = chrome.runtime.connect({ name: 'bgsm-agent-organize-job' });
+  const messages = [];
+  const deliveryMetadata = [];
+  port.onMessage.addListener((delivery) => {
+    globalThis.__recordBgsmOrganizeJobDelivery(delivery, messages, deliveryMetadata);
+  });
+  const controllerId = `controller:v1:runtime-repeated-start-${crypto.randomUUID()}`;
+  const sessionId = `runtime-repeated-start-${crypto.randomUUID()}`;
+  const requestId = `runtime-repeated-start-${crypto.randomUUID()}`;
+  const taskInstruction = 'Organize this durable scope exactly once.';
+  const waitFor = async (predicate) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const match = [...messages].reverse().find(predicate);
+      if (match) return match;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`Repeated-start scenario timed out: ${JSON.stringify(messages.slice(-6))}`);
+  };
+
+  port.postMessage({
+    type: 'requestBgsmOrganizeJobPreflight',
+    controllerId,
+    sessionId,
+    requestId,
+    taskInstruction,
+  });
+  const preflight = await waitFor((message) => (
+    message.type === 'bgsmOrganizeJobRunPreflightResult' &&
+    message.requestId === requestId
+  ));
+  const startMessage = {
+    type: 'startBgsmOrganizeJob',
+    controllerId,
+    sessionId,
+    requestId,
+    preflightToken: preflight.preflightToken,
+    taskInstruction,
+  };
+  port.postMessage(startMessage);
+  const first = await waitFor((message) => message.type === 'bgsmOrganizeJobRunSnapshot');
+  const authoritativeBeforeReplay = deliveryMetadata.filter((delivery) => (
+    delivery.messageType === 'bgsmOrganizeJobRunSnapshot' &&
+    delivery.deliveryKind === 'authoritative_snapshot'
+  )).length;
+
+  port.postMessage(startMessage);
+  const replay = await waitFor((message) => (
+    message.type === 'bgsmOrganizeJobRunError' &&
+    message.requestId === requestId
+  ) || (
+    message.type === 'bgsmOrganizeJobRunSnapshot' &&
+    deliveryMetadata.filter((delivery) => (
+      delivery.messageType === 'bgsmOrganizeJobRunSnapshot' &&
+      delivery.deliveryKind === 'authoritative_snapshot'
+    )).length > authoritativeBeforeReplay
+  ));
+
+  const database = await new Promise((resolve, reject) => {
+    const open = indexedDB.open('better-github-stars-manager');
+    open.onsuccess = () => resolve(open.result);
+    open.onerror = () => reject(open.error);
+  });
+  let jobCount;
+  try {
+    const transaction = database.transaction('organizeJobs', 'readonly');
+    const count = transaction.objectStore('organizeJobs').count();
+    jobCount = await new Promise((resolve, reject) => {
+      count.onsuccess = () => resolve(count.result);
+      count.onerror = () => reject(count.error);
+    });
+  } finally {
+    database.close();
+  }
+
+  port.postMessage({
+    type: 'stopBgsmOrganizeJob',
+    controllerId,
+    sessionId,
+    runId: first.snapshot.runId,
+    generation: first.snapshot.generation,
+  });
+  await waitFor((message) => (
+    message.type === 'bgsmOrganizeJobRunResult' &&
+    message.runId === first.snapshot.runId
+  ));
+  port.postMessage({ type: 'disconnectBgsmOrganizeJob', controllerId, sessionId });
+  port.disconnect();
+  return {
+    error: replay.type === 'bgsmOrganizeJobRunError' ? replay.message : null,
+    sameRun: replay.type === 'bgsmOrganizeJobRunSnapshot'
+      && replay.snapshot.runId === first.snapshot.runId
+      && replay.snapshot.generation === first.snapshot.generation,
+    jobCount,
+  };
+}
+
 async function runOrganizeBudgetContinuationScenario({ rowCount, timeoutMs }) {
   const port = chrome.runtime.connect({ name: 'bgsm-agent-organize-job' });
   const messages = [];
@@ -815,6 +1178,7 @@ async function runOrganizeBudgetContinuationScenario({ rowCount, timeoutMs }) {
   port.postMessage({
     type: 'requestBgsmOrganizeJobPreflight', controllerId, sessionId,
     requestId: 'runtime-preflight',
+    taskInstruction: 'Organize the complete runtime scope.',
   });
   const result = await waitFor((message) => message.type === 'bgsmOrganizeJobRunPreflightResult');
   if (result.count !== rowCount) throw new Error(`Expected ${rowCount}, got ${result.count}`);
@@ -822,6 +1186,7 @@ async function runOrganizeBudgetContinuationScenario({ rowCount, timeoutMs }) {
     type: 'startBgsmOrganizeJob',
     controllerId,
     sessionId,
+    requestId: result.requestId,
     preflightToken: result.preflightToken,
     taskInstruction: 'Organize the complete runtime scope.',
   });
@@ -891,6 +1256,7 @@ async function runPreflightOnlyScenario({ rowCount, timeoutMs }) {
     controllerId,
     sessionId,
     requestId: 'runtime-preflight-only',
+    taskInstruction: 'Prepare the complete runtime scope.',
   });
   const deadline = Date.now() + timeoutMs;
   let preflight = null;
@@ -930,12 +1296,14 @@ async function runDurableFullLibraryApplyScenario({ rowCount, timeoutMs }) {
     controllerId,
     sessionId,
     requestId: 'runtime-durable-preflight',
+    taskInstruction: 'Propose one synthetic tag for every repository in the complete local library.',
   });
   const preflight = await waitFor((message) => message.type === 'bgsmOrganizeJobRunPreflightResult');
   port.postMessage({
     type: 'startBgsmOrganizeJob',
     controllerId,
     sessionId,
+    requestId: preflight.requestId,
     preflightToken: preflight.preflightToken,
     taskInstruction: 'Propose one synthetic tag for every repository in the complete local library.',
   });
@@ -1074,6 +1442,7 @@ async function beginWorkerRecoveryScenario({ rowCount, timeoutMs }) {
     controllerId,
     sessionId,
     requestId: 'runtime-worker-recovery-preflight',
+    taskInstruction: 'Recover this complete runtime scope after worker termination.',
   });
   const preflight = await waitFor((message) => message.type === 'bgsmOrganizeJobRunPreflightResult');
   if (preflight.count !== rowCount) throw new Error(`Expected ${rowCount}, got ${preflight.count}`);
@@ -1081,6 +1450,7 @@ async function beginWorkerRecoveryScenario({ rowCount, timeoutMs }) {
     type: 'startBgsmOrganizeJob',
     controllerId,
     sessionId,
+    requestId: preflight.requestId,
     preflightToken: preflight.preflightToken,
     taskInstruction: 'Recover this complete runtime scope after worker termination.',
   });
@@ -1088,11 +1458,105 @@ async function beginWorkerRecoveryScenario({ rowCount, timeoutMs }) {
   const durable = await waitFor((message) => (
     message.type === 'bgsmOrganizeJobState' && message.presentation?.status === 'analyzing'
   ));
+  globalThis.__runtimeWorkerRecoveryReconnect = {
+    port,
+    controllerId,
+    sessionId,
+    reconnectMessages: [],
+    reconnectDeliveryMetadata: [],
+    reconnectAttempts: 0,
+    reconnectArmed: false,
+    reconnectStopped: false,
+  };
   return {
     jobId: durable.presentation.jobId,
+    controllerId,
+    sessionId,
     runId: snapshot.snapshot.runId,
     generation: snapshot.snapshot.generation,
   };
+}
+
+function armWorkerRecoveryReconnect() {
+  const state = globalThis.__runtimeWorkerRecoveryReconnect;
+  if (!state) throw new Error('Worker recovery reconnect state is unavailable.');
+  if (state.reconnectArmed) return { armed: true };
+  state.reconnectArmed = true;
+
+  const connect = () => {
+    if (state.reconnectStopped) return;
+    const port = chrome.runtime.connect({ name: 'bgsm-agent-organize-job' });
+    state.port = port;
+    state.reconnectAttempts += 1;
+    port.onMessage.addListener((delivery) => {
+      globalThis.__recordBgsmOrganizeJobDelivery(
+        delivery,
+        state.reconnectMessages,
+        state.reconnectDeliveryMetadata,
+      );
+    });
+    port.onDisconnect.addListener(() => {
+      if (!state.reconnectStopped) setTimeout(connect, 25);
+    });
+    port.postMessage({
+      type: 'requestBgsmActiveOrganizeJob',
+      controllerId: state.controllerId,
+      sessionId: state.sessionId,
+    });
+  };
+
+  state.port.onDisconnect.addListener(() => {
+    if (!state.reconnectStopped) setTimeout(connect, 0);
+  });
+  return { armed: true };
+}
+
+async function waitForWorkerRecoveryReconnect({
+  runId,
+  generation,
+  timeoutMs,
+}) {
+  const state = globalThis.__runtimeWorkerRecoveryReconnect;
+  if (!state) throw new Error('Worker recovery reconnect state is unavailable.');
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const error = state.reconnectMessages.find((message) => message.type === 'bgsmOrganizeJobRunError');
+    if (error) throw new Error(`Worker recovery reconnect failed: ${error.message}`);
+    const snapshot = [...state.reconnectMessages].reverse().find((message) => (
+      message.type === 'bgsmOrganizeJobRunSnapshot'
+      && message.snapshot?.runId === runId
+      && message.snapshot?.generation === generation
+    ));
+    if (snapshot) {
+      return {
+        runId: snapshot.snapshot.runId,
+        generation: snapshot.snapshot.generation,
+        state: snapshot.snapshot.state,
+        reconnectAttempts: state.reconnectAttempts,
+        deliveryMetadata: state.reconnectDeliveryMetadata,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(
+    `Worker recovery reconnect timed out after ${state.reconnectAttempts} attempts: `
+    + JSON.stringify(state.reconnectMessages.slice(-6)),
+  );
+}
+
+async function disconnectWorkerRecoveryReconnect() {
+  const state = globalThis.__runtimeWorkerRecoveryReconnect;
+  if (!state) return { disconnected: false };
+  state.reconnectStopped = true;
+  state.port.postMessage({
+    type: 'disconnectBgsmOrganizeJob',
+    controllerId: state.controllerId,
+    sessionId: state.sessionId,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  state.port.disconnect();
+  delete globalThis.__runtimeWorkerRecoveryReconnect;
+  return { disconnected: true };
 }
 
 async function expireActiveAnalysisLeaseForRuntime() {
@@ -1147,18 +1611,30 @@ async function waitForRecoveredOrganizeState({ jobId, expectedStatus, timeoutMs 
   try {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const transaction = database.transaction('organizeJobs', 'readonly');
-      const request = transaction.objectStore('organizeJobs').get(jobId);
-      const job = await new Promise((resolve, reject) => {
+      const transaction = database.transaction(['organizeJobs', 'organizeItems'], 'readonly');
+      const read = (request) => new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
+      const [job, items] = await Promise.all([
+        read(transaction.objectStore('organizeJobs').get(jobId)),
+        read(transaction.objectStore('organizeItems').getAll()),
+      ]);
       if (job?.status === expectedStatus) {
+        const settled = items.filter((item) => (
+          item.jobId === jobId
+          && item.analysisState !== 'pending'
+          && item.analysisState !== 'leased'
+        ));
         return {
           status: job.status,
+          runId: job.runId,
+          generation: job.generation,
           nextFrozenIndex: job.nextFrozenIndex,
           revision: job.revision,
           usage: job.usage,
+          settledCount: settled.length,
+          uniqueSettledPositionCount: new Set(settled.map((item) => item.position)).size,
         };
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1207,6 +1683,7 @@ async function beginActiveProviderReadScenario({ timeoutMs }) {
     controllerId,
     sessionId,
     requestId: 'runtime-active-disconnect-preflight',
+    taskInstruction: 'Complete this durable analysis after the panel disconnects.',
   });
   const deadline = Date.now() + timeoutMs;
   let preflight = null;
@@ -1220,6 +1697,7 @@ async function beginActiveProviderReadScenario({ timeoutMs }) {
     type: 'startBgsmOrganizeJob',
     controllerId,
     sessionId,
+    requestId: preflight.requestId,
     preflightToken: preflight.preflightToken,
     taskInstruction: 'Complete this durable analysis after the panel disconnects.',
   });

@@ -12,17 +12,21 @@ import { db } from '@/storage/db';
 import { idbTagStore, resetDirtyForDev } from '@/storage/idb-tag-store';
 import {
   attachOrganizeJob,
+  activateOrganizePreflight,
   advanceOrganizeJobRun,
+  cancelOrganizePreflight,
   checkpointOrganizeAnalysisPage,
   cancelOrganizeJob,
   claimOrganizeAnalysisBatch,
   claimOrganizeApplyChunk,
   completeOrganizeJobWithoutApply,
   createOrganizeJob,
+  createOrganizePreflight,
   dismissOrganizeReceipt,
   getActiveOrganizeJob,
   getOrganizeCoverage,
   getOrganizeJob,
+  getReadyOrganizePreflight,
   getOrganizeReceipt,
   getOrganizeReviewPage,
   getOrganizeTaxonomy,
@@ -350,10 +354,12 @@ describe('durable whole-library organize job store', () => {
       sessionId: job.sessionId,
       runId: run2,
       generation: 2,
+      expectedParent: { runId: run1, generation: 1 },
       proposalId: parseProposalId('proposal:v1:exact-page-2'),
       budget: createProductionRunBudget(),
       usage: createEmptyRunBudgetUsage(),
       startFrozenIndex: 1,
+      analysisPendingRanges: [],
       now: 121,
     });
     const second = await reserveOrganizeAnalysisPage({
@@ -664,6 +670,200 @@ describe('durable whole-library organize job store', () => {
     ]);
   });
 
+  it('preserves a split worklist through provider binding and continuation checkpoints', async () => {
+    const parentRunId = parseRunId('run:v1:split-continuation-parent');
+    const emptyUsage = createEmptyRunBudgetUsage();
+    const parentPageUsage = { ...emptyUsage, analyzerBatches: 1 };
+    const repositoryIds = Array.from({ length: 25 }, (_, index) => `owner/split-${index}`);
+    const job = await createOrganizeJob({
+      ...jobInput(repositoryIds),
+      runId: parentRunId,
+      proposalId: parseProposalId('proposal:v1:split-continuation-parent'),
+      budget: createProductionRunBudget(),
+      usage: emptyUsage,
+    });
+    const parentPage = await reserveOrganizeAnalysisPage({
+      jobId: job.jobId,
+      runId: parentRunId,
+      generation: 1,
+      expectedRevision: job.revision,
+      startFrozenIndex: 0,
+      endFrozenIndexExclusive: 25,
+      previousUsage: emptyUsage,
+      usage: parentPageUsage,
+      lease: { ownerId: 'scheduler:split-parent', now: 100 },
+    });
+    const split = await splitOrganizeAnalysisPage({
+      jobId: job.jobId,
+      runId: parentRunId,
+      generation: 1,
+      expectedRevision: parentPage!.job.revision,
+      leaseToken: parentPage!.leaseToken,
+      now: 101,
+    });
+    assert.deepEqual(split.pendingRanges, [
+      { startFrozenIndex: 0, endFrozenIndexExclusive: 12, depth: 1 },
+      { startFrozenIndex: 12, endFrozenIndexExclusive: 25, depth: 1 },
+    ]);
+
+    await assert.rejects(() => advanceOrganizeJobRun({
+      jobId: job.jobId,
+      controllerId: job.controllerId,
+      sessionId: job.sessionId,
+      runId: parentRunId,
+      generation: 1,
+      proposalId: parseProposalId(job.proposalId),
+      budget: job.budget as ReturnType<typeof createProductionRunBudget>,
+      usage: parentPageUsage,
+      providerBinding: { provider: 'test', model: 'split-safe' },
+      startFrozenIndex: 0,
+      analysisPendingRanges: [],
+      now: 102,
+    }), /pending range worklist is stale/u);
+
+    const providerBound = await advanceOrganizeJobRun({
+      jobId: job.jobId,
+      controllerId: job.controllerId,
+      sessionId: job.sessionId,
+      runId: parentRunId,
+      generation: 1,
+      proposalId: parseProposalId(job.proposalId),
+      budget: job.budget as ReturnType<typeof createProductionRunBudget>,
+      usage: parentPageUsage,
+      providerBinding: { provider: 'test', model: 'split-safe' },
+      startFrozenIndex: 0,
+      analysisPendingRanges: split.pendingRanges,
+      now: 102,
+    });
+    assert.equal(providerBound.nextFrozenIndex, 0);
+    assert.deepEqual(providerBound.analysisPendingRanges, split.pendingRanges);
+
+    const childRunId = parseRunId('run:v1:split-continuation-child');
+    const continued = await advanceOrganizeJobRun({
+      jobId: job.jobId,
+      controllerId: job.controllerId,
+      sessionId: job.sessionId,
+      runId: childRunId,
+      generation: 2,
+      expectedParent: { runId: parentRunId, generation: 1 },
+      proposalId: parseProposalId('proposal:v1:split-continuation-child'),
+      budget: createProductionRunBudget(),
+      usage: emptyUsage,
+      providerBinding: providerBound.providerBinding,
+      startFrozenIndex: 0,
+      analysisPendingRanges: split.pendingRanges,
+      now: 103,
+    });
+    assert.deepEqual(continued.analysisPendingRanges, split.pendingRanges);
+
+    const leftPageUsage = { ...emptyUsage, analyzerBatches: 1 };
+    const left = await reserveOrganizeAnalysisPage({
+      jobId: job.jobId,
+      runId: childRunId,
+      generation: 2,
+      expectedRevision: continued.revision,
+      startFrozenIndex: 0,
+      endFrozenIndexExclusive: 12,
+      previousUsage: emptyUsage,
+      usage: leftPageUsage,
+      lease: { ownerId: 'scheduler:split-child', now: 104 },
+    });
+    const leftCheckpoint = await checkpointOrganizeAnalysisPage({
+      jobId: job.jobId,
+      runId: childRunId,
+      generation: 2,
+      expectedRevision: left!.job.revision,
+      leaseToken: left!.leaseToken,
+      expectedNextFrozenIndex: 12,
+      outcomes: left!.items.map((row) => ({ position: row.position, state: 'missing' as const })),
+      usage: { ...leftPageUsage, consumedFrozenPositions: 12 },
+      analysisPendingRanges: [
+        { startFrozenIndex: 12, endFrozenIndexExclusive: 25, depth: 1 },
+      ],
+      now: 105,
+    });
+    assert.equal(leftCheckpoint.job.nextFrozenIndex, 12);
+
+    const restored = await restoreOrganizeAnalysisCheckpoint(job.jobId);
+    assert.equal(restored.resumeFrozenIndex, 12);
+    assert.deepEqual(restored.job.analysisPendingRanges, [
+      { startFrozenIndex: 12, endFrozenIndexExclusive: 25, depth: 1 },
+    ]);
+    const rightPageUsage = {
+      ...(leftCheckpoint.job.usage as typeof leftPageUsage),
+      analyzerBatches: 2,
+    };
+    const right = await reserveOrganizeAnalysisPage({
+      jobId: job.jobId,
+      runId: childRunId,
+      generation: 2,
+      expectedRevision: restored.job.revision,
+      startFrozenIndex: 12,
+      endFrozenIndexExclusive: 25,
+      previousUsage: leftCheckpoint.job.usage as typeof leftPageUsage,
+      usage: rightPageUsage,
+      lease: { ownerId: 'scheduler:split-child-restored', now: 106 },
+    });
+    assert.deepEqual(
+      right?.items.map((row) => row.position),
+      Array.from({ length: 13 }, (_, index) => index + 12),
+    );
+  });
+
+  it('lets only one child claim a durable continuation generation', async () => {
+    const parentRunId = parseRunId('run:v1:continuation-parent');
+    const firstChildRunId = parseRunId('run:v1:continuation-child-first');
+    const secondChildRunId = parseRunId('run:v1:continuation-child-second');
+    const emptyUsage = createEmptyRunBudgetUsage();
+    const job = await createOrganizeJob({
+      ...jobInput(['owner/continuation-cas']),
+      runId: parentRunId,
+      proposalId: parseProposalId('proposal:v1:continuation-parent'),
+      budget: createProductionRunBudget(),
+      usage: emptyUsage,
+    });
+    const continuationInput = {
+      jobId: job.jobId,
+      controllerId: job.controllerId,
+      sessionId: job.sessionId,
+      generation: 2,
+      expectedParent: { runId: parentRunId, generation: 1 },
+      budget: createProductionRunBudget(),
+      usage: emptyUsage,
+      startFrozenIndex: 0,
+      analysisPendingRanges: [],
+    } as const;
+
+    await assert.rejects(() => advanceOrganizeJobRun({
+      ...continuationInput,
+      runId: firstChildRunId,
+      generation: 3,
+      proposalId: parseProposalId('proposal:v1:continuation-child-skipped'),
+      now: 99,
+    }), /advance exactly once/u);
+
+    const firstChild = await advanceOrganizeJobRun({
+      ...continuationInput,
+      runId: firstChildRunId,
+      proposalId: parseProposalId('proposal:v1:continuation-child-first'),
+      now: 100,
+    });
+    assert.equal(firstChild.runId, firstChildRunId);
+    assert.equal(firstChild.generation, 2);
+
+    await assert.rejects(() => advanceOrganizeJobRun({
+      ...continuationInput,
+      runId: secondChildRunId,
+      proposalId: parseProposalId('proposal:v1:continuation-child-second'),
+      now: 101,
+    }), /parent authority|durable identity/u);
+
+    const durable = await getOrganizeJob(job.jobId);
+    assert.equal(durable?.runId, firstChildRunId);
+    assert.equal(durable?.generation, 2);
+    assert.equal(durable?.proposalId, 'proposal:v1:continuation-child-first');
+  });
+
   it('releases a captured page token after the job advances to a child generation', async () => {
     const parentRunId = parseRunId('run:v1:lease-parent');
     const emptyUsage = createEmptyRunBudgetUsage();
@@ -692,10 +892,12 @@ describe('durable whole-library organize job store', () => {
       sessionId: job.sessionId,
       runId: childRunId,
       generation: 2,
+      expectedParent: { runId: parentRunId, generation: 1 },
       proposalId: parseProposalId('proposal:v1:lease-child'),
       budget: createProductionRunBudget(),
       usage: emptyUsage,
       startFrozenIndex: 0,
+      analysisPendingRanges: [],
       now: 101,
     });
 
@@ -976,7 +1178,200 @@ describe('durable whole-library organize job store', () => {
       /active job/u,
     );
   });
+
+  it('keeps an attach idempotent when the durable owner is unchanged', async () => {
+    const created = await createOrganizeJob(jobInput(['owner/idempotent-attach']));
+    const attached = await attachOrganizeJob({
+      jobId: created.jobId,
+      controllerId: created.controllerId,
+      sessionId: created.sessionId,
+      now: created.updatedAt + 100,
+    });
+
+    assert.equal(attached.revision, created.revision);
+    assert.equal(attached.updatedAt, created.updatedAt);
+    assert.deepEqual(await getOrganizeJob(created.jobId), created);
+  });
+
+  it('persists a frozen preflight across workers and starts it idempotently', async () => {
+    const input = preflightInput(['owner/first', 'owner/second']);
+    const ready = await createOrganizePreflight(input);
+
+    assert.equal(ready.status, 'preflight_ready');
+    assert.equal(await getActiveOrganizeJob(), undefined);
+    assert.equal((await getReadyOrganizePreflight({
+      controllerId: input.controllerId,
+      sessionId: input.sessionId,
+      now: 150,
+    }))?.jobId, ready.jobId);
+
+    const started = await activateOrganizePreflight({
+      preflightToken: input.preflightToken,
+      controllerId: input.controllerId,
+      sessionId: input.sessionId,
+      taskInstruction: input.taskInstruction,
+      now: 150,
+    });
+    assert.equal(started.disposition, 'started');
+    assert.equal(started.job.status, 'analyzing');
+    assert.equal((await getActiveOrganizeJob())?.jobId, ready.jobId);
+
+    const replayed = await activateOrganizePreflight({
+      preflightToken: input.preflightToken,
+      controllerId: input.controllerId,
+      sessionId: input.sessionId,
+      taskInstruction: input.taskInstruction,
+      now: 160,
+    });
+    assert.equal(replayed.disposition, 'already_started');
+    assert.equal(replayed.job.runId, started.job.runId);
+    assert.equal(await db.organizeJobs.count(), 1);
+    assert.equal(await db.organizeItems.count(), 2);
+  });
+
+  it('rejects consumed preflight replay after its job becomes terminal', async () => {
+    for (const status of ['cancelled', 'completed'] as const) {
+      const input = preflightInput([`owner/${status}`], {
+        jobId: `organize-job:v1:terminal-${status}`,
+        preflightToken: `preflight:v1:terminal-${status}`,
+        requestId: `request:terminal-${status}`,
+        controllerId: `controller:v1:terminal-${status}`,
+        sessionId: `session:terminal-${status}`,
+      });
+      await createOrganizePreflight(input);
+      const started = await activateOrganizePreflight({
+        preflightToken: input.preflightToken,
+        controllerId: input.controllerId,
+        sessionId: input.sessionId,
+        taskInstruction: input.taskInstruction,
+        now: 150,
+      });
+      await db.organizeJobs.update(started.job.jobId, {
+        status,
+        activeSlot: undefined,
+      });
+
+      await assert.rejects(() => activateOrganizePreflight({
+        preflightToken: input.preflightToken,
+        controllerId: input.controllerId,
+        sessionId: input.sessionId,
+        taskInstruction: input.taskInstruction,
+        now: 160,
+      }), /invalid or stale/u);
+    }
+  });
+
+  it('expires and cancels durable preflights without exposing them as active jobs', async () => {
+    const expiredInput = preflightInput(['owner/expired'], {
+      preflightToken: 'preflight:v1:expired-store',
+      requestId: 'request:expired-store',
+      expiresAt: 110,
+    });
+    await createOrganizePreflight(expiredInput);
+    await assert.rejects(() => activateOrganizePreflight({
+      preflightToken: expiredInput.preflightToken,
+      controllerId: expiredInput.controllerId,
+      sessionId: expiredInput.sessionId,
+      taskInstruction: expiredInput.taskInstruction,
+      now: 111,
+    }), /expired/u);
+    assert.equal(await getReadyOrganizePreflight({
+      controllerId: expiredInput.controllerId,
+      sessionId: expiredInput.sessionId,
+      now: 111,
+    }), null);
+
+    const cancelledInput = preflightInput(['owner/cancelled'], {
+      preflightToken: 'preflight:v1:cancelled-store',
+      requestId: 'request:cancelled-store',
+      controllerId: 'controller:v1:cancel-store',
+      sessionId: 'session:cancel-store',
+    });
+    await createOrganizePreflight(cancelledInput);
+    assert.equal(await cancelOrganizePreflight({
+      controllerId: cancelledInput.controllerId,
+      sessionId: cancelledInput.sessionId,
+      requestId: cancelledInput.requestId,
+      now: 120,
+    }), true);
+    assert.equal(await getActiveOrganizeJob(), undefined);
+    assert.equal(await cancelOrganizePreflight({
+      controllerId: cancelledInput.controllerId,
+      sessionId: cancelledInput.sessionId,
+      requestId: cancelledInput.requestId,
+      now: 121,
+    }), false);
+  });
+
+  it('prunes expired abandoned preflights when another confirmation is created', async () => {
+    const abandonedJobId = 'organize-job:v1:abandoned-store';
+    const currentJobId = 'organize-job:v1:current-store';
+    const abandoned = preflightInput(['owner/abandoned-first', 'owner/abandoned-second'], {
+      jobId: abandonedJobId,
+      preflightToken: 'preflight:v1:abandoned-store',
+      requestId: 'request:abandoned-store',
+      controllerId: 'controller:v1:abandoned-store',
+      sessionId: 'session:abandoned-store',
+      now: 100,
+      expiresAt: 110,
+    });
+    const current = preflightInput(['owner/current'], {
+      jobId: currentJobId,
+      preflightToken: 'preflight:v1:current-store',
+      requestId: 'request:current-store',
+      controllerId: 'controller:v1:current-store',
+      sessionId: 'session:current-store',
+      now: 120,
+      expiresAt: 200,
+    });
+    await createOrganizePreflight(abandoned);
+    await createOrganizePreflight(current);
+
+    assert.equal(await getOrganizeJob(abandonedJobId), undefined);
+    assert.equal((await getOrganizeJob(currentJobId))?.status, 'preflight_ready');
+    assert.equal(await db.organizeJobs.count(), 1);
+    assert.equal(await db.organizeItems.count(), 1);
+    assert.equal(await db.organizeTaxonomies.count(), 1);
+  });
+
+  it('rejects a preflight start when its owner or frozen instruction changes', async () => {
+    const input = preflightInput(['owner/guarded']);
+    await createOrganizePreflight(input);
+    await assert.rejects(() => activateOrganizePreflight({
+      preflightToken: input.preflightToken,
+      controllerId: input.controllerId,
+      sessionId: 'session:other',
+      taskInstruction: input.taskInstruction,
+      now: 150,
+    }), /another controller|session/u);
+    await assert.rejects(() => activateOrganizePreflight({
+      preflightToken: input.preflightToken,
+      controllerId: input.controllerId,
+      sessionId: input.sessionId,
+      taskInstruction: 'A different instruction.',
+      now: 150,
+    }), /instruction/u);
+  });
 });
+
+function preflightInput(
+  repositoryIds: string[],
+  overrides: Partial<ReturnType<typeof jobInput> & {
+    jobId: string;
+    preflightToken: string;
+    requestId: string;
+    expiresAt: number;
+  }> = {},
+) {
+  return {
+    ...jobInput(repositoryIds),
+    activeSlot: undefined,
+    preflightToken: 'preflight:v1:store-test',
+    requestId: 'request:store-test',
+    expiresAt: 200,
+    ...overrides,
+  };
+}
 
 function jobInput(
   repositoryIds: string[],

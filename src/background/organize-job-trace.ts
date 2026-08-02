@@ -34,6 +34,7 @@ export function createBgsmOrganizeJobTraceCoordinator(input: Readonly<{
     revision: number;
     source: DevTraceEventDataByKind['organize_durable_state']['source'];
   }>): void;
+  recordRestore(jobId: OrganizeJobId, input: DevTraceEventDataByKind['organize_restore_state']): void;
   recordReview(jobId: OrganizeJobId, input: DevTraceEventDataByKind['organize_review_state']): void;
   recordSelection(jobId: OrganizeJobId, input: DevTraceEventDataByKind['organize_selection_state']): void;
   recordApply(jobId: OrganizeJobId, input: DevTraceEventDataByKind['organize_apply_state']): void;
@@ -151,6 +152,10 @@ export function createBgsmOrganizeJobTraceCoordinator(input: Readonly<{
       ensure(jobId, true)?.recordDurableState(event);
     },
 
+    recordRestore(jobId, event) {
+      ensure(jobId, true)?.recordRestore(event);
+    },
+
     recordReview(jobId, event) {
       ensure(jobId, true)?.recordReview(event);
     },
@@ -244,6 +249,9 @@ export function createDeferredBgsmOrganizeJobTraceFactory(
       },
       recordDurableState(event) {
         forward((trace) => trace.recordDurableState(event));
+      },
+      recordRestore(event) {
+        forward((trace) => trace.recordRestore(event));
       },
       recordReview(event) {
         forward((trace) => trace.recordReview(event));

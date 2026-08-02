@@ -217,6 +217,47 @@ describe('BGSM Agent OrganizeJobRun trace', () => {
     assert.equal(root?.baseRevision, null);
   });
 
+  it('records metadata-only restore failures even after a prior terminal result', async () => {
+    const db = database('restore-failure');
+    const jobId = parseOrganizeJobId('organize-job:v1:restore-failure');
+    const factory = createDevOrganizeJobRunTraceFactory({
+      recorder: createDevTraceRecorder({ db }),
+    });
+    const first = factory({
+      jobId,
+      executionEpochId: 'organize-epoch:restore-failure-first',
+      startedAt: 1_000,
+    });
+    first.finish('completed', 'apply_completed');
+    await first.flush();
+
+    const restored = factory({
+      jobId,
+      executionEpochId: 'organize-epoch:restore-failure-second',
+      startedAt: 2_000,
+      resumeExisting: true,
+    });
+    restored.recordRestore({ state: 'started', reasonCode: null });
+    restored.recordRestore({
+      state: 'failed',
+      reasonCode: 'checkpoint_invariant',
+      rawError: 'Analyzed private-owner/private-repository with Bearer secret',
+    } as Parameters<typeof restored.recordRestore>[0]);
+    await restored.flush();
+
+    const rootId = `organize_job:${jobId}`;
+    const events = await db.events.where('rootOperationId').equals(rootId).sortBy('sequence');
+    assert.deepEqual(
+      events.filter((event) => event.kind === 'organize_restore_state').map((event) => event.data),
+      [
+        { state: 'started', reasonCode: null },
+        { state: 'failed', reasonCode: 'checkpoint_invariant' },
+      ],
+    );
+    assert.equal((await db.roots.get(rootId))?.terminalState, 'completed');
+    assert.doesNotMatch(JSON.stringify(events), /private-owner|private-repository|Bearer secret/u);
+  });
+
   it('records OrganizeJobRun heartbeat and deadline transitions as metadata-only watchdog states', async () => {
     const db = database('watchdog');
     let id = 0;

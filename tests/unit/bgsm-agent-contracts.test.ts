@@ -616,6 +616,7 @@ describe('first-use disclosure and messaging identities', () => {
       controllerId,
       sessionId: 'session-1',
       requestId: 'request-1',
+      taskInstruction: 'Organize every starred repository.',
     };
     validateBgsmOrganizeJobMessageIdentity(preflightRequest);
     assert.throws(() => validateBgsmOrganizeJobMessageIdentity({

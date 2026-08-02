@@ -22,7 +22,7 @@ export function createDurableJobRecovery<
   TOperation extends RecoverableDurableOperation,
 >(dependencies: DurableJobRecoveryDependencies<TOperation>) {
   let installed = false;
-  let recovery: Promise<void> | null = null;
+  let activeWork: Promise<void> | null = null;
 
   const arm = async (): Promise<void> => {
     await dependencies.createAlarm(
@@ -39,7 +39,7 @@ export function createDurableJobRecovery<
     await dependencies.clearAlarm(dependencies.alarmName);
   };
 
-  const start = async (operationId: string): Promise<void> => {
+  const startOnce = async (operationId: string): Promise<void> => {
     await arm();
     try {
       await dependencies.pump(operationId);
@@ -63,17 +63,23 @@ export function createDurableJobRecovery<
       await dependencies.clearAlarm(dependencies.alarmName);
       return;
     }
-    await start(recovered.operationId);
+    await startOnce(recovered.operationId);
   };
 
-  const recover = (): Promise<void> => {
-    if (recovery) return recovery;
-    const operation = recoverOnce().finally(() => {
-      if (recovery === operation) recovery = null;
+  const runSingleFlight = (work: () => Promise<void>): Promise<void> => {
+    if (activeWork) return activeWork;
+    const operation = work().finally(() => {
+      if (activeWork === operation) activeWork = null;
     });
-    recovery = operation;
+    activeWork = operation;
     return operation;
   };
+
+  const start = (operationId: string): Promise<void> => (
+    runSingleFlight(() => startOnce(operationId))
+  );
+
+  const recover = (): Promise<void> => runSingleFlight(recoverOnce);
 
   const runInBackground = (): void => {
     void recover().catch((error) => dependencies.onError?.(error));

@@ -265,6 +265,36 @@ describe('Agent observability contracts', () => {
     );
   });
 
+  it('keeps OrganizeJobRun restore failures metadata-only', () => {
+    const built = buildDevTraceEvent({
+      eventId: 'event-organize-restore',
+      rootOperationId: 'root-organize',
+      operationKind: 'organize_job',
+      spanId: 'span-organize',
+      parentSpanId: null,
+      sequence: 1,
+      wallTimeMs: 101,
+      clockSegmentId: 'clock-1',
+      monotonicOffsetMs: 1,
+    }, {
+      kind: 'organize_restore_state',
+      data: {
+        state: 'failed',
+        reasonCode: 'checkpoint_invariant',
+        rawError: 'Analyzed private-owner/private-repository with Bearer secret',
+      } as {
+        state: 'failed';
+        reasonCode: 'checkpoint_invariant';
+      },
+    });
+
+    expect(built.data).toEqual({
+      state: 'failed',
+      reasonCode: 'checkpoint_invariant',
+    });
+    expect(JSON.stringify(built)).not.toMatch(/private-owner|private-repository|Bearer secret/u);
+  });
+
   it('keeps OrganizeJobRun watchdog evidence separate from chat timeouts and metadata-only', () => {
     const envelope = {
       eventId: 'event-organize-watchdog',

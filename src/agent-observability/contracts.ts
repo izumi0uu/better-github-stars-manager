@@ -41,6 +41,7 @@ export const DEV_TRACE_EVENT_KINDS = [
   'organize_batch_state',
   'organize_provider_attempt',
   'organize_durable_state',
+  'organize_restore_state',
   'organize_review_state',
   'organize_selection_state',
   'organize_apply_state',
@@ -276,6 +277,15 @@ export type DevTraceEventDataByKind = Readonly<{
     missingFromRevision: number | null;
     missingToRevision: number | null;
     source: 'mutation' | 'restore' | 'reconnect';
+  }>;
+  organize_restore_state: Readonly<{
+    state: 'started' | 'succeeded' | 'failed';
+    reasonCode:
+      | 'checkpoint_invariant'
+      | 'checkpoint_missing'
+      | 'storage_unavailable'
+      | 'unknown'
+      | null;
   }>;
   organize_review_state: Readonly<{
     runId: string;
@@ -600,6 +610,23 @@ function validateEventData(kind: DevTraceEventKind, value: unknown): void {
       throw new TypeError('OrganizeJobRun durable revision gap range is invalid.');
     }
   }
+  if (kind === 'organize_restore_state') {
+    const failed = data.state === 'failed';
+    if (failed !== (data.reasonCode !== null)) {
+      throw new TypeError('OrganizeJobRun restore reason does not match its state.');
+    }
+    if (
+      data.reasonCode !== null
+      && ![
+        'checkpoint_invariant',
+        'checkpoint_missing',
+        'storage_unavailable',
+        'unknown',
+      ].includes(data.reasonCode as string)
+    ) {
+      throw new TypeError('OrganizeJobRun restore reason is unsupported.');
+    }
+  }
   if (kind === 'organize_selection_state' && (data.revision as number) <= (data.previousRevision as number)) {
     throw new TypeError('OrganizeJobRun selection revision must advance.');
   }
@@ -763,6 +790,10 @@ const EVENT_DATA_SCHEMAS: Readonly<Record<DevTraceEventKind, Readonly<Record<str
     missingFromRevision: nullableInteger,
     missingToRevision: nullableInteger,
     source: oneOf(['mutation', 'restore', 'reconnect']),
+  },
+  organize_restore_state: {
+    state: oneOf(['started', 'succeeded', 'failed']),
+    reasonCode: nullableString,
   },
   organize_review_state: {
     runId: requiredString,
