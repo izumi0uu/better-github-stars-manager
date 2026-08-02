@@ -26,6 +26,8 @@ import { createRepositoryNotesTool } from './repository-notes-tool';
 
 const DEFAULT_PAGE_LIMIT = 20;
 const MAX_PAGE_LIMIT = 50;
+const DEFAULT_COMPACT_PAGE_LIMIT = 100;
+const MAX_COMPACT_PAGE_LIMIT = 500;
 const MAX_DESCRIPTION_BYTES = 512;
 const MAX_LABEL_BYTES = 128;
 const MAX_LABELS_PER_REPO = 12;
@@ -34,6 +36,8 @@ const MAX_SEARCH_TERM_BYTES = 128;
 const MAX_REPOSITORY_FULL_NAME_BYTES = 201;
 const MAX_SCOPE_LABEL_BYTES = 160;
 const DEFAULT_SCOPE_LABEL = 'Authorized repository scope';
+const LIST_STARS_CURSOR_PREFIX = 'list-stars:v1:';
+const MAX_LIST_STARS_CURSOR_CHARS = 2_048;
 
 type PageArgs = {
   cursor: number;
@@ -58,12 +62,40 @@ type InspectedRepoDto = StarToolDto & {
   tags: string[];
 };
 
+type IdentityAndTagCountDto = {
+  full_name: string;
+  visibleTagCount: number;
+};
+
+type VisibleTagCountOperator = 'eq' | 'lt' | 'lte' | 'gt' | 'gte';
+type VisibleTagCountFilter = Readonly<{
+  operator: VisibleTagCountOperator;
+  value: number;
+}>;
+type ListStarsFilter = Readonly<{
+  visibleTagCount: VisibleTagCountFilter;
+}>;
+type ListStarsProjection = 'full' | 'identity_and_tag_count';
+type ListStarsArgs = PageArgs & Readonly<{
+  filter?: ListStarsFilter;
+  projection?: ListStarsProjection;
+}>;
+
+type ListStarsCursorPayload = Readonly<{
+  version: 1;
+  offset: number;
+  filter: ListStarsFilter | null;
+  projection: ListStarsProjection;
+  scopeFingerprint: string | null;
+}>;
+
 type SearchMatchMode = 'auto' | 'all' | 'any';
 type AppliedSearchMode = Exclude<SearchMatchMode, 'auto'>;
 type SearchMatchField = 'full_name' | 'name' | 'topics' | 'language' | 'description';
 
 type SearchStarDto = StarToolDto & {
   matchedFields: SearchMatchField[];
+  matchedTerms: string[];
   score: number;
 };
 
@@ -71,6 +103,7 @@ type RepositorySearchScope = Readonly<{
   repositoryIds: readonly string[];
   canonicalByNormalizedFullName: ReadonlyMap<string, string>;
   label: string;
+  scopeFingerprint: string | null;
 }>;
 
 export type BgsmAgentManualTagWriter = (
@@ -94,6 +127,7 @@ export function createBgsmAgentTools(options: Readonly<{
   const repositorySearchScope = createRepositorySearchScope(
     repositoryScope,
     options.scopeLabel,
+    options.scopeFingerprint,
   );
   const tools: AgentTool[] = [
     listTagsTool(),
@@ -131,24 +165,25 @@ export async function loadLiveBgsmAgentRepositoryScope(): Promise<string[]> {
 }
 
 function listStarsTool(repositoryScope: RepositorySearchScope): AgentTool<
-  PageArgs,
+  ListStarsArgs,
   {
-    stars: InspectedRepoDto[];
+    stars: Array<InspectedRepoDto | IdentityAndTagCountDto>;
     totalRepositories: number;
     scope: { label: string; repositoryCount: number; liveRepositoryCount: number };
+    totalMatches?: number;
+    appliedFilter?: ListStarsFilter | null;
+    projection?: ListStarsProjection;
     nextCursor: string | null;
   }
 > {
   return {
     name: 'list_stars',
     description:
-      'List local starred repositories and visible tags in stable full-name order within the authorized scope. Follow nextCursor until null only when the user requests a complete inventory.',
+      'List local starred repositories in stable full-name order within the authorized scope. For local visible-tag-count conditions, use filter.visibleTagCount with operator eq, lt, lte, gt, or gte and use projection identity_and_tag_count to avoid loading full metadata; for example, tag count <= 3 maps to operator lte and value 3. A filtered or compact opaque nextCursor retains the same query, so reuse it exactly until null. Use the default full projection only when repository metadata and visible tag names are needed.',
     risk: 'read',
-    parameters: paginationParameters(),
+    parameters: listStarsParameters(),
     validate(input) {
-      const value = expectObject(input);
-      assertOnlyKeys(value, ['limit', 'cursor'], 'list_stars');
-      return parsePageArgs(value);
+      return parseListStarsArgs(input, repositoryScope);
     },
     async execute(args, context) {
       const repositoryIds = [...repositoryScope.repositoryIds]
@@ -160,25 +195,47 @@ function listStarsTool(repositoryScope: RepositorySearchScope): AgentTool<
         loadExcludedTagKeys(),
       ]);
       const tagsByRepository = new Map(tagRows.flatMap((row) => row ? [[row.full_name, row] as const] : []));
-      const stars = liveStars.map((star): InspectedRepoDto => ({
-        ...toStarToolDto(star),
-        tags: visibleTagNames(tagsByRepository.get(star.full_name))
-          .filter((tag) => !excluded.has(policyTagKey(tag)))
-          .slice(0, MAX_LABELS_PER_REPO)
-          .map((tag) => truncateUtf8(tag, MAX_LABEL_BYTES)),
+      const indexedStars = liveStars.map((star) => ({
+        star,
+        visibleTags: visibleToolTagNames(tagsByRepository.get(star.full_name), excluded),
       }));
+      const countFilter = args.filter?.visibleTagCount;
+      const matches = countFilter
+        ? indexedStars.filter(({ visibleTags }) => matchesVisibleTagCount(
+            visibleTags.length,
+            countFilter,
+          ))
+        : indexedStars;
+      const projection = args.projection ?? 'full';
+      const stars = matches.map(({ star: matchedStar, visibleTags }) => (
+        projection === 'identity_and_tag_count'
+          ? {
+              full_name: matchedStar.full_name,
+              visibleTagCount: visibleTags.length,
+            }
+          : toInspectedRepoDtoFromVisibleTags(matchedStar, visibleTags)
+      ));
+      const queryIsDefault = args.filter === undefined && projection === 'full';
       const metadata = {
-        totalRepositories: stars.length,
+        totalRepositories: indexedStars.length,
         scope: {
           ...compactScopeDiagnostics(repositoryScope),
-          liveRepositoryCount: stars.length,
+          liveRepositoryCount: indexedStars.length,
         },
+        ...(queryIsDefault ? {} : {
+          totalMatches: matches.length,
+          appliedFilter: args.filter ?? null,
+          projection,
+        }),
       };
       return buildBoundedPage(
         stars,
         args,
         (page, nextCursor) => ({ stars: page, ...metadata, nextCursor }),
         resultAllowanceBytes(context),
+        (nextOffset) => queryIsDefault
+          ? String(nextOffset)
+          : encodeListStarsCursor(nextOffset, args, repositoryScope),
       );
     },
   };
@@ -217,7 +274,7 @@ function listTagsTool(): AgentTool<
 function getStarTool(repositoryScope: RepositorySearchScope): AgentTool<
   { full_name: string },
   {
-    star: StarToolDto | null;
+    star: InspectedRepoDto | null;
     normalizedFullName: string;
     status: 'found' | 'outside_scope' | 'unavailable';
     scope: { label: string; repositoryCount: number };
@@ -262,7 +319,11 @@ function getStarTool(repositoryScope: RepositorySearchScope): AgentTool<
         }, context);
       }
 
-      const star = await db.stars.get(canonicalFullName);
+      const [star, tag, excluded] = await Promise.all([
+        db.stars.get(canonicalFullName),
+        db.tags.get(canonicalFullName),
+        loadExcludedTagKeys(),
+      ]);
       if (!star || star.tombstone) {
         return ensureToolResultFits({
           star: null,
@@ -272,7 +333,7 @@ function getStarTool(repositoryScope: RepositorySearchScope): AgentTool<
         }, context);
       }
       return ensureToolResultFits({
-        star: toStarToolDto(star),
+        star: toInspectedRepoDto(star, tag, excluded),
         normalizedFullName,
         status: 'found' as const,
         scope,
@@ -296,7 +357,7 @@ function searchStarsTool(repositoryScope: RepositorySearchScope): AgentTool<
   return {
     name: 'search_stars',
     description:
-      'Search local starred repositories with structured terms across name, description, language, and topics.',
+      'Search local starred repositories with structured terms across name, description, language, and topics. Each result reports matchedTerms. An appliedMode of any only discovers candidates; it does not prove that every requested attribute matched. For exact-count requests, start with direct atomic terms and match all. Put exactly one term per logical criterion in a query; alternatives such as terminal or CLI belong in separate variants, never together. Use a small explicit limit, follow useful nextCursor pages, and stop once enough candidates qualify. Use no more than four distinct term variants total before reporting a shortage: the initial direct query counts as the first.',
     risk: 'read',
     parameters: {
       type: 'object',
@@ -603,6 +664,7 @@ function assertRepositoryInSearchScope(
 function createRepositorySearchScope(
   repositoryScope: ReadonlySet<string>,
   scopeLabel: string | undefined,
+  scopeFingerprint: string | undefined,
 ): RepositorySearchScope {
   const canonicalByNormalizedFullName = new Map<string, string>();
   for (const fullName of repositoryScope) {
@@ -616,6 +678,7 @@ function createRepositorySearchScope(
     repositoryIds: Array.from(canonicalByNormalizedFullName.values()),
     canonicalByNormalizedFullName,
     label: truncateUtf8(normalizedLabel || DEFAULT_SCOPE_LABEL, MAX_SCOPE_LABEL_BYTES),
+    scopeFingerprint: scopeFingerprint?.trim() || null,
   };
 }
 
@@ -686,6 +749,7 @@ function scoreSearchStar(star: Star, terms: readonly string[]): {
   const language = normalizeSearchText(star.language ?? '');
   const topics = star.topics.map(normalizeSearchText);
   const matchedFields = new Set<SearchMatchField>();
+  const matchedTerms: string[] = [];
   let matchedTermCount = 0;
   let highestTier = 0;
   let signalCount = 0;
@@ -699,6 +763,7 @@ function scoreSearchStar(star: Star, terms: readonly string[]): {
     if (!fullNameMatch && !nameMatch && !topicMatch && !languageMatch && !descriptionMatch) continue;
 
     matchedTermCount += 1;
+    matchedTerms.push(term);
     if (fullNameMatch) matchedFields.add('full_name');
     if (nameMatch) matchedFields.add('name');
     if (topicMatch) matchedFields.add('topics');
@@ -730,6 +795,7 @@ function scoreSearchStar(star: Star, terms: readonly string[]): {
     star: {
       ...toStarToolDto(star),
       matchedFields: SEARCH_MATCH_FIELD_ORDER.filter((field) => matchedFields.has(field)),
+      matchedTerms,
       score: highestTier * 100_000 + matchedTermCount * 1_000 + signalCount,
     },
     matchedTermCount,
@@ -785,6 +851,195 @@ function assertOnlyKeys(
   }
 }
 
+function listStarsParameters(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      filter: {
+        type: 'object',
+        properties: {
+          visibleTagCount: {
+            type: 'object',
+            properties: {
+              operator: { type: 'string', enum: ['eq', 'lt', 'lte', 'gt', 'gte'] },
+              value: { type: 'integer', minimum: 0 },
+            },
+            required: ['operator', 'value'],
+            additionalProperties: false,
+          },
+        },
+        required: ['visibleTagCount'],
+        additionalProperties: false,
+      },
+      projection: {
+        type: 'string',
+        enum: ['full', 'identity_and_tag_count'],
+      },
+      cursor: { type: 'string', maxLength: MAX_LIST_STARS_CURSOR_CHARS },
+      limit: { type: 'integer', minimum: 1, maximum: MAX_COMPACT_PAGE_LIMIT },
+    },
+    additionalProperties: false,
+  };
+}
+
+function parseListStarsArgs(
+  input: unknown,
+  repositoryScope: RepositorySearchScope,
+): ListStarsArgs {
+  const value = expectObject(input);
+  assertOnlyKeys(value, ['filter', 'projection', 'limit', 'cursor'], 'list_stars');
+  const filterProvided = value.filter !== undefined;
+  const projectionProvided = value.projection !== undefined;
+  const explicitFilter = filterProvided ? parseListStarsFilter(value.filter) : undefined;
+  const explicitProjection = projectionProvided
+    ? parseListStarsProjection(value.projection)
+    : undefined;
+  const rawCursor = value.cursor === undefined
+    ? undefined
+    : expectString(value.cursor, 'cursor');
+
+  let cursor = 0;
+  let filter = explicitFilter;
+  let projection = explicitProjection ?? 'full';
+  if (rawCursor?.startsWith(LIST_STARS_CURSOR_PREFIX)) {
+    const payload = decodeListStarsCursor(rawCursor);
+    if (payload.scopeFingerprint !== repositoryScope.scopeFingerprint) {
+      throw new TypeError('list_stars cursor belongs to another authorized scope.');
+    }
+    if (filterProvided && !sameListStarsFilter(explicitFilter, payload.filter ?? undefined)) {
+      throw new TypeError('list_stars cursor query does not match the supplied filter.');
+    }
+    if (projectionProvided && explicitProjection !== payload.projection) {
+      throw new TypeError('list_stars cursor query does not match the supplied projection.');
+    }
+    cursor = payload.offset;
+    filter = payload.filter ?? undefined;
+    projection = payload.projection;
+  } else if (rawCursor !== undefined) {
+    cursor = parsePageCursor(rawCursor);
+    if (cursor > 0 && (filter !== undefined || projection !== 'full')) {
+      throw new TypeError('A filtered or compact list_stars query requires its opaque nextCursor.');
+    }
+  }
+
+  const compact = projection === 'identity_and_tag_count';
+  const limit = parsePageLimit(
+    value.limit,
+    compact ? DEFAULT_COMPACT_PAGE_LIMIT : DEFAULT_PAGE_LIMIT,
+    compact ? MAX_COMPACT_PAGE_LIMIT : MAX_PAGE_LIMIT,
+  );
+  return {
+    cursor,
+    limit,
+    ...(filter ? { filter } : {}),
+    ...(projection === 'full' ? {} : { projection }),
+  };
+}
+
+function parseListStarsFilter(input: unknown): ListStarsFilter {
+  const value = expectObject(input);
+  assertOnlyKeys(value, ['visibleTagCount'], 'list_stars filter');
+  if (value.visibleTagCount === undefined) {
+    throw new TypeError('list_stars filter requires visibleTagCount.');
+  }
+  const count = expectObject(value.visibleTagCount);
+  assertOnlyKeys(count, ['operator', 'value'], 'list_stars visibleTagCount filter');
+  const operator = expectString(count.operator, 'visibleTagCount operator');
+  if (!isVisibleTagCountOperator(operator)) {
+    throw new TypeError('visibleTagCount operator must be eq, lt, lte, gt, or gte.');
+  }
+  const filterValue = expectNonNegativeInteger(count.value, 'visibleTagCount value');
+  return {
+    visibleTagCount: {
+      operator,
+      value: filterValue,
+    },
+  };
+}
+
+function parseListStarsProjection(input: unknown): ListStarsProjection {
+  const value = expectString(input, 'projection');
+  if (value !== 'full' && value !== 'identity_and_tag_count') {
+    throw new TypeError('list_stars projection must be full or identity_and_tag_count.');
+  }
+  return value;
+}
+
+function isVisibleTagCountOperator(value: string): value is VisibleTagCountOperator {
+  return value === 'eq' || value === 'lt' || value === 'lte' || value === 'gt' || value === 'gte';
+}
+
+function sameListStarsFilter(
+  left: ListStarsFilter | undefined,
+  right: ListStarsFilter | undefined,
+): boolean {
+  if (!left || !right) return left === right;
+  return left.visibleTagCount.operator === right.visibleTagCount.operator
+    && left.visibleTagCount.value === right.visibleTagCount.value;
+}
+
+function encodeListStarsCursor(
+  offset: number,
+  args: ListStarsArgs,
+  repositoryScope: RepositorySearchScope,
+): string {
+  const payload: ListStarsCursorPayload = {
+    version: 1,
+    offset,
+    filter: args.filter ?? null,
+    projection: args.projection ?? 'full',
+    scopeFingerprint: repositoryScope.scopeFingerprint,
+  };
+  return LIST_STARS_CURSOR_PREFIX + encodeURIComponent(JSON.stringify(payload));
+}
+
+function decodeListStarsCursor(cursor: string): ListStarsCursorPayload {
+  if (cursor.length > MAX_LIST_STARS_CURSOR_CHARS) {
+    throw new TypeError('list_stars cursor is too long.');
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(decodeURIComponent(cursor.slice(LIST_STARS_CURSOR_PREFIX.length)));
+  } catch {
+    throw new TypeError('list_stars cursor is malformed.');
+  }
+  const payload = expectObject(value);
+  assertOnlyKeys(
+    payload,
+    ['version', 'offset', 'filter', 'projection', 'scopeFingerprint'],
+    'list_stars cursor',
+  );
+  if (payload.version !== 1) throw new TypeError('list_stars cursor version is unsupported.');
+  const offset = expectNonNegativeInteger(payload.offset, 'list_stars cursor offset');
+  const filter = payload.filter === null ? null : parseListStarsFilter(payload.filter);
+  const projection = parseListStarsProjection(payload.projection);
+  const scopeFingerprint = payload.scopeFingerprint;
+  if (scopeFingerprint !== null && typeof scopeFingerprint !== 'string') {
+    throw new TypeError('list_stars cursor scope fingerprint is malformed.');
+  }
+  return {
+    version: 1,
+    offset,
+    filter,
+    projection,
+    scopeFingerprint,
+  };
+}
+
+function parsePageLimit(input: unknown, fallback: number, maximum: number): number {
+  const limit = input === undefined ? fallback : expectPositiveInteger(input, 'limit');
+  return Math.min(limit, maximum);
+}
+
+function parsePageCursor(rawCursor: string): number {
+  if (!/^\d+$/u.test(rawCursor)) {
+    throw new Error('Expected cursor to be a non-negative integer string.');
+  }
+  const cursor = Number(rawCursor);
+  if (!Number.isSafeInteger(cursor)) throw new Error('Expected cursor to be a safe integer string.');
+  return cursor;
+}
+
 function paginationParameters(): Record<string, unknown> {
   return {
     type: 'object',
@@ -798,17 +1053,11 @@ function paginationParameters(): Record<string, unknown> {
 
 function parsePageArgs(input: unknown): PageArgs {
   const value = expectObject(input);
-  const limit = value.limit === undefined
-    ? DEFAULT_PAGE_LIMIT
-    : expectPositiveInteger(value.limit, 'limit');
-  let cursor = 0;
-  if (value.cursor !== undefined) {
-    const rawCursor = expectString(value.cursor, 'cursor');
-    if (!/^\d+$/.test(rawCursor)) throw new Error('Expected cursor to be a non-negative integer string.');
-    cursor = Number(rawCursor);
-    if (!Number.isSafeInteger(cursor)) throw new Error('Expected cursor to be a safe integer string.');
-  }
-  return { cursor, limit: Math.min(limit, MAX_PAGE_LIMIT) };
+  const limit = parsePageLimit(value.limit, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT);
+  const cursor = value.cursor === undefined
+    ? 0
+    : parsePageCursor(expectString(value.cursor, 'cursor'));
+  return { cursor, limit };
 }
 
 function expectString(input: unknown, field: string): string {
@@ -850,6 +1099,13 @@ function expectPositiveInteger(input: unknown, field: string): number {
   return input;
 }
 
+function expectNonNegativeInteger(input: unknown, field: string): number {
+  if (typeof input !== 'number' || !Number.isSafeInteger(input) || input < 0) {
+    throw new Error(`Expected ${field} to be a non-negative integer.`);
+  }
+  return input;
+}
+
 function toStarToolDto(star: Star): StarToolDto {
   return {
     full_name: star.full_name,
@@ -867,16 +1123,57 @@ function toStarToolDto(star: Star): StarToolDto {
   };
 }
 
+function toInspectedRepoDto(
+  star: Star,
+  tag: Tag | undefined,
+  excluded: ReadonlySet<string>,
+): InspectedRepoDto {
+  return toInspectedRepoDtoFromVisibleTags(star, visibleToolTagNames(tag, excluded));
+}
+
+function visibleToolTagNames(
+  tag: Tag | undefined,
+  excluded: ReadonlySet<string>,
+): string[] {
+  return visibleTagNames(tag).filter((name) => !excluded.has(policyTagKey(name)));
+}
+
+function toInspectedRepoDtoFromVisibleTags(
+  star: Star,
+  visibleTags: readonly string[],
+): InspectedRepoDto {
+  return {
+    ...toStarToolDto(star),
+    tags: visibleTags
+      .slice(0, MAX_LABELS_PER_REPO)
+      .map((name) => truncateUtf8(name, MAX_LABEL_BYTES)),
+  };
+}
+
+function matchesVisibleTagCount(count: number, filter: VisibleTagCountFilter): boolean {
+  switch (filter.operator) {
+    case 'eq': return count === filter.value;
+    case 'lt': return count < filter.value;
+    case 'lte': return count <= filter.value;
+    case 'gt': return count > filter.value;
+    case 'gte': return count >= filter.value;
+  }
+}
+
 function buildBoundedPage<TItem, TResult>(
   items: TItem[],
   args: PageArgs,
   build: (page: TItem[], nextCursor: string | null) => TResult,
   maxSerializedBytes = MAX_TOOL_RESULT_BYTES,
+  cursorForOffset: (offset: number) => string = String,
 ): TResult {
   const available = items.slice(args.cursor, args.cursor + args.limit);
   for (let count = available.length; count > 0; count--) {
     const nextOffset = args.cursor + count;
-    const result = build(available.slice(0, count), nextOffset < items.length ? String(nextOffset) : null);
+    const result = build(
+      available.slice(0, count),
+      nextOffset < items.length ? cursorForOffset(nextOffset) : null,
+    );
     if (serializedToolResultByteLength(okToolResult(result)) <= maxSerializedBytes) return result;
   }
 

@@ -45,6 +45,8 @@ describe('BGSM Agent app context', () => {
     assert.match(prompt, /Infer from the user request and conversation whether the user wants tags to change\./);
     assert.match(prompt, /Use list_stars for repository inventory/);
     assert.match(prompt, /Follow list_stars nextCursor until null/);
+    assert.match(prompt, /visible tag count.*identity_and_tag_count/iu);
+    assert.match(prompt, /opaque nextCursor retains the same local query/iu);
     assert.match(prompt, /search_stars with a terms array/);
     assert.match(prompt, /list_repository_files, search_repository_code, and read_repository_file/);
     assert.match(prompt, /reuse only a commit ref returned by list or search in this conversation/);

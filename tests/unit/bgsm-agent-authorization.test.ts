@@ -81,13 +81,15 @@ describe('BGSM Agent current-prompt authorization', () => {
     assert.equal((await authorization.permissions(writes.assign, args, context())).type, 'allow');
   });
 
-  it('treats a structured list_stars row as current local repository evidence', async () => {
+  it('treats a compact list_stars count row as current local repository evidence', async () => {
     const authorization = createBgsmTurnAuthorization(
       analyzeBgsmPromptIntent('Add the typescript tag to owner/repo.').capabilities,
     );
     await executeRead(authorization, readTool('list_stars', {
-      stars: [{ full_name: 'owner/repo', tags: [] }],
+      stars: [{ full_name: 'owner/repo', visibleTagCount: 2 }],
       totalRepositories: 1,
+      totalMatches: 1,
+      projection: 'identity_and_tag_count',
       nextCursor: null,
     }));
 

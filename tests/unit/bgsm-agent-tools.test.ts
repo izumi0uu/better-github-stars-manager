@@ -611,6 +611,207 @@ describe('BGSM Agent tools', () => {
     assert.ok(serializedToolResultByteLength(okToolResult(first)) <= MAX_TOOL_RESULT_BYTES);
   });
 
+  it('filters visible tag counts locally and pages compact results with a query-bound cursor', async () => {
+    const candidates = [
+      { ...star, full_name: 'alpha/no-tags' },
+      { ...star, full_name: 'beta/two-tags' },
+      { ...star, full_name: 'delta/four-tags' },
+      { ...star, full_name: 'gamma/three-tags' },
+      { ...star, full_name: 'scope/tombstoned', tombstone: true },
+      { ...star, full_name: 'outside/one-tag' },
+    ];
+    await db.stars.bulkPut(candidates);
+    const tagRow = (fullName: string, manualTags: string[], autoTags: string[] = []) => ({
+      full_name: fullName,
+      manualTags,
+      autoTags,
+      dismissedAutoTags: [],
+      manualTagsMtime: star.synced_at,
+      autoTagsMtime: star.synced_at,
+      dismissedAutoTagsMtime: star.synced_at,
+      notes: 'private',
+      favorite: true,
+      mtime: star.synced_at,
+    });
+    await db.tags.bulkPut([
+      tagRow('beta/two-tags', ['one', 'excluded'], ['two', 'ONE']),
+      tagRow('delta/four-tags', ['one', 'two', 'three', 'four']),
+      tagRow('gamma/three-tags', ['one', 'two', 'three']),
+      tagRow('scope/tombstoned', ['one']),
+      tagRow('outside/one-tag', ['one']),
+    ]);
+    await db.tagMeta.put({
+      name: 'ＥＸＣＬＵＤＥＤ',
+      dimension: null,
+      color: null,
+      excluded: true,
+      mtime: star.synced_at,
+    });
+    const scope = candidates
+      .filter((candidate) => candidate.full_name !== 'outside/one-tag')
+      .map((candidate) => candidate.full_name);
+    const list = createTools(scope).find((candidate) => candidate.name === 'list_stars');
+    assert.ok(list);
+    const query = {
+      filter: { visibleTagCount: { operator: 'lte', value: 3 } },
+      projection: 'identity_and_tag_count',
+      limit: 1,
+    };
+
+    const validated = list.validate?.(query) as Record<string, unknown>;
+    assert.deepEqual(validated, {
+      cursor: 0,
+      limit: 1,
+      filter: query.filter,
+      projection: query.projection,
+    });
+    const first = await list.execute(validated, {
+      sessionId: 's-list-filtered',
+      callId: 'c-list-filtered-1',
+    }) as {
+      stars: Array<Record<string, unknown>>;
+      totalRepositories: number;
+      totalMatches: number;
+      appliedFilter: unknown;
+      projection: string;
+      nextCursor: string | null;
+    };
+    assert.deepEqual(first.stars, [{ full_name: 'alpha/no-tags', visibleTagCount: 0 }]);
+    assert.equal(first.totalRepositories, 4);
+    assert.equal(first.totalMatches, 3);
+    assert.deepEqual(first.appliedFilter, query.filter);
+    assert.equal(first.projection, 'identity_and_tag_count');
+    assert.ok(first.nextCursor);
+    assert.doesNotMatch(first.nextCursor, /^\d+$/u);
+
+    const inherited = list.validate?.({ cursor: first.nextCursor, limit: 2 }) as Record<string, unknown>;
+    assert.deepEqual(inherited, {
+      cursor: 1,
+      limit: 2,
+      filter: query.filter,
+      projection: query.projection,
+    });
+    const second = await list.execute(inherited, {
+      sessionId: 's-list-filtered',
+      callId: 'c-list-filtered-2',
+    }) as { stars: Array<Record<string, unknown>>; nextCursor: string | null };
+    assert.deepEqual(second.stars, [
+      { full_name: 'beta/two-tags', visibleTagCount: 2 },
+      { full_name: 'gamma/three-tags', visibleTagCount: 3 },
+    ]);
+    assert.equal(second.nextCursor, null);
+
+    assert.throws(() => list.validate?.({
+      cursor: first.nextCursor,
+      filter: { visibleTagCount: { operator: 'gte', value: 3 } },
+    }), /cursor.*query|query.*cursor/iu);
+    assert.throws(() => list.validate?.({
+      cursor: first.nextCursor,
+      projection: 'full',
+    }), /cursor.*query|query.*cursor/iu);
+    assert.throws(() => list.validate?.({
+      cursor: '1',
+      filter: query.filter,
+      projection: query.projection,
+    }), /opaque nextCursor/iu);
+    const anotherScope = createBgsmAgentTools({
+      repositoryScope: scope,
+      scopeFingerprint: 'scope:other',
+    }).find((candidate) => candidate.name === 'list_stars');
+    assert.ok(anotherScope);
+    assert.throws(() => anotherScope.validate?.({ cursor: first.nextCursor }), /another authorized scope/iu);
+    assert.throws(() => list.validate?.({
+      filter: { visibleTagCount: { operator: 'lte', value: -1 } },
+    }), /non-negative integer/iu);
+    assert.throws(() => list.validate?.({
+      filter: { visibleTagCount: { operator: 'between', value: 3 } },
+    }), /operator/iu);
+    assert.throws(() => list.validate?.({
+      filter: { visibleTagCount: { operator: 'lte' } },
+    }), /value/iu);
+    assert.throws(() => list.validate?.({
+      filter: { visibleTagCount: { operator: 'lte', value: 3 }, unknown: true },
+    }), /accepts only/iu);
+  });
+
+  it('counts every visible tag before the full projection truncates tag names', async () => {
+    const manyTags = Array.from({ length: 13 }, (_, index) => `tag-${index}`);
+    await db.tags.put({
+      full_name: star.full_name,
+      manualTags: manyTags,
+      autoTags: [],
+      dismissedAutoTags: [],
+      manualTagsMtime: star.synced_at,
+      autoTagsMtime: star.synced_at,
+      dismissedAutoTagsMtime: star.synced_at,
+      notes: '',
+      favorite: false,
+      mtime: star.synced_at,
+    });
+    const list = createTools().find((candidate) => candidate.name === 'list_stars');
+    assert.ok(list);
+
+    const compact = await list.execute(list.validate?.({
+      filter: { visibleTagCount: { operator: 'eq', value: 13 } },
+      projection: 'identity_and_tag_count',
+    }), { sessionId: 's-list-count', callId: 'c-list-count' }) as {
+      stars: Array<{ full_name: string; visibleTagCount: number }>;
+    };
+    assert.deepEqual(compact.stars, [{ full_name: star.full_name, visibleTagCount: 13 }]);
+
+    const legacy = await list.execute(list.validate?.({}), {
+      sessionId: 's-list-legacy',
+      callId: 'c-list-legacy',
+    }) as { stars: Array<{ tags: string[] }>; nextCursor: string | null };
+    assert.equal(legacy.stars[0]?.tags.length, 12);
+    assert.equal(legacy.nextCursor, null);
+  });
+
+  it('pages a 316-repository compact tag-count query to completion within the byte guard', async () => {
+    const compactStars = Array.from({ length: 316 }, (_, index) => ({
+      ...star,
+      full_name: `compact/repo-${String(index).padStart(3, '0')}`,
+    }));
+    await db.stars.bulkPut(compactStars);
+    const list = createTools(compactStars.map((candidate) => candidate.full_name))
+      .find((candidate) => candidate.name === 'list_stars');
+    assert.ok(list);
+
+    const listed: Array<{ full_name: string; visibleTagCount: number }> = [];
+    let cursor: string | null = null;
+    let pageIndex = 0;
+    do {
+      const compact = await list.execute(list.validate?.(cursor === null ? {
+        filter: { visibleTagCount: { operator: 'lte', value: 3 } },
+        projection: 'identity_and_tag_count',
+        limit: 500,
+      } : { cursor, limit: 500 }), {
+        sessionId: 's-list-wide',
+        callId: `c-list-wide-${pageIndex}`,
+      }) as {
+        stars: Array<{ full_name: string; visibleTagCount: number }>;
+        totalMatches: number;
+        nextCursor: string | null;
+      };
+      if (pageIndex === 0) assert.ok(compact.stars.length > 50);
+      assert.equal(compact.totalMatches, compactStars.length);
+      assert.ok(serializedToolResultByteLength(okToolResult(compact)) <= MAX_TOOL_RESULT_BYTES);
+      listed.push(...compact.stars);
+      cursor = compact.nextCursor;
+      pageIndex += 1;
+    } while (cursor !== null);
+    assert.equal(listed.length, compactStars.length);
+    assert.equal(new Set(listed.map((candidate) => candidate.full_name)).size, compactStars.length);
+    assert.ok(pageIndex > 1);
+
+    const full = await list.execute(list.validate?.({ limit: 500 }), {
+      sessionId: 's-list-wide',
+      callId: 'c-list-wide-full',
+    }) as { stars: unknown[]; nextCursor: string | null };
+    assert.ok(full.stars.length <= 50);
+    assert.match(full.nextCursor ?? '', /^\d+$/u);
+  });
+
   it('normalizes and deduplicates structured search terms with strict bounds', () => {
     const search = createTools().find((candidate) => candidate.name === 'search_stars');
     assert.ok(search);
@@ -701,7 +902,7 @@ describe('BGSM Agent tools', () => {
       terms: ['better', 'typescript'],
       match: 'any',
     }), { sessionId: 's-search-any', callId: 'c-search-any' }) as {
-      stars: Array<{ full_name: string }>;
+      stars: Array<{ full_name: string; matchedTerms: string[] }>;
       appliedMode: string;
       totalMatches: number;
     };
@@ -709,6 +910,13 @@ describe('BGSM Agent tools', () => {
       'izumi0uu/better-github-stars-manager',
       'owner/better-bookmarks',
     ]));
+    assert.deepEqual(
+      Object.fromEntries(any.stars.map((candidate) => [candidate.full_name, candidate.matchedTerms])),
+      {
+        'izumi0uu/better-github-stars-manager': ['better', 'typescript'],
+        'owner/better-bookmarks': ['better'],
+      },
+    );
     assert.equal(any.appliedMode, 'any');
     assert.equal(any.totalMatches, 2);
 
@@ -760,7 +968,12 @@ describe('BGSM Agent tools', () => {
       terms: ['owner/needle'],
       match: 'all',
     }), { sessionId: 's-search-rank', callId: 'c-search-rank' }) as {
-      stars: Array<{ full_name: string; matchedFields: string[]; score: number }>;
+      stars: Array<{
+        full_name: string;
+        matchedFields: string[];
+        matchedTerms: string[];
+        score: number;
+      }>;
     };
     assert.deepEqual(result.stars.map((candidate) => candidate.full_name), [
       'owner/needle',
@@ -780,6 +993,9 @@ describe('BGSM Agent tools', () => {
       ['language'],
       ['description'],
     ]);
+    assert.equal(result.stars.every((candidate) => (
+      candidate.matchedTerms.length === 1 && candidate.matchedTerms[0] === 'owner needle'
+    )), true);
     assert.equal(result.stars.every((candidate, index, array) => (
       index === 0 || array[index - 1]!.score > candidate.score
     )), true);
@@ -789,6 +1005,25 @@ describe('BGSM Agent tools', () => {
   it('gets an exact in-scope repository case-insensitively and returns its canonical name', async () => {
     const canonical = 'Izumi0uu/Better-GitHub-Stars-Manager';
     await db.stars.put({ ...star, full_name: canonical });
+    await db.tags.put({
+      full_name: canonical,
+      manualTags: ['visible', 'excluded'],
+      autoTags: ['automatic'],
+      dismissedAutoTags: [],
+      manualTagsMtime: star.synced_at,
+      autoTagsMtime: star.synced_at,
+      dismissedAutoTagsMtime: star.synced_at,
+      notes: 'private note',
+      favorite: true,
+      mtime: star.synced_at,
+    });
+    await db.tagMeta.put({
+      name: 'excluded',
+      dimension: null,
+      color: null,
+      excluded: true,
+      mtime: star.synced_at,
+    });
     const getStar = createBgsmAgentTools({
       repositoryScope: [canonical],
       scopeLabel: 'Selected repository',
@@ -798,13 +1033,16 @@ describe('BGSM Agent tools', () => {
     const found = await getStar.execute(getStar.validate?.({
       full_name: ' izumi0UU/better-github-stars-manager ',
     }), { sessionId: 's-get-star', callId: 'c-get-star' }) as {
-      star: { full_name: string } | null;
+      star: { full_name: string; tags: string[]; notes?: string; favorite?: boolean } | null;
       normalizedFullName: string;
       status: string;
       scope: { label: string; repositoryCount: number };
     };
     assert.equal(found.status, 'found');
     assert.equal(found.star?.full_name, canonical);
+    assert.deepEqual(found.star?.tags, ['visible', 'automatic']);
+    assert.equal('notes' in found.star!, false);
+    assert.equal('favorite' in found.star!, false);
     assert.equal(found.normalizedFullName, 'izumi0uu/better-github-stars-manager');
     assert.deepEqual(found.scope, { label: 'Selected repository', repositoryCount: 1 });
     assert.throws(

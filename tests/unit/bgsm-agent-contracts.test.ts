@@ -70,6 +70,7 @@ import {
   validateBgsmOrganizeJobMessageIdentity,
   type BgsmOrganizeJobPortMessage,
 } from '@/utils/messaging';
+import { BGSM_AGENT_INSTRUCTIONS } from '@/bgsm-agent/instructions';
 
 const DIGEST = 'A'.repeat(43);
 const runId = parseRunId('run:v1:run-1');
@@ -77,6 +78,49 @@ const proposalId = parseProposalId('proposal:v1:proposal-1');
 const controllerId = parseControllerId('controller:v1:controller-1');
 const sourceFingerprint = parseSourceFingerprintV1(`sf:v1:${DIGEST}`);
 const taxonomyFingerprint = parseTaxonomyFingerprintV1(`tf:v1:${DIGEST}`);
+
+describe('BGSM Agent response completeness contract', () => {
+  it('requires exact requested counts or an explicit qualified-result shortage', () => {
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /exact number of repositories/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /exactly that many distinct qualifying repositories/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /follow nextCursor/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /after the bounded search/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /only how many qualified/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /at most four distinct query variants/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /direct initial query is variant one/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /at most three alternative term sets/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Stop searching immediately/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /smallest practical limit/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /more than 50 repositories/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /enumerate at most 50 repositories/u);
+  });
+
+  it('treats any-mode search as discovery and requires positive evidence for every criterion', () => {
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /appliedMode any/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /discovery candidates, not proof/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Read each result matchedTerms/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /all-mode search using one atomic term per criterion/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /direct user terms/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /match: all/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /separate bounded variants/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /joined by or, slash/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /never put two alternatives/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /terminal and CLI/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Do not relax the requested product role/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /every required positive attribute/u);
+  });
+
+  it('keeps core products distinct from related ecosystem infrastructure', () => {
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /core product/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /multiplexer, orchestrator, host, integration, plugin, toolkit, framework, SDK, library, skill/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /template, tutorial, harness, or supporting component/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /merely contains, supports, or relates/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /broader ecosystem/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /required positive attribute/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /absence of an excluded role is not proof/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /topics as supporting evidence/u);
+  });
+});
 
 function action(tag: string): ProposalAction {
   return { kind: 'add_existing_tag', tag, evidence: `Evidence for ${tag}` };
