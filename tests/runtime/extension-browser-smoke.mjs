@@ -551,19 +551,19 @@ async function assertAgentDrawerA11y(page) {
     setupVisible: false,
     composerVisible: true,
   });
-  await clickShadowButton(page, 'button[aria-label="Functions"]');
+  await clickShadowButton(page, 'button[aria-label="Prompt suggestions"]');
   await page.waitForFunction(
     () => !!document
       .getElementById('gsm-manager-host')
       ?.shadowRoot
-      ?.querySelector('[role="group"][aria-label="Available functions"]'),
+      ?.querySelector('[role="group"][aria-label="Suggested prompts"]'),
     { polling: DOM_POLLING_MS, timeout: 10_000 },
   );
   const functionLabels = await page.evaluate(() => [...(
     document
       .getElementById('gsm-manager-host')
       ?.shadowRoot
-      ?.querySelectorAll('[role="group"][aria-label="Available functions"] button') ?? []
+      ?.querySelectorAll('[role="group"][aria-label="Suggested prompts"] button') ?? []
   )].map((item) => item.querySelector('span > span')?.textContent?.trim() ?? ''));
   assert.deepEqual(functionLabels, [
     'Summarize current scope',
@@ -571,7 +571,7 @@ async function assertAgentDrawerA11y(page) {
     'Organize full library',
     'Review tag names',
   ]);
-  await clickShadowButton(page, 'button[aria-label="Functions"]');
+  await clickShadowButton(page, 'button[aria-label="Prompt suggestions"]');
   const originalViewport = page.viewport() ?? { width: 800, height: 600, deviceScaleFactor: 1 };
   await page.setViewport({ width: 360, height: 720, deviceScaleFactor: 1 });
   const narrow = await page.evaluate(() => {

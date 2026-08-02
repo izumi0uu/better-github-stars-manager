@@ -642,6 +642,24 @@ describe('first-use disclosure and messaging identities', () => {
       count: 0,
     };
     validateBgsmOrganizeJobMessageIdentity(noWork);
+    const progress: BgsmOrganizeJobPortMessage = {
+      type: 'bgsmOrganizeJobAnalysisProgress',
+      controllerId,
+      sessionId: 'session-1',
+      runId,
+      generation: 2,
+      processed: 2,
+      total: 4,
+    };
+    validateBgsmOrganizeJobMessageIdentity(progress);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...progress,
+      processed: 5,
+    }), /cannot exceed/u);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...progress,
+      debug: true,
+    } as unknown as BgsmOrganizeJobPortMessage), /Unexpected BGSM OrganizeJobRun message keys/u);
     validateBgsmOrganizeJobMessageIdentity({
       type: 'cancelBgsmOrganizeJobPreflight',
       controllerId,

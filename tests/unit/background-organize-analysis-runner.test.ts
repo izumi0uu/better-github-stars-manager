@@ -114,6 +114,7 @@ function createHarness(input: Readonly<{
   const durableCalls: string[] = [];
   const continuationEvents: string[] = [];
   const traceEvents: BgsmOrganizeJobSchedulerTraceEvent[] = [];
+  const analysisProgress: Array<{ processed: number; total: number }> = [];
   const loadedRanges: string[] = [];
   let usage: RunBudgetUsage = {
     firstAnalyzerRequestAt: null,
@@ -264,6 +265,7 @@ function createHarness(input: Readonly<{
     async analyzeWithSingleRetry(
       batch: SemanticAnalyzerBatch,
       reserve: (attempt: PreparedAnalyzerAttempt) => AnalyzerReservationDecision | Promise<AnalyzerReservationDecision>,
+      onProgress?: (completedRows: number) => void,
     ): Promise<AnalyzerRunResult> {
       analyzerBatchCount += 1;
       const first = await reserveOnce(batch, reserve);
@@ -273,6 +275,9 @@ function createHarness(input: Readonly<{
       await input.analyzerGate;
       if (first.decision.status === 'admitted' && first.decision.signal?.aborted) {
         throw new Error('analyzer aborted');
+      }
+      for (const completedRows of input.streamProgressCounts ?? []) {
+        if (completedRows <= batch.repositories.length) onProgress?.(completedRows);
       }
       if (input.analyzerMode === 'success' || input.analyzerMode === undefined ||
         (input.analyzerMode === 'retry_blocked_on_seventh' && analyzerBatchCount < 7)) {
@@ -347,6 +352,9 @@ function createHarness(input: Readonly<{
     publishSnapshot: (snapshot) => {
       if (snapshot.generation > identity.generation) continuationEvents.push('published');
       publishedSnapshots.push(snapshot);
+    },
+    publishAnalysisProgress: (_identity, processed, total) => {
+      analysisProgress.push({ processed, total });
     },
     issueContinuationCursor: async (_identity, index) => {
       nextFrozenIndex = index;
@@ -465,6 +473,7 @@ function createHarness(input: Readonly<{
     continuationEvents,
     loadedRanges,
     traceEvents,
+    analysisProgress,
     get reason() { return reason; },
     get nextIndex() { return nextFrozenIndex; },
   };
@@ -503,6 +512,22 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     ]);
     assert.equal(run.counters.reads, 2);
     assert.equal(run.counters.completions, 1);
+  });
+
+  it('publishes streamed rows as continuous whole-library progress across batch boundaries', async () => {
+    const run = createHarness({
+      scopeCount: 30,
+      pageKind: 'live',
+      streamProgressCounts: Array.from({ length: 25 }, (_, index) => index + 1),
+    });
+
+    await run.scheduler.schedule(run.identity);
+
+    assert.deepEqual(
+      run.analysisProgress.map(({ processed }) => processed),
+      Array.from({ length: 30 }, (_, index) => index + 1),
+    );
+    assert.equal(run.analysisProgress.every(({ total }) => total === 30), true);
   });
 
   it('keeps the extension worker active while a provider attempt is pending', async () => {

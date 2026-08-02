@@ -5,16 +5,28 @@ import {
 } from '@/bgsm-agent/identity';
 import {
   canContinueOrganizeJobRun,
-  analyzedRepositoryCount,
   createAgentWorkbenchState,
+  displayedAnalyzedRepositoryCount,
+  PREFLIGHT_INCOMPLETE_COPY,
   reduceAgentWorkbench,
+  type WorkbenchConversationAnchor,
 } from '@/ui/agent-workbench-state';
-import { useIncrementingNumber } from '@/ui/hooks/use-incrementing-number';
+import type { BgsmAgentOrganizeLibraryHandoff } from '@/bgsm-agent/tools';
 import {
   validateBgsmOrganizeJobDeliveryEnvelope,
   validateBgsmOrganizeJobMessageIdentity,
   type BgsmOrganizeJobClientMessage,
 } from '@/utils/messaging';
+
+type DeferredOrganizeHandoffCommand = Extract<
+  BgsmOrganizeJobClientMessage,
+  {
+    type:
+      | 'requestBgsmOrganizeJobPreflight'
+      | 'startBgsmOrganizeJob'
+      | 'cancelBgsmOrganizeJobPreflight';
+  }
+>;
 
 export function useBgsmAgentWorkbench(
   onAuthoritativeDataChanged?: () => void,
@@ -23,8 +35,10 @@ export function useBgsmAgentWorkbench(
   const controllerIdRef = useRef<ControllerId>(createControllerId());
   const sessionIdRef = useRef(sharedSessionId ?? `organize-session:${createNonce()}`);
   const portRef = useRef<chrome.runtime.Port | null>(null);
-  const taskInstructionRef = useRef('');
   const restoreRunAfterPreflightCancelRef = useRef(false);
+  const agentAutoStartRequestIdRef = useRef<string | null>(null);
+  const agentHandoffAuthorityRef = useRef(0);
+  const deferredHandoffCommandRef = useRef<DeferredOrganizeHandoffCommand | null>(null);
   const onAuthoritativeDataChangedRef = useRef(onAuthoritativeDataChanged);
   onAuthoritativeDataChangedRef.current = onAuthoritativeDataChanged;
   const [state, dispatch] = useReducer(
@@ -40,30 +54,38 @@ export function useBgsmAgentWorkbench(
     stateRef.current = reduceAgentWorkbench(stateRef.current, action);
     dispatch(action);
   }, []);
-  const automaticContinuation = state.continuationPending;
-  const progressActive = !!state.snapshot && (
-    ['frozen', 'prepared', 'checking_provider', 'analyzing'].includes(state.snapshot.state)
-    || automaticContinuation
-  );
-  const displayedProcessed = useIncrementingNumber(
-    analyzedRepositoryCount(state),
-    progressActive,
-  );
+  const displayedProcessed = displayedAnalyzedRepositoryCount(state);
 
-  const post = useCallback((message: BgsmOrganizeJobClientMessage) => {
+  const tryPost = useCallback((message: BgsmOrganizeJobClientMessage): boolean => {
     validateBgsmOrganizeJobMessageIdentity(message);
     const port = portRef.current;
-    if (!port) throw new Error('BGSM Agent is not connected.');
-    port.postMessage(message);
+    if (!port) return false;
+    try {
+      port.postMessage(message);
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
+
+  const post = useCallback((message: BgsmOrganizeJobClientMessage) => {
+    if (!tryPost(message)) throw new Error('BGSM Agent is not connected.');
+  }, [tryPost]);
+
+  const postOrDeferHandoff = useCallback((message: DeferredOrganizeHandoffCommand) => {
+    deferredHandoffCommandRef.current = message;
+    if (tryPost(message)) deferredHandoffCommandRef.current = null;
+  }, [tryPost]);
 
   useEffect(() => {
     const nextSessionId = sharedSessionId ?? sessionIdRef.current;
     if (nextSessionId !== sessionIdRef.current) {
       controllerIdRef.current = createControllerId();
       sessionIdRef.current = nextSessionId;
-      taskInstructionRef.current = '';
       restoreRunAfterPreflightCancelRef.current = false;
+      agentAutoStartRequestIdRef.current = null;
+      agentHandoffAuthorityRef.current += 1;
+      deferredHandoffCommandRef.current = null;
       const rebound = createAgentWorkbenchState(controllerIdRef.current, nextSessionId);
       stateRef.current = rebound;
       snapshotRef.current = null;
@@ -144,7 +166,11 @@ export function useBgsmAgentWorkbench(
         try {
           const message = delivery.message;
           validateBgsmOrganizeJobMessageIdentity(message);
-          const action = { type: 'server_message' as const, message };
+          const action = {
+            type: 'server_message' as const,
+            message,
+            authoritative: delivery.deliveryKind === 'authoritative_snapshot',
+          };
           const currentState = stateRef.current;
           const nextState = reduceAgentWorkbench(currentState, action);
           stateRef.current = nextState;
@@ -179,8 +205,26 @@ export function useBgsmAgentWorkbench(
       port.onMessage.addListener(onMessage);
       port.onDisconnect.addListener(onDisconnect);
 
+      const deferredHandoff = deferredHandoffCommandRef.current;
+      const currentState = stateRef.current;
       const snapshot = snapshotRef.current;
-      if (snapshot) {
+      if (deferredHandoff) {
+        try {
+          validateBgsmOrganizeJobMessageIdentity(deferredHandoff);
+          port.postMessage(deferredHandoff);
+          deferredHandoffCommandRef.current = null;
+        } catch {
+          reconnectFromTransport();
+        }
+      } else if (currentState.organizeJob) {
+        const request: BgsmOrganizeJobClientMessage = {
+          type: 'requestBgsmActiveOrganizeJob',
+          controllerId,
+          sessionId,
+        };
+        validateBgsmOrganizeJobMessageIdentity(request);
+        port.postMessage(request);
+      } else if (snapshot) {
         const request: BgsmOrganizeJobClientMessage = {
           type: 'requestBgsmOrganizeJobSnapshot',
           controllerId,
@@ -308,64 +352,168 @@ export function useBgsmAgentWorkbench(
     state.transport,
   ]);
 
-  const requestPreflight = useCallback((taskInstruction: string) => {
+  const requestPreflight = useCallback((
+    taskInstruction: string,
+    conversationAnchor: WorkbenchConversationAnchor = {
+      messageId: null,
+      createdAt: Date.now(),
+    },
+  ) => {
     const requestId = `preflight-request:${createNonce()}`;
     const normalizedInstruction = taskInstruction.trim();
     restoreRunAfterPreflightCancelRef.current = false;
-    taskInstructionRef.current = taskInstruction.trim();
-    dispatch({ type: 'preflight_requested', requestId });
-    post({
+    dispatchTracked({
+      type: 'preflight_requested',
+      requestId,
+      taskInstruction: normalizedInstruction,
+      conversationAnchor,
+    });
+    postOrDeferHandoff({
       type: 'requestBgsmOrganizeJobPreflight',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
       requestId,
       taskInstruction: normalizedInstruction,
     });
-  }, [post]);
+    return requestId;
+  }, [dispatchTracked, postOrDeferHandoff]);
 
   const restartWholeLibrary = useCallback((taskInstruction: string) => {
     const requestId = `preflight-request:${createNonce()}`;
     const normalizedInstruction = taskInstruction.trim();
+    agentHandoffAuthorityRef.current += 1;
     restoreRunAfterPreflightCancelRef.current = true;
-    taskInstructionRef.current = taskInstruction.trim();
-    dispatch({ type: 'whole_library_restart_requested', requestId });
-    post({
+    dispatchTracked({
+      type: 'whole_library_restart_requested',
+      requestId,
+      taskInstruction: normalizedInstruction,
+      conversationAnchor: stateRef.current.conversationAnchor ?? {
+        messageId: null,
+        createdAt: Date.now(),
+      },
+    });
+    postOrDeferHandoff({
       type: 'requestBgsmOrganizeJobPreflight',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
       requestId,
       taskInstruction: normalizedInstruction,
     });
-  }, [post]);
+    return requestId;
+  }, [dispatchTracked, postOrDeferHandoff]);
 
   const confirmPreflight = useCallback(() => {
-    const requestId = state.preflight?.requestId;
-    const preflightToken = state.preflight?.preflightToken;
-    if (!requestId || !preflightToken || !taskInstructionRef.current) return;
-    post({
+    const preflight = stateRef.current.preflight;
+    if (
+      preflight?.status !== 'ready'
+      || !preflight.preflightToken
+      || !preflight.taskInstruction
+    ) {
+      dispatchTracked({
+        type: 'preflight_start_failed',
+        message: PREFLIGHT_INCOMPLETE_COPY,
+      });
+      return;
+    }
+    dispatchTracked({ type: 'preflight_start_requested' });
+    postOrDeferHandoff({
       type: 'startBgsmOrganizeJob',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
-      requestId,
-      preflightToken,
-      taskInstruction: taskInstructionRef.current,
+      requestId: preflight.requestId,
+      preflightToken: preflight.preflightToken,
+      taskInstruction: preflight.taskInstruction,
     });
-  }, [post, state.preflight?.preflightToken, state.preflight?.requestId]);
+  }, [dispatchTracked, postOrDeferHandoff]);
+
+  const startWholeLibraryFromAgent = useCallback((
+    taskInstruction: string,
+    conversationAnchor?: WorkbenchConversationAnchor,
+  ) => {
+    const current = stateRef.current;
+    const preflight = current.preflight;
+    if (preflight?.status === 'ready') {
+      agentAutoStartRequestIdRef.current = null;
+      confirmPreflight();
+      return true;
+    }
+    if (preflight?.status === 'requesting') {
+      agentAutoStartRequestIdRef.current = preflight.requestId;
+      return true;
+    }
+    if (preflight?.status === 'starting') return true;
+    if (
+      current.organizeJob
+      && ['analyzing', 'analysis_blocked', 'review', 'apply_sealed', 'applying', 'paused']
+        .includes(current.organizeJob.status)
+    ) return false;
+
+    const requestId = requestPreflight(taskInstruction, conversationAnchor);
+    agentAutoStartRequestIdRef.current = requestId;
+    return true;
+  }, [confirmPreflight, requestPreflight]);
+
+  const captureAgentHandoffAuthority = useCallback(
+    () => agentHandoffAuthorityRef.current,
+    [],
+  );
+
+  const applyAgentHandoff = useCallback((
+    handoff: BgsmAgentOrganizeLibraryHandoff,
+    authority: number,
+    conversationAnchor: WorkbenchConversationAnchor,
+  ): boolean => {
+    if (authority !== agentHandoffAuthorityRef.current) return false;
+    agentHandoffAuthorityRef.current += 1;
+    if (handoff.action === 'start_analysis') {
+      return startWholeLibraryFromAgent(handoff.instruction, conversationAnchor);
+    }
+    requestPreflight(handoff.instruction, conversationAnchor);
+    return true;
+  }, [requestPreflight, startWholeLibraryFromAgent]);
+
+  useEffect(() => {
+    const requestId = agentAutoStartRequestIdRef.current;
+    if (!requestId) return;
+    const preflight = state.preflight;
+    if (!preflight) {
+      if (state.error) agentAutoStartRequestIdRef.current = null;
+      return;
+    }
+    if (preflight.requestId !== requestId) {
+      agentAutoStartRequestIdRef.current = null;
+      return;
+    }
+    if (preflight.status === 'no_work') {
+      agentAutoStartRequestIdRef.current = null;
+      return;
+    }
+    if (preflight.status !== 'ready') return;
+    agentAutoStartRequestIdRef.current = null;
+    confirmPreflight();
+  }, [confirmPreflight, state.error, state.preflight]);
 
   const cancelPreflight = useCallback(() => {
     const requestId = state.preflight?.requestId;
     const restoreRun = restoreRunAfterPreflightCancelRef.current;
     restoreRunAfterPreflightCancelRef.current = false;
-    if (requestId) {
-      post({
+    agentAutoStartRequestIdRef.current = null;
+    agentHandoffAuthorityRef.current += 1;
+    const pendingWasUnsentRequest = deferredHandoffCommandRef.current?.type ===
+      'requestBgsmOrganizeJobPreflight'
+      && deferredHandoffCommandRef.current.requestId === requestId;
+    if (deferredHandoffCommandRef.current?.requestId === requestId) {
+      deferredHandoffCommandRef.current = null;
+    }
+    if (requestId && !pendingWasUnsentRequest) {
+      postOrDeferHandoff({
         type: 'cancelBgsmOrganizeJobPreflight',
         controllerId: controllerIdRef.current,
         sessionId: sessionIdRef.current,
         requestId,
       });
     }
-    taskInstructionRef.current = '';
-    dispatch({ type: 'preflight_cancelled' });
+    dispatchTracked({ type: 'preflight_cancelled' });
     if (restoreRun) {
       post({
         type: 'requestBgsmActiveOrganizeJob',
@@ -373,18 +521,23 @@ export function useBgsmAgentWorkbench(
         sessionId: sessionIdRef.current,
       });
     }
-  }, [post, state.preflight?.requestId]);
+  }, [dispatchTracked, post, postOrDeferHandoff, state.preflight?.requestId]);
 
   const stop = useCallback(() => {
-    if (!state.snapshot) return;
+    const identity = !state.organizeJob
+      ? state.snapshot
+      : !state.snapshot || state.organizeJob.generation >= state.snapshot.generation
+        ? state.organizeJob
+        : state.snapshot;
+    if (!identity) return;
     post({
       type: 'stopBgsmOrganizeJob',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
-      runId: state.snapshot.runId,
-      generation: state.snapshot.generation,
+      runId: identity.runId,
+      generation: identity.generation,
     });
-  }, [post, state.snapshot]);
+  }, [post, state.organizeJob, state.snapshot]);
 
   const continueRemaining = useCallback(() => {
     const snapshot = state.snapshot;
@@ -392,6 +545,13 @@ export function useBgsmAgentWorkbench(
     if (
       !snapshot ||
       !continuationCursor ||
+      (
+        state.organizeJob
+        && (
+          state.organizeJob.runId !== snapshot.runId
+          || state.organizeJob.generation !== snapshot.generation
+        )
+      ) ||
       !canContinueOrganizeJobRun(snapshot)
     ) return;
     dispatch({ type: 'continue_requested' });
@@ -403,23 +563,24 @@ export function useBgsmAgentWorkbench(
       generation: snapshot.generation,
       continuationCursor,
     });
-  }, [post, state.snapshot]);
+  }, [post, state.organizeJob, state.snapshot]);
 
   const discardBlockedRun = useCallback(() => {
     const current = stateRef.current;
     const snapshot = current.snapshot;
-    if (
-      !snapshot ||
-      (snapshot.state !== 'analysis_blocked' && current.organizeJob?.status !== 'analysis_blocked')
-    ) return;
+    const identity = current.organizeJob?.status === 'analysis_blocked'
+      ? current.organizeJob
+      : snapshot?.state === 'analysis_blocked'
+        ? snapshot
+        : null;
+    if (!identity) return;
     post({
       type: 'stopBgsmOrganizeJob',
-      controllerId: snapshot.controllerId,
-      sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      controllerId: identity.controllerId,
+      sessionId: identity.sessionId,
+      runId: identity.runId,
+      generation: identity.generation,
     });
-    taskInstructionRef.current = '';
     dispatch({ type: 'clear_terminal' });
   }, [post]);
 
@@ -499,6 +660,8 @@ export function useBgsmAgentWorkbench(
   }, [post, state.organizeJob]);
 
   const clearTerminal = useCallback(() => {
+    agentHandoffAuthorityRef.current += 1;
+    deferredHandoffCommandRef.current = null;
     const job = stateRef.current.organizeJob;
     if (job?.status === 'completed' && job.apply) {
       post({
@@ -518,6 +681,9 @@ export function useBgsmAgentWorkbench(
     state,
     displayedProcessed,
     requestPreflight,
+    captureAgentHandoffAuthority,
+    applyAgentHandoff,
+    startWholeLibraryFromAgent,
     restartWholeLibrary,
     confirmPreflight,
     cancelPreflight,
@@ -540,6 +706,9 @@ export function useBgsmAgentWorkbench(
     applySelected,
     displayedProcessed,
     requestPreflight,
+    captureAgentHandoffAuthority,
+    applyAgentHandoff,
+    startWholeLibraryFromAgent,
     requestOrganizeReceiptPage,
     requestOrganizeReviewPage,
     resumeOrganizeApply,

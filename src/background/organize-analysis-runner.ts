@@ -178,6 +178,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
     snapshot: ReturnType<BgsmAgentController['continueRun']>,
     parent?: OrganizeRunIdentity,
   ): void;
+  publishAnalysisProgress?(identity: OrganizeRunIdentity, processed: number, total: number): void;
   automaticContinuationFailed?(identity: OrganizeRunIdentity, error: unknown): void;
   providerSetupFailed?(identity: OrganizeRunIdentity, error: unknown): void | Promise<void>;
   executionFailed?(identity: OrganizeRunIdentity, error: unknown): void | Promise<void>;
@@ -540,6 +541,8 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             state: 'local_only_completed',
           });
         } else {
+          const analyzedBeforeBatch = coverageFor(state).analyzed;
+          const localOnlyCount = page.positions.length - batch.repositories.length;
           const result = await runAnalyzer({
             analyzer,
             batch,
@@ -551,6 +554,20 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             },
             now,
             signal: abortController.signal,
+            onProgress: (completedRows) => {
+              try {
+                dependencies.publishAnalysisProgress?.(
+                  identity,
+                  Math.min(
+                    state.frozenScope.count,
+                    analyzedBeforeBatch + localOnlyCount + completedRows,
+                  ),
+                  state.frozenScope.count,
+                );
+              } catch {
+                // Presentation progress cannot alter Provider execution or durable checkpoints.
+              }
+            },
             traceAttempt: (attempt) => trace({
               type: 'provider_attempt',
               identity,
@@ -790,6 +807,7 @@ async function runAnalyzer(input: Readonly<{
   setState(state: OrganizeJobRunAnalysisState): void;
   now(): number;
   signal: AbortSignal;
+  onProgress?(completedRows: number): void;
   reserveDurableAttempt?(input: Readonly<{
     state: OrganizeJobRunAnalysisState;
     previousUsage: RunBudgetUsage;
@@ -871,7 +889,7 @@ async function runAnalyzer(input: Readonly<{
         reservedAt,
       });
       return durable ? durable.then(admit) : admit();
-    });
+    }, input.onProgress);
     if (result.status === 'success') {
       const attempt = attempts.get(result.attempts);
       if (attempt) record(attempt, 'succeeded', result.value.telemetry, null);

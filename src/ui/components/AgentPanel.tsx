@@ -16,11 +16,11 @@ import {
   RotateCcw,
   Search,
   Sparkles,
+  Tags,
   TriangleAlert,
   Wrench,
   X,
 } from 'lucide-react';
-import type { OrganizeJobRunState } from '@/bgsm-agent/events';
 import type { LaunchCandidateContract } from '@/bgsm-agent/scope';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
@@ -36,10 +36,12 @@ import type { BgsmAgentChatMessage, useBgsmAgent } from '@/ui/hooks/use-bgsm-age
 import type { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
 import {
   CONNECTION_INTERRUPTED_COPY,
+  PREFLIGHT_INCOMPLETE_COPY,
   WORKER_LOST_COPY,
   analyzedRepositoryCount,
-  canChatWithOrganizeJobRun,
+  currentOrganizeJobState,
   hasCompleteAnalysisCoverage,
+  type CurrentOrganizeJobState,
 } from '@/ui/agent-workbench-state';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -70,9 +72,11 @@ export function AgentPanel({
   const { m } = useI18n();
   const [input, setInput] = useState('');
   const [lastFailedPrompt, setLastFailedPrompt] = useState<string | null>(null);
+  const [reviewTranscriptOpen, setReviewTranscriptOpen] = useState(false);
   const drawerRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const reviewTranscriptMessageIdRef = useRef<string | null>(null);
   const onHideRef = useRef(onHide);
   onHideRef.current = onHide;
   const {
@@ -106,23 +110,25 @@ export function AgentPanel({
       organize.organizeJob.coverage.analysisFailed === 0
     : hasCompleteAnalysisCoverage(organize);
   const automaticContinuation = organize.continuationPending;
-  const durableAnalysisBlocked = organize.organizeJob?.status === 'analysis_blocked';
-  const organizeActive = !durableAnalysisBlocked && (
-    isActiveRunState(organize.snapshot?.state) || automaticContinuation || !!(
-      organize.organizeJob && ['analyzing', 'review', 'apply_sealed', 'applying', 'paused'].includes(organize.organizeJob.status)
-    )
-  );
-  const preflightActive = organize.preflight?.status === 'requesting' || organize.preflight?.status === 'ready';
+  const currentRunState = currentOrganizeJobState(organize.snapshot, organize.organizeJob);
+  const organizeActive = automaticContinuation || isActiveRunState(currentRunState);
+  const preflightRequesting = organize.preflight?.status === 'requesting'
+    || organize.preflight?.status === 'starting';
+  const preflightReady = organize.preflight?.status === 'ready';
+  const preflightActive = preflightRequesting || preflightReady;
   const active = running || organizeActive || preflightActive;
   const reviewFocused = !!organize.snapshot
-    && organize.snapshot.state === 'review'
+    && currentRunState === 'review'
     && !!organize.proposal
     && analysisCoverageComplete
     && !durableReceiptCounts
     && organize.organizeJob?.status !== 'completed';
-  const chatDisabled = active
+  const organizeBlocksChat = automaticContinuation || isActiveRunState(currentRunState);
+  const chatDisabled = running
+    || organizeActive
+    || preflightRequesting
     || !!contextLimitRecovery
-    || !canChatWithOrganizeJobRun(organize.snapshot);
+    || organizeBlocksChat;
   const isReadyIdle = !running
     && !organize.snapshot
     && !organize.preflight
@@ -140,8 +146,7 @@ export function AgentPanel({
     && !error
     && !contextLimitRecovery
     && messages.length === 0;
-  const applying = organize.organizeJob?.status === 'apply_sealed' ||
-    organize.organizeJob?.status === 'applying';
+  const applying = currentRunState === 'apply_sealed' || currentRunState === 'applying';
   const showDestructiveUnavailable = !running
     && !organize.snapshot
     && !organize.preflight
@@ -151,17 +156,27 @@ export function AgentPanel({
     && messages.some((message) => message.role === 'user' && /clean up|cleanup|merge|delete tag|rename tag|清理|合并|删除标签/i.test(message.content));
   const lastUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content ?? null;
   const retryPrompt = draftRecovery ?? lastFailedPrompt ?? lastUserPrompt;
+  const unsafeReplayBlocked = !canRetryLastTurn
+    && !!retryPrompt
+    && input.trim() === retryPrompt.trim();
   const contextFailureReason = contextLimitRecovery?.reason ?? null;
   const contextNeedsProviderSettings = contextFailureReason === 'capability_unresolved'
     || contextFailureReason === 'provider_context_overflow_repeated'
     || contextFailureReason === 'provider_request_byte_limit_repeated';
   const contextNeedsPromptEdit = contextFailureReason === 'current_turn_too_large';
+  const contextNeedsInternalRetry = contextFailureReason === 'tool_result_memory_limit';
   const contextRecoveryTitle = contextNeedsProviderSettings
     ? m.agentPanel.contextSettingsTitle
-    : m.agentPanel.contextPromptTooLargeTitle;
+    : contextNeedsInternalRetry
+      ? m.agentPanel.contextToolMemoryTitle
+      : m.agentPanel.contextPromptTooLargeTitle;
   const contextRecoveryMessage = contextNeedsProviderSettings
     ? m.agentPanel.contextSettingsMessage
-    : m.agentPanel.contextPromptTooLargeMessage;
+    : contextNeedsInternalRetry
+      ? canRetryLastTurn
+        ? m.agentPanel.contextToolMemoryMessage
+        : m.agentPanel.contextToolMemoryWriteBlockedMessage
+      : m.agentPanel.contextPromptTooLargeMessage;
   const toolMessages = messages.filter((message) => message.role === 'tool');
   const repositoryCodeReadOnly = toolMessages.some((message) => (
     message.toolName === 'list_repository_files'
@@ -176,12 +191,51 @@ export function AgentPanel({
     && !durableReceiptCounts
     && !repositoryCodeReadOnly
     && !!lastTurnResult
+    && !lastTurnResult.organizeLibraryHandoff
     && !lastTurnResult.changed
     && messages.some((message) => message.role === 'assistant' && message.content.trim());
   const codeSearchMessages = toolMessages.filter((message) => (
     message.toolName === 'search_repository_code'
   ));
   const transcriptMessages = messages.filter((message) => message.role !== 'tool');
+  const workbenchAnchor = organize.conversationAnchor;
+  const anchoredMessageIndex = workbenchAnchor?.messageId
+    ? messages.findIndex((message) => message.id === workbenchAnchor.messageId)
+    : -1;
+  const messagesBeforeWorkbench = anchoredMessageIndex >= 0
+    ? new Set(messages.slice(0, anchoredMessageIndex + 1).map((message) => message.id))
+    : null;
+  const isBeforeWorkbench = (message: BgsmAgentChatMessage) => messagesBeforeWorkbench
+    ? messagesBeforeWorkbench.has(message.id)
+    : workbenchAnchor
+      ? message.createdAt <= workbenchAnchor.createdAt
+      : true;
+  const transcriptMessagesBeforeWorkbench = workbenchAnchor === null
+    ? transcriptMessages
+    : transcriptMessages.filter(isBeforeWorkbench);
+  const transcriptMessagesAfterWorkbench = workbenchAnchor === null
+    ? []
+    : transcriptMessages.filter((message) => !isBeforeWorkbench(message));
+  const codeSearchMessagesBeforeWorkbench = workbenchAnchor === null
+    ? codeSearchMessages
+    : codeSearchMessages.filter(isBeforeWorkbench);
+  const codeSearchMessagesAfterWorkbench = workbenchAnchor === null
+    ? []
+    : codeSearchMessages.filter((message) => !isBeforeWorkbench(message));
+  const hasPostWorkbenchTranscript = transcriptMessagesAfterWorkbench.length > 0
+    || codeSearchMessagesAfterWorkbench.length > 0;
+  const repositoryCodeReadOnlyNoticeAfterWorkbench = codeSearchMessagesAfterWorkbench.length > 0;
+  const latestReviewTranscriptMessageId = transcriptMessagesBeforeWorkbench.at(-1)?.id ?? null;
+
+  useEffect(() => {
+    const messageChanged = latestReviewTranscriptMessageId !== reviewTranscriptMessageIdRef.current;
+    reviewTranscriptMessageIdRef.current = latestReviewTranscriptMessageId;
+    if (!reviewFocused) {
+      setReviewTranscriptOpen(false);
+      return;
+    }
+    if ((running && !hasPostWorkbenchTranscript) || messageChanged) setReviewTranscriptOpen(true);
+  }, [hasPostWorkbenchTranscript, latestReviewTranscriptMessageId, reviewFocused, running]);
 
   useEffect(() => {
     if (contextLimitRecovery) setInput(contextLimitRecovery.prompt);
@@ -195,6 +249,16 @@ export function AgentPanel({
     if (error && lastUserPrompt) setLastFailedPrompt(lastUserPrompt);
     if (!error && !running) setLastFailedPrompt(null);
   }, [error, lastUserPrompt, running]);
+
+  const focusComposerAtEnd = () => {
+    queueMicrotask(() => {
+      const textarea = drawerRef.current?.querySelector<HTMLTextAreaElement>('textarea');
+      if (!textarea) return;
+      textarea.focus();
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    });
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -241,43 +305,59 @@ export function AgentPanel({
     };
   }, [open]);
 
-  const startOrganizeTurn = () => {
-    if (active || repositoryCodeReadOnly) return;
-    workbench.requestPreflight(m.agentPanel.autoAssignPrompt);
-  };
-
-  const handleQuickPrompt = (prompt: string) => {
-    if (!prompt.trim() || chatDisabled) return;
-    setInput('');
-    void startTurn(prompt);
-  };
-
-  const handleInsertCorrection = (prompt: string) => {
-    if (!prompt.trim()) return;
-    setInput(prompt);
-    queueMicrotask(() => {
-      drawerRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+  const runAgentPrompt = (prompt: string) => {
+    const handoffAuthority = workbench.captureAgentHandoffAuthority();
+    void startTurn(prompt).then((result) => {
+      if (result?.organizeLibraryHandoff?.type !== 'organize_whole_library') return;
+      const anchorMessage = result.newMessages.at(-1);
+      workbench.applyAgentHandoff(
+        result.organizeLibraryHandoff,
+        handoffAuthority,
+        {
+          messageId: anchorMessage?.id ?? null,
+          createdAt: anchorMessage?.createdAt ?? Date.now(),
+        },
+      );
     });
   };
 
+  const handlePromptSuggestion = (prompt: string) => {
+    if (!prompt.trim() || chatDisabled) return;
+    setInput(prompt);
+    focusComposerAtEnd();
+  };
+
   const handleSubmit = () => {
-    if (!input.trim() || chatDisabled) return;
+    if (!input.trim() || chatDisabled || unsafeReplayBlocked) return;
+    const prompt = input;
     setInput('');
-    void startTurn(input);
+    runAgentPrompt(prompt);
   };
 
   const handleRetry = () => {
     if (!retryPrompt || chatDisabled) return;
     setInput('');
-    void startTurn(retryPrompt);
+    runAgentPrompt(retryPrompt);
   };
 
   const handleEditContextLimitedPrompt = () => {
     if (!contextLimitRecovery || active) return;
     editContextLimitedPrompt();
-    queueMicrotask(() => {
-      drawerRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
-    });
+    focusComposerAtEnd();
+  };
+
+  const handleRetryContextLimitedPrompt = () => {
+    if (!contextLimitRecovery || active || !canRetryLastTurn) return;
+    const prompt = contextLimitRecovery.prompt;
+    editContextLimitedPrompt();
+    setInput('');
+    runAgentPrompt(prompt);
+  };
+
+  const handleOpenContextSettings = () => {
+    if (contextLimitRecovery) editContextLimitedPrompt();
+    onOpenOptions?.();
+    focusComposerAtEnd();
   };
 
   const handleResetConversation = () => {
@@ -285,22 +365,19 @@ export function AgentPanel({
     resetConversation();
     setLastFailedPrompt(null);
     setInput('');
-    queueMicrotask(() => {
-      drawerRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
-    });
+    focusComposerAtEnd();
   };
 
   const motionState = open ? 'open' : 'closed';
   const selectedCount = organize.organizeJob?.selectedRepositories ?? organize.selectedProposalRowIds.size;
   const resolvedScopeCount = resolvedScopeCountValue(scopeCount, defaultCandidate);
-  const analyzing = !!organize.snapshot
-    && (
-      ['frozen', 'prepared', 'checking_provider', 'analyzing'].includes(organize.snapshot.state)
-      || automaticContinuation
-    );
-  const processed = organize.organizeJob?.coverage.analyzed ?? analyzedRepositoryCount(organize);
-  const displayedProcessed = Math.min(processed, workbench.displayedProcessed);
+  const analyzing = currentRunState !== null && (
+    (['frozen', 'prepared', 'checking_provider', 'analyzing'] as readonly string[]).includes(currentRunState)
+    || automaticContinuation
+  );
   const total = organize.organizeJob?.scopeCount ?? organize.snapshot?.frozenScope.count ?? 0;
+  const processed = organize.organizeJob?.coverage.analyzed ?? analyzedRepositoryCount(organize);
+  const displayedProcessed = Math.min(total, Math.max(processed, workbench.displayedProcessed));
   const applySelectedTotal = organize.organizeJob?.apply?.total ?? selectedCount;
   const applyDone = organize.organizeJob?.apply?.settled ?? 0;
   const isProviderSetupError = !!error && !!errorCategory && !['provider', 'other'].includes(errorCategory);
@@ -308,27 +385,29 @@ export function AgentPanel({
     ? status?.text ?? m.agentPanel.chatWorking
     : contextLimitRecovery
       ? contextRecoveryTitle
-      : organize.snapshot?.state === 'cancelled'
+      : currentRunState === 'cancelled'
               ? m.agentPanel.stopMidAnalyzeHeader
-              : organize.snapshot?.state === 'failed' && !durableReceiptCounts
+              : currentRunState === 'failed' && !durableReceiptCounts
                 ? m.agentPanel.workbench.analysisBlockedTitle
-                : organize.snapshot?.state === 'analysis_blocked'
+                : currentRunState === 'analysis_blocked'
                   ? m.agentPanel.workbench.analysisBlockedTitle
-                : organize.organizeJob?.status === 'completed' && !organize.organizeJob.apply
+                : currentRunState === 'completed' && !organize.organizeJob?.apply
                   ? m.agentPanel.completedNoChangesHeader
                   : organize.preflight?.status === 'requesting'
             ? m.agentPanel.resolvingScopeHeader
+            : organize.preflight?.status === 'starting'
+              ? m.agentPanel.workbench.startingAnalysis
             : organize.preflight?.status === 'no_work' && !organize.snapshot
               ? m.agentPanel.nothingToAnalyzeHeader
               : organize.preflight?.status === 'ready' && !organize.snapshot
                 ? m.agentPanel.confirmScopeHeader
                   : applying
                   ? m.agentPanel.applyingHeader(Math.min(applyDone, applySelectedTotal), applySelectedTotal)
-                  : organize.snapshot?.state === 'budget_exhausted' && !automaticContinuation
+                  : currentRunState === 'budget_exhausted' && !automaticContinuation
                     ? m.agentPanel.workbench.analysisBlockedTitle
-                    : organize.snapshot?.state === 'review' && organize.proposal && !analysisCoverageComplete
+                    : currentRunState === 'review' && organize.proposal && !analysisCoverageComplete
                       ? m.agentPanel.workbench.analysisBlockedTitle
-                    : organize.snapshot?.state === 'review' && organize.proposal && analysisCoverageComplete
+                    : currentRunState === 'review' && organize.proposal && analysisCoverageComplete
                       ? (running
                         ? m.agentPanel.needsReviewFollowUp
                         : m.agentPanel.needsReviewSelected(selectedCount))
@@ -344,8 +423,8 @@ export function AgentPanel({
                             ? m.agentPanel.handoffHeader
                             : showDestructiveUnavailable
                               ? m.agentPanel.destructiveHeader
-                              : organize.snapshot
-                                ? m.agentPanel.runStateLabel(organize.snapshot.state)
+                              : currentRunState
+                                ? m.agentPanel.runStateLabel(currentRunState)
                                 : error
                                   ? (isProviderSetupError ? m.agentPanel.providerAuthHeader : m.agentPanel.turnFailed)
                                   : lastTurnResult?.changed
@@ -355,10 +434,14 @@ export function AgentPanel({
                                       : m.agentPanel.chatHeaderIdle;
   const composerNote = contextLimitRecovery
     ? m.agentPanel.composerPausedContextRecovery
+    : unsafeReplayBlocked
+      ? m.agentPanel.composerWriteRetryBlocked
     : applying
       ? m.agentPanel.composerPausedApplying
       : organize.preflight?.status === 'requesting'
         ? m.agentPanel.scopeNotFrozenYet
+        : organize.preflight?.status === 'starting'
+          ? m.agentPanel.workbench.startingAnalysis
         : organize.organizeJob?.status === 'review' && organize.proposal && analysisCoverageComplete
           ? (running ? m.agentPanel.reviewFollowUpNote : m.agentPanel.reviewFollowUpNote)
           : receiptCounts
@@ -396,6 +479,10 @@ export function AgentPanel({
     ? m.agentPanel.applyingStopbar
     : organize.preflight?.status === 'requesting'
       ? m.agentPanel.resolvingScopeHeader
+      : organize.preflight?.status === 'starting'
+        ? m.agentPanel.workbench.startingAnalysis
+      : preflightReady && !running
+        ? m.agentPanel.pendingConfirmationNote(organize.preflight?.count ?? 0)
       : (organizeActive || running)
         ? m.agentPanel.runContinuesWhileHidden
         : status?.text ?? m.agentPanel.chatWorking;
@@ -434,9 +521,48 @@ export function AgentPanel({
       </section>
     </Message>
   ) : null;
-  const conversationTranscript = (
+  const toolActivityTranscript = toolActivities.length > 0 ? (
+    <Message role="system">
+      <div
+        className="flex w-full flex-col gap-1 border-l-2 border-border py-0.5 pl-2 text-xs text-muted-foreground"
+        data-testid="agent-tool-activity"
+        aria-label={m.agentPanel.agentActivityLabel}
+        role="group"
+      >
+        {toolActivities.map((activity) => (
+          <div key={activity.callId} className="flex items-center gap-1.5">
+            <span
+              className={cn('size-1.5 shrink-0 rounded-full', {
+                'animate-pulse bg-foreground motion-reduce:animate-none': activity.state === 'running',
+                'bg-muted-foreground/55': activity.state === 'queued',
+                'bg-primary': activity.state === 'completed',
+                'bg-destructive': activity.state === 'failed',
+              })}
+              aria-hidden="true"
+            />
+            <span>
+              {toolDisplayName(activity.toolName, m.agentPanel)} · {toolActivityStateLabel(activity.state, m.agentPanel)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Message>
+  ) : null;
+  const runningTranscript = running && status?.kind !== 'tool' ? (
+    <Message role="assistant">
+      <div
+        className="flex items-center gap-2 text-sm text-muted-foreground"
+        data-testid={status?.kind === 'compacting' ? 'agent-compacting-status' : 'agent-streaming-status'}
+        aria-busy="true"
+      >
+        <Spinner />
+        {status?.text ?? m.agentPanel.chatWorking}
+      </div>
+    </Message>
+  ) : null;
+  const conversationTranscriptBeforeWorkbench = (
     <>
-      {transcriptMessages.map((message) => (
+      {transcriptMessagesBeforeWorkbench.map((message) => (
         <AgentChatMessage
           key={message.id}
           message={message}
@@ -444,52 +570,36 @@ export function AgentPanel({
         />
       ))}
 
-      {toolActivities.length > 0 && (
-        <Message role="system">
-          <div
-            className="flex w-full flex-col gap-1 border-l-2 border-border py-0.5 pl-2 text-xs text-muted-foreground"
-            data-testid="agent-tool-activity"
-            aria-label={m.agentPanel.agentActivityLabel}
-            role="group"
-          >
-            {toolActivities.map((activity) => (
-              <div key={activity.callId} className="flex items-center gap-1.5">
-                <span
-                  className={cn('size-1.5 shrink-0 rounded-full', {
-                    'animate-pulse bg-foreground motion-reduce:animate-none': activity.state === 'running',
-                    'bg-muted-foreground/55': activity.state === 'queued',
-                    'bg-primary': activity.state === 'completed',
-                    'bg-destructive': activity.state === 'failed',
-                  })}
-                  aria-hidden="true"
-                />
-                <span>
-                  {toolDisplayName(activity.toolName, m.agentPanel)} · {toolActivityStateLabel(activity.state, m.agentPanel)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Message>
-      )}
+      {!hasPostWorkbenchTranscript && toolActivityTranscript}
 
-      {codeSearchMessages.map((message) => (
+      {codeSearchMessagesBeforeWorkbench.map((message) => (
         <RepositoryCodeSearchResult key={`code:${message.id}`} content={message.content} />
       ))}
 
-      {!reviewFocused && repositoryCodeReadOnlyNotice}
+      {!reviewFocused && !repositoryCodeReadOnlyNoticeAfterWorkbench && repositoryCodeReadOnlyNotice}
 
-      {running && status?.kind !== 'tool' && (
-        <Message role="assistant">
-          <div
-            className="flex items-center gap-2 text-sm text-muted-foreground"
-            data-testid={status?.kind === 'compacting' ? 'agent-compacting-status' : 'agent-streaming-status'}
-            aria-busy="true"
-          >
-            <Spinner />
-            {status?.text ?? m.agentPanel.chatWorking}
-          </div>
-        </Message>
-      )}
+      {!hasPostWorkbenchTranscript && runningTranscript}
+    </>
+  );
+  const conversationTranscriptAfterWorkbench = (
+    <>
+      {transcriptMessagesAfterWorkbench.map((message) => (
+        <AgentChatMessage
+          key={message.id}
+          message={message}
+          hidePlainError={showProviderErrorCard && message.role === 'assistant' && message.content === error}
+        />
+      ))}
+
+      {hasPostWorkbenchTranscript && toolActivityTranscript}
+
+      {codeSearchMessagesAfterWorkbench.map((message) => (
+        <RepositoryCodeSearchResult key={`code:${message.id}`} content={message.content} />
+      ))}
+
+      {repositoryCodeReadOnlyNoticeAfterWorkbench && repositoryCodeReadOnlyNotice}
+
+      {hasPostWorkbenchTranscript && runningTranscript}
     </>
   );
 
@@ -568,7 +678,7 @@ export function AgentPanel({
                       size="sm"
                       className="h-7 px-2 text-xs"
                       disabled={chatDisabled}
-                      onClick={() => handleQuickPrompt(m.agentPanel.findSimilarPrompt)}
+                      onClick={() => handlePromptSuggestion(m.agentPanel.findSimilarPrompt)}
                     >
                       <Search className="size-3.5" data-icon="inline-start" />
                       {m.agentPanel.quickFindSimilar}
@@ -577,12 +687,10 @@ export function AgentPanel({
                       variant="outline"
                       size="sm"
                       className="h-7 px-2 text-xs"
-                      disabled={active}
-                      onClick={startOrganizeTurn}
+                      disabled={chatDisabled}
+                      onClick={() => handlePromptSuggestion(m.agentPanel.autoAssignPrompt)}
                     >
-                      {running
-                        ? <Spinner data-icon="inline-start" />
-                        : <ArrowUp className="size-3.5" data-icon="inline-start" />}
+                      <Tags className="size-3.5" data-icon="inline-start" />
                       {m.agentPanel.quickOrganizeUntagged}
                     </Button>
                     <Button
@@ -590,7 +698,7 @@ export function AgentPanel({
                       size="sm"
                       className="h-7 px-2 text-xs"
                       disabled={chatDisabled}
-                      onClick={() => handleQuickPrompt(m.agentPanel.cleanupTagsPrompt)}
+                      onClick={() => handlePromptSuggestion(m.agentPanel.cleanupTagsPrompt)}
                     >
                       <ListFilter className="size-3.5" data-icon="inline-start" />
                       {m.agentPanel.quickCleanupTags}
@@ -646,7 +754,7 @@ export function AgentPanel({
                         disabled={active}
                         onClick={() => {
                           onDismissHandoff?.();
-                          workbench.requestPreflight(m.agentPanel.autoAssignPrompt);
+                          handlePromptSuggestion(m.agentPanel.autoAssignPrompt);
                         }}
                       >
                         {m.agentPanel.quickOrganizeUntagged}
@@ -656,7 +764,7 @@ export function AgentPanel({
                         size="sm"
                         className="h-7 px-2 text-xs"
                         disabled={chatDisabled}
-                        onClick={() => handleQuickPrompt(m.agentPanel.handoffAmbiguous)}
+                        onClick={() => handlePromptSuggestion(m.agentPanel.handoffAmbiguous)}
                       >
                         {m.agentPanel.handoffAmbiguous}
                       </Button>
@@ -665,7 +773,7 @@ export function AgentPanel({
                         size="sm"
                         className="h-7 px-2 text-xs"
                         disabled={chatDisabled}
-                        onClick={() => handleQuickPrompt(m.agentPanel.handoffExamples)}
+                        onClick={() => handlePromptSuggestion(m.agentPanel.handoffExamples)}
                       >
                         {m.agentPanel.handoffExamples}
                       </Button>
@@ -675,24 +783,31 @@ export function AgentPanel({
               )}
 
               {reviewFocused ? (
-                <details className="w-full" data-testid="agent-run-transcript-details">
+                <details
+                  className="w-full"
+                  data-testid="agent-run-transcript-details"
+                  open={reviewTranscriptOpen}
+                  onToggle={(event) => setReviewTranscriptOpen(event.currentTarget.open)}
+                >
                   <summary className="cursor-pointer select-none text-xs text-muted-foreground">
                     {m.agentPanel.reviewConversationDetails}
                   </summary>
                   <div className="mt-3 flex flex-col gap-3">
-                    {conversationTranscript}
+                    {conversationTranscriptBeforeWorkbench}
                   </div>
                 </details>
-              ) : conversationTranscript}
+              ) : conversationTranscriptBeforeWorkbench}
 
-              {reviewFocused && repositoryCodeReadOnlyNotice}
+              {reviewFocused && !repositoryCodeReadOnlyNoticeAfterWorkbench && repositoryCodeReadOnlyNotice}
 
               <OrganizeJobRunWorkbench
                 workbench={workbench}
                 readOnly={repositoryCodeReadOnly}
                 displayedProcessed={displayedProcessed}
-                onInsertCorrection={handleInsertCorrection}
+                onInsertCorrection={handlePromptSuggestion}
               />
+
+              {conversationTranscriptAfterWorkbench}
 
               {showProviderErrorCard && (
                 <Message role="system">
@@ -804,7 +919,7 @@ export function AgentPanel({
                 <div className="mt-1 text-xs leading-5 text-muted-foreground">{contextRecoveryMessage}</div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {contextNeedsProviderSettings && onOpenOptions && (
-                    <Button size="sm" onClick={onOpenOptions}>
+                    <Button size="sm" onClick={handleOpenContextSettings}>
                       <Wrench data-icon="inline-start" />
                       {m.agentPanel.contextAdjustSettings}
                     </Button>
@@ -818,6 +933,16 @@ export function AgentPanel({
                     <Button variant="outline" size="sm" onClick={onOpenOptions}>
                       <Wrench data-icon="inline-start" />
                       {m.agentPanel.contextAdjustSettings}
+                    </Button>
+                  )}
+                  {contextNeedsInternalRetry && (
+                    <Button size="sm" onClick={handleRetryContextLimitedPrompt} disabled={!canRetryLastTurn}>
+                      {m.agentPanel.retry}
+                    </Button>
+                  )}
+                  {contextNeedsInternalRetry && !canRetryLastTurn && (
+                    <Button size="sm" onClick={handleEditContextLimitedPrompt}>
+                      {m.agentPanel.contextEditPrompt}
                     </Button>
                   )}
                 </div>
@@ -835,11 +960,13 @@ export function AgentPanel({
                   size="sm"
                   onClick={organizeActive
                     ? workbench.stop
-                    : preflightActive ? workbench.cancelPreflight : stopTurn}
-                  disabled={applying || status?.kind === 'stopped'}
+                    : running
+                      ? stopTurn
+                      : preflightActive ? workbench.cancelPreflight : stopTurn}
+                  disabled={applying || organize.preflight?.status === 'starting' || status?.kind === 'stopped'}
                 >
                   <CircleStop className="size-4" data-icon="inline-start" />
-                  {preflightActive ? m.agentPanel.cancel : m.agentPanel.stop}
+                  {!running && preflightActive ? m.agentPanel.cancel : m.agentPanel.stop}
                 </Button>
               </div>
             )}
@@ -850,6 +977,7 @@ export function AgentPanel({
               onSubmit={handleSubmit}
               placeholder={composerPlaceholder}
               disabled={chatDisabled}
+              submitDisabled={unsafeReplayBlocked}
               submitLabel={m.agentPanel.send}
               submitVariant={reviewFocused ? 'outline' : 'default'}
               inputLabel={m.agentPanel.chatInputLabel}
@@ -859,12 +987,12 @@ export function AgentPanel({
                   disabled={chatDisabled}
                   showRepositoryFunctions={defaultCandidate.kind === 'selected_repository'}
                   showWriteFunctions={!repositoryCodeReadOnly}
-                  onSummarizeScope={() => handleQuickPrompt(m.agentPanel.summarizeScopePrompt)}
-                  onFindSimilar={() => handleQuickPrompt(m.agentPanel.findSimilarPrompt)}
-                  onOrganizeUntagged={startOrganizeTurn}
-                  onReviewTags={() => handleQuickPrompt(m.agentPanel.cleanupTagsPrompt)}
-                  onSearchCode={() => handleQuickPrompt(m.agentPanel.searchCodePrompt)}
-                  onReviewNotes={() => handleQuickPrompt(m.agentPanel.reviewNotesPrompt)}
+                  onSummarizeScope={() => handlePromptSuggestion(m.agentPanel.summarizeScopePrompt)}
+                  onFindSimilar={() => handlePromptSuggestion(m.agentPanel.findSimilarPrompt)}
+                  onOrganizeUntagged={() => handlePromptSuggestion(m.agentPanel.autoAssignPrompt)}
+                  onReviewTags={() => handlePromptSuggestion(m.agentPanel.cleanupTagsPrompt)}
+                  onSearchCode={() => handlePromptSuggestion(m.agentPanel.searchCodePrompt)}
+                  onReviewNotes={() => handlePromptSuggestion(m.agentPanel.reviewNotesPrompt)}
                 />
               )}
             />
@@ -925,34 +1053,40 @@ function OrganizeJobRunWorkbench({
   const processed = state.organizeJob?.coverage.analyzed ?? analyzedRepositoryCount(state);
   const total = state.organizeJob?.scopeCount ?? snapshot?.frozenScope.count ?? preflight?.count ?? 0;
   const automaticContinuation = state.continuationPending;
-  const analysisInProgress = state.organizeJob?.status === 'analyzing' || (!!snapshot && (
-    ['frozen', 'prepared', 'checking_provider', 'analyzing'].includes(snapshot.state)
-    || automaticContinuation
-  ));
-  const visibleProcessed = Math.min(processed, displayedProcessed);
+  const currentRunState = currentOrganizeJobState(snapshot, state.organizeJob);
+  const analysisInProgress = automaticContinuation || (
+    currentRunState !== null
+    && ['frozen', 'prepared', 'checking_provider', 'analyzing'].includes(currentRunState)
+  );
+  const visibleProcessed = Math.min(total, Math.max(processed, displayedProcessed));
   const remaining = Math.max(0, total - processed);
   const displayedRemaining = Math.max(0, total - visibleProcessed);
   const analysisCoverageComplete = state.organizeJob
     ? state.organizeJob.coverage.analyzed === state.organizeJob.coverage.total &&
       state.organizeJob.coverage.analysisFailed === 0
     : hasCompleteAnalysisCoverage(state);
-  const proposalReadyForReview = state.organizeJob?.status === 'review' &&
+  const proposalReadyForReview = currentRunState === 'review' &&
     !!state.proposal && analysisCoverageComplete;
-  const analysisBlocked = !!snapshot
-    && !receipt
-    && !automaticContinuation
-    && (
-      snapshot.state === 'budget_exhausted'
-      || snapshot.state === 'analysis_blocked'
-      || state.organizeJob?.status === 'analysis_blocked'
-      || snapshot.state === 'failed'
-    );
+  const analysisBlocked = !receipt && !automaticContinuation && currentRunState !== null && [
+    'budget_exhausted',
+    'analysis_blocked',
+    'failed',
+  ].includes(currentRunState);
+  const snapshotMatchesDurablePresentation = !!snapshot && (
+    !state.organizeJob || (
+      snapshot.runId === state.organizeJob.runId
+      && snapshot.generation === state.organizeJob.generation
+    )
+  );
+  const blockedSnapshot = snapshotMatchesDurablePresentation ? snapshot : null;
+  const blockedFailureCount = state.organizeJob?.coverage.analysisFailed
+    ?? blockedSnapshot?.coverage?.analysisFailed
+    ?? 0;
 
   if (!preflight && !snapshot && !state.organizeJob && state.timeline.length === 0 && !state.error) return null;
 
   const selectedCount = state.organizeJob?.selectedRepositories ?? 0;
-  const applyInFlight = state.organizeJob?.status === 'apply_sealed' ||
-    state.organizeJob?.status === 'applying';
+  const applyInFlight = currentRunState === 'apply_sealed' || currentRunState === 'applying';
   const reviewEditable = (
     !!state.proposal
     && analysisCoverageComplete
@@ -963,10 +1097,12 @@ function OrganizeJobRunWorkbench({
     && state.organizeJob?.status === 'review'
   );
 
-  const stopMidAnalyze = snapshot?.state === 'cancelled'
+  const stopMidAnalyze = currentRunState === 'cancelled'
+    && snapshotMatchesDurablePresentation
+    && snapshot?.state === 'cancelled'
     && !receipt
     && (snapshot.terminalReason === 'user_stopped' || snapshot.terminalReason === 'user_aborted');
-  const completedNoChanges = state.organizeJob?.status === 'completed' && !state.organizeJob.apply;
+  const completedNoChanges = currentRunState === 'completed' && !state.organizeJob?.apply;
   const staleBlockedRows = receipt
     ? receipt.rows.filter((row) => row.reason === 'stale_source')
     : [];
@@ -979,7 +1115,7 @@ function OrganizeJobRunWorkbench({
     ? 'receipt'
     : applyInFlight || state.organizeJob?.status === 'paused'
       ? 'apply'
-      : proposalReadyForReview
+      : currentRunState === 'review'
         ? 'review'
         : snapshot
           ? 'analyze'
@@ -996,17 +1132,38 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {preflight?.status === 'ready' && !snapshot && (
+      {(preflight?.status === 'ready' || preflight?.status === 'starting') && !snapshot && (
         <Message role="system">
-          <WorkbenchSection title={m.agentPanel.workbench.confirmScopeTitle} icon={<Sparkles className="size-4" />}>
-            <p className="text-foreground">{preflight.label}</p>
-            <p>{m.agentPanel.workbench.repositoriesFrozen(preflight.count)}</p>
+          <WorkbenchSection
+            title={m.agentPanel.workbench.confirmScopeTitle}
+            icon={<Sparkles className="size-4" />}
+            subtitle={preflight.label}
+          >
+            <p className="font-medium text-foreground">
+              {m.agentPanel.workbench.repositoriesFrozen(preflight.count)}
+            </p>
+            <p className="mt-1">{m.agentPanel.workbench.reviewBeforeApply}</p>
             <div className="mt-2 flex gap-2">
-              <Button size="sm" onClick={workbench.confirmPreflight} disabled={readOnly}>
-                <Play className="size-4" data-icon="inline-start" />
-                {m.agentPanel.workbench.startAnalysis}
+              <Button
+                size="sm"
+                onClick={workbench.confirmPreflight}
+                disabled={readOnly || preflight.status === 'starting'}
+              >
+                {preflight.status === 'starting'
+                  ? <Spinner data-icon="inline-start" />
+                  : <Play className="size-4" data-icon="inline-start" />}
+                {preflight.status === 'starting'
+                  ? m.agentPanel.workbench.startingAnalysis
+                  : m.agentPanel.workbench.startAnalysis}
               </Button>
-              <Button variant="ghost" size="sm" onClick={workbench.cancelPreflight}>{m.agentPanel.cancel}</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={workbench.cancelPreflight}
+                disabled={preflight.status === 'starting'}
+              >
+                {m.agentPanel.cancel}
+              </Button>
             </div>
           </WorkbenchSection>
         </Message>
@@ -1024,10 +1181,14 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {snapshot && snapshot.state !== 'review' && !receipt && !analysisBlocked && (
+      {snapshot && analysisInProgress && !receipt && !analysisBlocked && (
         <Message role="system">
           <WorkbenchSection
-            title={m.agentPanel.runStateLabel(automaticContinuation ? 'analyzing' : snapshot.state)}
+            title={m.agentPanel.runStateLabel(
+              currentRunState === 'analyzing' || automaticContinuation
+                ? 'analyzing'
+                : currentRunState ?? snapshot.state,
+            )}
             titleTestId="organize-job-current-phase"
             icon={
               analysisInProgress
@@ -1075,9 +1236,9 @@ function OrganizeJobRunWorkbench({
             icon={<TriangleAlert className="size-4" />}
             subtitle={m.agentPanel.workbench.analysisCoverage(processed, total)}
           >
-            <p>{m.agentPanel.workbench.analysisBlockedBody(snapshot.coverage?.analysisFailed ?? 0)}</p>
+            <p>{m.agentPanel.workbench.analysisBlockedBody(blockedFailureCount)}</p>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {state.organizeJob?.status === 'analysis_blocked' && snapshot.continuationCursor && (
+              {state.organizeJob?.status === 'analysis_blocked' && blockedSnapshot?.continuationCursor && (
                 <Button
                   size="sm"
                   onClick={workbench.continueRemaining}
@@ -1405,6 +1566,8 @@ function OrganizeJobRunWorkbench({
               ? m.agentPanel.workbench.connectionInterrupted
               : state.error === WORKER_LOST_COPY
                 ? m.agentPanel.workbench.workerLost
+                : state.error === PREFLIGHT_INCOMPLETE_COPY
+                  ? m.agentPanel.workbench.analysisScopeIncomplete
                 : isStaleOrganizeJobRunError(state.error)
                   ? m.agentPanel.workbench.runStateRefreshed
                   : state.error}
@@ -1461,7 +1624,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function isActiveRunState(state: OrganizeJobRunState | undefined): boolean {
+function isActiveRunState(state: CurrentOrganizeJobState | null | undefined): boolean {
   return !!state && ![
     'analysis_blocked',
     'review',
@@ -1470,6 +1633,7 @@ function isActiveRunState(state: OrganizeJobRunState | undefined): boolean {
     'cancelled',
     'failed',
     'interrupted',
+    'paused',
   ].includes(state);
 }
 
@@ -1530,10 +1694,17 @@ function toolDisplayName(
   labels: {
     agentReadingData: string;
     agentSearchingCode: string;
+    agentPreparingOrganizationScope: string;
     agentApplyingChanges: string;
     toolResult: string;
   },
 ): string {
+  if (
+    toolName === 'request_full_library_organization'
+    || toolName === 'start_full_library_analysis'
+  ) {
+    return labels.agentPreparingOrganizationScope;
+  }
   if (
     toolName === 'list_repository_files'
     || toolName === 'search_repository_code'
@@ -1545,6 +1716,7 @@ function toolDisplayName(
   if (
     toolName === 'list_tags'
     || toolName === 'list_stars'
+    || toolName === 'get_star'
     || toolName === 'search_stars'
     || toolName === 'inspect_tag'
     || toolName === 'read_repository_notes'

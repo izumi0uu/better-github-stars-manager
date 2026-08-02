@@ -535,6 +535,15 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
     const port = currentOrganizeJobRunPort(snapshot.controllerId, snapshot.sessionId);
     safeOrganizeJobRunPost(port, { type: "bgsmOrganizeJobRunSnapshot", snapshot });
   },
+  publishAnalysisProgress(identity, processed, total) {
+    const port = currentOrganizeJobRunPort(identity.controllerId, identity.sessionId);
+    safeOrganizeJobRunPost(port, {
+      type: 'bgsmOrganizeJobAnalysisProgress',
+      ...identity,
+      processed,
+      total,
+    });
+  },
   automaticContinuationFailed(identity, error) {
     const port = currentOrganizeJobRunPort(identity.controllerId, identity.sessionId);
     if (!port) return;

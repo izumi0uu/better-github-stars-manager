@@ -615,6 +615,8 @@ export function getAgentDiagnosticsFindingText(
       return `写入工具 ${String(evidence.toolName ?? 'unknown')} 执行失败。`;
     case 'active_port_disconnected':
       return 'Agent 尝试仍在运行时 Port 已断开。';
+    case 'session_transition_not_applied':
+      return 'UI 已确认收到 Agent 结果，但未应用对应的会话状态变更。';
     case 'trace_storage_failure':
       return `跟踪存储进入 ${String(evidence.state ?? 'unknown')} 状态。`;
     case 'organize_preflight_failed':

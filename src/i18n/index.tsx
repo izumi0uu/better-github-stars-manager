@@ -177,9 +177,13 @@ export interface MessageCatalog {
     contextSettingsMessage: string;
     contextPromptTooLargeTitle: string;
     contextPromptTooLargeMessage: string;
+    contextToolMemoryTitle: string;
+    contextToolMemoryMessage: string;
+    contextToolMemoryWriteBlockedMessage: string;
     contextAdjustSettings: string;
     contextEditPrompt: string;
     composerPausedContextRecovery: string;
+    composerWriteRetryBlocked: string;
     startNewConversation: string;
     hideWhileRunning: string;
     runContinuesWhileHidden: string;
@@ -333,7 +337,10 @@ export interface MessageCatalog {
       resolvingHint: string;
       confirmScopeTitle: string;
       repositoriesFrozen: (count: number) => string;
+      reviewBeforeApply: string;
       startAnalysis: string;
+      startingAnalysis: string;
+      analysisScopeIncomplete: string;
       nothingToAnalyzeBody: string;
       dismiss: string;
       confirmRequestedScope: string;
@@ -936,8 +943,8 @@ const messages: Record<Locale, MessageCatalog> = {
       quickFindSimilar: "Find similar tools",
       quickOrganizeUntagged: "Organize full library",
       quickCleanupTags: "Clean up tag names",
-      functionMenuLabel: "Functions",
-      functionMenuTitle: "Available functions",
+      functionMenuLabel: "Prompt suggestions",
+      functionMenuTitle: "Suggested prompts",
       functionSummarize: "Summarize current scope",
       functionSummarizeDescription: "Inspect repository metadata and explain the main patterns.",
       functionFindSimilar: "Find similar tools",
@@ -976,9 +983,13 @@ const messages: Record<Locale, MessageCatalog> = {
       contextSettingsMessage: "Adjust this service's context settings before continuing. Your draft is preserved.",
       contextPromptTooLargeTitle: "This request is too large",
       contextPromptTooLargeMessage: "Shorten the draft, or increase the configured context limit if your AI service supports it.",
+      contextToolMemoryTitle: "BGSM reached an internal tool-data limit",
+      contextToolMemoryMessage: "Your prompt and completed results were preserved. Retry to continue; you do not need to shorten the prompt or change the model context window.",
+      contextToolMemoryWriteBlockedMessage: "Completed results were preserved, but a write may already have finished. Review or change the request before sending it again.",
       contextAdjustSettings: "Adjust AI service settings",
       contextEditPrompt: "Edit prompt",
       composerPausedContextRecovery: "Draft preserved · choose a recovery action above",
+      composerWriteRetryBlocked: "Review or change this request before sending because a write may already have completed.",
       startNewConversation: "Start new conversation",
       hideWhileRunning: "Hide BGSM Agent",
       runContinuesWhileHidden: "You can hide this panel; the turn continues.",
@@ -1172,7 +1183,10 @@ const messages: Record<Locale, MessageCatalog> = {
         resolvingHint: "Usually quick · no tags are changed during this step",
         confirmScopeTitle: "Confirm analysis scope",
         repositoriesFrozen: (count) => `${count} repositories will be frozen for this run.`,
+        reviewBeforeApply: "Analysis prepares a complete review first. No tags are changed at this step.",
         startAnalysis: "Start analysis",
+        startingAnalysis: "Starting analysis",
+        analysisScopeIncomplete: "The saved analysis scope is incomplete. Prepare it again.",
         nothingToAnalyzeBody: "Either every visible repo already has tags, or the active filters hide the candidates. Change filters or broaden scope, then ask again.",
         dismiss: "Dismiss",
         confirmRequestedScope: "Confirm requested scope",
@@ -1827,8 +1841,8 @@ const messages: Record<Locale, MessageCatalog> = {
       quickFindSimilar: "找相似工具",
       quickOrganizeUntagged: "整理整个资料库",
       quickCleanupTags: "清理标签命名",
-      functionMenuLabel: "功能",
-      functionMenuTitle: "可用功能",
+      functionMenuLabel: "提示词建议",
+      functionMenuTitle: "建议提示词",
       functionSummarize: "总结当前范围",
       functionSummarizeDescription: "检查仓库元数据并说明主要模式。",
       functionFindSimilar: "查找相似工具",
@@ -1867,9 +1881,13 @@ const messages: Record<Locale, MessageCatalog> = {
       contextSettingsMessage: "请先调整此服务的上下文设置。你的草稿已保留。",
       contextPromptTooLargeTitle: "本次请求内容过多",
       contextPromptTooLargeMessage: "请缩短草稿；如果 AI 服务支持，也可以调高已配置的上下文上限。",
+      contextToolMemoryTitle: "BGSM 达到本轮内部工具数据上限",
+      contextToolMemoryMessage: "你的提示词和已完成结果都已保留。可直接重试继续处理，无需缩短提示词或调整模型上下文窗口。",
+      contextToolMemoryWriteBlockedMessage: "已完成的结果已保留，但一次写入可能已经完成。请检查或修改本次请求后再发送。",
       contextAdjustSettings: "调整 AI 服务设置",
       contextEditPrompt: "编辑提示词",
       composerPausedContextRecovery: "草稿已保留 · 请从上方选择恢复方式",
+      composerWriteRetryBlocked: "写入可能已经完成，请检查或修改本次请求后再发送。",
       startNewConversation: "开始新对话",
       hideWhileRunning: "隐藏 BGSM Agent",
       runContinuesWhileHidden: "可以隐藏面板；本轮会继续。",
@@ -2093,7 +2111,10 @@ const messages: Record<Locale, MessageCatalog> = {
         resolvingHint: "通常很快 · 此步骤不会修改标签",
         confirmScopeTitle: "确认分析范围",
         repositoriesFrozen: (count) => `本轮将冻结 ${count} 个仓库。`,
+        reviewBeforeApply: "分析完成后会先生成一次完整审阅；此步骤不会修改标签。",
         startAnalysis: "开始分析",
+        startingAnalysis: "正在启动分析",
+        analysisScopeIncomplete: "已保存的分析范围不完整，请重新准备后再试。",
         nothingToAnalyzeBody: "可见仓库可能都已有标签，或当前筛选隐藏了候选项。请调整筛选或扩大范围后重试。",
         dismiss: "关闭",
         confirmRequestedScope: "确认请求的范围",

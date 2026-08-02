@@ -5,6 +5,9 @@ import { useI18n } from '@/i18n';
 import { AgentPanel } from '@/ui/components/AgentPanel';
 import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
 import { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
+import {
+  currentOrganizeJobState,
+} from '@/ui/agent-workbench-state';
 
 export type AgentHostPresentation = Readonly<{
   status: string | null;
@@ -40,30 +43,31 @@ export function AgentHost({
   const presentation = useMemo<AgentHostPresentation>(() => {
     const snapshot = workbench.state.snapshot;
     const organizeJob = workbench.state.organizeJob;
-    const runState = snapshot?.state;
-    const processed = organizeJob?.coverage.analyzed ?? workbench.displayedProcessed;
     const total = organizeJob?.scopeCount ?? snapshot?.frozenScope.count ?? 0;
+    const processed = Math.min(total, workbench.displayedProcessed);
     const automaticContinuation = workbench.state.continuationPending;
-    const analyzing = organizeJob?.status === 'analyzing' || (!!snapshot && (
-      ['frozen', 'prepared', 'checking_provider', 'analyzing'].includes(snapshot.state)
+    const currentRunState = currentOrganizeJobState(snapshot, organizeJob);
+    const analyzing = currentRunState !== null && (
+      ['frozen', 'prepared', 'checking_provider', 'analyzing'].includes(currentRunState)
       || automaticContinuation
-    ));
-    const applying = organizeJob?.status === 'apply_sealed'
-      || organizeJob?.status === 'applying';
+    );
+    const applying = currentRunState === 'apply_sealed' || currentRunState === 'applying';
     const status = analyzing && total > 0
       ? `${processed}/${total}`
       : applying
         ? m.agentPanel.toolbarApplying
-        : organizeJob?.status === 'paused'
+        : currentRunState === 'paused'
           ? m.agentPanel.runStateLabel('paused')
-        : organizeJob?.status === 'completed'
+        : currentRunState === 'completed'
           ? m.agentPanel.runStateLabel('completed')
-          : organizeJob?.status === 'review'
+          : currentRunState === 'review'
           ? m.agentPanel.toolbarReview
-          : runState
-              ? m.agentPanel.runStateLabel(runState)
+          : currentRunState
+              ? m.agentPanel.runStateLabel(currentRunState)
               : workbench.state.preflight?.status === 'requesting'
                 ? m.agentPanel.resolvingScopeHeader
+                : workbench.state.preflight?.status === 'starting'
+                  ? m.agentPanel.workbench.startingAnalysis
                 : workbench.state.preflight?.status === 'ready'
                   ? m.agentPanel.scopeReady
                   : agent.running
@@ -71,16 +75,9 @@ export function AgentHost({
                     : null;
     const active = agent.running
       || workbench.state.preflight?.status === 'requesting'
-      || workbench.state.preflight?.status === 'ready'
-      || !!(organizeJob && ['analyzing', 'review', 'apply_sealed', 'applying', 'paused'].includes(organizeJob.status))
-      || (!!runState && ![
-        'analysis_blocked',
-        'completed',
-        'budget_exhausted',
-        'cancelled',
-        'failed',
-        'interrupted',
-      ].includes(runState));
+      || workbench.state.preflight?.status === 'starting'
+      || analyzing
+      || applying;
     return { status, active };
   }, [agent.running, agent.status?.text, m.agentPanel, workbench.displayedProcessed, workbench.state]);
 

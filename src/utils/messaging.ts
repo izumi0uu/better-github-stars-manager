@@ -347,8 +347,15 @@ export type BgsmOrganizeJobConnectionReady = BgsmOrganizeJobControllerIdentity &
   type: 'bgsmOrganizeJobRunConnectionReady';
 }>;
 
+export type BgsmOrganizeJobAnalysisProgress = OrganizeJobRunIdentity & Readonly<{
+  type: 'bgsmOrganizeJobAnalysisProgress';
+  processed: number;
+  total: number;
+}>;
+
 export type BgsmOrganizeJobServerMessage =
   | BgsmOrganizeJobConnectionReady
+  | BgsmOrganizeJobAnalysisProgress
   | BgsmOrganizeJobPreflightResult
   | Readonly<{ type: 'bgsmOrganizeJobRunEvent'; event: OrganizeJobRunEvent }>
   | Readonly<{ type: 'bgsmOrganizeJobRunSnapshot'; snapshot: OrganizeJobRunSnapshot }>
@@ -481,6 +488,13 @@ export function validateBgsmOrganizeJobMessageIdentity(
     throw new TypeError('Organize jobId must be nonempty.');
   }
   if ('rowOffset' in message) assertNonnegativeCount(message.rowOffset, 'organize rowOffset');
+  if ('processed' in message) {
+    assertNonnegativeCount(message.processed, 'organize analyzed progress');
+    assertNonnegativeCount(message.total, 'organize analyzed progress total');
+    if (message.processed > message.total) {
+      throw new RangeError('Organize analyzed progress cannot exceed its total.');
+    }
+  }
   if ('limit' in message && (!Number.isSafeInteger(message.limit) || message.limit < 1 || message.limit > 100)) {
     throw new RangeError('Organize page limit must be between 1 and 100.');
   }
@@ -850,6 +864,9 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
       break;
     case 'bgsmOrganizeJobRunConnectionReady':
       expected = controller;
+      break;
+    case 'bgsmOrganizeJobAnalysisProgress':
+      expected = [...run, 'processed', 'total'];
       break;
     case 'bgsmOrganizeJobRunPreflightResult':
       expected = [...preflight, 'status', 'preflightToken', 'label', 'count'];

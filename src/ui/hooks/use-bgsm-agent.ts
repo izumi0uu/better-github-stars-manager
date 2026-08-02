@@ -842,7 +842,10 @@ function toolStatusText(
     agentApplyingChanges: string;
   },
 ): string {
-  if (toolName === 'request_full_library_organization') {
+  if (
+    toolName === 'request_full_library_organization'
+    || toolName === 'start_full_library_analysis'
+  ) {
     return labels.agentPreparingOrganizationScope;
   }
   return risk === 'write'

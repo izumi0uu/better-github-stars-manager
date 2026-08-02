@@ -115,6 +115,7 @@ export function PromptInput({
   onSubmit,
   placeholder,
   disabled,
+  submitDisabled,
   submitLabel,
   submitVariant = 'default',
   inputLabel,
@@ -126,6 +127,7 @@ export function PromptInput({
   onSubmit: () => void;
   placeholder: string;
   disabled?: boolean;
+  submitDisabled?: boolean;
   submitLabel: string;
   submitVariant?: 'default' | 'outline';
   inputLabel: string;
@@ -163,7 +165,7 @@ export function PromptInput({
           variant={submitVariant}
           size="sm"
           className="h-8 min-w-14 shrink-0 px-3 text-xs font-semibold"
-          disabled={disabled || value.trim().length === 0}
+          disabled={disabled || submitDisabled || value.trim().length === 0}
           aria-label={submitLabel}
           title={submitLabel}
         >

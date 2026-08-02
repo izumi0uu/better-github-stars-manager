@@ -67,6 +67,14 @@ function AgentPanel({
     state: createAgentWorkbenchState('controller:v1:test', 'session-test'),
     displayedProcessed: 0,
     requestPreflight: messagingMocks.requestPreflight,
+    captureAgentHandoffAuthority: vi.fn(() => 0),
+    applyAgentHandoff: vi.fn((handoff) => {
+      if (handoff.action === 'request_confirmation') {
+        messagingMocks.requestPreflight(handoff.instruction);
+      }
+      return true;
+    }),
+    startWholeLibraryFromAgent: vi.fn(),
     confirmPreflight: vi.fn(),
     cancelPreflight: vi.fn(),
     stop: vi.fn(),
@@ -128,15 +136,10 @@ describe('AgentPanel', () => {
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
-  it('lists scope functions and sends the selected function immediately', async () => {
-    let turnInput: BgsmAgentTurnInput | undefined;
-    messagingMocks.startBgsmAgentTurn.mockImplementation((input) => {
-      turnInput = input;
-      return { stop: vi.fn(), acknowledge: vi.fn() };
-    });
+  it('lists scope functions and inserts the selected prompt without sending', async () => {
     const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
 
-    const functionButton = container.querySelector<HTMLButtonElement>('button[aria-label="Functions"]');
+    const functionButton = container.querySelector<HTMLButtonElement>('button[aria-label="Prompt suggestions"]');
     const composer = container.querySelector('textarea')?.closest('form');
     const header = container.querySelector('#gsm-agent-dialog-title')?.closest('.border-b');
     expect(composer?.contains(functionButton)).toBe(true);
@@ -144,9 +147,9 @@ describe('AgentPanel', () => {
 
     await click(functionButton!);
     await waitFor(() => {
-      expect(document.body.textContent).toContain('Available functions');
+      expect(document.body.textContent).toContain('Suggested prompts');
     });
-    expect(document.body.querySelector('[role="group"][aria-label="Available functions"]')).toBeTruthy();
+    expect(document.body.querySelector('[role="group"][aria-label="Suggested prompts"]')).toBeTruthy();
     expect(document.body.querySelector('[role="menu"]')).toBeNull();
     expect(document.body.querySelector('[role="menuitem"]')).toBeNull();
     expect(document.body.textContent).toContain('Summarize current scope');
@@ -164,8 +167,13 @@ describe('AgentPanel', () => {
     });
     await click(summarize!);
 
-    expect(turnInput?.prompt).toContain('Inspect the repositories in the current scope');
-    expect(messagingMocks.startBgsmAgentTurn).toHaveBeenCalledOnce();
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(textarea.value).toContain('Inspect the repositories in the current scope');
+    expect(document.body.querySelector('[role="group"][aria-label="Suggested prompts"]')).toBeNull();
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.selectionStart).toBe(textarea.value.length);
+    expect(textarea.selectionEnd).toBe(textarea.value.length);
+    expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
   it('sends with Enter while Shift+Enter remains available for a new line', async () => {
@@ -200,12 +208,7 @@ describe('AgentPanel', () => {
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
-  it('adds code search and private notes functions for one selected repository', async () => {
-    let turnInput: BgsmAgentTurnInput | undefined;
-    messagingMocks.startBgsmAgentTurn.mockImplementation((input) => {
-      turnInput = input;
-      return { stop: vi.fn(), acknowledge: vi.fn() };
-    });
+  it('adds code search and private notes suggestions for one selected repository', async () => {
     const container = await mountAgentPanel(
       <AgentPanel
         open
@@ -217,7 +220,7 @@ describe('AgentPanel', () => {
       />,
     );
 
-    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Functions"]')!);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Prompt suggestions"]')!);
     await waitFor(() => {
       expect(document.body.textContent).toContain('Search repository code');
       expect(document.body.textContent).toContain('Review repository notes');
@@ -230,8 +233,9 @@ describe('AgentPanel', () => {
     });
     await click(searchCode!);
 
-    expect(turnInput?.prompt).toContain('Search the selected repository code');
-    expect(messagingMocks.startBgsmAgentTurn).toHaveBeenCalledOnce();
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value)
+      .toContain('Search the selected repository code');
+    expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
   it('renders Frame 1 Ready intro, chips, and scoped composer note', async () => {
@@ -308,7 +312,7 @@ describe('AgentPanel', () => {
     expect(document.activeElement).toBe(opener);
   });
 
-  it('requests a background-issued preflight before tag analysis', async () => {
+  it('fills the composer from the whole-library suggestion without starting work', async () => {
     const onDataChanged = vi.fn();
 
     const container = await mountAgentPanel(
@@ -320,14 +324,14 @@ describe('AgentPanel', () => {
     expect(autoAssign).toBeDefined();
     await click(autoAssign!);
 
-    expect(messagingMocks.requestPreflight).toHaveBeenCalledWith(
-      expect.stringContaining('entire starred library'),
-    );
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value)
+      .toContain('entire starred library');
+    expect(messagingMocks.requestPreflight).not.toHaveBeenCalled();
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
     expect(onDataChanged).not.toHaveBeenCalled();
   });
 
-  it('keeps the whole-library organize job independent from a selected-repository chat scope', async () => {
+  it('keeps the whole-library suggestion independent from a selected-repository chat scope', async () => {
     const container = await mountAgentPanel(
       <AgentPanel
         open
@@ -343,9 +347,9 @@ describe('AgentPanel', () => {
       .find((button) => button.textContent?.trim() === 'Organize full library');
     await click(organize!);
 
-    expect(messagingMocks.requestPreflight).toHaveBeenCalledWith(
-      expect.stringContaining('entire starred library'),
-    );
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value)
+      .toContain('entire starred library');
+    expect(messagingMocks.requestPreflight).not.toHaveBeenCalled();
   });
 
   it('sends custom user prompts to the agent stream', async () => {
@@ -405,6 +409,154 @@ describe('AgentPanel', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('I inspected your tags');
     });
+  });
+
+  it('sends a typed whole-library request through Agent handoff before scope confirmation', async () => {
+    let turn: { input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers } | undefined;
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
+      turn = { input, handlers };
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    const prompt = 'Create useful tags for all my starred repositories.';
+
+    await setTextareaValue(textarea, prompt);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+
+    expect(messagingMocks.requestPreflight).not.toHaveBeenCalled();
+    expect(messagingMocks.startBgsmAgentTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt }),
+      expect.any(Object),
+    );
+    expect(textarea.value).toBe('');
+    if (!turn) throw new Error('expected whole-library Agent turn');
+    await act(async () => {
+      turn!.handlers.onEvent?.({
+        ...deliveryIdentity(turn!.input),
+        type: 'tool_execution_start',
+        toolName: 'request_full_library_organization',
+        callId: 'whole-library-handoff',
+        risk: 'suggest',
+      });
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
+      .toContain('Preparing full-library scope... · Running');
+
+    await act(async () => {
+      turn!.handlers.onEvent?.({
+        ...deliveryIdentity(turn!.input),
+        type: 'tool_execution_end',
+        toolName: 'request_full_library_organization',
+        callId: 'whole-library-handoff',
+        ok: true,
+        risk: 'suggest',
+        writeOutcome: 'not_applicable',
+      });
+      turn!.handlers.onResult?.({
+        ...deliveryIdentity(turn!.input),
+        reason: 'final_answer',
+        changed: false,
+        changedCount: 0,
+        newMessages: [
+          { id: 'whole-user', role: 'user', content: prompt, createdAt: 1 },
+          { id: 'whole-agent', role: 'agent', content: 'Opening scope confirmation.', createdAt: 2 },
+        ],
+        organizeLibraryHandoff: {
+          type: 'organize_whole_library',
+          action: 'request_confirmation',
+          instruction: prompt,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(messagingMocks.requestPreflight).toHaveBeenCalledWith(prompt);
+    expect(container.querySelector('[data-testid="agent-readonly-result-card"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
+      .toContain('Preparing full-library scope... · Completed');
+  });
+
+  it('keeps whole-library read-only questions in the regular agent stream', async () => {
+    let turn: { input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers } | undefined;
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
+      turn = { input, handlers };
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    const prompt = 'Summarize all my starred repositories without changing tags.';
+
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, prompt);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+
+    expect(messagingMocks.startBgsmAgentTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt }),
+      expect.any(Object),
+    );
+    if (!turn) throw new Error('expected read-only whole-library turn');
+    await act(async () => {
+      turn!.handlers.onResult?.({
+        ...deliveryIdentity(turn!.input),
+        reason: 'final_answer',
+        changed: false,
+        changedCount: 0,
+        newMessages: [
+          { id: 'read-only-whole-user', role: 'user', content: prompt, createdAt: 1 },
+          {
+            id: 'read-only-whole-agent',
+            role: 'agent',
+            content: 'Here is the requested read-only summary.',
+            createdAt: 2,
+          },
+        ],
+      });
+      await Promise.resolve();
+    });
+    expect(messagingMocks.requestPreflight).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Here is the requested read-only summary.');
+  });
+
+  it('honors Agent handoff for varied whole-library language', async () => {
+    let turn: { input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers } | undefined;
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
+      turn = { input, handlers };
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    const prompt = '把我收藏的项目都归归类';
+
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, prompt);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    expect(messagingMocks.requestPreflight).not.toHaveBeenCalled();
+    if (!turn) throw new Error('expected semantic fallback turn');
+
+    await act(async () => {
+      turn!.handlers.onResult?.({
+        ...deliveryIdentity(turn!.input),
+        reason: 'final_answer',
+        changed: false,
+        changedCount: 0,
+        newMessages: [
+          { id: 'handoff-user', role: 'user', content: prompt, createdAt: 1 },
+          {
+            id: 'handoff-agent',
+            role: 'agent',
+            content: 'I will open scope confirmation.',
+            createdAt: 2,
+          },
+        ],
+        organizeLibraryHandoff: {
+          type: 'organize_whole_library',
+          action: 'request_confirmation',
+          instruction: prompt,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(messagingMocks.requestPreflight).toHaveBeenCalledWith(prompt);
   });
 
   it('grows one transient assistant message and atomically reconciles the final result', async () => {
@@ -534,6 +686,16 @@ describe('AgentPanel', () => {
       writeOutcome: 'not_applicable',
     });
     expect(container.textContent).toContain('Failed');
+    await emit({
+      ...deliveryIdentity(turn.input),
+      type: 'tool_execution_queued',
+      toolName: 'get_star',
+      callId: 'call-exact-repository',
+    });
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
+      .toContain('Checking local data... · Queued');
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
+      .not.toContain('Tool result');
     expect(container.textContent).not.toContain('secret arguments');
   });
 
@@ -746,12 +908,42 @@ describe('AgentPanel', () => {
       expect(container.textContent).toContain('This conversation is now read-only');
       expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
     });
-    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Functions"]')!);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Prompt suggestions"]')!);
     await waitFor(() => {
-      expect(document.body.textContent).toContain('Available functions');
+      expect(document.body.textContent).toContain('Suggested prompts');
     });
     expect(document.body.textContent).not.toContain('Organize full library');
     expect(messagingMocks.requestPreflight).not.toHaveBeenCalled();
+
+    await setTextareaValue(
+      container.querySelector<HTMLTextAreaElement>('textarea')!,
+      'Tag all my starred repositories.',
+    );
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    expect(messagingMocks.requestPreflight).not.toHaveBeenCalled();
+    expect(messagingMocks.startBgsmAgentTurn).toHaveBeenLastCalledWith(
+      expect.objectContaining({ prompt: 'Tag all my starred repositories.' }),
+      expect.any(Object),
+    );
+    if (!turn) throw new Error('expected routed read-only turn');
+    await act(async () => {
+      turn!.handlers.onResult?.({
+        ...deliveryIdentity(turn!.input),
+        reason: 'final_answer',
+        changed: false,
+        changedCount: 0,
+        newMessages: [
+          { id: 'readonly-user', role: 'user', content: turn!.input.prompt, createdAt: 5 },
+          {
+            id: 'readonly-answer',
+            role: 'agent',
+            content: 'Start a new conversation before changing tags.',
+            createdAt: 6,
+          },
+        ],
+      });
+      await Promise.resolve();
+    });
 
     const notice = container.querySelector<HTMLElement>('[data-testid="agent-code-readonly-notice"]')!;
     const reset = [...notice.querySelectorAll<HTMLButtonElement>('button')]
@@ -802,6 +994,52 @@ describe('AgentPanel', () => {
       .find((button) => button.textContent?.trim() === 'Retry');
     expect(retry?.disabled).toBe(true);
     expect(container.textContent).toContain('Failed');
+  });
+
+  it('unlocks a read-only turn after transport failure and offers the original prompt for retry', async () => {
+    let turn: { input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers } | undefined;
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
+      turn = { input, handlers };
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    const prompt = 'Find exactly three terminal coding agents.';
+
+    await setTextareaValue(textarea, prompt);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    if (!turn) throw new Error('expected turn');
+
+    await act(async () => {
+      turn!.handlers.onEvent?.({
+        ...deliveryIdentity(turn!.input),
+        type: 'assistant_text_delta',
+        step: 0,
+        delta: 'Searching candidates...',
+      });
+      turn!.handlers.onEvent?.({
+        ...deliveryIdentity(turn!.input),
+        type: 'tool_execution_start',
+        toolName: 'search_stars',
+        callId: 'read-call',
+        risk: 'read',
+      });
+      turn!.handlers.onError?.({
+        ...deliveryIdentity(turn!.input),
+        message: 'BGSM Agent stopped before finishing.',
+        category: 'other',
+      });
+      await Promise.resolve();
+    });
+
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.value).toBe(prompt);
+    expect(container.textContent).not.toContain('Searching candidates...');
+    const retry = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Retry');
+    expect(retry?.disabled).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled)
+      .toBe(false);
   });
 
   it('reuses one session and sends committed protocol history on the next turn', async () => {
@@ -1437,6 +1675,101 @@ describe('AgentPanel', () => {
     expect(turns[1].input.history).toEqual([]);
   });
 
+  it('detaches a stopped turn after a bounded wait when the background never returns a terminal result', async () => {
+    vi.useFakeTimers();
+    try {
+      const turns: Array<{
+        input: BgsmAgentTurnInput;
+        handlers: BgsmAgentTurnHandlers;
+        stop: ReturnType<typeof vi.fn>;
+      }> = [];
+      messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
+        const stop = vi.fn();
+        turns.push({ input, handlers, stop });
+        return { stop, acknowledge: vi.fn() };
+      });
+
+      const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+      await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Stop without terminal');
+      await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+      const stopButton = [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.trim() === 'Stop');
+      await click(stopButton!);
+
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true);
+      await act(async () => {
+        vi.advanceTimersByTime(3_000);
+        await Promise.resolve();
+      });
+
+      expect(turns[0].stop).toHaveBeenNthCalledWith(1);
+      expect(turns[0].stop).toHaveBeenNthCalledWith(2, { detach: true });
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
+      expect(container.querySelector<HTMLButtonElement>('button[aria-label="Start new conversation"]')?.disabled)
+        .toBe(false);
+      await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+      expect(turns).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['failed', true],
+    ['committed', false],
+    ['unknown', false],
+  ] as const)('allows an exact retry only when every started write is %s', async (writeOutcome, safeToRetry) => {
+    const turns: Array<{ input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers }> = [];
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
+      turns.push({ input, handlers });
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    const prompt = `Write outcome ${writeOutcome}`;
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, prompt);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+
+    await act(async () => {
+      turns[0].handlers.onEvent?.({
+        ...deliveryIdentity(turns[0].input),
+        type: 'tool_execution_start',
+        toolName: 'assign_repo_tags',
+        callId: `write-${writeOutcome}`,
+        risk: 'write',
+      });
+      turns[0].handlers.onEvent?.({
+        ...deliveryIdentity(turns[0].input),
+        type: 'tool_execution_end',
+        toolName: 'assign_repo_tags',
+        callId: `write-${writeOutcome}`,
+        risk: 'write',
+        ok: writeOutcome !== 'failed',
+        writeOutcome,
+      });
+      turns[0].handlers.onError?.({
+        ...deliveryIdentity(turns[0].input),
+        message: 'Provider failed after the write boundary.',
+        category: 'provider',
+      });
+      await Promise.resolve();
+    });
+
+    const retry = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Retry');
+    const send = container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!;
+    expect(retry?.disabled).toBe(!safeToRetry);
+    expect(send.disabled).toBe(!safeToRetry);
+
+    if (safeToRetry) {
+      await click(retry!);
+      expect(turns).toHaveLength(2);
+    } else {
+      expect(container.textContent).toContain('a write may already have completed');
+      await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, `${prompt} - verify first`);
+      expect(send.disabled).toBe(false);
+    }
+  });
+
   it('waits for the stop result and refreshes data when a raced write reports changed', async () => {
     let turn: {
       input: BgsmAgentTurnInput;
@@ -1733,7 +2066,7 @@ describe('AgentPanel', () => {
 
 
 
-  it('renders Auto Tags handoff card and launches still-untagged preflight', async () => {
+  it('renders Auto Tags handoff card and inserts its suggestion into the composer', async () => {
     const onDismissHandoff = vi.fn();
     const container = await mountAgentPanel(
       <AgentPanel
@@ -1757,9 +2090,10 @@ describe('AgentPanel', () => {
     expect(organize).toBeTruthy();
     await click(organize as HTMLButtonElement);
     expect(onDismissHandoff).toHaveBeenCalledTimes(1);
-    expect(messagingMocks.requestPreflight).toHaveBeenCalledWith(
-      expect.any(String),
-    );
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value)
+      .toContain('entire starred library');
+    expect(messagingMocks.requestPreflight).not.toHaveBeenCalled();
+    expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
   it('keeps disclosure copy out of chat and shows a destructive unavailable card for cleanup asks', async () => {
@@ -2056,6 +2390,7 @@ describe('AgentPanel', () => {
     ['provider_context_overflow_repeated', 'settings', 'AI service settings need attention', 'Adjust AI service settings'],
     ['provider_request_byte_limit_repeated', 'settings', 'AI service settings need attention', 'Adjust AI service settings'],
     ['current_turn_too_large', 'edit', 'This request is too large', 'Edit prompt'],
+    ['tool_result_memory_limit', 'retry', 'BGSM reached an internal tool-data limit', 'Retry'],
   ] as const)(
     'maps irreducible %s to a focused recovery action without exposing internal identifiers',
     async (reason, action, title, actionLabel) => {
@@ -2090,6 +2425,11 @@ describe('AgentPanel', () => {
         expect(container.querySelector('[data-testid="agent-context-recovery-banner"]')).toBeTruthy();
         if (action === 'edit') {
           expect(container.textContent).toContain('Adjust AI service settings');
+        } else if (action === 'retry') {
+          expect(container.textContent).toContain('you do not need to shorten the prompt');
+          expect(container.textContent).not.toContain('This request is too large');
+          expect(container.textContent).not.toContain('Edit prompt');
+          expect(container.textContent).not.toContain('Adjust AI service settings');
         }
         expect(container.textContent).toContain('Draft preserved');
         expect(container.textContent).not.toContain('Context limit reached');
@@ -2106,8 +2446,12 @@ describe('AgentPanel', () => {
 
       if (action === 'settings') {
         expect(onOpenOptions).toHaveBeenCalledOnce();
-        expect(turns).toHaveLength(1);
+        expect(container.querySelector('[data-testid="agent-context-recovery-banner"]')).toBeNull();
         expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(prompt);
+        expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
+        await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+        expect(turns).toHaveLength(2);
+        expect(turns[1].input.sessionId).toBe(failedSessionId);
       } else if (action === 'edit') {
         const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
         expect(turns).toHaveLength(1);
@@ -2119,9 +2463,69 @@ describe('AgentPanel', () => {
         expect(turns).toHaveLength(2);
         expect(turns[1].input.prompt).toBe('Shorter prompt');
         expect(turns[1].input.sessionId).toBe(failedSessionId);
+      } else if (action === 'retry') {
+        expect(turns).toHaveLength(2);
+        expect(turns[1].input.prompt).toBe(prompt);
+        expect(turns[1].input.sessionId).toBe(failedSessionId);
       }
     },
   );
+
+  it('unlocks prompt editing after an internal memory terminal with a committed write', async () => {
+    const turns: Array<{ input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers }> = [];
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
+      turns.push({ input, handlers });
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    const prompt = 'Apply safe tags and continue analysis';
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, prompt);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+
+    await act(async () => {
+      turns[0].handlers.onEvent?.({
+        ...deliveryIdentity(turns[0].input),
+        type: 'tool_execution_start',
+        toolName: 'assign_repo_tags',
+        callId: 'committed-before-memory-limit',
+        risk: 'write',
+      });
+      turns[0].handlers.onEvent?.({
+        ...deliveryIdentity(turns[0].input),
+        type: 'tool_execution_end',
+        toolName: 'assign_repo_tags',
+        callId: 'committed-before-memory-limit',
+        risk: 'write',
+        ok: true,
+        writeOutcome: 'committed',
+      });
+      turns[0].handlers.onResult?.({
+        ...deliveryIdentity(turns[0].input),
+        reason: 'context_limit',
+        contextFailureReason: 'tool_result_memory_limit',
+        changed: true,
+        changedCount: 1,
+        newMessages: [],
+      });
+      await Promise.resolve();
+    });
+
+    const edit = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Edit prompt');
+    expect(edit).toBeDefined();
+    expect(container.textContent).toContain('a write may already have finished');
+    expect(container.textContent).not.toContain('Retry to continue');
+    await click(edit!);
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    const send = container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!;
+    expect(textarea.disabled).toBe(false);
+    expect(send.disabled).toBe(true);
+    await setTextareaValue(textarea, `${prompt} - inspect previous results without repeating writes`);
+    expect(send.disabled).toBe(false);
+    await click(send);
+    expect(turns).toHaveLength(2);
+    expect(turns[1].input.sessionId).toBe(turns[0].input.sessionId);
+  });
 
   it.each([
     'provider_context_overflow',

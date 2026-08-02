@@ -6,6 +6,7 @@ import type {
 import type { ProposalReviewProjection } from '@/bgsm-agent/proposal';
 import { isMonotonicRunBudgetUsage } from '@/bgsm-agent/policy';
 import type { PreflightToken } from '@/bgsm-agent/scope';
+import type { RunId } from '@/bgsm-agent/identity';
 import type {
   BgsmOrganizeJobPresentation,
   BgsmOrganizeJobPreflightResult,
@@ -14,10 +15,12 @@ import type {
 
 export const CONNECTION_INTERRUPTED_COPY = 'BGSM_AGENT_CONNECTION_INTERRUPTED';
 export const WORKER_LOST_COPY = 'BGSM_AGENT_WORKER_LOST';
+export const PREFLIGHT_INCOMPLETE_COPY = 'BGSM_AGENT_PREFLIGHT_INCOMPLETE';
 
 export type WorkbenchPreflight = Readonly<{
   requestId: string;
-  status: 'requesting' | 'ready' | 'no_work';
+  status: 'requesting' | 'ready' | 'starting' | 'no_work';
+  taskInstruction: string;
   label: string;
   count: number;
   preflightToken: PreflightToken | null;
@@ -52,6 +55,11 @@ export type WorkbenchUsageOffset = Readonly<{
   providerAttempts: number;
 }>;
 
+export type WorkbenchConversationAnchor = Readonly<{
+  messageId: string | null;
+  createdAt: number;
+}>;
+
 export type AgentWorkbenchState = Readonly<{
   controllerId: string;
   sessionId: string;
@@ -66,6 +74,13 @@ export type AgentWorkbenchState = Readonly<{
   organizeReceiptRequestId: string | null;
   usageOffset: WorkbenchUsageOffset;
   continuationPending: boolean;
+  conversationAnchor: WorkbenchConversationAnchor | null;
+  analysisProgress: Readonly<{
+    runId: RunId;
+    generation: number;
+    processed: number;
+    total: number;
+  }> | null;
   transport: 'connected' | 'disconnected';
   error: string | null;
   timeline: readonly WorkbenchTimelineItem[];
@@ -73,17 +88,61 @@ export type AgentWorkbenchState = Readonly<{
 }>;
 
 export type AgentWorkbenchAction =
-  | Readonly<{ type: 'preflight_requested'; requestId: string }>
-  | Readonly<{ type: 'whole_library_restart_requested'; requestId: string }>
+  | Readonly<{
+      type: 'preflight_requested';
+      requestId: string;
+      taskInstruction: string;
+      conversationAnchor: WorkbenchConversationAnchor;
+    }>
+  | Readonly<{
+      type: 'whole_library_restart_requested';
+      requestId: string;
+      taskInstruction: string;
+      conversationAnchor: WorkbenchConversationAnchor;
+    }>
+  | Readonly<{ type: 'preflight_start_requested' }>
+  | Readonly<{ type: 'preflight_start_failed'; message: string }>
   | Readonly<{ type: 'preflight_cancelled' }>
   | Readonly<{ type: 'continue_requested' }>
   | Readonly<{ type: 'organize_review_page_requested'; requestId: string }>
   | Readonly<{ type: 'organize_receipt_page_requested'; requestId: string }>
-  | Readonly<{ type: 'server_message'; message: BgsmOrganizeJobServerMessage }>
+  | Readonly<{
+      type: 'server_message';
+      message: BgsmOrganizeJobServerMessage;
+      authoritative?: boolean;
+    }>
   | Readonly<{ type: 'transport_connected' }>
   | Readonly<{ type: 'transport_disconnected' }>
   | Readonly<{ type: 'session_rebound'; controllerId: string; sessionId: string }>
   | Readonly<{ type: 'clear_terminal' }>;
+
+export type CurrentOrganizeJobState = OrganizeJobRunState | BgsmOrganizeJobPresentation['status'];
+
+export function isDurableOrganizeJobAuthoritative(
+  snapshot: Pick<OrganizeJobRunSnapshot, 'runId' | 'generation'> | null,
+  presentation: Pick<BgsmOrganizeJobPresentation, 'runId' | 'generation' | 'status'> | null,
+): boolean {
+  if (!presentation) return false;
+  if (!snapshot) return true;
+  if (presentation.generation !== snapshot.generation) {
+    return presentation.generation > snapshot.generation;
+  }
+  if (presentation.runId !== snapshot.runId) return false;
+
+  // Runtime snapshots carry finer-grained analysis failures while the durable job
+  // remains in its broad analyzing phase. Later durable phases are authoritative.
+  return presentation.status !== 'analyzing';
+}
+
+export function currentOrganizeJobState(
+  snapshot: Pick<OrganizeJobRunSnapshot, 'runId' | 'generation' | 'state'> | null,
+  presentation: Pick<BgsmOrganizeJobPresentation, 'runId' | 'generation' | 'status'> | null,
+): CurrentOrganizeJobState | null {
+  if (isDurableOrganizeJobAuthoritative(snapshot, presentation)) {
+    return presentation!.status;
+  }
+  return snapshot?.state ?? presentation?.status ?? null;
+}
 
 export function createAgentWorkbenchState(
   controllerId: string,
@@ -103,6 +162,8 @@ export function createAgentWorkbenchState(
     organizeReceiptRequestId: null,
     usageOffset: emptyUsageOffset(),
     continuationPending: false,
+    conversationAnchor: null,
+    analysisProgress: null,
     transport: 'connected',
     error: null,
     timeline: [],
@@ -121,9 +182,11 @@ export function reduceAgentWorkbench(
     return {
       ...createAgentWorkbenchState(state.controllerId, state.sessionId),
       transport: state.transport,
+      conversationAnchor: action.conversationAnchor,
       preflight: {
         requestId: action.requestId,
         status: 'requesting',
+        taskInstruction: action.taskInstruction,
         label: '',
         count: 0,
         preflightToken: null,
@@ -131,17 +194,15 @@ export function reduceAgentWorkbench(
     };
   }
   if (action.type === 'preflight_requested') {
-    const resetRun = !!state.snapshot;
+    const reset = createAgentWorkbenchState(state.controllerId, state.sessionId);
     return {
-      ...state,
-      snapshot: resetRun ? null : state.snapshot,
-      proposal: resetRun ? null : state.proposal,
-      selectedProposalRowIds: resetRun ? new Set() : state.selectedProposalRowIds,
-      usageOffset: resetRun ? emptyUsageOffset() : state.usageOffset,
-      continuationPending: resetRun ? false : state.continuationPending,
+      ...reset,
+      transport: state.transport,
+      conversationAnchor: action.conversationAnchor,
       preflight: {
         requestId: action.requestId,
         status: 'requesting',
+        taskInstruction: action.taskInstruction,
         label: '',
         count: 0,
         preflightToken: null,
@@ -149,7 +210,20 @@ export function reduceAgentWorkbench(
       error: null,
     };
   }
-  if (action.type === 'preflight_cancelled') return { ...state, preflight: null };
+  if (action.type === 'preflight_start_requested') {
+    if (state.preflight?.status !== 'ready') return state;
+    return {
+      ...state,
+      preflight: { ...state.preflight, status: 'starting' },
+      error: null,
+    };
+  }
+  if (action.type === 'preflight_start_failed') {
+    return { ...state, preflight: null, error: action.message };
+  }
+  if (action.type === 'preflight_cancelled') {
+    return { ...state, preflight: null, conversationAnchor: null };
+  }
   if (action.type === 'continue_requested') {
     if (!state.snapshot) return state;
     return {
@@ -176,6 +250,7 @@ export function reduceAgentWorkbench(
       transport: 'disconnected',
       error: CONNECTION_INTERRUPTED_COPY,
       continuationPending: false,
+      analysisProgress: null,
       organizeReviewRequestId: null,
       organizeReceiptRequestId: null,
       timeline: appendTimeline(state.timeline, {
@@ -193,9 +268,19 @@ export function reduceAgentWorkbench(
     return reducePreflight(state, message);
   }
   if (message.type === 'bgsmOrganizeJobRunError') {
+    if (
+      message.runId === null
+      && message.generation === null
+      && (
+        message.requestId
+          ? state.preflight?.requestId !== message.requestId
+          : state.preflight?.status !== 'starting'
+      )
+    ) return state;
     if (!matchesActiveRun(state, message.runId, message.generation)) return state;
     return {
       ...state,
+      preflight: message.runId === null ? null : state.preflight,
       continuationPending: false,
       error: message.message,
     };
@@ -203,13 +288,17 @@ export function reduceAgentWorkbench(
   if (message.type === 'bgsmOrganizeJobRunDisconnected') {
     if (!matchesActiveRun(state, message.runId, message.generation)) return state;
     const reset = createAgentWorkbenchState(state.controllerId, state.sessionId);
+    const interruptedSnapshot = state.snapshot
+      && state.snapshot.runId === message.runId
+      && state.snapshot.generation === message.generation
+      ? { ...state.snapshot, state: 'interrupted' as const, terminalReason: 'worker_lost' as const }
+      : null;
     return {
       ...reset,
       transport: 'connected',
       error: WORKER_LOST_COPY,
-      snapshot: state.snapshot
-        ? { ...state.snapshot, state: 'interrupted', terminalReason: 'worker_lost' }
-        : null,
+      snapshot: interruptedSnapshot,
+      conversationAnchor: state.conversationAnchor,
       timeline: appendTimeline(state.timeline, {
         id: `worker-lost:${message.runId ?? 'none'}:${message.generation ?? 'none'}`,
         state: 'interrupted',
@@ -217,30 +306,79 @@ export function reduceAgentWorkbench(
       }),
     };
   }
-  if (message.type === 'bgsmOrganizeJobRunSnapshot' || message.type === 'bgsmOrganizeJobRunResult') {
-    return reduceSnapshot(state, message.snapshot);
-  }
-  if (message.type === 'bgsmOrganizeJobState') {
+  if (message.type === 'bgsmOrganizeJobAnalysisProgress') {
+    const snapshot = state.snapshot;
     if (
-      state.snapshot &&
-      (state.snapshot.runId !== message.runId || state.snapshot.generation !== message.generation)
+      !snapshot
+      || snapshot.state !== 'analyzing'
+      || snapshot.runId !== message.runId
+      || snapshot.generation !== message.generation
+      || snapshot.frozenScope.count !== message.total
     ) return state;
-    const changedJob = state.organizeJob?.jobId !== message.presentation.jobId;
-    if (!changedJob && state.organizeJob && message.presentation.revision < state.organizeJob.revision) {
-      return state;
-    }
-    const leftReview = message.presentation.status !== 'review';
-    const leftReceipt = message.presentation.status !== 'completed';
+    const durable = analyzedRepositoryCount(state);
+    const processed = Math.min(message.total, Math.max(durable, message.processed));
+    const current = state.analysisProgress;
+    if (
+      current
+      && current.runId === message.runId
+      && current.generation === message.generation
+      && current.total === message.total
+      && current.processed >= processed
+    ) return state;
+    if (!current && processed <= durable) return state;
     return {
       ...state,
-      organizeJob: message.presentation,
+      analysisProgress: {
+        runId: message.runId,
+        generation: message.generation,
+        processed,
+        total: message.total,
+      },
+    };
+  }
+  if (message.type === 'bgsmOrganizeJobRunSnapshot' || message.type === 'bgsmOrganizeJobRunResult') {
+    return reduceSnapshot(state, message.snapshot, action.authoritative === true);
+  }
+  if (message.type === 'bgsmOrganizeJobState') {
+    const presentation = message.presentation;
+    const currentJob = state.organizeJob;
+    const changedJob = currentJob?.jobId !== presentation.jobId;
+    const sameJob = !!currentJob && !changedJob;
+    if (sameJob && presentation.revision < currentJob.revision) {
+      return state;
+    }
+    if (sameJob && presentation.generation < currentJob.generation) return state;
+    const snapshotMismatch = !!state.snapshot && (
+      state.snapshot.runId !== presentation.runId
+      || state.snapshot.generation !== presentation.generation
+    );
+    if (snapshotMismatch) {
+      if (!sameJob) return state;
+      if (presentation.generation <= state.snapshot!.generation) return state;
+    }
+    const leftReview = presentation.status !== 'review';
+    const leftReceipt = presentation.status !== 'completed';
+    const continuationPending = presentation.status === 'analyzing'
+      ? state.continuationPending || snapshotMismatch
+      : false;
+    const progressMatchesPresentation = state.analysisProgress?.runId === presentation.runId
+      && state.analysisProgress.generation === presentation.generation;
+    return {
+      ...state,
+      organizeJob: presentation,
       organizeReviewPage: changedJob || leftReview ? null : state.organizeReviewPage,
       organizeReceiptPage: changedJob || leftReceipt ? null : state.organizeReceiptPage,
       organizeReviewRequestId: changedJob || leftReview ? null : state.organizeReviewRequestId,
       organizeReceiptRequestId: changedJob || leftReceipt ? null : state.organizeReceiptRequestId,
       proposal: leftReview ? null : state.proposal,
       selectedProposalRowIds: leftReview ? new Set() : state.selectedProposalRowIds,
-      continuationPending: false,
+      continuationPending,
+      conversationAnchor: changedJob && !state.preflight && !state.snapshot
+        ? fallbackConversationAnchor(presentation.capturedAt)
+        : state.conversationAnchor ?? fallbackConversationAnchor(presentation.capturedAt),
+      analysisProgress: presentation.status === 'analyzing' && progressMatchesPresentation
+        ? state.analysisProgress
+        : null,
       error: null,
     };
   }
@@ -303,6 +441,7 @@ function reducePreflight(
     preflight: {
       requestId: message.requestId,
       status: message.status,
+      taskInstruction: state.preflight.taskInstruction,
       label: message.label,
       count: message.count,
       preflightToken: message.preflightToken,
@@ -320,18 +459,49 @@ function reducePreflight(
 function reduceSnapshot(
   state: AgentWorkbenchState,
   snapshot: OrganizeJobRunSnapshot,
+  authoritative = false,
 ): AgentWorkbenchState {
-  if (!canAcceptSnapshot(state, snapshot)) return state;
+  if (!canAcceptSnapshot(state, snapshot, authoritative)) return state;
   const childRun = state.snapshot?.runId !== snapshot.runId;
-  const continuationChild = childRun && state.continuationPending;
+  const continuationChild = childRun && (
+    state.continuationPending
+    || (
+      !!state.snapshot
+      && state.organizeJob?.runId === snapshot.runId
+      && state.organizeJob.generation === snapshot.generation
+      && snapshot.generation > state.snapshot.generation
+    )
+    || (authoritative && state.organizeJob?.status === 'analyzing')
+  );
+  const cancelledMatchingJob = snapshot.state === 'cancelled'
+    && !!state.organizeJob
+    && (
+      (
+        state.organizeJob.runId === snapshot.runId
+        && state.organizeJob.generation === snapshot.generation
+      )
+      || snapshot.generation > state.organizeJob.generation
+    );
   return {
     ...state,
     snapshot,
+    organizeJob: cancelledMatchingJob ? null : state.organizeJob,
+    organizeReviewPage: cancelledMatchingJob ? null : state.organizeReviewPage,
+    organizeReceiptPage: cancelledMatchingJob ? null : state.organizeReceiptPage,
+    organizeReviewRequestId: cancelledMatchingJob ? null : state.organizeReviewRequestId,
+    organizeReceiptRequestId: cancelledMatchingJob ? null : state.organizeReceiptRequestId,
+    proposal: cancelledMatchingJob ? null : state.proposal,
+    selectedProposalRowIds: cancelledMatchingJob ? new Set() : state.selectedProposalRowIds,
+    analysisProgress: authoritative || childRun || snapshot.state !== 'analyzing'
+      ? null
+      : state.analysisProgress,
     preflight: childRun ? null : state.preflight,
     usageOffset: continuationChild && state.snapshot
       ? addUsageOffset(state.usageOffset, state.snapshot)
       : childRun ? emptyUsageOffset() : state.usageOffset,
     continuationPending: false,
+    conversationAnchor: state.conversationAnchor
+      ?? fallbackConversationAnchor(snapshot.frozenScope.capturedAt),
     transport: 'connected',
     error: null,
     timeline: appendTimeline(state.timeline, {
@@ -340,6 +510,10 @@ function reduceSnapshot(
       label: runStateLabel(snapshot.state),
     }),
   };
+}
+
+function fallbackConversationAnchor(createdAt: number): WorkbenchConversationAnchor {
+  return { messageId: null, createdAt };
 }
 
 function reduceEvent(state: AgentWorkbenchState, event: OrganizeJobRunEvent): AgentWorkbenchState {
@@ -419,8 +593,20 @@ function matchesCurrentRun(state: AgentWorkbenchState, runId: string, generation
   return state.snapshot.runId === runId && state.snapshot.generation === generation;
 }
 
-function canAcceptSnapshot(state: AgentWorkbenchState, snapshot: OrganizeJobRunSnapshot): boolean {
+function canAcceptSnapshot(
+  state: AgentWorkbenchState,
+  snapshot: OrganizeJobRunSnapshot,
+  authoritative: boolean,
+): boolean {
   if (matchesCurrentRun(state, snapshot.runId, snapshot.generation)) return true;
+  if (
+    state.organizeJob?.runId === snapshot.runId
+    && state.organizeJob.generation === snapshot.generation
+    && (!state.snapshot || snapshot.generation > state.snapshot.generation)
+  ) return true;
+  if (authoritative && state.snapshot && snapshot.generation > state.snapshot.generation) {
+    return true;
+  }
   return state.continuationPending &&
     !!state.snapshot &&
     snapshot.runId !== state.snapshot.runId &&
@@ -433,8 +619,21 @@ function matchesActiveRun(
   runId: string | null,
   generation: number | null,
 ): boolean {
-  if (runId === null && generation === null) return state.snapshot === null;
-  return !!state.snapshot && state.snapshot.runId === runId && state.snapshot.generation === generation;
+  if (runId === null && generation === null) {
+    return state.snapshot === null && state.organizeJob === null;
+  }
+  const active = currentWorkbenchRunIdentity(state);
+  return !!active && active.runId === runId && active.generation === generation;
+}
+
+function currentWorkbenchRunIdentity(
+  state: AgentWorkbenchState,
+): Pick<OrganizeJobRunSnapshot, 'runId' | 'generation'> | null {
+  const snapshot = state.snapshot;
+  const durable = state.organizeJob;
+  if (!durable) return snapshot;
+  if (!snapshot || durable.generation >= snapshot.generation) return durable;
+  return snapshot;
 }
 
 function matchesController(
@@ -499,6 +698,11 @@ export function cumulativeOrganizeJobRunUsage(state: AgentWorkbenchState): Workb
 }
 
 export function hasCompleteAnalysisCoverage(state: AgentWorkbenchState): boolean {
+  const durableCoverage = state.organizeJob?.coverage;
+  if (durableCoverage) {
+    return durableCoverage.analyzed === durableCoverage.total
+      && durableCoverage.analysisFailed === 0;
+  }
   const coverage = state.snapshot?.coverage;
   if (coverage) {
     return coverage.analyzed === coverage.total && coverage.analysisFailed === 0;
@@ -509,21 +713,24 @@ export function hasCompleteAnalysisCoverage(state: AgentWorkbenchState): boolean
 }
 
 export function analyzedRepositoryCount(state: AgentWorkbenchState): number {
-  return state.snapshot?.coverage?.analyzed
-    ?? cumulativeOrganizeJobRunUsage(state).consumedFrozenPositions;
+  const snapshotCount = state.snapshot?.coverage?.analyzed ?? 0;
+  const usageCount = cumulativeOrganizeJobRunUsage(state).consumedFrozenPositions;
+  const durableJobCount = state.organizeJob?.coverage.analyzed ?? 0;
+  return Math.max(snapshotCount, usageCount, durableJobCount);
 }
 
-export function canChatWithOrganizeJobRun(snapshot: Pick<OrganizeJobRunSnapshot, 'state'> | null): boolean {
-  if (!snapshot) return true;
-  return [
-    'review',
-    'analysis_blocked',
-    'cancelled',
-    'interrupted',
-    'failed',
-    'completed',
-    'budget_exhausted',
-  ].includes(snapshot.state);
+export function displayedAnalyzedRepositoryCount(state: AgentWorkbenchState): number {
+  const durable = analyzedRepositoryCount(state);
+  const progress = state.analysisProgress;
+  const snapshot = state.snapshot;
+  if (
+    !progress
+    || !snapshot
+    || progress.runId !== snapshot.runId
+    || progress.generation !== snapshot.generation
+    || progress.total !== snapshot.frozenScope.count
+  ) return durable;
+  return Math.min(progress.total, Math.max(durable, progress.processed));
 }
 
 function emptyUsageOffset(): WorkbenchUsageOffset {
