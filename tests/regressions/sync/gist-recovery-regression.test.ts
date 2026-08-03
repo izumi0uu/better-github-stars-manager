@@ -277,6 +277,28 @@ describe('Gist recovery regressions', () => {
     assert.deepEqual(snapshotDirty(), { names: ['owner/repo'], meta: true });
   });
 
+  it('push recovers tag dirtiness from IndexedDB after in-memory state is lost', async () => {
+    await resetState();
+    await storeSyntheticToken();
+    await authStore.update({ gistId: 'bound-gist' });
+    await idbTagStore.setTags('owner/repo', ['alpha']);
+    assert.equal(await db.tagDirtyOutbox.count(), 1);
+    resetDirtyForDev();
+    assert.deepEqual(snapshotDirty(), { names: [], meta: false });
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/gists/bound-gist') && method === 'GET') return response(200, {});
+      if (url.endsWith('/gists/bound-gist') && method === 'PATCH') return response(200, {});
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    const result = await idbTagStore.syncPush();
+    assert.equal(result.pushed, 1);
+    assert.equal(await db.tagDirtyOutbox.count(), 0);
+  });
+
   it('push only clears the dirty versions included in the uploaded snapshot', async () => {
     await resetState();
     await storeSyntheticToken();
@@ -300,6 +322,7 @@ describe('Gist recovery regressions', () => {
     assert.equal(result.pushed, 1);
     assert.equal(patched.payload?.tags['owner/repo']?.notes, '');
     assert.deepEqual(snapshotDirty(), { names: ['owner/repo'], meta: false });
+    assert.equal(await db.tagDirtyOutbox.count(), 1);
   });
 
   it('push only clears tag meta when the uploaded meta version is still current', async () => {

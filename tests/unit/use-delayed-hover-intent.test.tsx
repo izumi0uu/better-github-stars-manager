@@ -14,16 +14,21 @@ const mountedRoots: MountedRoot[] = [];
 
 function Harness({
   enabled,
+  delayMs = 20,
+  closeDelayMs = 0,
   onOpen,
   onClose,
 }: {
   enabled: boolean;
+  delayMs?: number;
+  closeDelayMs?: number;
   onOpen: () => void;
   onClose: () => void;
 }) {
   const intent = useDelayedHoverIntent({
     enabled,
-    delayMs: 20,
+    delayMs,
+    closeDelayMs,
     onOpen,
     onClose,
   });
@@ -72,5 +77,45 @@ describe('useDelayedHoverIntent', () => {
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('bridges the leave→enter gap with closeDelayMs without snapping shut', () => {
+    vi.useFakeTimers();
+    const onOpen = vi.fn();
+    const onClose = vi.fn();
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+    mountedRoots.push(root);
+    act(() => {
+      root.render(
+        <Harness
+          enabled
+          delayMs={20}
+          closeDelayMs={100}
+          onOpen={onOpen}
+          onClose={onClose}
+        />,
+      );
+    });
+    const button = container.querySelector('button') as HTMLButtonElement;
+
+    act(() => {
+      button.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      vi.advanceTimersByTime(20);
+    });
+    expect(onOpen).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      button.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+      // Still inside the close grace window.
+      vi.advanceTimersByTime(40);
+      button.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    // Re-enter during pending close re-asserts open immediately (no second delay).
+    expect(onOpen).toHaveBeenCalledTimes(2);
   });
 });

@@ -61,6 +61,8 @@
     --gsm-ease-linearized: ease;
     --gsm-ease-pulse: ease-in-out;
     --gsm-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+    --gsm-ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+    --gsm-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
     --gsm-ease-pop: cubic-bezier(0.2, 0.9, 0.3, 1.25);
     --gsm-ease-overshoot: cubic-bezier(0.2, 0.8, 0.3, 1.1);
   }

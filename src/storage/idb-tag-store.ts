@@ -1,4 +1,4 @@
-import type { Tag } from '@/types';
+import type { Tag, TagDirtyOutboxRecord } from '@/types';
 import type { CountProgressCallback, TagStore } from '@/api/tag-store';
 import { gistTagStore } from '@/sync/gist-tag-store';
 import { db } from './db';
@@ -27,6 +27,7 @@ const dirtyVersions = new Map<string, number>();
 let dirtyMeta = false;
 let dirtyMetaVersion = 0;
 let dirtyVersion = 0;
+const TAG_DIRTY_META_ID = 'meta:*';
 
 export type DirtySnapshot = {
   names: Array<{ name: string; version: number }>;
@@ -36,6 +37,47 @@ export type DirtySnapshot = {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+function newOutboxVersion(): string {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+export async function queueTagDirtyOutbox(fullName: string, updatedAt: string): Promise<void> {
+  await db.tagDirtyOutbox.put({
+    id: `tag:${fullName}`,
+    kind: 'tag',
+    key: fullName,
+    version: newOutboxVersion(),
+    updatedAt,
+  });
+}
+
+async function queueTagMetaDirtyOutbox(updatedAt: string): Promise<void> {
+  await db.tagDirtyOutbox.put({
+    id: TAG_DIRTY_META_ID,
+    kind: 'meta',
+    key: '*',
+    version: newOutboxVersion(),
+    updatedAt,
+  });
+}
+
+export async function snapshotTagDirtyOutbox(): Promise<TagDirtyOutboxRecord[]> {
+  return db.tagDirtyOutbox.toArray();
+}
+
+export async function clearTagDirtyOutbox(
+  snapshot: readonly TagDirtyOutboxRecord[],
+): Promise<void> {
+  if (snapshot.length === 0) return;
+  await db.transaction('rw', db.tagDirtyOutbox, async () => {
+    for (const row of snapshot) {
+      const current = await db.tagDirtyOutbox.get(row.id);
+      if (current?.version === row.version) await db.tagDirtyOutbox.delete(row.id);
+    }
+  });
 }
 
 function markDirty(full_name: string): void {
@@ -84,6 +126,76 @@ function buildManualTagReplacement(existing: Tag, tags: string[]) {
   };
 }
 
+/**
+ * Additive agent write: appends manual tags without clearing exclusion tombstones.
+ * Model-facing assignment is not a user-owned re-add of a deleted tag.
+ */
+export type BgsmAgentManualTagAdditionResult = Readonly<{
+  manualTags: string[];
+  changed: boolean;
+  reason: 'missing' | 'tombstoned' | 'excluded_tag' | null;
+}>;
+
+export async function addBgsmAgentManualTags(
+  full_name: string,
+  tags: readonly string[],
+): Promise<BgsmAgentManualTagAdditionResult> {
+  const additions = addTagNames([], [...tags]);
+  if (additions.length === 0) {
+    throw new TypeError('Agent manual-tag additions must include at least one non-empty tag.');
+  }
+
+  const result = await db.transaction(
+    'rw',
+    db.stars,
+    db.tags,
+    db.tagMeta,
+    db.tagDirtyOutbox,
+    async () => {
+    const star = await db.stars.get(full_name);
+    if (!star) {
+      return { manualTags: [], changed: false, reason: 'missing' as const };
+    }
+    if (star.tombstone) {
+      return { manualTags: [], changed: false, reason: 'tombstoned' as const };
+    }
+
+    const stored = await db.tags.get(full_name) as LegacyTagRow | undefined;
+    const existing = stored ? normalizeStoredTag(stored) : emptyTag(full_name);
+    const currentManual = manualTagNames(existing);
+    const excludedKeys = new Set(
+      (await db.tagMeta.toArray())
+        .filter((entry) => entry.excluded)
+        .map((entry) => entry.name.trim().normalize('NFKC').toLocaleLowerCase('en-US')),
+    );
+    if (additions.some((tag) => (
+      excludedKeys.has(tag.trim().normalize('NFKC').toLocaleLowerCase('en-US'))
+    ))) {
+      return { manualTags: currentManual, changed: false, reason: 'excluded_tag' as const };
+    }
+
+    const nextManual = addTagNames(currentManual, additions);
+    if (sameTagNames(currentManual, nextManual)) {
+      return { manualTags: currentManual, changed: false, reason: null };
+    }
+
+    const ts = now();
+    await db.tags.put(normalizeStoredTag({
+      ...existing,
+      favorite: existing.favorite ?? false,
+      manualTags: nextManual,
+      manualTagsMtime: ts,
+      mtime: ts,
+    }));
+    await queueTagDirtyOutbox(full_name, ts);
+    return { manualTags: nextManual, changed: true, reason: null };
+    },
+  );
+
+  if (result.changed) markDirty(full_name);
+  return Object.freeze({ ...result, manualTags: [...result.manualTags] });
+}
+
 export const idbTagStore: TagStore = {
   async get(full_name) {
     return getNormalized(full_name);
@@ -108,29 +220,36 @@ export const idbTagStore: TagStore = {
   },
 
   async setTags(full_name, tags) {
-    const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
-    const replacement = buildManualTagReplacement(existing, tags);
     const ts = now();
-    await db.tags.put(normalizeStoredTag({
-      ...existing,
-      favorite: existing.favorite ?? false,
-      manualTags: replacement.manualTags,
-      dismissedAutoTags: replacement.dismissedAutoTags,
-      manualTagsMtime: ts,
-      dismissedAutoTagsMtime: replacement.dismissedAutoTagsChanged ? ts : existing.dismissedAutoTagsMtime,
-      mtime: ts,
-    }));
-    markDirty(full_name);
-    // (Re)typing a previously-deleted global tag clears its tombstone.
-    const newlyAdded = replacement.manualTags
-      .filter((t) => !includesTagName(replacement.existingManualTags, t));
-    for (const name of newlyAdded) {
-      const meta = await db.tagMeta.get(name);
-      if (meta?.excluded) {
-        await db.tagMeta.put({ ...meta, excluded: false, mtime: now() });
-        markMetaDirty();
+    let clearedExcluded = false;
+    await db.transaction('rw', db.tags, db.tagMeta, db.tagDirtyOutbox, async () => {
+      const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
+      const replacement = buildManualTagReplacement(existing, tags);
+      await db.tags.put(normalizeStoredTag({
+        ...existing,
+        favorite: existing.favorite ?? false,
+        manualTags: replacement.manualTags,
+        dismissedAutoTags: replacement.dismissedAutoTags,
+        manualTagsMtime: ts,
+        dismissedAutoTagsMtime: replacement.dismissedAutoTagsChanged ? ts : existing.dismissedAutoTagsMtime,
+        mtime: ts,
+      }));
+      await queueTagDirtyOutbox(full_name, ts);
+      // (Re)typing a previously-deleted global tag is the user-owned path that
+      // clears its tombstone. Model-facing organization never takes this path.
+      const newlyAdded = replacement.manualTags
+        .filter((t) => !includesTagName(replacement.existingManualTags, t));
+      for (const name of newlyAdded) {
+        const meta = await db.tagMeta.get(name);
+        if (meta?.excluded) {
+          await db.tagMeta.put({ ...meta, excluded: false, mtime: ts });
+          clearedExcluded = true;
+        }
       }
-    }
+      if (clearedExcluded) await queueTagMetaDirtyOutbox(ts);
+    });
+    markDirty(full_name);
+    if (clearedExcluded) markMetaDirty();
   },
 
   async setTagsBulk(updates) {
@@ -138,7 +257,7 @@ export const idbTagStore: TagStore = {
     let clearedExcluded = false;
     const ts = now();
 
-    await db.transaction('rw', db.tags, db.tagMeta, async () => {
+    await db.transaction('rw', db.tags, db.tagMeta, db.tagDirtyOutbox, async () => {
       const tagRecords: Tag[] = [];
       for (const update of updates) {
         const existing = (await getNormalized(update.full_name)) ?? emptyTag(update.full_name);
@@ -160,6 +279,7 @@ export const idbTagStore: TagStore = {
           mtime: ts,
         }));
         touchedNames.push(update.full_name);
+        await queueTagDirtyOutbox(update.full_name, ts);
 
         const newlyAdded = replacement.manualTags
           .filter((tag) => !includesTagName(replacement.existingManualTags, tag));
@@ -172,6 +292,7 @@ export const idbTagStore: TagStore = {
         }
       }
       if (tagRecords.length > 0) await db.tags.bulkPut(tagRecords);
+      if (clearedExcluded) await queueTagMetaDirtyOutbox(ts);
     });
 
     for (const fullName of touchedNames) markDirty(fullName);
@@ -183,7 +304,7 @@ export const idbTagStore: TagStore = {
     const touchedNames: string[] = [];
     const ts = now();
 
-    await db.transaction('rw', db.tags, async () => {
+    await db.transaction('rw', db.tags, db.tagDirtyOutbox, async () => {
       const tagRecords: Tag[] = [];
       for (const update of updates) {
         const existing = (await getNormalized(update.full_name)) ?? emptyTag(update.full_name);
@@ -201,6 +322,7 @@ export const idbTagStore: TagStore = {
           autoTagsMtime: ts,
         }));
         touchedNames.push(update.full_name);
+        await queueTagDirtyOutbox(update.full_name, ts);
       }
       if (tagRecords.length > 0) await db.tags.bulkPut(tagRecords);
     });
@@ -214,7 +336,7 @@ export const idbTagStore: TagStore = {
     let touched = false;
     const ts = now();
 
-    await db.transaction('rw', db.tags, async () => {
+    await db.transaction('rw', db.tags, db.tagDirtyOutbox, async () => {
       const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
       const hadManual = includesTagName(existing.manualTags, name);
       const hadAuto = includesTagName(existing.autoTags, name);
@@ -235,6 +357,7 @@ export const idbTagStore: TagStore = {
           : ts,
         mtime: ts,
       }));
+      await queueTagDirtyOutbox(full_name, ts);
       removed = true;
       touched = true;
     });
@@ -244,24 +367,38 @@ export const idbTagStore: TagStore = {
   },
 
   async setNotes(full_name, notes) {
-    const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
-    await db.tags.put(normalizeStoredTag({ ...existing, favorite: existing.favorite ?? false, notes, mtime: now() }));
+    const ts = now();
+    await db.transaction('rw', db.tags, db.tagDirtyOutbox, async () => {
+      const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
+      await db.tags.put(normalizeStoredTag({ ...existing, favorite: existing.favorite ?? false, notes, mtime: ts }));
+      await queueTagDirtyOutbox(full_name, ts);
+    });
     markDirty(full_name);
   },
 
   async setFavorite(full_name, favorite) {
-    const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
-    await db.tags.put(normalizeStoredTag({ ...existing, favorite, mtime: now() }));
+    const ts = now();
+    await db.transaction('rw', db.tags, db.tagDirtyOutbox, async () => {
+      const existing = (await getNormalized(full_name)) ?? emptyTag(full_name);
+      await db.tags.put(normalizeStoredTag({ ...existing, favorite, mtime: ts }));
+      await queueTagDirtyOutbox(full_name, ts);
+    });
     markDirty(full_name);
   },
 
   async upsert(tag) {
-    await db.tags.put({ ...normalizeStoredTag(tag), favorite: tag.favorite ?? false });
+    await db.transaction('rw', db.tags, db.tagDirtyOutbox, async () => {
+      await db.tags.put({ ...normalizeStoredTag(tag), favorite: tag.favorite ?? false });
+      await queueTagDirtyOutbox(tag.full_name, tag.mtime);
+    });
     markDirty(tag.full_name);
   },
 
   async upsertMeta(meta) {
-    await db.tagMeta.put(meta);
+    await db.transaction('rw', db.tagMeta, db.tagDirtyOutbox, async () => {
+      await db.tagMeta.put(meta);
+      await queueTagMetaDirtyOutbox(meta.mtime);
+    });
     markMetaDirty();
   },
 
@@ -273,7 +410,7 @@ export const idbTagStore: TagStore = {
     let removed = 0;
     const touchedNames: string[] = [];
     const ts = now();
-    await db.transaction('rw', db.tags, db.tagMeta, async () => {
+    await db.transaction('rw', db.tags, db.tagMeta, db.tagDirtyOutbox, async () => {
       const rows = await db.tags.toArray() as LegacyTagRow[];
       for (const row of rows) {
         const t = normalizeStoredTag(row);
@@ -292,6 +429,7 @@ export const idbTagStore: TagStore = {
           mtime: ts,
         }));
         touchedNames.push(t.full_name);
+        await queueTagDirtyOutbox(t.full_name, ts);
         removed++;
       }
       // Persist a delete tombstone (not a hard delete) so auto-assign can't resurrect the tag on the next sync; preserve any existing dimension/color.
@@ -303,6 +441,7 @@ export const idbTagStore: TagStore = {
         excluded: true,
         mtime: ts,
       });
+      await queueTagMetaDirtyOutbox(ts);
     });
     for (const fullName of touchedNames) markDirty(fullName);
     markMetaDirty();
@@ -315,7 +454,7 @@ export const idbTagStore: TagStore = {
     let assignmentsRemoved = 0;
     const ts = now();
 
-    await db.transaction('rw', db.tags, async () => {
+    await db.transaction('rw', db.tags, db.tagDirtyOutbox, async () => {
       const rows = await db.tags.toArray() as LegacyTagRow[];
       for (const row of rows) {
         const tag = normalizeStoredTag(row);
@@ -335,6 +474,7 @@ export const idbTagStore: TagStore = {
           favorite: tag.favorite ?? false,
           mtime: ts,
         }));
+        await queueTagDirtyOutbox(tag.full_name, ts);
       }
     });
 
@@ -390,4 +530,9 @@ export function resetDirtyForDev() {
   dirtyMeta = false;
   dirtyMetaVersion = 0;
   dirtyVersion = 0;
+}
+
+export function markDirtyForLocalWrites(fullNames: Iterable<string>, meta = false): void {
+  for (const fullName of fullNames) markDirty(fullName);
+  if (meta) markMetaDirty();
 }

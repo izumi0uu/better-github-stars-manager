@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, URL } from 'node:url';
 import manifest from './manifest.config';
+import { providerDiagnosticsBridgePlugin } from './src/dev-agent/provider-diagnostics-server';
 
 function git(args: string[], fallback = ''): string {
   try {
@@ -30,11 +31,14 @@ export default defineConfig(({ command }) => {
   const RELEASE = process.env.GSM_RELEASE === 'true';
   const DEV = !RELEASE && (command === 'serve' || command === 'build' || process.env.GSM_DEV === 'true');
   const VERSION_HASH = versionHash();
+  const outDir = process.env.GSM_DIST_DIR ?? 'dist';
 
   return {
+    base: './',
     plugins: [
       react(),
       crx({ manifest }),
+      ...(DEV && command === 'serve' ? [providerDiagnosticsBridgePlugin()] : []),
       {
         name: 'gsm-build-info',
         closeBundle() {
@@ -53,9 +57,21 @@ export default defineConfig(({ command }) => {
     },
     build: {
       target: 'es2022',
-      outDir: 'dist',
+      outDir,
       emptyOutDir: true,
+      modulePreload: {
+        resolveDependencies(filename, dependencies) {
+          // The Agent trace module is imported by the MV3 service worker. Vite's
+          // browser preload helper reads `document`, which does not exist there.
+          return /(?:agent-turn|organize-job)-trace/u.test(filename) ? [] : dependencies;
+        },
+      },
       rollupOptions: {
+        input: DEV
+          ? {
+              'dev-agent': fileURLToPath(new URL('./src/dev-agent/index.html', import.meta.url)),
+            }
+          : undefined,
         // Dexie needs to not be split in a way that breaks content-script contexts
         output: { chunkFileNames: 'assets/[name]-[hash].js' },
       },

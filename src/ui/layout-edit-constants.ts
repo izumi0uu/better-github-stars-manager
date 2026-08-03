@@ -1,6 +1,9 @@
 export const LAYOUT_PREVIEW_HOVER_DELAY_MS = 300;
 export const BROWSE_LAYOUT_FADE_DELAY_MS = 120;
 export const BROWSE_LAYOUT_TABLE_OPACITY_MS = 160;
+export const LAYOUT_MODE_TABLE_PREPARE_MS = 32;
+export const LAYOUT_MODE_TABLE_TRANSITION_MS = 180;
+export type LayoutModeTableTransitionPhase = 'idle' | 'pre-enter' | 'entering';
 export const COLUMN_HIDE_INTENT_DISTANCE_PX = 44;
 export const COLUMN_GAP_PX = 8;
 export const TRAY_RESTORE_HEADER_BUFFER_PX = 24;

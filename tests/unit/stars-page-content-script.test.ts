@@ -35,9 +35,8 @@ describe('stars-page content script invariants', () => {
   it('keeps GitHub shortcut suppression inside editable shadow-root targets', () => {
     const code = source();
 
-    expect(code).toContain("shadow.addEventListener('keydown'");
-    expect(code).toContain("tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable");
-    expect(code).toContain('e.stopPropagation()');
+    expect(code).toContain("shadow.addEventListener('keydown', stopEditableKeydownAtShadowBoundary)");
+    expect(code).not.toMatch(/addEventListener\('keydown',[\s\S]*?,\s*true\)/u);
     expect(code).toContain("document.addEventListener('turbo:load', sync);");
     expect(code).toContain("document.addEventListener('turbo:render', sync);");
     expect(code).toContain("window.addEventListener('popstate', sync);");

@@ -82,10 +82,10 @@ Apply this repo's frontend conventions before changing UI code. Keep changes sco
   - locked columns cannot hide;
   - hidden tray order is canonical;
   - tray drag-back has the 24px header buffer.
-- Numeric columns may be right-aligned only in the default browse layout.
-  - In custom layout contexts — editing, saved custom mode, and custom hover preview — numeric column headers and row content must align with their editable column group instead of anchoring to the column's right boundary.
-  - Right-anchored narrow numeric columns appear stuck to the next column after resize because the column grows leftward while the content remains visually attached to the neighbor boundary.
-  - Do not drive editable/custom header or row alignment directly from `COLUMN_DEFS[id].align`; gate numeric right-alignment behind default browse mode, or pass an explicit custom-layout alignment flag through the row/header rendering path.
+- Switch between browse and edit as one table-shell transition; suppress per-grid column-width tweening while the shell settles.
+- Keep the Stars count column start-aligned in every layout context: default browse, editing, saved custom mode, and custom hover preview.
+  - Its header and row content should share the same alignment so switching modes does not create a visual jump.
+  - Do not add a layout-mode-specific Stars alignment prop; use the column definition as the shared source of truth.
 
 ## Shadow Root Rules
 

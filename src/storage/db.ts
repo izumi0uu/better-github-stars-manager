@@ -1,5 +1,15 @@
 import Dexie, { type Table } from 'dexie';
-import type { Star, Tag, TagMeta } from '@/types';
+import type {
+  OrganizeApplyRecord,
+  OrganizeApplyRowRecord,
+  OrganizeItemRecord,
+  OrganizeJobRecord,
+  OrganizeTaxonomyRecord,
+  Star,
+  Tag,
+  TagDirtyOutboxRecord,
+  TagMeta,
+} from '@/types';
 import { normalizeStoredTag, type LegacyTagRow } from './tag-shape';
 
 /**
@@ -11,6 +21,12 @@ export class StarsDB extends Dexie {
   stars!: Table<Star, string>;
   tags!: Table<Tag, string>;
   tagMeta!: Table<TagMeta, string>;
+  organizeJobs!: Table<OrganizeJobRecord, string>;
+  organizeItems!: Table<OrganizeItemRecord, string>;
+  organizeTaxonomies!: Table<OrganizeTaxonomyRecord, string>;
+  organizeApplies!: Table<OrganizeApplyRecord, string>;
+  organizeApplyRows!: Table<OrganizeApplyRowRecord, string>;
+  tagDirtyOutbox!: Table<TagDirtyOutboxRecord, string>;
 
   constructor() {
     super('better-github-stars-manager');
@@ -39,6 +55,19 @@ export class StarsDB extends Dexie {
       const table = tx.table('tags');
       const rows = await table.toArray() as LegacyTagRow[];
       await table.bulkPut(rows.map((row) => normalizeStoredTag(row)));
+    });
+    // v4 adds isolated durable artifacts for whole-library tag organization and
+    // Gist dirtiness. The non-indexed analysis split worklist lives on organizeJobs.
+    this.version(4).stores({
+      stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
+      tags: 'full_name, mtime',
+      tagMeta: 'name, dimension, mtime',
+      organizeJobs: 'jobId, &activeSlot, status, updatedAt',
+      organizeItems: 'id, [jobId+position], [jobId+analysisState], jobId, position, analysisState, leaseExpiresAt',
+      organizeTaxonomies: 'jobId',
+      organizeApplies: 'applyId, jobId, status',
+      organizeApplyRows: 'id, [applyId+position], [applyId+state], applyId, state, leaseExpiresAt',
+      tagDirtyOutbox: 'id, kind, updatedAt',
     });
   }
 }

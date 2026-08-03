@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
 import { Toolbar } from '@/ui/components/Toolbar';
+import { AutoTagAgentPrompt } from '@/ui/components/AutoTagAgentPrompt';
 import { FilterSidebar } from '@/ui/components/FilterSidebar';
 import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
@@ -11,6 +12,7 @@ import { StarsTable } from '@/ui/components/StarsTable';
 import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
 import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
+import { useAutoTagAgentPrompt } from '@/ui/hooks/use-auto-tag-agent-prompt';
 import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
@@ -27,6 +29,11 @@ import { COLUMN_DEFS } from '@/ui/column-layout';
 import { layoutViewportFromMeasurements, type LayoutViewportState } from '@/ui/layout-resize-surface';
 import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
 import { nextOpenUnstarFullName } from '@/ui/unstar-popover-state';
+import type { AgentHostPresentation } from '@/ui/components/AgentHost';
+
+const LazyAgentHost = lazy(() => import('@/ui/components/AgentHost').then(({ AgentHost }) => ({
+  default: AgentHost,
+})));
 
 export { layoutViewportFromMeasurements };
 
@@ -114,6 +121,12 @@ export function ManagerPanel() {
     isOnboardingCardStage,
   } = useManagerSyncActions({ refreshStars });
   const [selected, setSelected] = useState<string | null>(null);
+  const [agentPanelOpen, setAgentPanelOpen] = useState(false);
+  const [agentHostMounted, setAgentHostMounted] = useState(false);
+  const [agentPresentation, setAgentPresentation] = useState<AgentHostPresentation>({
+    status: null,
+    active: false,
+  });
   const [coachStep, setCoachStep] = useState<number | null>(null);
   const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
   const [unstarFeedback, setUnstarFeedback] = useState<UnstarFeedback | null>(null);
@@ -145,6 +158,7 @@ export function ManagerPanel() {
     trayDropReady,
     trayCaretX,
     layoutFaded,
+    layoutModeTransitionPhase,
     flashedColumn,
     columnMenuOpen,
     columnMenuPosition,
@@ -170,7 +184,6 @@ export function ManagerPanel() {
     toggleColumnMenu,
   } = useColumnLayoutEditor(rootRef, listRef, layoutResizeLiveAdapterRef);
   const interactionLocked = editingLayout;
-  const customColumnLayoutActive = editingLayout || layoutMode === 'custom' || previewingCustomLayout;
   const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
   const visibleRows = rows;
   const visibleTotal = total;
@@ -238,6 +251,53 @@ export function ManagerPanel() {
   const handleSelect = (full_name: string) => {
     setSelected((cur) => (cur === full_name ? null : full_name));
   };
+
+  const openAgentPanel = () => {
+    setAgentHostMounted(true);
+    setAgentPanelOpen(true);
+  };
+
+  const handleAutoAssignTags = async () => {
+    await autoAssignTags();
+  };
+
+  const autoTagAgentPrompt = useAutoTagAgentPrompt({
+    onOpenAgent: openAgentPanel,
+    onRunAutoTags: () => { void handleAutoAssignTags(); },
+  });
+
+  const agentCandidate = useMemo(() => selected
+    ? {
+        kind: 'selected_repository' as const,
+        selectedRepositoryIdHint: selected,
+      }
+    : {
+        kind: 'current_view' as const,
+        filter: {
+          query: f.query,
+          languages: [...new Set(f.languages)],
+          tags: [...new Set(f.tags)],
+          tagMode: f.tagMode,
+          showTombstone: f.showTombstone,
+          onlyFavorite: f.onlyFavorite,
+          onlyUntagged: f.onlyUntagged,
+          onlyArchived: f.onlyArchived,
+          sortKey: f.sortKey,
+          sortDir: f.sortDir,
+        },
+      }, [
+    f.languages,
+    f.onlyArchived,
+    f.onlyFavorite,
+    f.onlyUntagged,
+    f.query,
+    f.showTombstone,
+    f.sortDir,
+    f.sortKey,
+    f.tagMode,
+    f.tags,
+    selected,
+  ]);
 
   const handleToggleFavorite = async (full_name: string, favorite: boolean) => {
     setFavoriteOverrides((current) => ({
@@ -350,7 +410,10 @@ export function ManagerPanel() {
           pendingAction={pendingAction}
           successAction={successAction}
           onSync={doSync}
-          onAutoAssignTags={autoAssignTags}
+          onAutoAssignTags={() => { void autoTagAgentPrompt.requestAutoTags(); }}
+          onOpenAgent={openAgentPanel}
+          agentStatus={agentPresentation.status}
+          agentActive={agentPresentation.active}
           onStatusPatch={applyStatusPatch}
           onToggleTheme={toggleTheme}
           onTogglePanel={hidePanel}
@@ -364,7 +427,7 @@ export function ManagerPanel() {
           customPreviewing={previewingCustomLayout}
           hiddenColumnCount={hiddenColumnCount}
           onLayoutModeChange={setBrowseLayoutMode}
-          onStartLayoutEdit={beginCustomLayoutEdit}
+          onStartLayoutEdit={editingLayout ? cancelLayoutEdit : beginCustomLayoutEdit}
           onPreviewCustomChange={previewCustomLayout}
           layoutEditChrome={layoutEditChrome}
         />
@@ -456,6 +519,7 @@ export function ManagerPanel() {
                 layoutEdit={{
                   editing: editingLayout,
                   faded: layoutFaded,
+                  transitionPhase: layoutModeTransitionPhase,
                   draggedColumnId: layoutDrag?.kind === 'column' ? layoutDrag.id : null,
                   draggedColumnHideIntent: layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false,
                   columnShifts,
@@ -465,7 +529,6 @@ export function ManagerPanel() {
                   onMoveColumnByKeyboard: moveColumnByKeyboard,
                 }}
                 layoutResize={layoutResize}
-                customColumnLayoutActive={customColumnLayoutActive}
                 scrollRef={listRef}
                 rootRef={rootRef}
                 headerRef={headerRef}
@@ -509,6 +572,28 @@ export function ManagerPanel() {
         <FloatingLocaleToggle drawerOpen={!!selectedStar} interactionLocked={interactionLocked} />
 
         <LayoutDragGhost ghost={dragGhost} />
+
+        {agentHostMounted && (
+          <Suspense fallback={null}>
+            <LazyAgentHost
+              open={agentPanelOpen}
+              onHide={() => setAgentPanelOpen(false)}
+              onOpenOptions={() => bgCall('openOptions').catch(() => {})}
+              onDataChanged={refreshStars}
+              onPresentationChange={setAgentPresentation}
+              defaultCandidate={agentCandidate}
+              chatCandidate={agentCandidate}
+              scopeCount={agentCandidate.kind === 'selected_repository' ? 1 : visibleTotal}
+            />
+          </Suspense>
+        )}
+
+        <AutoTagAgentPrompt
+          open={autoTagAgentPrompt.open}
+          onChooseAgent={autoTagAgentPrompt.chooseAgent}
+          onChooseAutoTags={autoTagAgentPrompt.chooseAutoTags}
+          onDismiss={autoTagAgentPrompt.dismiss}
+        />
 
         {statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
           <CoachOverlay

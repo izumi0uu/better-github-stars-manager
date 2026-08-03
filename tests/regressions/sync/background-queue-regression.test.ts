@@ -63,6 +63,31 @@ describe('Background queue regressions', () => {
     assert.equal(runner.isRunning(), false);
   });
 
+  it('does not start a queued job after its signal is aborted', async () => {
+    const runner = createSerializedRunner();
+    const controller = new AbortController();
+    let releaseFirst!: () => void;
+    const firstDone = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let queuedJobStarted = false;
+
+    const first = runner.run(() => firstDone);
+    const queued = runner.run(
+      async () => {
+        queuedJobStarted = true;
+      },
+      { signal: controller.signal },
+    );
+    controller.abort();
+    releaseFirst();
+
+    await first;
+    await assert.rejects(queued, { name: 'AbortError' });
+    assert.equal(queuedJobStarted, false);
+    assert.equal(runner.isRunning(), false);
+  });
+
   it('starts the backfill state machine only when its queued job begins', async () => {
     const jobQueue = createSerializedRunner();
     const states: BackfillState['status'][] = [];

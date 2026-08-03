@@ -84,7 +84,7 @@ export const COLUMN_DEFS: Record<ColumnId, ColumnDefinition> = {
     id: 'stars',
     width: '64px',
     minWidth: 48,
-    align: 'end',
+    align: 'start',
     label: (m) => m.toolbar.columnStars,
   },
   updated: {

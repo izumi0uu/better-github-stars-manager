@@ -4,6 +4,7 @@ import { I18nProvider } from '@/i18n';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { applyFabLabel } from '@/content/stars-page/fab-label';
 import { mountState, pageOwner } from '@/content/stars-page/mount-state';
+import { stopEditableKeydownAtShadowBoundary } from '@/content/stars-page/keyboard-boundary';
 import {
   isPanelEnabled,
   onPanelToggle,
@@ -63,7 +64,7 @@ function injectPanel(): void {
   // actual UI + styles live inside its shadow root.
   const host = document.createElement('div');
   host.id = 'gsm-manager-host';
-  host.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483000;';
+  host.style.cssText = 'position:fixed;inset:0;z-index:2147483000;';
 
   lockPageScroll();
 
@@ -86,11 +87,7 @@ function injectPanel(): void {
   shadow.appendChild(root);
 
   // GitHub listens on document; retargeted input keystrokes need a shadow-boundary stop.
-  shadow.addEventListener('keydown', (e) => {
-    const t = e.target as HTMLElement | null;
-    const tag = t?.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable) e.stopPropagation();
-  }, true);
+  shadow.addEventListener('keydown', stopEditableKeydownAtShadowBoundary);
 
   const main = document.querySelector('main') ?? document.querySelector('[data-pjax-container]') ?? document.body;
   main.parentElement?.insertBefore(host, main);

@@ -84,6 +84,29 @@ function renderToolbarViewTabs({
 }
 
 describe('layout edit interaction lock render behavior', () => {
+  it('outlines the Sync caret with the primary button color', () => {
+    const markup = renderToolbarViewTabs({ layoutMode: 'default', customPreviewing: false });
+    const buttons = [...markup.matchAll(/<button[\s\S]*?<\/button>/g)].map((match) => match[0]);
+    const syncCaret = buttons.find((button) => button.includes('data-coach-target="full-sync"'));
+
+    expect(syncCaret).toBeDefined();
+    expect(syncCaret).toContain('border-primary');
+    expect(syncCaret).toContain('hover:bg-primary');
+    expect(syncCaret).toContain('hover:text-primary-foreground');
+    expect(syncCaret).not.toContain('border-border/70');
+  });
+
+  it('reserves a visible border for the Sync primary action on hover', () => {
+    const markup = renderToolbarViewTabs({ layoutMode: 'default', customPreviewing: false });
+    const buttons = [...markup.matchAll(/<button[\s\S]*?<\/button>/g)].map((match) => match[0]);
+    const syncButton = buttons.find((button) => button.includes('data-coach-target="sync"'));
+
+    expect(syncButton).toBeDefined();
+    expect(syncButton).toContain('border-transparent');
+    expect(syncButton).toContain('border-r-0');
+    expect(syncButton).toContain('hover:border-primary');
+  });
+
   it('renders locked helper attributes and suppresses anchor activation', () => {
     expect(getLockedRegionProps(true)).toEqual({ 'aria-disabled': true, inert: '' });
     expect(getLockedRegionProps(false)).toEqual({});
@@ -145,6 +168,12 @@ describe('layout edit interaction lock render behavior', () => {
     expect(markup).toContain('aria-disabled="true"');
     expect(markup).toContain('tabindex="-1"');
     expect(markup).toContain('pointer-events-none opacity-50');
+
+    const buttons = [...markup.matchAll(/<button[\s\S]*?<\/button>/g)].map((match) => match[0]);
+    const editButton = buttons.find((button) => button.includes('data-layout-edit-trigger=""'));
+    expect(editButton).toBeDefined();
+    expect(editButton).not.toContain('disabled=""');
+    expect(editButton).toContain('aria-pressed="true"');
   });
 
   it('renders the view tab active dot for default, custom, and custom preview states', () => {
@@ -176,7 +205,7 @@ describe('layout edit interaction lock render behavior', () => {
     const buttons = [...markup.matchAll(/<button[\s\S]*?<\/button>/g)].map((match) => match[0]);
     const defaultTab = buttons.find((button) => button.includes('Default'));
     const customTab = buttons.find((button) => button.includes('Custom'));
-    const editButton = buttons.find((button) => button.includes('w-7'));
+    const editButton = buttons.find((button) => button.includes('data-layout-edit-trigger=""'));
 
     expect(defaultTab).toBeDefined();
     expect(customTab).toBeDefined();
