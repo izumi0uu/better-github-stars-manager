@@ -133,22 +133,20 @@ export function createOrganizeApplyPump(dependencies: OrganizeApplyPumpDependenc
         jobId: claim.jobId,
         positionStart: settledPositions.length > 0 ? Math.min(...settledPositions) : null,
         positionEnd: settledPositions.length > 0 ? Math.max(...settledPositions) + 1 : null,
-        rowCount: settledRows.length || claim.rows.length,
+        rowCount: settledRows.length,
         changed: settledRows.filter((row) => row.state === 'changed').length,
         unchanged: settledRows.filter((row) => row.state === 'unchanged').length,
         skipped: settledRows.filter((row) => row.state === 'skipped').length,
         failed: settledRows.filter((row) => row.state === 'failed').length,
         complete: settled.complete,
       });
-      if (settled.complete) {
-        emitLifecycle({ type: 'attempt_completed', applyId, executionId, jobId: claim.jobId });
-      }
     },
     onProgress(jobId) {
       return dependencies.onProgress(jobId);
     },
-    onComplete(jobId) {
+    onComplete(jobId, _claim, _settlement, { operationId: applyId, executionId }) {
       dependencies.onComplete(jobId);
+      emitLifecycle({ type: 'attempt_completed', applyId, executionId, jobId });
     },
     async onFailure({ operationId: applyId, jobId, executionId, sequence, error }) {
       emitLifecycle({

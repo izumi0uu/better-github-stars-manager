@@ -137,7 +137,12 @@ function connectionKey(identity: BgsmOrganizeJobControllerIdentity): string {
 }
 
 function assertIdentity(identity: BgsmOrganizeJobControllerIdentity): void {
-  if (!identity.controllerId || !identity.sessionId || identity.sessionId.trim() !== identity.sessionId) {
+  if (
+    !identity.controllerId
+    || identity.controllerId.trim() !== identity.controllerId
+    || !identity.sessionId
+    || identity.sessionId.trim() !== identity.sessionId
+  ) {
     throw new TypeError('OrganizeJobRun connection identity is malformed.');
   }
 }

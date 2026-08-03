@@ -102,6 +102,8 @@ export function createBgsmOrganizeJobTraceCoordinator(input: Readonly<{
   const releaseTrace = async (jobId: OrganizeJobId, trace: OrganizeJobRunTrace): Promise<void> => {
     try {
       await trace.flush();
+    } catch {
+      // Development trace persistence cannot affect OrganizeJobRun cleanup.
     } finally {
       if (traces.get(jobId) === trace) {
         traces.delete(jobId);
@@ -178,8 +180,8 @@ export function createBgsmOrganizeJobTraceCoordinator(input: Readonly<{
       trace.recordReceipt(event);
       if (terminal) {
         trace.finish(terminal.state, terminal.reasonCode);
+        void releaseTrace(jobId, trace);
       }
-      void releaseTrace(jobId, trace);
     },
 
     completeNoChanges(jobId) {

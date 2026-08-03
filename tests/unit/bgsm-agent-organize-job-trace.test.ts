@@ -14,6 +14,7 @@ import {
 } from '@/bgsm-agent';
 import { createBgsmOrganizeJobTraceCoordinator } from '@/background/organize-job-trace';
 import type { OrganizeJobRunSnapshot } from '@/bgsm-agent/events';
+import type { OrganizeJobRunTrace } from '@/agent-observability/organize-job-types';
 
 const databases: DevTraceDB[] = [];
 
@@ -599,6 +600,61 @@ describe('BGSM Agent OrganizeJobRun trace', () => {
     assert.doesNotMatch(JSON.stringify(events), /private-owner|private-repository|private-tag/u);
   });
 
+  it('keeps one trace across non-terminal receipts', async () => {
+    const jobId = parseOrganizeJobId('organize-job:v1:non-terminal-receipt');
+    let factoryCalls = 0;
+    let receiptCalls = 0;
+    const coordinator = createBgsmOrganizeJobTraceCoordinator({
+      executionEpochId: 'organize-epoch:non-terminal-receipt',
+      traceFactory: () => {
+        factoryCalls += 1;
+        return stubTrace({
+          recordReceipt: () => { receiptCalls += 1; },
+        });
+      },
+    });
+    const receipt = {
+      applyId: 'organize-apply:non-terminal-receipt',
+      state: 'page_delivered' as const,
+      total: 2,
+      changed: 1,
+      unchanged: 0,
+      skipped: 1,
+      failed: 0,
+      rowOffset: 0,
+      rowCount: 2,
+      nextRowOffset: null,
+      filter: 'all' as const,
+    };
+
+    coordinator.recordReceipt(jobId, receipt);
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    coordinator.recordReceipt(jobId, { ...receipt, state: 'dismissed', rowOffset: null, rowCount: 0, filter: null });
+
+    assert.equal(factoryCalls, 1);
+    assert.equal(receiptCalls, 2);
+  });
+
+  it('releases a terminal trace even when its flush rejects', async () => {
+    const jobId = parseOrganizeJobId('organize-job:v1:failed-trace-flush');
+    let factoryCalls = 0;
+    const coordinator = createBgsmOrganizeJobTraceCoordinator({
+      executionEpochId: 'organize-epoch:failed-trace-flush',
+      traceFactory: () => {
+        factoryCalls += 1;
+        return stubTrace({
+          flush: async () => { throw new Error('trace persistence failed'); },
+        });
+      },
+    });
+
+    coordinator.failPreflight(jobId);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    coordinator.resume(jobId);
+
+    assert.equal(factoryCalls, 2);
+  });
+
   it('closes no-change completion explicitly without waiting for a generation terminal', async () => {
     const db = database('no-changes-terminal');
     const jobId = parseOrganizeJobId('organize-job:v1:no-changes-terminal');
@@ -750,3 +806,24 @@ describe('BGSM Agent OrganizeJobRun trace', () => {
     assert.equal((await db.roots.get(`organize_job:${currentJobId}`))?.terminalState, null);
   });
 });
+
+function stubTrace(overrides: Partial<OrganizeJobRunTrace> = {}): OrganizeJobRunTrace {
+  return {
+    recordPreflight() {},
+    recordGeneration() {},
+    recordBatch() {},
+    recordProviderAttempt() {},
+    recordWatchdog() {},
+    recordDurableState() {},
+    recordRestore() {},
+    recordReview() {},
+    recordSelection() {},
+    recordApply() {},
+    recordApplyChunk() {},
+    recordReceipt() {},
+    recordCancellation() {},
+    finish() {},
+    async flush() {},
+    ...overrides,
+  };
+}

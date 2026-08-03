@@ -20,6 +20,27 @@ const identity = {
 } as const;
 
 describe('OrganizeJobRun connection registry', () => {
+  it('rejects leading, trailing, and whitespace-only controller or session IDs', () => {
+    const registry = createBgsmOrganizeJobConnectionRegistry<FakePort>();
+    const malformedIdentities = [
+      { ...identity, controllerId: ` ${identity.controllerId}` },
+      { ...identity, controllerId: `${identity.controllerId} ` },
+      { ...identity, controllerId: ' ' },
+      { ...identity, sessionId: ` ${identity.sessionId}` },
+      { ...identity, sessionId: `${identity.sessionId} ` },
+      { ...identity, sessionId: ' ' },
+    ] as const;
+
+    for (const malformed of malformedIdentities) {
+      const port = new FakePort();
+      assert.throws(
+        () => registry.bind(port, malformed as typeof identity),
+        /connection identity is malformed/u,
+      );
+      assert.equal(registry.forPort(port), null);
+    }
+  });
+
   it('binds one immutable identity and emits one monotonic delivery namespace', () => {
     let id = 0;
     const registry = createBgsmOrganizeJobConnectionRegistry<FakePort>({

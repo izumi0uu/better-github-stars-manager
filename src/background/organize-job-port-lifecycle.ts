@@ -51,29 +51,30 @@ export async function settleBgsmOrganizeJobDisconnect(input: Readonly<{
   releaseRuns?(runIds: readonly string[]): void;
   post?(message: BgsmOrganizeJobDisconnected): void;
 }>): Promise<void> {
-  const current = input.controller.findLatestSnapshot(input.identity);
-  if (!current) {
+  try {
+    const current = input.controller.findLatestSnapshot(input.identity);
+    if (!current) {
+      input.post?.({
+        type: 'bgsmOrganizeJobRunDisconnected',
+        controllerId: input.identity.controllerId,
+        sessionId: input.identity.sessionId,
+        runId: null,
+        generation: null,
+      });
+      return;
+    }
+
+    input.abortRun(current.runId);
+    const settled = input.controller.disconnectController(input.identity);
     input.post?.({
       type: 'bgsmOrganizeJobRunDisconnected',
       controllerId: input.identity.controllerId,
       sessionId: input.identity.sessionId,
-      runId: null,
-      generation: null,
+      runId: settled?.runId ?? current.runId,
+      generation: settled?.generation ?? current.generation,
     });
+  } finally {
     const released = input.controller.releaseController(input.identity);
     input.releaseRuns?.(released);
-    return;
   }
-
-  input.abortRun(current.runId);
-  const settled = input.controller.disconnectController(input.identity);
-  input.post?.({
-    type: 'bgsmOrganizeJobRunDisconnected',
-    controllerId: input.identity.controllerId,
-    sessionId: input.identity.sessionId,
-    runId: settled?.runId ?? current.runId,
-    generation: settled?.generation ?? current.generation,
-  });
-  const released = input.controller.releaseController(input.identity);
-  input.releaseRuns?.(released);
 }

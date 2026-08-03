@@ -160,4 +160,46 @@ describe('durable organize Apply pump', () => {
     await expect(pump.pump('apply')).resolves.toBeUndefined();
     expect(onComplete).toHaveBeenCalledWith('job');
   });
+
+  it('emits completion after progress and domain completion with consistent empty settlement counts', async () => {
+    const order: string[] = [];
+    let claimed = false;
+    const lifecycle: OrganizeApplyPumpLifecycleEvent[] = [];
+    const pump = createOrganizeApplyPump({
+      runSerialized: async (fn) => fn(),
+      claim: async () => {
+        if (claimed) return null;
+        claimed = true;
+        return { leaseToken: 'lease-empty', rows: [{ jobId: 'job-empty', position: 4 }] };
+      },
+      settle: async () => ({ complete: true, rows: [] }),
+      onProgress: async () => { order.push('progress'); },
+      onComplete: () => { order.push('domain_complete'); },
+      onFailure: async () => expect.fail('empty settlement telemetry must not fail Apply'),
+      shouldRestart: async () => false,
+      onLifecycle: (event) => {
+        lifecycle.push(event);
+        if (event.type === 'chunk_settled' || event.type === 'attempt_completed') {
+          order.push(event.type);
+        }
+      },
+      createExecutionId: () => 'apply-execution-empty',
+    });
+
+    await pump.pump('apply-empty');
+
+    expect(order).toEqual([
+      'chunk_settled',
+      'progress',
+      'domain_complete',
+      'attempt_completed',
+    ]);
+    expect(lifecycle.find((event) => event.type === 'chunk_settled')).toMatchObject({
+      rowCount: 0,
+      changed: 0,
+      unchanged: 0,
+      skipped: 0,
+      failed: 0,
+    });
+  });
 });

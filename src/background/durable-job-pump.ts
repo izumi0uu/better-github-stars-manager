@@ -53,7 +53,17 @@ export type DurableJobPumpDependencies<
   }>): Promise<void>;
   shouldRestart(operationId: string): Promise<boolean>;
   createExecutionId?: () => string;
+  delayBeforeRestart?(consecutiveFailures: number): Promise<void>;
 }>;
+
+const RESTART_BACKOFF_BASE_MS = 250;
+const RESTART_BACKOFF_MAX_MS = 30_000;
+
+function defaultDelayBeforeRestart(consecutiveFailures: number): Promise<void> {
+  const exponent = Math.max(0, Math.min(7, consecutiveFailures - 1));
+  const delay = Math.min(RESTART_BACKOFF_MAX_MS, RESTART_BACKOFF_BASE_MS * (2 ** exponent));
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
 
 /** Runs one durable claim/checkpoint loop without owning domain state. */
 export function createDurableJobPump<
@@ -61,6 +71,7 @@ export function createDurableJobPump<
   TSettlement extends DurableJobSettlement,
 >(dependencies: DurableJobPumpDependencies<TClaim, TSettlement>) {
   const executions = new Map<string, Promise<void>>();
+  const consecutiveFailures = new Map<string, number>();
 
   const start = (operationId: string): Promise<void> => {
     const existing = executions.get(operationId);
@@ -97,7 +108,11 @@ export function createDurableJobPump<
     });
 
     const execution = serialized
+      .then(() => {
+        consecutiveFailures.delete(operationId);
+      })
       .catch(async (error) => {
+        consecutiveFailures.set(operationId, (consecutiveFailures.get(operationId) ?? 0) + 1);
         try {
           await dependencies.onFailure({
             operationId,
@@ -113,8 +128,17 @@ export function createDurableJobPump<
       .finally(async () => {
         executions.delete(operationId);
         try {
-          if (await dependencies.shouldRestart(operationId)) void start(operationId);
+          if (!(await dependencies.shouldRestart(operationId))) {
+            consecutiveFailures.delete(operationId);
+            return;
+          }
+          const failures = consecutiveFailures.get(operationId) ?? 0;
+          if (failures > 0) {
+            await (dependencies.delayBeforeRestart ?? defaultDelayBeforeRestart)(failures);
+          }
+          void start(operationId);
         } catch {
+          consecutiveFailures.delete(operationId);
           // A later wake or attach can rediscover the durable operation.
         }
       });

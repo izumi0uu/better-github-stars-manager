@@ -81,4 +81,37 @@ describe('durable job pump', () => {
       error: new Error('claim failed'),
     }]);
   });
+
+  it('backs off repeated immediate failures before restarting', async () => {
+    const delays: number[] = [];
+    let attempts = 0;
+    const pump = createDurableJobPump({
+      runSerialized: (run) => run(),
+      async claim() {
+        attempts += 1;
+        throw new Error(`claim failed ${attempts}`);
+      },
+      async settle() {
+        return { complete: true };
+      },
+      async onProgress() {},
+      onComplete() {},
+      async onFailure() {},
+      async shouldRestart() {
+        return attempts < 3;
+      },
+      async delayBeforeRestart(consecutiveFailures) {
+        delays.push(consecutiveFailures);
+      },
+      createExecutionId: () => `execution-${attempts + 1}`,
+    });
+
+    await pump.start('operation-retry');
+    for (let index = 0; index < 20 && attempts < 3; index += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+
+    assert.equal(attempts, 3);
+    assert.deepEqual(delays, [1, 2]);
+  });
 });

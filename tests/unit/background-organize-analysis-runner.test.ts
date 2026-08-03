@@ -68,6 +68,7 @@ function createHarness(input: Readonly<{
   onLoadPage?: (readCount: number) => void;
   setTimer?: (callback: () => void, delay: number) => unknown;
   analyzerGate?: Promise<void>;
+  createAnalyzerGates?: readonly Promise<void>[];
   heartbeat?: (identity: Readonly<{
     controllerId: string;
     sessionId: string;
@@ -85,6 +86,8 @@ function createHarness(input: Readonly<{
   streamProgressCounts?: readonly number[];
   continuationInitializationGate?: Promise<void>;
   scheduleContinuationChildren?: boolean;
+  issueContinuationCursorError?: Error;
+  automaticContinuationFailed?: (error: unknown) => void | Promise<void>;
 }>) {
   const runId = parseRunId(`run:v1:scheduler-${Math.random()}`);
   const identity = {
@@ -110,12 +113,14 @@ function createHarness(input: Readonly<{
     completions: 0,
     continuations: 0,
   };
+  let failures = 0;
   const publishedSnapshots: OrganizeJobRunSnapshot[] = [];
   const durableCalls: string[] = [];
   const continuationEvents: string[] = [];
   const traceEvents: BgsmOrganizeJobSchedulerTraceEvent[] = [];
   const analysisProgress: Array<{ processed: number; total: number }> = [];
   const loadedRanges: string[] = [];
+  const failureReasons: string[] = [];
   let usage: RunBudgetUsage = {
     firstAnalyzerRequestAt: null,
     consumedFrozenPositions: 0,
@@ -127,6 +132,7 @@ function createHarness(input: Readonly<{
   let reason: BudgetExhaustionReason | null = null;
   let nextFrozenIndex: number | null = null;
   let analyzerBatchCount = 0;
+  let analyzerCreations = 0;
   const runStarts = new Map<RunId, number>([[runId, 0]]);
   const controller = {
     setRunState: (current: typeof identity) => {
@@ -212,7 +218,11 @@ function createHarness(input: Readonly<{
         continuationCursor: null,
       };
     },
-    failRun: () => ({} as never),
+    failRun: (_identity: typeof identity, failureReason?: string) => {
+      failures += 1;
+      if (failureReason) failureReasons.push(failureReason);
+      return {} as never;
+    },
   };
 
   const reserveOnce = async (
@@ -341,6 +351,9 @@ function createHarness(input: Readonly<{
   const scheduler = createBgsmOrganizeJobScheduler({
     controller,
     createAnalyzer: async () => {
+      analyzerCreations += 1;
+      const gate = input.createAnalyzerGates?.[analyzerCreations - 1];
+      if (gate) await gate;
       if (input.createAnalyzerError) throw input.createAnalyzerError;
       return analyzer;
     },
@@ -358,7 +371,11 @@ function createHarness(input: Readonly<{
     },
     issueContinuationCursor: async (_identity, index) => {
       nextFrozenIndex = index;
+      if (input.issueContinuationCursorError) throw input.issueContinuationCursorError;
       return parseContinuationCursorToken(`cursor:v1:${runId}-${index}`);
+    },
+    automaticContinuationFailed: (_identity, error) => {
+      return input.automaticContinuationFailed?.(error);
     },
     setTimer: input.setTimer,
     clearTimer: () => {},
@@ -474,8 +491,11 @@ function createHarness(input: Readonly<{
     loadedRanges,
     traceEvents,
     analysisProgress,
+    failureReasons,
     get reason() { return reason; },
     get nextIndex() { return nextFrozenIndex; },
+    get failures() { return failures; },
+    get analyzerCreations() { return analyzerCreations; },
   };
 }
 
@@ -886,6 +906,30 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     assert.equal(run.publishedSnapshots[0]?.state, 'prepared');
   });
 
+  it('terminalizes a run when continuation cursor issuance fails', async () => {
+    const cursorError = new Error('cursor signing unavailable');
+    const reported: unknown[] = [];
+    const run = createHarness({
+      scopeCount: 176,
+      pageKind: 'live',
+      requestedTokens: 4_096,
+      issueContinuationCursorError: cursorError,
+      automaticContinuationFailed: async (error) => {
+        reported.push(error);
+        throw new Error('observer unavailable');
+      },
+    });
+
+    await run.scheduler.schedule(run.identity);
+    await Promise.resolve();
+
+    assert.equal(run.failures, 1);
+    assert.deepEqual(run.failureReasons, ['internal_error']);
+    assert.deepEqual(reported, [cursorError]);
+    assert.equal(run.counters.exhaustions, 0);
+    assert.equal(run.counters.continuations, 0);
+  });
+
   it('does not publish or schedule a continuation until its durable identity is committed', async () => {
     let releaseInitialization!: () => void;
     const continuationInitializationGate = new Promise<void>((resolve) => {
@@ -1110,6 +1154,45 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     assert.equal(run.scheduler.getState(run.identity.runId)?.status, 'budget_exhausted');
     run.scheduler.release(run.identity.runId);
     assert.equal(run.scheduler.getState(run.identity.runId), null);
+  });
+
+  it('does not let a released execution settle a replacement execution with the same run id', async () => {
+    let releaseOldProviderSetup!: () => void;
+    let releaseRestoredAnalyzer!: () => void;
+    const oldProviderSetupGate = new Promise<void>((resolve) => {
+      releaseOldProviderSetup = resolve;
+    });
+    const restoredAnalyzerGate = new Promise<void>((resolve) => {
+      releaseRestoredAnalyzer = resolve;
+    });
+    const run = createHarness({
+      scopeCount: 1,
+      pageKind: 'live',
+      createAnalyzerGates: [oldProviderSetupGate],
+      analyzerGate: restoredAnalyzerGate,
+    });
+
+    const oldExecution = run.scheduler.schedule(run.identity);
+    for (let index = 0; index < 20 && run.analyzerCreations < 1; index += 1) {
+      await Promise.resolve();
+    }
+    assert.equal(run.analyzerCreations, 1);
+
+    run.scheduler.release(run.identity.runId);
+    const restoredExecution = run.scheduler.schedule(run.identity);
+    for (let index = 0; index < 50 && run.counters.executes < 1; index += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    assert.equal(run.counters.executes, 1);
+    assert.equal(run.scheduler.isRunning(run.identity.runId), true);
+
+    releaseOldProviderSetup();
+    await oldExecution;
+    assert.equal(run.scheduler.isRunning(run.identity.runId), true);
+
+    releaseRestoredAnalyzer();
+    await restoredExecution;
+    assert.equal(run.counters.completions, 1);
   });
 
   it('keeps a blocked retry page unconsumed with no second execute', async () => {

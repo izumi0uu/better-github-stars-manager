@@ -179,7 +179,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
     parent?: OrganizeRunIdentity,
   ): void;
   publishAnalysisProgress?(identity: OrganizeRunIdentity, processed: number, total: number): void;
-  automaticContinuationFailed?(identity: OrganizeRunIdentity, error: unknown): void;
+  automaticContinuationFailed?(identity: OrganizeRunIdentity, error: unknown): void | Promise<void>;
   providerSetupFailed?(identity: OrganizeRunIdentity, error: unknown): void | Promise<void>;
   executionFailed?(identity: OrganizeRunIdentity, error: unknown): void | Promise<void>;
   requestedWindowSize?: number;
@@ -201,6 +201,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
   const states = new Map<RunId, OrganizeJobRunAnalysisState>();
   const abortControllers = new Map<RunId, AbortController>();
   const executions = new Map<RunId, Promise<void>>();
+  const executionTokens = new Map<RunId, object>();
   const continuationSeeds = new Map<RunId, ContinuationSeed>();
   const continuationPreparations = new Map<
     RunId,
@@ -229,20 +230,44 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
     }
   };
 
+  const reportAutomaticContinuationFailure = (
+    identity: OrganizeRunIdentity,
+    error: unknown,
+  ): void => {
+    try {
+      const reporting = dependencies.automaticContinuationFailed?.(identity, error);
+      void Promise.resolve(reporting).catch(() => {});
+    } catch {
+      // Failure observation cannot alter the authoritative run state.
+    }
+  };
+
+  const reportExecutionFailure = async (
+    identity: OrganizeRunIdentity,
+    error: unknown,
+  ): Promise<void> => {
+    try {
+      await dependencies.executionFailed?.(identity, error);
+    } catch {
+      // Failure observation cannot create another unhandled rejection.
+    }
+  };
+
   const exhaustAndMaybeContinue = async (
     identity: OrganizeRunIdentity,
     state: OrganizeJobRunAnalysisState,
     reason: BudgetExhaustionReason,
     analyzer: Analyzer,
   ): Promise<void> => {
-    const cursor = await dependencies.issueContinuationCursor(identity, state.nextFrozenIndex);
-    dependencies.controller.exhaustBudget(identity, state.usage, reason, cursor);
-    const generationStart = dependencies.controller.getExecutionContext(identity).startFrozenIndex;
-    if (state.nextFrozenIndex <= generationStart) return;
     try {
+      const cursor = await dependencies.issueContinuationCursor(identity, state.nextFrozenIndex);
+      dependencies.controller.exhaustBudget(identity, state.usage, reason, cursor);
+      const generationStart = dependencies.controller.getExecutionContext(identity).startFrozenIndex;
+      if (state.nextFrozenIndex <= generationStart) return;
       await prepareContinuation(identity, state, state.nextFrozenIndex, cursor, analyzer);
     } catch (error) {
-      dependencies.automaticContinuationFailed?.(identity, error);
+      dependencies.controller.failRun(identity, 'internal_error');
+      reportAutomaticContinuationFailure(identity, error);
     }
   };
 
@@ -291,7 +316,9 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
       states.set(identity.runId, state);
       continuationSeeds.set(identity.runId, Object.freeze({ state, analyzer }));
       dependencies.publishSnapshot?.(child, parentIdentity);
-      void scheduleRun(identity);
+      void scheduleRun(identity).catch((error: unknown) => {
+        void reportExecutionFailure(identity, error);
+      });
       return child;
     })().finally(() => {
       continuationPreparations.delete(child.runId);
@@ -739,15 +766,19 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
   };
 
   scheduleRun = (identity) => {
-      if (settledRunIds.has(identity.runId)) return Promise.resolve();
-      const existing = executions.get(identity.runId);
-      if (existing) return existing;
-      const execution = execute(identity).finally(() => {
-        executions.delete(identity.runId);
-        rememberSettledRun(identity.runId);
-      });
-      executions.set(identity.runId, execution);
-      return execution;
+    if (settledRunIds.has(identity.runId)) return Promise.resolve();
+    const existing = executions.get(identity.runId);
+    if (existing) return existing;
+    const token = {};
+    executionTokens.set(identity.runId, token);
+    const execution = execute(identity).finally(() => {
+      if (executionTokens.get(identity.runId) !== token) return;
+      executionTokens.delete(identity.runId);
+      executions.delete(identity.runId);
+      rememberSettledRun(identity.runId);
+    });
+    executions.set(identity.runId, execution);
+    return execution;
   };
 
   return {
@@ -770,6 +801,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
     release(runId) {
       abortControllers.get(runId)?.abort();
       abortControllers.delete(runId);
+      executionTokens.delete(runId);
       states.delete(runId);
       continuationSeeds.delete(runId);
       continuationPreparations.delete(runId);

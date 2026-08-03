@@ -79,6 +79,79 @@ describe('OrganizeJobRun Port lifecycle', () => {
     }]);
   });
 
+  it('releases controller and scheduler state when disconnect settlement fails', async () => {
+    for (const failurePoint of ['abort', 'disconnect', 'post'] as const) {
+      const run = await frozenController();
+      const released: string[][] = [];
+      const calls: string[] = [];
+
+      await assert.rejects(
+        settleBgsmOrganizeJobDisconnect({
+          identity: run.owner,
+          controller: {
+            findLatestSnapshot: (owner) => run.controller.findLatestSnapshot(owner),
+            disconnectController: (owner) => {
+              calls.push('disconnect');
+              if (failurePoint === 'disconnect') throw new Error('disconnect failed');
+              return run.controller.disconnectController(owner);
+            },
+            releaseController: (owner) => {
+              calls.push('release-controller');
+              return run.controller.releaseController(owner);
+            },
+          },
+          abortRun: () => {
+            calls.push('abort');
+            if (failurePoint === 'abort') throw new Error('abort failed');
+          },
+          releaseRuns: (runIds) => {
+            calls.push('release-runs');
+            released.push([...runIds]);
+          },
+          post: () => {
+            calls.push('post');
+            if (failurePoint === 'post') throw new Error('post failed');
+          },
+        }),
+        new RegExp(`${failurePoint} failed`, 'u'),
+      );
+
+      assert.deepEqual(calls.slice(-2), ['release-controller', 'release-runs']);
+      assert.deepEqual(released, [[run.frozen.runId]]);
+      assert.throws(() => run.controller.getSnapshot(run.frozen), /stale/u);
+    }
+  });
+
+  it('releases preflight authority when the no-current disconnect post fails', async () => {
+    const controller = createBgsmAgentController({ resolveCandidate: async () => candidate });
+    const owner = {
+      controllerId: parseControllerId('controller:v1:no-current-disconnect'),
+      sessionId: 'no-current-disconnect-session',
+    } as const;
+    const preflight = await controller.issuePreflight(owner);
+    assert.ok(preflight.preflightToken);
+    assert.ok(controller.findReadyPreflight(owner));
+    const released: string[][] = [];
+
+    await assert.rejects(
+      settleBgsmOrganizeJobDisconnect({
+        identity: owner,
+        controller,
+        abortRun: () => { throw new Error('unexpected abort'); },
+        releaseRuns: (runIds) => { released.push([...runIds]); },
+        post: () => { throw new Error('post failed'); },
+      }),
+      /post failed/u,
+    );
+
+    assert.deepEqual(released, [[]]);
+    assert.equal(controller.findReadyPreflight(owner), null);
+    assert.throws(
+      () => controller.startRun(owner, preflight.preflightToken!),
+      /invalid or stale/u,
+    );
+  });
+
   it('replays an authoritative in-worker snapshot on reconnect', async () => {
     const run = await frozenController();
     const posted: unknown[] = [];
