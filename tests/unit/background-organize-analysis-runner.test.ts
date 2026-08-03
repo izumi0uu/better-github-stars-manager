@@ -1185,9 +1185,11 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     }
     assert.equal(run.counters.executes, 1);
     assert.equal(run.scheduler.isRunning(run.identity.runId), true);
+    const executesBeforeOldRelease = run.counters.executes;
 
     releaseOldProviderSetup();
     await oldExecution;
+    assert.equal(run.counters.executes, executesBeforeOldRelease);
     assert.equal(run.scheduler.isRunning(run.identity.runId), true);
 
     releaseRestoredAnalyzer();
