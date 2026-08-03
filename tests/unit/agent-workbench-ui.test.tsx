@@ -1480,6 +1480,7 @@ describe('Agent organize-job workbench UI', () => {
 
     expect(container.textContent).toContain('1-2 of 102');
     expect(container.textContent).toContain('Apply 120 tags to 100 repositories');
+    expect(buttonWithText(container, 'Discard this analysis')).toBeTruthy();
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
     await click(container.querySelector<HTMLButtonElement>('[aria-label="Select owner/repo-0"]')!);
@@ -1626,6 +1627,21 @@ describe('Agent organize-job workbench UI', () => {
       .not.toBe(0);
     expect(receiptCard!.compareDocumentPosition(followUpReply!) & Node.DOCUMENT_POSITION_FOLLOWING)
       .not.toBe(0);
+
+    const sessionToggle = container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!;
+    expect(sessionToggle.disabled).toBe(true);
+    await click(buttonWithText(container, 'Dismiss'));
+    expect(activeOrganizePort().posted.at(-1)).toEqual({
+      type: 'dismissBgsmOrganizeReceipt',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      jobId: presentation.jobId,
+      applyId: completedApply.applyId,
+    });
+    expect(container.querySelector('[data-testid="organize-job-receipt-card"]')).toBeNull();
+    expect(sessionToggle.disabled).toBe(false);
   });
 });
 

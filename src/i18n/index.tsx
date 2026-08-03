@@ -185,6 +185,13 @@ export interface MessageCatalog {
     composerPausedContextRecovery: string;
     composerWriteRetryBlocked: string;
     startNewConversation: string;
+    sessionsLabel: string;
+    sessionUntitled: string;
+    sessionDelete: string;
+    sessionDeleteTitle: string;
+    sessionDeleteMessage: (title: string) => string;
+    sessionDeleteConfirm: string;
+    sessionDeleteCancel: string;
     hideWhileRunning: string;
     runContinuesWhileHidden: string;
     confirmScopeHeader: string;
@@ -991,6 +998,13 @@ const messages: Record<Locale, MessageCatalog> = {
       composerPausedContextRecovery: "Draft preserved · choose a recovery action above",
       composerWriteRetryBlocked: "Review or change this request before sending because a write may already have completed.",
       startNewConversation: "Start new conversation",
+      sessionsLabel: "Conversations",
+      sessionUntitled: "New conversation",
+      sessionDelete: "Delete conversation",
+      sessionDeleteTitle: "Delete this conversation?",
+      sessionDeleteMessage: (title) => `Delete “${title}”? Its local transcript will be removed from this panel.`,
+      sessionDeleteConfirm: "Delete",
+      sessionDeleteCancel: "Cancel",
       hideWhileRunning: "Hide BGSM Agent",
       runContinuesWhileHidden: "You can hide this panel; the turn continues.",
       confirmScopeHeader: "Confirm scope",
@@ -1889,6 +1903,13 @@ const messages: Record<Locale, MessageCatalog> = {
       composerPausedContextRecovery: "草稿已保留 · 请从上方选择恢复方式",
       composerWriteRetryBlocked: "写入可能已经完成，请检查或修改本次请求后再发送。",
       startNewConversation: "开始新对话",
+      sessionsLabel: "对话列表",
+      sessionUntitled: "新对话",
+      sessionDelete: "删除对话",
+      sessionDeleteTitle: "删除这个对话？",
+      sessionDeleteMessage: (title) => `确定删除「${title}」吗？它在本面板中的本地记录会被移除。`,
+      sessionDeleteConfirm: "删除",
+      sessionDeleteCancel: "取消",
       hideWhileRunning: "隐藏 BGSM Agent",
       runContinuesWhileHidden: "可以隐藏面板；本轮会继续。",
       confirmScopeHeader: "确认范围",

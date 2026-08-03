@@ -589,6 +589,24 @@ export function useBgsmAgentWorkbench(
     dispatch({ type: 'clear_terminal' });
   }, [post]);
 
+  const discardReview = useCallback(() => {
+    const current = stateRef.current;
+    const identity = current.organizeJob?.status === 'review'
+      ? current.organizeJob
+      : current.snapshot?.state === 'review'
+        ? current.snapshot
+        : null;
+    if (!identity) return;
+    post({
+      type: 'stopBgsmOrganizeJob',
+      controllerId: identity.controllerId,
+      sessionId: identity.sessionId,
+      runId: identity.runId,
+      generation: identity.generation,
+    });
+    dispatch({ type: 'clear_terminal' });
+  }, [post]);
+
   const toggleProposalRow = useCallback((proposalRowId: string) => {
     const job = state.organizeJob;
     const page = state.organizeReviewPage;
@@ -695,6 +713,7 @@ export function useBgsmAgentWorkbench(
     stop,
     continueRemaining,
     discardBlockedRun,
+    discardReview,
     toggleProposalRow,
     setAllProposalRowsSelected,
     applySelected,
@@ -708,6 +727,7 @@ export function useBgsmAgentWorkbench(
     confirmPreflight,
     continueRemaining,
     discardBlockedRun,
+    discardReview,
     applySelected,
     displayedProcessed,
     requestPreflight,

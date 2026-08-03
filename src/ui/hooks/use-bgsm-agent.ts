@@ -26,6 +26,13 @@ export type BgsmAgentChatMessage = {
   streaming?: boolean;
 };
 
+export type BgsmAgentSessionSummary = Readonly<{
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}>;
+
 export type BgsmAgentStatus = {
   kind: 'idle' | 'queued' | 'working' | 'compacting' | 'tool' | 'done' | 'stopped' | 'error';
   text: string;
@@ -76,6 +83,20 @@ type PendingTurn = {
   compactionUi: PendingCompactionUi | null;
 };
 
+type AgentSessionRecord = {
+  summary: BgsmAgentSessionSummary;
+  session: BgsmAgentSession;
+  messages: BgsmAgentChatMessage[];
+  conversationBinding: BgsmAgentConversationBinding | null;
+};
+
+type AgentSessionStore = {
+  records: Map<string, AgentSessionRecord>;
+  activeSessionId: string;
+};
+
+const SESSION_TITLE_MAX_LENGTH = 32;
+
 const STOP_SETTLE_TIMEOUT_MS = 3_000;
 
 function canReplayPendingTurn(pending: Pick<PendingTurn, 'writeOutcomes'>): boolean {
@@ -87,7 +108,33 @@ export function useBgsmAgent(
   candidateContract?: BgsmAgentConversationCandidate,
 ) {
   const { m } = useI18n();
-  const [messages, setMessages] = useState<BgsmAgentChatMessage[]>([]);
+  const sessionStoreRef = useRef<AgentSessionStore | null>(null);
+  if (!sessionStoreRef.current) {
+    const session = createBgsmAgentSession();
+    const now = Date.now();
+    const record: AgentSessionRecord = {
+      summary: {
+        id: session.id,
+        title: '',
+        createdAt: now,
+        updatedAt: now,
+      },
+      session,
+      messages: [],
+      conversationBinding: null,
+    };
+    sessionStoreRef.current = {
+      records: new Map([[session.id, record]]),
+      activeSessionId: session.id,
+    };
+  }
+  const sessionStore = sessionStoreRef.current!;
+  const initialRecord = sessionStore.records.get(sessionStore.activeSessionId)!;
+  const [activeSessionId, setActiveSessionId] = useState(sessionStore.activeSessionId);
+  const [sessionList, setSessionList] = useState<BgsmAgentSessionSummary[]>(() => (
+    [...sessionStore.records.values()].map((record) => record.summary)
+  ));
+  const [messages, setMessages] = useState<BgsmAgentChatMessage[]>(initialRecord.messages);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<BgsmAgentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -97,15 +144,41 @@ export function useBgsmAgent(
   const [draftRecovery, setDraftRecovery] = useState<string | null>(null);
   const [canRetryLastTurn, setCanRetryLastTurn] = useState(true);
   const [toolActivities, setToolActivities] = useState<BgsmAgentToolActivity[]>([]);
-  const [conversationBinding, setConversationBinding] = useState<BgsmAgentConversationBinding | null>(null);
-  const sessionRef = useRef<BgsmAgentSession | null>(null);
+  const [conversationBinding, setConversationBinding] = useState<BgsmAgentConversationBinding | null>(
+    initialRecord.conversationBinding,
+  );
+  const sessionRef = useRef<BgsmAgentSession>(initialRecord.session);
+  const messagesRef = useRef(messages);
+  const conversationBindingRef = useRef(conversationBinding);
   const runningRef = useRef(false);
   const statusRef = useRef<BgsmAgentStatus | null>(null);
   const turnHadErrorRef = useRef(false);
   const pendingTurnRef = useRef<PendingTurn | null>(null);
   const turnSequenceRef = useRef(0);
-  if (!sessionRef.current) sessionRef.current = createBgsmAgentSession();
-  const sessionId = sessionRef.current.id;
+  const sessionId = activeSessionId;
+
+  const publishSessionList = useCallback(() => {
+    const store = sessionStoreRef.current;
+    if (!store) return;
+    setSessionList([...store.records.values()].map((record) => record.summary));
+  }, []);
+
+  const syncActiveSessionRecord = useCallback(() => {
+    const store = sessionStoreRef.current;
+    if (!store) return;
+    const record = store.records.get(store.activeSessionId);
+    if (!record) return;
+    record.session = sessionRef.current;
+    record.messages = messagesRef.current;
+    record.conversationBinding = conversationBindingRef.current;
+  }, []);
+
+  const updateCurrentSession = useCallback((session: BgsmAgentSession) => {
+    sessionRef.current = session;
+    const store = sessionStoreRef.current;
+    const record = store?.records.get(store.activeSessionId);
+    if (record) record.session = session;
+  }, []);
 
   const setAgentStatus = useCallback((next: BgsmAgentStatus | null) => {
     statusRef.current = next;
@@ -148,6 +221,20 @@ export function useBgsmAgent(
   useEffect(() => {
     runningRef.current = running;
   }, [running]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+    const store = sessionStoreRef.current;
+    const record = store?.records.get(store.activeSessionId);
+    if (record) record.messages = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    conversationBindingRef.current = conversationBinding;
+    const store = sessionStoreRef.current;
+    const record = store?.records.get(store.activeSessionId);
+    if (record) record.conversationBinding = conversationBinding;
+  }, [conversationBinding]);
 
   useEffect(() => () => {
     const pending = pendingTurnRef.current;
@@ -340,7 +427,7 @@ export function useBgsmAgent(
       case 'conversation_bound': {
         const session = sessionRef.current;
         if (session) {
-          sessionRef.current = bindBgsmAgentSession(session, event.binding);
+          updateCurrentSession(bindBgsmAgentSession(session, event.binding));
           setConversationBinding(event.binding);
         }
         break;
@@ -451,8 +538,98 @@ export function useBgsmAgent(
     rollbackPendingMessages,
     setAgentStatus,
     startCompactionUi,
+    updateCurrentSession,
     updateToolActivity,
   ]);
+
+  const clearSessionUi = useCallback(() => {
+    turnHadErrorRef.current = false;
+    setRunning(false);
+    setAgentStatus(null);
+    setError(null);
+    setErrorCategory(null);
+    setLastTurnResult(null);
+    setContextLimitRecovery(null);
+    setDraftRecovery(null);
+    setCanRetryLastTurn(true);
+    setToolActivities([]);
+  }, [setAgentStatus]);
+
+  const createSession = useCallback(() => {
+    if (runningRef.current) return null;
+    const store = sessionStoreRef.current;
+    if (!store) return null;
+    syncActiveSessionRecord();
+    const session = createBgsmAgentSession();
+    const now = Date.now();
+    const record: AgentSessionRecord = {
+      summary: {
+        id: session.id,
+        title: '',
+        createdAt: now,
+        updatedAt: now,
+      },
+      session,
+      messages: [],
+      conversationBinding: null,
+    };
+    store.records.set(session.id, record);
+    store.activeSessionId = session.id;
+    sessionRef.current = session;
+    messagesRef.current = [];
+    conversationBindingRef.current = null;
+    setActiveSessionId(session.id);
+    setMessages([]);
+    setConversationBinding(null);
+    clearSessionUi();
+    publishSessionList();
+    return session.id;
+  }, [clearSessionUi, publishSessionList, syncActiveSessionRecord]);
+
+  const switchSession = useCallback((nextSessionId: string) => {
+    if (runningRef.current) return false;
+    const store = sessionStoreRef.current;
+    if (!store || store.activeSessionId === nextSessionId) return false;
+    const target = store.records.get(nextSessionId);
+    if (!target) return false;
+    syncActiveSessionRecord();
+    store.activeSessionId = nextSessionId;
+    sessionRef.current = target.session;
+    messagesRef.current = target.messages;
+    conversationBindingRef.current = target.conversationBinding;
+    setActiveSessionId(nextSessionId);
+    setMessages(target.messages);
+    setConversationBinding(target.conversationBinding);
+    clearSessionUi();
+    return true;
+  }, [clearSessionUi, syncActiveSessionRecord]);
+
+  const deleteSession = useCallback((sessionIdToDelete: string) => {
+    if (runningRef.current) return false;
+    const store = sessionStoreRef.current;
+    if (!store || store.records.size <= 1 || !store.records.has(sessionIdToDelete)) return false;
+    syncActiveSessionRecord();
+    const deletingActive = store.activeSessionId === sessionIdToDelete;
+    store.records.delete(sessionIdToDelete);
+    if (!deletingActive) {
+      publishSessionList();
+      return true;
+    }
+    const nextRecord = [...store.records.values()].sort((left, right) => (
+      right.summary.updatedAt - left.summary.updatedAt
+    ))[0];
+    if (!nextRecord) return false;
+    store.activeSessionId = nextRecord.session.id;
+    sessionRef.current = nextRecord.session;
+    messagesRef.current = nextRecord.messages;
+    conversationBindingRef.current = nextRecord.conversationBinding;
+    setActiveSessionId(nextRecord.session.id);
+    setMessages(nextRecord.messages);
+    setConversationBinding(nextRecord.conversationBinding);
+    clearSessionUi();
+    publishSessionList();
+    return true;
+  }, [clearSessionUi, publishSessionList, syncActiveSessionRecord]);
 
   const resetConversation = useCallback(() => {
     const pending = pendingTurnRef.current;
@@ -464,20 +641,8 @@ export function useBgsmAgent(
     runningRef.current = false;
     pending?.resolve(null);
     pending?.stop({ detach: true });
-    sessionRef.current = createBgsmAgentSession();
-    turnHadErrorRef.current = false;
-    setMessages([]);
-    setRunning(false);
-    setAgentStatus(null);
-    setError(null);
-    setErrorCategory(null);
-    setLastTurnResult(null);
-    setContextLimitRecovery(null);
-    setDraftRecovery(null);
-    setCanRetryLastTurn(true);
-    setToolActivities([]);
-    setConversationBinding(null);
-  }, [clearCompactionUi, setAgentStatus]);
+    createSession();
+  }, [clearCompactionUi, createSession]);
 
   const stopTurn = useCallback(() => {
     const pending = pendingTurnRef.current;
@@ -520,6 +685,16 @@ export function useBgsmAgent(
     const token = `${session.id}:turn:${turnSequence}`;
     const optimisticMessageId = `${token}:user`;
     const startedAt = Date.now();
+    const store = sessionStoreRef.current;
+    const record = store?.records.get(session.id);
+    if (record) {
+      record.summary = {
+        ...record.summary,
+        title: record.summary.title || truncateSessionTitle(clean),
+        updatedAt: startedAt,
+      };
+      publishSessionList();
+    }
 
     runningRef.current = true;
     turnHadErrorRef.current = false;
@@ -611,7 +786,7 @@ export function useBgsmAgent(
                   if (!transition.applied) {
                     throw new Error(m.agentPanel.turnFailed);
                   }
-                  sessionRef.current = transition.session;
+                  updateCurrentSession(transition.session);
                   appliedRevision = transition.session.revision;
                   if (result.newMessages.length > 0) reconcileFinalMessages(pending, result);
                 }
@@ -675,7 +850,7 @@ export function useBgsmAgent(
                 if (!transition.applied) {
                   throw new Error(m.agentPanel.turnFailed);
                 }
-                sessionRef.current = transition.session;
+                updateCurrentSession(transition.session);
                 appliedRevision = transition.session.revision;
                 if (result.reason === 'final_answer' || result.newMessages.length > 0) {
                   reconcileFinalMessages(pending, result);
@@ -760,13 +935,17 @@ export function useBgsmAgent(
     handleEvent,
     isCurrentDelivery,
     m.agentPanel,
+    publishSessionList,
     reconcileFinalMessages,
     rollbackPendingMessages,
     setAgentStatus,
+    updateCurrentSession,
   ]);
 
   return useMemo(() => ({
     sessionId,
+    activeSessionId,
+    sessions: sessionList,
     messages,
     running,
     status,
@@ -781,25 +960,40 @@ export function useBgsmAgent(
     startTurn,
     stopTurn,
     editContextLimitedPrompt,
+    createSession,
+    switchSession,
+    deleteSession,
     resetConversation,
   }), [
+    activeSessionId,
     contextLimitRecovery,
     canRetryLastTurn,
     draftRecovery,
     editContextLimitedPrompt,
     errorCategory,
     error,
+    createSession,
+    deleteSession,
     lastTurnResult,
     messages,
     resetConversation,
     running,
+    sessionList,
     sessionId,
     startTurn,
     status,
     stopTurn,
+    switchSession,
     toolActivities,
     conversationBinding,
   ]);
+}
+
+function truncateSessionTitle(prompt: string): string {
+  const clean = prompt.trim().replace(/\s+/g, ' ');
+  const characters = [...clean];
+  if (characters.length <= SESSION_TITLE_MAX_LENGTH) return clean;
+  return `${characters.slice(0, SESSION_TITLE_MAX_LENGTH - 1).join('').trimEnd()}…`;
 }
 
 function toChatMessage(

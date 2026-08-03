@@ -7,11 +7,12 @@ import type { ReactElement } from 'react';
 import { AgentPanel as PresentationalAgentPanel } from '@/ui/components/AgentPanel';
 import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
 import type { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
-import { createAgentWorkbenchState } from '@/ui/agent-workbench-state';
+import { createAgentWorkbenchState, type AgentWorkbenchState } from '@/ui/agent-workbench-state';
 import { cleanupMountedRootsAndBody, click, mountReact, type MountedRoot } from './test-utils';
-import type { BgsmAgentTurnHandlers } from '@/utils/messaging';
+import type { BgsmAgentTurnHandlers, BgsmOrganizeJobPresentation } from '@/utils/messaging';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';
 import { parseScopeFingerprintV1, type LaunchCandidateContract } from '@/bgsm-agent/scope';
+import { parseControllerId, parseProposalId, parseRunId } from '@/bgsm-agent/identity';
 
 const messagingMocks = vi.hoisted(() => ({
   startBgsmAgentTurn: vi.fn(),
@@ -49,6 +50,8 @@ function AgentPanel({
   onDismissHandoff,
   defaultCandidate = { kind: 'all_live_stars' },
   scopeCount,
+  workbenchState,
+  onClearTerminal,
 }: {
   open: boolean;
   onClose: () => void;
@@ -58,13 +61,15 @@ function AgentPanel({
   onDismissHandoff?: () => void;
   defaultCandidate?: LaunchCandidateContract;
   scopeCount?: number;
+  workbenchState?: AgentWorkbenchState;
+  onClearTerminal?: () => void;
 }) {
   const agent = useBgsmAgent(onDataChanged, {
     kind: 'selected_repository',
     selectedRepositoryIdHint: 'owner/repo',
   });
   const workbench = {
-    state: createAgentWorkbenchState('controller:v1:test', 'session-test'),
+    state: workbenchState ?? createAgentWorkbenchState('controller:v1:test', 'session-test'),
     displayedProcessed: 0,
     requestPreflight: messagingMocks.requestPreflight,
     captureAgentHandoffAuthority: vi.fn(() => 0),
@@ -80,10 +85,11 @@ function AgentPanel({
     stop: vi.fn(),
     continueRemaining: vi.fn(),
     discardBlockedRun: vi.fn(),
+    discardReview: vi.fn(),
     toggleProposalRow: vi.fn(),
     setAllProposalRowsSelected: vi.fn(),
     applySelected: vi.fn(),
-    clearTerminal: vi.fn(),
+    clearTerminal: onClearTerminal ?? vi.fn(),
     restartWholeLibrary: vi.fn(),
     requestOrganizeReviewPage: vi.fn(),
     requestOrganizeReceiptPage: vi.fn(),
@@ -1592,6 +1598,153 @@ describe('AgentPanel', () => {
     expect(turns[2].input.checkpoint).toBeUndefined();
   });
 
+  it('keeps separate in-memory conversations available for switching', async () => {
+    const turns: Array<{ input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers }> = [];
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input: BgsmAgentTurnInput, handlers: BgsmAgentTurnHandlers) => {
+      turns.push({ input, handlers });
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    const send = async (prompt: string, answer: string) => {
+      await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, prompt);
+      await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+      const turn = turns.at(-1)!;
+      await act(async () => {
+        turn.handlers.onResult?.({
+          ...deliveryIdentity(turn.input),
+          reason: 'final_answer',
+          changed: false,
+          changedCount: 0,
+          newMessages: [
+            { id: `${turns.length}-user`, role: 'user', content: prompt, createdAt: turns.length },
+            { id: `${turns.length}-answer`, role: 'agent', content: answer, createdAt: turns.length + 1 },
+          ],
+        });
+        await Promise.resolve();
+      });
+    };
+
+    await send('First conversation', 'First answer');
+    const firstSessionId = turns[0].input.sessionId;
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Start new conversation"]')!);
+    await send('Second conversation', 'Second answer');
+    const secondSessionId = turns[1].input.sessionId;
+    expect(secondSessionId).not.toBe(firstSessionId);
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!);
+    const firstItem = container.querySelector<HTMLElement>(
+      `[data-testid="agent-session-item"][data-session-id="${firstSessionId}"]`,
+    );
+    expect(firstItem?.textContent).toContain('First conversation');
+    await click(firstItem!.querySelector<HTMLButtonElement>('button')!);
+    expect(container.textContent).toContain('First answer');
+    expect(container.textContent).not.toContain('Second answer');
+
+    await send('Continue first conversation', 'Follow-up answer');
+    expect(turns[2].input.sessionId).toBe(firstSessionId);
+    expect(turns[2].input.baseRevision).toBe(1);
+    expect(turns[2].input.history.map((message) => message.content)).toEqual([
+      'First conversation',
+      'First answer',
+    ]);
+  });
+
+  it('requires confirmation before deleting a conversation and preserves the last one', async () => {
+    let firstTurn: { input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers } | null = null;
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
+      firstTurn = { input, handlers };
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Conversation to keep');
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    await act(async () => {
+      if (!firstTurn) throw new Error('Expected an agent turn.');
+      firstTurn.handlers.onResult?.({
+        ...deliveryIdentity(firstTurn.input),
+        reason: 'final_answer',
+        changed: false,
+        changedCount: 0,
+        newMessages: [
+          { id: 'delete-user', role: 'user', content: 'Conversation to keep', createdAt: 1 },
+          { id: 'delete-answer', role: 'agent', content: 'Saved answer', createdAt: 2 },
+        ],
+      });
+      await Promise.resolve();
+    });
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Start new conversation"]')!);
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!);
+
+    const items = [...container.querySelectorAll<HTMLElement>('[data-testid="agent-session-item"]')];
+    expect(items).toHaveLength(2);
+    const firstDelete = items[0].querySelector<HTMLButtonElement>('[data-testid="agent-session-delete"]')!;
+    await click(firstDelete);
+    expect(container.querySelector('[data-testid="agent-session-delete-confirm"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="agent-session-item"]')).toHaveLength(2);
+
+    await click([...container.querySelectorAll<HTMLButtonElement>('[data-testid="agent-session-delete-confirm"] button')]
+      .find((button) => button.textContent?.includes('Cancel'))!);
+    expect(container.querySelector('[data-testid="agent-session-delete-confirm"]')).toBeNull();
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-item"] [data-testid="agent-session-delete"]')!);
+    await click([...container.querySelectorAll<HTMLButtonElement>('[data-testid="agent-session-delete-confirm"] button')]
+      .find((button) => button.textContent?.includes('Delete'))!);
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!);
+    expect(container.querySelectorAll('[data-testid="agent-session-item"]')).toHaveLength(1);
+
+    const remainingDelete = container.querySelector<HTMLButtonElement>('[data-testid="agent-session-delete"]');
+    expect(remainingDelete?.disabled).toBe(true);
+  });
+
+  it('closes the conversation menu on Escape without hiding the Agent drawer', async () => {
+    const onClose = vi.fn();
+    const container = await mountAgentPanel(<AgentPanel open onClose={onClose} />);
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!;
+    await click(toggle);
+    toggle.focus();
+
+    await act(async () => {
+      toggle.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="agent-session-list"]')).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it('locks conversation transitions until the completed workbench receipt is dismissed', async () => {
+    const onClearTerminal = vi.fn();
+    const container = await mountAgentPanel(
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        workbenchState={completedWorkbenchState()}
+        onClearTerminal={onClearTerminal}
+      />,
+    );
+
+    const newConversation = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Start new conversation"]',
+    );
+    const sessionToggle = container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]');
+    expect(newConversation?.disabled).toBe(true);
+    expect(sessionToggle?.disabled).toBe(true);
+    await click(newConversation!);
+    expect(onClearTerminal).not.toHaveBeenCalled();
+
+    const dismiss = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Dismiss');
+    expect(dismiss).toBeDefined();
+    await click(dismiss!);
+    expect(onClearTerminal).toHaveBeenCalledOnce();
+  });
+
   it('stops a pending turn before resetting and ignores all delayed callbacks', async () => {
     const turns: Array<{
       input: BgsmAgentTurnInput;
@@ -2694,5 +2847,48 @@ function deliveryIdentity(input: BgsmAgentTurnInput) {
     turnAttemptId: input.turnAttemptId,
     sessionId: input.sessionId,
     baseRevision: input.baseRevision,
+  };
+}
+
+function completedWorkbenchState(): AgentWorkbenchState {
+  const controllerId = parseControllerId('controller:v1:session-lock-test');
+  const sessionId = 'session-lock-test';
+  const organizeJob: BgsmOrganizeJobPresentation = {
+    controllerId,
+    sessionId,
+    runId: parseRunId('run:v1:session-lock-test'),
+    generation: 1,
+    jobId: 'organize-job:v1:session-lock-test',
+    revision: 1,
+    status: 'completed',
+    scopeLabel: 'All stars',
+    scopeCount: 1,
+    capturedAt: 1,
+    proposalId: parseProposalId('proposal:v1:session-lock-test'),
+    coverage: {
+      total: 1,
+      analyzed: 1,
+      actionable: 1,
+      unchanged: 0,
+      insufficientEvidence: 0,
+      missing: 0,
+      tombstoned: 0,
+      analysisFailed: 0,
+    },
+    selectedRepositories: 1,
+    selectedActions: 1,
+    apply: {
+      applyId: 'apply:v1:session-lock-test',
+      total: 1,
+      settled: 1,
+      changed: 1,
+      unchanged: 0,
+      skipped: 0,
+      failed: 0,
+    },
+  };
+  return {
+    ...createAgentWorkbenchState(controllerId, sessionId),
+    organizeJob,
   };
 }

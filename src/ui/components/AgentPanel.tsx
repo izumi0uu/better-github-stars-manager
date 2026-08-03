@@ -27,6 +27,7 @@ import { Spinner } from '@/ui/shadcn/spinner';
 import { Conversation, Message, MessageContent, PromptInput } from '@/ui/ai-elements/chat';
 import { MessageResponse } from '@/ui/ai-elements/response';
 import { AgentFunctionMenu } from '@/ui/components/AgentFunctionMenu';
+import { AgentSessionMenu } from '@/ui/components/AgentSessionMenu';
 import {
   AgentProposalReviewCard,
   AgentRunStepper,
@@ -93,6 +94,11 @@ export function AgentPanel({
     startTurn,
     stopTurn,
     editContextLimitedPrompt,
+    activeSessionId,
+    sessions,
+    createSession,
+    switchSession,
+    deleteSession,
     resetConversation,
   } = agent;
   const organize = workbench.state;
@@ -117,6 +123,16 @@ export function AgentPanel({
   const preflightReady = organize.preflight?.status === 'ready';
   const preflightActive = preflightRequesting || preflightReady;
   const active = running || organizeActive || preflightActive;
+  const workbenchOwnsSession = !!(
+    organize.preflight
+    || organize.snapshot
+    || organize.proposal
+    || organize.organizeJob
+    || organize.organizeReviewPage
+    || organize.organizeReceiptPage
+    || organize.conversationAnchor
+  );
+  const sessionTransitionBlocked = active || workbenchOwnsSession;
   const reviewFocused = !!organize.snapshot
     && currentRunState === 'review'
     && !!organize.proposal
@@ -361,11 +377,41 @@ export function AgentPanel({
   };
 
   const handleResetConversation = () => {
-    workbench.clearTerminal();
+    if (sessionTransitionBlocked) return;
     resetConversation();
     setLastFailedPrompt(null);
     setInput('');
     focusComposerAtEnd();
+  };
+
+  const handleCreateSession = (): boolean => {
+    if (sessionTransitionBlocked) return false;
+    if (createSession()) {
+      setLastFailedPrompt(null);
+      setInput('');
+      focusComposerAtEnd();
+      return true;
+    }
+    return false;
+  };
+
+  const handleSwitchSession = (nextSessionId: string): boolean => {
+    if (sessionTransitionBlocked || !switchSession(nextSessionId)) return false;
+    setLastFailedPrompt(null);
+    setInput('');
+    focusComposerAtEnd();
+    return true;
+  };
+
+  const handleDeleteSession = (sessionIdToDelete: string): boolean => {
+    if (sessionTransitionBlocked) return false;
+    if (deleteSession(sessionIdToDelete)) {
+      setLastFailedPrompt(null);
+      setInput('');
+      focusComposerAtEnd();
+      return true;
+    }
+    return false;
   };
 
   const motionState = open ? 'open' : 'closed';
@@ -512,7 +558,7 @@ export function AgentPanel({
             size="sm"
             className="mt-2 h-7 px-2 text-xs"
             onClick={handleResetConversation}
-            disabled={active}
+            disabled={sessionTransitionBlocked}
           >
             <MessageSquarePlus className="size-3.5" data-icon="inline-start" />
             {m.agentPanel.startNewConversation}
@@ -639,12 +685,20 @@ export function AgentPanel({
             </div>
             <div className="sr-only" role="status" aria-live="polite">{headerStatus}</div>
           </div>
+          <AgentSessionMenu
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            disabled={sessionTransitionBlocked || !open}
+            onCreate={handleCreateSession}
+            onSwitch={handleSwitchSession}
+            onDelete={handleDeleteSession}
+          />
           <Button
             variant="ghost"
             size="icon"
             className="h-8 w-8"
             onClick={handleResetConversation}
-            disabled={active}
+            disabled={sessionTransitionBlocked}
             aria-label={m.agentPanel.startNewConversation}
             title={m.agentPanel.startNewConversation}
           >
@@ -1305,6 +1359,18 @@ function OrganizeJobRunWorkbench({
               onInsertCorrection={onInsertCorrection}
               onPageChange={workbench.requestOrganizeReviewPage}
             />
+            <div className="mt-2 flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={workbench.discardReview}
+                disabled={readOnly || state.transport !== 'connected'}
+              >
+                <X className="size-4" data-icon="inline-start" />
+                {m.agentPanel.workbench.discardAnalysis}
+              </Button>
+            </div>
           </Message>
         </>
       )}
@@ -1486,6 +1552,14 @@ function OrganizeJobRunWorkbench({
                         ? m.agentPanel.workbench.viewFailedChanged
                         : m.agentPanel.workbench.viewChanged}
                   </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={workbench.clearTerminal}
+                  >
+                    {m.agentPanel.workbench.dismiss}
+                  </Button>
                 </div>
               </div>
             </div>
@@ -1554,6 +1628,14 @@ function OrganizeJobRunWorkbench({
             </div>
             <div className="px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
               <p>{m.agentPanel.completedNoChangesBody}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 h-7 px-2 text-xs"
+                onClick={workbench.clearTerminal}
+              >
+                {m.agentPanel.workbench.dismiss}
+              </Button>
             </div>
           </div>
         </Message>
