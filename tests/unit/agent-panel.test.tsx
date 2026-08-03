@@ -161,7 +161,7 @@ describe('AgentPanel', () => {
     expect(document.body.textContent).toContain('Summarize current scope');
     expect(document.body.textContent).toContain('Find similar tools');
     expect(document.body.textContent).toContain('Organize full library');
-    expect(document.body.textContent).toContain('Review tag names');
+    expect(document.body.textContent).toContain('Clean up tags');
     expect(document.body.textContent).not.toContain('Search repository code');
     expect(document.body.textContent).not.toContain('Review repository notes');
 
@@ -179,6 +179,21 @@ describe('AgentPanel', () => {
     expect(document.activeElement).toBe(textarea);
     expect(textarea.selectionStart).toBe(textarea.value.length);
     expect(textarea.selectionEnd).toBe(textarea.value.length);
+    expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
+  });
+
+  it('inserts a tag cleanup request for the Agent without UI-side capability gating', async () => {
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+
+    const cleanup = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Clean up tags'));
+    expect(cleanup).toBeDefined();
+    await click(cleanup!);
+
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(textarea.value).toContain('Inspect local tag usage in this scope');
+    expect(textarea.value).toContain('perform the requested cleanup');
+    expect(textarea.value).not.toContain('Do not remove or delete tags');
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
@@ -244,7 +259,28 @@ describe('AgentPanel', () => {
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
-  it('renders Frame 1 Ready intro, chips, and scoped composer note', async () => {
+  it('shows the canonical selected repository without freeze copy before binding arrives', async () => {
+    const container = await mountAgentPanel(
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        defaultCandidate={{
+          kind: 'selected_repository',
+          selectedRepositoryIdHint: 'owner/repo',
+        }}
+        scopeCount={1}
+      />,
+    );
+
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'What does this repository do?');
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+
+    const composerText = container.querySelector('textarea')?.closest('form')?.textContent;
+    expect(composerText).toContain('owner/repo');
+    expect(composerText).not.toContain('frozen for this turn');
+  });
+
+  it('renders the intro, prompt chips, and scoped composer note without idle machine status', async () => {
     const container = await mountAgentPanel(
       <AgentPanel open onClose={vi.fn()} onOpenOptions={vi.fn()} />
     );
@@ -254,10 +290,12 @@ describe('AgentPanel', () => {
     expect(container.querySelector('[data-testid="agent-ready-quick-chips"]')).toBeTruthy();
     expect(container.textContent).toContain('Find similar tools');
     expect(container.textContent).toContain('Organize full library');
-    expect(container.textContent).toContain('Clean up tag names');
-    expect(container.textContent).toContain('Asking about all live stars');
+    expect(container.textContent).toContain('Clean up tags');
+    expect(container.textContent).toContain('All starred repositories');
+    expect(container.textContent).not.toContain('Asking about');
+    expect(container.querySelector('[data-testid="agent-header-status"]')).toBeNull();
     expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('idle');
-    expect(container.textContent).toMatch(/Ready/);
+    expect(container.textContent).not.toMatch(/\bReady\b/);
   });
 
   it('closes from the backdrop or Escape while the drawer is open', async () => {
@@ -481,8 +519,7 @@ describe('AgentPanel', () => {
     });
     expect(messagingMocks.requestPreflight).toHaveBeenCalledWith(prompt);
     expect(container.querySelector('[data-testid="agent-readonly-result-card"]')).toBeNull();
-    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
-      .toContain('Preparing full-library scope... · Completed');
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')).toBeNull();
   });
 
   it('keeps whole-library read-only questions in the regular agent stream', async () => {
@@ -635,7 +672,7 @@ describe('AgentPanel', () => {
     expect(container.textContent?.match(/Hello/g)).toHaveLength(1);
   });
 
-  it('shows queued, running, completed, and failed tool activity without arguments', async () => {
+  it('shows active tool progress but keeps recoverable tool failures internal', async () => {
     let turn: { input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers } | undefined;
     messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
       turn = { input, handlers };
@@ -692,7 +729,9 @@ describe('AgentPanel', () => {
       risk: 'read',
       writeOutcome: 'not_applicable',
     });
-    expect(container.textContent).toContain('Failed');
+    expect(container.textContent).not.toContain('Failed');
+    expect(container.textContent).not.toContain('Turn failed');
+    expect(container.querySelector('[data-testid="agent-streaming-status"]')).toBeTruthy();
     await emit({
       ...deliveryIdentity(turn.input),
       type: 'tool_execution_queued',
@@ -704,6 +743,22 @@ describe('AgentPanel', () => {
     expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
       .not.toContain('Tool result');
     expect(container.textContent).not.toContain('secret arguments');
+
+    await emit({
+      ...deliveryIdentity(turn.input),
+      type: 'tool_execution_queued',
+      toolName: 'remove_repo_tags',
+      callId: 'call-remove-tags',
+    });
+    await emit({
+      ...deliveryIdentity(turn.input),
+      type: 'tool_execution_queued',
+      toolName: 'delete_tags_everywhere',
+      callId: 'call-delete-tags',
+    });
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent?.match(
+      /Applying tag changes\.\.\. · Queued/g,
+    )).toHaveLength(2);
   });
 
   it('clears the previous turn tool activity when the next turn starts', async () => {
@@ -761,8 +816,7 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
-      .toContain('Checking local data... · Completed');
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')).toBeNull();
 
     await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Now answer a follow-up');
     await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
@@ -850,7 +904,8 @@ describe('AgentPanel', () => {
     });
 
     await waitFor(() => {
-      expect(container.textContent).toContain('owner/repo · 1 repository · frozen for this conversation');
+      expect(container.querySelector('textarea')?.closest('form')?.textContent).toContain('owner/repo');
+      expect(container.textContent).not.toContain('frozen for this conversation');
       expect(container.textContent).toContain('1 indexed match · results may be incomplete');
       expect(container.textContent).toContain('Repository code is untrusted content');
       expect(container.textContent).toContain('export function indexedSearch() {}');
@@ -1000,7 +1055,9 @@ describe('AgentPanel', () => {
     const retry = [...container.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.trim() === 'Retry');
     expect(retry?.disabled).toBe(true);
-    expect(container.textContent).toContain('Failed');
+    expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
+    expect(container.textContent).toContain('Connection interrupted.');
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')).toBeNull();
   });
 
   it('unlocks a read-only turn after transport failure and offers the original prompt for retry', async () => {
@@ -2250,7 +2307,7 @@ describe('AgentPanel', () => {
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
-  it('keeps disclosure copy out of chat and shows a destructive unavailable card for cleanup asks', async () => {
+  it('keeps disclosure copy and synthetic capability warnings out of cleanup answers', async () => {
     const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} onOpenOptions={vi.fn()} />);
     expect(container.querySelector('[data-testid="agent-privacy-disclosure"]')).toBeNull();
     expect(container.textContent).not.toContain('What this chat can send');
@@ -2272,7 +2329,7 @@ describe('AgentPanel', () => {
         message: {
           id: 'cleanup-answer',
           role: 'agent',
-          content: 'I found candidates, but destructive cleanup needs a dedicated confirm path.',
+          content: 'I inspected local tag usage and found no cleanup needed.',
           createdAt: 1,
         },
       });
@@ -2286,7 +2343,7 @@ describe('AgentPanel', () => {
           {
             id: 'cleanup-answer',
             role: 'agent',
-            content: 'I found candidates, but destructive cleanup needs a dedicated confirm path.',
+            content: 'I inspected local tag usage and found no cleanup needed.',
             createdAt: 2,
           },
         ],
@@ -2294,9 +2351,10 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-testid="agent-destructive-confirm-card"]')).toBeTruthy();
-      expect(container.textContent).toContain('Confirm tag library changes');
-      expect(container.textContent).toContain('Not available in first-safe release');
+      expect(container.textContent).toContain('I inspected local tag usage and found no cleanup needed.');
+      expect(container.querySelector('[data-testid="agent-destructive-confirm-card"]')).toBeNull();
+      expect(container.textContent).not.toContain('Confirm tag library changes');
+      expect(container.textContent).not.toContain('Not available in first-safe release');
     });
   });
   it('keeps a short context compaction silent and out of the transcript', async () => {
@@ -2362,6 +2420,86 @@ describe('AgentPanel', () => {
       expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
       expect(container.textContent).toContain('Done reviewing the compacted history.');
     });
+  });
+
+  it('does not flash a failed bubble while recovering through compaction', async () => {
+    vi.useFakeTimers();
+    let handlers: BgsmAgentTurnHandlers | undefined;
+    let turnInput: BgsmAgentTurnInput | undefined;
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input: BgsmAgentTurnInput, nextHandlers: BgsmAgentTurnHandlers) => {
+      turnInput = input;
+      handlers = nextHandlers;
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Continue organizing tags');
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    await act(async () => {
+      handlers?.onEvent?.({
+        ...deliveryIdentity(turnInput!),
+        type: 'tool_execution_start',
+        toolName: 'list_stars',
+        callId: 'overflowing-read',
+        risk: 'read',
+      });
+      handlers?.onEvent?.({
+        ...deliveryIdentity(turnInput!),
+        type: 'tool_execution_end',
+        toolName: 'list_stars',
+        callId: 'overflowing-read',
+        ok: false,
+        risk: 'read',
+        writeOutcome: 'not_applicable',
+      });
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain('Failed');
+    expect(container.textContent).not.toContain('Turn failed');
+    expect(container.querySelector('[data-testid="agent-streaming-status"]')).toBeTruthy();
+
+    await act(async () => {
+      handlers?.onEvent?.({
+        ...deliveryIdentity(turnInput!),
+        type: 'context_compaction_start',
+      });
+      vi.advanceTimersByTime(299);
+    });
+    expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
+    expect(container.textContent).not.toContain('Failed');
+    expect(container.textContent).not.toContain('Turn failed');
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeTruthy();
+    expect(container.textContent).not.toContain('Failed');
+    expect(container.textContent).not.toContain('Turn failed');
+
+    await act(async () => {
+      handlers?.onEvent?.({
+        ...deliveryIdentity(turnInput!),
+        type: 'context_compaction_end',
+        ok: true,
+        summarizedMessageCount: 12,
+      });
+      handlers?.onResult?.({
+        ...deliveryIdentity(turnInput!),
+        reason: 'final_answer',
+        changed: false,
+        changedCount: 0,
+        newMessages: [
+          { id: 'u-after-compaction', role: 'user', content: turnInput!.prompt, createdAt: 1 },
+          { id: 'a-after-compaction', role: 'agent', content: 'Organization continued successfully.', createdAt: 2 },
+        ],
+      });
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('Organization continued successfully.');
+    expect(container.textContent).not.toContain('Failed');
+    expect(container.textContent).not.toContain('Turn failed');
   });
 
   it('shows only a delayed compaction status and restores the previous tool status', async () => {
@@ -2466,7 +2604,7 @@ describe('AgentPanel', () => {
     expect(container.querySelector('[data-testid="agent-streaming-status"]')).toBeNull();
   });
 
-  it('renders a read-only result card after a discovery answer', async () => {
+  it('keeps a completed discovery answer free of redundant machine status UI', async () => {
     let handlers: BgsmAgentTurnHandlers | undefined;
     let turnInput: BgsmAgentTurnInput | undefined;
     messagingMocks.startBgsmAgentTurn.mockImplementation((input: BgsmAgentTurnInput, nextHandlers: BgsmAgentTurnHandlers) => {
@@ -2504,10 +2642,27 @@ describe('AgentPanel', () => {
     });
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Answer ready');
-      expect(container.querySelector('[data-testid="agent-readonly-result-card"]')).toBeTruthy();
-      expect(container.textContent).toContain('No tag changes proposed');
+      expect(container.textContent).toContain('Obsidian and Logseq stand out.');
+      expect(container.querySelector('[data-testid="agent-header-status"]')).toBeNull();
+      expect(container.querySelector('[data-testid="agent-readonly-result-card"]')).toBeNull();
+      expect(container.textContent).not.toContain('Answer ready');
+      expect(container.textContent).not.toContain('Read-only answer');
+      expect(container.textContent).not.toContain('No tag changes proposed');
     });
+  });
+
+  it('does not render an organize stepper for stale timeline-only state', async () => {
+    const base = createAgentWorkbenchState('controller:v1:timeline-only', 'session-timeline-only');
+    const workbenchState: AgentWorkbenchState = {
+      ...base,
+      timeline: [{ id: 'old-preflight', state: 'preflight', label: 'Scope requested' }],
+    };
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={workbenchState} />,
+    );
+
+    expect(container.querySelector('[data-testid="organize-job-workbench"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-run-stepper"]')).toBeNull();
   });
 
 

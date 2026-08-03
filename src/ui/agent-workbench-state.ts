@@ -222,7 +222,12 @@ export function reduceAgentWorkbench(
     return { ...state, preflight: null, error: action.message };
   }
   if (action.type === 'preflight_cancelled') {
-    return { ...state, preflight: null, conversationAnchor: null };
+    return {
+      ...state,
+      preflight: null,
+      conversationAnchor: null,
+      timeline: [],
+    };
   }
   if (action.type === 'continue_requested') {
     if (!state.snapshot) return state;

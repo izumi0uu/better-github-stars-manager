@@ -554,10 +554,10 @@ function classifyTransportError(error: unknown, deadline: RequestDeadline): Agen
     return new AgentProviderError('timeout', AGENT_PROVIDER_TIMEOUT);
   }
   if (deadline.callerAborted || deadline.signal.aborted) {
-    return new AgentProviderError('caller_abort', 'Agent provider request was aborted.');
+    return new AgentProviderError('caller_abort', 'AI provider request was aborted.');
   }
   if (error instanceof AgentProviderError) return error;
-  return new AgentProviderError('network_error', 'Agent provider network request failed.');
+  return new AgentProviderError('network_error', 'AI provider network request failed.');
 }
 function isAuthorityFailure(error: unknown): error is Error {
   if (!(error instanceof Error)) return false;

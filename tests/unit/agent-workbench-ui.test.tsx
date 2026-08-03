@@ -437,8 +437,14 @@ describe('Agent organize-job workbench UI', () => {
       count: 290,
     });
     expect(container.textContent).toContain('Confirm analysis scope');
-    expect(container.textContent).toContain('290 repositories will be frozen');
+    expect(container.textContent).toContain('This analysis will include 290 repositories.');
+    expect(container.textContent).not.toContain('frozen for this run');
     expect(container.textContent).toContain('No tags are changed at this step');
+    expect(container.querySelector('textarea')?.closest('form')?.textContent)
+      .toContain('Pending confirmation · 290 repositories');
+    expect(container.textContent?.match(/Pending confirmation · 290 repositories/gu))
+      .toHaveLength(1);
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
     expect(container.innerHTML).not.toContain('preflight:v1:ui-confirm');
     await click(buttonWithText(container, 'Start analysis'));
     expect(activeOrganizePort().posted).toContainEqual(expect.objectContaining({

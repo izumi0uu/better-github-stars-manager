@@ -135,6 +135,7 @@ export function AgentPanel({
   const preflightReady = organize.preflight?.status === 'ready';
   const preflightActive = preflightRequesting || preflightReady;
   const active = running || organizeActive || preflightActive;
+  const showStopbar = running || organizeActive || preflightRequesting;
   const workbenchOwnsSession = !!(
     organize.preflight
     || organize.snapshot
@@ -175,13 +176,6 @@ export function AgentPanel({
     && !contextLimitRecovery
     && messages.length === 0;
   const applying = currentRunState === 'apply_sealed' || currentRunState === 'applying';
-  const showDestructiveUnavailable = !running
-    && !organize.snapshot
-    && !organize.preflight
-    && !durableReceiptCounts
-    && !!lastTurnResult
-    && !lastTurnResult.changed
-    && messages.some((message) => message.role === 'user' && /clean up|cleanup|merge|delete tag|rename tag|清理|合并|删除标签/i.test(message.content));
   const lastUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content ?? null;
   const retryPrompt = draftRecovery ?? lastFailedPrompt ?? lastUserPrompt;
   const unsafeReplayBlocked = !canRetryLastTurn
@@ -212,16 +206,6 @@ export function AgentPanel({
     || message.toolName === 'read_repository_file'
   ));
   const showProviderErrorCard = !running && !!error && !contextLimitRecovery;
-  const showReadOnlyResult = !running
-    && !error
-    && !organize.snapshot
-    && !organize.proposal
-    && !durableReceiptCounts
-    && !repositoryCodeReadOnly
-    && !!lastTurnResult
-    && !lastTurnResult.organizeLibraryHandoff
-    && !lastTurnResult.changed
-    && messages.some((message) => message.role === 'assistant' && message.content.trim());
   const codeSearchMessages = toolMessages.filter((message) => (
     message.toolName === 'search_repository_code'
   ));
@@ -479,17 +463,15 @@ export function AgentPanel({
                           )
                           : showHandoff
                             ? m.agentPanel.handoffHeader
-                            : showDestructiveUnavailable
-                              ? m.agentPanel.destructiveHeader
-                              : currentRunState
-                                ? m.agentPanel.runStateLabel(currentRunState)
-                                : error
-                                  ? (isProviderSetupError ? m.agentPanel.providerAuthHeader : m.agentPanel.turnFailed)
-                                  : lastTurnResult?.changed
-                                    ? m.agentPanel.agentChanged(lastTurnResult.changedCount)
-                                    : showReadOnlyResult
-                                      ? m.agentPanel.answerReady
-                                      : m.agentPanel.chatHeaderIdle;
+                            : currentRunState
+                              ? m.agentPanel.runStateLabel(currentRunState)
+                              : error
+                                ? (isProviderSetupError ? m.agentPanel.providerAuthHeader : m.agentPanel.turnFailed)
+                                : lastTurnResult?.changed
+                                  ? m.agentPanel.agentChanged(lastTurnResult.changedCount)
+                                  : status?.kind === 'stopped'
+                                    ? status.text
+                                    : null;
   const composerNote = contextLimitRecovery
     ? m.agentPanel.composerPausedContextRecovery
     : unsafeReplayBlocked
@@ -513,14 +495,11 @@ export function AgentPanel({
                   : organize.snapshot
                     ? m.agentPanel.frozenScopeNote(organize.snapshot.frozenScope.count)
                     : agent.conversationBinding
-                      ? m.agentPanel.conversationFrozenScope(
-                          agent.conversationBinding.label,
-                          agent.conversationBinding.count,
-                        )
-                    : running && typeof resolvedScopeCount === 'number'
-                      ? m.agentPanel.turnFrozenScopeNote(resolvedScopeCount)
-                      : defaultCandidate.kind === 'selected_repository'
-                        ? m.agentPanel.askingAboutSelectedRepository
+                      ? agent.conversationBinding.candidateContract.kind === 'selected_repository'
+                        ? agent.conversationBinding.label
+                        : m.agentPanel.askingAboutCurrentView(agent.conversationBinding.count)
+                    : defaultCandidate.kind === 'selected_repository'
+                        ? defaultCandidate.selectedRepositoryIdHint
                         : defaultCandidate.kind === 'current_view'
                           ? (typeof resolvedScopeCount === 'number'
                             ? m.agentPanel.askingAboutCurrentView(resolvedScopeCount)
@@ -539,11 +518,9 @@ export function AgentPanel({
       ? m.agentPanel.resolvingScopeHeader
       : organize.preflight?.status === 'starting'
         ? m.agentPanel.workbench.startingAnalysis
-      : preflightReady && !running
-        ? m.agentPanel.pendingConfirmationNote(organize.preflight?.count ?? 0)
-      : (organizeActive || running)
-        ? m.agentPanel.runContinuesWhileHidden
-        : status?.text ?? m.agentPanel.chatWorking;
+        : (organizeActive || running)
+          ? m.agentPanel.runContinuesWhileHidden
+          : status?.text ?? m.agentPanel.chatWorking;
   const conversationScrollKey = [
     messages.at(-1)?.id ?? '',
     messages.at(-1)?.content.length ?? 0,
@@ -579,7 +556,7 @@ export function AgentPanel({
       </section>
     </Message>
   ) : null;
-  const toolActivityTranscript = toolActivities.length > 0 ? (
+  const toolActivityTranscript = running && toolActivities.length > 0 ? (
     <Message role="system">
       <div
         className="flex w-full flex-col gap-1 border-l-2 border-border py-0.5 pl-2 text-xs text-muted-foreground"
@@ -687,13 +664,17 @@ export function AgentPanel({
           <AgentMascot key={mascotState} state={mascotState} playing={open} />
           <div className="min-w-0 flex-1">
             <div id="gsm-agent-dialog-title" className="text-[13.5px] font-semibold leading-tight text-foreground">{m.agentPanel.title}</div>
-            <div
-              className="truncate text-[11.5px] text-muted-foreground"
-              data-testid="agent-header-status"
-            >
-              {headerStatus}
-            </div>
-            <div className="sr-only" role="status" aria-live="polite">{headerStatus}</div>
+            {headerStatus && (
+              <>
+                <div
+                  className="truncate text-[11.5px] text-muted-foreground"
+                  data-testid="agent-header-status"
+                >
+                  {headerStatus}
+                </div>
+                <div className="sr-only" role="status" aria-live="polite">{headerStatus}</div>
+              </>
+            )}
           </div>
           <AgentSessionMenu
             sessions={sessions}
@@ -920,61 +901,6 @@ export function AgentPanel({
                 </Message>
               )}
 
-              {showReadOnlyResult && !showDestructiveUnavailable && (
-                <Message role="system">
-                  <div
-                    className="w-full overflow-hidden rounded-[10px] border border-border bg-card"
-                    data-testid="agent-readonly-result-card"
-                  >
-                    <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
-                      <div className="mt-0.5 grid size-5 place-items-center text-muted-foreground">
-                        <Search className="size-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[12.5px] font-semibold leading-tight text-foreground">
-                          {m.agentPanel.readOnlyResultTitle}
-                        </div>
-                        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
-                          {m.agentPanel.readOnlyResultSubtitle}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
-                      <p>{m.agentPanel.noTagChangesProposed}</p>
-                    </div>
-                  </div>
-                </Message>
-              )}
-
-              {showDestructiveUnavailable && (
-                <Message role="system">
-                  <div
-                    className="w-full overflow-hidden rounded-[10px] border border-border bg-card"
-                    data-testid="agent-destructive-confirm-card"
-                    role="status"
-                  >
-                    <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
-                      <div className="mt-0.5 grid size-5 place-items-center text-muted-foreground">
-                        <TriangleAlert className="size-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[12.5px] font-semibold leading-tight text-foreground">
-                          {m.agentPanel.destructiveTitle}
-                        </div>
-                        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
-                          {m.agentPanel.destructiveSubtitle}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
-                      <p>{m.agentPanel.destructiveBody}</p>
-                      <Button size="sm" className="h-7 px-2 text-xs" disabled>
-                        {m.agentPanel.destructiveUnavailable}
-                      </Button>
-                    </div>
-                  </div>
-                </Message>
-              )}
             </Conversation>
 
             {contextLimitRecovery && (
@@ -1013,7 +939,7 @@ export function AgentPanel({
               </div>
             )}
 
-            {active && (
+            {showStopbar && (
               <div
                 className="flex items-center justify-between gap-3 border-t border-border bg-muted/30 px-3 py-2"
                 data-testid="agent-stopbar"
@@ -1147,7 +1073,7 @@ function OrganizeJobRunWorkbench({
     ?? blockedSnapshot?.coverage?.analysisFailed
     ?? 0;
 
-  if (!preflight && !snapshot && !state.organizeJob && state.timeline.length === 0 && !state.error) return null;
+  if (!preflight && !snapshot && !state.organizeJob && !state.error) return null;
 
   const selectedCount = state.organizeJob?.selectedRepositories ?? 0;
   const applyInFlight = currentRunState === 'apply_sealed' || currentRunState === 'applying';
@@ -1802,7 +1728,11 @@ function toolDisplayName(
     || toolName === 'search_repository_code'
     || toolName === 'read_repository_file'
   ) return labels.agentSearchingCode;
-  if (toolName === 'assign_repo_tags' || toolName === 'remove_repo_tag' || toolName === 'delete_tag_everywhere') {
+  if (
+    toolName === 'assign_repo_tags'
+    || toolName === 'remove_repo_tags'
+    || toolName === 'delete_tags_everywhere'
+  ) {
     return labels.agentApplyingChanges;
   }
   if (

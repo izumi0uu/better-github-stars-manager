@@ -115,6 +115,36 @@ describe('Agent workbench durable organize-job reducer', () => {
     }));
   });
 
+  it('clears preflight timeline state when scope confirmation is cancelled', () => {
+    let state = createAgentWorkbenchState(controllerId, sessionId);
+    state = reduceAgentWorkbench(state, {
+      type: 'preflight_requested',
+      requestId: 'request-cancel',
+      taskInstruction: 'Organize every starred repository.',
+      conversationAnchor: { messageId: 'request-cancel-message', createdAt: 1 },
+    });
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunPreflightResult',
+        controllerId,
+        sessionId,
+        requestId: 'request-cancel',
+        status: 'ready',
+        preflightToken: parsePreflightToken('preflight:v1:cancel'),
+        label: 'All live stars',
+        count: 303,
+      },
+    });
+    expect(state.timeline.length).toBeGreaterThan(0);
+
+    const cancelled = reduceAgentWorkbench(state, { type: 'preflight_cancelled' });
+
+    expect(cancelled.preflight).toBeNull();
+    expect(cancelled.conversationAnchor).toBeNull();
+    expect(cancelled.timeline).toEqual([]);
+  });
+
   it('accepts an unscoped start error only while start is pending', () => {
     const errorMessage = {
       type: 'bgsmOrganizeJobRunError' as const,

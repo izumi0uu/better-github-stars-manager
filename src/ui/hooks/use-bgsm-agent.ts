@@ -371,6 +371,10 @@ export function useBgsmAgent(
     });
   }, []);
 
+  const removeToolActivity = useCallback((callId: string) => {
+    setToolActivities((current) => current.filter((activity) => activity.callId !== callId));
+  }, []);
+
   const failOpenToolActivities = useCallback(() => {
     setToolActivities((current) => current.map((activity) => (
       activity.state === 'queued' || activity.state === 'running'
@@ -478,16 +482,20 @@ export function useBgsmAgent(
             event.writeOutcome === 'not_applicable' ? 'unknown' : event.writeOutcome,
           );
         }
+        if (!event.ok) {
+          // Tool failures remain available in diagnostics and model history. They
+          // are recoverable while the turn is alive, so do not flash a terminal
+          // failure in the product transcript before retry or compaction.
+          removeToolActivity(event.callId);
+          setAgentStatus({ kind: 'working', text: m.agentPanel.agentThinking });
+          break;
+        }
         updateToolActivity({
           callId: event.callId,
           toolName: event.toolName,
-          state: event.ok ? 'completed' : 'failed',
+          state: 'completed',
         });
-        if (!event.ok) turnHadErrorRef.current = true;
-        setAgentStatus({
-          kind: event.ok ? 'working' : 'error',
-          text: event.ok ? m.agentPanel.agentThinking : m.agentPanel.turnFailed,
-        });
+        setAgentStatus({ kind: 'working', text: m.agentPanel.agentThinking });
         break;
       case 'agent_error':
         turnHadErrorRef.current = true;
@@ -535,6 +543,7 @@ export function useBgsmAgent(
     finishCompactionUi,
     isCurrentDelivery,
     m.agentPanel,
+    removeToolActivity,
     rollbackPendingMessages,
     setAgentStatus,
     startCompactionUi,

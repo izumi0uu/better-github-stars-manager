@@ -414,7 +414,6 @@ export async function compactBgsmAgentCompletedToolEnvelope(input: {
       baselineProjection,
     });
     if (activeOutcome) return activeOutcome;
-    emitFailedCompaction(input);
     const currentPreflight = preflightContextRequest({
       messages: input.currentProjectedMessages.map(toModelMessage),
       toolSchemas,
@@ -450,8 +449,19 @@ export async function compactBgsmAgentCompletedToolEnvelope(input: {
               ? 'provider_request_byte_limit'
               : 'no_candidate'),
         };
+    if (outcome.kind === 'ready') {
+      input.emit?.({
+        type: 'context_compaction_end',
+        sessionId: input.turn.sessionId,
+        ok: true,
+        summarizedMessageCount: 0,
+      });
+      input.liveness?.markAgentProgress();
+    } else {
+      emitFailedCompaction(input);
+    }
     emitCompactionDiagnostic(input, 'terminal', {
-      category: outcome.kind === 'context_limit' ? outcome.reason : 'no_candidate',
+      category: outcome.kind === 'context_limit' ? outcome.reason : 'succeeded',
     });
     return outcome;
   }
@@ -1107,12 +1117,18 @@ function boundedToolCompletionFacts(messages: readonly AgentMessage[]): string {
     if (assistant.role !== 'agent') continue;
     for (const call of assistant.toolCalls ?? []) {
       const result = results.get(call.id);
-      const toolClass = call.name === 'assign_repo_tags' ? 'write' : 'read';
+      const toolClass = isTagWriteTool(call.name) ? 'write' : 'read';
       const toolName = truncateUtf8(call.name.replace(/[^\w.-]/gu, '?'), 64) || 'unknown';
       facts.push(toolClass + ' tool ' + toolName + ': ' + boundedToolOutcome(toolClass, result));
     }
   }
   return facts.join(' | ');
+}
+
+function isTagWriteTool(toolName: string): boolean {
+  return toolName === 'assign_repo_tags'
+    || toolName === 'remove_repo_tags'
+    || toolName === 'delete_tags_everywhere';
 }
 
 function boundedToolOutcome(

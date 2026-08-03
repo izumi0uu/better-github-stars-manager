@@ -133,7 +133,6 @@ export interface MessageCatalog {
   agentPanel: {
     title: string;
     chatInputLabel: string;
-    chatHeaderIdle: string;
     chatIntro: string;
     chatPlaceholder: string;
     chatPlaceholderScoped: (count: number) => string;
@@ -162,17 +161,14 @@ export interface MessageCatalog {
     functionReviewNotes: string;
     functionReviewNotesDescription: string;
     askingAboutCurrentView: (count: number) => string;
-    askingAboutSelectedRepository: string;
     askingAboutAllLiveStars: (count?: number) => string;
     agentChanged: (count: number) => string;
     turnFailed: string;
     attemptStateLost: string;
-    answerReady: string;
     providerErrorTitle: string;
     providerErrorSubtitle: string;
     providerErrorBody: string;
     retry: string;
-    noLocalDataModified: string;
     contextSettingsTitle: string;
     contextSettingsMessage: string;
     contextPromptTooLargeTitle: string;
@@ -200,11 +196,6 @@ export interface MessageCatalog {
     analyzingMeta: (processed: number, remaining: number, batches: number) => string;
     frozenScopeNote: (count: number) => string;
     pendingConfirmationNote: (count: number) => string;
-    turnFrozenScopeNote: (count: number) => string;
-    conversationFrozenScope: (label: string, count: number) => string;
-    readOnlyResultTitle: string;
-    readOnlyResultSubtitle: string;
-    noTagChangesProposed: string;
     hideAgent: string;
     stop: string;
     cancel: string;
@@ -233,11 +224,6 @@ export interface MessageCatalog {
     handoffAmbiguous: string;
     handoffExamples: string;
     handoffScopeNote: (count: number) => string;
-    destructiveHeader: string;
-    destructiveTitle: string;
-    destructiveSubtitle: string;
-    destructiveBody: string;
-    destructiveUnavailable: string;
     partialReceiptHeader: string;
     resolvingScopeHeader: string;
     resolvingScopeBody: string;
@@ -862,7 +848,7 @@ const messages: Record<Locale, MessageCatalog> = {
       hidePanelTitle: "Hide panel (use native stars list)",
       starRepoTitle: "Like the project? Leave a star:)",
       autoAssignTitle:
-        "Auto-assign tags from each repo's topics (experimental)",
+        "Auto-assign tags from each repo's topics",
       autoAssignButton: "Auto Tags",
       agentTitle: "Open Cubby, the optional AI tag assistant",
       agentButton: "Cubby",
@@ -925,7 +911,6 @@ const messages: Record<Locale, MessageCatalog> = {
     agentPanel: {
       title: "Cubby",
       chatInputLabel: "Message Cubby",
-      chatHeaderIdle: "Ready",
       chatIntro:
         "I can inspect, compare, and organize repositories in your current scope. Auto Tags stays local and one-click — this chat is for judgment calls.",
       chatPlaceholder: "Ask about these repositories…",
@@ -942,14 +927,14 @@ const messages: Record<Locale, MessageCatalog> = {
       findSimilarPrompt:
         "Find similar tools in this scope and compare the strongest options with clear evidence from local repository metadata.",
       cleanupTagsPrompt:
-        "Review tag names in this scope and suggest cleanup opportunities. Do not remove or delete tags; only explain candidates and ask before any later review path.",
+        "Inspect local tag usage in this scope, identify duplicate, inconsistent, and unused tags, then perform the requested cleanup with the available tag tools. Summarize what changed.",
       searchCodePrompt:
         "Search the selected repository code for its main architecture and explain the key implementation files. Do not change tags.",
       reviewNotesPrompt:
         "Read the private notes for the selected repository and summarize the useful context. Do not change tags.",
       quickFindSimilar: "Find similar tools",
       quickOrganizeUntagged: "Organize full library",
-      quickCleanupTags: "Clean up tag names",
+      quickCleanupTags: "Clean up tags",
       functionMenuLabel: "Prompt suggestions",
       functionMenuTitle: "Suggested prompts",
       functionSummarize: "Summarize current scope",
@@ -958,34 +943,31 @@ const messages: Record<Locale, MessageCatalog> = {
       functionFindSimilarDescription: "Compare the strongest alternatives in this scope.",
       functionOrganizeUntagged: "Organize full library",
       functionOrganizeUntaggedDescription: "Analyze every live star and prepare one complete tag review.",
-      functionReviewTags: "Review tag names",
-      functionReviewTagsDescription: "Find duplicates and naming cleanup opportunities without deleting.",
+      functionReviewTags: "Clean up tags",
+      functionReviewTagsDescription: "Inspect local usage and clean up duplicate, inconsistent, or unused tags.",
       functionSearchCode: "Search repository code",
       functionSearchCodeDescription: "Inspect indexed public code for the selected repository.",
       functionReviewNotes: "Review repository notes",
       functionReviewNotesDescription: "Read the private notes attached to the selected repository.",
       askingAboutCurrentView: (count) => (
         count === 1
-          ? "Asking about current view · 1 repository"
-          : `Asking about current view · ${count} repositories`
+          ? "Current view · 1 repository"
+          : `Current view · ${count} repositories`
       ),
-      askingAboutSelectedRepository: "Asking about selected repository · 1",
       askingAboutAllLiveStars: (count) => (
         typeof count === "number"
           ? (count === 1
-            ? "Asking about all live stars · 1 repository"
-            : `Asking about all live stars · ${count} repositories`)
-          : "Asking about all live stars"
+            ? "All starred repositories · 1 repository"
+            : `All starred repositories · ${count} repositories`)
+          : "All starred repositories"
       ),
       agentChanged: (count) => `${count} tag update${count === 1 ? '' : 's'} applied`,
       turnFailed: "Turn failed",
       attemptStateLost: "The extension restarted before this turn could be recovered. Review any completed changes, then retry.",
-      answerReady: "Answer ready",
       providerErrorTitle: "Provider error",
       providerErrorSubtitle: "No local data was modified",
       providerErrorBody: "Your prompt is still in the thread. Retry the same question or start a new conversation.",
       retry: "Retry",
-      noLocalDataModified: "No local data was modified",
       contextSettingsTitle: "AI service settings need attention",
       contextSettingsMessage: "Adjust this service's context settings before continuing. Your draft is preserved.",
       contextPromptTooLargeTitle: "This request is too large",
@@ -1023,19 +1005,6 @@ const messages: Record<Locale, MessageCatalog> = {
           ? "Pending confirmation · 1 repository"
           : `Pending confirmation · ${count} repositories`
       ),
-      turnFrozenScopeNote: (count) => (
-        count === 1
-          ? "Current view · 1 repository · frozen for this turn"
-          : `Current view · ${count} repositories · frozen for this turn`
-      ),
-      conversationFrozenScope: (label, count) => (
-        count === 1
-          ? `${label} · 1 repository · frozen for this conversation`
-          : `${label} · ${count} repositories · frozen for this conversation`
-      ),
-      readOnlyResultTitle: "Read-only answer",
-      readOnlyResultSubtitle: "No tag changes proposed",
-      noTagChangesProposed: "No tag changes proposed",
       hideAgent: "Hide Cubby",
       stop: "Stop",
       cancel: "Cancel",
@@ -1068,11 +1037,6 @@ const messages: Record<Locale, MessageCatalog> = {
           ? "Still untagged after Auto Tags · 1 repository"
           : `Still untagged after Auto Tags · ${count} repositories`
       ),
-      destructiveHeader: "Confirm destructive changes",
-      destructiveTitle: "Confirm tag library changes",
-      destructiveSubtitle: "Destructive · review required · not auto-applied",
-      destructiveBody: "Rename, merge, and delete stay off the free-chat tool path. A dedicated confirm + Apply flow is required before any library cleanup writes.",
-      destructiveUnavailable: "Not available in first-safe release",
       partialReceiptHeader: "Applied with conflicts",
       resolvingScopeHeader: "Resolving scope…",
       resolvingScopeBody: "I’m freezing exact repository IDs for this turn so later filter changes can’t silently expand the job.",
@@ -1188,7 +1152,7 @@ const messages: Record<Locale, MessageCatalog> = {
       needsReviewSelected: (count) => `Needs review · ${count} selected`,
       appliedTagChanges: (count) => `Applied ${count} tag ${count === 1 ? "change" : "changes"}`,
       followUpAboutScope: "Ask a follow-up about this scope",
-      askingAboutCurrentViewUnknown: "Asking about current view",
+      askingAboutCurrentViewUnknown: "Current view",
       handoffAutoTagsUpdated: "Auto Tags already updated topic-based auto tags.",
       agentActivityLabel: "Cubby activity",
       workbench: {
@@ -1196,7 +1160,7 @@ const messages: Record<Locale, MessageCatalog> = {
         resolvingBody: "I’m freezing every live starred repository so filters and the selected row cannot narrow this organization job.",
         resolvingHint: "Usually quick · no tags are changed during this step",
         confirmScopeTitle: "Confirm analysis scope",
-        repositoriesFrozen: (count) => `${count} repositories will be frozen for this run.`,
+        repositoriesFrozen: (count) => `This analysis will include ${count} repositories.`,
         reviewBeforeApply: "Analysis prepares a complete review first. No tags are changed at this step.",
         startAnalysis: "Start analysis",
         startingAnalysis: "Starting analysis",
@@ -1767,7 +1731,7 @@ const messages: Record<Locale, MessageCatalog> = {
       githubHomeTitle: "GitHub 首页",
       hidePanelTitle: "隐藏面板（用 GitHub 原生列表）",
       starRepoTitle: "点个Star~",
-      autoAssignTitle: "根据每个仓库的 topics 自动分配标签（实验性功能）",
+      autoAssignTitle: "根据每个仓库的 topics 自动分配标签",
       autoAssignButton: "Auto Tags",
       agentTitle: "打开 Cubby，可选的 AI 标签助手",
       agentButton: "Cubby",
@@ -1830,7 +1794,6 @@ const messages: Record<Locale, MessageCatalog> = {
     agentPanel: {
       title: "Cubby",
       chatInputLabel: "向 Cubby 提问",
-      chatHeaderIdle: "就绪",
       chatIntro:
         "我可以检查、对比并整理当前范围内的仓库。Auto Tags 仍是本地一键操作——这个对话负责需要判断的部分。",
       chatPlaceholder: "问这些仓库…",
@@ -1847,14 +1810,14 @@ const messages: Record<Locale, MessageCatalog> = {
       findSimilarPrompt:
         "在当前范围内找相似工具，并用本地仓库元数据给出有证据的对比。",
       cleanupTagsPrompt:
-        "检查当前范围内的标签命名，并建议清理机会。不要移除或删除标签；只说明候选，后续如需删除走独立确认路径。",
+        "检查当前范围内本地标签的使用情况，找出重复、命名不一致和未使用的标签，然后使用可用的标签工具完成请求的清理，并总结改动。",
       searchCodePrompt:
         "搜索选中仓库的代码，分析它的主要架构并说明关键实现文件。不要修改标签。",
       reviewNotesPrompt:
         "读取选中仓库的私人笔记，并总结其中有用的上下文。不要修改标签。",
       quickFindSimilar: "找相似工具",
       quickOrganizeUntagged: "整理整个资料库",
-      quickCleanupTags: "清理标签命名",
+      quickCleanupTags: "清理标签",
       functionMenuLabel: "提示词建议",
       functionMenuTitle: "建议提示词",
       functionSummarize: "总结当前范围",
@@ -1863,34 +1826,31 @@ const messages: Record<Locale, MessageCatalog> = {
       functionFindSimilarDescription: "对比当前范围内最值得关注的替代方案。",
       functionOrganizeUntagged: "整理整个资料库",
       functionOrganizeUntaggedDescription: "分析全部仍在收藏的仓库并准备一次完整标签审阅。",
-      functionReviewTags: "检查标签命名",
-      functionReviewTagsDescription: "查找重复和命名清理机会，不直接删除。",
+      functionReviewTags: "清理标签",
+      functionReviewTagsDescription: "检查本地使用情况并清理重复、命名不一致或未使用的标签。",
       functionSearchCode: "搜索仓库代码",
       functionSearchCodeDescription: "检查选中仓库的公开代码索引。",
       functionReviewNotes: "查看仓库笔记",
       functionReviewNotesDescription: "读取选中仓库关联的私人笔记。",
       askingAboutCurrentView: (count) => (
         count === 1
-          ? "正在询问当前视图 · 1 个仓库"
-          : `正在询问当前视图 · ${count} 个仓库`
+          ? "当前视图 · 1 个仓库"
+          : `当前视图 · ${count} 个仓库`
       ),
-      askingAboutSelectedRepository: "正在询问选中仓库 · 1",
       askingAboutAllLiveStars: (count) => (
         typeof count === "number"
           ? (count === 1
-            ? "正在询问全部 live stars · 1 个仓库"
-            : `正在询问全部 live stars · ${count} 个仓库`)
-          : "正在询问全部 live stars"
+            ? "全部星标仓库 · 1 个仓库"
+            : `全部星标仓库 · ${count} 个仓库`)
+          : "全部星标仓库"
       ),
       agentChanged: (count) => `已应用 ${count} 次标签更新`,
       turnFailed: "本轮失败",
       attemptStateLost: "扩展重启后无法恢复本轮执行。请先检查已完成的变更，再重试。",
-      answerReady: "回答已就绪",
       providerErrorTitle: "服务商错误",
       providerErrorSubtitle: "本地数据未被修改",
       providerErrorBody: "你的问题仍在对话里。可以重试同一问题，或开始新对话。",
       retry: "重试",
-      noLocalDataModified: "本地数据未被修改",
       contextSettingsTitle: "AI 服务设置需要调整",
       contextSettingsMessage: "请先调整此服务的上下文设置。你的草稿已保留。",
       contextPromptTooLargeTitle: "本次请求内容过多",
@@ -1928,19 +1888,6 @@ const messages: Record<Locale, MessageCatalog> = {
           ? "待确认 · 1 个仓库"
           : `待确认 · ${count} 个仓库`
       ),
-      turnFrozenScopeNote: (count) => (
-        count === 1
-          ? "当前视图 · 1 个仓库 · 本轮冻结"
-          : `当前视图 · ${count} 个仓库 · 本轮冻结`
-      ),
-      conversationFrozenScope: (label, count) => (
-        count === 1
-          ? `${label} · 1 个仓库 · 本对话范围已冻结`
-          : `${label} · ${count} 个仓库 · 本对话范围已冻结`
-      ),
-      readOnlyResultTitle: "只读回答",
-      readOnlyResultSubtitle: "未提出标签变更",
-      noTagChangesProposed: "未提出标签变更",
       hideAgent: "隐藏 Cubby",
       stop: "停止",
       cancel: "取消",
@@ -1973,11 +1920,6 @@ const messages: Record<Locale, MessageCatalog> = {
           ? "Auto Tags 后仍未标注 · 1 个仓库"
           : `Auto Tags 后仍未标注 · ${count} 个仓库`
       ),
-      destructiveHeader: "确认破坏性变更",
-      destructiveTitle: "确认标签库变更",
-      destructiveSubtitle: "破坏性 · 需要审阅 · 不会自动应用",
-      destructiveBody: "重命名、合并、删除不在自由聊天工具路径上。在写入标签库清理前，需要独立的确认 + Apply 流程。",
-      destructiveUnavailable: "首个安全版本暂不可用",
       partialReceiptHeader: "已应用，但有冲突",
       resolvingScopeHeader: "正在解析范围…",
       resolvingScopeBody: "我会为本轮冻结确切的仓库 ID，避免之后改筛选时静默扩大任务范围。",
@@ -2123,7 +2065,7 @@ const messages: Record<Locale, MessageCatalog> = {
       needsReviewSelected: (count) => `待审阅 · 已选择 ${count} 条`,
       appliedTagChanges: (count) => `已应用 ${count} 项标签变更`,
       followUpAboutScope: "继续询问此范围",
-      askingAboutCurrentViewUnknown: "正在询问当前视图",
+      askingAboutCurrentViewUnknown: "当前视图",
       handoffAutoTagsUpdated: "自动标签已更新基于主题的标签。",
       agentActivityLabel: "Cubby 活动",
       workbench: {
@@ -2131,7 +2073,7 @@ const messages: Record<Locale, MessageCatalog> = {
         resolvingBody: "正在冻结全部仍在收藏的仓库；筛选条件和当前选中行都不会缩小本次整理范围。",
         resolvingHint: "通常很快 · 此步骤不会修改标签",
         confirmScopeTitle: "确认分析范围",
-        repositoriesFrozen: (count) => `本轮将冻结 ${count} 个仓库。`,
+        repositoriesFrozen: (count) => `将分析 ${count} 个仓库。`,
         reviewBeforeApply: "分析完成后会先生成一次完整审阅；此步骤不会修改标签。",
         startAnalysis: "开始分析",
         startingAnalysis: "正在启动分析",

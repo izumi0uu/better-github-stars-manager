@@ -119,6 +119,45 @@ describe('i18n catalog and locale propagation invariants', () => {
     assert.equal(chinese.agentApplyingChanges, '正在应用标签变更...');
   });
 
+  it('keeps Cubby scope summaries natural and localized', () => {
+    const english = getMessages('en').agentPanel;
+    const chinese = getMessages('zh-CN').agentPanel;
+
+    assert.equal(english.askingAboutCurrentView(2), 'Current view · 2 repositories');
+    assert.equal(chinese.askingAboutCurrentView(2), '当前视图 · 2 个仓库');
+    assert.equal(english.askingAboutAllLiveStars(2), 'All starred repositories · 2 repositories');
+    assert.equal(chinese.askingAboutAllLiveStars(2), '全部星标仓库 · 2 个仓库');
+    assert.equal(
+      english.workbench.repositoriesFrozen(290),
+      'This analysis will include 290 repositories.',
+    );
+    assert.equal(chinese.workbench.repositoriesFrozen(290), '将分析 290 个仓库。');
+  });
+
+  it('uses Cubby consistently across both product locales', () => {
+    const english = getMessages('en');
+    const chinese = getMessages('zh-CN');
+
+    assert.deepEqual(
+      [
+        english.toolbar.agentButton,
+        english.agentPanel.title,
+        english.agentPanel.agentSettings,
+        english.options.agentHeading,
+      ],
+      ['Cubby', 'Cubby', 'Cubby settings', '2. Cubby'],
+    );
+    assert.deepEqual(
+      [
+        chinese.toolbar.agentButton,
+        chinese.agentPanel.title,
+        chinese.agentPanel.agentSettings,
+        chinese.options.agentHeading,
+      ],
+      ['Cubby', 'Cubby', 'Cubby 设置', '2. Cubby'],
+    );
+  });
+
   it('localizes the development Cubby diagnostics surface while preserving raw evidence identifiers', () => {
     const english = getAgentDiagnosticsMessages('en');
     const chinese = getAgentDiagnosticsMessages('zh-CN');

@@ -637,7 +637,7 @@ async function assertAgentDrawerA11y(page) {
     'Summarize current scope',
     'Find similar tools',
     'Organize full library',
-    'Review tag names',
+    'Clean up tags',
   ]);
   await clickShadowButton(page, 'button[aria-label="Prompt suggestions"]');
   await page.waitForFunction(
