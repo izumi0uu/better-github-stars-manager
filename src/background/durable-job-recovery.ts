@@ -59,7 +59,6 @@ export function createDurableJobRecovery<
       await dependencies.clearAlarm(dependencies.alarmName);
       return;
     }
-    activeOperationId = active.operationId;
     await arm();
     if (await dependencies.isRunning(active.operationId)) return;
 

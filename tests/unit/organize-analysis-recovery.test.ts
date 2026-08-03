@@ -165,6 +165,53 @@ describe('organize analysis recovery alarm', () => {
     ]);
   });
 
+  it('queues an explicit start until lease recovery confirms which operation it owns', async () => {
+    let active: RecoverableOrganizeAnalysis | null = { jobId: 'job-1', status: 'analyzing' };
+    const operations: string[] = [];
+    let releaseLeaseRecovery!: () => void;
+    const leaseRecoveryGate = new Promise<void>((resolve) => { releaseLeaseRecovery = resolve; });
+    let leaseRecoveryStarted!: () => void;
+    const leaseRecoveryReady = new Promise<void>((resolve) => { leaseRecoveryStarted = resolve; });
+    const recovery = createOrganizeAnalysisRecovery({
+      async createAlarm(name, delayInMinutes) {
+        operations.push(`create:${name}:${delayInMinutes}`);
+      },
+      async clearAlarm(name) {
+        operations.push(`clear:${name}`);
+      },
+      addAlarmListener() {},
+      async getRecoverableAnalysis() {
+        return active;
+      },
+      async recoverExpiredLeases() {
+        operations.push('recover-expired');
+        leaseRecoveryStarted();
+        await leaseRecoveryGate;
+        active = { jobId: 'job-2', status: 'analyzing' };
+      },
+      isRunning() {
+        return false;
+      },
+      async pump(jobId) {
+        operations.push(`pump:${jobId}`);
+        active = jobId === 'job-2'
+          ? { jobId: 'job-1', status: 'analyzing' }
+          : null;
+      },
+    });
+
+    const alarmRecovery = recovery.recover();
+    await leaseRecoveryReady;
+    const explicitStart = recovery.start('job-1');
+    releaseLeaseRecovery();
+    await Promise.all([alarmRecovery, explicitStart]);
+
+    assert.deepEqual(operations.filter((entry) => entry.startsWith('pump:')), [
+      'pump:job-2',
+      'pump:job-1',
+    ]);
+  });
+
   it('keeps the alarm armed without taking over a live scheduler', async () => {
     const run = createHarness({ jobId: 'job-3', status: 'analyzing' });
     run.setRunning(true);
