@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Sun, Moon, Search, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow, X,
   Tags, Upload, Download, AlertTriangle, ExternalLink, Home, EyeOff, Star, RefreshCcw,
-  Pencil, Bot, ChevronDown,
+  Pencil, ChevronDown,
 } from 'lucide-react';
 import { CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { REPO_URL } from '@/lib/links';
@@ -15,6 +15,7 @@ import { Progress } from '@/ui/shadcn/progress';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { SuccessCheck } from '@/ui/shadcn/success-check';
 import { ActionIcon } from '@/ui/shadcn/action-icon';
+import { AgentMascotIcon } from '@/ui/components/AgentMascot';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/ui/shadcn/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/shadcn/select';
@@ -522,8 +523,9 @@ export function Toolbar({
             onStatusPatch={onStatusPatch}
             data-coach-target="agent"
             aria-label={m.toolbar.agentButton}
+            aria-busy={agentActive}
           >
-            {agentActive ? <Spinner className="size-4" data-icon="inline-start" /> : <Bot className="size-4" data-icon="inline-start" />}
+            <AgentMascotIcon running={agentActive} />
             <span className="max-w-36 truncate">
               {agentStatus ? `${m.toolbar.agentButton} · ${agentStatus}` : m.toolbar.agentButton}
             </span>

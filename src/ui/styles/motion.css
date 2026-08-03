@@ -1,4 +1,20 @@
 @layer utilities {
+  @keyframes gsm-agent-mascot-cycle {
+    to {
+      background-position-x: -256px;
+    }
+  }
+
+  .gsm-agent-mascot {
+    animation-name: gsm-agent-mascot-cycle;
+    animation-timing-function: steps(8, end);
+    animation-iteration-count: infinite;
+  }
+
+  .gsm-agent-mascot[data-playing='false'] {
+    animation-play-state: paused;
+  }
+
   .drawer-enter {
     width: 340px;
     opacity: 1;
@@ -476,6 +492,11 @@
       opacity: 1 !important;
       transform: none !important;
       transition: none !important;
+    }
+
+    .gsm-agent-mascot {
+      animation: none !important;
+      background-position-x: 0;
     }
 
     .gsm-gear-in,

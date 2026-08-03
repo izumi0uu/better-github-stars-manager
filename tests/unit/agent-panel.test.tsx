@@ -256,6 +256,7 @@ describe('AgentPanel', () => {
     expect(container.textContent).toContain('Organize full library');
     expect(container.textContent).toContain('Clean up tag names');
     expect(container.textContent).toContain('Asking about all live stars');
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('idle');
     expect(container.textContent).toMatch(/Ready/);
   });
 
@@ -2391,11 +2392,13 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
 
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('tool');
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
     await act(async () => {
       vi.advanceTimersByTime(300);
     });
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('compacting');
     expect(container.textContent).toContain('Organizing conversation context');
 
     await act(async () => {
@@ -2410,6 +2413,7 @@ describe('AgentPanel', () => {
 
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
     expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent).toContain('Checking local data');
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('tool');
 
     await act(async () => {
       handlers?.onEvent?.({
@@ -2426,6 +2430,7 @@ describe('AgentPanel', () => {
     });
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
     expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent).toContain('Stopped');
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('stopped');
   });
 
   it('shows a single streaming status line without reasoning theater', async () => {

@@ -459,21 +459,46 @@ async function assertScrollLocked(page) {
 }
 
 async function assertAgentAndAutoTagsRemainSeparate(page) {
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot;
     const autoTags = root?.querySelector('[data-coach-target="auto-tags"]');
     const agent = root?.querySelector('[data-coach-target="agent"]');
+    const mascot = agent?.querySelector('[data-testid="agent-mascot-icon"]');
+    const mascotStyle = mascot ? getComputedStyle(mascot) : null;
+    const mascotUrl = mascot?.getAttribute('src') ?? null;
+    const mascotResponse = mascotUrl ? await fetch(mascotUrl) : null;
     return {
       autoTagsText: autoTags?.textContent?.trim() ?? null,
       agentText: agent?.textContent?.trim() ?? null,
       nested: !!(autoTags?.contains(agent) || agent?.contains(autoTags)),
       retryPresent: /Retry failed only/i.test(root?.textContent ?? ''),
+      mascotAriaHidden: mascot?.getAttribute('aria-hidden') ?? null,
+      mascotWidth: mascotStyle?.width ?? null,
+      mascotHeight: mascotStyle?.height ?? null,
+      mascotImageRendering: mascotStyle?.imageRendering ?? null,
+      mascotAnimationName: mascotStyle?.animationName ?? null,
+      mascotResourceOk: mascotResponse?.ok ?? false,
     };
   });
   assert.equal(result.autoTagsText, 'Auto Tags');
   assert.equal(result.agentText, 'Cubby');
   assert.equal(result.nested, false);
   assert.equal(result.retryPresent, false);
+  assert.deepEqual({
+    ariaHidden: result.mascotAriaHidden,
+    width: result.mascotWidth,
+    height: result.mascotHeight,
+    imageRendering: result.mascotImageRendering,
+    animationName: result.mascotAnimationName,
+    resourceOk: result.mascotResourceOk,
+  }, {
+    ariaHidden: 'true',
+    width: '20px',
+    height: '20px',
+    imageRendering: 'pixelated',
+    animationName: 'none',
+    resourceOk: true,
+  });
 }
 
 async function assertAutoTagAgentFirstClickChoice(page) {
@@ -551,6 +576,49 @@ async function assertAgentDrawerA11y(page) {
     setupVisible: false,
     composerVisible: true,
   });
+  const mascot = await page.evaluate(async () => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const element = root?.querySelector('[data-testid="agent-mascot"]');
+    const style = element ? getComputedStyle(element) : null;
+    const assetUrl = style?.backgroundImage.match(/^url\(["']?(.*?)["']?\)$/u)?.[1] ?? null;
+    const response = assetUrl ? await fetch(assetUrl) : null;
+    const bytes = response?.ok ? (await response.blob()).size : 0;
+    return {
+      ariaHidden: element?.getAttribute('aria-hidden') ?? null,
+      state: element?.getAttribute('data-state') ?? null,
+      width: style?.width ?? null,
+      height: style?.height ?? null,
+      backgroundSize: style?.backgroundSize ?? null,
+      imageRendering: style?.imageRendering ?? null,
+      animationName: style?.animationName ?? null,
+      animationTimingFunction: style?.animationTimingFunction ?? null,
+      assetUrl,
+      resourceOk: response?.ok ?? false,
+      bytes,
+    };
+  });
+  assert.deepEqual({
+    ariaHidden: mascot.ariaHidden,
+    state: mascot.state,
+    width: mascot.width,
+    height: mascot.height,
+    backgroundSize: mascot.backgroundSize,
+    imageRendering: mascot.imageRendering,
+    animationName: mascot.animationName,
+    resourceOk: mascot.resourceOk,
+  }, {
+    ariaHidden: 'true',
+    state: 'idle',
+    width: '32px',
+    height: '32px',
+    backgroundSize: '256px 288px',
+    imageRendering: 'pixelated',
+    animationName: 'gsm-agent-mascot-cycle',
+    resourceOk: true,
+  });
+  assert.match(mascot.animationTimingFunction ?? '', /^steps\(8(?:, end)?\)$/u);
+  assert.match(mascot.assetUrl ?? '', /^chrome-extension:\/\/[^/]+\/assets\/index-agent-atlas-[^/]+\.png$/u);
+  assert.equal(mascot.bytes > 0, true);
   await clickShadowButton(page, 'button[aria-label="Prompt suggestions"]');
   await page.waitForFunction(
     () => !!document

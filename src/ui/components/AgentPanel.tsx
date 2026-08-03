@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Activity,
   ArrowUp,
-  Bot,
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
@@ -27,6 +26,7 @@ import { Spinner } from '@/ui/shadcn/spinner';
 import { Conversation, Message, MessageContent, PromptInput } from '@/ui/ai-elements/chat';
 import { MessageResponse } from '@/ui/ai-elements/response';
 import { AgentFunctionMenu } from '@/ui/components/AgentFunctionMenu';
+import { AgentMascot, resolveAgentMascotState } from '@/ui/components/AgentMascot';
 import { AgentSessionMenu } from '@/ui/components/AgentSessionMenu';
 import {
   AgentProposalReviewCard,
@@ -117,6 +117,18 @@ export function AgentPanel({
     : hasCompleteAnalysisCoverage(organize);
   const automaticContinuation = organize.continuationPending;
   const currentRunState = currentOrganizeJobState(organize.snapshot, organize.organizeJob);
+  const mascotState = resolveAgentMascotState({
+    chatStatus: status?.kind ?? null,
+    chatRunning: running,
+    hasAgentError: !!error,
+    hasContextRecovery: !!contextLimitRecovery,
+    preflightStatus: organize.preflight?.status ?? null,
+    runState: currentRunState,
+    automaticContinuation: organize.continuationPending,
+    hasWorkbenchError: !!organize.error,
+    workbenchDisconnected: organize.transport === 'disconnected',
+    hasReceipt: durableReceiptCounts !== null,
+  });
   const organizeActive = automaticContinuation || isActiveRunState(currentRunState);
   const preflightRequesting = organize.preflight?.status === 'requesting'
     || organize.preflight?.status === 'starting';
@@ -672,9 +684,7 @@ export function AgentPanel({
         {...(!open ? { inert: '' as const } : {})}
       >
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-          <div className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground">
-            <Bot className="size-4" />
-          </div>
+          <AgentMascot key={mascotState} state={mascotState} playing={open} />
           <div className="min-w-0 flex-1">
             <div id="gsm-agent-dialog-title" className="text-[13.5px] font-semibold leading-tight text-foreground">{m.agentPanel.title}</div>
             <div
