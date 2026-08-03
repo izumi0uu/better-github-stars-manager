@@ -35,6 +35,8 @@ import {
   COLUMN_HIDE_INTENT_DISTANCE_PX,
   COLUMN_MENU_WIDTH_PX,
   LAYOUT_EDIT_CSS_VARS,
+  LAYOUT_MODE_TABLE_PREPARE_MS,
+  LAYOUT_MODE_TABLE_TRANSITION_MS,
   LAYOUT_PREVIEW_HOVER_DELAY_MS,
   RESTORE_FLASH_ANIMATION_MS,
   RESTORE_FLASH_DELAY_MS,
@@ -78,6 +80,8 @@ describe('column layout editing', () => {
   it('keeps layout edit interaction constants explicit and reusable', () => {
     expect(LAYOUT_PREVIEW_HOVER_DELAY_MS).toBeGreaterThan(BROWSE_LAYOUT_FADE_DELAY_MS);
     expect(BROWSE_LAYOUT_TABLE_OPACITY_MS).toBe(160);
+    expect(LAYOUT_MODE_TABLE_PREPARE_MS).toBe(32);
+    expect(LAYOUT_MODE_TABLE_TRANSITION_MS).toBe(180);
     expect(TRAY_RESTORE_HEADER_BUFFER_PX).toBeLessThan(COLUMN_HIDE_INTENT_DISTANCE_PX);
     expect(COLUMN_MENU_WIDTH_PX).toBe(208);
     expect(LAYOUT_EDIT_CSS_VARS.columnMenuWidth).toBe(`${COLUMN_MENU_WIDTH_PX}px`);

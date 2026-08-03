@@ -27,6 +27,7 @@ const chromeHarness = vi.hoisted(() => {
     gsm_config: { langTagMigrationDone: true },
   };
   const storageListeners = new Set<StorageListener>();
+  const sessionState: Record<string, unknown> = {};
   const messages: unknown[] = [];
   const messageListeners: BackgroundListener[] = [];
   let sendObserver: ((message: unknown) => void) | null = null;
@@ -54,6 +55,17 @@ const chromeHarness = vi.hoisted(() => {
           for (const listener of storageListeners) listener(changes, 'local');
         },
       },
+      session: {
+        async get(key: string) {
+          return key in sessionState ? { [key]: sessionState[key] } : {};
+        },
+        async set(next: Record<string, unknown>) {
+          Object.assign(sessionState, next);
+        },
+        async remove(key: string) {
+          delete sessionState[key];
+        },
+      },
       onChanged: {
         addListener(listener: StorageListener) {
           storageListeners.add(listener);
@@ -62,6 +74,11 @@ const chromeHarness = vi.hoisted(() => {
           storageListeners.delete(listener);
         },
       },
+    },
+    alarms: {
+      async create() {},
+      async clear() { return false; },
+      onAlarm: { addListener() {} },
     },
     runtime: {
       async sendMessage(message: unknown) {
@@ -72,6 +89,9 @@ const chromeHarness = vi.hoisted(() => {
         addListener(listener: BackgroundListener) {
           messageListeners.push(listener);
         },
+      },
+      onConnect: {
+        addListener() {},
       },
       onInstalled: {
         addListener() {},

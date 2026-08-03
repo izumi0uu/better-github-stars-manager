@@ -1,6 +1,7 @@
 /** Core domain types for Better GitHub Stars Manager. */
 
 import type { ColumnId } from '@/ui/column-layout';
+import type { AgentDataDisclosureAcceptance } from '@/bgsm-agent/disclosure';
 
 export type Locale = 'en' | 'zh-CN';
 
@@ -99,10 +100,224 @@ export interface TagMeta {
   excluded?: boolean;
 }
 
+export type OrganizeJobStatus =
+  | 'analyzing'
+  | 'analysis_blocked'
+  | 'paused'
+  | 'review'
+  | 'apply_sealed'
+  | 'applying'
+  | 'completed'
+  | 'cancelled';
+
+export type OrganizeStoredJobStatus = OrganizeJobStatus | 'preflight_ready';
+
+export type OrganizePreflightState = 'ready' | 'consumed';
+
+export interface OrganizePreflightAuthority {
+  token: string;
+  requestId: string;
+  state: OrganizePreflightState;
+  expiresAt: number;
+  consumedAt: number | null;
+}
+
+export type OrganizeItemAnalysisState =
+  | 'pending'
+  | 'leased'
+  | 'actionable'
+  | 'unchanged'
+  | 'insufficient_evidence'
+  | 'missing'
+  | 'tombstoned'
+  | 'failed';
+
+export interface OrganizeProposedAction {
+  kind: 'add_existing_tag' | 'propose_new_tag';
+  tag: string;
+  evidence: string;
+}
+
+export interface OrganizeFrozenScopeSnapshot {
+  kind: string;
+  label: string;
+  filterSnapshot: unknown;
+  repositoryIds: string[];
+  capturedAt: number;
+  fingerprint: string;
+}
+
+export interface OrganizeAnalysisRange {
+  startFrozenIndex: number;
+  endFrozenIndexExclusive: number;
+  depth: number;
+}
+
+/** Durable header for a resumable whole-library tag organization job. */
+export interface OrganizeJobRecord {
+  jobId: string;
+  /** Present only while active; v1 enforces one job per slot with a unique index. */
+  activeSlot?: string;
+  controllerId: string;
+  sessionId: string;
+  runId: string;
+  generation: number;
+  proposalId: string;
+  frozenScope: OrganizeFrozenScopeSnapshot;
+  taskInstruction: string;
+  budget: unknown;
+  usage: unknown;
+  nextFrozenIndex: number;
+  /** Depth-first worklist used only while isolating a failed analyzer page. */
+  analysisPendingRanges?: OrganizeAnalysisRange[];
+  providerBinding: unknown | null;
+  status: OrganizeStoredJobStatus;
+  preflight?: OrganizePreflightAuthority | null;
+  revision: number;
+  itemCount: number;
+  applyId: string | null;
+  pauseRequested: boolean;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+  cancelledAt: number | null;
+}
+
+export interface OrganizeItemRecord {
+  id: string;
+  jobId: string;
+  position: number;
+  fullName: string;
+  analysisState: OrganizeItemAnalysisState;
+  proposedActions: OrganizeProposedAction[];
+  approvedActions: OrganizeProposedAction[];
+  proposedAdditions: string[];
+  sourceFingerprint: string | null;
+  selected: boolean;
+  retryCount: number;
+  failure: string | null;
+  leaseToken: string | null;
+  leaseOwner: string | null;
+  leaseExpiresAt: number | null;
+  analyzedAt: number | null;
+}
+
+export interface OrganizeTaxonomyRecord {
+  jobId: string;
+  fingerprint: string;
+  snapshot: unknown;
+  createdAt: number;
+}
+
+export type OrganizeApplyStatus = 'sealed' | 'applying' | 'completed' | 'cancelled';
+export type OrganizeApplyRowState =
+  | 'pending'
+  | 'leased'
+  | 'changed'
+  | 'unchanged'
+  | 'skipped'
+  | 'failed';
+
+export interface OrganizeApplyRecord {
+  applyId: string;
+  jobId: string;
+  sourceRevision: number;
+  /** Taxonomy state expected before the next chunk; advances with this Apply's own writes. */
+  expectedTaxonomyFingerprint: string;
+  status: OrganizeApplyStatus;
+  rowCount: number;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+}
+
+export interface OrganizeApplyRowRecord {
+  id: string;
+  applyId: string;
+  jobId: string;
+  position: number;
+  fullName: string;
+  approvedActions: OrganizeProposedAction[];
+  approvedAdditions: string[];
+  sourceFingerprint: string;
+  taxonomyFingerprint: string;
+  state: OrganizeApplyRowState;
+  outcomeReason: string | null;
+  attemptCount: number;
+  leaseToken: string | null;
+  leaseOwner: string | null;
+  leaseExpiresAt: number | null;
+  settledAt: number | null;
+}
+
+/** Latest durable Gist-sync dirtiness for one tag row or the tagMeta snapshot. */
+export interface TagDirtyOutboxRecord {
+  id: string;
+  kind: 'tag' | 'meta';
+  key: string;
+  version: string;
+  updatedAt: string;
+}
+
+export type AgentProviderId =
+  | 'openai'
+  | 'openrouter'
+  | 'anthropic'
+  | 'custom-openai-compatible';
+
+export type AgentCustomProviderProtocol = 'chat-completions' | 'responses';
+
+export interface AgentCredentialScope {
+  provider: AgentProviderId;
+  origin: string;
+}
+
+export interface AgentProviderCapabilityRecord {
+  fingerprint: string;
+  verifiedAt: number;
+  textChat: true;
+  namedToolRoundTrip: true;
+  contextCapability?: AgentModelContextCapability;
+}
+
+export type AgentModelContextCapabilitySource =
+  | 'builtin-official'
+  | 'provider-verified'
+  | 'user-declared';
+
+export interface AgentModelContextCapability {
+  schemaVersion: 1;
+  contextWindow: number;
+  maxOutputTokens: number;
+  source: AgentModelContextCapabilitySource;
+  sourceRevision: string;
+  capabilityRevision: string;
+}
+
+export interface AgentProviderConfig {
+  provider: AgentProviderId;
+  /** Persisted only for Custom; native services resolve a fixed protocol. */
+  protocol: AgentCustomProviderProtocol | null;
+  baseUrl: string | null;
+  model: string;
+  /** Required for unknown routes; Custom services may explicitly override an exact model preset. */
+  declaredContextWindow?: number | null;
+  /** Optional cost/latency working-set cap; may only reduce the provider window. */
+  workingContextWindow?: number | null;
+  apiKeyEncrypted: string | null;
+  apiKeyCryptoMeta: CryptoMeta | null;
+  credentialScope: AgentCredentialScope | null;
+  credentialRevision: string | null;
+  capability: AgentProviderCapabilityRecord | null;
+}
+
 /** Light config kept in chrome.storage.local. */
 export interface Config {
   tokenEncrypted: string | null;
   tokenCryptoMeta: CryptoMeta | null;
+  agentProvider: AgentProviderConfig;
+  /** Explicit Agent data-sharing acknowledgement for one disclosure/provider/origin tuple. */
+  agentDataDisclosureAcceptance: AgentDataDisclosureAcceptance | null;
   theme: 'dark' | 'light';
   locale: Locale;
   defaultView: 'list' | 'table';
@@ -118,6 +333,8 @@ export interface Config {
   seenOnboarding: boolean;
   /** Bitmask of one-time button coachmarks already shown. */
   seenTooltips: number;
+  /** Whether the one-time Auto Tags choice has already been answered. */
+  autoTagAgentPromptSeen: boolean;
   /** Legacy max topic-derived tags per repo. Read as compatibility input only. */
   autoTagLimit: number;
   /** Max topic-derived tags per repo for Auto Tags. */

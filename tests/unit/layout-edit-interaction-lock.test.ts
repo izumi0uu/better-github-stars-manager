@@ -76,7 +76,7 @@ describe('layout edit interaction lock invariants', () => {
     expect(toolbar).toMatch(/onClick=\{onStartLayoutEdit\}/);
     expect(toolbar).not.toMatch(/onLayoutModeChange\('custom'\);\s*onStartLayoutEdit/);
     expect(manager).toMatch(/beginCustomLayoutEdit,/);
-    expect(manager).toMatch(/onStartLayoutEdit=\{beginCustomLayoutEdit\}/);
+    expect(manager).toMatch(/onStartLayoutEdit=\{editingLayout \? cancelLayoutEdit : beginCustomLayoutEdit\}/);
     expect(manager).toMatch(/<StarsTable\b/);
     expect(table).toContain('BROWSE_LAYOUT_TABLE_OPACITY_MS');
     expect(table).toContain('data-table-head');
@@ -87,6 +87,31 @@ describe('layout edit interaction lock invariants', () => {
     expect(hook).toMatch(/preEditMode\.current\s*=\s*layoutMode;/);
     expect(hook).toContain('reportLayoutPersistenceFailure');
     expect(hook).not.toContain("authStore.update({ columnLayoutMode: edit.layoutMode })");
+  });
+
+  it('switches browse and edit as one table-shell transition', () => {
+    const hook = read('src/ui/hooks/use-column-layout-editor.ts');
+    const table = read('src/ui/components/StarsTable.tsx');
+    const motion = read('src/ui/styles/motion.css');
+    const skill = read('.codex/skills/github-stars-frontend/SKILL.md');
+    const transitionGridRule = motion.match(
+      /\.gsm-layout-table-shell\[data-layout-mode-transition='entering'\] \.gsm-layout-grid\s*\{([^}]*)\}/,
+    )?.[1] ?? '';
+    const layoutGridRule = motion.match(/\.gsm-layout-grid\s*\{([^}]*)\}/)?.[1] ?? '';
+
+    expect(hook).toContain("setLayoutModeTransitionPhase('pre-enter')");
+    expect(hook).toContain("setLayoutModeTransitionPhase('entering')");
+    expect(hook).toContain('LAYOUT_MODE_TABLE_TRANSITION_MS');
+    expect(table).toContain('data-layout-mode-transition={layoutModeTransitionPhase}');
+    expect(table).toContain("translate3d(0, 2px, 0) scale(0.998)");
+    expect(motion).toContain(".gsm-layout-table-shell[data-layout-mode-transition='pre-enter']");
+    expect(motion).toContain('@keyframes gsm-layout-mode-table-enter');
+    expect(motion).toContain('animation: gsm-layout-mode-table-enter var(--gsm-table-opacity-duration) var(--gsm-ease-enter) both;');
+    expect(transitionGridRule).not.toContain('grid-template-columns');
+    expect(transitionGridRule).not.toMatch(/transition:\s*all/);
+    expect(layoutGridRule).not.toContain('grid-template-columns');
+    expect(layoutGridRule).not.toMatch(/transition:\s*all/);
+    expect(skill).toContain('Switch between browse and edit as one table-shell transition;');
   });
 
   it('keeps storage echoes from owning the rendered browse layout after hydration', () => {
@@ -107,26 +132,25 @@ describe('layout edit interaction lock invariants', () => {
     expect(hook).toMatch(/if \(shouldHydrateBrowseLayout\) \{\s+setRenderedBrowseLayout\(cloneColumnLayout\(nextBrowseLayout\)\);\s+setLayoutFaded\(false\);\s+\}/);
   });
 
-  it('keeps numeric right alignment limited to default browse layout', () => {
+  it('keeps the Stars column aligned consistently across browse and edit layouts', () => {
     const manager = read('src/ui/ManagerPanel.tsx');
+    const columns = read('src/ui/column-layout.ts');
     const table = read('src/ui/components/StarsTable.tsx');
     const row = read('src/ui/components/StarRow.tsx');
 
-    expect(manager).toMatch(/const\s+customColumnLayoutActive\s*=\s*editingLayout\s*\|\|\s*layoutMode\s*===\s*'custom'\s*\|\|\s*previewingCustomLayout;/);
-    expect(table).toContain("'justify-end text-right': def.align === 'end' && !customColumnLayoutActive");
-    expect(table).toContain('starColumnAlignStart={customColumnLayoutActive}');
-    expect(table).not.toContain("'justify-end pr-3 text-right': def.align === 'end'");
-    expect(row).toContain("'justify-start': starColumnAlignStart");
-    expect(row).toContain("'justify-end': !starColumnAlignStart");
-    expect(row).not.toContain("'justify-start': interactionLocked");
+    expect(columns).toMatch(/stars:\s*\{[\s\S]*?align:\s*'start'/);
+    expect(table).toContain("'justify-start text-left': def.align === 'start'");
+    expect(table).not.toContain('customColumnLayoutActive');
+    expect(row).toContain('items-center justify-start gap-0.5');
+    expect(row).not.toContain('starColumnAlignStart');
+    expect(manager).not.toContain('customColumnLayoutActive');
   });
 
-  it('documents the numeric column custom-layout alignment invariant in the frontend skill', () => {
+  it('documents the shared Stars column alignment invariant in the frontend skill', () => {
     const skill = read('.codex/skills/github-stars-frontend/SKILL.md');
 
-    expect(skill).toContain('Numeric columns may be right-aligned only in the default browse layout.');
-    expect(skill).toContain('editing, saved custom mode, and custom hover preview');
-    expect(skill).toContain('Do not drive editable/custom header or row alignment directly from `COLUMN_DEFS[id].align`;');
+    expect(skill).toContain('Keep the Stars count column start-aligned in every layout context:');
+    expect(skill).toContain('default browse, editing, saved custom mode, and custom hover preview');
   });
 
   it('disables row-grid transitions while column resizing is active', () => {

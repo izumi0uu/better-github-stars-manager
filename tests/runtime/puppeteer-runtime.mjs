@@ -29,7 +29,7 @@ export async function resolveExecutablePath() {
   return executablePath;
 }
 
-export async function launchExtensionBrowser({ dist, userDataDir }) {
+export async function launchExtensionBrowser({ dist, userDataDir, protocolTimeout }) {
   const executablePath = await resolveExecutablePath();
   const args = [
     `--disable-extensions-except=${dist}`,
@@ -47,6 +47,7 @@ export async function launchExtensionBrowser({ dist, userDataDir }) {
     enableExtensions: true,
     executablePath,
     userDataDir,
+    ...(protocolTimeout === undefined ? {} : { protocolTimeout }),
     args,
   });
 }

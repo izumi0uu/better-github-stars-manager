@@ -36,7 +36,6 @@ export const StarRow = memo(function StarRow({
   gridTemplateColumns,
   flashedColumn,
   interactionLocked = false,
-  starColumnAlignStart = false,
   minWidth,
   onConfirmUnstar,
   unstarPopoverOpen,
@@ -56,7 +55,6 @@ export const StarRow = memo(function StarRow({
   gridTemplateColumns: string;
   flashedColumn: ColumnId | null;
   interactionLocked?: boolean;
-  starColumnAlignStart?: boolean;
   minWidth?: number;
   onConfirmUnstar?: (fullName: string) => void;
   unstarPopoverOpen?: boolean;
@@ -172,10 +170,8 @@ export const StarRow = memo(function StarRow({
                 key={column}
                 data-row-col={column}
                 className={cn(
-                  'flex min-w-0 items-center gap-0.5 overflow-hidden rounded-sm text-xs text-muted-foreground',
+                  'flex min-w-0 items-center justify-start gap-0.5 overflow-hidden rounded-sm text-xs text-muted-foreground',
                   {
-                    'justify-start': starColumnAlignStart,
-                    'justify-end': !starColumnAlignStart,
                     'gsm-flash-col': flashedColumn === column,
                   },
                 )}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Sun, Moon, Search, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow, X,
   Tags, Upload, Download, AlertTriangle, ExternalLink, Home, EyeOff, Star, RefreshCcw,
-  Pencil,
+  Pencil, Bot, ChevronDown,
 } from 'lucide-react';
 import { CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { REPO_URL } from '@/lib/links';
@@ -16,6 +16,7 @@ import { Spinner } from '@/ui/shadcn/spinner';
 import { SuccessCheck } from '@/ui/shadcn/success-check';
 import { ActionIcon } from '@/ui/shadcn/action-icon';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/ui/shadcn/tooltip';
+import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/shadcn/select';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { useDelayedHoverIntent } from '@/ui/hooks/use-delayed-hover-intent';
@@ -69,6 +70,97 @@ function TButton({
   );
 }
 
+/**
+ * Compact hover/click toolstrip popover for low-frequency toolbar actions.
+ * Module-scope so open state does not remount sibling toolbar controls.
+ *
+ * Hover bridge: openDelay + closeDelay + invisible top pad on content so the
+ * pointer can cross the Radix portal gap without the menu snapping shut.
+ */
+function ToolHoverBar({
+  open,
+  onOpenChange,
+  disabled,
+  align = 'end',
+  trigger,
+  children,
+  contentClassName,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  disabled?: boolean;
+  align?: 'start' | 'center' | 'end';
+  trigger: ReactNode;
+  children: ReactNode;
+  contentClassName?: string;
+}) {
+  const hoverIntent = useDelayedHoverIntent({
+    enabled: !disabled,
+    delayMs: 80,
+    closeDelayMs: 180,
+    onOpen: () => onOpenChange(true),
+    onClose: () => onOpenChange(false),
+  });
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <span
+          className={cn('inline-flex', { 'pointer-events-none opacity-50': disabled })}
+          onMouseEnter={hoverIntent.onMouseEnter}
+          onMouseLeave={hoverIntent.onMouseLeave}
+          onFocus={hoverIntent.onFocus}
+          onBlur={hoverIntent.onBlur}
+        >
+          {trigger}
+        </span>
+      </PopoverTrigger>
+      <PopoverContent
+        align={align}
+        sideOffset={6}
+        collisionPadding={8}
+        className={cn(
+          // Invisible bridge above content closes the classic hover gap.
+          'relative w-auto min-w-0 overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md',
+          'before:absolute before:-top-2 before:right-0 before:left-0 before:h-2 before:content-[\'\']',
+          contentClassName,
+        )}
+        onMouseEnter={hoverIntent.onMouseEnter}
+        onMouseLeave={hoverIntent.onMouseLeave}
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+      >
+        {children}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ActionPhaseIcon({
+  action,
+  pendingAction,
+  successAction,
+  idle,
+}: {
+  action: string;
+  pendingAction: string | null;
+  successAction: string | null;
+  idle: ReactNode;
+}) {
+  const phase = successAction === action ? 'ok' : pendingAction === action ? 'busy' : 'idle';
+  return (
+    <ActionIcon phase={phase}>
+      {phase === 'ok' ? (
+        <SuccessCheck data-icon="inline-start" />
+      ) : phase === 'busy' ? (
+        <Spinner data-icon="inline-start" />
+      ) : (
+        idle
+      )}
+    </ActionIcon>
+  );
+}
+
 export function Toolbar({
   f,
   status,
@@ -81,6 +173,9 @@ export function Toolbar({
   successAction,
   onSync,
   onAutoAssignTags,
+  onOpenAgent,
+  agentStatus,
+  agentActive,
   onStatusPatch,
   onToggleTheme,
   onTogglePanel,
@@ -109,6 +204,9 @@ export function Toolbar({
   successAction: string | null;
   onSync: (type: string, label: string) => void;
   onAutoAssignTags: () => void;
+  onOpenAgent?: () => void;
+  agentStatus?: string | null;
+  agentActive?: boolean;
   onStatusPatch?: (patch: Partial<SyncStatus>) => void;
   onToggleTheme: () => void;
   /** Retract the panel overlay → native stars list (+ floating re-mount button). */
@@ -129,6 +227,8 @@ export function Toolbar({
 }) {
   const { m } = useI18n();
   const [account, setAccount] = useState<Account | null>(null);
+  const [syncMenuOpen, setSyncMenuOpen] = useState(false);
+  const [gistMenuOpen, setGistMenuOpen] = useState(false);
   const syncing = !!status?.inFlight && status.progress.phase !== 'idle';
   const phase = syncing ? status!.progress : null;
   const actionBusy = busy || syncing || pendingAction !== null;
@@ -136,7 +236,7 @@ export function Toolbar({
   const progressCount = phase?.total ? `${phase.done}/${phase.total}` : null;
   const searchInput = useImeBufferedInput(f.query, f.setQuery);
   const layoutControlsDisabled = layoutEditing || !layoutConfigReady;
-  const layoutEditDisabled = layoutEditing || !layoutEditReady;
+  const layoutEditDisabled = !layoutEditReady;
   const customPreviewIntent = useDelayedHoverIntent({
     enabled: layoutMode === 'default' && !layoutControlsDisabled && customLayoutDirty,
     delayMs: LAYOUT_PREVIEW_HOVER_DELAY_MS,
@@ -147,6 +247,19 @@ export function Toolbar({
     'gsm-touch-target relative inline-flex h-6 items-center gap-1.5 rounded-md px-2 font-medium text-muted-foreground transition-[background-color,color,box-shadow] duration-150 hover:text-foreground',
     { 'bg-background text-foreground shadow-sm': active },
   );
+
+  const gistBusy = pendingAction === 'gistPush' || pendingAction === 'gistPull'
+    || successAction === 'gistPush' || successAction === 'gistPull';
+  const gistPhaseAction = pendingAction === 'gistPull' || successAction === 'gistPull'
+    ? 'gistPull'
+    : pendingAction === 'gistPush' || successAction === 'gistPush'
+      ? 'gistPush'
+      : null;
+  const gistLabel = pendingAction === 'gistPush'
+    ? m.toolbar.gistPushing
+    : pendingAction === 'gistPull'
+      ? m.toolbar.gistPulling
+      : m.toolbar.gistButton;
 
   useEffect(() => {
     let cancelled = false;
@@ -194,7 +307,23 @@ export function Toolbar({
     prevPending.current = pendingAction;
   }, [pendingAction]);
 
+  useEffect(() => {
+    if (layoutEditing) {
+      setSyncMenuOpen(false);
+      setGistMenuOpen(false);
+    }
+  }, [layoutEditing]);
+
   const seenTooltips = status?.seenTooltips ?? 0;
+
+  const runSync = (type: string, label: string) => {
+    setSyncMenuOpen(false);
+    onSync(type, label);
+  };
+  const runGist = (type: 'gistPush' | 'gistPull', label: string) => {
+    setGistMenuOpen(false);
+    onSync(type, label);
+  };
 
   return (
     <div className="border-b border-border bg-card">
@@ -281,97 +410,208 @@ export function Toolbar({
           </ActionIcon>
         </TButton>
 
-        <TButton onClick={() => onSync('syncIncremental', m.toolbar.syncButton)} disabled={actionBusy || layoutEditing} tip={m.toolbar.syncTitle} firstUseTip={m.onboarding.tooltipSyncFirst} bit={1} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch} data-coach-target="sync">
-          <ActionIcon phase={successAction === 'syncIncremental' ? 'ok' : pendingAction === 'syncIncremental' ? 'busy' : 'idle'}>
-            {successAction === 'syncIncremental' ? (
-              <SuccessCheck data-icon="inline-start" />
-            ) : pendingAction === 'syncIncremental' ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <RefreshCw className="size-4" data-icon="inline-start" />
+        {/* Sync primary (default style) + Full Sync under caret; menu right-aligns to the split. */}
+        <div className="inline-flex h-9 items-stretch overflow-hidden rounded-md">
+          <TButton
+            className="h-9 rounded-r-none border border-r-0 border-transparent hover:border-primary"
+            onClick={() => runSync('syncIncremental', m.toolbar.syncButton)}
+            disabled={actionBusy || layoutEditing}
+            tip={m.toolbar.syncTitle}
+            firstUseTip={m.onboarding.tooltipSyncFirst}
+            bit={1}
+            seenTooltips={seenTooltips}
+            onStatusPatch={onStatusPatch}
+            data-coach-target="sync"
+          >
+            <ActionPhaseIcon
+              action="syncIncremental"
+              pendingAction={pendingAction}
+              successAction={successAction}
+              idle={<RefreshCw className="size-4" data-icon="inline-start" />}
+            />
+            {m.toolbar.syncButton}
+            {pendingAction === 'syncIncremental' && progressCount && (
+              <span className="gsm-inline-progress-count">{progressCount}</span>
             )}
-          </ActionIcon>
-          {m.toolbar.syncButton}
-          {pendingAction === 'syncIncremental' && progressCount && (
-            <span className="gsm-inline-progress-count">{progressCount}</span>
-          )}
-        </TButton>
+          </TButton>
+          <ToolHoverBar
+            open={syncMenuOpen}
+            onOpenChange={setSyncMenuOpen}
+            disabled={actionBusy || layoutEditing}
+            align="end"
+            contentClassName="w-[196px]"
+            trigger={(
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  'h-9 w-7 rounded-l-none border border-primary hover:bg-primary hover:text-primary-foreground',
+                  { 'bg-muted text-foreground': syncMenuOpen },
+                )}
+                disabled={actionBusy || layoutEditing}
+                aria-label={m.toolbar.fullSyncButton}
+                aria-expanded={syncMenuOpen}
+                title={m.toolbar.fullSyncTitle}
+                data-coach-target="full-sync"
+              >
+                <ActionPhaseIcon
+                  action="syncFull"
+                  pendingAction={pendingAction}
+                  successAction={successAction}
+                  idle={<ChevronDown className="size-3.5 opacity-70" />}
+                />
+              </Button>
+            )}
+          >
+            <button
+              type="button"
+              disabled={actionBusy || layoutEditing}
+              className="flex w-full flex-col items-start gap-0.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+              onClick={() => runSync('syncFull', m.toolbar.fullSyncButton)}
+            >
+              <span className="inline-flex items-center gap-1.5 text-[13px] font-medium leading-none text-foreground">
+                <ActionPhaseIcon
+                  action="syncFull"
+                  pendingAction={pendingAction}
+                  successAction={successAction}
+                  idle={<RefreshCcw className="size-3.5 opacity-80" data-icon="inline-start" />}
+                />
+                {m.toolbar.fullSyncButton}
+              </span>
+              <span className="pl-5 text-[11px] font-normal leading-snug text-muted-foreground">
+                {m.toolbar.fullSyncTitle}
+              </span>
+            </button>
+          </ToolHoverBar>
+        </div>
 
-        <TButton onClick={() => onSync('syncFull', m.toolbar.fullSyncButton)} disabled={actionBusy || layoutEditing} tip={m.toolbar.fullSyncTitle} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch} data-coach-target="full-sync">
-          <ActionIcon phase={successAction === 'syncFull' ? 'ok' : pendingAction === 'syncFull' ? 'busy' : 'idle'}>
-            {successAction === 'syncFull' ? (
-              <SuccessCheck data-icon="inline-start" />
-            ) : pendingAction === 'syncFull' ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <RefreshCcw className="size-4" data-icon="inline-start" />
-            )}
-          </ActionIcon>
-          {m.toolbar.fullSyncButton}
-          {pendingAction === 'syncFull' && progressCount && (
-            <span className="gsm-inline-progress-count">{progressCount}</span>
-          )}
-        </TButton>
-
-        <TButton variant="ghost" size="sm" onClick={() => onAutoAssignTags()} disabled={actionBusy || layoutEditing} tip={m.toolbar.autoAssignTitle} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch} data-coach-target="auto-tags">
-          <ActionIcon phase={successAction === 'autoAssignTags' ? 'ok' : pendingAction === 'autoAssignTags' ? 'busy' : 'idle'}>
-            {successAction === 'autoAssignTags' ? (
-              <SuccessCheck data-icon="inline-start" />
-            ) : pendingAction === 'autoAssignTags' ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <Tags data-icon="inline-start" />
-            )}
-          </ActionIcon>
+        {/* Deterministic local Auto Tags — never nested with Agent. */}
+        <TButton
+          variant="ghost"
+          size="sm"
+          className="h-9"
+          onClick={() => onAutoAssignTags()}
+          disabled={actionBusy || layoutEditing}
+          tip={m.toolbar.autoAssignTitle}
+          seenTooltips={seenTooltips}
+          onStatusPatch={onStatusPatch}
+          data-coach-target="auto-tags"
+        >
+          <ActionPhaseIcon
+            action="autoAssignTags"
+            pendingAction={pendingAction}
+            successAction={successAction}
+            idle={<Tags data-icon="inline-start" />}
+          />
           {m.toolbar.autoAssignButton}
-        </TButton>
-        <TButton variant="ghost" size="sm" onClick={() => onSync('gistPush', m.toolbar.gistPushButton)} disabled={actionBusy || layoutEditing} tip={m.toolbar.gistPushTitle} firstUseTip={m.onboarding.tooltipPushFirst} bit={2} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
-          <ActionIcon phase={successAction === 'gistPush' ? 'ok' : pendingAction === 'gistPush' ? 'busy' : 'idle'}>
-            {successAction === 'gistPush' ? (
-              <SuccessCheck data-icon="inline-start" />
-            ) : pendingAction === 'gistPush' ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <Upload data-icon="inline-start" />
-            )}
-          </ActionIcon>
-          {m.toolbar.gistPushButton}
-        </TButton>
-        <TButton variant="ghost" size="sm" onClick={() => onSync('gistPull', m.toolbar.gistPullButton)} disabled={actionBusy || layoutEditing} tip={m.toolbar.gistPullTitle} firstUseTip={m.onboarding.tooltipPullFirst} bit={4} seenTooltips={seenTooltips} onStatusPatch={onStatusPatch}>
-          <ActionIcon phase={successAction === 'gistPull' ? 'ok' : pendingAction === 'gistPull' ? 'busy' : 'idle'}>
-            {successAction === 'gistPull' ? (
-              <SuccessCheck data-icon="inline-start" />
-            ) : pendingAction === 'gistPull' ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <Download data-icon="inline-start" />
-            )}
-          </ActionIcon>
-          {m.toolbar.gistPullButton}
         </TButton>
 
         <span className="flex-1" />
 
-        {account?.username && account?.gistId && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <a
-                href={`https://gist.github.com/${account.username}/${account.gistId}`}
-                target="_blank"
-                rel="noreferrer"
-                className={cn(
-                  'inline-flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground',
-                  { 'pointer-events-none opacity-50': layoutEditing },
-                )}
-                {...getLockedAnchorProps(layoutEditing)}
-              >
-                <ExternalLink className="size-3.5 shrink-0" />
-                <span className="max-w-[140px] truncate">gist/{account.gistId.slice(0, 8)}</span>
-              </a>
-            </TooltipTrigger>
-            <TooltipContent>{m.toolbar.gistLinkTitle}</TooltipContent>
-          </Tooltip>
+        {/* Optional AI workbench entry — post-spacer, independent of Auto Tags. */}
+        {onOpenAgent && (
+          <TButton
+            variant="outline"
+            size="sm"
+            className="h-9"
+            onClick={() => onOpenAgent()}
+            disabled={layoutEditing}
+            tip={m.toolbar.agentTitle}
+            seenTooltips={seenTooltips}
+            onStatusPatch={onStatusPatch}
+            data-coach-target="agent"
+            aria-label={m.toolbar.agentButton}
+          >
+            {agentActive ? <Spinner className="size-4" data-icon="inline-start" /> : <Bot className="size-4" data-icon="inline-start" />}
+            <span className="max-w-36 truncate">
+              {agentStatus ? `${m.toolbar.agentButton} · ${agentStatus}` : m.toolbar.agentButton}
+            </span>
+          </TButton>
         )}
+
+        {/* Gist hover bar: Push / Pull / Open. */}
+        <ToolHoverBar
+          open={gistMenuOpen}
+          onOpenChange={setGistMenuOpen}
+          disabled={actionBusy || layoutEditing}
+          align="end"
+          trigger={(
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={cn('h-9 gap-1.5', { 'bg-muted/60': gistMenuOpen })}
+              disabled={actionBusy || layoutEditing}
+              aria-expanded={gistMenuOpen}
+              aria-label={m.toolbar.gistButton}
+              title={m.toolbar.gistTitle}
+            >
+              {gistPhaseAction ? (
+                <ActionPhaseIcon
+                  action={gistPhaseAction}
+                  pendingAction={pendingAction}
+                  successAction={successAction}
+                  idle={<Download className="size-4" data-icon="inline-start" />}
+                />
+              ) : (
+                <Download className="size-4" data-icon="inline-start" />
+              )}
+              <span className={cn({ 'max-sm:hidden': !gistBusy })}>{gistLabel}</span>
+              <ChevronDown className="size-3.5 opacity-70" />
+            </Button>
+          )}
+        >
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              disabled={actionBusy || layoutEditing}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+              title={m.toolbar.gistPushTitle}
+              onClick={() => runGist('gistPush', m.toolbar.gistPushButton)}
+            >
+              <ActionPhaseIcon
+                action="gistPush"
+                pendingAction={pendingAction}
+                successAction={successAction}
+                idle={<Upload className="size-3.5 opacity-80" data-icon="inline-start" />}
+              />
+              {m.toolbar.gistPushButton}
+            </button>
+            <button
+              type="button"
+              disabled={actionBusy || layoutEditing}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+              title={m.toolbar.gistPullTitle}
+              onClick={() => runGist('gistPull', m.toolbar.gistPullButton)}
+            >
+              <ActionPhaseIcon
+                action="gistPull"
+                pendingAction={pendingAction}
+                successAction={successAction}
+                idle={<Download className="size-3.5 opacity-80" data-icon="inline-start" />}
+              />
+              {m.toolbar.gistPullButton}
+            </button>
+            {account?.username && account?.gistId && (
+              <>
+                <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
+                <a
+                  href={`https://gist.github.com/${account.username}/${account.gistId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-8 max-w-[150px] items-center gap-1.5 rounded-md px-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title={m.toolbar.gistLinkTitle}
+                  onClick={() => setGistMenuOpen(false)}
+                  {...getLockedAnchorProps(layoutEditing)}
+                >
+                  <ExternalLink className="size-3.5 shrink-0" />
+                  <span className="truncate">gist/{account.gistId.slice(0, 8)}</span>
+                </a>
+              </>
+            )}
+          </div>
+        </ToolHoverBar>
 
         <Tooltip>
           <TooltipTrigger asChild>
@@ -475,52 +715,59 @@ export function Toolbar({
             </span>
           )}
           <span className="flex-1" />
-          <div className={cn('relative ml-auto inline-flex shrink-0 items-center gap-2', { 'pointer-events-none opacity-[0.35]': layoutControlsDisabled })}>
+          <div className="relative ml-auto inline-flex shrink-0 items-center gap-2">
             <span className="text-[11px]">{m.toolbar.viewLabel}</span>
             <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted p-0.5 text-[11px]">
-              <button
-                type="button"
-                disabled={layoutControlsDisabled}
-                aria-pressed={layoutMode === 'default' && !customPreviewing}
-                onClick={() => onLayoutModeChange('default')}
-                className={segmentItemClass(layoutMode === 'default' && !customPreviewing)}
-              >
-                {layoutMode === 'default' && !customPreviewing && (
-                  <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
-                )}
-                {m.toolbar.defaultLayout}
-              </button>
-              <button
-                type="button"
-                disabled={layoutControlsDisabled}
-                aria-pressed={layoutMode === 'custom' || customPreviewing}
-                title={customLayoutDirty ? m.toolbar.customLayoutChanged : undefined}
-                onMouseEnter={customPreviewIntent.onMouseEnter}
-                onMouseLeave={customPreviewIntent.onMouseLeave}
-                onFocus={customPreviewIntent.onFocus}
-                onBlur={customPreviewIntent.onBlur}
-                onClick={() => {
-                  customPreviewIntent.clear();
-                  onLayoutModeChange('custom');
-                }}
-                className={cn(
-                  segmentItemClass(layoutMode === 'custom' || customPreviewing),
-                  { 'gsm-seg-previewing': customPreviewing },
-                )}
-              >
-                {(layoutMode === 'custom' || customPreviewing) && (
-                  <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
-                )}
-                {m.toolbar.customLayout}
-              </button>
+              <div className={cn('inline-flex items-center gap-0.5', { 'pointer-events-none opacity-[0.35]': layoutControlsDisabled })}>
+                <button
+                  type="button"
+                  disabled={layoutControlsDisabled}
+                  aria-pressed={layoutMode === 'default' && !customPreviewing}
+                  onClick={() => onLayoutModeChange('default')}
+                  className={segmentItemClass(layoutMode === 'default' && !customPreviewing)}
+                >
+                  {layoutMode === 'default' && !customPreviewing && (
+                    <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+                  )}
+                  {m.toolbar.defaultLayout}
+                </button>
+                <button
+                  type="button"
+                  disabled={layoutControlsDisabled}
+                  aria-pressed={layoutMode === 'custom' || customPreviewing}
+                  title={customLayoutDirty ? m.toolbar.customLayoutChanged : undefined}
+                  onMouseEnter={customPreviewIntent.onMouseEnter}
+                  onMouseLeave={customPreviewIntent.onMouseLeave}
+                  onFocus={customPreviewIntent.onFocus}
+                  onBlur={customPreviewIntent.onBlur}
+                  onClick={() => {
+                    customPreviewIntent.clear();
+                    onLayoutModeChange('custom');
+                  }}
+                  className={cn(
+                    segmentItemClass(layoutMode === 'custom' || customPreviewing),
+                    { 'gsm-seg-previewing': customPreviewing },
+                  )}
+                >
+                  {(layoutMode === 'custom' || customPreviewing) && (
+                    <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+                  )}
+                  {m.toolbar.customLayout}
+                </button>
+              </div>
               <span className="mx-0.5 h-4 w-px bg-border" />
               <button
                 type="button"
+                data-layout-edit-trigger=""
                 disabled={layoutEditDisabled}
                 onClick={onStartLayoutEdit}
-                title={m.toolbar.editLayout}
-                aria-label={m.toolbar.editLayout}
-                className="gsm-touch-target grid h-6 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground disabled:pointer-events-none"
+                title={layoutEditing ? m.common.cancel : m.toolbar.editLayout}
+                aria-label={layoutEditing ? m.common.cancel : m.toolbar.editLayout}
+                aria-pressed={layoutEditing}
+                className={cn(
+                  'gsm-touch-target grid h-6 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground disabled:pointer-events-none',
+                  { 'bg-background text-foreground shadow-sm': layoutEditing },
+                )}
               >
                 <Pencil className="size-3.5" />
               </button>

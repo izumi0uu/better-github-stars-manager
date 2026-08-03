@@ -231,7 +231,7 @@ export function RepoDetailPanel({
   return (
     <div
       className={cn(
-        "flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card",
+        "gsm-scrollbar-stable flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card",
         {
           "opacity-55": interactionLocked,
         },

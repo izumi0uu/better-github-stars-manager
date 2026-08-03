@@ -39,9 +39,12 @@ import {
   COLUMN_GAP_PX,
   COLUMN_KEYBOARD_RESIZE_LARGE_STEP_PX,
   COLUMN_KEYBOARD_RESIZE_STEP_PX,
+  LAYOUT_MODE_TABLE_PREPARE_MS,
+  LAYOUT_MODE_TABLE_TRANSITION_MS,
   RESTORE_FLASH_DURATION_MS,
   TRAY_DRAG_MOVE_THRESHOLD_PX,
   TRAY_RESTORE_HEADER_BUFFER_PX,
+  type LayoutModeTableTransitionPhase,
 } from '@/ui/layout-edit-constants';
 import {
   LayoutResizeTool,
@@ -117,12 +120,15 @@ export function useColumnLayoutEditor(
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [renderedBrowseLayout, setRenderedBrowseLayout] = useState<ColumnLayout>(() => cloneColumnLayout(DEFAULT_COLUMN_LAYOUT));
   const [layoutFaded, setLayoutFaded] = useState(false);
+  const [layoutModeTransitionPhase, setLayoutModeTransitionPhase] = useState<LayoutModeTableTransitionPhase>('idle');
   const [layoutConfigReady, setLayoutConfigReady] = useState(false);
   const [layoutEditReady, setLayoutEditReady] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [flashedColumn, setFlashedColumn] = useState<ColumnId | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const layoutModePrepareTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const layoutModeTransitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingBrowseLayout = useRef<ColumnLayout | null>(null);
   const configSynced = useRef(false);
   const configLoaded = useRef(false);
@@ -272,18 +278,49 @@ export function useColumnLayoutEditor(
     };
   }, [browseTargetLayout, editingLayout, prefersReducedMotion, renderedBrowseLayout]);
 
+  const clearLayoutModeTableTransition = () => {
+    if (layoutModePrepareTimer.current) clearTimeout(layoutModePrepareTimer.current);
+    if (layoutModeTransitionTimer.current) clearTimeout(layoutModeTransitionTimer.current);
+    layoutModePrepareTimer.current = null;
+    layoutModeTransitionTimer.current = null;
+  };
+
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
     const query = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const updatePreference = () => setPrefersReducedMotion(query.matches);
+    const updatePreference = () => {
+      setPrefersReducedMotion(query.matches);
+      if (!query.matches) return;
+      clearLayoutModeTableTransition();
+      setLayoutModeTransitionPhase('idle');
+    };
     updatePreference();
     query.addEventListener('change', updatePreference);
     return () => query.removeEventListener('change', updatePreference);
   }, []);
 
+  const startLayoutModeTableTransition = () => {
+    clearLayoutModeTableTransition();
+    if (prefersReducedMotion) {
+      setLayoutModeTransitionPhase('idle');
+      return;
+    }
+
+    setLayoutModeTransitionPhase('pre-enter');
+    layoutModePrepareTimer.current = setTimeout(() => {
+      layoutModePrepareTimer.current = null;
+      setLayoutModeTransitionPhase('entering');
+      layoutModeTransitionTimer.current = setTimeout(() => {
+        layoutModeTransitionTimer.current = null;
+        setLayoutModeTransitionPhase('idle');
+      }, LAYOUT_MODE_TABLE_TRANSITION_MS);
+    }, LAYOUT_MODE_TABLE_PREPARE_MS);
+  };
+
   useEffect(() => () => {
     if (flashTimer.current) clearTimeout(flashTimer.current);
     if (layoutFadeTimer.current) clearTimeout(layoutFadeTimer.current);
+    clearLayoutModeTableTransition();
     pendingBrowseLayout.current = null;
   }, []);
 
@@ -310,6 +347,7 @@ export function useColumnLayoutEditor(
     layoutFadeTimer.current = null;
     pendingBrowseLayout.current = null;
     preEditMode.current = layoutMode;
+    startLayoutModeTableTransition();
     setPreviewingCustomLayout(edit.previewingCustomLayout);
     setLayoutMode(edit.layoutMode);
     setDraftLayout(edit.draftLayout);
@@ -344,6 +382,7 @@ export function useColumnLayoutEditor(
       reportLayoutPersistenceFailure('save edit', error);
       return;
     }
+    startLayoutModeTableTransition();
     setSavedCustomLayout(nextSavedCustomLayout);
     setDraftLayout(cloneColumnLayout(next));
     setRenderedBrowseLayout(cloneColumnLayout(next));
@@ -357,7 +396,11 @@ export function useColumnLayoutEditor(
 
   const cancelLayoutEdit = () => {
     if (blockLayoutMutationDuringResize()) return;
+    const nextBrowseLayout = preEditMode.current === 'custom' ? customLayout : DEFAULT_COLUMN_LAYOUT;
+    startLayoutModeTableTransition();
     setDraftLayout(cloneColumnLayout(customLayout));
+    setRenderedBrowseLayout(cloneColumnLayout(nextBrowseLayout));
+    setLayoutFaded(false);
     setEditingLayout(false);
     setLayoutMode(preEditMode.current);
     setPreviewingCustomLayout(false);
@@ -791,6 +834,7 @@ export function useColumnLayoutEditor(
     trayDropReady,
     trayCaretX,
     layoutFaded,
+    layoutModeTransitionPhase,
     flashedColumn,
     columnMenuOpen,
     columnMenuPosition,

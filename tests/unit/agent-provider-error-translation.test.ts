@@ -1,0 +1,50 @@
+import { describe, expect, it } from 'vitest';
+import { translateError } from '@/api/errors';
+import {
+  AgentProviderError,
+  isStructuredProviderContextOverflow,
+  publicAgentProviderErrorMessage,
+} from '@/agent-harness/provider';
+import { getMessages } from '@/i18n';
+
+describe('Agent provider error translation', () => {
+  it('uses fixed content-free copy for context overflow', () => {
+    const error = new AgentProviderError(
+      'context_overflow',
+      'provider-authored secret must not be used',
+      400,
+    );
+    expect(publicAgentProviderErrorMessage(error))
+      .toBe('AI provider request exceeded the model context window.');
+  });
+
+  it.each(['protocol_error', 'parse_error'] as const)(
+    'maps %s to bounded copy without raw protocol detail or secrets',
+    (code) => {
+      const secret = 'sk-secret-do-not-show';
+      const raw = `Responses stream invalid Anthropic message ${secret}`;
+
+      for (const locale of ['en', 'zh-CN'] as const) {
+        const translated = translateError(
+          new AgentProviderError(code, raw),
+          getMessages(locale),
+        );
+        expect(translated).not.toContain(secret);
+        expect(translated).not.toContain('Responses');
+        expect(translated).not.toContain('Anthropic');
+        expect(translated).not.toContain('stream');
+        expect(translated).not.toContain('message');
+      }
+    },
+  );
+
+  it.each([
+    'Monthly token limit exceeded for this account.',
+    'Organization token quota exhausted.',
+    'Insufficient credits or billing balance.',
+    'TPM quota exceeded for this deployment.',
+  ])('does not classify provider quota text as context overflow: %s', (message) => {
+    expect(isStructuredProviderContextOverflow({ error: { message } }, 'openai', 429))
+      .toBe(false);
+  });
+});

@@ -10,7 +10,11 @@ import { getMessages } from '@/i18n';
 import { ManagerPanel } from '@/ui/ManagerPanel';
 import { Toolbar } from '@/ui/components/Toolbar';
 import { COLUMN_DEFS, DEFAULT_COLUMN_LAYOUT, hideColumn } from '@/ui/column-layout';
-import { BROWSE_LAYOUT_FADE_DELAY_MS } from '@/ui/layout-edit-constants';
+import {
+  BROWSE_LAYOUT_FADE_DELAY_MS,
+  LAYOUT_MODE_TABLE_PREPARE_MS,
+  LAYOUT_MODE_TABLE_TRANSITION_MS,
+} from '@/ui/layout-edit-constants';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
 import { TooltipProvider } from '@/ui/shadcn/tooltip';
 
@@ -187,7 +191,6 @@ vi.mock('@/ui/components/FavoriteButton', () => ({
 
 const CONFIG_STORAGE_KEY = 'gsm_config';
 const customLayout = hideColumn(DEFAULT_COLUMN_LAYOUT, 'language');
-const editLayoutLabel = getMessages('en').toolbar.editLayout;
 const mountedRoots: Root[] = [];
 let storageListeners: Array<(changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void> = [];
 
@@ -305,7 +308,7 @@ function LayoutToolbarHarness() {
           customPreviewing={editor.previewingCustomLayout}
           hiddenColumnCount={editor.hiddenColumnCount}
           onLayoutModeChange={editor.setBrowseLayoutMode}
-          onStartLayoutEdit={editor.beginCustomLayoutEdit}
+          onStartLayoutEdit={editor.editingLayout ? editor.cancelLayoutEdit : editor.beginCustomLayoutEdit}
           onPreviewCustomChange={editor.previewCustomLayout}
         />
       </TooltipProvider>
@@ -327,7 +330,7 @@ function mountLayoutToolbar() {
 }
 
 function findEditLayoutButton(container: HTMLElement): HTMLButtonElement {
-  const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${editLayoutLabel}"]`);
+  const button = container.querySelector<HTMLButtonElement>('button[data-layout-edit-trigger]');
   if (!button) throw new Error('Expected edit layout button to render');
   return button;
 }
@@ -583,6 +586,65 @@ describe('layout editor config sync', () => {
     expect(authMocks.update).not.toHaveBeenCalled();
   });
 
+  it('settles the whole table shell after edit mode changes without delaying layout state', async () => {
+    authMocks.getConfig.mockResolvedValue(configFor('default'));
+    const editor = mountLayoutEditor();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      editor.current.beginCustomLayoutEdit();
+    });
+
+    expect(editor.current.editingLayout).toBe(true);
+    expect(editor.current.layoutModeTransitionPhase).toBe('pre-enter');
+
+    act(() => {
+      vi.advanceTimersByTime(LAYOUT_MODE_TABLE_PREPARE_MS);
+    });
+    expect(editor.current.layoutModeTransitionPhase).toBe('entering');
+
+    act(() => {
+      vi.advanceTimersByTime(LAYOUT_MODE_TABLE_TRANSITION_MS);
+    });
+    expect(editor.current.layoutModeTransitionPhase).toBe('idle');
+
+    act(() => {
+      editor.current.cancelLayoutEdit();
+    });
+    expect(editor.current.editingLayout).toBe(false);
+    expect(editor.current.layoutMode).toBe('default');
+    expect(editor.current.layoutModeTransitionPhase).toBe('pre-enter');
+  });
+
+  it('keeps edit mode changes instant when reduced motion is requested', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      media: '(prefers-reduced-motion: reduce)',
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    authMocks.getConfig.mockResolvedValue(configFor('default'));
+    const editor = mountLayoutEditor();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      editor.current.beginCustomLayoutEdit();
+    });
+
+    expect(editor.current.editingLayout).toBe(true);
+    expect(editor.current.layoutModeTransitionPhase).toBe('idle');
+  });
+
   it('recovers browse controls after initial config read failure without enabling writable layout edit', async () => {
     authMocks.getConfig.mockRejectedValue(new Error('storage unavailable'));
     const editor = mountLayoutEditor();
@@ -696,6 +758,14 @@ describe('layout editor config sync', () => {
       editButton.click();
     });
 
+    expect(findEditLayoutButton(container).getAttribute('aria-pressed')).toBe('true');
+    expect(findEditLayoutButton(container).disabled).toBe(false);
+
+    act(() => {
+      findEditLayoutButton(container).click();
+    });
+
+    expect(findEditLayoutButton(container).getAttribute('aria-pressed')).toBe('false');
     expect(authMocks.update).not.toHaveBeenCalled();
   });
 

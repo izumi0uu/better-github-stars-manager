@@ -92,18 +92,20 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
     }
   };
 
-  const autoAssignTags = async () => {
+  const autoAssignTags = async (): Promise<{ tagged: number; remainingUntagged: number } | null> => {
     setBusy(true);
     setPendingAction('autoAssignTags');
     setSuccessAction(null);
     setInfo(null);
     try {
-      await bgCall('autoAssignTags');
+      const result = await bgCall<{ tagged: number; remainingUntagged: number }>('autoAssignTags');
       refreshStars();
       await refreshStatus();
       flashSuccess('autoAssignTags');
+      return result ?? null;
     } catch (e) {
       setInfo(m.manager.autoAssignFailed(e instanceof Error ? e.message : String(e)));
+      return null;
     } finally {
       setBusy(false);
       setPendingAction((cur) => (cur === 'autoAssignTags' ? null : cur));

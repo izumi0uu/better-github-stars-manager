@@ -38,14 +38,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build extension
-        run: pnpm build
+      - name: Run integrated Agent release verification
+        run: pnpm verify:agent-phase5
 
-      - name: Run test suite
-        run: pnpm test
-
-      - name: Package extension
-        run: pnpm package:extension
+      - name: Finalize release evidence
+        run: pnpm verify:agent-release-gates
 
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v7

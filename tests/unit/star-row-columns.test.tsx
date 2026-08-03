@@ -79,7 +79,7 @@ describe('star row column rendering', () => {
     expect(markup).toContain('—');
   });
 
-  it('keeps star values right-aligned in the default browse layout', () => {
+  it('uses the edit-layout star alignment in the default browse layout', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 }}
@@ -100,8 +100,8 @@ describe('star row column rendering', () => {
     );
 
     expect(markup).toContain('data-row-col="stars"');
-    expect(markup).toContain('justify-end');
-    expect(markup).not.toContain('justify-start');
+    expect(markup).toContain('justify-start');
+    expect(markup).not.toContain('justify-end');
   });
 
   it('keeps dense numeric and date columns clipped inside their tracks', () => {
@@ -125,7 +125,7 @@ describe('star row column rendering', () => {
     );
 
     expect(markup).toContain('data-row-col="stars"');
-    expect(markup).toContain('justify-end');
+    expect(markup).toContain('justify-start');
     expect(markup).toContain('overflow-hidden');
     expect(markup).toContain('min-w-0 truncate tabular-nums');
     expect(markup).toContain('data-row-col="updated"');
@@ -133,7 +133,7 @@ describe('star row column rendering', () => {
     expect(markup).toContain('data-row-col="created"');
   });
 
-  it('keeps star values with their custom layout column group after editing is saved or previewed', () => {
+  it('keeps the same star alignment when a custom layout is rendered', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 }}
@@ -150,7 +150,6 @@ describe('star row column rendering', () => {
         gridTemplateColumns="64px 84px"
         minWidth={180}
         flashedColumn={null}
-        starColumnAlignStart
       />,
     );
 
