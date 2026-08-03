@@ -1,5 +1,10 @@
 import type { ToolExecutionContext } from '@/agent-harness';
-import type { BgsmAgentManualTagAdditionResult } from '@/storage/idb-tag-store';
+import type {
+  BgsmAgentManualTagAdditionResult,
+  GlobalTagBulkDeletionResult,
+  VisibleTagBulkRemoval,
+  VisibleTagBulkRemovalResult,
+} from '@/storage/idb-tag-store';
 import type { SerializedRunOptions } from './serialized-runner';
 
 export type AgentManualTagWriter = (
@@ -7,6 +12,16 @@ export type AgentManualTagWriter = (
   tags: readonly string[],
   context: ToolExecutionContext,
 ) => Promise<BgsmAgentManualTagAdditionResult>;
+
+export type AgentVisibleTagRemovalWriter = (
+  changes: readonly VisibleTagBulkRemoval[],
+  context: ToolExecutionContext,
+) => Promise<VisibleTagBulkRemovalResult>;
+
+export type AgentGlobalTagDeletionWriter = (
+  tags: readonly string[],
+  context: ToolExecutionContext,
+) => Promise<GlobalTagBulkDeletionResult>;
 
 type AgentManualTagWriterDependencies = Readonly<{
   runSerialized: <T>(
@@ -23,13 +38,55 @@ type AgentManualTagWriterDependencies = Readonly<{
 export function createQueuedAgentManualTagWriter(
   dependencies: AgentManualTagWriterDependencies,
 ): AgentManualTagWriter {
-  return (fullName, tags, context) => dependencies.runSerialized(async () => {
+  return (fullName, tags, context) => runQueuedAgentTagMutation(
+    dependencies,
+    context,
+    () => dependencies.write(fullName, tags),
+  );
+}
+
+export function createQueuedAgentVisibleTagRemovalWriter(
+  dependencies: Readonly<{
+    runSerialized: AgentManualTagWriterDependencies['runSerialized'];
+    isBlocked: AgentManualTagWriterDependencies['isBlocked'];
+    write: (
+      changes: readonly VisibleTagBulkRemoval[],
+    ) => Promise<VisibleTagBulkRemovalResult>;
+  }>,
+): AgentVisibleTagRemovalWriter {
+  return (changes, context) => runQueuedAgentTagMutation(
+    dependencies,
+    context,
+    () => dependencies.write(changes),
+  );
+}
+
+export function createQueuedAgentGlobalTagDeletionWriter(
+  dependencies: Readonly<{
+    runSerialized: AgentManualTagWriterDependencies['runSerialized'];
+    isBlocked: AgentManualTagWriterDependencies['isBlocked'];
+    write: (tags: readonly string[]) => Promise<GlobalTagBulkDeletionResult>;
+  }>,
+): AgentGlobalTagDeletionWriter {
+  return (tags, context) => runQueuedAgentTagMutation(
+    dependencies,
+    context,
+    () => dependencies.write(tags),
+  );
+}
+
+function runQueuedAgentTagMutation<TResult>(
+  dependencies: Pick<AgentManualTagWriterDependencies, 'runSerialized' | 'isBlocked'>,
+  context: ToolExecutionContext,
+  write: () => Promise<TResult>,
+): Promise<TResult> {
+  return dependencies.runSerialized(async () => {
     if (await dependencies.isBlocked()) {
       throw new TypeError(
         'Cubby tag writes are unavailable while full-library tag changes are being applied.',
       );
     }
     context.markWriteStarted?.();
-    return dependencies.write(fullName, tags);
+    return write();
   }, { signal: context.signal });
 }

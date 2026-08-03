@@ -184,26 +184,34 @@ function makeTag(fullName: string, selected: string[], index: number, rng: Seede
 
 function referenceQuery(input: GeneratedQueryCase): QueryResult {
   const indexedStars = [...input.stars].sort((a, b) => a.full_name.localeCompare(b.full_name));
+  const excluded = referenceExcludedTagKeys(input.tagMeta);
   const indexedTags = input.tags
     .map((tag) => normalizeStoredTag(tag as LegacyTagRow))
+    .map((tag) => ({
+      ...tag,
+      manualTags: tag.manualTags.filter((name) => !excluded.has(referenceTagKey(name))),
+      autoTags: tag.autoTags.filter((name) => !excluded.has(referenceTagKey(name))),
+    }))
     .sort((a, b) => a.full_name.localeCompare(b.full_name));
   const tagMap = new Map(indexedTags.map((tag) => [tag.full_name, tag]));
-  const excluded = new Set(input.tagMeta.filter((meta) => meta.excluded).map((meta) => meta.name));
   const q = input.params.filter.query.trim().toLowerCase();
   const langSet = input.params.filter.languages.length ? new Set(input.params.filter.languages) : null;
-  const tagSet = input.params.filter.tags.length ? new Set(input.params.filter.tags) : null;
+  const tagSet = input.params.filter.tags.length
+    ? new Set(input.params.filter.tags.map((tag) => referenceTagKey(tag)))
+    : null;
   const filtered = indexedStars.filter((star) => {
     if (!input.params.filter.showTombstone && star.tombstone) return false;
     if (input.params.filter.onlyArchived && !star.archived) return false;
     if (langSet && (star.language === null || !langSet.has(star.language))) return false;
     const tagRecord = tagMap.get(star.full_name);
     const myTags = visibleTagNames(tagRecord);
+    const myTagKeys = myTags.map((tag) => referenceTagKey(tag));
     if (input.params.filter.onlyFavorite && !tagRecord?.favorite) return false;
     if (input.params.filter.onlyUntagged && myTags.length > 0) return false;
     if (tagSet) {
       if (input.params.filter.tagMode === 'all') {
-        if (!input.params.filter.tags.every((tag) => myTags.includes(tag))) return false;
-      } else if (!myTags.some((tag) => tagSet.has(tag))) {
+        if (!input.params.filter.tags.every((tag) => myTagKeys.includes(referenceTagKey(tag)))) return false;
+      } else if (!myTagKeys.some((tag) => tagSet.has(tag))) {
         return false;
       }
     }
@@ -258,13 +266,43 @@ function countLanguages(stars: Star[]): Map<string, number> {
 }
 
 function countTags(tags: Tag[], excluded: Set<string>): Map<string, number> {
-  const counts = new Map<string, number>();
+  const countsByKey = new Map<string, { name: string; count: number }>();
   for (const row of tags) {
     for (const tag of visibleTagNames(row)) {
-      if (!excluded.has(tag)) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      const key = referenceTagKey(tag);
+      if (excluded.has(key)) continue;
+      const current = countsByKey.get(key);
+      countsByKey.set(key, {
+        name: current?.name ?? tag,
+        count: (current?.count ?? 0) + 1,
+      });
     }
   }
-  return counts;
+  return new Map([...countsByKey.values()].map(({ name, count }) => [name, count]));
+}
+
+function referenceExcludedTagKeys(metas: readonly TagMeta[]): Set<string> {
+  const winners = new Map<string, TagMeta>();
+  for (const meta of metas) {
+    const key = referenceTagKey(meta.name);
+    const current = winners.get(key);
+    if (!current || referencePrefersRightMeta(current, meta)) winners.set(key, meta);
+  }
+  return new Set(
+    [...winners]
+      .filter(([, meta]) => meta.excluded)
+      .map(([key]) => key),
+  );
+}
+
+function referencePrefersRightMeta(left: TagMeta, right: TagMeta): boolean {
+  if (left.mtime !== right.mtime) return right.mtime > left.mtime;
+  if ((left.excluded === true) !== (right.excluded === true)) return right.excluded === true;
+  return right.name.localeCompare(left.name, 'en-US') < 0;
+}
+
+function referenceTagKey(value: string): string {
+  return value.trim().normalize('NFKC').toLocaleLowerCase('en-US');
 }
 
 function assertQueryEqual(

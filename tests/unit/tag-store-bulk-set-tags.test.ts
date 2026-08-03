@@ -70,7 +70,7 @@ describe('idbTagStore.setTagsBulk', () => {
     await db.close();
   });
 
-  it('updates manual rows while preserving annotations and clearing only newly re-added tombstones', async () => {
+  it('updates manual rows while preserving annotations and reviving submitted tombstones', async () => {
     const result = await idbTagStore.setTagsBulk([
       { full_name: 'a/react', tags: ['react', 'ui'] },
       { full_name: 'b/infra', tags: ['infra'] },
@@ -107,11 +107,117 @@ describe('idbTagStore.setTagsBulk', () => {
     assert.equal(uiMeta?.excluded, false);
     assert.equal(uiMeta?.dimension, 'topic');
     assert.equal(uiMeta?.color, '#ff00aa');
-    assert.equal(reactMeta?.excluded, true);
+    assert.equal(reactMeta?.excluded, false);
     assert.equal(reactMeta?.dimension, 'framework');
     assert.equal(reactMeta?.color, '#61dafb');
 
     assert.deepEqual(snapshotDirty().names.sort(), ['a/react', 'c/new']);
+    assert.equal(snapshotDirty().meta, true);
+  });
+
+  it('clears and collapses case and NFKC-equivalent tombstones on a manual re-add', async () => {
+    await db.tagMeta.bulkPut([
+      {
+        name: 'UI',
+        dimension: null,
+        color: '#111111',
+        excluded: true,
+        mtime: '2026-07-03T00:00:00Z',
+      },
+      {
+        name: 'ＵＩ',
+        dimension: 'interface',
+        color: null,
+        excluded: true,
+        mtime: '2026-07-02T00:00:00Z',
+      },
+    ]);
+
+    await idbTagStore.setTagsBulk([
+      { full_name: 'c/new', tags: ['ui'] },
+    ]);
+
+    const aliases = (await db.tagMeta.toArray())
+      .filter((meta) => meta.name.trim().normalize('NFKC').toLocaleLowerCase('en-US') === 'ui');
+    assert.deepEqual(aliases.map((meta) => ({
+      name: meta.name,
+      dimension: meta.dimension,
+      color: meta.color,
+      excluded: meta.excluded,
+    })), [{
+      name: 'ui',
+      dimension: 'interface',
+      color: '#111111',
+      excluded: false,
+    }]);
+    assert.deepEqual((await db.tags.get('c/new'))?.manualTags, ['ui']);
+    assert.equal(snapshotDirty().meta, true);
+  });
+
+  it('clears a differently-spelled tombstone through the single-repository path', async () => {
+    await db.tagMeta.bulkPut([
+      {
+        name: 'ＵＩ',
+        dimension: 'interface',
+        color: '#111111',
+        excluded: true,
+        mtime: '2026-07-02T00:00:00Z',
+      },
+    ]);
+
+    await idbTagStore.setTags('c/new', ['UI']);
+
+    assert.equal(await db.tagMeta.get('ＵＩ'), undefined);
+    const meta = await db.tagMeta.get('UI');
+    assert.equal(meta?.name, 'UI');
+    assert.equal(meta?.dimension, 'interface');
+    assert.equal(meta?.color, '#111111');
+    assert.equal(meta?.excluded, false);
+  });
+
+  it('revives a manually submitted tag even when a hidden assignment already exists', async () => {
+    await db.tags.put({
+      full_name: 'hidden/single',
+      manualTags: ['ＵＩ'],
+      autoTags: [],
+      dismissedAutoTags: [],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
+      notes: '',
+      favorite: false,
+      mtime: '2026-07-01T00:00:00Z',
+    });
+
+    await idbTagStore.setTags('hidden/single', ['ＵＩ']);
+
+    assert.deepEqual(await idbTagStore.listExcluded(), ['react']);
+    assert.equal((await db.tagMeta.get('ＵＩ'))?.excluded, false);
+    assert.equal(await db.tagMeta.get('ui'), undefined);
+    assert.equal(snapshotDirty().meta, true);
+  });
+
+  it('revives hidden assignments in bulk without requiring a repository rewrite', async () => {
+    await db.tags.put({
+      full_name: 'hidden/bulk',
+      manualTags: ['ＵＩ'],
+      autoTags: [],
+      dismissedAutoTags: [],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
+      notes: '',
+      favorite: false,
+      mtime: '2026-07-01T00:00:00Z',
+    });
+
+    const result = await idbTagStore.setTagsBulk([
+      { full_name: 'hidden/bulk', tags: ['ＵＩ'] },
+    ]);
+
+    assert.deepEqual(result, { updated: 0 });
+    assert.equal((await db.tagMeta.get('ＵＩ'))?.excluded, false);
+    assert.equal(await db.tagMeta.get('ui'), undefined);
     assert.equal(snapshotDirty().meta, true);
   });
 
@@ -186,6 +292,56 @@ describe('idbTagStore.setTagsBulk', () => {
     assert.deepEqual(react?.autoTags, ['hooks']);
     assert.deepEqual(react?.dismissedAutoTags, ['ui']);
     assert.deepEqual(visibleTagNames(react), ['react', 'hooks']);
+  });
+
+  it('does not restore a globally deleted tag through an NFKC-equivalent auto update', async () => {
+    await db.tags.put({
+      full_name: 'auto/full-width',
+      manualTags: [],
+      autoTags: ['ＵＩ'],
+      dismissedAutoTags: [],
+      manualTagsMtime: '2026-07-01T00:00:00Z',
+      autoTagsMtime: '2026-07-01T00:00:00Z',
+      dismissedAutoTagsMtime: '2026-07-01T00:00:00Z',
+      notes: '',
+      favorite: false,
+      mtime: '2026-07-01T00:00:00Z',
+    });
+    await idbTagStore.deleteTagsEverywhere(['ui']);
+
+    await idbTagStore.setAutoTagsBulk([
+      { full_name: 'auto/full-width', autoTags: ['ui'] },
+    ]);
+
+    const row = await db.tags.get('auto/full-width');
+    assert.deepEqual(row?.autoTags, []);
+    assert.deepEqual(visibleTagNames(row), []);
+  });
+
+  it('allows auto tags when a newer canonical metadata alias cleared an old tombstone', async () => {
+    await db.tagMeta.bulkPut([
+      {
+        name: 'ＵＩ',
+        dimension: null,
+        color: null,
+        excluded: true,
+        mtime: '2026-07-01T00:00:00Z',
+      },
+      {
+        name: 'ui',
+        dimension: null,
+        color: null,
+        excluded: false,
+        mtime: '2026-07-02T00:00:00Z',
+      },
+    ]);
+
+    await idbTagStore.setAutoTagsBulk([
+      { full_name: 'c/new', autoTags: ['UI'] },
+    ]);
+
+    assert.deepEqual((await db.tags.get('c/new'))?.autoTags, ['UI']);
+    assert.deepEqual(await idbTagStore.listExcluded(), ['react']);
   });
 
   it('records manually removed legacy tags as dismissed so auto bulk cannot restore them', async () => {

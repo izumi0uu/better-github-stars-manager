@@ -124,7 +124,7 @@ describe('Cubby prompt intent', () => {
     );
   });
 
-  it('retains deterministic denial for explicit prohibitions and unsupported removals', () => {
+  it('retains deterministic denial only for explicit tag-write prohibitions', () => {
     for (const prompt of [
       'Do not tag owner/repo.',
       'Never assign tags to owner/repo.',
@@ -150,13 +150,29 @@ describe('Cubby prompt intent', () => {
       '禁止向所有归档的仓库添加标签。',
       '禁止在归档的私有仓库中添加标签。',
       '别给 owner/repo 添加标签。',
-      'Remove tag legacy from owner/repo.',
-      '从 owner/repo 移除标签 legacy。',
-      'Delete tag obsolete everywhere.',
+      'Do not remove tag legacy from owner/repo.',
+      'Never delete tag obsolete everywhere.',
+      '不要从 owner/repo 移除标签 legacy。',
+      '禁止从所有仓库删除标签 obsolete。',
     ]) {
       assert.equal(
         analyzeBgsmPromptIntent(prompt).capabilities.manualTagWritesForbidden,
         true,
+        prompt,
+      );
+    }
+  });
+
+  it('does not use positive remove or delete phrasing as a capability gate', () => {
+    for (const prompt of [
+      'Remove tag legacy from owner/repo.',
+      'Delete obsolete and unused tags everywhere.',
+      '从 owner/repo 移除标签 legacy。',
+      '从所有仓库删除标签 obsolete。',
+    ]) {
+      assert.equal(
+        analyzeBgsmPromptIntent(prompt).capabilities.manualTagWritesForbidden,
+        false,
         prompt,
       );
     }

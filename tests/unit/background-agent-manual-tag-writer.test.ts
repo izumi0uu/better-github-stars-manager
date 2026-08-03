@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it, vi } from 'vitest';
-import { createQueuedAgentManualTagWriter } from '@/background/agent-manual-tag-writer';
+import {
+  createQueuedAgentGlobalTagDeletionWriter,
+  createQueuedAgentManualTagWriter,
+  createQueuedAgentVisibleTagRemovalWriter,
+} from '@/background/agent-manual-tag-writer';
 import { createSerializedRunner } from '@/background/serialized-runner';
 
 describe('background Agent manual-tag writer', () => {
@@ -15,7 +19,7 @@ describe('background Agent manual-tag writer', () => {
       await applyGate;
       applyActive = false;
     });
-    const write = vi.fn(async () => ({
+    const write = vi.fn(async (_fullName: string, _tags: readonly string[]) => ({
       manualTags: ['queued'],
       changed: true,
       reason: null,
@@ -51,7 +55,7 @@ describe('background Agent manual-tag writer', () => {
       releaseQueue = resolve;
     });
     const blocker = runner.run(() => queueGate);
-    const write = vi.fn(async () => ({
+    const write = vi.fn(async (_fullName: string, _tags: readonly string[]) => ({
       manualTags: ['blocked'],
       changed: true,
       reason: null,
@@ -120,5 +124,109 @@ describe('background Agent manual-tag writer', () => {
     });
     assert.equal(markStarted.mock.calls.length, 1);
     assert.equal(write.mock.calls.length, 1);
+  });
+});
+
+describe('background Agent destructive-tag writers', () => {
+  it('serializes one atomic repository-tag removal batch and delegates the write boundary', async () => {
+    const runner = createSerializedRunner();
+    const markStarted = vi.fn();
+    const write = vi.fn(async (_changes: readonly Readonly<{
+      full_name: string;
+      tags: readonly string[];
+    }>[]) => ({
+      requested: 3,
+      changed: 2,
+      skipped: 1,
+      repositoriesChanged: 2,
+    }));
+    const queuedWriter = createQueuedAgentVisibleTagRemovalWriter({
+      runSerialized: (operation, options) => runner.run(operation, options),
+      isBlocked: () => false,
+      write,
+    });
+    const changes = [
+      { full_name: 'owner/one', tags: ['legacy', 'unused'] },
+      { full_name: 'owner/two', tags: ['legacy'] },
+    ];
+
+    assert.deepEqual(await queuedWriter(changes, {
+      sessionId: 'session',
+      callId: 'call',
+      markWriteStarted: markStarted,
+    }), {
+      requested: 3,
+      changed: 2,
+      skipped: 1,
+      repositoriesChanged: 2,
+    });
+    assert.deepEqual(write.mock.calls[0]?.[0], changes);
+    assert.equal(markStarted.mock.calls.length, 1);
+  });
+
+  it('deletes a batch of global tags inside one serialized queue operation', async () => {
+    const runner = createSerializedRunner();
+    const markStarted = vi.fn();
+    const write = vi.fn(async (_tags: readonly string[]) => ({
+      requestedTags: 2,
+      assignmentsRemoved: 4,
+      repositoriesChanged: 3,
+    }));
+    const queuedWriter = createQueuedAgentGlobalTagDeletionWriter({
+      runSerialized: (operation, options) => runner.run(operation, options),
+      isBlocked: () => false,
+      write,
+    });
+
+    assert.deepEqual(await queuedWriter(['legacy', 'unused'], {
+      sessionId: 'session',
+      callId: 'call',
+      markWriteStarted: markStarted,
+    }), {
+      requestedTags: 2,
+      assignmentsRemoved: 4,
+      repositoriesChanged: 3,
+    });
+    assert.deepEqual(write.mock.calls[0]?.[0], ['legacy', 'unused']);
+    assert.equal(write.mock.calls.length, 1);
+    assert.equal(markStarted.mock.calls.length, 1);
+  });
+
+  it('rechecks the Organize Apply lock before destructive writes reach storage', async () => {
+    const runner = createSerializedRunner();
+    const remove = vi.fn(async () => ({
+      requested: 1,
+      changed: 1,
+      skipped: 0,
+      repositoriesChanged: 1,
+    }));
+    const del = vi.fn(async () => ({
+      requestedTags: 1,
+      assignmentsRemoved: 1,
+      repositoriesChanged: 1,
+    }));
+    const removalWriter = createQueuedAgentVisibleTagRemovalWriter({
+      runSerialized: (operation, options) => runner.run(operation, options),
+      isBlocked: () => true,
+      write: remove,
+    });
+    const deletionWriter = createQueuedAgentGlobalTagDeletionWriter({
+      runSerialized: (operation, options) => runner.run(operation, options),
+      isBlocked: () => true,
+      write: del,
+    });
+
+    await assert.rejects(
+      removalWriter([{ full_name: 'owner/repo', tags: ['legacy'] }], {
+        sessionId: 'session', callId: 'remove',
+      }),
+      /unavailable while full-library tag changes are being applied/u,
+    );
+    await assert.rejects(
+      deletionWriter(['legacy'], { sessionId: 'session', callId: 'delete' }),
+      /unavailable while full-library tag changes are being applied/u,
+    );
+    assert.equal(remove.mock.calls.length, 0);
+    assert.equal(del.mock.calls.length, 0);
   });
 });

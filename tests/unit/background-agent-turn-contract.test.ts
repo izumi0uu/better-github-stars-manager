@@ -49,9 +49,10 @@ describe('background agent turn contract', () => {
     assert.match(backgroundSource, /tool\.risk !== 'write'/);
     assert.match(
       backgroundSource,
-      /!repositoryCodeReadOnly && !organizeApplyActive && tool\.name === 'assign_repo_tags'/,
+      /!repositoryCodeReadOnly[\s\S]*?&& !organizeApplyActive[\s\S]*?&& isDirectBgsmAgentTagWriteTool\(tool\.name\)/,
     );
-    assert.match(backgroundSource, /buildBgsmAgentSystemPrompt\(\{ repositoryCodeReadOnly \}\)/);
+    assert.match(backgroundSource, /createBgsmAgentPromptScope\(\{[\s\S]*?kind: conversation\.binding\.candidateContract\.kind,[\s\S]*?label: scopeLabel,[\s\S]*?repositoryIds: repositoryScope/);
+    assert.match(backgroundSource, /buildBgsmAgentSystemPrompt\(\{[\s\S]*?conversationScope,[\s\S]*?repositoryCodeReadOnly/);
     assert.match(backgroundSource, /systemPrompt,/);
     assert.match(backgroundSource, /prepareBgsmAgentTurn\(/);
     assert.match(backgroundSource, /emit: options\.emit/);
@@ -87,7 +88,13 @@ describe('background agent turn contract', () => {
   it('allows agent write tools and broadcasts after tool-driven changes', () => {
     assert.match(backgroundSource, /permissions: authorization\.permissions/);
     assert.match(backgroundSource, /assignManualTags: agentManualTagWriter/);
+    assert.match(backgroundSource, /removeVisibleTags: agentVisibleTagRemovalWriter/);
+    assert.match(backgroundSource, /deleteTagsEverywhere: agentGlobalTagDeletionWriter/);
     assert.match(backgroundSource, /createQueuedAgentManualTagWriter/);
+    assert.match(backgroundSource, /createQueuedAgentVisibleTagRemovalWriter/);
+    assert.match(backgroundSource, /createQueuedAgentGlobalTagDeletionWriter/);
+    assert.match(backgroundSource, /idbTagStore\.removeVisibleTagsBulk\(changes\)/);
+    assert.match(backgroundSource, /idbTagStore\.deleteTagsEverywhere\(tags\)/);
     assert.match(
       backgroundSource,
       /runSerialized: \(operation, runOptions\) => jobQueue\.run\(operation, runOptions\)/,
@@ -100,9 +107,14 @@ describe('background agent turn contract', () => {
     assert.match(backgroundSource, /wrapWriteTrackingTool/);
     assert.match(
       backgroundSource,
+      /typeof value\.assignmentsRemoved === ["']number["'][\s\S]*?Math\.max\(0, value\.assignmentsRemoved, requestedTags\)/,
+    );
+    assert.match(
+      backgroundSource,
       /message\.type === "applyBgsmOrganizeSelection"[\s\S]*?jobQueue\.run\(async \(\) => \{[\s\S]*?sealOrganizeApply[\s\S]*?\}\);[\s\S]*?pumpOrganizeApply/,
     );
     assert.match(backgroundSource, /if \(changed\) broadcastDataChanged\(\)/);
+    assert.match(backgroundSource, /function isDirectBgsmAgentTagWriteTool[\s\S]*?assign_repo_tags[\s\S]*?remove_repo_tags[\s\S]*?delete_tags_everywhere/);
   });
 
   it('prepares compaction before the loop and transports checkpoints without partial deltas', () => {

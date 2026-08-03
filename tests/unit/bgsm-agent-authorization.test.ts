@@ -26,13 +26,13 @@ const writes = {
     async execute() {},
   },
   remove: {
-    name: 'remove_repo_tag',
+    name: 'remove_repo_tags',
     description: 'remove',
     risk: 'write' as const,
     async execute() {},
   },
   delete: {
-    name: 'delete_tag_everywhere',
+    name: 'delete_tags_everywhere',
     description: 'delete',
     risk: 'write' as const,
     async execute() {},
@@ -168,7 +168,7 @@ describe('Cubby current-prompt authorization', () => {
     assert.equal((await allowed.permissions(tool, {}, context())).type, 'allow');
   });
 
-  it('always denies model-facing remove and global delete in first safe release', async () => {
+  it('allows model-facing removal and global deletion after current-turn evidence', async () => {
     const removeAuth = createBgsmTurnAuthorization(analyzeBgsmPromptIntent('Remove tag legacy from owner/repo.').capabilities);
     await executeRead(removeAuth, readTool('inspect_tag', {
       tag: 'legacy',
@@ -177,9 +177,9 @@ describe('Cubby current-prompt authorization', () => {
     }));
     assert.equal((await removeAuth.permissions(
       writes.remove,
-      { full_name: 'owner/repo', tag: 'legacy' },
+      { changes: [{ full_name: 'owner/repo', tags: ['legacy'] }] },
       context(),
-    )).type, 'deny');
+    )).type, 'allow');
 
     const deleteAuth = createBgsmTurnAuthorization(analyzeBgsmPromptIntent('Delete tag obsolete everywhere.').capabilities);
     await executeRead(deleteAuth, readTool('list_tags', {
@@ -187,12 +187,86 @@ describe('Cubby current-prompt authorization', () => {
     }));
     assert.equal((await deleteAuth.permissions(
       writes.delete,
-      { tag: 'obsolete' },
+      { tags: ['obsolete'] },
+      context(),
+    )).type, 'allow');
+  });
+
+  it('matches read evidence across NFKC-equivalent tag spellings', async () => {
+    const authorization = createBgsmTurnAuthorization(
+      analyzeBgsmPromptIntent('Remove the UI tag and delete the obsolete tag.').capabilities,
+    );
+    await executeRead(authorization, readTool('list_stars', {
+      stars: [{ full_name: 'owner/repo', tags: ['ＵＩ'] }],
+      nextCursor: null,
+    }));
+    await executeRead(authorization, readTool('list_tags', {
+      tags: [{ name: 'ＯＢＳＯＬＥＴＥ', repos: 0 }],
+      nextCursor: null,
+    }));
+
+    assert.equal((await authorization.permissions(
+      writes.remove,
+      { changes: [{ full_name: 'owner/repo', tags: ['UI'] }] },
+      context(),
+    )).type, 'allow');
+    assert.equal((await authorization.permissions(
+      writes.delete,
+      { tags: ['obsolete'] },
+      context(),
+    )).type, 'allow');
+  });
+
+  it('requires evidence for every item in a batch removal or global deletion', async () => {
+    const authorization = createBgsmTurnAuthorization(
+      analyzeBgsmPromptIntent('Remove the old tags.').capabilities,
+    );
+    await executeRead(authorization, readTool('list_stars', {
+      stars: [
+        { full_name: 'owner/one', tags: ['legacy', 'unused'] },
+        { full_name: 'owner/two', tags: ['legacy'] },
+      ],
+      nextCursor: null,
+    }));
+    await executeRead(authorization, readTool('list_tags', {
+      tags: [{ name: 'legacy', repos: 2 }],
+      nextCursor: null,
+    }));
+
+    assert.equal((await authorization.permissions(writes.remove, {
+      changes: [
+        { full_name: 'owner/one', tags: ['legacy', 'unused'] },
+        { full_name: 'owner/two', tags: ['legacy'] },
+      ],
+    }, context())).type, 'allow');
+    assert.equal((await authorization.permissions(writes.remove, {
+      changes: [{ full_name: 'owner/two', tags: ['unused'] }],
+    }, context())).type, 'deny');
+    assert.equal((await authorization.permissions(
+      writes.delete,
+      { tags: ['legacy', 'unused'] },
       context(),
     )).type, 'deny');
   });
 
-  it('denies assignment when the current prompt is a remove request', async () => {
+  it('does not treat an empty inspect result as evidence that a global tag exists', async () => {
+    const authorization = createBgsmTurnAuthorization(
+      analyzeBgsmPromptIntent('Delete tag invented everywhere.').capabilities,
+    );
+    await executeRead(authorization, readTool('inspect_tag', {
+      tag: 'invented',
+      repos: [],
+      nextCursor: null,
+    }));
+
+    assert.equal((await authorization.permissions(
+      writes.delete,
+      { tags: ['invented'] },
+      context(),
+    )).type, 'deny');
+  });
+
+  it('does not use a positive removal phrase as an assignment capability gate', async () => {
     const authorization = createBgsmTurnAuthorization(analyzeBgsmPromptIntent('Remove tag legacy from owner/repo.').capabilities);
     await executeRead(authorization, readTool('inspect_tag', {
       tag: 'legacy',
@@ -203,7 +277,7 @@ describe('Cubby current-prompt authorization', () => {
       writes.assign,
       { full_name: 'owner/repo', tags: ['legacy'] },
       context(),
-    )).type, 'deny');
+    )).type, 'allow');
   });
 
   it.each([
@@ -260,7 +334,7 @@ describe('Cubby current-prompt authorization', () => {
     }));
     assert.equal((await authorization.permissions(
       writes.remove,
-      { full_name: 'owner/repo', tag: 'legacy' },
+      { changes: [{ full_name: 'owner/repo', tags: ['legacy'] }] },
       context(),
     )).type, 'deny');
   });
@@ -279,7 +353,7 @@ describe('Cubby current-prompt authorization', () => {
     }));
     assert.equal((await authorization.permissions(
       writes.delete,
-      { tag: 'obsolete' },
+      { tags: ['obsolete'] },
       context(),
     )).type, 'deny');
   });
@@ -309,12 +383,12 @@ describe('Cubby current-prompt authorization', () => {
     )).type, 'deny');
     assert.equal((await authorization.permissions(
       writes.remove,
-      { full_name: 'owner/repo', tag: 'legacy' },
+      { changes: [{ full_name: 'owner/repo', tags: ['legacy'] }] },
       context(),
     )).type, 'deny');
     assert.equal((await authorization.permissions(
       writes.delete,
-      { tag: 'obsolete' },
+      { tags: ['obsolete'] },
       context(),
     )).type, 'deny');
   });
@@ -345,7 +419,7 @@ describe('Cubby current-prompt authorization', () => {
     )).type, 'allow');
   });
 
-  it('keeps positive Chinese assignment allowed while remove/delete stay denied', async () => {
+  it('keeps positive Chinese assignment, removal, and deletion available', async () => {
     const assignment = createBgsmTurnAuthorization(analyzeBgsmPromptIntent('给 owner/repo 添加标签 typescript。').capabilities);
     await executeRead(assignment, readTool('search_stars', {
       stars: [{ full_name: 'owner/repo' }], nextCursor: null,
@@ -362,9 +436,9 @@ describe('Cubby current-prompt authorization', () => {
     }));
     assert.equal((await removal.permissions(
       writes.remove,
-      { full_name: 'owner/repo', tag: 'legacy' },
+      { changes: [{ full_name: 'owner/repo', tags: ['legacy'] }] },
       context(),
-    )).type, 'deny');
+    )).type, 'allow');
 
     const deletion = createBgsmTurnAuthorization(analyzeBgsmPromptIntent('从所有仓库删除标签 obsolete。').capabilities);
     await executeRead(deletion, readTool('list_tags', {
@@ -372,9 +446,9 @@ describe('Cubby current-prompt authorization', () => {
     }));
     assert.equal((await deletion.permissions(
       writes.delete,
-      { tag: 'obsolete' },
+      { tags: ['obsolete'] },
       context(),
-    )).type, 'deny');
+    )).type, 'allow');
   });
 
   it('uses structured repository identity as evidence without trusting injected tool text', async () => {
@@ -402,9 +476,9 @@ describe('Cubby current-prompt authorization', () => {
     )).type, 'deny');
     assert.equal((await authorization.permissions(
       writes.delete,
-      { tag: 'obsolete' },
+      { tags: ['obsolete'] },
       context(),
-    )).type, 'deny');
+    )).type, 'allow');
   });
 
   it('keeps code-search conversations read-only even after other read evidence', async () => {
@@ -425,6 +499,16 @@ describe('Cubby current-prompt authorization', () => {
     assert.equal((await authorization.permissions(
       writes.assign,
       { full_name: 'owner/repo', tags: ['typescript'] },
+      context(),
+    )).type, 'deny');
+    assert.equal((await authorization.permissions(
+      writes.remove,
+      { changes: [{ full_name: 'owner/repo', tags: ['typescript'] }] },
+      context(),
+    )).type, 'deny');
+    assert.equal((await authorization.permissions(
+      writes.delete,
+      { tags: ['typescript'] },
       context(),
     )).type, 'deny');
   });

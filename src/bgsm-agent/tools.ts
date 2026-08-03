@@ -10,9 +10,17 @@ import {
   addBgsmAgentManualTags,
   idbTagStore,
   type BgsmAgentManualTagAdditionResult,
+  type GlobalTagBulkDeletionResult,
+  type VisibleTagBulkRemoval,
+  type VisibleTagBulkRemovalResult,
 } from '@/storage/idb-tag-store';
 import { db } from '@/storage/db';
-import { includesTagName, visibleTagNames } from '@/tags/tag-model';
+import {
+  canonicalTagMetaWinners,
+  excludedCanonicalTagKeys,
+  includesTagName,
+  visibleTagNames,
+} from '@/tags/tag-model';
 import type { OrganizeStoredJobStatus, Star, Tag } from '@/types';
 import {
   MAX_SEMANTIC_TAG_NAME_BYTES,
@@ -35,6 +43,10 @@ const MAX_SEARCH_TERMS = 8;
 const MAX_SEARCH_TERM_BYTES = 128;
 const MAX_REPOSITORY_FULL_NAME_BYTES = 201;
 const MAX_SCOPE_LABEL_BYTES = 160;
+const MAX_REPOSITORY_TAG_REMOVAL_CHANGES = 500;
+const MAX_TAG_REMOVALS_PER_REPOSITORY = 20;
+const MAX_TAG_REMOVAL_EFFECTS = 2_000;
+const MAX_GLOBAL_TAG_DELETIONS = 50;
 const DEFAULT_SCOPE_LABEL = 'Authorized repository scope';
 const LIST_STARS_CURSOR_PREFIX = 'list-stars:v1:';
 const MAX_LIST_STARS_CURSOR_CHARS = 2_048;
@@ -112,6 +124,16 @@ export type BgsmAgentManualTagWriter = (
   context: ToolExecutionContext,
 ) => Promise<BgsmAgentManualTagAdditionResult>;
 
+export type BgsmAgentVisibleTagRemovalWriter = (
+  changes: readonly VisibleTagBulkRemoval[],
+  context: ToolExecutionContext,
+) => Promise<VisibleTagBulkRemovalResult>;
+
+export type BgsmAgentGlobalTagDeletionWriter = (
+  tags: readonly string[],
+  context: ToolExecutionContext,
+) => Promise<GlobalTagBulkDeletionResult>;
+
 export const REQUEST_FULL_LIBRARY_ORGANIZATION_TOOL_NAME =
   'request_full_library_organization';
 export const START_FULL_LIBRARY_ANALYSIS_TOOL_NAME =
@@ -146,8 +168,8 @@ export function createBgsmAgentTools(options: Readonly<{
     action: BgsmAgentOrganizeLibraryAction,
   ) => BgsmAgentOrganizeLibraryHandoffDecision | Promise<BgsmAgentOrganizeLibraryHandoffDecision>;
   assignManualTags?: BgsmAgentManualTagWriter;
-  /** Opt-in only. Default false: first safe release is additive manual tags. */
-  allowDestructiveWrites?: boolean;
+  removeVisibleTags?: BgsmAgentVisibleTagRemovalWriter;
+  deleteTagsEverywhere?: BgsmAgentGlobalTagDeletionWriter;
 }>): AgentTool[] {
   if (options.enableOrganizeLibraryHandoff && !options.requestOrganizeLibraryHandoff) {
     throw new TypeError('Full-library handoff requires an execution callback.');
@@ -175,6 +197,14 @@ export function createBgsmAgentTools(options: Readonly<{
       options.scopeFingerprint,
       options.assignManualTags ?? directManualTagWriter,
     ),
+    removeRepoTagsTool(
+      repositorySearchScope,
+      options.scopeFingerprint,
+      options.removeVisibleTags ?? directVisibleTagRemovalWriter,
+    ),
+    deleteTagsEverywhereTool(
+      options.deleteTagsEverywhere ?? directGlobalTagDeletionWriter,
+    ),
   ];
   if (options.enableRepositoryCodeSearch) {
     tools.push(...createRepositoryCodeTools(
@@ -184,9 +214,6 @@ export function createBgsmAgentTools(options: Readonly<{
   }
   if (options.enableRepositoryNotes) {
     tools.push(createRepositoryNotesTool(options.repositoryScope));
-  }
-  if (options.allowDestructiveWrites) {
-    tools.push(removeRepoTagTool(repositoryScope), deleteTagEverywhereTool());
   }
   return tools;
 }
@@ -364,19 +391,29 @@ function listTagsTool(): AgentTool<
 > {
   return {
     name: 'list_tags',
-    description: 'List current non-excluded tags and repository counts.',
+    description: 'List current non-excluded tags and repository counts, including metadata-only tags used by zero repositories.',
     risk: 'read',
     parameters: paginationParameters(),
     validate: parsePageArgs,
     async execute(args, context) {
       const [tagRows, tagMeta] = await Promise.all([db.tags.toArray(), db.tagMeta.toArray()]);
-      const excluded = new Set(
-        tagMeta.filter((meta) => meta.excluded).map((meta) => policyTagKey(meta.name)),
-      );
+      const metaWinners = canonicalTagMetaWinners(tagMeta);
+      const excluded = excludedCanonicalTagKeys(tagMeta);
       const usage = buildTagUsage(tagRows);
+      for (const [key, meta] of metaWinners) {
+        if (meta.excluded) continue;
+        const existing = usage.get(key);
+        usage.set(key, {
+          name: meta.name,
+          repositories: existing?.repositories ?? [],
+        });
+      }
       const tags = Array.from(usage.entries())
-        .filter(([name]) => !excluded.has(policyTagKey(name)))
-        .map(([name, repos]) => ({ name, repos: repos.length }))
+        .filter(([key]) => !excluded.has(key))
+        .map(([, entry]) => ({
+          name: entry.name,
+          repos: entry.repositories.length,
+        }))
         .sort((a, b) => a.name.localeCompare(b.name));
       return buildBoundedPage(
         tags,
@@ -683,90 +720,183 @@ const directManualTagWriter: BgsmAgentManualTagWriter = (fullName, tags, context
   return addBgsmAgentManualTags(fullName, tags);
 };
 
-function removeRepoTagTool(repositoryScope: ReadonlySet<string>): AgentTool<
-  { full_name: string; tag: string },
-  { full_name: string; tag: string; removed: boolean }
+function removeRepoTagsTool(
+  repositoryScope: RepositorySearchScope,
+  scopeFingerprint: string | undefined,
+  removeVisibleTags: BgsmAgentVisibleTagRemovalWriter,
+): AgentTool<
+  { changes: VisibleTagBulkRemoval[] },
+  VisibleTagBulkRemovalResult
 > {
   return {
-    name: 'remove_repo_tag',
+    name: 'remove_repo_tags',
     description:
-      'Remove one visible tag from one repository. Arguments: full_name string, tag string. Use only when the user asks to remove tags.',
+      'Remove visible tags from one or more repositories only when the user asks for those repository-level removals. Pass changes as an array of {full_name, tags}; one call is one atomic local batch. Inspect every requested repository/tag assignment in the current turn first. This does not delete a tag globally.',
     risk: 'write',
     parameters: {
       type: 'object',
       properties: {
-        full_name: { type: 'string' },
-        tag: { type: 'string' },
+        changes: {
+          type: 'array',
+          minItems: 1,
+          maxItems: MAX_REPOSITORY_TAG_REMOVAL_CHANGES,
+          items: {
+            type: 'object',
+            properties: {
+              full_name: { type: 'string' },
+              tags: {
+                type: 'array',
+                minItems: 1,
+                maxItems: MAX_TAG_REMOVALS_PER_REPOSITORY,
+                items: { type: 'string' },
+              },
+            },
+            required: ['full_name', 'tags'],
+            additionalProperties: false,
+          },
+        },
       },
-      required: ['full_name', 'tag'],
+      required: ['changes'],
       additionalProperties: false,
     },
     validate(input) {
       const value = expectObject(input);
+      assertOnlyKeys(value, ['changes'], 'remove_repo_tags');
       return {
-        full_name: expectString(value.full_name, 'full_name').trim(),
-        tag: expectString(value.tag, 'tag').trim(),
+        changes: parseVisibleTagRemovalChanges(value.changes, repositoryScope),
       };
     },
-    async execute(args) {
-      assertRepositoryInScope(repositoryScope, args.full_name);
-      const result = await idbTagStore.removeVisibleTag(args.full_name, args.tag);
-      return {
-        full_name: args.full_name,
-        tag: args.tag,
-        removed: result.removed,
-      };
+    writeEffectPlan: {
+      canonicalEffects(args: { changes: VisibleTagBulkRemoval[] }) {
+        const scopeKey = scopeFingerprint ?? 'unbound-scope';
+        return args.changes.flatMap((change) => change.tags.map((tag) => [
+          'remove_repo_tags',
+          scopeKey,
+          normalizeRepositoryIdentity(change.full_name),
+          policyTagKey(tag),
+        ] as const)).sort(compareCanonicalEffects);
+      },
+      selectEffects(
+        args: { changes: VisibleTagBulkRemoval[] },
+        effects: readonly (readonly [string, ...string[]])[],
+      ) {
+        const selected = new Set(effects.map((effect) => `${effect[2]}\u0000${effect[3]}`));
+        return {
+          changes: args.changes.flatMap((change) => {
+            const repositoryKey = normalizeRepositoryIdentity(change.full_name);
+            const tags = change.tags.filter((tag) => (
+              selected.has(`${repositoryKey}\u0000${policyTagKey(tag)}`)
+            ));
+            return tags.length > 0 ? [{ ...change, tags }] : [];
+          }),
+        };
+      },
+      replayResult(args: { changes: VisibleTagBulkRemoval[] }) {
+        return {
+          requested: countVisibleTagRemovalEffects(args.changes),
+          changed: 0,
+          skipped: 0,
+          repositoriesChanged: 0,
+        };
+      },
+      startBoundary: 'delegated',
+    },
+    async execute(args, context) {
+      for (const change of args.changes) {
+        assertRepositoryInSearchScope(repositoryScope, change.full_name);
+      }
+      return removeVisibleTags(args.changes, context);
     },
   };
 }
 
-function deleteTagEverywhereTool(): AgentTool<
-  { tag: string },
-  { tag: string; removed: number }
+function deleteTagsEverywhereTool(
+  deleteTagsEverywhere: BgsmAgentGlobalTagDeletionWriter,
+): AgentTool<
+  { tags: string[] },
+  GlobalTagBulkDeletionResult
 > {
   return {
-    name: 'delete_tag_everywhere',
+    name: 'delete_tags_everywhere',
     description:
-      'Delete one tag from every repository and prevent automatic re-adding. Arguments: tag string. Use only when the user explicitly asks to delete a tag.',
+      'Delete one or more tag names from every local repository and prevent automatic re-adding. Pass tags as an array; one call is one atomic local batch. Use only when the user explicitly asks for global deletion, after inspecting each tag in the current turn. For selected repositories only, use remove_repo_tags instead.',
     risk: 'write',
     parameters: {
       type: 'object',
       properties: {
-        tag: { type: 'string' },
+        tags: {
+          type: 'array',
+          minItems: 1,
+          maxItems: MAX_GLOBAL_TAG_DELETIONS,
+          items: { type: 'string' },
+        },
       },
-      required: ['tag'],
+      required: ['tags'],
       additionalProperties: false,
     },
     validate(input) {
       const value = expectObject(input);
-      const tag = expectString(value.tag, 'tag').trim();
-      if (!tag) throw new TypeError('tag must be a non-empty string.');
-      return { tag };
+      assertOnlyKeys(value, ['tags'], 'delete_tags_everywhere');
+      return {
+        tags: expectTagArray(value.tags, 'tags', MAX_GLOBAL_TAG_DELETIONS),
+      };
     },
-    async execute(args) {
-      if (!args.tag.trim()) throw new TypeError('tag must be a non-empty string.');
-      const result = await idbTagStore.deleteTagEverywhere(args.tag);
-      return { tag: args.tag, removed: result.removed };
+    writeEffectPlan: {
+      canonicalEffects(args: { tags: string[] }) {
+        return args.tags.map((tag) => [
+          'delete_tags_everywhere',
+          policyTagKey(tag),
+        ] as const).sort(compareCanonicalEffects);
+      },
+      selectEffects(
+        args: { tags: string[] },
+        effects: readonly (readonly [string, ...string[]])[],
+      ) {
+        const selected = new Set(effects.map((effect) => effect[1]));
+        return { tags: args.tags.filter((tag) => selected.has(policyTagKey(tag))) };
+      },
+      replayResult(args: { tags: string[] }) {
+        return {
+          requestedTags: args.tags.length,
+          assignmentsRemoved: 0,
+          repositoriesChanged: 0,
+        };
+      },
+      startBoundary: 'delegated',
+    },
+    async execute(args, context) {
+      return deleteTagsEverywhere(args.tags, context);
     },
   };
 }
 
-function buildTagUsage(tags: Tag[]): Map<string, string[]> {
-  const usage = new Map<string, string[]>();
+const directVisibleTagRemovalWriter: BgsmAgentVisibleTagRemovalWriter = (
+  changes,
+  context,
+) => {
+  context.markWriteStarted?.();
+  return idbTagStore.removeVisibleTagsBulk(changes);
+};
+
+const directGlobalTagDeletionWriter: BgsmAgentGlobalTagDeletionWriter = (
+  tags,
+  context,
+) => {
+  context.markWriteStarted?.();
+  return idbTagStore.deleteTagsEverywhere(tags);
+};
+
+function buildTagUsage(tags: Tag[]): Map<string, { name: string; repositories: string[] }> {
+  const usage = new Map<string, { name: string; repositories: string[] }>();
   for (const row of tags) {
-    for (const tag of visibleTagNames(row)) {
-      const repos = usage.get(tag) ?? [];
-      repos.push(row.full_name);
-      usage.set(tag, repos);
+    for (const name of visibleTagNames(row)) {
+      const key = policyTagKey(name);
+      const entry = usage.get(key) ?? { name, repositories: [] };
+      entry.repositories.push(row.full_name);
+      usage.set(key, entry);
     }
   }
   return usage;
-}
-
-function assertRepositoryInScope(repositoryScope: ReadonlySet<string>, fullName: string): void {
-  if (!repositoryScope.has(fullName)) {
-    throw new TypeError(`Repository is outside the authorized scope: ${fullName}`);
-  }
 }
 
 function assertRepositoryInSearchScope(
@@ -941,7 +1071,7 @@ function compareScoredStars(
 
 async function loadExcludedTagKeys(): Promise<Set<string>> {
   const meta = await db.tagMeta.toArray();
-  return new Set(meta.filter((entry) => entry.excluded).map((entry) => policyTagKey(entry.name)));
+  return excludedCanonicalTagKeys(meta);
 }
 
 
@@ -1185,6 +1315,10 @@ function expectString(input: unknown, field: string): string {
 }
 
 function expectAgentTagArray(input: unknown, field: string): string[] {
+  return expectTagArray(input, field, TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT);
+}
+
+function expectTagArray(input: unknown, field: string, maxItems: number): string[] {
   if (!Array.isArray(input)) {
     throw new Error(`Expected ${field} to be an array.`);
   }
@@ -1203,10 +1337,88 @@ function expectAgentTagArray(input: unknown, field: string): string[] {
     tags.push(tag);
   }
   if (tags.length === 0) throw new Error(`Expected ${field} to include at least one tag.`);
-  if (tags.length > TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT) {
-    throw new Error(`Expected ${field} to include at most ${TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT} tags.`);
+  if (tags.length > maxItems) {
+    throw new Error(`Expected ${field} to include at most ${maxItems} tags.`);
   }
   return tags;
+}
+
+function parseVisibleTagRemovalChanges(
+  input: unknown,
+  repositoryScope: RepositorySearchScope,
+): VisibleTagBulkRemoval[] {
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new TypeError('remove_repo_tags changes must be a non-empty array.');
+  }
+  if (input.length > MAX_REPOSITORY_TAG_REMOVAL_CHANGES) {
+    throw new TypeError(
+      `remove_repo_tags changes must contain at most ${MAX_REPOSITORY_TAG_REMOVAL_CHANGES} repositories.`,
+    );
+  }
+
+  const changesByRepository = new Map<string, { full_name: string; tags: Map<string, string> }>();
+  for (const item of input) {
+    const value = expectObject(item);
+    assertOnlyKeys(value, ['full_name', 'tags'], 'remove_repo_tags change');
+    const requestedFullName = expectRepositoryFullName(value.full_name, 'full_name');
+    const repositoryKey = normalizeRepositoryIdentity(requestedFullName);
+    const fullName = repositoryScope.canonicalByNormalizedFullName.get(repositoryKey)
+      ?? requestedFullName;
+    const entry = changesByRepository.get(repositoryKey) ?? {
+      full_name: fullName,
+      tags: new Map<string, string>(),
+    };
+    for (const tag of expectTagArray(
+      value.tags,
+      'tags',
+      MAX_TAG_REMOVALS_PER_REPOSITORY,
+    )) {
+      entry.tags.set(policyTagKey(tag), entry.tags.get(policyTagKey(tag)) ?? tag);
+    }
+    changesByRepository.set(repositoryKey, entry);
+  }
+
+  const changes = Array.from(changesByRepository.values(), (entry) => ({
+    full_name: entry.full_name,
+    tags: Array.from(entry.tags.values()),
+  })).sort((left, right) => (
+    normalizeRepositoryIdentity(left.full_name)
+      .localeCompare(normalizeRepositoryIdentity(right.full_name))
+  ));
+  if (countVisibleTagRemovalEffects(changes) > MAX_TAG_REMOVAL_EFFECTS) {
+    throw new TypeError(
+      `remove_repo_tags must contain at most ${MAX_TAG_REMOVAL_EFFECTS} unique repository/tag pairs.`,
+    );
+  }
+  return changes;
+}
+
+function expectRepositoryFullName(input: unknown, field: string): string {
+  const fullName = expectString(input, field).trim().normalize('NFKC');
+  if (
+    !fullName
+    || new TextEncoder().encode(fullName).byteLength > MAX_REPOSITORY_FULL_NAME_BYTES
+    || /[\u0000-\u001f\u007f-\u009f\ud800-\udfff]/u.test(fullName)
+  ) {
+    throw new TypeError(`${field} must be a bounded repository identifier.`);
+  }
+  return fullName;
+}
+
+function countVisibleTagRemovalEffects(changes: readonly VisibleTagBulkRemoval[]): number {
+  return changes.reduce((total, change) => total + change.tags.length, 0);
+}
+
+function compareCanonicalEffects(
+  left: readonly string[],
+  right: readonly string[],
+): number {
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index++) {
+    const comparison = (left[index] ?? '').localeCompare(right[index] ?? '');
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
 }
 
 function expectPositiveInteger(input: unknown, field: string): number {

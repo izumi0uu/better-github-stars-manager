@@ -52,23 +52,44 @@ export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities):
         return denyCurrentAuthorization();
       }
       if (tool.risk !== 'write') return { type: 'allow' };
-      if (capabilities.repositoryCodeReadOnly) return denyCurrentAuthorization();
+      if (
+        capabilities.repositoryCodeReadOnly
+        || capabilities.manualTagWritesForbidden
+      ) return denyCurrentAuthorization();
       const value = objectArgs(args);
-      // Direct model-facing writes are additive only. The model decides whether
-      // the conversation requests a change; the runtime enforces hard policy.
-      if (tool.name === 'remove_repo_tag' || tool.name === 'delete_tag_everywhere') {
-        return denyCurrentAuthorization();
-      }
       if (tool.name === 'assign_repo_tags') {
         const repository = stringArg(value, 'full_name');
         if (
-          capabilities.manualTagWritesForbidden ||
           !evidence.repositories.has(normalize(repository)) ||
           remainingAssignmentWrites <= 0
         ) {
           return denyCurrentAuthorization();
         }
         remainingAssignmentWrites -= 1;
+        return { type: 'allow' };
+      }
+      if (tool.name === 'remove_repo_tags') {
+        const changes = arrayArg(value, 'changes');
+        if (
+          changes.length === 0
+          || changes.some((rawChange) => {
+            const change = objectArgs(rawChange);
+            const repository = stringArg(change, 'full_name');
+            const tags = stringArrayArg(change, 'tags');
+            return !repository
+              || tags.length === 0
+              || !evidence.repositories.has(normalize(repository))
+              || tags.some((tag) => !evidence.repositoryTags.has(pair(repository, tag)));
+          })
+        ) return denyCurrentAuthorization();
+        return { type: 'allow' };
+      }
+      if (tool.name === 'delete_tags_everywhere') {
+        const tags = stringArrayArg(value, 'tags');
+        if (
+          tags.length === 0
+          || tags.some((tag) => !evidence.tags.has(normalize(tag)))
+        ) return denyCurrentAuthorization();
         return { type: 'allow' };
       }
       return denyCurrentAuthorization();
@@ -90,14 +111,12 @@ function wrapReadTool(tool: AgentTool, evidence: ReadEvidence): AgentTool {
 function recordReadEvidence(toolName: string, result: unknown, evidence: ReadEvidence): void {
   const value = objectArgs(result);
   if (toolName === 'get_star') {
-    const repository = optionalStringArg(objectArgs(value.star), 'full_name');
-    if (repository) evidence.repositories.add(normalize(repository));
+    recordRepositoryEvidence(value.star, evidence);
     return;
   }
   if (toolName === 'list_stars' || toolName === 'search_stars') {
     for (const star of arrayArg(value, 'stars')) {
-      const repository = optionalStringArg(objectArgs(star), 'full_name');
-      if (repository) evidence.repositories.add(normalize(repository));
+      recordRepositoryEvidence(star, evidence);
     }
     return;
   }
@@ -110,8 +129,11 @@ function recordReadEvidence(toolName: string, result: unknown, evidence: ReadEvi
   }
   if (toolName !== 'inspect_tag') return;
   const inspectedTag = optionalStringArg(value, 'tag');
-  if (inspectedTag) evidence.tags.add(normalize(inspectedTag));
-  for (const repoRow of arrayArg(value, 'repos')) {
+  const repositories = arrayArg(value, 'repos');
+  if (inspectedTag && repositories.length > 0) {
+    evidence.tags.add(normalize(inspectedTag));
+  }
+  for (const repoRow of repositories) {
     const repo = objectArgs(repoRow);
     const repository = optionalStringArg(repo, 'full_name');
     if (!repository) continue;
@@ -120,6 +142,16 @@ function recordReadEvidence(toolName: string, result: unknown, evidence: ReadEvi
     for (const tag of arrayArg(repo, 'tags')) {
       if (typeof tag === 'string') evidence.repositoryTags.add(pair(repository, tag));
     }
+  }
+}
+
+function recordRepositoryEvidence(result: unknown, evidence: ReadEvidence): void {
+  const repository = objectArgs(result);
+  const fullName = optionalStringArg(repository, 'full_name');
+  if (!fullName) return;
+  evidence.repositories.add(normalize(fullName));
+  for (const tag of stringArrayArg(repository, 'tags')) {
+    evidence.repositoryTags.add(pair(fullName, tag));
   }
 }
 
@@ -151,7 +183,7 @@ function pair(repository: string, tag: string): string {
 }
 
 function normalize(value: string): string {
-  return value.trim().toLocaleLowerCase('en-US');
+  return value.trim().normalize('NFKC').toLocaleLowerCase('en-US');
 }
 
 function objectArgs(value: unknown): Record<string, unknown> {
@@ -162,6 +194,10 @@ function objectArgs(value: unknown): Record<string, unknown> {
 
 function arrayArg(value: Record<string, unknown>, name: string): unknown[] {
   return Array.isArray(value[name]) ? value[name] : [];
+}
+
+function stringArrayArg(value: Record<string, unknown>, name: string): string[] {
+  return arrayArg(value, name).filter((item): item is string => typeof item === 'string');
 }
 
 function stringArg(value: Record<string, unknown>, name: string): string {

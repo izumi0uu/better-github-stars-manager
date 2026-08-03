@@ -80,6 +80,15 @@ const sourceFingerprint = parseSourceFingerprintV1(`sf:v1:${DIGEST}`);
 const taxonomyFingerprint = parseTaxonomyFingerprintV1(`tf:v1:${DIGEST}`);
 
 describe('Cubby response completeness contract', () => {
+  it('keeps full-library scope confirmation actions in the UI', () => {
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /confirmation_requested/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /analysis scope is being prepared/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Do not ask the user to reply with a fixed phrase/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Do not claim that the scope is ready/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Do not mention the UI, tool, handoff, status, or protocol/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Start analysis and Cancel controls/u);
+  });
+
   it('requires exact requested counts or an explicit qualified-result shortage', () => {
     assert.match(BGSM_AGENT_INSTRUCTIONS, /exact number of repositories/u);
     assert.match(BGSM_AGENT_INSTRUCTIONS, /exactly that many distinct qualifying repositories/u);

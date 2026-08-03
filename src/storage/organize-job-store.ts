@@ -31,7 +31,7 @@ import {
   buildSemanticPolicyTaxonomyFromStorage,
   fingerprintSemanticTaxonomy,
 } from '@/bgsm-agent/semantic-dto';
-import { addTagNames, sameTagNames } from '@/tags/tag-model';
+import { addTagNames, excludedCanonicalTagKeys, sameTagNames } from '@/tags/tag-model';
 import { db } from './db';
 import { markDirtyForLocalWrites, queueTagDirtyOutbox } from './idb-tag-store';
 import { normalizeStoredTag, type LegacyTagRow } from './tag-shape';
@@ -1380,11 +1380,7 @@ export async function settleOrganizeApplyChunk(input: Readonly<{
         throw new TypeError('Organize Apply lease has expired.');
       }
       const tagMeta = await db.tagMeta.toArray();
-      const excluded = new Set(
-        tagMeta
-          .filter((meta) => meta.excluded)
-          .map((meta) => canonicalTag(meta.name)),
-      );
+      const excluded = excludedCanonicalTagKeys(tagMeta);
       const frozenTaxonomy = await db.organizeTaxonomies.get(apply.jobId);
       if (!frozenTaxonomy) throw new TypeError('Organize Apply taxonomy snapshot is missing.');
       const rawTags = await db.tags.toArray();

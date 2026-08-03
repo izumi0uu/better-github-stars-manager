@@ -42,14 +42,6 @@ function createTools(repositoryScope: readonly string[] = [star.full_name]) {
   return createBgsmAgentTools({ repositoryScope, scopeFingerprint: 'scope:test' });
 }
 
-function createToolsWithDestructive(repositoryScope: readonly string[] = [star.full_name]) {
-  return createBgsmAgentTools({
-    repositoryScope,
-    scopeFingerprint: 'scope:test',
-    allowDestructiveWrites: true,
-  });
-}
-
 describe('Cubby tools', () => {
   beforeEach(async () => {
     await db.delete();
@@ -86,18 +78,14 @@ describe('Cubby tools', () => {
     assert.equal(names.includes('suggest_tag_cleanup'), false);
   });
 
-  it('omits destructive write tools by default and keeps them opt-in only', () => {
-    const defaultNames = createTools().map((tool) => tool.name);
-    assert.equal(defaultNames.includes('remove_repo_tag'), false);
-    assert.equal(defaultNames.includes('delete_tag_everywhere'), false);
-    assert.equal(defaultNames.includes('assign_repo_tags'), true);
+  it('exposes all local tag mutation tools on regular turns without intent gating', () => {
+    const names = createTools().map((tool) => tool.name);
+    assert.equal(names.includes('remove_repo_tags'), true);
+    assert.equal(names.includes('delete_tags_everywhere'), true);
+    assert.equal(names.includes('assign_repo_tags'), true);
     const assign = createTools().find((tool) => tool.name === 'assign_repo_tags');
     assert.match(assign?.description ?? '', /only when the user wants its tags changed/);
     assert.match(assign?.description ?? '', /current turn/);
-
-    const optInNames = createToolsWithDestructive().map((tool) => tool.name);
-    assert.equal(optInNames.includes('remove_repo_tag'), true);
-    assert.equal(optInNames.includes('delete_tag_everywhere'), true);
   });
 
   it('exposes opt-in, argument-free full-library confirmation and start handoffs without writes', async () => {
@@ -462,6 +450,103 @@ describe('Cubby tools', () => {
     assert.equal(await db.tags.get(star.full_name), undefined);
   });
 
+  it('routes normalized repository removals and global deletions as atomic batches', async () => {
+    const context = { sessionId: 's-batch-delete', callId: 'call-batch-delete' };
+    let receivedRemoval: unknown = null;
+    let receivedDeletion: unknown = null;
+    const tools = createBgsmAgentTools({
+      repositoryScope: [star.full_name],
+      scopeFingerprint: 'scope:batch-delete',
+      removeVisibleTags: async (changes, executionContext) => {
+        receivedRemoval = { changes, executionContext };
+        return {
+          requested: 2,
+          changed: 2,
+          skipped: 0,
+          repositoriesChanged: 1,
+        };
+      },
+      deleteTagsEverywhere: async (tags, executionContext) => {
+        receivedDeletion = { tags, executionContext };
+        return {
+          requestedTags: 2,
+          assignmentsRemoved: 3,
+          repositoriesChanged: 2,
+        };
+      },
+    });
+    const remove = tools.find((candidate) => candidate.name === 'remove_repo_tags');
+    const del = tools.find((candidate) => candidate.name === 'delete_tags_everywhere');
+    assert.ok(remove);
+    assert.ok(del);
+
+    const removalArgs = remove.validate?.({
+      changes: [
+        { full_name: 'OWNER/REPO', tags: ['  Ｌｅｇａｃｙ ', 'unused'] },
+        { full_name: 'owner/repo', tags: ['legacy'] },
+      ],
+    });
+    assert.deepEqual(removalArgs, {
+      changes: [{ full_name: 'owner/repo', tags: ['Legacy', 'unused'] }],
+    });
+    assert.deepEqual(await remove.execute(removalArgs, context), {
+      requested: 2,
+      changed: 2,
+      skipped: 0,
+      repositoriesChanged: 1,
+    });
+    assert.deepEqual(receivedRemoval, {
+      changes: [{ full_name: 'owner/repo', tags: ['Legacy', 'unused'] }],
+      executionContext: context,
+    });
+
+    const deletionArgs = del.validate?.({ tags: [' legacy ', 'unused', 'LEGACY'] });
+    assert.deepEqual(deletionArgs, { tags: ['legacy', 'unused'] });
+    assert.deepEqual(await del.execute(deletionArgs, context), {
+      requestedTags: 2,
+      assignmentsRemoved: 3,
+      repositoriesChanged: 2,
+    });
+    assert.deepEqual(receivedDeletion, {
+      tags: ['legacy', 'unused'],
+      executionContext: context,
+    });
+  });
+
+  it('defines stable per-effect replay plans for both deletion tools', () => {
+    const tools = createTools();
+    const remove = tools.find((candidate) => candidate.name === 'remove_repo_tags');
+    const del = tools.find((candidate) => candidate.name === 'delete_tags_everywhere');
+    assert.ok(remove?.writeEffectPlan);
+    assert.ok(del?.writeEffectPlan);
+
+    const removalArgs = remove.validate?.({
+      changes: [{ full_name: star.full_name, tags: ['unused', 'legacy'] }],
+    }) as { changes: Array<{ full_name: string; tags: string[] }> };
+    assert.deepEqual(remove.writeEffectPlan.canonicalEffects(removalArgs), [
+      ['remove_repo_tags', 'scope:test', 'owner/repo', 'legacy'],
+      ['remove_repo_tags', 'scope:test', 'owner/repo', 'unused'],
+    ]);
+    assert.deepEqual(remove.writeEffectPlan.selectEffects?.(
+      removalArgs,
+      [['remove_repo_tags', 'scope:test', 'owner/repo', 'unused']],
+    ), {
+      changes: [{ full_name: star.full_name, tags: ['unused'] }],
+    });
+
+    const deletionArgs = del.validate?.({ tags: ['unused', 'legacy'] }) as { tags: string[] };
+    assert.deepEqual(del.writeEffectPlan.canonicalEffects(deletionArgs), [
+      ['delete_tags_everywhere', 'legacy'],
+      ['delete_tags_everywhere', 'unused'],
+    ]);
+    assert.deepEqual(del.writeEffectPlan.selectEffects?.(
+      deletionArgs,
+      [['delete_tags_everywhere', 'legacy']],
+    ), { tags: ['legacy'] });
+    assert.equal(remove.writeEffectPlan.startBoundary, 'delegated');
+    assert.equal(del.writeEffectPlan.startBoundary, 'delegated');
+  });
+
   it('rejects empty or whitespace-only assign and delete tags', async () => {
     const assign = createTools().find((candidate) => candidate.name === 'assign_repo_tags');
     assert.ok(assign);
@@ -470,9 +555,9 @@ describe('Cubby tools', () => {
       /at least one tag|non-empty/u,
     );
 
-    const del = createToolsWithDestructive().find((candidate) => candidate.name === 'delete_tag_everywhere');
+    const del = createTools().find((candidate) => candidate.name === 'delete_tags_everywhere');
     assert.ok(del);
-    assert.throws(() => del.validate?.({ tag: '   ' }), /non-empty/u);
+    assert.throws(() => del.validate?.({ tags: ['   '] }), /non-empty/u);
   });
 
   it('normalizes direct tag arguments and enforces semantic hard limits', () => {
@@ -1255,6 +1340,62 @@ describe('Cubby tools', () => {
     assert.doesNotThrow(() => JSON.parse(JSON.stringify(okToolResult(inspected))));
   });
 
+  it('lists non-excluded metadata-only tags with a zero repository count', async () => {
+    await db.tagMeta.bulkPut([
+      {
+        name: 'unused',
+        dimension: null,
+        color: null,
+        excluded: false,
+        mtime: star.synced_at,
+      },
+      {
+        name: 'deleted',
+        dimension: null,
+        color: null,
+        excluded: true,
+        mtime: star.synced_at,
+      },
+    ]);
+    const listTags = createTools().find((candidate) => candidate.name === 'list_tags');
+    assert.ok(listTags);
+
+    const result = await listTags.execute(listTags.validate?.({ limit: 20 }), {
+      sessionId: 's-zero-count-tag',
+      callId: 'call-zero-count-tag',
+    }) as { tags: Array<{ name: string; repos: number }> };
+
+    assert.deepEqual(result.tags, [{ name: 'unused', repos: 0 }]);
+  });
+
+  it('uses the newest canonical metadata state when listing tags', async () => {
+    await db.tagMeta.bulkPut([
+      {
+        name: 'ＵＩ',
+        dimension: null,
+        color: null,
+        excluded: true,
+        mtime: '2026-01-01T00:00:00Z',
+      },
+      {
+        name: 'ui',
+        dimension: null,
+        color: null,
+        excluded: false,
+        mtime: '2026-01-02T00:00:00Z',
+      },
+    ]);
+    const listTags = createTools().find((candidate) => candidate.name === 'list_tags');
+    assert.ok(listTags);
+
+    const result = await listTags.execute(listTags.validate?.({ limit: 20 }), {
+      sessionId: 's-canonical-meta-winner',
+      callId: 'call-canonical-meta-winner',
+    }) as { tags: Array<{ name: string; repos: number }> };
+
+    assert.deepEqual(result.tags, [{ name: 'ui', repos: 0 }]);
+  });
+
   it('rejects invalid pagination cursors', () => {
     const tool = createTools().find((candidate) => candidate.name === 'search_stars');
     assert.ok(tool);
@@ -1424,10 +1565,9 @@ describe('Cubby tools', () => {
       excluded: true,
     });
     const tools = createTools();
-    const destructiveTools = createToolsWithDestructive();
     const inspect = tools.find((candidate) => candidate.name === 'inspect_tag');
     const assign = tools.find((candidate) => candidate.name === 'assign_repo_tags');
-    const remove = destructiveTools.find((candidate) => candidate.name === 'remove_repo_tag');
+    const remove = tools.find((candidate) => candidate.name === 'remove_repo_tags');
     const listTags = tools.find((candidate) => candidate.name === 'list_tags');
     assert.ok(inspect);
     assert.ok(assign);
@@ -1462,7 +1602,9 @@ describe('Cubby tools', () => {
       /outside the authorized scope/u,
     );
     await assert.rejects(
-      () => remove.execute(remove.validate?.({ full_name: 'other/outside', tag: 'build' }), {
+      () => remove.execute(remove.validate?.({
+        changes: [{ full_name: 'other/outside', tags: ['build'] }],
+      }), {
         sessionId: 's-outside-remove',
         callId: 'call-outside-remove',
       }),

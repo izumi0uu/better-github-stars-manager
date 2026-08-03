@@ -17,6 +17,8 @@ const NOTES_READ_NEGATION =
 
 const ENGLISH_TAG_WRITE_PROHIBITION =
   /\bno\s+(?:more\s+)?tagging\b|\bno\s+tag\s+changes?\b|\bno\s+changes?\s+to\s+(?:the\s+)?tags?\b|\b(?:leave|keep)\s+(?:the\s+)?tags?\s+(?:unchanged|as[-\s]?is)\b|\b(?:do\s+not|don(?:['’])?t|never|must\s+not|cannot|can(?:['’])?t|not\s+allowed\s+to)\s+(?:(?:please|ever|directly|accidentally|automatically|permanently|categorically|now|by\s+any\s+means|under\s+any\s+circumstances|want\s+(?:you\s+)?to)\s+){0,4}(?:(?:tag|label|categorize|classify)\b|(?:assign|add|apply|change|modify|write|touch)\b[^,.;!?\n]{0,32}\btags?\b)|\b(?:refrain\s+from|avoid|without)\s+(?:(?:tagging|labeling|categorizing|classifying)\b|(?:assigning|adding|applying|changing|modifying|writing|touching)\b[^,.;!?\n]{0,32}\btags?\b)/iu;
+const ENGLISH_TAG_REMOVAL_PROHIBITION =
+  /\b(?:do\s+not|don(?:['’])?t|never|must\s+not|cannot|can(?:['’])?t|not\s+allowed\s+to)\b[^,.;!?\n]{0,80}\b(?:remove|unassign|delete)\b[^,.;!?\n]{0,48}\btags?\b/iu;
 const CHINESE_TAG_WRITE_NEGATOR = /不要|不可|不能|请勿|不得|禁止|切勿|无需|无须|别/gu;
 const CHINESE_TAG_WRITE_ACTION =
   /打标|标记|标注|归类|分类|设为|设成|设置为|设置成|分配|添加|打上?|加上?|加个|贴上?|贴个|补上?|补个|写入|应用|修改|改变/gu;
@@ -29,8 +31,8 @@ const CHINESE_OUTER_SCOPE_BEFORE_NEGATOR =
 const CHINESE_CLAUSE_BOUNDARY = /[，。！？；\n]+/u;
 const CHINESE_UNCHANGED_TAG_PROHIBITION =
   /(?:保持|维持)[^，。！？；\n]{0,16}标签[^，。！？；\n]{0,8}(?:不变|原样)/u;
-const REMOVE_OR_DELETE_INTENT =
-  /\b(?:remove|unassign|delete)\b|移除|取消标签|删除/i;
+const CHINESE_TAG_REMOVAL_PROHIBITION =
+  /(?:不要|不可|不能|请勿|不得|禁止|切勿|别)[^，。！？；\n]{0,48}(?:移除|取消|删除)[^，。！？；\n]{0,24}标签/u;
 
 export type BgsmPromptCapabilities = Readonly<{
   manualTagWritesForbidden: boolean;
@@ -58,8 +60,9 @@ export function analyzeBgsmPromptIntent(prompt: string): BgsmPromptIntent {
   const manualTagWritesForbidden = value.length > 0
     && (
       ENGLISH_TAG_WRITE_PROHIBITION.test(value)
+      || ENGLISH_TAG_REMOVAL_PROHIBITION.test(value)
+      || CHINESE_TAG_REMOVAL_PROHIBITION.test(value)
       || hasChineseTagWriteProhibition(value)
-      || REMOVE_OR_DELETE_INTENT.test(value)
     );
   return Object.freeze({
     capabilities: Object.freeze({

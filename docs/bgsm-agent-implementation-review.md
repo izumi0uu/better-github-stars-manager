@@ -17,6 +17,21 @@ The earlier [MVP Agent Harness Blueprint](./bgsm-agent-tag-assistant-plan.md) re
 
 The product and interaction contract was reviewed separately and is intentionally not checked into this branch. This document owns implementation and safety findings; executable source and regression tests own the enforced runtime behavior.
 
+## Product autonomy decision — 2026-08-03
+
+Repository tags are treated as low-impact local annotations. Regular Agent conversations may directly remove visible tags from repositories and delete tag names globally; the earlier recommendation that every removal require a proposal and separate Apply confirmation is retained below as review history but no longer describes the accepted product contract.
+
+The direct path is still constrained by application code:
+
+- `remove_repo_tags` and `delete_tags_everywhere` are available on regular turns rather than enabled by keyword or intent matching;
+- every repository/tag removal needs same-turn local assignment evidence, and every global tag deletion needs same-turn tag-list evidence;
+- repository-code conversations remain read-only, explicit no-write requests deny every tag mutation, and an active Organize Apply holds the shared write lock;
+- repository removals and global deletions execute as separate atomic IndexedDB batches and preserve Gist dirty-outbox semantics;
+- canonical write effects are recorded in the execution ledger so retries execute only effects that are not already committed;
+- the Agent UI reports the tool activity and final mutation count without synthesizing a keyword-driven confirmation or unavailable card.
+
+Global deletion writes `TagMeta.excluded` tombstones and therefore remains semantically different from removing a visible tag on selected repositories. The model must not substitute one operation for the other or broaden the requested repositories or tag names.
+
 ## Remediation closure — 2026-07-14
 
 The repair pass closed the eight implementation findings selected from the comprehensive review:
@@ -161,9 +176,11 @@ Toolbar Auto Tags / free-form prompt
 | `search_repository_code` | Conditional read | Searches the bounded GitHub code index and returns verified, pinned snippets; at most one search runs per turn |
 | `read_repository_file` | Conditional read | Reads at most 200 text lines using a trusted commit ref returned by list/search |
 | `read_repository_notes` | Conditional private read | Returns bounded private notes only when the current prompt explicitly requests them |
-| `assign_repo_tags` | Write | Adds manual tags only after explicit current-turn intent and same-turn local repository evidence |
+| `assign_repo_tags` | Write | Adds manual tags after same-turn local repository evidence when the current prompt does not forbid writes |
+| `remove_repo_tags` | Write | Atomically removes requested visible repository/tag pairs after same-turn assignment evidence |
+| `delete_tags_everywhere` | Write | Atomically removes requested tag names from all repositories and writes exclusion tombstones after same-turn tag evidence |
 
-Destructive tag tools remain opt-in and are not exposed by the first-release background flow. After any repository-code tool runs, that conversation stays read-only; tag changes require a new conversation.
+All three tag mutation tools are present on regular turns; runtime authorization, not prompt keyword matching, decides whether a call can execute. After any repository-code tool runs, that conversation stays read-only; tag changes require a new conversation.
 
 The registry is defined in `src/bgsm-agent/tools.ts` and `src/bgsm-agent/repository-code-search-tool.ts`.
 

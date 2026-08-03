@@ -51,6 +51,8 @@ export function buildBgsmAgentContext(): BgsmAgentContext {
       ],
       write: [
         'Add manual tags to a repository after inspecting local data',
+        'Remove visible tags from repositories in the authorized scope after inspecting local data',
+        'Delete tags from every repository after inspecting current tag usage',
       ],
     },
     safety: {
@@ -96,6 +98,8 @@ export function limitBgsmAgentContext(
       ],
       write: [
         'Add manual tags to a repository after inspecting local data',
+        'Remove visible tags from repositories in the authorized scope after inspecting local data',
+        'Delete tags from every repository after inspecting current tag usage',
       ],
     },
     safety: {
