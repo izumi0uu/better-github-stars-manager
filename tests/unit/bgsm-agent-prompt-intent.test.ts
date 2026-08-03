@@ -3,7 +3,7 @@ import { describe, it } from 'vitest';
 import { analyzeBgsmPromptIntent } from '@/bgsm-agent';
 import { getMessages } from '@/i18n';
 
-describe('BGSM Agent prompt intent', () => {
+describe('Cubby prompt intent', () => {
   it('does not classify ordinary conversation or positive tag intent in code', () => {
     for (const prompt of [
       'hello',

@@ -66,8 +66,8 @@ afterEach(() => {
   cleanupMountedRootsAndBody(mountedRoots);
 });
 
-describe('one-time Auto Tags Agent choice', () => {
-  it('opens Agent for Yes, remembers the answer, and runs later clicks directly', async () => {
+describe('one-time Auto Tags Cubby choice', () => {
+  it('opens Cubby for Yes, remembers the answer, and runs later clicks directly', async () => {
     getConfig.mockResolvedValue({ autoTagAgentPromptSeen: false });
     const container = mountReact(<Harness />, mountedRoots);
     await flushEffects();
@@ -75,10 +75,10 @@ describe('one-time Auto Tags Agent choice', () => {
     await click(buttonByText(container, 'Request Auto Tags'));
     const dialog = container.querySelector('[role="dialog"]');
     expect(dialog?.getAttribute('aria-modal')).toBe('true');
-    expect(dialog?.textContent).toContain('Try Agent for smarter tagging?');
-    expect(document.activeElement).toBe(buttonByText(container, 'Yes, open Agent'));
+    expect(dialog?.textContent).toContain('Try Cubby for smarter tagging?');
+    expect(document.activeElement).toBe(buttonByText(container, 'Yes, open Cubby'));
 
-    await click(buttonByText(container, 'Yes, open Agent'));
+    await click(buttonByText(container, 'Yes, open Cubby'));
     expect(openAgent).toHaveBeenCalledTimes(1);
     expect(runAutoTags).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith({ autoTagAgentPromptSeen: true });

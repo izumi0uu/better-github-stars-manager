@@ -1300,7 +1300,7 @@ async function runBgsmAgentTurn(
       initialRawMessages[0]?.role !== 'user'
       || initialRawMessages[0].content !== input.prompt
     ) {
-      throw new TypeError('BGSM Agent Provider projection must retain the original user prompt.');
+      throw new TypeError('Cubby Provider projection must retain the original user prompt.');
     }
     const continueAfterContextPressure = async (
       continuation: Readonly<{
@@ -1316,7 +1316,7 @@ async function runBgsmAgentTurn(
       }>,
     ) => {
       if (!continuation.rawMessages) {
-        throw new TypeError('BGSM Agent continuation requires an append-only raw turn transcript.');
+        throw new TypeError('Cubby continuation requires an append-only raw turn transcript.');
       }
       const compacted = await compactBgsmAgentCompletedToolEnvelope({
         turn: input,

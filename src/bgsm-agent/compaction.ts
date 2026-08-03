@@ -106,7 +106,7 @@ export function buildBgsmAgentTerminalPayload(
   candidateActiveProjection?: BgsmAgentActiveProjection | null;
 } {
   if (!result.rawMessages) {
-    throw new TypeError('BGSM Agent terminal payload requires an append-only raw turn transcript.');
+    throw new TypeError('Cubby terminal payload requires an append-only raw turn transcript.');
   }
   return {
     newMessages: selectBgsmAgentRawTurnNewMessages(result.rawMessages, turn),
@@ -702,7 +702,7 @@ function activeProjectionStart(
 ): number {
   if (!activeProjection) return 1;
   if (activeProjection.schemaVersion !== 1) {
-    throw new TypeError('Unsupported BGSM Agent active projection schema.');
+    throw new TypeError('Unsupported Cubby active projection schema.');
   }
   if (rawMessages[0]?.id !== activeProjection.currentUserMessageId) {
     throw new TypeError('Active-turn projection no longer matches the original user message.');

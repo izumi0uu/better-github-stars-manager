@@ -45,7 +45,7 @@ async function executeRead(authorization: ReturnType<typeof createBgsmTurnAuthor
   await wrapped.execute({}, { sessionId: 's', callId: 'c' });
 }
 
-describe('BGSM Agent current-prompt authorization', () => {
+describe('Cubby current-prompt authorization', () => {
   it('inherits code mode only from successful structured code-tool results', () => {
     const message = (toolName: string, content: string) => ({
       id: crypto.randomUUID(),

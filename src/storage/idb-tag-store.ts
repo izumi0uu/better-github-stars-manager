@@ -142,7 +142,7 @@ export async function addBgsmAgentManualTags(
 ): Promise<BgsmAgentManualTagAdditionResult> {
   const additions = addTagNames([], [...tags]);
   if (additions.length === 0) {
-    throw new TypeError('Agent manual-tag additions must include at least one non-empty tag.');
+    throw new TypeError('Cubby manual-tag additions must include at least one non-empty tag.');
   }
 
   const result = await db.transaction(

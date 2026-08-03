@@ -75,7 +75,7 @@ function deferredRunner() {
   };
 }
 
-describe('BGSM Agent turn single-flight registry', () => {
+describe('Cubby turn single-flight registry', () => {
   it('claims one content capture for a newly admitted root and closes it once at terminal', async () => {
     const run = deferredRunner();
     let factoryCalls = 0;
@@ -267,7 +267,7 @@ describe('BGSM Agent turn single-flight registry', () => {
 
     assert.equal(
       messagesOfType(transport.posted, 'bgsmAgentTurnError')[0]?.error.message,
-      'BGSM Agent turn failed.',
+      'Cubby turn failed.',
     );
   });
 

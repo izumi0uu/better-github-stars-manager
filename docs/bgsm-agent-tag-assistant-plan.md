@@ -1,16 +1,16 @@
-# MVP Agent Harness Blueprint: BGSM Agent for GitHub Stars Tagging
+# MVP Agent Harness Blueprint: Cubby for GitHub Stars Tagging
 
 > [!IMPORTANT]
 > **Status: historical design baseline, not the current branch contract.**
 > The active branch replaced this proposal-only flow with a direct model/tool loop.
-> Read [BGSM Agent Implementation Review and Production-Safety Plan](./bgsm-agent-implementation-review.md)
+> Read [Cubby Implementation Review and Production-Safety Plan](./bgsm-agent-implementation-review.md)
 > for the current implementation map, blocking findings, target architecture, phased remediation plan,
 > and merge gates. Do not use the implementation checkpoint or first-release checklist below as
 > evidence that the current branch is production-safe.
 
 ## 1. Objective
 
-Build **BGSM Agent**, an in-product agent for Better GitHub Stars Manager that helps users organize tags across their starred repositories.
+Build **Cubby**, an in-product agent for Better GitHub Stars Manager that helps users organize tags across their starred repositories.
 
 The first release should let a user:
 
@@ -34,7 +34,7 @@ Assumptions:
 
 MVP scope:
 
-- A `BGSM Agent` panel opens from the existing `Auto assign tags` toolbar entry.
+- A `Cubby` panel opens from the existing `Auto assign tags` toolbar entry.
 - The panel uses a chat-like or agent-like surface, but the agent is constrained to a small set of typed tools.
 - The agent can inspect stars, tags, tag metadata, and current list scope.
 - The agent can create pending tag suggestions from supported tasks.
@@ -61,7 +61,7 @@ Implementation checkpoint:
 - Existing suggest tools can persist pending proposal envelopes.
 - `applySelectedProposals` applies selected pending proposal IDs after reloading and validating envelopes from IndexedDB.
 - Background now exposes proposal generation, listing, and apply endpoints; UI should pass only proposal IDs to apply.
-- The toolbar opens a `BGSM Agent` chat panel; users can type freely, but the only exposed action for now is `Suggest tags`.
+- The toolbar opens a `Cubby` chat panel; users can type freely, but the only exposed action for now is `Suggest tags`.
 - The chat panel uses a local AI Elements-style `Reasoning` block and renders grouped, collapsible proposal review sections as the tool result.
 - The chat panel uses the existing i18n catalog for English and Chinese UI copy.
 - Undo and model provider integration are still deferred.
@@ -119,7 +119,7 @@ The agent needs a stable, narrow instruction set.
 
 System/developer intent:
 
-- BGSM Agent helps organize GitHub Stars tags.
+- Cubby helps organize GitHub Stars tags.
 - It may inspect local repo, tag, and tag metadata state.
 - It must never directly mutate tags.
 - It should prefer existing tags over creating new ones unless a task clearly needs a new tag.
@@ -451,14 +451,14 @@ Launch gates:
    - topic tag suggestions;
    - low-use tag cleanup suggestions.
 6. Implement transaction-based apply and undo in background code.
-7. Add a `BGSM Agent` panel UI with a chat-like surface and constrained interaction model.
-8. Wire `Auto assign tags` to open `BGSM Agent` instead of silently applying tags.
+7. Add a `Cubby` panel UI with a chat-like surface and constrained interaction model.
+8. Wire `Auto assign tags` to open `Cubby` instead of silently applying tags.
 9. Add tests for suggestion generation, apply, undo, and schema upgrade.
 10. Run `pnpm typecheck`, `pnpm test:logic`, `pnpm test:integration`, and `pnpm test:regressions`.
 
 ## 15. First Release Checklist
 
-- `BGSM Agent` opens from the toolbar.
+- `Cubby` opens from the toolbar.
 - The agent can help with the two MVP tasks:
   - suggest tags for untagged repos.
 - Low-use tag cleanup stays implemented behind the typed tool boundary but is not exposed in the chat UI yet.

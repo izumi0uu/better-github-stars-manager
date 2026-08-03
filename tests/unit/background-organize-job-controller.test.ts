@@ -70,7 +70,7 @@ function recordActionableCoverage(
   });
 }
 
-describe('BGSM Agent background controller', () => {
+describe('Cubby background controller', () => {
   it('rejects a resolver that returns anything other than the whole starred library', async () => {
     const controller = createBgsmAgentController({
       resolveCandidate: async () => ({

@@ -69,7 +69,7 @@ export function useBgsmAgentWorkbench(
   }, []);
 
   const post = useCallback((message: BgsmOrganizeJobClientMessage) => {
-    if (!tryPost(message)) throw new Error('BGSM Agent is not connected.');
+    if (!tryPost(message)) throw new Error('Cubby is not connected.');
   }, [tryPost]);
 
   const postOrDeferHandoff = useCallback((message: DeferredOrganizeHandoffCommand) => {

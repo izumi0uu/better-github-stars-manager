@@ -1037,7 +1037,7 @@ export function startBgsmAgentTurn(
         turnAttemptId: input.turnAttemptId,
         sessionId: input.sessionId,
         baseRevision: input.baseRevision,
-        message: error instanceof Error ? error.message : 'BGSM Agent could not connect.',
+        message: error instanceof Error ? error.message : 'Cubby could not connect.',
       });
       return;
     }
@@ -1055,7 +1055,7 @@ export function startBgsmAgentTurn(
           turnAttemptId: input.turnAttemptId,
           sessionId: input.sessionId,
           baseRevision: input.baseRevision,
-          message: 'BGSM Agent received an invalid background delivery.',
+          message: 'Cubby received an invalid background delivery.',
           category: 'other',
         });
         disconnect(port);
@@ -1067,7 +1067,7 @@ export function startBgsmAgentTurn(
             turnAttemptId: input.turnAttemptId,
             sessionId: input.sessionId,
             baseRevision: input.baseRevision,
-            message: 'BGSM Agent received a duplicate worker handshake.',
+            message: 'Cubby received a duplicate worker handshake.',
             category: 'other',
           });
           disconnect(port);
@@ -1105,7 +1105,7 @@ export function startBgsmAgentTurn(
             baseRevision: input.baseRevision,
             message: error instanceof Error
               ? error.message
-              : 'BGSM Agent could not start the background turn.',
+              : 'Cubby could not start the background turn.',
           });
           return;
         }
@@ -1144,7 +1144,7 @@ export function startBgsmAgentTurn(
           turnAttemptId: input.turnAttemptId,
           sessionId: input.sessionId,
           baseRevision: input.baseRevision,
-          message: 'BGSM Agent background deliveries arrived out of order.',
+          message: 'Cubby background deliveries arrived out of order.',
           category: 'other',
         });
         disconnect(port);
@@ -1156,7 +1156,7 @@ export function startBgsmAgentTurn(
           turnAttemptId: input.turnAttemptId,
           sessionId: input.sessionId,
           baseRevision: input.baseRevision,
-          message: 'BGSM Agent delivered data after its terminal event.',
+          message: 'Cubby delivered data after its terminal event.',
           category: 'other',
         });
         disconnect(port);
@@ -1201,7 +1201,7 @@ export function startBgsmAgentTurn(
         turnAttemptId: input.turnAttemptId,
         sessionId: input.sessionId,
         baseRevision: input.baseRevision,
-        message: chrome.runtime.lastError?.message ?? 'BGSM Agent stopped before finishing.',
+        message: chrome.runtime.lastError?.message ?? 'Cubby stopped before finishing.',
       });
     });
   };

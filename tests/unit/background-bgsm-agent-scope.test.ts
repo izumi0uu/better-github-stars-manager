@@ -36,7 +36,7 @@ function resolver(repositoryIds = ['owner/repo']) {
   });
 }
 
-describe('BGSM Agent conversation scope binding', () => {
+describe('Cubby conversation scope binding', () => {
   it('creates a deterministic first-turn scope/provider binding', async () => {
     const first = await resolveBgsmAgentConversation(firstTurn(), {
       providerFingerprint: PROVIDER,

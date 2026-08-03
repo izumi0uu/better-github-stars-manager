@@ -824,10 +824,10 @@ const messages: Record<Locale, MessageCatalog> = {
       autoAssignDone: (count) =>
         `Auto-assigned tags from repo topics for ${count} repos`,
       autoAssignFailed: (error) => `auto-assign tags: ${error}`,
-      autoTagAgentPromptTitle: "Try Agent for smarter tagging?",
+      autoTagAgentPromptTitle: "Try Cubby for smarter tagging?",
       autoTagAgentPromptBody:
-        "Agent can inspect repository details and suggest manual tags. Auto Tags stays local and assigns labels from synced topics.",
-      autoTagAgentPromptYes: "Yes, open Agent",
+        "Cubby can inspect repository details and suggest manual tags. Auto Tags stays local and assigns labels from synced topics.",
+      autoTagAgentPromptYes: "Yes, open Cubby",
       autoTagAgentPromptNo: "No, use Auto Tags",
       deleteTagFailed: (error) => `delete tag: ${error}`,
       deleteAllTagsFailed: (error) => `delete all tags: ${error}`,
@@ -864,8 +864,8 @@ const messages: Record<Locale, MessageCatalog> = {
       autoAssignTitle:
         "Auto-assign tags from each repo's topics (experimental)",
       autoAssignButton: "Auto Tags",
-      agentTitle: "Open the optional AI tag assistant",
-      agentButton: "Agent",
+      agentTitle: "Open Cubby, the optional AI tag assistant",
+      agentButton: "Cubby",
       gistTitle: "Gist backup actions",
       gistButton: "Gist",
       gistPushing: "Gist · Pushing",
@@ -923,8 +923,8 @@ const messages: Record<Locale, MessageCatalog> = {
         `${label} ${width}px (${delta >= 0 ? '+' : ''}${delta}px) / Table ${tableWidth}px / Panel ${panelWidth}px${overflow > 0 ? ` / Overflow +${overflow}px` : ''}`,
     },
     agentPanel: {
-      title: "BGSM Agent",
-      chatInputLabel: "Message BGSM Agent",
+      title: "Cubby",
+      chatInputLabel: "Message Cubby",
       chatHeaderIdle: "Ready",
       chatIntro:
         "I can inspect, compare, and organize repositories in your current scope. Auto Tags stays local and one-click — this chat is for judgment calls.",
@@ -934,7 +934,7 @@ const messages: Record<Locale, MessageCatalog> = {
           ? "Ask about this repository…"
           : `Ask about these ${count} repositories…`
       ),
-      chatWorking: "BGSM Agent is working...",
+      chatWorking: "Cubby is working...",
       autoAssignPrompt:
         "Organize untagged repositories across the entire starred library with useful semantic tags. Inspect every live star first, add manual tags only when repository topics, names, descriptions, or existing tags provide clear evidence, then return one complete review before applying anything.",
       summarizeScopePrompt:
@@ -1005,7 +1005,7 @@ const messages: Record<Locale, MessageCatalog> = {
       sessionDeleteMessage: (title) => `Delete “${title}”? Its local transcript will be removed from this panel.`,
       sessionDeleteConfirm: "Delete",
       sessionDeleteCancel: "Cancel",
-      hideWhileRunning: "Hide BGSM Agent",
+      hideWhileRunning: "Hide Cubby",
       runContinuesWhileHidden: "You can hide this panel; the turn continues.",
       confirmScopeHeader: "Confirm scope",
       analyzingHeader: (processed, total) => `Analyzing · ${processed}/${total}`,
@@ -1036,7 +1036,7 @@ const messages: Record<Locale, MessageCatalog> = {
       readOnlyResultTitle: "Read-only answer",
       readOnlyResultSubtitle: "No tag changes proposed",
       noTagChangesProposed: "No tag changes proposed",
-      hideAgent: "Hide BGSM Agent",
+      hideAgent: "Hide Cubby",
       stop: "Stop",
       cancel: "Cancel",
       applyingHeader: (done, total) => `Applying · ${done}/${total}`,
@@ -1140,7 +1140,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "I can help organize your stars with the configured AI service.",
       reasoningSuggestTags:
         "I will inspect local repository topics and existing tags, skip excluded tags, and apply conservative tag changes.",
-      reasoningStreaming: "Running agent...",
+      reasoningStreaming: "Cubby is working...",
       reasoningDone: (duration) => `Checked local tags in ${duration}s`,
       reviewTitle: "Review tag suggestions",
       send: "Send",
@@ -1154,9 +1154,9 @@ const messages: Record<Locale, MessageCatalog> = {
         return parts.length === 0 ? "No suggestions ready" : parts.join(" · ");
       },
       refreshTitle: "Refresh suggestions",
-      closeTitle: "Close BGSM Agent",
+      closeTitle: "Close Cubby",
       suggestTags: "Organize untagged here",
-      agentSettings: "Agent settings",
+      agentSettings: "Cubby settings",
       cleanupTags: "Clean up tags",
       selectAllPage: "Select all suggestions on this page",
       selectedOnPage: (count) => `${count} selected on this page`,
@@ -1190,7 +1190,7 @@ const messages: Record<Locale, MessageCatalog> = {
       followUpAboutScope: "Ask a follow-up about this scope",
       askingAboutCurrentViewUnknown: "Asking about current view",
       handoffAutoTagsUpdated: "Auto Tags already updated topic-based auto tags.",
-      agentActivityLabel: "Agent activity",
+      agentActivityLabel: "Cubby activity",
       workbench: {
         resolvingSubtitle: "Preparing one job for the complete starred library",
         resolvingBody: "I’m freezing every live starred repository so filters and the selected row cannot narrow this organization job.",
@@ -1268,10 +1268,10 @@ const messages: Record<Locale, MessageCatalog> = {
         viewAllRows: "View all rows",
         viewFailedChanged: "View failed & changed",
         viewChanged: "View changed",
-        connectionInterrupted: "Agent connection was interrupted. Reconnecting…",
+        connectionInterrupted: "Cubby connection was interrupted. Reconnecting…",
         workerLost: "The extension worker restarted, so this run can no longer continue. Start a new analysis.",
         timelineLabel: (state) => state.replaceAll("_", " ").replace(/^./u, (character) => character.toUpperCase()),
-        runStepsLabel: "Agent run steps",
+        runStepsLabel: "Cubby run steps",
         runStepScope: "Scope",
         runStepAnalyze: "Analyze",
         runStepReview: "Review",
@@ -1433,11 +1433,11 @@ const messages: Record<Locale, MessageCatalog> = {
     options: {
       title: "Better GitHub Stars Manager — Options",
       starRepoButton: "Like the project? Leave a star:)",
-      agentHeading: "2. BGSM Agent",
+      agentHeading: "2. Cubby",
       agentIntro:
-        "Connect your own AI service so BGSM Agent can suggest tags without leaving the extension.",
+        "Connect your own AI service so Cubby can suggest tags without leaving the extension.",
       agentServiceLabel: "AI service",
-      agentServiceHint: "Choose where BGSM Agent should run.",
+      agentServiceHint: "Choose where Cubby should run.",
       agentAdvancedSettings: "Advanced settings",
       agentProtocolLabel: "API protocol",
       agentProtocolHint: "Choose the API supported by this custom service.",
@@ -1477,8 +1477,8 @@ const messages: Record<Locale, MessageCatalog> = {
       agentTestOk: (provider, model, latencyMs) =>
         `Connected to ${provider} · ${model} (${latencyMs} ms)`,
       agentRemoveKey: "Remove saved key",
-      agentKeyRemoved: "Saved BGSM Agent key removed.",
-      agentDisclosureHeading: "How BGSM Agent uses data",
+      agentKeyRemoved: "Saved Cubby key removed.",
+      agentDisclosureHeading: "How Cubby uses data",
       agentDisclosureIntro: (provider, origin) =>
         `${provider} · ${origin} · direct connection`,
       agentDisclosureSentHeading: "May send",
@@ -1645,11 +1645,11 @@ const messages: Record<Locale, MessageCatalog> = {
       agentProviderResponseInvalid:
         "The AI service returned an incompatible response. Check the service settings and try again.",
       agentDataDisclosureRequired:
-        "Review and accept the Agent data-sharing disclosure before connecting.",
+        "Review and accept the Cubby data-sharing disclosure before connecting.",
       agentContextCapabilityRequired:
-        "AI service capability is not ready. Check the context window and test the connection before using Agent tools.",
+        "AI service capability is not ready. Check the context window and test the connection before using Cubby tools.",
       agentContextCapabilityInfeasible:
-        "Increase the context window in Advanced settings before using the Agent.",
+        "Increase the context window in Advanced settings before using Cubby.",
       unknown: (raw) => `Something went wrong: ${raw}`,
     },
     onboarding: {
@@ -1731,10 +1731,10 @@ const messages: Record<Locale, MessageCatalog> = {
       autoAssignDone: (count) =>
         `已从仓库 topics 为 ${count} 个仓库自动分配标签`,
       autoAssignFailed: (error) => `自动分配标签失败: ${error}`,
-      autoTagAgentPromptTitle: "要试试让 Agent 帮你分配标签吗？",
+      autoTagAgentPromptTitle: "要试试让 Cubby 帮你分配标签吗？",
       autoTagAgentPromptBody:
-        "Agent 可以查看仓库详情并建议 manual tags；Auto Tags 会留在本地，根据已同步的 topics 一键分配。",
-      autoTagAgentPromptYes: "是，打开 Agent",
+        "Cubby 可以查看仓库详情并建议 manual tags；Auto Tags 会留在本地，根据已同步的 topics 一键分配。",
+      autoTagAgentPromptYes: "是，打开 Cubby",
       autoTagAgentPromptNo: "不，使用 Auto Tags",
       deleteTagFailed: (error) => `删除标签失败: ${error}`,
       deleteAllTagsFailed: (error) => `删除全部标签失败: ${error}`,
@@ -1769,8 +1769,8 @@ const messages: Record<Locale, MessageCatalog> = {
       starRepoTitle: "点个Star~",
       autoAssignTitle: "根据每个仓库的 topics 自动分配标签（实验性功能）",
       autoAssignButton: "Auto Tags",
-      agentTitle: "打开可选的 AI 标签助手",
-      agentButton: "Agent",
+      agentTitle: "打开 Cubby，可选的 AI 标签助手",
+      agentButton: "Cubby",
       gistTitle: "Gist 备份操作",
       gistButton: "Gist",
       gistPushing: "Gist · 推送中",
@@ -1828,8 +1828,8 @@ const messages: Record<Locale, MessageCatalog> = {
         `${label} ${width}px（${delta >= 0 ? '+' : ''}${delta}px） / 总宽 ${tableWidth}px / 面板 ${panelWidth}px${overflow > 0 ? ` / 溢出 +${overflow}px` : ''}`,
     },
     agentPanel: {
-      title: "BGSM Agent",
-      chatInputLabel: "向 BGSM Agent 提问",
+      title: "Cubby",
+      chatInputLabel: "向 Cubby 提问",
       chatHeaderIdle: "就绪",
       chatIntro:
         "我可以检查、对比并整理当前范围内的仓库。Auto Tags 仍是本地一键操作——这个对话负责需要判断的部分。",
@@ -1839,7 +1839,7 @@ const messages: Record<Locale, MessageCatalog> = {
           ? "问这个仓库…"
           : `问这 ${count} 个仓库…`
       ),
-      chatWorking: "BGSM Agent 正在处理...",
+      chatWorking: "Cubby 正在处理...",
       autoAssignPrompt:
         "整理整个 starred 资料库中尚未标注的仓库。先检查全部仍在收藏的仓库，只在 topics、名称、描述或已有标签有明确依据时添加 manual tags；完成全库分析后只返回一次完整审阅，再应用任何变更。",
       summarizeScopePrompt:
@@ -1910,7 +1910,7 @@ const messages: Record<Locale, MessageCatalog> = {
       sessionDeleteMessage: (title) => `确定删除「${title}」吗？它在本面板中的本地记录会被移除。`,
       sessionDeleteConfirm: "删除",
       sessionDeleteCancel: "取消",
-      hideWhileRunning: "隐藏 BGSM Agent",
+      hideWhileRunning: "隐藏 Cubby",
       runContinuesWhileHidden: "可以隐藏面板；本轮会继续。",
       confirmScopeHeader: "确认范围",
       analyzingHeader: (processed, total) => `分析中 · ${processed}/${total}`,
@@ -1941,7 +1941,7 @@ const messages: Record<Locale, MessageCatalog> = {
       readOnlyResultTitle: "只读回答",
       readOnlyResultSubtitle: "未提出标签变更",
       noTagChangesProposed: "未提出标签变更",
-      hideAgent: "隐藏 BGSM Agent",
+      hideAgent: "隐藏 Cubby",
       stop: "停止",
       cancel: "取消",
       applyingHeader: (done, total) => `应用中 · ${done}/${total}`,
@@ -2045,7 +2045,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "我可以用你配置的 AI 服务帮你整理 stars。",
       reasoningSuggestTags:
         "我会查看本地仓库 topics 和现有标签，跳过已排除的标签，并保守地应用标签变更。",
-      reasoningStreaming: "正在运行 agent...",
+      reasoningStreaming: "Cubby 正在处理...",
       reasoningDone: (duration) => `已检查本地标签，用时 ${duration}s`,
       reviewTitle: "确认标签建议",
       send: "发送",
@@ -2059,9 +2059,9 @@ const messages: Record<Locale, MessageCatalog> = {
         return parts.length === 0 ? "暂无建议" : parts.join(" · ");
       },
       refreshTitle: "刷新建议",
-      closeTitle: "关闭 BGSM Agent",
+      closeTitle: "关闭 Cubby",
       suggestTags: "整理这里的未标注",
-      agentSettings: "Agent 设置",
+      agentSettings: "Cubby 设置",
       cleanupTags: "整理标签",
       selectAllPage: "选择当前页全部建议",
       selectedOnPage: (count) => `当前页已选 ${count} 个`,
@@ -2125,7 +2125,7 @@ const messages: Record<Locale, MessageCatalog> = {
       followUpAboutScope: "继续询问此范围",
       askingAboutCurrentViewUnknown: "正在询问当前视图",
       handoffAutoTagsUpdated: "自动标签已更新基于主题的标签。",
-      agentActivityLabel: "Agent 活动",
+      agentActivityLabel: "Cubby 活动",
       workbench: {
         resolvingSubtitle: "正在为完整 starred 资料库准备一个作业",
         resolvingBody: "正在冻结全部仍在收藏的仓库；筛选条件和当前选中行都不会缩小本次整理范围。",
@@ -2203,7 +2203,7 @@ const messages: Record<Locale, MessageCatalog> = {
         viewAllRows: "查看全部行",
         viewFailedChanged: "查看失败和已变更项",
         viewChanged: "查看已变更项",
-        connectionInterrupted: "Agent 连接已中断，正在重新连接…",
+        connectionInterrupted: "Cubby 连接已中断，正在重新连接…",
         workerLost: "扩展后台已重启，本次运行无法继续。请开始新的分析。",
         timelineLabel: (state) => ({
           preflight: "正在解析范围",
@@ -2219,7 +2219,7 @@ const messages: Record<Locale, MessageCatalog> = {
           failed: "失败",
           interrupted: "已中断",
         }[state] ?? state.replaceAll("_", " ")),
-        runStepsLabel: "Agent 运行步骤",
+        runStepsLabel: "Cubby 运行步骤",
         runStepScope: "范围",
         runStepAnalyze: "分析",
         runStepReview: "审阅",
@@ -2380,11 +2380,11 @@ const messages: Record<Locale, MessageCatalog> = {
     options: {
       title: "Better GitHub Stars Manager — 选项",
       starRepoButton: "点个Star~",
-      agentHeading: "2. BGSM Agent",
+      agentHeading: "2. Cubby",
       agentIntro:
-        "连接你自己的 AI 服务，这样 BGSM Agent 就能在插件里直接给出 tag 建议。",
+        "连接你自己的 AI 服务，这样 Cubby 就能在插件里直接给出 tag 建议。",
       agentServiceLabel: "AI 服务",
-      agentServiceHint: "选择 BGSM Agent 要使用的服务。",
+      agentServiceHint: "选择 Cubby 要使用的服务。",
       agentAdvancedSettings: "高级设置",
       agentProtocolLabel: "API 协议",
       agentProtocolHint: "选择这个自定义服务支持的 API。",
@@ -2424,8 +2424,8 @@ const messages: Record<Locale, MessageCatalog> = {
       agentTestOk: (provider, model, latencyMs) =>
         `${provider} · ${model} 已连接（${latencyMs} ms）`,
       agentRemoveKey: "移除已保存 key",
-      agentKeyRemoved: "已移除保存的 BGSM Agent key。",
-      agentDisclosureHeading: "BGSM Agent 数据使用",
+      agentKeyRemoved: "已移除保存的 Cubby key。",
+      agentDisclosureHeading: "Cubby 数据使用",
       agentDisclosureIntro: (provider, origin) =>
         `${provider} · ${origin} · 直接连接`,
       agentDisclosureSentHeading: "可能发送",
@@ -2582,11 +2582,11 @@ const messages: Record<Locale, MessageCatalog> = {
       agentProviderResponseInvalid:
         "AI 服务返回了不兼容的响应。请检查服务设置后重试。",
       agentDataDisclosureRequired:
-        "连接前请先查看并接受 Agent 数据共享说明。",
+        "连接前请先查看并接受 Cubby 数据共享说明。",
       agentContextCapabilityRequired:
-        "AI 服务能力尚未就绪。请检查上下文窗口并测试连接后再使用 Agent 工具。",
+        "AI 服务能力尚未就绪。请检查上下文窗口并测试连接后再使用 Cubby 工具。",
       agentContextCapabilityInfeasible:
-        "请先在高级设置中增大上下文窗口，再使用 Agent。",
+        "请先在高级设置中增大上下文窗口，再使用 Cubby。",
       unknown: (raw) => `出错了:${raw}`,
     },
     onboarding: {

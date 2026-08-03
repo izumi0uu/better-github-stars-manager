@@ -94,7 +94,7 @@ function fakePort() {
   };
 }
 
-describe('BGSM Agent turn Port ownership', () => {
+describe('Cubby turn Port ownership', () => {
   it('rejects malformed start envelopes instead of repairing them', () => {
     const transport = fakePort();
     let runCount = 0;

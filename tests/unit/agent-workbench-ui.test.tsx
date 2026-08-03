@@ -97,7 +97,7 @@ describe('Agent organize-job workbench UI', () => {
       snapshot: { ...activeBase, state: 'analyzing' },
     });
     expect(currentPhase(container)).toBe('Analyzing');
-    expect(container.querySelector('[aria-label="Agent activity"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Cubby activity"]')).toBeNull();
   });
 
   it('advances every visible progress surface one repository at a time', async () => {
@@ -1845,7 +1845,7 @@ function Harness() {
   const workbench = useBgsmAgentWorkbench(undefined, agent.sessionId);
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)}>Show Agent</button>
+      <button type="button" onClick={() => setOpen(true)}>Show Cubby</button>
       <AgentPanel
         open={open}
         onHide={() => setOpen(false)}

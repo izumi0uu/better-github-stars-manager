@@ -104,7 +104,7 @@ describe('i18n catalog and locale propagation invariants', () => {
     assert.equal(messageFor('missing' as Locale), getMessages('en'));
   });
 
-  it('keeps generic Agent lifecycle statuses separate from tag operations', () => {
+  it('keeps generic Cubby lifecycle statuses separate from tag operations', () => {
     const english = getMessages('en').agentPanel;
     const chinese = getMessages('zh-CN').agentPanel;
 
@@ -119,18 +119,18 @@ describe('i18n catalog and locale propagation invariants', () => {
     assert.equal(chinese.agentApplyingChanges, '正在应用标签变更...');
   });
 
-  it('localizes the development Agent diagnostics surface while preserving raw evidence identifiers', () => {
+  it('localizes the development Cubby diagnostics surface while preserving raw evidence identifiers', () => {
     const english = getAgentDiagnosticsMessages('en');
     const chinese = getAgentDiagnosticsMessages('zh-CN');
 
-    assert.equal(english.title, 'Agent Diagnostics');
-    assert.equal(chinese.title, 'Agent 诊断');
+    assert.equal(english.title, 'Cubby Diagnostics');
+    assert.equal(chinese.title, 'Cubby 诊断');
     assert.equal(chinese.rawCapture, '单次原始捕获');
     assert.equal(chinese.providerDebug, 'Provider 调试');
     assert.equal(chinese.testSavedProvider, '测试已保存的 Provider');
     assert.equal(chinese.retainedOperations(2), '2 个保留操作');
     assert.equal(chinese.evidenceRequestFailed('internal_error'), '获取证据失败: internal_error');
-    assert.equal(chinese.openAgentDiagnostics, '打开 Agent 诊断');
+    assert.equal(chinese.openAgentDiagnostics, '打开 Cubby 诊断');
   });
 
   it('starts with English, then updates from stored locale on mount', async () => {

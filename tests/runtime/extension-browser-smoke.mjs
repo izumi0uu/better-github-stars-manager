@@ -63,7 +63,7 @@ try {
   await assertNoAuthenticatedBanner(optionsFromPopup);
   ok('invalid token was rejected and no authenticated banner appeared');
 
-  step('3) Agent disclosure is collapsed and does not gate Test');
+  step('3) Cubby disclosure is collapsed and does not gate Test');
   await assertAgentDisclosureInfo(optionsFromPopup);
   ok('real Options kept disclosure collapsed while allowing Test without acceptance');
 
@@ -96,7 +96,7 @@ try {
   await waitForFab(ownStars);
   await clickFab(ownStars);
   await waitForManagerRoot(ownStars);
-  ok('manager injected, first Auto Tags click offered Agent, drawer opened accessibly, and panel toggle worked');
+  ok('manager injected, first Auto Tags click offered Cubby, drawer opened accessibly, and panel toggle worked');
 
   step('6) Turbo-style navigation does not duplicate extension hosts');
   await ownStars.evaluate(() => {
@@ -471,7 +471,7 @@ async function assertAgentAndAutoTagsRemainSeparate(page) {
     };
   });
   assert.equal(result.autoTagsText, 'Auto Tags');
-  assert.equal(result.agentText, 'Agent');
+  assert.equal(result.agentText, 'Cubby');
   assert.equal(result.nested, false);
   assert.equal(result.retryPresent, false);
 }
@@ -489,8 +489,8 @@ async function assertAutoTagAgentFirstClickChoice(page) {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot;
     const prompt = root?.querySelector('[data-testid="auto-tag-agent-prompt"]');
     return {
-      titleVisible: prompt?.textContent?.includes('Try Agent for smarter tagging?') ?? false,
-      yesVisible: prompt?.textContent?.includes('Yes, open Agent') ?? false,
+      titleVisible: prompt?.textContent?.includes('Try Cubby for smarter tagging?') ?? false,
+      yesVisible: prompt?.textContent?.includes('Yes, open Cubby') ?? false,
       noVisible: prompt?.textContent?.includes('No, use Auto Tags') ?? false,
       focusedText: root?.activeElement?.textContent?.trim() ?? null,
     };
@@ -499,7 +499,7 @@ async function assertAutoTagAgentFirstClickChoice(page) {
     titleVisible: true,
     yesVisible: true,
     noVisible: true,
-    focusedText: 'Yes, open Agent',
+    focusedText: 'Yes, open Cubby',
   });
 
   const choseLocal = await page.evaluate(() => {
@@ -521,7 +521,7 @@ async function assertAutoTagAgentFirstClickChoice(page) {
     .getElementById('gsm-manager-host')
     ?.shadowRoot
     ?.querySelector('#gsm-agent-dialog-title'));
-  assert.equal(agentDrawerOpened, false, 'choosing local Auto Tags should not open Agent');
+  assert.equal(agentDrawerOpened, false, 'choosing local Auto Tags should not open Cubby');
 }
 
 async function assertAgentDrawerA11y(page) {
@@ -546,8 +546,8 @@ async function assertAgentDrawerA11y(page) {
   });
   assert.deepEqual(state, {
     labelledBy: 'gsm-agent-dialog-title',
-    title: 'BGSM Agent',
-    focusedLabel: 'Close BGSM Agent',
+    title: 'Cubby',
+    focusedLabel: 'Close Cubby',
     setupVisible: false,
     composerVisible: true,
   });
@@ -584,7 +584,7 @@ async function assertAgentDrawerA11y(page) {
   const narrow = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot;
     const dialog = root?.querySelector('[role="dialog"]');
-    const close = root?.querySelector('button[aria-label="Close BGSM Agent"]');
+    const close = root?.querySelector('button[aria-label="Close Cubby"]');
     const dialogRect = dialog?.getBoundingClientRect();
     const closeRect = close?.getBoundingClientRect();
     return {
@@ -602,7 +602,7 @@ async function assertAgentDrawerA11y(page) {
   assert.equal(narrow.dialogOverflow <= 1, true);
   assert.equal(narrow.closeRight <= narrow.viewportWidth, true);
   await page.setViewport(originalViewport);
-  await clickShadowButton(page, 'button[aria-label="Close BGSM Agent"]');
+  await clickShadowButton(page, 'button[aria-label="Close Cubby"]');
 }
 
 async function clickShadowButton(page, selector) {

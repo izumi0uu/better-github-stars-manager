@@ -319,7 +319,7 @@ describe('Options preferences', () => {
     expect(document.querySelector('a[href="https://github.com/idah?tab=stars"]')).toBeNull();
   });
 
-  it('saves and automatically tests BGSM Agent settings with the saved key', async () => {
+  it('saves and automatically tests Cubby settings with the saved key', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
     authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
@@ -898,7 +898,7 @@ describe('Options preferences', () => {
       .some((button) => button.textContent?.includes('Grant access'))).toBe(true);
   });
 
-  it('tests BGSM Agent connection with the current form values', async () => {
+  it('tests Cubby connection with the current form values', async () => {
     authMocks.getConfig.mockResolvedValue(config({ agentDataDisclosureAcceptance: null }));
     authMocks.hasToken.mockResolvedValue(true);
     vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: unknown) => {
@@ -987,7 +987,7 @@ describe('Options preferences', () => {
     expect(document.body.textContent).not.toContain('Accept disclosure');
   });
 
-  it('lets the user remove a saved BGSM Agent key', async () => {
+  it('lets the user remove a saved Cubby key', async () => {
     authMocks.getConfig.mockResolvedValue(config({
       agentProvider: {
         provider: 'openai',

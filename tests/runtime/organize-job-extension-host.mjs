@@ -907,7 +907,7 @@ async function pollPageConfig(page, predicate) {
     if (predicate(config)) return config;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error('Timed out waiting for BGSM Agent config state.');
+  throw new Error('Timed out waiting for Cubby config state.');
 }
 
 async function clickButton(page, matcher) {

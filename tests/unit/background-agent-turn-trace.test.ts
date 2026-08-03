@@ -19,7 +19,7 @@ afterEach(async () => {
   }));
 });
 
-describe('BGSM Agent turn trace boundary', () => {
+describe('Cubby turn trace boundary', () => {
   it('creates one root for duplicate attachments and records replay after terminal', async () => {
     const db = new DevTraceDB(`bgsm-agent-turn-boundary-${crypto.randomUUID()}`);
     databases.push(db);

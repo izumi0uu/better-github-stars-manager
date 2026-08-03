@@ -171,7 +171,7 @@ const completedEnvelopeTools = [{
   async execute() {},
 }];
 
-describe('BGSM Agent compaction execution', () => {
+describe('Cubby compaction execution', () => {
   it('uses versioned built-in capability and requires explicit capacity for unknown routes', () => {
     const openaiModels = new Map(
       getModels('openai').map((definition) => [definition.id, definition]),
@@ -1955,7 +1955,7 @@ describe('BGSM Agent compaction execution', () => {
         profile: CONTEXT_PROFILE_8192,
         maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
       }),
-      /Unsupported BGSM Agent compaction checkpoint schema/,
+      /Unsupported Cubby compaction checkpoint schema/,
     );
     assert.equal(calls.length, 0);
   });

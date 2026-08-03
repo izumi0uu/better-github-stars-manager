@@ -126,13 +126,13 @@ afterEach(() => {
 });
 
 describe('AgentPanel', () => {
-  it('opens the single Agent settings surface without starting a request', async () => {
+  it('opens the single Cubby settings surface without starting a request', async () => {
     const onOpenOptions = vi.fn();
     const container = await mountAgentPanel(
       <AgentPanel open onClose={vi.fn()} onOpenOptions={onOpenOptions} />
     );
     const settings = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Agent settings'));
+      .find((button) => button.textContent?.includes('Cubby settings'));
     expect(settings).toBeInstanceOf(HTMLButtonElement);
     await act(async () => {
       (settings as HTMLButtonElement).click();
@@ -298,8 +298,8 @@ describe('AgentPanel', () => {
     expect(drawer.getAttribute('role')).toBe('dialog');
     expect(drawer.getAttribute('aria-modal')).toBe('true');
     expect(drawer.getAttribute('aria-labelledby')).toBe('gsm-agent-dialog-title');
-    expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('Message BGSM Agent');
-    expect(document.activeElement?.getAttribute('aria-label')).toBe('Close BGSM Agent');
+    expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('Message Cubby');
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Close Cubby');
     const focusable = [...drawer.querySelectorAll<HTMLElement>(
       'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
     )];
@@ -1032,7 +1032,7 @@ describe('AgentPanel', () => {
       });
       turn!.handlers.onError?.({
         ...deliveryIdentity(turn!.input),
-        message: 'BGSM Agent stopped before finishing.',
+        message: 'Cubby stopped before finishing.',
         category: 'other',
       });
       await Promise.resolve();
@@ -2781,8 +2781,8 @@ describe('AgentPanel', () => {
 
     const drawer = container.querySelector('aside');
     expect(drawer?.getAttribute('data-agent-active')).toBe('true');
-    expect(container.querySelector('button[aria-label="Hide BGSM Agent"]')).toBeTruthy();
-    await click(container.querySelector('button[aria-label="Hide BGSM Agent"]')!);
+    expect(container.querySelector('button[aria-label="Hide Cubby"]')).toBeTruthy();
+    await click(container.querySelector('button[aria-label="Hide Cubby"]')!);
     expect(onClose).toHaveBeenCalledOnce();
   });
 

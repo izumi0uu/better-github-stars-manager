@@ -256,7 +256,7 @@ export function reduceAgentWorkbench(
       timeline: appendTimeline(state.timeline, {
         id: 'transport-disconnected',
         state: state.snapshot?.state ?? 'interrupted',
-        label: 'Agent connection interrupted',
+        label: 'Cubby connection interrupted',
       }),
     };
   }

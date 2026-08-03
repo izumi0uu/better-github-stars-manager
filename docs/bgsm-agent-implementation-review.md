@@ -1,4 +1,4 @@
-# BGSM Agent Implementation Review and Production-Safety Plan
+# Cubby Implementation Review and Production-Safety Plan
 
 ## Document status
 
@@ -8,8 +8,8 @@
 - **Original review date:** 2026-07-10
 - **Remediation date:** 2026-07-14
 - **Context v2 integration date:** 2026-07-17
-- **Audience:** maintainers implementing, reviewing, and testing BGSM Agent
-- **Scope:** the BGSM Agent runtime, provider adapters, background orchestration, Port protocols, release evidence, and packaged-extension runtime
+- **Audience:** maintainers implementing, reviewing, and testing Cubby
+- **Scope:** the Cubby runtime, provider adapters, background orchestration, Port protocols, release evidence, and packaged-extension runtime
 
 This document preserves the original findings and remediation plan as review history. The 2026-07-14 closure record does not by itself prove context v2 release readiness; executable source, current tests, and the fresh verification matrix remain the enforced runtime contract.
 
@@ -582,7 +582,7 @@ The target should remain GitHub-native and border-led, with one dominant task/re
 
 ### B-10 — Bundle cost should be paid on demand
 
-The audited build passed but reported a large JavaScript chunk after adding Streamdown and Agent UI. Lazy-load the panel and markdown renderer when the user first opens BGSM Agent. Verify that the content-script CSS build still contains no runtime `@import`.
+The audited build passed but reported a large JavaScript chunk after adding Streamdown and Agent UI. Lazy-load the panel and markdown renderer when the user first opens Cubby. Verify that the content-script CSS build still contains no runtime `@import`.
 
 ## 8. Target architecture
 
@@ -799,7 +799,7 @@ The primary surface should be a task workbench. Free-form chat remains useful as
 
 ```text
 Header
-  BGSM Agent
+  Cubby
   Provider/model
   Scope: Current filter · 32 repositories
   Run status
@@ -1305,7 +1305,7 @@ Historical evidence from the implementation audit before this document was writt
 - built CSS: no runtime `@import` remained;
 - `pnpm test`: failed with 1 failing suite and 66 passing suites;
 - `pnpm test:runtime`: passed, but covers only Puppeteer runtime availability;
-- `pnpm test:smoke`: passed six base-extension scenarios and did not exercise BGSM Agent;
+- `pnpm test:smoke`: passed six base-extension scenarios and did not exercise Cubby;
 - ShadowRoot keyboard reproduction: the target textarea did not receive `keydown` when the ancestor capture listener stopped propagation.
 
 Fresh context v2 evidence from 2026-07-17:

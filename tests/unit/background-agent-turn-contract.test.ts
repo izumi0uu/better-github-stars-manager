@@ -10,7 +10,7 @@ const turnPortSource = readFileSync(
 const deliverySource = `${backgroundSource}\n${turnPortSource}`;
 
 describe('background agent turn contract', () => {
-  it('routes BGSM Agent through the agent loop and configured provider', () => {
+  it('routes Cubby through the agent loop and configured provider', () => {
 
     assert.doesNotMatch(backgroundSource, /type: ["']startBgsmAgentTurn["']/);
     assert.match(backgroundSource, /chrome\.runtime\.onConnect\.addListener/);

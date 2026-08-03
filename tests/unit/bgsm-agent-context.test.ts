@@ -7,7 +7,7 @@ import {
   limitBgsmAgentContext,
 } from '@/bgsm-agent';
 
-describe('BGSM Agent app context', () => {
+describe('Cubby app context', () => {
   it('builds deterministic context without disclosing local excluded-tag policy data', () => {
     const context = buildBgsmAgentContext();
 

@@ -79,7 +79,7 @@ const controllerId = parseControllerId('controller:v1:controller-1');
 const sourceFingerprint = parseSourceFingerprintV1(`sf:v1:${DIGEST}`);
 const taxonomyFingerprint = parseTaxonomyFingerprintV1(`tf:v1:${DIGEST}`);
 
-describe('BGSM Agent response completeness contract', () => {
+describe('Cubby response completeness contract', () => {
   it('requires exact requested counts or an explicit qualified-result shortage', () => {
     assert.match(BGSM_AGENT_INSTRUCTIONS, /exact number of repositories/u);
     assert.match(BGSM_AGENT_INSTRUCTIONS, /exactly that many distinct qualifying repositories/u);
@@ -166,7 +166,7 @@ function validateProposalActions(actions: readonly ProposalAction[]): void {
   });
 }
 
-describe('BGSM Agent frozen RunBudget contract', () => {
+describe('Cubby frozen RunBudget contract', () => {
   it('exposes the exact production defaults and deeply immutable policy value', () => {
     const budget = createProductionRunBudget();
     assert.deepEqual(budget, {

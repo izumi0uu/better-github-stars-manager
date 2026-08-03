@@ -352,7 +352,7 @@ export const authStore = {
     return readDecryptedToken();
   },
 
-  /** The decrypted BGSM Agent API key, or null. Held only in memory. */
+  /** The decrypted Cubby API key, or null. Held only in memory. */
   async getAgentApiKey(): Promise<string | null> {
     return readDecryptedAgentApiKey();
   },

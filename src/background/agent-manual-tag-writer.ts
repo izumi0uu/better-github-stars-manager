@@ -26,7 +26,7 @@ export function createQueuedAgentManualTagWriter(
   return (fullName, tags, context) => dependencies.runSerialized(async () => {
     if (await dependencies.isBlocked()) {
       throw new TypeError(
-        'Agent tag writes are unavailable while full-library tag changes are being applied.',
+        'Cubby tag writes are unavailable while full-library tag changes are being applied.',
       );
     }
     context.markWriteStarted?.();

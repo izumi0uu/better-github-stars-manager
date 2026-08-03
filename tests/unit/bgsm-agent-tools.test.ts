@@ -50,7 +50,7 @@ function createToolsWithDestructive(repositoryScope: readonly string[] = [star.f
   });
 }
 
-describe('BGSM Agent tools', () => {
+describe('Cubby tools', () => {
   beforeEach(async () => {
     await db.delete();
     await db.open();
