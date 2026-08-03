@@ -134,7 +134,12 @@ export function useBgsmAgentWorkbench(
         activePort = null;
         if (portRef.current === port) portRef.current = null;
         retiringPorts.add(port);
-        connect(port);
+        // A failed deferred handoff must survive the reconnect. Schedule the
+        // replacement asynchronously so a throwing Port cannot recurse through
+        // connect() synchronously and overflow the worker/UI stack.
+        queueMicrotask(() => {
+          if (!disposed) connect(port);
+        });
       };
 
       const onMessage = (delivery: unknown) => {

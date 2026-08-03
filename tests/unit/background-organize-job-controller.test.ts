@@ -286,6 +286,30 @@ describe('BGSM Agent background controller', () => {
     ]);
   });
 
+  it('acknowledges a consumed preflight idempotently after the in-memory record is closed', async () => {
+    const controller = createBgsmAgentController({
+      resolveCandidate: async () => candidate,
+      now: () => 100,
+      setTimer: () => null,
+      clearTimer: () => {},
+    });
+    const identity = { controllerId, sessionId: 'preflight-ack-idempotent' } as const;
+    const issued = await controller.issuePreflight(identity, {
+      requestId: 'request:ack-idempotent',
+      jobId: parseOrganizeJobId('organize-job:v1:ack-idempotent'),
+    });
+    assert.ok(issued.preflightToken);
+    assert.equal(controller.acknowledgePreflightStarted(identity, issued.preflightToken), true);
+    assert.equal(controller.acknowledgePreflightStarted(identity, issued.preflightToken), true);
+    assert.throws(
+      () => controller.acknowledgePreflightStarted(
+        { controllerId, sessionId: 'another-session' },
+        issued.preflightToken!,
+      ),
+      /belongs to another controller\/session/u,
+    );
+  });
+
   it('keeps request order authoritative when concurrent preflights resolve out of order', async () => {
     let resolveFirst!: (value: ResolvedLaunchCandidate) => void;
     let resolveSecond!: (value: ResolvedLaunchCandidate) => void;

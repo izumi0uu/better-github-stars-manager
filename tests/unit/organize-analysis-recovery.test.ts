@@ -122,6 +122,49 @@ describe('organize analysis recovery alarm', () => {
     ]);
   });
 
+  it('queues a different operation instead of silently joining the current single-flight', async () => {
+    let active: RecoverableOrganizeAnalysis | null = { jobId: 'job-1', status: 'analyzing' };
+    const operations: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const recovery = createOrganizeAnalysisRecovery({
+      async createAlarm(name, delayInMinutes) {
+        operations.push(`create:${name}:${delayInMinutes}`);
+      },
+      async clearAlarm(name) {
+        operations.push(`clear:${name}`);
+      },
+      addAlarmListener() {},
+      async getRecoverableAnalysis() {
+        return active;
+      },
+      async recoverExpiredLeases() {},
+      isRunning() {
+        return false;
+      },
+      async pump(jobId) {
+        operations.push(`pump:${jobId}`);
+        if (jobId === 'job-1') {
+          await firstGate;
+          active = { jobId: 'job-2', status: 'analyzing' };
+        } else {
+          active = null;
+        }
+      },
+    });
+
+    const first = recovery.start('job-1');
+    while (!operations.includes('pump:job-1')) await Promise.resolve();
+    const second = recovery.start('job-2');
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    assert.deepEqual(operations.filter((entry) => entry.startsWith('pump:')), [
+      'pump:job-1',
+      'pump:job-2',
+    ]);
+  });
+
   it('keeps the alarm armed without taking over a live scheduler', async () => {
     const run = createHarness({ jobId: 'job-3', status: 'analyzing' });
     run.setRunning(true);

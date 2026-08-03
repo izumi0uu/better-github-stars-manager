@@ -639,6 +639,10 @@ export function getAgentDiagnosticsFindingText(
       return `${count ?? 0} 个跟踪字段已截断，证据不完整。`;
     case 'trace_events_unknown':
       return `保留了 ${count ?? 0} 个未知跟踪事件，证据可能不完整。`;
+    case 'trace_legacy_roots_omitted':
+      return `${count ?? 0} 个旧版操作无法识别，已从跟踪文件中省略。`;
+    case 'trace_legacy_events_omitted':
+      return `${count ?? 0} 个旧版跟踪事件无法识别，已从跟踪文件中省略。`;
     case 'trace_started_after_operation':
       return '至少一个操作在跟踪开始前已经运行。';
     case 'trace_sequence_gap':

@@ -320,6 +320,7 @@ export async function compactBgsmAgentCompletedToolEnvelope(input: {
   });
   if (
     !input.force
+    && input.trigger !== 'tool_result_memory_pressure'
     && !shouldCompact(currentEstimate, input.profile)
     && currentBytesAccepted
   ) {

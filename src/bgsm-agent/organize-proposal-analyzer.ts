@@ -676,9 +676,7 @@ function parseAnalyzerResponse(
       'tool_call_count',
       'Analyzer response must contain exactly one tool call.',
       undefined,
-      response.toolCalls?.length === 1
-        ? analyzerRowCount(response.toolCalls[0]?.arguments)
-        : null,
+      analyzerRowCount(response.toolCalls?.[0]?.arguments),
       'Response must contain exactly one proposal tool call.',
     );
   }

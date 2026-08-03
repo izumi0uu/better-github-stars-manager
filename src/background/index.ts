@@ -3117,7 +3117,7 @@ async function restoreDurableOrganizeJob(identity: Readonly<{
         !snapshot ||
         (snapshot.controllerId === identity.controllerId && snapshot.sessionId === identity.sessionId)
       ) return snapshot;
-      return restoreDurableOrganizeJob(identity, { ...options, force: false });
+      return restoreDurableOrganizeJob(identity, { ...options });
     }
     const flight = restoreDurableOrganizeJob(identity, {
       ...options,
@@ -3222,12 +3222,12 @@ function classifyOrganizeRestoreFailure(
   error: unknown,
 ): 'checkpoint_invariant' | 'checkpoint_missing' | 'storage_unavailable' | 'unknown' {
   const message = error instanceof Error ? error.message : '';
-  if (/missing|Unknown organize job/u.test(message)) return 'checkpoint_missing';
   if (
     error instanceof TypeError
     || error instanceof RangeError
     || /invalid|malformed|stale|contiguous|FrozenScope|ledger|fingerprint/u.test(message)
   ) return 'checkpoint_invariant';
+  if (/missing|Unknown organize job/u.test(message)) return 'checkpoint_missing';
   const name = error instanceof Error ? error.name : '';
   if (/Database|Transaction|Quota|Abort|InvalidState|UnknownError/u.test(name)) {
     return 'storage_unavailable';

@@ -23,6 +23,10 @@ export function createDurableJobRecovery<
 >(dependencies: DurableJobRecoveryDependencies<TOperation>) {
   let installed = false;
   let activeWork: Promise<void> | null = null;
+  let activeKey: string | null = null;
+  let activeOperationId: string | null = null;
+  let workTail: Promise<void> = Promise.resolve();
+  const queuedWork = new Map<string, Promise<void>>();
 
   const arm = async (): Promise<void> => {
     await dependencies.createAlarm(
@@ -51,35 +55,67 @@ export function createDurableJobRecovery<
   const recoverOnce = async (): Promise<void> => {
     const active = await dependencies.getRecoverableOperation();
     if (!active) {
+      activeOperationId = null;
       await dependencies.clearAlarm(dependencies.alarmName);
       return;
     }
+    activeOperationId = active.operationId;
     await arm();
     if (await dependencies.isRunning(active.operationId)) return;
 
     await dependencies.recoverExpiredLeases();
     const recovered = await dependencies.getRecoverableOperation();
     if (!recovered) {
+      activeOperationId = null;
       await dependencies.clearAlarm(dependencies.alarmName);
       return;
     }
+    activeOperationId = recovered.operationId;
     await startOnce(recovered.operationId);
   };
 
-  const runSingleFlight = (work: () => Promise<void>): Promise<void> => {
-    if (activeWork) return activeWork;
-    const operation = work().finally(() => {
-      if (activeWork === operation) activeWork = null;
+  const enqueue = (key: string, work: () => Promise<void>): Promise<void> => {
+    const queued = queuedWork.get(key);
+    if (queued) return queued;
+    const operation = workTail.then(async () => {
+      activeKey = key;
+      activeWork = operation;
+      try {
+        await work();
+      } finally {
+        if (activeWork === operation) {
+          activeWork = null;
+          activeKey = null;
+          activeOperationId = null;
+        }
+      }
     });
-    activeWork = operation;
+    queuedWork.set(key, operation);
+    workTail = operation.catch(() => undefined);
+    const removeQueued = () => {
+      if (queuedWork.get(key) === operation) queuedWork.delete(key);
+    };
+    void operation.then(removeQueued, removeQueued);
     return operation;
   };
 
-  const start = (operationId: string): Promise<void> => (
-    runSingleFlight(() => startOnce(operationId))
-  );
+  const start = (operationId: string): Promise<void> => {
+    if (activeWork && activeOperationId === operationId) return activeWork;
+    return enqueue(`start:${operationId}`, async () => {
+      const current = await dependencies.getRecoverableOperation();
+      if (!current || current.operationId !== operationId) {
+        await reconcile();
+        return;
+      }
+      activeOperationId = operationId;
+      await startOnce(operationId);
+    });
+  };
 
-  const recover = (): Promise<void> => runSingleFlight(recoverOnce);
+  const recover = (): Promise<void> => {
+    if (activeWork && activeKey?.startsWith('start:')) return activeWork;
+    return enqueue('recover', recoverOnce);
+  };
 
   const runInBackground = (): void => {
     void recover().catch((error) => dependencies.onError?.(error));

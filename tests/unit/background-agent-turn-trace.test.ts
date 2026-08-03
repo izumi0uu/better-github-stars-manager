@@ -454,21 +454,41 @@ describe('BGSM Agent turn trace boundary', () => {
     const acknowledged = fakePort();
     registry.attach(acknowledged.port);
     acknowledged.start(turn);
+    acknowledged.deliver({
+      type: 'ackBgsmAgentTurnResult',
+      executionEpochId: registry.executionEpochId,
+      turnAttemptId: turn.turnAttemptId,
+      sessionId: turn.sessionId,
+      baseRevision: turn.baseRevision,
+      disposition: 'detached',
+      appliedRevision: null,
+    });
     acknowledged.port.disconnect();
     const completedRevision = fakePort();
     registry.attach(completedRevision.port);
     completedRevision.start({ ...turn, turnAttemptId: 'attempt-completed-revision' });
     completedRevision.port.disconnect();
 
-    await waitUntil(async () => (await db.events.where('kind').equals('attempt_rejected').count()) === 2);
+    await waitUntil(async () => (
+      (await db.events.where('kind').equals('attempt_rejected').count()) === 2
+      && (await db.events.where('kind').equals('result_acknowledged').count()) === 2
+    ));
     const acknowledgedEvents = await db.events
       .where('rootOperationId')
       .equals(`agent_turn:${turn.turnAttemptId}`)
       .toArray();
-    expect(acknowledgedEvents.find((event) => event.kind === 'result_acknowledged')?.data)
+    expect(acknowledgedEvents.find((event) => (
+      event.kind === 'result_acknowledged'
+      && (event.data as { disposition?: string }).disposition === 'applied'
+    ))?.data)
       .toEqual({ disposition: 'applied', appliedRevision: turn.baseRevision + 1 });
     expect(acknowledgedEvents.find((event) => event.kind === 'attempt_rejected')?.data)
       .toEqual({ reason: 'acknowledged_attempt' });
+    expect(acknowledgedEvents.find((event) => (
+      event.kind === 'result_acknowledged'
+      && (event.data as { disposition?: string }).disposition === 'detached'
+    ))?.data)
+      .toEqual({ disposition: 'detached', appliedRevision: null });
     expect((await db.roots.get(`agent_turn:${turn.turnAttemptId}`))?.terminalState).toBe('completed');
     const revisionEvents = await db.events
       .where('rootOperationId')

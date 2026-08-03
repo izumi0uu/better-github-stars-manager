@@ -5,6 +5,7 @@ import {
 } from '@/api/errors';
 import {
   DEFAULT_MAX_AGENT_STEPS,
+  MAX_GENERIC_TOOL_ERROR_RESULT_BYTES,
   MAX_TOOL_RESULT_BYTES,
   MAX_TURN_TOOL_RESULT_BYTES,
 } from './const';
@@ -913,6 +914,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
     if (
       input.contextPolicy
       && toolCalls.length > 0
+      && !violatesExclusiveToolEnvelope
       && (
         toolResultMemoryPressure(input.contextPolicy, cumulativeToolResultBytes)
         || !canFitMinimumToolResults(
@@ -1031,19 +1033,21 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
     for (const [index, toolCall] of toolCalls.entries()) {
       let resultAllowance: ToolResultAllowance;
       try {
-        resultAllowance = resolveToolResultAllowance({
-          policy: input.contextPolicy,
-          messages,
-          assistantMessage,
-          stagedToolMessages,
-          pendingToolCalls: toolCalls.slice(index),
-          toolDefinitions,
-          maxOutputTokens,
-          latestUsage: responseUsage,
-          cumulativeToolResultBytes,
-          provider: input.provider,
-          allowMinimumEnvelopeForContinuation: input.onToolEnvelopeSettled !== undefined,
-        });
+        resultAllowance = violatesExclusiveToolEnvelope
+          ? exclusiveToolResultAllowance()
+          : resolveToolResultAllowance({
+              policy: input.contextPolicy,
+              messages,
+              assistantMessage,
+              stagedToolMessages,
+              pendingToolCalls: toolCalls.slice(index),
+              toolDefinitions,
+              maxOutputTokens,
+              latestUsage: responseUsage,
+              cumulativeToolResultBytes,
+              provider: input.provider,
+              allowMinimumEnvelopeForContinuation: input.onToolEnvelopeSettled !== undefined,
+            });
         if (input.contextPolicy) {
           emitContextDiagnostic(emit, input.sessionId, 'tool_allowance', input.contextPolicy, {
             contextRemainingTokens: resultAllowance.contextRemainingTokens,
@@ -1794,8 +1798,24 @@ function toolResultMemoryPressure(
   policy: Pick<ContextBudgetPolicy, 'memoryResultCeilingBytes'>,
   cumulativeToolResultBytes: number,
 ): boolean {
-  const lowWaterMark = Math.min(MAX_TOOL_RESULT_BYTES, policy.memoryResultCeilingBytes);
+  // Reserve a small adaptive tail instead of treating every non-empty result
+  // as pressure when a provider advertises a compact result ceiling.
+  const lowWaterMark = policy.memoryResultCeilingBytes >= MAX_TOOL_RESULT_BYTES
+    ? MAX_TOOL_RESULT_BYTES
+    : Math.max(
+        MIN_TOOL_RESULT_ENVELOPE_BYTES,
+        Math.floor(policy.memoryResultCeilingBytes * 3 / 4),
+      );
   return policy.memoryResultCeilingBytes - cumulativeToolResultBytes < lowWaterMark;
+}
+
+function exclusiveToolResultAllowance(): ToolResultAllowance {
+  return {
+    maxSerializedBytes: MAX_GENERIC_TOOL_ERROR_RESULT_BYTES,
+    contextRemainingTokens: Number.MAX_SAFE_INTEGER,
+    memoryRemainingBytes: MAX_GENERIC_TOOL_ERROR_RESULT_BYTES,
+    providerResultCeilingBytes: MAX_GENERIC_TOOL_ERROR_RESULT_BYTES,
+  };
 }
 
 function abortedToolOutcome(

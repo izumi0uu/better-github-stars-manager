@@ -491,6 +491,10 @@ export function createBgsmAgentTurnRegistry(
             && isAckMessage(rawMessage, executionEpochId)
             && rawMessage.turnAttemptId === connectionState.attachedAttemptId
           ) {
+            observeTrace(() => connectionState.trace?.recordAcknowledgement({
+              disposition: rawMessage.disposition,
+              appliedRevision: rawMessage.appliedRevision,
+            }));
             confirmAcknowledgement(port, rawMessage);
           } else if (connectionState.attachmentMode === 'attempt') {
             acknowledge(port, rawMessage, connectionState.attachedAttemptId);

@@ -367,6 +367,13 @@ export async function activateOrganizePreflight(input: Readonly<{
   if (!isPreflightToken(input.preflightToken)) {
     throw new TypeError('Organize preflight token is malformed.');
   }
+  for (const [field, value] of [
+    ['controllerId', input.controllerId],
+    ['sessionId', input.sessionId],
+    ['taskInstruction', input.taskInstruction],
+  ] as const) {
+    if (!value.trim()) throw new TypeError(`Organize preflight ${field} must be nonempty.`);
+  }
   const now = input.now ?? Date.now();
   const outcome = await db.transaction(
     'rw',
@@ -381,14 +388,14 @@ export async function activateOrganizePreflight(input: Readonly<{
       if (job.controllerId !== input.controllerId || job.sessionId !== input.sessionId) {
         return { kind: 'wrong_owner' as const };
       }
-      if (job.taskInstruction !== input.taskInstruction) {
-        return { kind: 'instruction_changed' as const };
-      }
       if (job.preflight.state === 'consumed') {
         return REPLAYABLE_ORGANIZE_PREFLIGHT_STATUSES.has(job.status)
           && job.activeSlot === ORGANIZE_ACTIVE_SLOT
           ? { kind: 'active' as const, job }
           : { kind: 'missing' as const };
+      }
+      if (job.taskInstruction !== input.taskInstruction) {
+        return { kind: 'instruction_changed' as const };
       }
       if (job.status !== 'preflight_ready') return { kind: 'missing' as const };
       if (job.preflight.expiresAt <= now) {
@@ -896,7 +903,6 @@ export async function advanceOrganizeJobRun(input: Readonly<{
     }
     // Generation and Provider-binding transitions must carry the durable split worklist unchanged.
     const durablePendingRanges = job.analysisPendingRanges ?? [];
-    validateAnalysisRanges(durablePendingRanges, job.nextFrozenIndex, job.itemCount);
     validateAnalysisRanges(input.analysisPendingRanges, input.startFrozenIndex, job.itemCount);
     const rewinding = input.startFrozenIndex < job.nextFrozenIndex;
     if (rewinding) {
@@ -911,8 +917,11 @@ export async function advanceOrganizeJobRun(input: Readonly<{
       await db.organizeItems.bulkPut(suffix.map(resetAnalysisRow));
     } else if (input.startFrozenIndex !== job.nextFrozenIndex) {
       throw new TypeError('Organize continuation must start at the durable cursor.');
-    } else if (!sameAnalysisRanges(input.analysisPendingRanges, durablePendingRanges)) {
-      throw new TypeError('Organize continuation pending range worklist is stale.');
+    } else {
+      validateAnalysisRanges(durablePendingRanges, job.nextFrozenIndex, job.itemCount);
+      if (!sameAnalysisRanges(input.analysisPendingRanges, durablePendingRanges)) {
+        throw new TypeError('Organize continuation pending range worklist is stale.');
+      }
     }
     const next: OrganizeJobRecord = {
       ...job,

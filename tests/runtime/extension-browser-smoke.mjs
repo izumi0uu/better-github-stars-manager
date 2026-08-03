@@ -572,6 +572,13 @@ async function assertAgentDrawerA11y(page) {
     'Review tag names',
   ]);
   await clickShadowButton(page, 'button[aria-label="Prompt suggestions"]');
+  await page.waitForFunction(
+    () => !document
+      .getElementById('gsm-manager-host')
+      ?.shadowRoot
+      ?.querySelector('[role="group"][aria-label="Suggested prompts"]'),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
   const originalViewport = page.viewport() ?? { width: 800, height: 600, deviceScaleFactor: 1 };
   await page.setViewport({ width: 360, height: 720, deviceScaleFactor: 1 });
   const narrow = await page.evaluate(() => {

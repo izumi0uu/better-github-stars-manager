@@ -666,6 +666,7 @@ function reconcileTaxonomyActions(
     entry,
   ]));
   const reconciled: ProposalAction[] = [];
+  const seenTags = new Set<string>();
   for (const classification of classifications) {
     const entry = entries.get(
       classification.tag.normalize('NFKC').toLocaleLowerCase('en-US'),
@@ -673,12 +674,20 @@ function reconcileTaxonomyActions(
     if (entry?.excluded) continue;
     if (classification.kind === 'add_existing_tag') {
       if (!entry?.exists) continue;
-      reconciled.push(Object.freeze({ ...classification, tag: entry.name }));
+      const tag = entry.name;
+      const key = tag.normalize('NFKC').toLocaleLowerCase('en-US');
+      if (seenTags.has(key)) continue;
+      seenTags.add(key);
+      reconciled.push(Object.freeze({ ...classification, tag }));
       continue;
     }
+    const tag = entry?.name ?? classification.tag;
+    const key = tag.normalize('NFKC').toLocaleLowerCase('en-US');
+    if (seenTags.has(key)) continue;
+    seenTags.add(key);
     reconciled.push(Object.freeze(entry?.exists
-      ? { ...classification, kind: 'add_existing_tag', tag: entry.name }
-      : { ...classification, tag: entry?.name ?? classification.tag }));
+      ? { ...classification, kind: 'add_existing_tag', tag }
+      : { ...classification, tag }));
   }
   return Object.freeze(reconciled);
 }

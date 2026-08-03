@@ -1057,6 +1057,7 @@ async function runRepeatedPreflightStartScenario({ timeoutMs }) {
   const sessionId = `runtime-repeated-start-${crypto.randomUUID()}`;
   const requestId = `runtime-repeated-start-${crypto.randomUUID()}`;
   const taskInstruction = 'Organize this durable scope exactly once.';
+  const jobCountBefore = (await globalThis.__readOrganizeJobs()).length;
   const waitFor = async (predicate) => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -1093,34 +1094,22 @@ async function runRepeatedPreflightStartScenario({ timeoutMs }) {
     delivery.deliveryKind === 'authoritative_snapshot'
   )).length;
 
+  const replayMessageStart = messages.length;
   port.postMessage(startMessage);
   const replay = await waitFor((message) => (
-    message.type === 'bgsmOrganizeJobRunError' &&
-    message.requestId === requestId
+    messages.indexOf(message) >= replayMessageStart
+    && message.type === 'bgsmOrganizeJobRunError'
+    && message.requestId === requestId
   ) || (
-    message.type === 'bgsmOrganizeJobRunSnapshot' &&
+    messages.indexOf(message) >= replayMessageStart
+    && message.type === 'bgsmOrganizeJobRunSnapshot' &&
     deliveryMetadata.filter((delivery) => (
       delivery.messageType === 'bgsmOrganizeJobRunSnapshot' &&
       delivery.deliveryKind === 'authoritative_snapshot'
     )).length > authoritativeBeforeReplay
   ));
 
-  const database = await new Promise((resolve, reject) => {
-    const open = indexedDB.open('better-github-stars-manager');
-    open.onsuccess = () => resolve(open.result);
-    open.onerror = () => reject(open.error);
-  });
-  let jobCount;
-  try {
-    const transaction = database.transaction('organizeJobs', 'readonly');
-    const count = transaction.objectStore('organizeJobs').count();
-    jobCount = await new Promise((resolve, reject) => {
-      count.onsuccess = () => resolve(count.result);
-      count.onerror = () => reject(count.error);
-    });
-  } finally {
-    database.close();
-  }
+  const jobCount = (await globalThis.__readOrganizeJobs()).length - jobCountBefore;
 
   port.postMessage({
     type: 'stopBgsmOrganizeJob',
@@ -1548,13 +1537,21 @@ async function disconnectWorkerRecoveryReconnect() {
   const state = globalThis.__runtimeWorkerRecoveryReconnect;
   if (!state) return { disconnected: false };
   state.reconnectStopped = true;
-  state.port.postMessage({
-    type: 'disconnectBgsmOrganizeJob',
-    controllerId: state.controllerId,
-    sessionId: state.sessionId,
-  });
+  try {
+    state.port.postMessage({
+      type: 'disconnectBgsmOrganizeJob',
+      controllerId: state.controllerId,
+      sessionId: state.sessionId,
+    });
+  } catch {
+    // The worker may have already closed the reconnect port.
+  }
   await new Promise((resolve) => setTimeout(resolve, 0));
-  state.port.disconnect();
+  try {
+    state.port.disconnect();
+  } catch {
+    // The port can be disconnected by worker recovery concurrently.
+  }
   delete globalThis.__runtimeWorkerRecoveryReconnect;
   return { disconnected: true };
 }

@@ -1220,13 +1220,32 @@ describe('durable whole-library organize job store', () => {
       preflightToken: input.preflightToken,
       controllerId: input.controllerId,
       sessionId: input.sessionId,
-      taskInstruction: input.taskInstruction,
+      taskInstruction: 'A replay must return the active durable run.',
       now: 160,
     });
     assert.equal(replayed.disposition, 'already_started');
     assert.equal(replayed.job.runId, started.job.runId);
     assert.equal(await db.organizeJobs.count(), 1);
     assert.equal(await db.organizeItems.count(), 2);
+  });
+
+  it('rejects blank activation identity and instruction before reading the durable token', async () => {
+    const input = preflightInput(['owner/blank-validation']);
+    await createOrganizePreflight(input);
+    await assert.rejects(
+      () => activateOrganizePreflight({
+        ...input,
+        controllerId: ' ',
+      }),
+      /controllerId must be nonempty/u,
+    );
+    await assert.rejects(
+      () => activateOrganizePreflight({
+        ...input,
+        taskInstruction: '\t',
+      }),
+      /taskInstruction must be nonempty/u,
+    );
   });
 
   it('rejects consumed preflight replay after its job becomes terminal', async () => {

@@ -217,17 +217,27 @@ export function createBgsmAgentController(
   const preflightTimers = new Map<PreflightToken, unknown>();
   const preflightAuthorities = new Map<string, PreflightAuthority>();
   const consumedPreflights = new Set<PreflightToken>();
+  const consumedPreflightOwners = new Map<PreflightToken, Readonly<{
+    controllerId: string;
+    sessionId: string;
+  }>>();
   const runs = new Map<RunId, RunRecord>();
   const nextGeneration = new Map<string, number>();
   const continuationChildren = new Map<ContinuationCursorToken, RunId>();
   const maxConsumedPreflightTombstones = 256;
-  const rememberConsumedPreflight = (token: PreflightToken): void => {
+  const rememberConsumedPreflight = (record: PreflightRecord): void => {
+    const token = record.token;
     consumedPreflights.delete(token);
     consumedPreflights.add(token);
+    consumedPreflightOwners.set(token, {
+      controllerId: record.controllerId,
+      sessionId: record.sessionId,
+    });
     while (consumedPreflights.size > maxConsumedPreflightTombstones) {
       const oldest = consumedPreflights.values().next().value as PreflightToken | undefined;
       if (!oldest) break;
       consumedPreflights.delete(oldest);
+      consumedPreflightOwners.delete(oldest);
     }
   };
   let eventSequence = 0;
@@ -486,14 +496,21 @@ export function createBgsmAgentController(
     acknowledgePreflightStarted(identity, preflightToken) {
       assertControllerIdentity(identity);
       const preflight = preflights.get(preflightToken);
-      if (!preflight) return false;
+      if (!preflight) {
+        const owner = consumedPreflightOwners.get(preflightToken);
+        if (!owner) return false;
+        if (owner.controllerId !== identity.controllerId || owner.sessionId !== identity.sessionId) {
+          throw new TypeError('OrganizeJobRun preflight token belongs to another controller/session.');
+        }
+        return true;
+      }
       if (
         preflight.controllerId !== identity.controllerId
         || preflight.sessionId !== identity.sessionId
       ) {
         throw new TypeError('OrganizeJobRun preflight token belongs to another controller/session.');
       }
-      rememberConsumedPreflight(preflightToken);
+      rememberConsumedPreflight(preflight);
       closePreflight(preflight, 'started');
       return true;
     },
@@ -549,7 +566,7 @@ export function createBgsmAgentController(
         continuationCursor: null,
       };
 
-      rememberConsumedPreflight(preflightToken);
+      rememberConsumedPreflight(preflight);
       closePreflight(preflight, 'started');
       nextGeneration.set(generationKey, generation);
       runs.set(runId, record);
