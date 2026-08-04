@@ -80,6 +80,13 @@ const sourceFingerprint = parseSourceFingerprintV1(`sf:v1:${DIGEST}`);
 const taxonomyFingerprint = parseTaxonomyFingerprintV1(`tf:v1:${DIGEST}`);
 
 describe('Cubby response completeness contract', () => {
+  it('keeps the Cubby persona warm, precise, and restrained', () => {
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /optional AI tag assistant in Better GitHub Stars Manager/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /calm, capable library companion/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /do not role-play, use pet sounds/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /errors, recovery steps, data boundaries, and write confirmations precise and neutral/u);
+  });
+
   it('keeps full-library scope confirmation actions in the UI', () => {
     assert.match(BGSM_AGENT_INSTRUCTIONS, /confirmation_requested/u);
     assert.match(BGSM_AGENT_INSTRUCTIONS, /analysis scope is being prepared/u);

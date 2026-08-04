@@ -110,13 +110,13 @@ describe('i18n catalog and locale propagation invariants', () => {
 
     assert.deepEqual(
       [english.agentStarting, english.agentThinking, english.agentWriting, english.agentCompacting],
-      ['Preparing context...', 'Thinking...', 'Responding...', 'Organizing conversation context…'],
+      ['Gathering context…', 'Looking into it…', 'Putting the answer together…', 'Tidying up our conversation…'],
     );
     assert.deepEqual(
       [chinese.agentStarting, chinese.agentThinking, chinese.agentWriting, chinese.agentCompacting],
-      ['正在准备上下文...', '思考中...', '回复中...', '正在整理对话上下文…'],
+      ['正在收集上下文…', '正在仔细查看…', '正在整理答案…', '正在整理这段对话…'],
     );
-    assert.equal(chinese.agentApplyingChanges, '正在应用标签变更...');
+    assert.equal(chinese.agentApplyingChanges, '正在应用标签变更…');
   });
 
   it('keeps Cubby scope summaries natural and localized', () => {

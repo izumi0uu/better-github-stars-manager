@@ -501,7 +501,7 @@ describe('Options preferences', () => {
       apiKey: 'sk-custom',
     });
     expect(document.querySelector('[data-testid="agent-connection-status"]')?.textContent)
-      .toContain('Settings saved. Grant host access, then test the connection.');
+      .toContain('Settings saved. Allow Chrome access, then test the connection.');
   });
 
   it('uses an exact Custom model preset without requiring capacity and allows an override', async () => {
@@ -688,7 +688,7 @@ describe('Options preferences', () => {
     expect(responsesProtocol?.getAttribute('aria-pressed')).toBe('true');
     expect(document.body.textContent).toContain('A saved key is already on this device.');
     expect(document.body.textContent).not.toContain('Accept disclosure');
-    expect(document.body.textContent).toContain('Host access granted');
+    expect(document.body.textContent).toContain('Access allowed');
     expect(testButton.disabled).toBe(false);
 
     await click(chatProtocol as HTMLButtonElement);
@@ -696,7 +696,7 @@ describe('Options preferences', () => {
     expect(chatProtocol?.getAttribute('aria-pressed')).toBe('true');
     expect(document.body.textContent).toContain('A saved key is already on this device.');
     expect(document.body.textContent).not.toContain('Accept disclosure');
-    expect(document.body.textContent).toContain('Host access granted');
+    expect(document.body.textContent).toContain('Access allowed');
     expect(testButton.disabled).toBe(false);
     expect(chrome.permissions.request).not.toHaveBeenCalled();
 
@@ -790,7 +790,7 @@ describe('Options preferences', () => {
     await setInputValue(keyInput!, 'transient-secret');
     await click(saveButton as HTMLButtonElement);
     const grantButton = [...document.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Grant access'));
+      .find((button) => button.textContent?.includes('Allow access'));
     expect(grantButton).toBeInstanceOf(HTMLButtonElement);
     await click(grantButton as HTMLButtonElement);
     await click(testButton as HTMLButtonElement);
@@ -803,7 +803,7 @@ describe('Options preferences', () => {
     expect(providerMessages).toHaveLength(0);
   });
 
-  it('disables Test and restores Grant access when custom host permission is revoked', async () => {
+  it('disables Test and restores Allow access when custom host permission is revoked', async () => {
     authMocks.getConfig.mockResolvedValue(config({
       agentProvider: {
         provider: 'custom-openai-compatible',
@@ -836,7 +836,7 @@ describe('Options preferences', () => {
       .find((button) => button.textContent?.includes('Test connection')) as HTMLButtonElement;
     expect(testButton.disabled).toBe(false);
     expect([...document.querySelectorAll('button')]
-      .some((button) => button.textContent?.includes('Grant access'))).toBe(false);
+      .some((button) => button.textContent?.includes('Allow access'))).toBe(false);
 
     vi.mocked(chrome.permissions.contains).mockImplementation(
       () => Promise.resolve(false) as never,
@@ -849,7 +849,7 @@ describe('Options preferences', () => {
 
     expect(testButton.disabled).toBe(true);
     expect([...document.querySelectorAll('button')]
-      .some((button) => button.textContent?.includes('Grant access'))).toBe(true);
+      .some((button) => button.textContent?.includes('Allow access'))).toBe(true);
   });
 
   it('refreshes custom host access after a failed connection test', async () => {
@@ -895,7 +895,7 @@ describe('Options preferences', () => {
 
     expect(testButton.disabled).toBe(true);
     expect([...document.querySelectorAll('button')]
-      .some((button) => button.textContent?.includes('Grant access'))).toBe(true);
+      .some((button) => button.textContent?.includes('Allow access'))).toBe(true);
   });
 
   it('tests Cubby connection with the current form values', async () => {
@@ -987,7 +987,7 @@ describe('Options preferences', () => {
     expect(document.body.textContent).not.toContain('Accept disclosure');
   });
 
-  it('lets the user remove a saved Cubby key', async () => {
+  it('lets the user remove a saved AI service key', async () => {
     authMocks.getConfig.mockResolvedValue(config({
       agentProvider: {
         provider: 'openai',

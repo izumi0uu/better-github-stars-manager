@@ -19,7 +19,7 @@ The product and interaction contract was reviewed separately and is intentionall
 
 ## Product autonomy decision — 2026-08-03
 
-Repository tags are treated as low-impact local annotations. Regular Agent conversations may directly remove visible tags from repositories and delete tag names globally; the earlier recommendation that every removal require a proposal and separate Apply confirmation is retained below as review history but no longer describes the accepted product contract.
+Repository tags are treated as low-impact local annotations. Regular Cubby conversations may directly remove visible tags from repositories and delete tag names globally; the earlier recommendation that every removal require a proposal and separate Apply confirmation is retained below as review history but no longer describes the accepted product contract.
 
 The direct path is still constrained by application code:
 
@@ -28,7 +28,7 @@ The direct path is still constrained by application code:
 - repository-code conversations remain read-only, explicit no-write requests deny every tag mutation, and an active Organize Apply holds the shared write lock;
 - repository removals and global deletions execute as separate atomic IndexedDB batches and preserve Gist dirty-outbox semantics;
 - canonical write effects are recorded in the execution ledger so retries execute only effects that are not already committed;
-- the Agent UI reports the tool activity and final mutation count without synthesizing a keyword-driven confirmation or unavailable card.
+- the Cubby UI reports the tool activity and final mutation count without synthesizing a keyword-driven confirmation or unavailable card.
 
 Global deletion writes `TagMeta.excluded` tombstones and therefore remains semantically different from removing a visible tag on selected repositories. The model must not substitute one operation for the other or broaden the requested repositories or tag names.
 

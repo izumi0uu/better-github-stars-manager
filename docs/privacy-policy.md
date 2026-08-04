@@ -6,7 +6,7 @@ Better GitHub Stars Manager is a Chrome extension for organizing GitHub starred 
 
 ## Limited Use disclosure
 
-Better GitHub Stars Manager uses Chrome extension access to your GitHub data and, when you enable Cubby, the AI service you select only to provide user-facing features you explicitly request inside the extension.
+Better GitHub Stars Manager uses Chrome extension access to your GitHub data only to provide user-facing features you explicitly request. When you enable Cubby, the extension's optional AI assistant, the extension also connects directly to the AI service you select for Cubby tasks.
 
 The extension does not:
 
@@ -32,7 +32,7 @@ The extension processes the following categories of data:
 - GitHub star metadata returned by `GET /user/starred`, such as repository name, URL, description, language, topics, star count, pushed time, and starred time
 - Tags and notes that you create inside the extension
 - Optional sync metadata for the dedicated secret GitHub Gist used by the extension
-- Cubby service, model, canonical origin, encrypted API-key material, and connection readiness stored locally
+- AI service configuration for Cubby, including provider, model, canonical origin, encrypted API-key material, and connection readiness stored locally
 
 ## How the extension uses data
 
@@ -67,7 +67,7 @@ Depending on the features you choose, the extension communicates directly with:
 
 The Options page shows a collapsed data-use summary naming the selected provider and exact canonical origin. This notice is informational and does not block connection tests or Cubby use.
 
-Cubby may send these task-data categories when needed:
+When you use Cubby, the extension may send these task-data categories to your selected AI service when needed:
 
 - your prompt or bounded task instruction
 - public repository metadata for the selected or frozen scope
@@ -80,7 +80,7 @@ Indexed repository code search is not an exhaustive scan. GitHub searches its de
 
 Private notes are read only through a scoped tool after the current prompt explicitly asks to use them. Notes and code snippets are treated as untrusted data, remain only in the in-memory conversation, and may be sent again or summarized only to the same bound AI provider during follow-up turns. Starting a new conversation clears that conversation context.
 
-Cubby does not send these as model-visible task data by default:
+When you use Cubby, the extension does not send these as model-visible task data by default:
 
 - private notes you did not ask Cubby to use
 - credentials or secrets

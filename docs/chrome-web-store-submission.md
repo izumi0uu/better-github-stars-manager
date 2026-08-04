@@ -94,7 +94,7 @@ Required in the current package so a user who explicitly configures Anthropic ca
 
 ### Optional custom AI-service hosts
 
-The manifest declares broad HTTPS plus localhost/127.0.0.1 development patterns as optional host permissions because a custom compatible service cannot be known at install time. Options requests access only from an explicit **Grant access** user action for the configured hostname. Chrome's permission pattern may cover ports, while BGSM's credential and fetch gates remain exact-origin and port-sensitive.
+The manifest declares broad HTTPS plus localhost/127.0.0.1 development patterns as optional host permissions because a custom compatible service cannot be known at install time. Options requests access only from an explicit **Allow access** user action for the configured hostname. Chrome's permission pattern may cover ports, while BGSM's credential and fetch gates remain exact-origin and port-sensitive.
 
 ## Privacy practices form notes
 
@@ -127,7 +127,7 @@ If the dashboard asks for a Limited Use statement, reuse the language from `docs
 9. Click `Push` to create or update the dedicated secret sync Gist, then click `Pull` to fetch it back.
 10. In Options, choose OpenAI, OpenRouter, or Anthropic and confirm the collapsed data-use notice names the service and exact origin.
 11. Enter a model and test API key, then confirm **Test connection** is available without a separate disclosure acknowledgement.
-12. For a custom compatible Base URL, click the separate **Grant access** control and verify denial makes no provider request.
+12. For a custom compatible Base URL, click the separate **Allow access** control and verify denial makes no provider request.
 13. Open the Cubby workbench, start a bounded tag analysis, review selected rows, and apply only the chosen additive tag suggestions.
 
 ## Pre-submit checklist

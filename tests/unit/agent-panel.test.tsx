@@ -145,7 +145,7 @@ describe('AgentPanel', () => {
   it('lists scope functions and inserts the selected prompt without sending', async () => {
     const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
 
-    const functionButton = container.querySelector<HTMLButtonElement>('button[aria-label="Prompt suggestions"]');
+    const functionButton = container.querySelector<HTMLButtonElement>('button[aria-label="Suggested actions"]');
     const composer = container.querySelector('textarea')?.closest('form');
     const header = container.querySelector('#gsm-agent-dialog-title')?.closest('.border-b');
     expect(composer?.contains(functionButton)).toBe(true);
@@ -153,13 +153,13 @@ describe('AgentPanel', () => {
 
     await click(functionButton!);
     await waitFor(() => {
-      expect(document.body.textContent).toContain('Suggested prompts');
+      expect(document.body.textContent).toContain('Choose an action');
     });
-    expect(document.body.querySelector('[role="group"][aria-label="Suggested prompts"]')).toBeTruthy();
+    expect(document.body.querySelector('[role="group"][aria-label="Choose an action"]')).toBeTruthy();
     expect(document.body.querySelector('[role="menu"]')).toBeNull();
     expect(document.body.querySelector('[role="menuitem"]')).toBeNull();
-    expect(document.body.textContent).toContain('Summarize current scope');
-    expect(document.body.textContent).toContain('Find similar tools');
+    expect(document.body.textContent).toContain('Summarize this view');
+    expect(document.body.textContent).toContain('Compare similar repositories');
     expect(document.body.textContent).toContain('Organize full library');
     expect(document.body.textContent).toContain('Clean up tags');
     expect(document.body.textContent).not.toContain('Search repository code');
@@ -168,14 +168,14 @@ describe('AgentPanel', () => {
     let summarize: HTMLButtonElement | undefined;
     await waitFor(() => {
       summarize = [...document.body.querySelectorAll<HTMLButtonElement>('button')]
-        .find((button) => button.textContent?.includes('Summarize current scope'));
+        .find((button) => button.textContent?.includes('Summarize this view'));
       expect(summarize).toBeDefined();
     });
     await click(summarize!);
 
     const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
     expect(textarea.value).toContain('Inspect the repositories in the current scope');
-    expect(document.body.querySelector('[role="group"][aria-label="Suggested prompts"]')).toBeNull();
+    expect(document.body.querySelector('[role="group"][aria-label="Choose an action"]')).toBeNull();
     expect(document.activeElement).toBe(textarea);
     expect(textarea.selectionStart).toBe(textarea.value.length);
     expect(textarea.selectionEnd).toBe(textarea.value.length);
@@ -191,8 +191,8 @@ describe('AgentPanel', () => {
     await click(cleanup!);
 
     const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
-    expect(textarea.value).toContain('Inspect local tag usage in this scope');
-    expect(textarea.value).toContain('perform the requested cleanup');
+    expect(textarea.value).toContain('Review tag usage in this view');
+    expect(textarea.value).toContain('summarize the changes');
     expect(textarea.value).not.toContain('Do not remove or delete tags');
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
@@ -241,7 +241,7 @@ describe('AgentPanel', () => {
       />,
     );
 
-    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Prompt suggestions"]')!);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Suggested actions"]')!);
     await waitFor(() => {
       expect(document.body.textContent).toContain('Search repository code');
       expect(document.body.textContent).toContain('Review repository notes');
@@ -255,7 +255,7 @@ describe('AgentPanel', () => {
     await click(searchCode!);
 
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value)
-      .toContain('Search the selected repository code');
+      .toContain("Search the selected repository's indexed public code");
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
@@ -285,7 +285,7 @@ describe('AgentPanel', () => {
       <AgentPanel open onClose={vi.fn()} onOpenOptions={vi.fn()} />
     );
     expect(container.textContent).toContain(
-      'I can inspect, compare, and organize repositories in your current scope.',
+      "Hey, I'm Cubby. Tell me what you want to organize.",
     );
     expect(container.querySelector('[data-testid="agent-ready-quick-chips"]')).toBeTruthy();
     expect(container.textContent).toContain('Find similar tools');
@@ -337,7 +337,7 @@ describe('AgentPanel', () => {
     expect(drawer.getAttribute('role')).toBe('dialog');
     expect(drawer.getAttribute('aria-modal')).toBe('true');
     expect(drawer.getAttribute('aria-labelledby')).toBe('gsm-agent-dialog-title');
-    expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('Message Cubby');
+    expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('Ask Cubby');
     expect(document.activeElement?.getAttribute('aria-label')).toBe('Close Cubby');
     const focusable = [...drawer.querySelectorAll<HTMLElement>(
       'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -420,7 +420,7 @@ describe('AgentPanel', () => {
       expect.any(Object),
     );
     expect(container.textContent).toContain('Only tag TypeScript build tools');
-    expect(container.textContent).toContain('Preparing your request');
+    expect(container.textContent).toContain('Getting your request ready');
 
     await act(async () => {
       handlers?.onEvent?.({
@@ -487,7 +487,7 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
     expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
-      .toContain('Preparing full-library scope... · Running');
+      .toContain('Mapping the full library… · Running');
 
     await act(async () => {
       turn!.handlers.onEvent?.({
@@ -730,7 +730,7 @@ describe('AgentPanel', () => {
       writeOutcome: 'not_applicable',
     });
     expect(container.textContent).not.toContain('Failed');
-    expect(container.textContent).not.toContain('Turn failed');
+    expect(container.textContent).not.toContain("Cubby couldn't complete this request");
     expect(container.querySelector('[data-testid="agent-streaming-status"]')).toBeTruthy();
     await emit({
       ...deliveryIdentity(turn.input),
@@ -739,7 +739,7 @@ describe('AgentPanel', () => {
       callId: 'call-exact-repository',
     });
     expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
-      .toContain('Checking local data... · Queued');
+      .toContain('Checking your local library… · Queued');
     expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
       .not.toContain('Tool result');
     expect(container.textContent).not.toContain('secret arguments');
@@ -757,7 +757,7 @@ describe('AgentPanel', () => {
       callId: 'call-delete-tags',
     });
     expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent?.match(
-      /Applying tag changes\.\.\. · Queued/g,
+      /Applying tag changes… · Queued/g,
     )).toHaveLength(2);
   });
 
@@ -970,9 +970,9 @@ describe('AgentPanel', () => {
       expect(container.textContent).toContain('This conversation is now read-only');
       expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
     });
-    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Prompt suggestions"]')!);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Suggested actions"]')!);
     await waitFor(() => {
-      expect(document.body.textContent).toContain('Suggested prompts');
+      expect(document.body.textContent).toContain('Choose an action');
     });
     expect(document.body.textContent).not.toContain('Organize full library');
     expect(messagingMocks.requestPreflight).not.toHaveBeenCalled();
@@ -1090,7 +1090,7 @@ describe('AgentPanel', () => {
       });
       turn!.handlers.onError?.({
         ...deliveryIdentity(turn!.input),
-        message: 'Cubby stopped before finishing.',
+        message: 'Cubby stopped before finishing. Try again.',
         category: 'other',
       });
       await Promise.resolve();
@@ -1275,7 +1275,7 @@ describe('AgentPanel', () => {
       disposition: 'no_transition',
       appliedRevision: null,
     });
-    expect(container.textContent).toContain('The extension restarted before this turn could be recovered');
+    expect(container.textContent).toContain("The extension restarted, so Cubby couldn't recover this request");
     expect(container.textContent).not.toContain('Starting');
   });
 
@@ -1484,7 +1484,7 @@ describe('AgentPanel', () => {
     await waitFor(() => {
       expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('  Restore this exact prompt  ');
       expect(container.textContent).toContain('Committed answer stays visible.');
-      expect(container.textContent).toContain('Provider error');
+      expect(container.textContent).toContain('AI service error');
       expect(container.querySelector('[data-testid="agent-context-recovery-banner"]')).toBeNull();
       expect(container.textContent).not.toContain('This partial answer must disappear.');
       expect(container.textContent).not.toContain('Tool result');
@@ -1854,7 +1854,7 @@ describe('AgentPanel', () => {
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
     expect(container.textContent).not.toContain('Pending request');
     expect(container.textContent).not.toContain('Pending transcript');
-    expect(container.textContent).not.toContain('Preparing your request');
+    expect(container.textContent).not.toContain('Getting your request ready');
     const afterReset = container.innerHTML;
 
     await act(async () => {
@@ -1975,7 +1975,7 @@ describe('AgentPanel', () => {
       await click(retry!);
       expect(turns).toHaveLength(2);
     } else {
-      expect(container.textContent).toContain('a write may already have completed');
+      expect(container.textContent).toContain('A change may already be applied');
       await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, `${prompt} - verify first`);
       expect(send.disabled).toBe(false);
     }
@@ -2270,7 +2270,7 @@ describe('AgentPanel', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('Model provider timed out while streaming.');
       expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
-      expect(container.textContent).toContain('Provider error');
+      expect(container.textContent).toContain('AI service error');
       expect(container.textContent).toContain('Retry');
     });
   });
@@ -2456,7 +2456,7 @@ describe('AgentPanel', () => {
     });
 
     expect(container.textContent).not.toContain('Failed');
-    expect(container.textContent).not.toContain('Turn failed');
+    expect(container.textContent).not.toContain("Cubby couldn't complete this request");
     expect(container.querySelector('[data-testid="agent-streaming-status"]')).toBeTruthy();
 
     await act(async () => {
@@ -2468,14 +2468,14 @@ describe('AgentPanel', () => {
     });
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
     expect(container.textContent).not.toContain('Failed');
-    expect(container.textContent).not.toContain('Turn failed');
+    expect(container.textContent).not.toContain("Cubby couldn't complete this request");
 
     await act(async () => {
       vi.advanceTimersByTime(1);
     });
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeTruthy();
     expect(container.textContent).not.toContain('Failed');
-    expect(container.textContent).not.toContain('Turn failed');
+    expect(container.textContent).not.toContain("Cubby couldn't complete this request");
 
     await act(async () => {
       handlers?.onEvent?.({
@@ -2499,7 +2499,7 @@ describe('AgentPanel', () => {
 
     expect(container.textContent).toContain('Organization continued successfully.');
     expect(container.textContent).not.toContain('Failed');
-    expect(container.textContent).not.toContain('Turn failed');
+    expect(container.textContent).not.toContain("Cubby couldn't complete this request");
   });
 
   it('shows only a delayed compaction status and restores the previous tool status', async () => {
@@ -2537,7 +2537,7 @@ describe('AgentPanel', () => {
     });
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('compacting');
-    expect(container.textContent).toContain('Organizing conversation context');
+    expect(container.textContent).toContain('Tidying up our conversation');
 
     await act(async () => {
       handlers?.onEvent?.({
@@ -2550,7 +2550,7 @@ describe('AgentPanel', () => {
     });
 
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
-    expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent).toContain('Checking local data');
+    expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent).toContain('Checking your local library');
     expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('tool');
 
     await act(async () => {
@@ -2600,7 +2600,7 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent).toContain('Checking local data');
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent).toContain('Checking your local library');
     expect(container.querySelector('[data-testid="agent-streaming-status"]')).toBeNull();
   });
 
@@ -2687,12 +2687,11 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
     await waitFor(() => {
-      expect(container.textContent).toContain('Provider auth failed');
-      expect(container.textContent).toContain('OpenAI-compatible auth failed');
-      expect(container.textContent).toContain('Open Options');
-      expect(container.textContent).toContain('Retry after fix');
+      expect(container.textContent).toContain('AI service authorization failed');
+      expect(container.textContent).toContain('Open options');
+      expect(container.textContent).toContain('Retry after updating settings');
     });
-    const openOptions = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('Open Options'));
+    const openOptions = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('Open options'));
     expect(openOptions).toBeTruthy();
     await click(openOptions as HTMLButtonElement);
     expect(onOpenOptions).toHaveBeenCalled();
@@ -2703,7 +2702,7 @@ describe('AgentPanel', () => {
     ['provider_context_overflow_repeated', 'settings', 'AI service settings need attention', 'Adjust AI service settings'],
     ['provider_request_byte_limit_repeated', 'settings', 'AI service settings need attention', 'Adjust AI service settings'],
     ['current_turn_too_large', 'edit', 'This request is too large', 'Edit prompt'],
-    ['tool_result_memory_limit', 'retry', 'BGSM reached an internal tool-data limit', 'Retry'],
+    ['tool_result_memory_limit', 'retry', "Cubby reached this request's data limit", 'Retry'],
   ] as const)(
     'maps irreducible %s to a focused recovery action without exposing internal identifiers',
     async (reason, action, title, actionLabel) => {
@@ -2826,7 +2825,7 @@ describe('AgentPanel', () => {
     const edit = [...container.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.trim() === 'Edit prompt');
     expect(edit).toBeDefined();
-    expect(container.textContent).toContain('a write may already have finished');
+    expect(container.textContent).toContain('a change may already be applied');
     expect(container.textContent).not.toContain('Retry to continue');
     await click(edit!);
     const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
@@ -2876,7 +2875,7 @@ describe('AgentPanel', () => {
       await waitFor(() => {
         expect(container.querySelector('[data-testid="agent-context-recovery-banner"]')).toBeNull();
         const errorCard = container.querySelector<HTMLElement>('[data-testid="agent-provider-error-card"]');
-        expect(errorCard?.textContent).toContain('Provider error');
+        expect(errorCard?.textContent).toContain('AI service error');
         expect(errorCard?.textContent).toContain('Retry');
         expect(container.textContent).not.toContain('Context limit reached');
         expect(errorCard?.textContent).not.toContain(reason);
@@ -2969,7 +2968,7 @@ describe('AgentPanel', () => {
 
     await waitFor(() => {
       expect(container.querySelector('[data-testid="agent-context-recovery-banner"]')).toBeNull();
-      expect(container.textContent).toContain('Provider error');
+      expect(container.textContent).toContain('AI service error');
       expect(container.textContent).not.toContain('Context limit reached');
       expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Overflowing prompt');
       expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);

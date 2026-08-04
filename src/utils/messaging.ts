@@ -1055,7 +1055,7 @@ export function startBgsmAgentTurn(
           turnAttemptId: input.turnAttemptId,
           sessionId: input.sessionId,
           baseRevision: input.baseRevision,
-          message: 'Cubby received an invalid background delivery.',
+          message: "Cubby's connection returned invalid data. Try again.",
           category: 'other',
         });
         disconnect(port);
@@ -1067,7 +1067,7 @@ export function startBgsmAgentTurn(
             turnAttemptId: input.turnAttemptId,
             sessionId: input.sessionId,
             baseRevision: input.baseRevision,
-            message: 'Cubby received a duplicate worker handshake.',
+            message: "Cubby's connection restarted unexpectedly. Try again.",
             category: 'other',
           });
           disconnect(port);
@@ -1105,7 +1105,7 @@ export function startBgsmAgentTurn(
             baseRevision: input.baseRevision,
             message: error instanceof Error
               ? error.message
-              : 'Cubby could not start the background turn.',
+              : 'Cubby could not start. Try again.',
           });
           return;
         }
@@ -1144,7 +1144,7 @@ export function startBgsmAgentTurn(
           turnAttemptId: input.turnAttemptId,
           sessionId: input.sessionId,
           baseRevision: input.baseRevision,
-          message: 'Cubby background deliveries arrived out of order.',
+          message: "Cubby's connection was interrupted. Try again.",
           category: 'other',
         });
         disconnect(port);
@@ -1156,7 +1156,7 @@ export function startBgsmAgentTurn(
           turnAttemptId: input.turnAttemptId,
           sessionId: input.sessionId,
           baseRevision: input.baseRevision,
-          message: 'Cubby delivered data after its terminal event.',
+          message: "Cubby's connection returned unexpected data. Try again.",
           category: 'other',
         });
         disconnect(port);
@@ -1201,7 +1201,7 @@ export function startBgsmAgentTurn(
         turnAttemptId: input.turnAttemptId,
         sessionId: input.sessionId,
         baseRevision: input.baseRevision,
-        message: chrome.runtime.lastError?.message ?? 'Cubby stopped before finishing.',
+        message: chrome.runtime.lastError?.message ?? 'Cubby stopped before finishing. Try again.',
       });
     });
   };

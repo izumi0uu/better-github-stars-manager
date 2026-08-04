@@ -298,7 +298,7 @@ describe('Cubby messaging', () => {
       turnAttemptId: input.turnAttemptId,
       sessionId: 'session-1',
       baseRevision: 3,
-      message: 'Cubby stopped before finishing.',
+      message: 'Cubby stopped before finishing. Try again.',
     });
   });
 
@@ -609,7 +609,7 @@ describe('Cubby messaging', () => {
 
     expect(onEvent).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Cubby background deliveries arrived out of order.',
+      message: "Cubby's connection was interrupted. Try again.",
     }));
     expect(disconnect).toHaveBeenCalledOnce();
 

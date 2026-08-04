@@ -83,14 +83,14 @@ describe('Agent organize-job workbench UI', () => {
     const activeBase = analysisSnapshot(request.controllerId, request.sessionId, 'frozen');
 
     await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: activeBase });
-    expect(currentPhase(container)).toBe('Frozen');
+    expect(currentPhase(container)).toBe('Scope locked');
     expect(container.textContent).not.toContain('Resolving scope');
 
     await emitMessage({
       type: 'bgsmOrganizeJobRunSnapshot',
       snapshot: { ...activeBase, state: 'checking_provider' },
     });
-    expect(currentPhase(container)).toBe('Checking provider');
+    expect(currentPhase(container)).toBe('Checking AI service');
 
     await emitMessage({
       type: 'bgsmOrganizeJobRunSnapshot',
@@ -400,8 +400,8 @@ describe('Agent organize-job workbench UI', () => {
     });
 
     expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent)
-      .toBe('Full-library analysis did not finish');
-    expect(container.textContent).toContain('Full-library analysis did not finish');
+      .toBe('Analysis paused before completion');
+    expect(container.textContent).toContain('Analysis paused before completion');
     expect(currentPhase(container)).toBeUndefined();
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
@@ -961,7 +961,7 @@ describe('Agent organize-job workbench UI', () => {
       },
     });
 
-    expect(container.textContent).not.toContain('Budget exhausted');
+    expect(container.textContent).not.toContain('Run limit reached');
     expect(container.textContent).not.toContain('Continue remaining');
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true);
 
@@ -1072,7 +1072,7 @@ describe('Agent organize-job workbench UI', () => {
 
     expectVisibleProgress(container, 125, 315);
     expect(currentPhase(container)).toBe('Analyzing');
-    expect(container.textContent).not.toContain('Full-library analysis did not finish');
+    expect(container.textContent).not.toContain('Analysis paused before completion');
     expect(container.textContent).not.toContain('Continue remaining');
     await click(buttonWithText(container, 'Stop'));
     expect(activeOrganizePort().posted.at(-1)).toEqual({
@@ -1141,7 +1141,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(container.querySelector('[data-testid="organize-job-stop-card"]')).toBeTruthy();
     expect(container.textContent).toContain('Completed reads: 9');
     expect(container.textContent).toContain('Not started: 19');
-    expect(container.textContent).not.toContain('Library update receipt');
+    expect(container.textContent).not.toContain('Tag update results');
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
     expect(container.querySelector('[data-testid="organize-job-current-phase"]')).toBeNull();
   });
@@ -1177,7 +1177,7 @@ describe('Agent organize-job workbench UI', () => {
     });
 
     expect(container.querySelector('[data-testid="agent-provider-error-card"]')?.textContent)
-      .toContain('Provider error');
+      .toContain('AI service error');
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value)
       .toBe('Analyze my local stars');
     expect(container.textContent).toContain('Retry');
@@ -1371,7 +1371,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(finalReply).not.toBeUndefined();
     expect(reviewWorkbench!.compareDocumentPosition(finalReply!) & Node.DOCUMENT_POSITION_FOLLOWING)
       .not.toBe(0);
-    expect(container.textContent).toContain('Review actionable suggestions');
+    expect(container.textContent).toContain('Review tag suggestions');
     expect(activeOrganizePort().posted.some((message) => message.type === 'cancelBgsmOrganizeJobRun'))
       .toBe(false);
   });
@@ -1429,7 +1429,7 @@ describe('Agent organize-job workbench UI', () => {
       snapshot: failed,
     }, 'authoritative_snapshot', 11);
     expect(firstPort.disconnectCalls).toBe(1);
-    expect(container.textContent).toContain('Full-library analysis did not finish');
+    expect(container.textContent).toContain('Analysis paused before completion');
   });
 
   it('reconnects an advancing durable job through its active generation', async () => {
@@ -1671,7 +1671,7 @@ describe('Agent organize-job workbench UI', () => {
       presentation: { ...revised, revision: 10, status: 'applying', apply: durableApply },
     });
     expect(container.textContent).toContain('Applying selected changes');
-    expect(container.textContent).toContain('20 of 99 rows selected · checkboxes locked');
+    expect(container.textContent).toContain('20 of 99 selected · selection locked');
 
     const completedApply = {
       ...durableApply,
@@ -1724,10 +1724,10 @@ describe('Agent organize-job workbench UI', () => {
     });
 
     expect(container.querySelector('[data-testid="organize-job-receipt-card"]')).toBeTruthy();
-    expect(container.textContent).toContain('Library update receipt');
+    expect(container.textContent).toContain('Tag update results');
     expect(container.textContent).toContain('owner/repo-0');
     expect(container.textContent).toContain('owner/repo-1');
-    expect(container.textContent).toContain('Source changed after proposal');
+    expect(container.textContent).toContain('Repository data changed');
 
     const followUpPrompt = 'Which repositories changed?';
     const followUpAnswer = 'I can summarize the completed receipt.';

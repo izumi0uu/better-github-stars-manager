@@ -3,7 +3,7 @@ export const BGSM_AGENT_CONTEXT_MAX_CHARS = 4_096;
 export type BgsmAgentContext = {
   schemaVersion: 1;
   application: {
-    name: 'GitHub Stars Manager';
+    name: 'Better GitHub Stars Manager';
     runtime: 'Chrome extension';
     purpose: 'Organize the user\'s GitHub starred repositories with local search, tags, notes, and favorites.';
   };
@@ -30,7 +30,7 @@ export function buildBgsmAgentContext(): BgsmAgentContext {
   return {
     schemaVersion: 1,
     application: {
-      name: 'GitHub Stars Manager',
+      name: 'Better GitHub Stars Manager',
       runtime: 'Chrome extension',
       purpose: 'Organize the user\'s GitHub starred repositories with local search, tags, notes, and favorites.',
     },
@@ -77,7 +77,7 @@ export function limitBgsmAgentContext(
   return {
     schemaVersion: 1,
     application: {
-      name: 'GitHub Stars Manager',
+      name: 'Better GitHub Stars Manager',
       runtime: 'Chrome extension',
       purpose: 'Organize the user\'s GitHub starred repositories with local search, tags, notes, and favorites.',
     },

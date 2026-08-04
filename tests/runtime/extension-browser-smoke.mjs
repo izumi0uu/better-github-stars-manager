@@ -514,9 +514,10 @@ async function assertAutoTagAgentFirstClickChoice(page) {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot;
     const prompt = root?.querySelector('[data-testid="auto-tag-agent-prompt"]');
     return {
-      titleVisible: prompt?.textContent?.includes('Try Cubby for smarter tagging?') ?? false,
-      yesVisible: prompt?.textContent?.includes('Yes, open Cubby') ?? false,
-      noVisible: prompt?.textContent?.includes('No, use Auto Tags') ?? false,
+      titleVisible: prompt?.textContent?.includes('Let Cubby look first?') ?? false,
+      yesVisible: prompt?.textContent?.includes('Ask Cubby') ?? false,
+      noVisible: prompt?.textContent?.includes('Use Auto Tags') ?? false,
+      mascotState: prompt?.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state') ?? null,
       focusedText: root?.activeElement?.textContent?.trim() ?? null,
     };
   });
@@ -524,13 +525,14 @@ async function assertAutoTagAgentFirstClickChoice(page) {
     titleVisible: true,
     yesVisible: true,
     noVisible: true,
-    focusedText: 'Yes, open Cubby',
+    mascotState: 'compacting',
+    focusedText: 'Ask Cubby',
   });
 
   const choseLocal = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot;
     const button = [...(root?.querySelectorAll('[data-testid="auto-tag-agent-prompt"] button') ?? [])]
-      .find((candidate) => candidate.textContent?.includes('No, use Auto Tags'));
+      .find((candidate) => candidate.textContent?.includes('Use Auto Tags'));
     button?.click();
     return !!button;
   });
@@ -619,32 +621,32 @@ async function assertAgentDrawerA11y(page) {
   assert.match(mascot.animationTimingFunction ?? '', /^steps\(8(?:, end)?\)$/u);
   assert.match(mascot.assetUrl ?? '', /^chrome-extension:\/\/[^/]+\/assets\/index-agent-atlas-[^/]+\.png$/u);
   assert.equal(mascot.bytes > 0, true);
-  await clickShadowButton(page, 'button[aria-label="Prompt suggestions"]');
+  await clickShadowButton(page, 'button[aria-label="Suggested actions"]');
   await page.waitForFunction(
     () => !!document
       .getElementById('gsm-manager-host')
       ?.shadowRoot
-      ?.querySelector('[role="group"][aria-label="Suggested prompts"]'),
+      ?.querySelector('[role="group"][aria-label="Choose an action"]'),
     { polling: DOM_POLLING_MS, timeout: 10_000 },
   );
   const functionLabels = await page.evaluate(() => [...(
     document
       .getElementById('gsm-manager-host')
       ?.shadowRoot
-      ?.querySelectorAll('[role="group"][aria-label="Suggested prompts"] button') ?? []
+      ?.querySelectorAll('[role="group"][aria-label="Choose an action"] button') ?? []
   )].map((item) => item.querySelector('span > span')?.textContent?.trim() ?? ''));
   assert.deepEqual(functionLabels, [
-    'Summarize current scope',
-    'Find similar tools',
+    'Summarize this view',
+    'Compare similar repositories',
     'Organize full library',
     'Clean up tags',
   ]);
-  await clickShadowButton(page, 'button[aria-label="Prompt suggestions"]');
+  await clickShadowButton(page, 'button[aria-label="Suggested actions"]');
   await page.waitForFunction(
     () => !document
       .getElementById('gsm-manager-host')
       ?.shadowRoot
-      ?.querySelector('[role="group"][aria-label="Suggested prompts"]'),
+      ?.querySelector('[role="group"][aria-label="Choose an action"]'),
     { polling: DOM_POLLING_MS, timeout: 10_000 },
   );
   const originalViewport = page.viewport() ?? { width: 800, height: 600, deviceScaleFactor: 1 };
