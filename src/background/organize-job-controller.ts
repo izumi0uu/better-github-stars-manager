@@ -222,6 +222,7 @@ export function createBgsmAgentController(
     sessionId: string;
   }>>();
   const runs = new Map<RunId, RunRecord>();
+  const currentRunIds = new Map<string, RunId>();
   const nextGeneration = new Map<string, number>();
   const continuationChildren = new Map<ContinuationCursorToken, RunId>();
   const maxConsumedPreflightTombstones = 256;
@@ -570,6 +571,7 @@ export function createBgsmAgentController(
       closePreflight(preflight, 'started');
       nextGeneration.set(generationKey, generation);
       runs.set(runId, record);
+      currentRunIds.set(generationKey, runId);
       dependencies.onLifecycle?.('token_consumed_frozen_and_budgeted');
       void Promise.resolve().then(() => dependencies.scheduleRun?.(record.identity));
       return snapshot(record);
@@ -672,6 +674,7 @@ export function createBgsmAgentController(
       };
       runs.set(input.identity.runId, record);
       const generationKey = `${input.identity.controllerId}\u0000${input.identity.sessionId}`;
+      currentRunIds.set(generationKey, input.identity.runId);
       nextGeneration.set(
         generationKey,
         Math.max(nextGeneration.get(generationKey) ?? 0, input.identity.generation),
@@ -860,7 +863,8 @@ export function createBgsmAgentController(
         throw new TypeError('Continuation start index is outside the authoritative FrozenScope.');
       }
       const generationKey = `${parent.identity.controllerId}\u0000${parent.identity.sessionId}`;
-      const generation = allocateNextGeneration(generationKey, parent.identity.generation);
+      // Continuation authority is family-local and only permits a direct child.
+      const generation = incrementRunGeneration(parent.identity.generation);
       const runId = parseRunId(`run:v1:${randomId()}`);
       const record: RunRecord = {
         jobId: parent.jobId,
@@ -882,13 +886,22 @@ export function createBgsmAgentController(
         continuationCursor: null,
       };
       runs.set(runId, record);
-      nextGeneration.set(generationKey, generation);
+      currentRunIds.set(generationKey, runId);
+      nextGeneration.set(
+        generationKey,
+        Math.max(nextGeneration.get(generationKey) ?? 0, generation),
+      );
       continuationChildren.set(continuationCursor, runId);
       return snapshot(record);
     },
 
     findLatestSnapshot(identity) {
       assertControllerIdentity(identity);
+      const currentRunId = currentRunIds.get(
+        `${identity.controllerId}\u0000${identity.sessionId}`,
+      );
+      const current = currentRunId ? runs.get(currentRunId) : undefined;
+      if (current) return snapshot(current);
       const matching = [...runs.values()]
         .filter((run) => (
           run.identity.controllerId === identity.controllerId &&
@@ -901,7 +914,11 @@ export function createBgsmAgentController(
 
     disconnectController(identity) {
       assertControllerIdentity(identity);
-      const record = [...runs.values()]
+      const currentRunId = currentRunIds.get(
+        `${identity.controllerId}\u0000${identity.sessionId}`,
+      );
+      const current = currentRunId ? runs.get(currentRunId) : undefined;
+      const record = current ?? [...runs.values()]
         .filter((run) => (
           run.identity.controllerId === identity.controllerId &&
           run.identity.sessionId === identity.sessionId
@@ -958,15 +975,11 @@ export function createBgsmAgentController(
       for (const runId of releasedRunIds) {
         runs.delete(runId);
       }
+      currentRunIds.delete(generationKey);
       nextGeneration.delete(generationKey);
       return [...releasedRunIds];
     },
   };
-
-  function allocateNextGeneration(generationKey: string, parentGeneration: number): number {
-    const current = Math.max(nextGeneration.get(generationKey) ?? 0, parentGeneration);
-    return incrementRunGeneration(current);
-  }
 }
 
 export function incrementRunGeneration(currentGeneration: number): number {

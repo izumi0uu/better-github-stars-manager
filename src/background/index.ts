@@ -164,6 +164,7 @@ import {
   activateOrganizePreflight,
   advanceOrganizeJobRun,
   attachOrganizeJob,
+  bindOrganizeJobProvider,
   claimOrganizeApplyChunk,
   checkpointOrganizeAnalysisPage,
   cancelOrganizeJob,
@@ -641,18 +642,11 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
     const job = await getOrganizeJobForRun(identity.runId, identity.generation);
     if (!job) return;
     if (job.providerBinding === null || job.providerBinding === undefined) {
-      await advanceOrganizeJobRun({
+      await bindOrganizeJobProvider({
         jobId: job.jobId,
-        controllerId: identity.controllerId,
-        sessionId: identity.sessionId,
         runId: identity.runId,
         generation: identity.generation,
-        proposalId: parseProposalId(job.proposalId),
-        budget: job.budget as RunBudget,
-        usage: job.usage as RunBudgetUsage,
         providerBinding,
-        startFrozenIndex: job.nextFrozenIndex,
-        analysisPendingRanges: job.analysisPendingRanges ?? [],
       });
       return;
     }

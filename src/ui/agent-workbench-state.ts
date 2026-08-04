@@ -74,6 +74,8 @@ export type AgentWorkbenchState = Readonly<{
   organizeReceiptRequestId: string | null;
   usageOffset: WorkbenchUsageOffset;
   continuationPending: boolean;
+  /** A failed-suffix retry rewinds repository progress, unlike a budget continuation. */
+  retryingFailedSuffix: boolean;
   conversationAnchor: WorkbenchConversationAnchor | null;
   analysisProgress: Readonly<{
     runId: RunId;
@@ -162,6 +164,7 @@ export function createAgentWorkbenchState(
     organizeReceiptRequestId: null,
     usageOffset: emptyUsageOffset(),
     continuationPending: false,
+    retryingFailedSuffix: false,
     conversationAnchor: null,
     analysisProgress: null,
     transport: 'connected',
@@ -231,9 +234,13 @@ export function reduceAgentWorkbench(
   }
   if (action.type === 'continue_requested') {
     if (!state.snapshot) return state;
+    const retryingFailedSuffix = state.snapshot.state === 'analysis_blocked'
+      || state.organizeJob?.status === 'analysis_blocked';
     return {
       ...state,
       continuationPending: true,
+      retryingFailedSuffix: state.retryingFailedSuffix || retryingFailedSuffix,
+      analysisProgress: retryingFailedSuffix ? null : state.analysisProgress,
       error: null,
     };
   }
@@ -283,6 +290,12 @@ export function reduceAgentWorkbench(
       )
     ) return state;
     if (!matchesActiveRun(state, message.runId, message.generation)) return state;
+    if (
+      message.reason === 'internal_error'
+      && state.organizeJob?.status === 'analyzing'
+      && state.continuationPending
+      && state.snapshot?.state === 'budget_exhausted'
+    ) return state;
     return {
       ...state,
       preflight: message.runId === null ? null : state.preflight,
@@ -366,6 +379,13 @@ export function reduceAgentWorkbench(
     const continuationPending = presentation.status === 'analyzing'
       ? state.continuationPending || snapshotMismatch
       : false;
+    const retryingFailedSuffix = ['review', 'completed', 'cancelled'].includes(presentation.status)
+      ? false
+      : state.retryingFailedSuffix || (
+        presentation.status === 'analyzing'
+        && snapshotMismatch
+        && state.snapshot?.state === 'analysis_blocked'
+      );
     const progressMatchesPresentation = state.analysisProgress?.runId === presentation.runId
       && state.analysisProgress.generation === presentation.generation;
     return {
@@ -378,6 +398,7 @@ export function reduceAgentWorkbench(
       proposal: leftReview ? null : state.proposal,
       selectedProposalRowIds: leftReview ? new Set() : state.selectedProposalRowIds,
       continuationPending,
+      retryingFailedSuffix,
       conversationAnchor: changedJob && !state.preflight && !state.snapshot
         ? fallbackConversationAnchor(presentation.capturedAt)
         : state.conversationAnchor ?? fallbackConversationAnchor(presentation.capturedAt),
@@ -478,6 +499,28 @@ function reduceSnapshot(
     )
     || (authoritative && state.organizeJob?.status === 'analyzing')
   );
+  const retryingFailedSuffix = state.retryingFailedSuffix || (
+    continuationChild && state.snapshot?.state === 'analysis_blocked'
+  );
+  const keepsProgress = ['frozen', 'prepared', 'checking_provider', 'analyzing']
+    .includes(snapshot.state);
+  const previousDisplayed = displayedAnalyzedRepositoryCount(state);
+  const carriedContinuationProgress = continuationChild
+    && !retryingFailedSuffix
+    && keepsProgress
+    && previousDisplayed > 0
+    ? {
+        runId: snapshot.runId,
+        generation: snapshot.generation,
+        processed: Math.min(snapshot.frozenScope.count, previousDisplayed),
+        total: snapshot.frozenScope.count,
+      }
+    : null;
+  const sameRunDurableRestore = authoritative
+    && keepsProgress
+    && state.organizeJob?.status === 'analyzing'
+    && state.organizeJob.runId === snapshot.runId
+    && state.organizeJob.generation === snapshot.generation;
   const cancelledMatchingJob = snapshot.state === 'cancelled'
     && !!state.organizeJob
     && (
@@ -497,14 +540,18 @@ function reduceSnapshot(
     organizeReceiptRequestId: cancelledMatchingJob ? null : state.organizeReceiptRequestId,
     proposal: cancelledMatchingJob ? null : state.proposal,
     selectedProposalRowIds: cancelledMatchingJob ? new Set() : state.selectedProposalRowIds,
-    analysisProgress: authoritative || childRun || snapshot.state !== 'analyzing'
-      ? null
-      : state.analysisProgress,
+    analysisProgress: carriedContinuationProgress
+      ?? (sameRunDurableRestore || (!authoritative && !childRun && keepsProgress)
+        ? state.analysisProgress
+        : null),
     preflight: childRun ? null : state.preflight,
     usageOffset: continuationChild && state.snapshot
       ? addUsageOffset(state.usageOffset, state.snapshot)
       : childRun ? emptyUsageOffset() : state.usageOffset,
     continuationPending: false,
+    retryingFailedSuffix: ['review', 'completed', 'cancelled'].includes(snapshot.state)
+      ? false
+      : retryingFailedSuffix,
     conversationAnchor: state.conversationAnchor
       ?? fallbackConversationAnchor(snapshot.frozenScope.capturedAt),
     transport: 'connected',
@@ -721,6 +768,15 @@ export function analyzedRepositoryCount(state: AgentWorkbenchState): number {
   const snapshotCount = state.snapshot?.coverage?.analyzed ?? 0;
   const usageCount = cumulativeOrganizeJobRunUsage(state).consumedFrozenPositions;
   const durableJobCount = state.organizeJob?.coverage.analyzed ?? 0;
+  if (state.retryingFailedSuffix) {
+    const successfulSnapshotCount = state.snapshot?.coverage
+      ? state.snapshot.coverage.analyzed - state.snapshot.coverage.analysisFailed
+      : 0;
+    const successfulDurableJobCount = state.organizeJob?.coverage
+      ? state.organizeJob.coverage.analyzed - state.organizeJob.coverage.analysisFailed
+      : 0;
+    return Math.max(0, successfulSnapshotCount, successfulDurableJobCount);
+  }
   return Math.max(snapshotCount, usageCount, durableJobCount);
 }
 

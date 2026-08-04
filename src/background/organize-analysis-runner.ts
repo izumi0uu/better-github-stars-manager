@@ -271,7 +271,10 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
       await prepareContinuation(identity, state, state.nextFrozenIndex, cursor, analyzer, isCurrentExecution);
     } catch (error) {
       if (!isCurrentExecution()) return;
-      dependencies.controller.failRun(identity, 'internal_error');
+      // Durable analysis remains authoritative and is retried from its checkpoint.
+      if (!dependencies.initializeDurableRun) {
+        dependencies.controller.failRun(identity, 'internal_error');
+      }
       reportAutomaticContinuationFailure(identity, error);
     }
   };

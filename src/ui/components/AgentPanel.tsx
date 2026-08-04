@@ -418,60 +418,56 @@ export function AgentPanel({
     || automaticContinuation
   );
   const total = organize.organizeJob?.scopeCount ?? organize.snapshot?.frozenScope.count ?? 0;
-  const processed = organize.organizeJob?.coverage.analyzed ?? analyzedRepositoryCount(organize);
+  const processed = analyzedRepositoryCount(organize);
   const displayedProcessed = Math.min(total, Math.max(processed, workbench.displayedProcessed));
   const applySelectedTotal = organize.organizeJob?.apply?.total ?? selectedCount;
   const applyDone = organize.organizeJob?.apply?.settled ?? 0;
   const isProviderSetupError = !!error && !!errorCategory && !['provider', 'other'].includes(errorCategory);
-  const headerStatus = running
-    ? status?.text ?? m.agentPanel.chatWorking
-    : contextLimitRecovery
-      ? contextRecoveryTitle
-      : currentRunState === 'cancelled'
-              ? m.agentPanel.stopMidAnalyzeHeader
-              : currentRunState === 'failed' && !durableReceiptCounts
-                ? m.agentPanel.workbench.analysisBlockedTitle
-                : currentRunState === 'analysis_blocked'
-                  ? m.agentPanel.workbench.analysisBlockedTitle
-                : currentRunState === 'completed' && !organize.organizeJob?.apply
-                  ? m.agentPanel.completedNoChangesHeader
-                  : organize.preflight?.status === 'requesting'
-            ? m.agentPanel.resolvingScopeHeader
-            : organize.preflight?.status === 'starting'
-              ? m.agentPanel.workbench.startingAnalysis
-            : organize.preflight?.status === 'no_work' && !organize.snapshot
-              ? m.agentPanel.nothingToAnalyzeHeader
-              : organize.preflight?.status === 'ready' && !organize.snapshot
-                ? m.agentPanel.confirmScopeHeader
-                  : applying
-                  ? m.agentPanel.applyingHeader(Math.min(applyDone, applySelectedTotal), applySelectedTotal)
-                  : currentRunState === 'budget_exhausted' && !automaticContinuation
-                    ? m.agentPanel.workbench.analysisBlockedTitle
-                    : currentRunState === 'review' && organize.proposal && !analysisCoverageComplete
-                      ? m.agentPanel.workbench.analysisBlockedTitle
-                    : currentRunState === 'review' && organize.proposal && analysisCoverageComplete
-                      ? (running
-                        ? m.agentPanel.needsReviewFollowUp
-                        : m.agentPanel.needsReviewSelected(selectedCount))
-                      : analyzing && total > 0
-                        ? m.agentPanel.analyzingHeader(displayedProcessed, total)
-                        : receiptCounts
-                          ? (
-                            receiptCounts.failed > 0 || receiptCounts.skipped > 0
-                              ? m.agentPanel.partialReceiptHeader
-                              : m.agentPanel.appliedTagChanges(receiptCounts.changed)
-                          )
-                          : showHandoff
-                            ? m.agentPanel.handoffHeader
-                            : currentRunState
-                              ? m.agentPanel.runStateLabel(currentRunState)
-                              : error
-                                ? (isProviderSetupError ? m.agentPanel.providerAuthHeader : m.agentPanel.turnFailed)
-                                : lastTurnResult?.changed
-                                  ? m.agentPanel.agentChanged(lastTurnResult.changedCount)
-                                  : status?.kind === 'stopped'
-                                    ? status.text
-                                    : null;
+  const headerStatus = (() => {
+    if (running) return status?.text ?? m.agentPanel.chatWorking;
+    if (contextLimitRecovery) return contextRecoveryTitle;
+    if (automaticContinuation) return m.agentPanel.analyzingHeader(displayedProcessed, total);
+    if (currentRunState === 'cancelled') return m.agentPanel.stopMidAnalyzeHeader;
+    if (currentRunState === 'failed' && !durableReceiptCounts) {
+      return m.agentPanel.workbench.analysisBlockedTitle;
+    }
+    if (currentRunState === 'analysis_blocked') return m.agentPanel.workbench.analysisBlockedTitle;
+    if (currentRunState === 'completed' && !organize.organizeJob?.apply) {
+      return m.agentPanel.completedNoChangesHeader;
+    }
+    if (organize.preflight?.status === 'requesting') return m.agentPanel.resolvingScopeHeader;
+    if (organize.preflight?.status === 'starting') return m.agentPanel.workbench.startingAnalysis;
+    if (organize.preflight?.status === 'no_work' && !organize.snapshot) {
+      return m.agentPanel.nothingToAnalyzeHeader;
+    }
+    if (organize.preflight?.status === 'ready' && !organize.snapshot) {
+      return m.agentPanel.confirmScopeHeader;
+    }
+    if (applying) {
+      return m.agentPanel.applyingHeader(Math.min(applyDone, applySelectedTotal), applySelectedTotal);
+    }
+    if (currentRunState === 'budget_exhausted' && !automaticContinuation) {
+      return m.agentPanel.workbench.analysisBlockedTitle;
+    }
+    if (currentRunState === 'review' && organize.proposal && !analysisCoverageComplete) {
+      return m.agentPanel.workbench.analysisBlockedTitle;
+    }
+    if (currentRunState === 'review' && organize.proposal && analysisCoverageComplete) {
+      return m.agentPanel.needsReviewSelected(selectedCount);
+    }
+    if (analyzing && total > 0) return m.agentPanel.analyzingHeader(displayedProcessed, total);
+    if (receiptCounts) {
+      return receiptCounts.failed > 0 || receiptCounts.skipped > 0
+        ? m.agentPanel.partialReceiptHeader
+        : m.agentPanel.appliedTagChanges(receiptCounts.changed);
+    }
+    if (showHandoff) return m.agentPanel.handoffHeader;
+    if (currentRunState) return m.agentPanel.runStateLabel(currentRunState);
+    if (error) return isProviderSetupError ? m.agentPanel.providerAuthHeader : m.agentPanel.turnFailed;
+    if (lastTurnResult?.changed) return m.agentPanel.agentChanged(lastTurnResult.changedCount);
+    if (status?.kind === 'stopped') return status.text;
+    return null;
+  })();
   const composerNote = contextLimitRecovery
     ? m.agentPanel.composerPausedContextRecovery
     : unsafeReplayBlocked
@@ -1040,7 +1036,7 @@ function OrganizeJobRunWorkbench({
     workbench.requestOrganizeReceiptPage(0, showChangedOrFailed ? 'changed_or_failed' : 'all');
   }, [durableReceipt?.applyId, showChangedOrFailed, workbench.requestOrganizeReceiptPage]);
 
-  const processed = state.organizeJob?.coverage.analyzed ?? analyzedRepositoryCount(state);
+  const processed = analyzedRepositoryCount(state);
   const total = state.organizeJob?.scopeCount ?? snapshot?.frozenScope.count ?? preflight?.count ?? 0;
   const automaticContinuation = state.continuationPending;
   const currentRunState = currentOrganizeJobState(snapshot, state.organizeJob);

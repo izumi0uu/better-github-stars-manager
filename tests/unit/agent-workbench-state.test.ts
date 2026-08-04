@@ -338,6 +338,143 @@ describe('Agent workbench durable organize-job reducer', () => {
     expect(accepted.continuationPending).toBe(false);
   });
 
+  it('rewinds visible progress while a failed suffix is retried', () => {
+    const continuationCursor = parseContinuationCursorToken('cursor:v1:failed-suffix-retry');
+    const parentCoverage = {
+      total: 3,
+      analyzed: 3,
+      actionable: 0,
+      unchanged: 2,
+      insufficientEvidence: 0,
+      missing: 0,
+      tombstoned: 0,
+      analysisFailed: 1,
+    };
+    const parent: OrganizeJobRunSnapshot = {
+      ...baseSnapshot(),
+      state: 'analysis_blocked',
+      terminalReason: 'analysis_failed',
+      coverage: parentCoverage,
+      continuationCursor,
+    };
+    let state = deliverJob(withSnapshot(parent), {
+      ...presentation(),
+      status: 'analysis_blocked',
+      coverage: parentCoverage,
+    });
+
+    state = reduceAgentWorkbench(state, { type: 'continue_requested' });
+    expect(state.retryingFailedSuffix).toBe(true);
+    expect(displayedAnalyzedRepositoryCount(state)).toBe(2);
+
+    const childRunId = parseRunId('run:v1:failed-suffix-retry-child');
+    const childCoverage = {
+      ...parentCoverage,
+      analyzed: 2,
+      analysisFailed: 0,
+    };
+    state = deliverJob(state, {
+      ...presentation(),
+      runId: childRunId,
+      generation: 2,
+      revision: 8,
+      status: 'analyzing',
+      coverage: childCoverage,
+    });
+    const child: OrganizeJobRunSnapshot = {
+      ...parent,
+      runId: childRunId,
+      generation: 2,
+      state: 'analyzing',
+      terminalReason: null,
+      usage: createEmptyRunBudgetUsage(),
+      coverage: childCoverage,
+      continuationCursor: null,
+    };
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: { type: 'bgsmOrganizeJobRunSnapshot', snapshot: child },
+    });
+    expect(displayedAnalyzedRepositoryCount(state)).toBe(2);
+
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobAnalysisProgress',
+        controllerId,
+        sessionId,
+        runId: childRunId,
+        generation: 2,
+        processed: 3,
+        total: 3,
+      },
+    });
+    expect(displayedAnalyzedRepositoryCount(state)).toBe(3);
+
+    state = deliverJob(state, {
+      ...presentation(),
+      runId: childRunId,
+      generation: 2,
+      revision: 9,
+    });
+    expect(state.retryingFailedSuffix).toBe(false);
+  });
+
+  it('surfaces a failed manual continuation instead of treating it as automatic recovery', () => {
+    const continuationCursor = parseContinuationCursorToken('cursor:v1:manual-retry-error');
+    const parent: OrganizeJobRunSnapshot = {
+      ...baseSnapshot(),
+      state: 'analysis_blocked',
+      terminalReason: 'analysis_failed',
+      coverage: {
+        total: 3,
+        analyzed: 3,
+        actionable: 0,
+        unchanged: 2,
+        insufficientEvidence: 0,
+        missing: 0,
+        tombstoned: 0,
+        analysisFailed: 1,
+      },
+      continuationCursor,
+    };
+    let state = deliverJob(withSnapshot(parent), {
+      ...presentation(),
+      status: 'analysis_blocked',
+      coverage: parent.coverage!,
+    });
+    state = reduceAgentWorkbench(state, { type: 'continue_requested' });
+
+    const childRunId = parseRunId('run:v1:manual-retry-error-child');
+    state = deliverJob(state, {
+      ...presentation(),
+      runId: childRunId,
+      generation: 2,
+      revision: 8,
+      status: 'analyzing',
+      coverage: {
+        ...parent.coverage!,
+        analyzed: 2,
+        analysisFailed: 0,
+      },
+    });
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunError',
+        controllerId,
+        sessionId,
+        runId: childRunId,
+        generation: 2,
+        reason: 'internal_error',
+        message: 'Manual retry could not start.',
+      },
+    });
+
+    expect(state.error).toBe('Manual retry could not start.');
+    expect(state.continuationPending).toBe(false);
+  });
+
   it('keeps streamed repository progress monotonic and separate from durable coverage', () => {
     let state = withSnapshot(baseSnapshot());
     const progress = (processed: number, overrides: Record<string, unknown> = {}) => ({
@@ -385,6 +522,40 @@ describe('Agent workbench durable organize-job reducer', () => {
     });
     expect(reconnected.analysisProgress).toBeNull();
     expect(displayedAnalyzedRepositoryCount(reconnected)).toBe(0);
+  });
+
+  it('keeps visible progress monotonic across a same-job authoritative restore', () => {
+    let state = deliverJob(withSnapshot(baseSnapshot()), {
+      ...presentation(),
+      status: 'analyzing',
+      coverage: {
+        ...presentation().coverage,
+        analyzed: 2,
+        actionable: 1,
+        unchanged: 1,
+      },
+    });
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobAnalysisProgress',
+        controllerId,
+        sessionId,
+        runId,
+        generation: 1,
+        processed: 3,
+        total: 3,
+      },
+    });
+    expect(displayedAnalyzedRepositoryCount(state)).toBe(3);
+
+    const restored = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      authoritative: true,
+      message: { type: 'bgsmOrganizeJobRunSnapshot', snapshot: baseSnapshot() },
+    });
+
+    expect(displayedAnalyzedRepositoryCount(restored)).toBe(3);
   });
 
   it('accepts a newer authoritative durable generation after reconnect', () => {
@@ -504,8 +675,7 @@ describe('Agent workbench durable organize-job reducer', () => {
         message: 'Child generation failed before publishing its snapshot.',
       },
     });
-    expect(childError.error).toBe('Child generation failed before publishing its snapshot.');
-    expect(childError.continuationPending).toBe(false);
+    expect(childError).toBe(state);
 
     const staleParent = deliverJob(state, {
       ...parentJob,
@@ -587,6 +757,67 @@ describe('Agent workbench durable organize-job reducer', () => {
     });
     expect(state.continuationPending).toBe(false);
     expect(state.error).toBe('Automatic continuation could not start.');
+  });
+
+  it('keeps showing progress while a durable automatic continuation is recoverable', () => {
+    const parent = {
+      ...baseSnapshot(),
+      usage: {
+        ...baseSnapshot().usage,
+        firstAnalyzerRequestAt: 1,
+        consumedFrozenPositions: 100,
+        analyzerBatches: 4,
+        providerAttempts: 4,
+        requestedOutputTokens: 4_096,
+      },
+    };
+    let state = deliverJob(withSnapshot(parent), {
+      ...presentation(),
+      status: 'analyzing',
+      coverage: {
+        ...presentation().coverage,
+        analyzed: 100,
+        unchanged: 100,
+      },
+    });
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunEvent',
+        event: {
+          type: 'budget_exhausted',
+          controllerId,
+          sessionId,
+          runId,
+          generation: 1,
+          eventId: 'event-durable-auto-continuation',
+          state: 'budget_exhausted',
+          reason: 'requested_output_tokens',
+          budget: parent.budget,
+          usage: parent.usage,
+          continuationCursor: parseContinuationCursorToken('cursor:v1:durable-auto-retry'),
+        },
+      },
+    });
+    expect(state.continuationPending).toBe(true);
+
+    const transientError = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunError',
+        controllerId,
+        sessionId,
+        runId,
+        generation: 1,
+        reason: 'internal_error',
+        message: 'Organize continuation generation must advance exactly once from its parent.',
+      },
+    });
+
+    expect(transientError).toBe(state);
+    expect(transientError.error).toBeNull();
+    expect(transientError.continuationPending).toBe(true);
+    expect(transientError.snapshot?.state).toBe('budget_exhausted');
   });
 
   it('drops an active durable presentation when its matching run is cancelled', () => {

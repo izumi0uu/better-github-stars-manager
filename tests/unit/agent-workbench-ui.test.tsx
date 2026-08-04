@@ -734,6 +734,124 @@ describe('Agent organize-job workbench UI', () => {
     });
   });
 
+  it('restarts visible progress from durable coverage when retrying a failed suffix', async () => {
+    const container = await mountHarness();
+    const request = await requestOrganizePreflight(container);
+    const total = 319;
+    const retryFrom = 300;
+    const continuationCursor = parseContinuationCursorToken('cursor:v1:failed-suffix-progress');
+    const parentBase = analysisSnapshot(
+      request.controllerId,
+      request.sessionId,
+      'analysis_blocked',
+      total,
+    );
+    const parentCoverage: OrganizeJobRunCoverageSummary = {
+      total,
+      analyzed: total,
+      actionable: 0,
+      unchanged: retryFrom,
+      insufficientEvidence: 0,
+      missing: 0,
+      tombstoned: 0,
+      analysisFailed: total - retryFrom,
+    };
+    const parent: OrganizeJobRunSnapshot = {
+      ...parentBase,
+      terminalReason: 'analysis_failed',
+      coverage: parentCoverage,
+      continuationCursor,
+    };
+    const parentPresentation = presentationFor(parent, {
+      jobId: 'organize-job:v1:failed-suffix-progress',
+      revision: 20,
+      status: 'analysis_blocked',
+      coverage: parentCoverage,
+    });
+    await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: parent });
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: parent.controllerId,
+      sessionId: parent.sessionId,
+      runId: parent.runId,
+      generation: parent.generation,
+      presentation: parentPresentation,
+    });
+    await click(buttonWithText(container, 'Continue remaining'));
+    expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent)
+      .toBe('Analyzing · 300/319');
+    expect(container.textContent).not.toContain('Analysis paused before completion');
+
+    const childRunId = parseRunId('run:v1:failed-suffix-progress-child');
+    const childCoverage: OrganizeJobRunCoverageSummary = {
+      ...parentCoverage,
+      analyzed: retryFrom,
+      analysisFailed: 0,
+    };
+    const child: OrganizeJobRunSnapshot = {
+      ...parent,
+      runId: childRunId,
+      generation: parent.generation + 1,
+      state: 'analyzing',
+      terminalReason: null,
+      usage: createEmptyRunBudgetUsage(),
+      coverage: childCoverage,
+      continuationCursor: null,
+    };
+    const childPresentation = presentationFor(child, {
+      jobId: parentPresentation.jobId,
+      revision: parentPresentation.revision + 1,
+      status: 'analyzing',
+      coverage: childCoverage,
+    });
+
+    // Durable continuation initialization is published before the child snapshot.
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: child.controllerId,
+      sessionId: child.sessionId,
+      runId: child.runId,
+      generation: child.generation,
+      presentation: childPresentation,
+    });
+    await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: child });
+    expectVisibleProgress(container, retryFrom, total);
+
+    await emitMessage({
+      type: 'bgsmOrganizeJobAnalysisProgress',
+      controllerId: child.controllerId,
+      sessionId: child.sessionId,
+      runId: child.runId,
+      generation: child.generation,
+      processed: retryFrom + 1,
+      total,
+    });
+    expectVisibleProgress(container, retryFrom + 1, total);
+
+    const reviewPresentation = presentationFor(child, {
+      jobId: parentPresentation.jobId,
+      revision: childPresentation.revision + 1,
+      status: 'review',
+      coverage: {
+        ...childCoverage,
+        analyzed: total,
+        unchanged: total,
+      },
+    });
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: child.controllerId,
+      sessionId: child.sessionId,
+      runId: child.runId,
+      generation: child.generation,
+      presentation: reviewPresentation,
+    });
+
+    expect(currentPhase(container)).toBeUndefined();
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+    expect(container.textContent).not.toContain('Analyzing ·');
+  });
+
   it('waits for the durable blocked generation snapshot before exposing Continue', async () => {
     const container = await mountHarness();
     const request = await requestOrganizePreflight(container);

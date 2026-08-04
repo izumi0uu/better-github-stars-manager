@@ -16,7 +16,10 @@ import {
   type OrganizeJobRunEvent,
 } from '@/bgsm-agent';
 import { createFrozenScope } from '@/bgsm-agent/scope';
-import { createProductionRunBudget } from '@/bgsm-agent/policy';
+import {
+  createEmptyRunBudgetUsage,
+  createProductionRunBudget,
+} from '@/bgsm-agent/policy';
 import { restoreOrganizeJobRunAnalysisState } from '@/bgsm-agent/organize-job';
 import {
   createBgsmAgentController,
@@ -156,6 +159,55 @@ describe('Cubby background controller', () => {
       () => incrementRunGeneration(Number.MAX_SAFE_INTEGER),
       /cannot be incremented safely/u,
     );
+  });
+
+  it('advances a continuation exactly once from its durable parent after an older job', () => {
+    const controller = createBgsmAgentController({
+      resolveCandidate: async () => candidate,
+      randomId: () => 'next-continuation',
+    });
+    const identity = { controllerId, sessionId: 'durable-generation-reset' } as const;
+    const frozenScope = createFrozenScope({
+      kind: 'all_live_stars',
+      label: candidate.label,
+      filterSnapshot: candidate.filterSnapshot,
+      repositoryIds: candidate.repositoryIds,
+      capturedAt: 1,
+      fingerprint: parseScopeFingerprintV1(`fs:v1:${'C'.repeat(43)}`),
+    });
+    const restore = (job: string, run: string, generation: number) => {
+      const runId = parseRunId(`run:v1:${run}`);
+      const state = restoreOrganizeJobRunAnalysisState({
+        runId,
+        generation,
+        proposalId: parseProposalId(`proposal:v1:${job}`),
+        frozenScope,
+        budget: createProductionRunBudget(),
+        usage: createEmptyRunBudgetUsage(),
+        nextFrozenIndex: 0,
+        status: 'analyzing',
+        analyzedFrozenPositions: [],
+        nonActionableAnalysisOutcomes: [],
+        actionableProposalRows: [],
+      });
+      return controller.restoreAnalysisRun({
+        jobId: parseOrganizeJobId(`organize-job:v1:${job}`),
+        identity: { ...identity, runId, generation },
+        state,
+        taskInstruction: 'Organize all tags.',
+      });
+    };
+
+    const previous = restore('previous', 'previous', 5);
+    controller.stopRun(previous);
+    const parent = restore('current', 'current', 1);
+    assert.equal(controller.findLatestSnapshot(identity)?.runId, parent.runId);
+    const continuationCursor = parseContinuationCursorToken('cursor:v1:current-next');
+    controller.exhaustBudget(parent, parent.usage, 'analyzer_batches', continuationCursor);
+
+    const child = controller.continueRun(parent, 0, continuationCursor);
+
+    assert.equal(child.generation, 2);
   });
 
   it('namespaces event IDs by controller epoch while preserving local order', async () => {
