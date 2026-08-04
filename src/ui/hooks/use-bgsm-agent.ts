@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   startBgsmAgentTurn,
   type BgsmAgentTurnAck,
@@ -17,6 +17,20 @@ import type { BgsmAgentConversationBinding } from '@/bgsm-agent/conversation-bin
 import { useI18n } from '@/i18n';
 import type { AgentErrorCategory } from '@/agent-harness';
 import { getBgsmAgentToolDefinition } from '@/bgsm-agent/tool-catalog';
+import {
+  createAgentTurnState,
+  reduceAgentTurn,
+  type BgsmAgentActionableContextFailureReason,
+  type BgsmAgentStatus,
+  type BgsmAgentToolActivity,
+  type AgentTurnAction,
+} from '@/ui/agent-turn-state';
+
+export type {
+  BgsmAgentContextLimitRecovery,
+  BgsmAgentStatus,
+  BgsmAgentToolActivity,
+} from '@/ui/agent-turn-state';
 
 export type BgsmAgentChatMessage = {
   id: string;
@@ -34,31 +48,7 @@ export type BgsmAgentSessionSummary = Readonly<{
   updatedAt: number;
 }>;
 
-export type BgsmAgentStatus = {
-  kind: 'idle' | 'queued' | 'working' | 'compacting' | 'tool' | 'done' | 'stopped' | 'error';
-  text: string;
-};
-
-export type BgsmAgentToolActivity = {
-  callId: string;
-  toolName: string;
-  state: 'queued' | 'running' | 'completed' | 'failed';
-};
-
-type BgsmAgentActionableContextFailureReason =
-  | 'capability_unresolved'
-  | 'current_turn_too_large'
-  | 'tool_result_memory_limit'
-  | 'provider_context_overflow_repeated'
-  | 'provider_request_byte_limit_repeated';
-
-export type BgsmAgentContextLimitRecovery = {
-  prompt: string;
-  reason: BgsmAgentActionableContextFailureReason;
-};
-
 type PendingCompactionUi = {
-  previousStatus: BgsmAgentStatus | null;
   timer: ReturnType<typeof setTimeout> | null;
   visible: boolean;
 };
@@ -77,6 +67,7 @@ type PendingTurn = {
   streamContent: string;
   streamFlushScheduled: boolean;
   writeOutcomes: Map<string, 'in_flight' | 'committed' | 'failed' | 'unknown'>;
+  stopRequested: boolean;
   stopFallbackTimer: ReturnType<typeof setTimeout> | null;
   stop: (options?: Readonly<{ detach?: boolean }>) => void;
   acknowledge: (ack: BgsmAgentTurnAck) => void;
@@ -136,27 +127,38 @@ export function useBgsmAgent(
     [...sessionStore.records.values()].map((record) => record.summary)
   ));
   const [messages, setMessages] = useState<BgsmAgentChatMessage[]>(initialRecord.messages);
-  const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState<BgsmAgentStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [errorCategory, setErrorCategory] = useState<AgentErrorCategory | null>(null);
-  const [lastTurnResult, setLastTurnResult] = useState<BgsmAgentTurnResult | null>(null);
-  const [contextLimitRecovery, setContextLimitRecovery] = useState<BgsmAgentContextLimitRecovery | null>(null);
-  const [draftRecovery, setDraftRecovery] = useState<string | null>(null);
-  const [canRetryLastTurn, setCanRetryLastTurn] = useState(true);
-  const [toolActivities, setToolActivities] = useState<BgsmAgentToolActivity[]>([]);
+  const [turnState, dispatchTurn] = useReducer(
+    reduceAgentTurn,
+    undefined,
+    createAgentTurnState,
+  );
+  const {
+    running,
+    status,
+    error,
+    errorCategory,
+    lastTurnResult,
+    contextLimitRecovery,
+    draftRecovery,
+    canRetryLastTurn,
+    toolActivities,
+  } = turnState;
   const [conversationBinding, setConversationBinding] = useState<BgsmAgentConversationBinding | null>(
     initialRecord.conversationBinding,
   );
   const sessionRef = useRef<BgsmAgentSession>(initialRecord.session);
   const messagesRef = useRef(messages);
   const conversationBindingRef = useRef(conversationBinding);
-  const runningRef = useRef(false);
-  const statusRef = useRef<BgsmAgentStatus | null>(null);
-  const turnHadErrorRef = useRef(false);
+  const turnStateRef = useRef(turnState);
+  turnStateRef.current = turnState;
   const pendingTurnRef = useRef<PendingTurn | null>(null);
   const turnSequenceRef = useRef(0);
   const sessionId = activeSessionId;
+
+  const dispatchTurnTracked = useCallback((action: AgentTurnAction) => {
+    turnStateRef.current = reduceAgentTurn(turnStateRef.current, action);
+    dispatchTurn(action);
+  }, []);
 
   const publishSessionList = useCallback(() => {
     const store = sessionStoreRef.current;
@@ -182,9 +184,8 @@ export function useBgsmAgent(
   }, []);
 
   const setAgentStatus = useCallback((next: BgsmAgentStatus | null) => {
-    statusRef.current = next;
-    setStatus(next);
-  }, []);
+    dispatchTurnTracked({ type: 'status_changed', status: next });
+  }, [dispatchTurnTracked]);
 
   const clearCompactionUi = useCallback((pending: PendingTurn) => {
     const compaction = pending.compactionUi;
@@ -196,32 +197,32 @@ export function useBgsmAgent(
   const startCompactionUi = useCallback((pending: PendingTurn) => {
     if (pending.compactionUi) return;
     const compaction: PendingCompactionUi = {
-      previousStatus: statusRef.current,
       timer: null,
       visible: false,
     };
     pending.compactionUi = compaction;
+    dispatchTurnTracked({ type: 'compaction_started' });
     compaction.timer = setTimeout(() => {
       if (pendingTurnRef.current !== pending || pending.compactionUi !== compaction) return;
       compaction.timer = null;
       compaction.visible = true;
-      setAgentStatus({ kind: 'compacting', text: m.agentPanel.agentCompacting });
+      dispatchTurnTracked({
+        type: 'compaction_shown',
+        status: { kind: 'compacting', text: m.agentPanel.agentCompacting },
+      });
     }, 300);
-  }, [m.agentPanel.agentCompacting, setAgentStatus]);
+  }, [dispatchTurnTracked, m.agentPanel.agentCompacting]);
 
   const finishCompactionUi = useCallback((pending: PendingTurn) => {
     const compaction = pending.compactionUi;
     clearCompactionUi(pending);
-    if (!compaction?.visible || pendingTurnRef.current !== pending) return;
-    setAgentStatus(compaction.previousStatus ?? {
-      kind: 'working',
-      text: m.agentPanel.agentThinking,
+    if (!compaction || pendingTurnRef.current !== pending) return;
+    dispatchTurnTracked({
+      type: 'compaction_finished',
+      restore: compaction.visible,
+      fallbackStatus: { kind: 'working', text: m.agentPanel.agentThinking },
     });
-  }, [clearCompactionUi, m.agentPanel.agentThinking, setAgentStatus]);
-
-  useEffect(() => {
-    runningRef.current = running;
-  }, [running]);
+  }, [clearCompactionUi, dispatchTurnTracked, m.agentPanel.agentThinking]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -240,7 +241,6 @@ export function useBgsmAgent(
   useEffect(() => () => {
     const pending = pendingTurnRef.current;
     pendingTurnRef.current = null;
-    runningRef.current = false;
     if (pending) {
       clearCompactionUi(pending);
       if (pending.stopFallbackTimer !== null) clearTimeout(pending.stopFallbackTimer);
@@ -289,6 +289,10 @@ export function useBgsmAgent(
       pending.optimisticMessageId,
       ...pending.transientMessageIds,
     ]);
+    pending.streamMessageId = null;
+    pending.streamStep = null;
+    pending.streamContent = '';
+    pending.streamFlushScheduled = false;
     setMessages((current) => current.filter((message) => !rollbackIds.has(message.id)));
   }, []);
 
@@ -308,6 +312,25 @@ export function useBgsmAgent(
       ...committed,
     ]);
   }, []);
+
+  const failPendingTurn = useCallback((
+    pending: PendingTurn,
+    message: string,
+    category: AgentErrorCategory,
+    result: BgsmAgentTurnResult | null = null,
+  ) => {
+    rollbackPendingMessages(pending);
+    dispatchTurnTracked({
+      type: 'turn_failed',
+      result,
+      message,
+      category,
+      status: { kind: 'error', text: message },
+      prompt: pending.prompt,
+      canRetry: canReplayPendingTurn(pending),
+    });
+    appendAssistantError(message, pending);
+  }, [appendAssistantError, dispatchTurnTracked, rollbackPendingMessages]);
 
   const appendStreamDelta = useCallback((
     pending: PendingTurn,
@@ -365,24 +388,12 @@ export function useBgsmAgent(
   }, []);
 
   const updateToolActivity = useCallback((activity: BgsmAgentToolActivity) => {
-    setToolActivities((current) => {
-      const index = current.findIndex((item) => item.callId === activity.callId);
-      if (index === -1) return [...current, activity];
-      return current.map((item, itemIndex) => itemIndex === index ? activity : item);
-    });
-  }, []);
+    dispatchTurnTracked({ type: 'tool_activity_updated', activity });
+  }, [dispatchTurnTracked]);
 
   const removeToolActivity = useCallback((callId: string) => {
-    setToolActivities((current) => current.filter((activity) => activity.callId !== callId));
-  }, []);
-
-  const failOpenToolActivities = useCallback(() => {
-    setToolActivities((current) => current.map((activity) => (
-      activity.state === 'queued' || activity.state === 'running'
-        ? { ...activity, state: 'failed' }
-        : activity
-    )));
-  }, []);
+    dispatchTurnTracked({ type: 'tool_activity_removed', callId });
+  }, [dispatchTurnTracked]);
 
   const isCurrentDelivery = useCallback((
     pending: PendingTurn,
@@ -405,22 +416,32 @@ export function useBgsmAgent(
       pending.stopFallbackTimer = null;
     }
     pendingTurnRef.current = null;
-    runningRef.current = false;
-    setRunning(false);
-    if (result) {
-      setLastTurnResult(result);
-      if (result.reason === 'aborted') {
-        setAgentStatus({ kind: 'stopped', text: m.agentPanel.agentStopped });
-      } else if (!turnHadErrorRef.current && result.reason === 'final_answer') {
-        setAgentStatus({ kind: 'done', text: m.agentPanel.agentDone });
+    if (turnStateRef.current.running) {
+      if (result) {
+        dispatchTurnTracked({
+          type: 'turn_finished',
+          result,
+          prompt: pending.prompt,
+          canRetry: canReplayPendingTurn(pending),
+          doneStatus: { kind: 'done', text: m.agentPanel.agentDone },
+          stoppedStatus: { kind: 'stopped', text: m.agentPanel.agentStopped },
+          failureStatus: { kind: 'error', text: m.agentPanel.turnFailed },
+          failureMessage: m.agentPanel.turnFailed,
+          failureCategory: result.reason === 'provider_error' || result.reason === 'context_limit'
+            ? 'provider'
+            : 'other',
+        });
+      } else {
+        dispatchTurnTracked({ type: 'turn_detached' });
       }
-      if (result.changed) onDataChanged?.();
     }
+    if (result?.changed) onDataChanged?.();
     pending.resolve(result);
-  }, [clearCompactionUi, m.agentPanel.agentDone, m.agentPanel.agentStopped, onDataChanged, setAgentStatus]);
+  }, [clearCompactionUi, dispatchTurnTracked, m.agentPanel, onDataChanged]);
 
   const handleEvent = useCallback((event: BgsmAgentTurnEvent, pending: PendingTurn) => {
     if (!isCurrentDelivery(pending, event)) return;
+    if (pending.stopRequested && event.type !== 'agent_done') return;
     if (!['context_compaction_start', 'context_compaction_end', 'context_diagnostic'].includes(event.type)) {
       finishCompactionUi(pending);
     }
@@ -499,19 +520,21 @@ export function useBgsmAgent(
         setAgentStatus({ kind: 'working', text: m.agentPanel.agentThinking });
         break;
       case 'agent_error':
-        turnHadErrorRef.current = true;
-        failOpenToolActivities();
-        setErrorCategory(event.category ?? 'other');
-        setError(event.message);
-        setAgentStatus({ kind: 'error', text: event.message });
+        dispatchTurnTracked({
+          type: 'error_observed',
+          message: event.message,
+          category: event.category ?? 'other',
+          status: { kind: 'error', text: event.message },
+        });
         appendAssistantError(event.message, pending);
         break;
       case 'approval_required':
-        turnHadErrorRef.current = true;
-        failOpenToolActivities();
-        setErrorCategory('other');
-        setError(event.summary);
-        setAgentStatus({ kind: 'error', text: event.summary });
+        dispatchTurnTracked({
+          type: 'error_observed',
+          message: event.summary,
+          category: 'other',
+          status: { kind: 'error', text: event.summary },
+        });
         appendAssistantError(event.summary, pending);
         break;
       case 'context_compaction_start':
@@ -525,13 +548,14 @@ export function useBgsmAgent(
         break;
       case 'agent_done':
         if (event.reason === 'aborted') {
+          pending.stopRequested = true;
           rollbackPendingMessages(pending);
-          failOpenToolActivities();
-          setDraftRecovery(pending.prompt);
-          setCanRetryLastTurn(canReplayPendingTurn(pending));
-          setAgentStatus({ kind: 'stopped', text: m.agentPanel.agentStopped });
-        } else if (!turnHadErrorRef.current) {
-          setAgentStatus({ kind: 'done', text: m.agentPanel.agentDone });
+          dispatchTurnTracked({
+            type: 'stop_requested',
+            prompt: pending.prompt,
+            canRetry: canReplayPendingTurn(pending),
+            status: { kind: 'stopped', text: m.agentPanel.agentStopped },
+          });
         }
         break;
     }
@@ -540,7 +564,7 @@ export function useBgsmAgent(
     appendAssistantError,
     appendStreamDelta,
     clearCurrentStreamMessage,
-    failOpenToolActivities,
+    dispatchTurnTracked,
     finishCompactionUi,
     isCurrentDelivery,
     m.agentPanel,
@@ -553,20 +577,11 @@ export function useBgsmAgent(
   ]);
 
   const clearSessionUi = useCallback(() => {
-    turnHadErrorRef.current = false;
-    setRunning(false);
-    setAgentStatus(null);
-    setError(null);
-    setErrorCategory(null);
-    setLastTurnResult(null);
-    setContextLimitRecovery(null);
-    setDraftRecovery(null);
-    setCanRetryLastTurn(true);
-    setToolActivities([]);
-  }, [setAgentStatus]);
+    dispatchTurnTracked({ type: 'session_cleared' });
+  }, [dispatchTurnTracked]);
 
   const createSession = useCallback(() => {
-    if (runningRef.current) return null;
+    if (pendingTurnRef.current) return null;
     const store = sessionStoreRef.current;
     if (!store) return null;
     syncActiveSessionRecord();
@@ -597,7 +612,7 @@ export function useBgsmAgent(
   }, [clearSessionUi, publishSessionList, syncActiveSessionRecord]);
 
   const switchSession = useCallback((nextSessionId: string) => {
-    if (runningRef.current) return false;
+    if (pendingTurnRef.current) return false;
     const store = sessionStoreRef.current;
     if (!store || store.activeSessionId === nextSessionId) return false;
     const target = store.records.get(nextSessionId);
@@ -615,7 +630,7 @@ export function useBgsmAgent(
   }, [clearSessionUi, syncActiveSessionRecord]);
 
   const deleteSession = useCallback((sessionIdToDelete: string) => {
-    if (runningRef.current) return false;
+    if (pendingTurnRef.current) return false;
     const store = sessionStoreRef.current;
     if (!store || store.records.size <= 1 || !store.records.has(sessionIdToDelete)) return false;
     syncActiveSessionRecord();
@@ -648,7 +663,6 @@ export function useBgsmAgent(
       if (pending.stopFallbackTimer !== null) clearTimeout(pending.stopFallbackTimer);
     }
     pendingTurnRef.current = null;
-    runningRef.current = false;
     pending?.resolve(null);
     pending?.stop({ detach: true });
     createSession();
@@ -656,14 +670,17 @@ export function useBgsmAgent(
 
   const stopTurn = useCallback(() => {
     const pending = pendingTurnRef.current;
-    if (!pending) return;
+    if (!pending || pending.stopRequested) return;
+    pending.stopRequested = true;
     clearCompactionUi(pending);
     pending.stop();
     rollbackPendingMessages(pending);
-    failOpenToolActivities();
-    setDraftRecovery(pending.prompt);
-    setCanRetryLastTurn(canReplayPendingTurn(pending));
-    setAgentStatus({ kind: 'stopped', text: m.agentPanel.agentStopped });
+    dispatchTurnTracked({
+      type: 'stop_requested',
+      prompt: pending.prompt,
+      canRetry: canReplayPendingTurn(pending),
+      status: { kind: 'stopped', text: m.agentPanel.agentStopped },
+    });
     if (pending.stopFallbackTimer === null) {
       pending.stopFallbackTimer = setTimeout(() => {
         if (pendingTurnRef.current !== pending) return;
@@ -673,21 +690,19 @@ export function useBgsmAgent(
     }
   }, [
     clearCompactionUi,
-    failOpenToolActivities,
+    dispatchTurnTracked,
     finishTurn,
     m.agentPanel.agentStopped,
     rollbackPendingMessages,
-    setAgentStatus,
   ]);
 
   const editContextLimitedPrompt = useCallback(() => {
-    setContextLimitRecovery(null);
-    setAgentStatus(null);
-  }, [setAgentStatus]);
+    dispatchTurnTracked({ type: 'context_recovery_dismissed' });
+  }, [dispatchTurnTracked]);
 
   const startTurn = useCallback((prompt: string): Promise<BgsmAgentTurnResult | null> => {
     const clean = prompt.trim();
-    if (!clean || runningRef.current) return Promise.resolve(null);
+    if (!clean || pendingTurnRef.current) return Promise.resolve(null);
     const session = sessionRef.current;
     if (!session) return Promise.resolve(null);
 
@@ -706,17 +721,10 @@ export function useBgsmAgent(
       publishSessionList();
     }
 
-    runningRef.current = true;
-    turnHadErrorRef.current = false;
-    setRunning(true);
-    setError(null);
-    setLastTurnResult(null);
-    setErrorCategory(null);
-    setContextLimitRecovery(null);
-    setDraftRecovery(null);
-    setCanRetryLastTurn(true);
-    setToolActivities([]);
-    setAgentStatus({ kind: 'queued', text: m.agentPanel.agentQueued });
+    dispatchTurnTracked({
+      type: 'turn_started',
+      status: { kind: 'queued', text: m.agentPanel.agentQueued },
+    });
     setMessages((current) => [
       ...current,
       {
@@ -742,6 +750,7 @@ export function useBgsmAgent(
         streamContent: '',
         streamFlushScheduled: false,
         writeOutcomes: new Map(),
+        stopRequested: false,
         stopFallbackTimer: null,
         compactionUi: null,
         stop: () => {},
@@ -763,15 +772,7 @@ export function useBgsmAgent(
 
             if (result.reason === 'attempt_state_lost') {
               pending.acknowledge({ disposition: 'no_transition', appliedRevision: null });
-              rollbackPendingMessages(pending);
-              failOpenToolActivities();
-              turnHadErrorRef.current = true;
-              setDraftRecovery(pending.prompt);
-              setCanRetryLastTurn(canReplayPendingTurn(pending));
-              setError(m.agentPanel.attemptStateLost);
-              setErrorCategory('other');
-              setAgentStatus({ kind: 'error', text: m.agentPanel.attemptStateLost });
-              appendAssistantError(m.agentPanel.attemptStateLost, pending);
+              failPendingTurn(pending, m.agentPanel.attemptStateLost, 'other');
               finishTurn(pending, null);
               return;
             }
@@ -806,35 +807,32 @@ export function useBgsmAgent(
               } catch (error) {
                 pending.acknowledge({ disposition: 'transition_rejected', appliedRevision: null });
                 const message = error instanceof Error ? error.message : m.agentPanel.turnFailed;
-                turnHadErrorRef.current = true;
-                rollbackPendingMessages(pending);
-                failOpenToolActivities();
-                setDraftRecovery(pending.prompt);
-                setCanRetryLastTurn(canReplayPendingTurn(pending));
-                setError(message);
-                setErrorCategory('other');
-                setAgentStatus({ kind: 'error', text: message });
-                appendAssistantError(message, pending);
+                failPendingTurn(pending, message, 'other');
                 finishTurn(pending, null);
                 return;
               }
               if (result.newMessages.length === 0) rollbackPendingMessages(pending);
-              failOpenToolActivities();
-              setDraftRecovery(pending.prompt);
-              setCanRetryLastTurn(canReplayPendingTurn(pending));
               if (isActionableContextFailure(result.contextFailureReason)) {
-                setError(null);
-                setErrorCategory(null);
-                setAgentStatus(null);
-                setContextLimitRecovery({
-                  prompt,
-                  reason: result.contextFailureReason,
+                dispatchTurnTracked({
+                  type: 'context_recovery_required',
+                  result,
+                  recovery: {
+                    prompt,
+                    reason: result.contextFailureReason,
+                  },
+                  prompt: pending.prompt,
+                  canRetry: canReplayPendingTurn(pending),
                 });
               } else {
-                turnHadErrorRef.current = true;
-                setError(m.agentPanel.turnFailed);
-                setErrorCategory('provider');
-                setAgentStatus({ kind: 'error', text: m.agentPanel.turnFailed });
+                dispatchTurnTracked({
+                  type: 'turn_failed',
+                  result,
+                  message: m.agentPanel.turnFailed,
+                  category: 'provider',
+                  status: { kind: 'error', text: m.agentPanel.turnFailed },
+                  prompt: pending.prompt,
+                  canRetry: canReplayPendingTurn(pending),
+                });
                 appendAssistantError(m.agentPanel.turnFailed, pending);
               }
               finishTurn(pending, result);
@@ -865,10 +863,6 @@ export function useBgsmAgent(
                 if (result.reason === 'final_answer' || result.newMessages.length > 0) {
                   reconcileFinalMessages(pending, result);
                 }
-                if (result.reason === 'final_answer') {
-                  setDraftRecovery(null);
-                  setCanRetryLastTurn(true);
-                }
               }
               pending.acknowledge(appliedRevision === null
                 ? { disposition: 'no_transition', appliedRevision: null }
@@ -876,15 +870,7 @@ export function useBgsmAgent(
             } catch (error) {
               pending.acknowledge({ disposition: 'transition_rejected', appliedRevision: null });
               const message = error instanceof Error ? error.message : m.agentPanel.turnFailed;
-              turnHadErrorRef.current = true;
-              rollbackPendingMessages(pending);
-              failOpenToolActivities();
-              setDraftRecovery(pending.prompt);
-              setCanRetryLastTurn(canReplayPendingTurn(pending));
-              setError(message);
-              setErrorCategory('other');
-              setAgentStatus({ kind: 'error', text: message });
-              appendAssistantError(message, pending);
+              failPendingTurn(pending, message, 'other');
               finishTurn(pending, null);
               return;
             }
@@ -894,25 +880,18 @@ export function useBgsmAgent(
               && result.candidateActiveProjection === undefined
             ) {
               if (result.newMessages.length === 0) rollbackPendingMessages(pending);
-              failOpenToolActivities();
-              setDraftRecovery(pending.prompt);
-              setCanRetryLastTurn(canReplayPendingTurn(pending));
             }
             finishTurn(pending, result);
           },
           onError: (delivery) => {
             if (!isCurrentDelivery(pending, delivery)) return;
             pending.acknowledge({ disposition: 'no_transition', appliedRevision: null });
+            if (pending.stopRequested) {
+              finishTurn(pending, null);
+              return;
+            }
             const text = delivery.message || m.agentPanel.turnFailed;
-            turnHadErrorRef.current = true;
-            rollbackPendingMessages(pending);
-            failOpenToolActivities();
-            setDraftRecovery(pending.prompt);
-            setCanRetryLastTurn(canReplayPendingTurn(pending));
-            setError(text);
-            setErrorCategory(delivery.category ?? 'other');
-            setAgentStatus({ kind: 'error', text });
-            appendAssistantError(text, pending);
+            failPendingTurn(pending, text, delivery.category ?? 'other');
             finishTurn(pending, null);
           },
         });
@@ -925,22 +904,15 @@ export function useBgsmAgent(
       } catch (error) {
         if (pendingTurnRef.current !== pending) return;
         const message = error instanceof Error ? error.message : m.agentPanel.turnFailed;
-        turnHadErrorRef.current = true;
-        rollbackPendingMessages(pending);
-        failOpenToolActivities();
-        setDraftRecovery(pending.prompt);
-        setCanRetryLastTurn(canReplayPendingTurn(pending));
-        setError(message);
-        setErrorCategory('other');
-        setAgentStatus({ kind: 'error', text: message });
-        appendAssistantError(message, pending);
+        failPendingTurn(pending, message, 'other');
         finishTurn(pending, null);
       }
     });
   }, [
     appendAssistantError,
     candidateContract,
-    failOpenToolActivities,
+    dispatchTurnTracked,
+    failPendingTurn,
     finishTurn,
     handleEvent,
     isCurrentDelivery,
@@ -948,7 +920,6 @@ export function useBgsmAgent(
     publishSessionList,
     reconcileFinalMessages,
     rollbackPendingMessages,
-    setAgentStatus,
     updateCurrentSession,
   ]);
 
@@ -957,6 +928,7 @@ export function useBgsmAgent(
     activeSessionId,
     sessions: sessionList,
     messages,
+    phase: turnState.phase,
     running,
     status,
     error,
@@ -992,6 +964,7 @@ export function useBgsmAgent(
     sessionId,
     startTurn,
     status,
+    turnState.phase,
     stopTurn,
     switchSession,
     toolActivities,
