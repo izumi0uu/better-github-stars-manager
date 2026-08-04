@@ -7,6 +7,8 @@ export * from './compaction';
 export * from './conversation-binding';
 export * from './authorization';
 export * from './tools';
+export * from './tool-registry';
+export * from './tool-catalog';
 export * from './repository-code-search-tool';
 export * from './repository-notes-tool';
 export * from './identity';

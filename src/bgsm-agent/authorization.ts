@@ -3,6 +3,10 @@ import type {
   AgentTool,
   PermissionEvaluator,
 } from '@/agent-harness';
+import {
+  getBgsmAgentToolDefinition,
+  isBgsmAgentToolCapability,
+} from './tool-catalog';
 
 type ReadEvidence = {
   repositories: Set<string>;
@@ -24,7 +28,7 @@ export function hasSuccessfulRepositoryCodeToolHistory(
 ): boolean {
   return messages.some((message) => (
     message.role === 'tool'
-    && isRepositoryCodeTool(message.toolName)
+    && isBgsmAgentToolCapability(message.toolName, 'repository_code')
     && isSuccessfulToolResult(message.content)
   ));
 }
@@ -45,10 +49,12 @@ export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities):
       return tools.map((tool) => tool.risk === 'read' ? wrapReadTool(tool, evidence) : tool);
     },
     permissions(tool, args) {
-      if (tool.name === 'read_repository_notes' && !capabilities.repositoryNotes) {
+      const definition = getBgsmAgentToolDefinition(tool.name);
+      if (definition && tool.risk !== definition.risk) return denyCurrentAuthorization();
+      if (definition?.capability === 'repository_notes' && !capabilities.repositoryNotes) {
         return denyCurrentAuthorization();
       }
-      if (isRepositoryCodeTool(tool.name) && !capabilities.repositoryCodeSearch) {
+      if (definition?.capability === 'repository_code' && !capabilities.repositoryCodeSearch) {
         return denyCurrentAuthorization();
       }
       if (tool.risk !== 'write') return { type: 'allow' };
@@ -57,7 +63,7 @@ export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities):
         || capabilities.manualTagWritesForbidden
       ) return denyCurrentAuthorization();
       const value = objectArgs(args);
-      if (tool.name === 'assign_repo_tags') {
+      if (definition?.writePolicy === 'assign_tags') {
         const repository = stringArg(value, 'full_name');
         if (
           !evidence.repositories.has(normalize(repository)) ||
@@ -68,7 +74,7 @@ export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities):
         remainingAssignmentWrites -= 1;
         return { type: 'allow' };
       }
-      if (tool.name === 'remove_repo_tags') {
+      if (definition?.writePolicy === 'remove_tags') {
         const changes = arrayArg(value, 'changes');
         if (
           changes.length === 0
@@ -84,7 +90,7 @@ export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities):
         ) return denyCurrentAuthorization();
         return { type: 'allow' };
       }
-      if (tool.name === 'delete_tags_everywhere') {
+      if (definition?.writePolicy === 'delete_tags') {
         const tags = stringArrayArg(value, 'tags');
         if (
           tags.length === 0
@@ -110,24 +116,25 @@ function wrapReadTool(tool: AgentTool, evidence: ReadEvidence): AgentTool {
 
 function recordReadEvidence(toolName: string, result: unknown, evidence: ReadEvidence): void {
   const value = objectArgs(result);
-  if (toolName === 'get_star') {
+  const evidenceSource = getBgsmAgentToolDefinition(toolName)?.evidenceSource ?? 'none';
+  if (evidenceSource === 'repository_from_star') {
     recordRepositoryEvidence(value.star, evidence);
     return;
   }
-  if (toolName === 'list_stars' || toolName === 'search_stars') {
+  if (evidenceSource === 'repositories_from_stars') {
     for (const star of arrayArg(value, 'stars')) {
       recordRepositoryEvidence(star, evidence);
     }
     return;
   }
-  if (toolName === 'list_tags') {
+  if (evidenceSource === 'tags_from_list') {
     for (const tagRow of arrayArg(value, 'tags')) {
       const tag = optionalStringArg(objectArgs(tagRow), 'name');
       if (tag) evidence.tags.add(normalize(tag));
     }
     return;
   }
-  if (toolName !== 'inspect_tag') return;
+  if (evidenceSource !== 'repository_tags_from_inspection') return;
   const inspectedTag = optionalStringArg(value, 'tag');
   const repositories = arrayArg(value, 'repos');
   if (inspectedTag && repositories.length > 0) {
@@ -153,12 +160,6 @@ function recordRepositoryEvidence(result: unknown, evidence: ReadEvidence): void
   for (const tag of stringArrayArg(repository, 'tags')) {
     evidence.repositoryTags.add(pair(fullName, tag));
   }
-}
-
-function isRepositoryCodeTool(toolName: string | undefined): boolean {
-  return toolName === 'list_repository_files'
-    || toolName === 'search_repository_code'
-    || toolName === 'read_repository_file';
 }
 
 function isSuccessfulToolResult(content: string): boolean {

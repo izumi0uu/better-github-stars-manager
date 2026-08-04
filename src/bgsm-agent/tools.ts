@@ -31,6 +31,12 @@ import {
   type RepositoryCodeRefAuthority,
 } from './repository-code-search-tool';
 import { createRepositoryNotesTool } from './repository-notes-tool';
+import {
+  BGSM_AGENT_TOOL_CATALOG,
+  BGSM_AGENT_TOOL_NAMES,
+  type BgsmAgentToolName,
+} from './tool-catalog';
+import { BgsmAgentToolRegistry } from './tool-registry';
 
 const DEFAULT_PAGE_LIMIT = 20;
 const MAX_PAGE_LIMIT = 50;
@@ -135,9 +141,9 @@ export type BgsmAgentGlobalTagDeletionWriter = (
 ) => Promise<GlobalTagBulkDeletionResult>;
 
 export const REQUEST_FULL_LIBRARY_ORGANIZATION_TOOL_NAME =
-  'request_full_library_organization';
+  BGSM_AGENT_TOOL_NAMES.requestFullLibraryOrganization;
 export const START_FULL_LIBRARY_ANALYSIS_TOOL_NAME =
-  'start_full_library_analysis';
+  BGSM_AGENT_TOOL_NAMES.startFullLibraryAnalysis;
 
 export type BgsmAgentOrganizeLibraryAction =
   | 'request_confirmation'
@@ -156,7 +162,7 @@ export type BgsmAgentOrganizeLibraryHandoff = Readonly<{
   instruction: string;
 }>;
 
-export function createBgsmAgentTools(options: Readonly<{
+export type CreateBgsmAgentToolRegistryOptions = Readonly<{
   repositoryScope: readonly string[];
   scopeFingerprint?: string;
   scopeLabel?: string;
@@ -164,13 +170,92 @@ export function createBgsmAgentTools(options: Readonly<{
   repositoryCodeRefAuthority?: RepositoryCodeRefAuthority;
   enableRepositoryNotes?: boolean;
   enableOrganizeLibraryHandoff?: boolean;
+  enableTagWrites?: boolean;
   requestOrganizeLibraryHandoff?: (
     action: BgsmAgentOrganizeLibraryAction,
   ) => BgsmAgentOrganizeLibraryHandoffDecision | Promise<BgsmAgentOrganizeLibraryHandoffDecision>;
   assignManualTags?: BgsmAgentManualTagWriter;
   removeVisibleTags?: BgsmAgentVisibleTagRemovalWriter;
   deleteTagsEverywhere?: BgsmAgentGlobalTagDeletionWriter;
-}>): AgentTool[] {
+}>;
+
+type BgsmAgentToolFactoryContext = Readonly<{
+  options: CreateBgsmAgentToolRegistryOptions;
+  repositoryScope: ReadonlySet<string>;
+  repositorySearchScope: RepositorySearchScope;
+  repositoryCodeTools: ReadonlyMap<string, AgentTool>;
+}>;
+
+type BgsmAgentToolFactory = (
+  context: BgsmAgentToolFactoryContext,
+) => AgentTool | undefined;
+
+const BGSM_AGENT_TOOL_FACTORIES = {
+  [BGSM_AGENT_TOOL_NAMES.requestFullLibraryOrganization]: ({ options }) => (
+    options.enableOrganizeLibraryHandoff
+      ? requestFullLibraryOrganizationTool(options.requestOrganizeLibraryHandoff!)
+      : undefined
+  ),
+  [BGSM_AGENT_TOOL_NAMES.startFullLibraryAnalysis]: ({ options }) => (
+    options.enableOrganizeLibraryHandoff
+      ? startFullLibraryAnalysisTool(options.requestOrganizeLibraryHandoff!)
+      : undefined
+  ),
+  [BGSM_AGENT_TOOL_NAMES.listTags]: () => listTagsTool(),
+  [BGSM_AGENT_TOOL_NAMES.listStars]: ({ repositorySearchScope }) => (
+    listStarsTool(repositorySearchScope)
+  ),
+  [BGSM_AGENT_TOOL_NAMES.getStar]: ({ repositorySearchScope }) => (
+    getStarTool(repositorySearchScope)
+  ),
+  [BGSM_AGENT_TOOL_NAMES.searchStars]: ({ repositorySearchScope }) => (
+    searchStarsTool(repositorySearchScope)
+  ),
+  [BGSM_AGENT_TOOL_NAMES.inspectTag]: ({ repositoryScope }) => inspectTagTool(repositoryScope),
+  [BGSM_AGENT_TOOL_NAMES.assignRepoTags]: ({ options, repositorySearchScope }) => (
+    options.enableTagWrites === false
+      ? undefined
+      : assignRepoTagsTool(
+          repositorySearchScope,
+          options.scopeFingerprint,
+          options.assignManualTags ?? directManualTagWriter,
+        )
+  ),
+  [BGSM_AGENT_TOOL_NAMES.removeRepoTags]: ({ options, repositorySearchScope }) => (
+    options.enableTagWrites === false
+      ? undefined
+      : removeRepoTagsTool(
+          repositorySearchScope,
+          options.scopeFingerprint,
+          options.removeVisibleTags ?? directVisibleTagRemovalWriter,
+        )
+  ),
+  [BGSM_AGENT_TOOL_NAMES.deleteTagsEverywhere]: ({ options }) => (
+    options.enableTagWrites === false
+      ? undefined
+      : deleteTagsEverywhereTool(
+          options.deleteTagsEverywhere ?? directGlobalTagDeletionWriter,
+        )
+  ),
+  [BGSM_AGENT_TOOL_NAMES.listRepositoryFiles]: ({ repositoryCodeTools }) => (
+    repositoryCodeTools.get(BGSM_AGENT_TOOL_NAMES.listRepositoryFiles)
+  ),
+  [BGSM_AGENT_TOOL_NAMES.searchRepositoryCode]: ({ repositoryCodeTools }) => (
+    repositoryCodeTools.get(BGSM_AGENT_TOOL_NAMES.searchRepositoryCode)
+  ),
+  [BGSM_AGENT_TOOL_NAMES.readRepositoryFile]: ({ repositoryCodeTools }) => (
+    repositoryCodeTools.get(BGSM_AGENT_TOOL_NAMES.readRepositoryFile)
+  ),
+  [BGSM_AGENT_TOOL_NAMES.readRepositoryNotes]: ({ options }) => (
+    options.enableRepositoryNotes
+      ? createRepositoryNotesTool(options.repositoryScope)
+      : undefined
+  ),
+} satisfies Record<BgsmAgentToolName, BgsmAgentToolFactory>;
+
+export function createBgsmAgentToolRegistry(
+  options: CreateBgsmAgentToolRegistryOptions,
+): BgsmAgentToolRegistry {
   if (options.enableOrganizeLibraryHandoff && !options.requestOrganizeLibraryHandoff) {
     throw new TypeError('Full-library handoff requires an execution callback.');
   }
@@ -180,42 +265,32 @@ export function createBgsmAgentTools(options: Readonly<{
     options.scopeLabel,
     options.scopeFingerprint,
   );
-  const tools: AgentTool[] = [
-    ...(options.enableOrganizeLibraryHandoff
-      ? [
-          requestFullLibraryOrganizationTool(options.requestOrganizeLibraryHandoff!),
-          startFullLibraryAnalysisTool(options.requestOrganizeLibraryHandoff!),
-        ]
-      : []),
-    listTagsTool(),
-    listStarsTool(repositorySearchScope),
-    getStarTool(repositorySearchScope),
-    searchStarsTool(repositorySearchScope),
-    inspectTagTool(repositoryScope),
-    assignRepoTagsTool(
-      repositorySearchScope,
-      options.scopeFingerprint,
-      options.assignManualTags ?? directManualTagWriter,
-    ),
-    removeRepoTagsTool(
-      repositorySearchScope,
-      options.scopeFingerprint,
-      options.removeVisibleTags ?? directVisibleTagRemovalWriter,
-    ),
-    deleteTagsEverywhereTool(
-      options.deleteTagsEverywhere ?? directGlobalTagDeletionWriter,
-    ),
-  ];
-  if (options.enableRepositoryCodeSearch) {
-    tools.push(...createRepositoryCodeTools(
+  const repositoryCodeTools = new Map(
+    (options.enableRepositoryCodeSearch ? createRepositoryCodeTools(
       options.repositoryScope,
       options.repositoryCodeRefAuthority,
-    ));
-  }
-  if (options.enableRepositoryNotes) {
-    tools.push(createRepositoryNotesTool(options.repositoryScope));
-  }
-  return tools;
+    ) : []).map((tool) => [tool.name, tool]),
+  );
+  const context: BgsmAgentToolFactoryContext = {
+    options,
+    repositoryScope,
+    repositorySearchScope,
+    repositoryCodeTools,
+  };
+  const tools = BGSM_AGENT_TOOL_CATALOG.flatMap(({ name }) => {
+    const tool = BGSM_AGENT_TOOL_FACTORIES[name](context);
+    if (tool && tool.name !== name) {
+      throw new TypeError(`Cubby tool factory ${name} returned ${tool.name}.`);
+    }
+    return tool ? [tool] : [];
+  });
+  return new BgsmAgentToolRegistry(tools);
+}
+
+export function createBgsmAgentTools(
+  options: CreateBgsmAgentToolRegistryOptions,
+): AgentTool[] {
+  return [...createBgsmAgentToolRegistry(options).getActiveTools()];
 }
 
 function requestFullLibraryOrganizationTool(
@@ -321,7 +396,7 @@ function listStarsTool(repositoryScope: RepositorySearchScope): AgentTool<
   }
 > {
   return {
-    name: 'list_stars',
+    name: BGSM_AGENT_TOOL_NAMES.listStars,
     description:
       'List local starred repositories in stable full-name order within the authorized scope. For local visible-tag-count conditions, use filter.visibleTagCount with operator eq, lt, lte, gt, or gte and use projection identity_and_tag_count to avoid loading full metadata; for example, tag count <= 3 maps to operator lte and value 3. A filtered or compact opaque nextCursor retains the same query, so reuse it exactly until null. Use the default full projection only when repository metadata and visible tag names are needed.',
     risk: 'read',
@@ -390,7 +465,7 @@ function listTagsTool(): AgentTool<
   { tags: Array<{ name: string; repos: number }>; nextCursor: string | null }
 > {
   return {
-    name: 'list_tags',
+    name: BGSM_AGENT_TOOL_NAMES.listTags,
     description: 'List current non-excluded tags and repository counts, including metadata-only tags used by zero repositories.',
     risk: 'read',
     parameters: paginationParameters(),
@@ -435,7 +510,7 @@ function getStarTool(repositoryScope: RepositorySearchScope): AgentTool<
   }
 > {
   return {
-    name: 'get_star',
+    name: BGSM_AGENT_TOOL_NAMES.getStar,
     description: 'Look up one local starred repository by its exact owner/name within the authorized scope.',
     risk: 'read',
     parameters: {
@@ -509,7 +584,7 @@ function searchStarsTool(repositoryScope: RepositorySearchScope): AgentTool<
   }
 > {
   return {
-    name: 'search_stars',
+    name: BGSM_AGENT_TOOL_NAMES.searchStars,
     description:
       'Search local starred repositories with structured terms across name, description, language, and topics. Each result reports matchedTerms. An appliedMode of any only discovers candidates; it does not prove that every requested attribute matched. For exact-count requests, start with direct atomic terms and match all. Put exactly one term per logical criterion in a query; alternatives such as terminal or CLI belong in separate variants, never together. Use a small explicit limit, follow useful nextCursor pages, and stop once enough candidates qualify. Use no more than four distinct term variants total before reporting a shortage: the initial direct query counts as the first.',
     risk: 'read',
@@ -577,7 +652,7 @@ function inspectTagTool(repositoryScope: ReadonlySet<string>): AgentTool<
   { tag: string; repos: InspectedRepoDto[]; nextCursor: string | null }
 > {
   return {
-    name: 'inspect_tag',
+    name: BGSM_AGENT_TOOL_NAMES.inspectTag,
     description: 'Inspect repositories that currently use one tag.',
     risk: 'read',
     parameters: {
@@ -637,7 +712,7 @@ function assignRepoTagsTool(
   { full_name: string; tags: string[]; changed: boolean; reason: BgsmAgentManualTagAdditionResult['reason'] }
 > {
   return {
-    name: 'assign_repo_tags',
+    name: BGSM_AGENT_TOOL_NAMES.assignRepoTags,
     description:
       'Add one or more manual tags to a repository only when the user wants its tags changed. Arguments: full_name string, tags string array. Use after inspecting local repository data in the current turn.',
     risk: 'write',
@@ -729,7 +804,7 @@ function removeRepoTagsTool(
   VisibleTagBulkRemovalResult
 > {
   return {
-    name: 'remove_repo_tags',
+    name: BGSM_AGENT_TOOL_NAMES.removeRepoTags,
     description:
       'Remove visible tags from one or more repositories only when the user asks for those repository-level removals. Pass changes as an array of {full_name, tags}; one call is one atomic local batch. Inspect every requested repository/tag assignment in the current turn first. This does not delete a tag globally.',
     risk: 'write',
@@ -817,7 +892,7 @@ function deleteTagsEverywhereTool(
   GlobalTagBulkDeletionResult
 > {
   return {
-    name: 'delete_tags_everywhere',
+    name: BGSM_AGENT_TOOL_NAMES.deleteTagsEverywhere,
     description:
       'Delete one or more tag names from every local repository and prevent automatic re-adding. Pass tags as an array; one call is one atomic local batch. Use only when the user explicitly asks for global deletion, after inspecting each tag in the current turn. For selected repositories only, use remove_repo_tags instead.',
     risk: 'write',

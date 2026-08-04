@@ -46,6 +46,7 @@ import {
   type ModelMessage,
   type ModelProvider,
 } from '@/agent-harness';
+import { isBgsmAgentTagWriteTool } from './tool-catalog';
 
 export const BGSM_AGENT_MAX_OUTPUT_TOKENS = 1024;
 
@@ -1117,18 +1118,12 @@ function boundedToolCompletionFacts(messages: readonly AgentMessage[]): string {
     if (assistant.role !== 'agent') continue;
     for (const call of assistant.toolCalls ?? []) {
       const result = results.get(call.id);
-      const toolClass = isTagWriteTool(call.name) ? 'write' : 'read';
+      const toolClass = isBgsmAgentTagWriteTool(call.name) ? 'write' : 'read';
       const toolName = truncateUtf8(call.name.replace(/[^\w.-]/gu, '?'), 64) || 'unknown';
       facts.push(toolClass + ' tool ' + toolName + ': ' + boundedToolOutcome(toolClass, result));
     }
   }
   return facts.join(' | ');
-}
-
-function isTagWriteTool(toolName: string): boolean {
-  return toolName === 'assign_repo_tags'
-    || toolName === 'remove_repo_tags'
-    || toolName === 'delete_tags_everywhere';
 }
 
 function boundedToolOutcome(

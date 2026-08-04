@@ -21,6 +21,10 @@ import {
   X,
 } from 'lucide-react';
 import type { LaunchCandidateContract } from '@/bgsm-agent/scope';
+import {
+  BGSM_AGENT_TOOL_NAMES,
+  getBgsmAgentToolDefinition,
+} from '@/bgsm-agent/tool-catalog';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { Conversation, Message, MessageContent, PromptInput } from '@/ui/ai-elements/chat';
@@ -201,13 +205,11 @@ export function AgentPanel({
       : m.agentPanel.contextPromptTooLargeMessage;
   const toolMessages = messages.filter((message) => message.role === 'tool');
   const repositoryCodeReadOnly = toolMessages.some((message) => (
-    message.toolName === 'list_repository_files'
-    || message.toolName === 'search_repository_code'
-    || message.toolName === 'read_repository_file'
+    getBgsmAgentToolDefinition(message.toolName)?.capability === 'repository_code'
   ));
   const showProviderErrorCard = !running && !!error && !contextLimitRecovery;
   const codeSearchMessages = toolMessages.filter((message) => (
-    message.toolName === 'search_repository_code'
+    message.toolName === BGSM_AGENT_TOOL_NAMES.searchRepositoryCode
   ));
   const transcriptMessages = messages.filter((message) => message.role !== 'tool');
   const workbenchAnchor = organize.conversationAnchor;
@@ -1713,32 +1715,15 @@ function toolDisplayName(
     toolResult: string;
   },
 ): string {
-  if (
-    toolName === 'request_full_library_organization'
-    || toolName === 'start_full_library_analysis'
-  ) {
+  const presentation = getBgsmAgentToolDefinition(toolName)?.presentation;
+  if (presentation === 'organization') {
     return labels.agentPreparingOrganizationScope;
   }
-  if (
-    toolName === 'list_repository_files'
-    || toolName === 'search_repository_code'
-    || toolName === 'read_repository_file'
-  ) return labels.agentSearchingCode;
-  if (
-    toolName === 'assign_repo_tags'
-    || toolName === 'remove_repo_tags'
-    || toolName === 'delete_tags_everywhere'
-  ) {
+  if (presentation === 'repository_code') return labels.agentSearchingCode;
+  if (presentation === 'tag_changes') {
     return labels.agentApplyingChanges;
   }
-  if (
-    toolName === 'list_tags'
-    || toolName === 'list_stars'
-    || toolName === 'get_star'
-    || toolName === 'search_stars'
-    || toolName === 'inspect_tag'
-    || toolName === 'read_repository_notes'
-  ) {
+  if (presentation === 'repository_data') {
     return labels.agentReadingData;
   }
   return labels.toolResult;

@@ -16,6 +16,7 @@ import type { BgsmAgentConversationCandidate } from '@/bgsm-agent/conversation-b
 import type { BgsmAgentConversationBinding } from '@/bgsm-agent/conversation-binding';
 import { useI18n } from '@/i18n';
 import type { AgentErrorCategory } from '@/agent-harness';
+import { getBgsmAgentToolDefinition } from '@/bgsm-agent/tool-catalog';
 
 export type BgsmAgentChatMessage = {
   id: string;
@@ -1045,10 +1046,7 @@ function toolStatusText(
     agentApplyingChanges: string;
   },
 ): string {
-  if (
-    toolName === 'request_full_library_organization'
-    || toolName === 'start_full_library_analysis'
-  ) {
+  if (getBgsmAgentToolDefinition(toolName)?.presentation === 'organization') {
     return labels.agentPreparingOrganizationScope;
   }
   return risk === 'write'

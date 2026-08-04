@@ -4,6 +4,7 @@ import {
   BGSM_AGENT_CONTEXT_MAX_CHARS,
   buildBgsmAgentContext,
   buildBgsmAgentSystemPrompt,
+  createBgsmAgentToolRegistry,
   createBgsmAgentPromptScope,
   limitBgsmAgentContext,
 } from '@/bgsm-agent';
@@ -75,6 +76,42 @@ describe('Cubby app context', () => {
 
     assert.match(prompt, /Trusted runtime policy: this conversation is currently in repository-code read-only mode/);
     assert.match(prompt, /start a new conversation for tag changes/);
+  });
+
+  it('keeps tool guidance synchronized with the active registry snapshot', () => {
+    const registry = createBgsmAgentToolRegistry({
+      repositoryScope: ['owner/repo'],
+      enableTagWrites: false,
+    });
+    const prompt = buildBgsmAgentSystemPrompt({
+      conversationScope: SELECTED_SCOPE,
+      activeToolNames: [...registry.getActiveToolNames(), 'unknown_tool'],
+    });
+    const match = prompt.match(/<runtime_context_json>\n([\s\S]+)\n<\/runtime_context_json>/);
+
+    assert.ok(match);
+    assert.deepEqual(
+      JSON.parse(match[1]).activeToolNames,
+      registry.getActiveToolNames(),
+    );
+    assert.match(prompt, /Use list_stars for repository inventory/);
+    assert.doesNotMatch(prompt, /request_full_library_organization/);
+    assert.doesNotMatch(prompt, /list_repository_files, search_repository_code/);
+    assert.doesNotMatch(prompt, /read_repository_notes reads private/);
+    assert.doesNotMatch(prompt, /Use remove_repo_tags only when the user asks/);
+  });
+
+  it('does not describe unavailable tools for a partial capability snapshot', () => {
+    const prompt = buildBgsmAgentSystemPrompt({
+      conversationScope: SELECTED_SCOPE,
+      activeToolNames: ['list_stars'],
+    });
+    const match = prompt.match(/<runtime_context_json>\n([\s\S]+)\n<\/runtime_context_json>/);
+
+    assert.ok(match);
+    assert.deepEqual(JSON.parse(match[1]).activeToolNames, ['list_stars']);
+    assert.doesNotMatch(prompt, /get_star for an exact owner\/name lookup/u);
+    assert.doesNotMatch(prompt, /search_stars with a terms array/u);
   });
 
   it('keeps app context within a fixed budget and rejects unreviewed context fields', () => {

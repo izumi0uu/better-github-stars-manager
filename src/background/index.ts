@@ -60,7 +60,7 @@ import {
   compactBgsmAgentCompletedToolEnvelope,
   createBgsmAgentPromptScope,
   createRepositoryCodeRefAuthority,
-  createBgsmAgentTools,
+  createBgsmAgentToolRegistry,
   createBgsmTurnAuthorization,
   hasSuccessfulRepositoryCodeToolHistory,
   analyzeBgsmPromptIntent,
@@ -1251,7 +1251,7 @@ async function runBgsmAgentTurn(
     const activeOrganizeJob = await getActiveOrganizeJob();
     const organizeApplyActive = organizeApplyBlocksAgentWrites(activeOrganizeJob);
     if (liveness.signal.aborted) return terminalAfterAbort();
-    const tools = authorization.wrapTools(createBgsmAgentTools({
+    const toolRegistry = createBgsmAgentToolRegistry({
       repositoryScope,
       scopeFingerprint,
       scopeLabel,
@@ -1259,6 +1259,7 @@ async function runBgsmAgentTurn(
       repositoryCodeRefAuthority,
       enableRepositoryNotes: promptIntent.capabilities.repositoryNotes,
       enableOrganizeLibraryHandoff: !repositoryCodeReadOnly,
+      enableTagWrites: !repositoryCodeReadOnly && !organizeApplyActive,
       requestOrganizeLibraryHandoff: async (action) => {
         const currentOrganizeJob = await getActiveOrganizeJob();
         if (currentOrganizeJob) {
@@ -1273,14 +1274,8 @@ async function runBgsmAgentTurn(
       assignManualTags: agentManualTagWriter,
       removeVisibleTags: agentVisibleTagRemovalWriter,
       deleteTagsEverywhere: agentGlobalTagDeletionWriter,
-    }).filter((tool) => (
-      tool.risk !== 'write'
-      || (
-        !repositoryCodeReadOnly
-        && !organizeApplyActive
-        && isDirectBgsmAgentTagWriteTool(tool.name)
-      )
-    ))).map((tool) =>
+    });
+    const tools = authorization.wrapTools([...toolRegistry.getActiveTools()]).map((tool) =>
       wrapWriteTrackingTool(tool, (count) => {
         changed = true;
         changedCount += count;
@@ -1290,6 +1285,7 @@ async function runBgsmAgentTurn(
     const systemPrompt = buildBgsmAgentSystemPrompt({
       conversationScope,
       repositoryCodeReadOnly,
+      activeToolNames: toolRegistry.getActiveToolNames(),
     });
     const provider = runtimeProvider.provider;
     const profile = resolveContextBudgetPolicy({
@@ -1554,12 +1550,6 @@ function toolResultChangedCount(result: unknown): number {
   if (typeof value.removed === "boolean") return value.removed ? 1 : 0;
   if (typeof value.removed === "number") return Math.max(0, value.removed);
   return 1;
-}
-
-function isDirectBgsmAgentTagWriteTool(toolName: string): boolean {
-  return toolName === 'assign_repo_tags'
-    || toolName === 'remove_repo_tags'
-    || toolName === 'delete_tags_everywhere';
 }
 
 function organizeApplyBlocksAgentWrites(job: OrganizeJobRecord | undefined): boolean {
