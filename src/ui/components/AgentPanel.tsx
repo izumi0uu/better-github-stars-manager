@@ -30,7 +30,7 @@ import { Spinner } from '@/ui/shadcn/spinner';
 import { Conversation, Message, MessageContent, PromptInput } from '@/ui/ai-elements/chat';
 import { MessageResponse } from '@/ui/ai-elements/response';
 import { AgentFunctionMenu } from '@/ui/components/AgentFunctionMenu';
-import { AgentMascot, resolveAgentMascotState } from '@/ui/components/AgentMascot';
+import { AgentMascot } from '@/ui/components/AgentMascot';
 import { AgentSessionMenu } from '@/ui/components/AgentSessionMenu';
 import {
   AgentProposalReviewCard,
@@ -43,11 +43,14 @@ import {
   CONNECTION_INTERRUPTED_COPY,
   PREFLIGHT_INCOMPLETE_COPY,
   WORKER_LOST_COPY,
-  analyzedRepositoryCount,
-  currentOrganizeJobState,
-  hasCompleteAnalysisCoverage,
-  type CurrentOrganizeJobState,
 } from '@/ui/agent-workbench-state';
+import {
+  resolveAgentUiPresentation,
+  selectOrganizeWorkbenchView,
+  type AgentDominantPhase,
+  type AgentProgress,
+  type OrganizeWorkbenchView,
+} from '@/ui/agent-ui-presentation';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 type ChatController = ReturnType<typeof useBgsmAgent>;
@@ -106,66 +109,13 @@ export function AgentPanel({
     resetConversation,
   } = agent;
   const organize = workbench.state;
-  const durableReceiptCounts = organize.organizeJob?.status === 'completed' && organize.organizeJob.apply
-    ? {
-        changed: organize.organizeJob.apply.changed,
-        unchanged: organize.organizeJob.apply.unchanged,
-        skipped: organize.organizeJob.apply.skipped,
-        failed: organize.organizeJob.apply.failed,
-      }
-    : null;
-  const receiptCounts = durableReceiptCounts;
-  const analysisCoverageComplete = organize.organizeJob
-    ? organize.organizeJob.coverage.analyzed === organize.organizeJob.coverage.total &&
-      organize.organizeJob.coverage.analysisFailed === 0
-    : hasCompleteAnalysisCoverage(organize);
-  const automaticContinuation = organize.continuationPending;
-  const currentRunState = currentOrganizeJobState(organize.snapshot, organize.organizeJob);
-  const mascotState = resolveAgentMascotState({
-    chatStatus: status?.kind ?? null,
-    chatRunning: running,
-    hasAgentError: !!error,
-    hasContextRecovery: !!contextLimitRecovery,
-    preflightStatus: organize.preflight?.status ?? null,
-    runState: currentRunState,
-    automaticContinuation: organize.continuationPending,
-    hasWorkbenchError: !!organize.error,
-    workbenchDisconnected: organize.transport === 'disconnected',
-    hasReceipt: durableReceiptCounts !== null,
-  });
-  const organizeActive = automaticContinuation || isActiveRunState(currentRunState);
-  const preflightRequesting = organize.preflight?.status === 'requesting'
-    || organize.preflight?.status === 'starting';
-  const preflightReady = organize.preflight?.status === 'ready';
-  const preflightActive = preflightRequesting || preflightReady;
-  const active = running || organizeActive || preflightActive;
-  const showStopbar = running || organizeActive || preflightRequesting;
-  const workbenchOwnsSession = !!(
-    organize.preflight
-    || organize.snapshot
-    || organize.proposal
-    || organize.organizeJob
-    || organize.organizeReviewPage
-    || organize.organizeReceiptPage
-    || organize.conversationAnchor
-  );
-  const sessionTransitionBlocked = active || workbenchOwnsSession;
-  const reviewFocused = !!organize.snapshot
-    && currentRunState === 'review'
-    && !!organize.proposal
-    && analysisCoverageComplete
-    && !durableReceiptCounts
-    && organize.organizeJob?.status !== 'completed';
-  const organizeBlocksChat = automaticContinuation || isActiveRunState(currentRunState);
-  const chatDisabled = running
-    || organizeActive
-    || preflightRequesting
-    || !!contextLimitRecovery
-    || organizeBlocksChat;
+  const organizeView = selectOrganizeWorkbenchView(organize, workbench.displayedProcessed);
+  const receiptCounts = organizeView.receiptCounts;
+  const reviewFocused = organizeView.phase === 'review_ready';
   const isReadyIdle = !running
     && !organize.snapshot
     && !organize.preflight
-    && !durableReceiptCounts
+    && !organizeView.hasReceipt
     && !error
     && !lastTurnResult
     && !contextLimitRecovery
@@ -175,16 +125,32 @@ export function AgentPanel({
     && !running
     && !organize.snapshot
     && !organize.preflight
-    && !durableReceiptCounts
+    && !organizeView.hasReceipt
     && !error
     && !contextLimitRecovery
     && messages.length === 0;
-  const applying = currentRunState === 'apply_sealed' || currentRunState === 'applying';
   const lastUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content ?? null;
   const retryPrompt = draftRecovery ?? lastFailedPrompt ?? lastUserPrompt;
   const unsafeReplayBlocked = !canRetryLastTurn
     && !!retryPrompt
     && input.trim() === retryPrompt.trim();
+  const uiPresentation = resolveAgentUiPresentation({
+    phase: agent.phase,
+    hasError: !!error,
+    hasContextRecovery: !!contextLimitRecovery,
+    unsafeReplayBlocked,
+    revisionKey: [
+      messages.at(-1)?.id ?? '',
+      messages.at(-1)?.content.length ?? 0,
+      status?.text ?? '',
+      error ?? '',
+    ].join(':'),
+  }, organizeView);
+  const active = uiPresentation.active;
+  const showStopbar = uiPresentation.stopbar !== null;
+  const sessionTransitionBlocked = !uiPresentation.sessionPolicy.canSwitchSession;
+  const chatDisabled = uiPresentation.composer.disabled;
+  const mascotState = uiPresentation.mascot;
   const contextFailureReason = contextLimitRecovery?.reason ?? null;
   const contextNeedsProviderSettings = contextFailureReason === 'capability_unresolved'
     || contextFailureReason === 'provider_context_overflow_repeated'
@@ -413,122 +379,66 @@ export function AgentPanel({
   };
 
   const motionState = open ? 'open' : 'closed';
-  const selectedCount = organize.organizeJob?.selectedRepositories ?? organize.selectedProposalRowIds.size;
+  const selectedCount = organizeView.selectedCount;
   const resolvedScopeCount = resolvedScopeCountValue(scopeCount, defaultCandidate);
-  const analyzing = currentRunState !== null && (
-    (['frozen', 'prepared', 'checking_provider', 'analyzing'] as readonly string[]).includes(currentRunState)
-    || automaticContinuation
-  );
-  const total = organize.organizeJob?.scopeCount ?? organize.snapshot?.frozenScope.count ?? 0;
-  const processed = analyzedRepositoryCount(organize);
-  const displayedProcessed = Math.min(total, Math.max(processed, workbench.displayedProcessed));
-  const applySelectedTotal = organize.organizeJob?.apply?.total ?? selectedCount;
-  const applyDone = organize.organizeJob?.apply?.settled ?? 0;
   const isProviderSetupError = !!error && !!errorCategory && !['provider', 'other'].includes(errorCategory);
-  const headerStatus = (() => {
-    if (running) return status?.text ?? m.agentPanel.chatWorking;
-    if (contextLimitRecovery) return contextRecoveryTitle;
-    if (automaticContinuation) return m.agentPanel.analyzingHeader(displayedProcessed, total);
-    if (currentRunState === 'cancelled') return m.agentPanel.stopMidAnalyzeHeader;
-    if (currentRunState === 'failed' && !durableReceiptCounts) {
-      return m.agentPanel.workbench.analysisBlockedTitle;
-    }
-    if (currentRunState === 'analysis_blocked') return m.agentPanel.workbench.analysisBlockedTitle;
-    if (currentRunState === 'completed' && !organize.organizeJob?.apply) {
-      return m.agentPanel.completedNoChangesHeader;
-    }
-    if (organize.preflight?.status === 'requesting') return m.agentPanel.resolvingScopeHeader;
-    if (organize.preflight?.status === 'starting') return m.agentPanel.workbench.startingAnalysis;
-    if (organize.preflight?.status === 'no_work' && !organize.snapshot) {
-      return m.agentPanel.nothingToAnalyzeHeader;
-    }
-    if (organize.preflight?.status === 'ready' && !organize.snapshot) {
-      return m.agentPanel.confirmScopeHeader;
-    }
-    if (applying) {
-      return m.agentPanel.applyingHeader(Math.min(applyDone, applySelectedTotal), applySelectedTotal);
-    }
-    if (currentRunState === 'budget_exhausted' && !automaticContinuation) {
-      return m.agentPanel.workbench.analysisBlockedTitle;
-    }
-    if (currentRunState === 'review' && organize.proposal && !analysisCoverageComplete) {
-      return m.agentPanel.workbench.analysisBlockedTitle;
-    }
-    if (currentRunState === 'review' && organize.proposal && analysisCoverageComplete) {
-      return m.agentPanel.needsReviewSelected(selectedCount);
-    }
-    if (analyzing && total > 0) return m.agentPanel.analyzingHeader(displayedProcessed, total);
-    if (receiptCounts) {
-      return receiptCounts.failed > 0 || receiptCounts.skipped > 0
-        ? m.agentPanel.partialReceiptHeader
-        : m.agentPanel.appliedTagChanges(receiptCounts.changed);
-    }
-    if (showHandoff) return m.agentPanel.handoffHeader;
-    if (currentRunState) return m.agentPanel.runStateLabel(currentRunState);
-    if (error) return isProviderSetupError ? m.agentPanel.providerAuthHeader : m.agentPanel.turnFailed;
-    if (lastTurnResult?.changed) return m.agentPanel.agentChanged(lastTurnResult.changedCount);
-    if (status?.kind === 'stopped') return status.text;
-    return null;
-  })();
-  const composerNote = contextLimitRecovery
-    ? m.agentPanel.composerPausedContextRecovery
-    : unsafeReplayBlocked
-      ? m.agentPanel.composerWriteRetryBlocked
-    : applying
-      ? m.agentPanel.composerPausedApplying
-      : organize.preflight?.status === 'requesting'
-        ? m.agentPanel.scopeNotFrozenYet
-        : organize.preflight?.status === 'starting'
-          ? m.agentPanel.workbench.startingAnalysis
-        : organize.organizeJob?.status === 'review' && organize.proposal && analysisCoverageComplete
-          ? (running ? m.agentPanel.reviewFollowUpNote : m.agentPanel.reviewFollowUpNote)
-          : receiptCounts
-            ? m.agentPanel.followUpAboutScope
-            : organize.preflight?.status === 'ready' && !organize.snapshot
-              ? m.agentPanel.pendingConfirmationNote(organize.preflight.count)
-              : organize.preflight?.status === 'no_work' && !organize.snapshot
-                ? `${organize.preflight.label} · ${m.agentPanel.emptyScopeCount}`
-                : showHandoff
-                  ? m.agentPanel.handoffScopeNote(handoff!.remainingUntagged)
-                  : organize.snapshot
-                    ? m.agentPanel.frozenScopeNote(organize.snapshot.frozenScope.count)
-                    : agent.conversationBinding
-                      ? agent.conversationBinding.candidateContract.kind === 'selected_repository'
-                        ? agent.conversationBinding.label
-                        : m.agentPanel.askingAboutCurrentView(agent.conversationBinding.count)
-                    : defaultCandidate.kind === 'selected_repository'
-                        ? defaultCandidate.selectedRepositoryIdHint
-                        : defaultCandidate.kind === 'current_view'
-                          ? (typeof resolvedScopeCount === 'number'
-                            ? m.agentPanel.askingAboutCurrentView(resolvedScopeCount)
-                            : m.agentPanel.askingAboutCurrentViewUnknown)
-                          : defaultCandidate.kind === 'still_untagged_after_auto_tags'
-                            ? m.agentPanel.handoffScopeNote(resolvedScopeCount ?? 0)
-                            : m.agentPanel.askingAboutAllLiveStars(resolvedScopeCount);
+  const headerStatus = resolveAgentHeaderStatus({
+    phase: uiPresentation.header.kind,
+    statusText: status?.text ?? null,
+    contextRecoveryTitle,
+    analysisProgress: organizeView.analysisProgress,
+    applyProgress: organizeView.applyProgress,
+    selectedCount,
+    receiptCounts,
+    showHandoff,
+    isProviderSetupError,
+    lastTurnChangedCount: lastTurnResult?.changed ? lastTurnResult.changedCount : null,
+    m,
+  });
+  const stateComposerNote = resolveAgentComposerNote({
+    mode: uiPresentation.composer.mode,
+    organizeView,
+    m,
+  });
+  const composerNote = stateComposerNote
+    ?? (showHandoff
+      ? m.agentPanel.handoffScopeNote(handoff!.remainingUntagged)
+      : organize.snapshot
+        ? m.agentPanel.frozenScopeNote(organizeView.analysisProgress.total)
+        : agent.conversationBinding
+          ? agent.conversationBinding.candidateContract.kind === 'selected_repository'
+            ? agent.conversationBinding.label
+            : m.agentPanel.askingAboutCurrentView(agent.conversationBinding.count)
+          : defaultCandidate.kind === 'selected_repository'
+            ? defaultCandidate.selectedRepositoryIdHint
+            : defaultCandidate.kind === 'current_view'
+              ? (typeof resolvedScopeCount === 'number'
+                ? m.agentPanel.askingAboutCurrentView(resolvedScopeCount)
+                : m.agentPanel.askingAboutCurrentViewUnknown)
+              : defaultCandidate.kind === 'still_untagged_after_auto_tags'
+                ? m.agentPanel.handoffScopeNote(resolvedScopeCount ?? 0)
+                : m.agentPanel.askingAboutAllLiveStars(resolvedScopeCount));
   const composerPlaceholder = reviewFocused
     ? m.agentPanel.reviewFollowUpPlaceholder
     : isReadyIdle && typeof resolvedScopeCount === 'number'
       ? m.agentPanel.chatPlaceholderScoped(resolvedScopeCount)
       : m.agentPanel.chatPlaceholder;
-  const stopbarText = applying
+  const stopbarText = uiPresentation.stopbar?.action === 'pause_apply'
     ? m.agentPanel.applyingStopbar
-    : organize.preflight?.status === 'requesting'
-      ? m.agentPanel.resolvingScopeHeader
-      : organize.preflight?.status === 'starting'
+    : uiPresentation.stopbar?.action === 'cancel_preflight'
+      ? uiPresentation.dominantPhase === 'scope_starting'
         ? m.agentPanel.workbench.startingAnalysis
-        : (organizeActive || running)
-          ? m.agentPanel.runContinuesWhileHidden
-          : status?.text ?? m.agentPanel.chatWorking;
-  const conversationScrollKey = [
-    messages.at(-1)?.id ?? '',
-    messages.at(-1)?.content.length ?? 0,
-    organize.timeline.at(-1)?.id ?? '',
-    organize.snapshot?.state ?? '',
-    processed,
-    organize.organizeJob?.apply?.applyId ?? '',
-    status?.text ?? '',
-    error ?? '',
-  ].join(':');
+        : m.agentPanel.resolvingScopeHeader
+      : uiPresentation.stopbar?.action === 'stop_analysis'
+        ? m.agentPanel.runContinuesWhileHidden
+        : m.agentPanel.runContinuesWhileHidden;
+  const handleStopbarAction = () => {
+    const action = uiPresentation.stopbar?.action;
+    if (action === 'stop_chat') stopTurn();
+    if (action === 'cancel_preflight') workbench.cancelPreflight();
+    if (action === 'stop_analysis' || action === 'pause_apply') workbench.stop();
+  };
+  const conversationScrollKey = uiPresentation.scrollKey;
   const repositoryCodeReadOnlyNotice = repositoryCodeReadOnly ? (
     <Message role="system">
       <section
@@ -845,8 +755,8 @@ export function AgentPanel({
 
               <OrganizeJobRunWorkbench
                 workbench={workbench}
+                view={organizeView}
                 readOnly={repositoryCodeReadOnly}
-                displayedProcessed={displayedProcessed}
                 onInsertCorrection={handlePromptSuggestion}
               />
 
@@ -946,15 +856,14 @@ export function AgentPanel({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={organizeActive
-                    ? workbench.stop
-                    : running
-                      ? stopTurn
-                      : preflightActive ? workbench.cancelPreflight : stopTurn}
-                  disabled={applying || organize.preflight?.status === 'starting' || status?.kind === 'stopped'}
+                  onClick={handleStopbarAction}
                 >
                   <CircleStop className="size-4" data-icon="inline-start" />
-                  {!running && preflightActive ? m.agentPanel.cancel : m.agentPanel.stop}
+                  {uiPresentation.stopbar?.action === 'cancel_preflight'
+                    ? m.agentPanel.cancel
+                    : uiPresentation.stopbar?.action === 'pause_apply'
+                      ? m.agentPanel.pause
+                      : m.agentPanel.stop}
                 </Button>
               </div>
             )}
@@ -999,15 +908,137 @@ function resolvedScopeCountValue(
   return undefined;
 }
 
+type AgentMessages = ReturnType<typeof useI18n>['m'];
+
+function resolveAgentHeaderStatus({
+  phase,
+  statusText,
+  contextRecoveryTitle,
+  analysisProgress,
+  applyProgress,
+  selectedCount,
+  receiptCounts,
+  showHandoff,
+  isProviderSetupError,
+  lastTurnChangedCount,
+  m,
+}: {
+  phase: AgentDominantPhase;
+  statusText: string | null;
+  contextRecoveryTitle: string;
+  analysisProgress: AgentProgress;
+  applyProgress: AgentProgress | null;
+  selectedCount: number;
+  receiptCounts: OrganizeWorkbenchView['receiptCounts'];
+  showHandoff: boolean;
+  isProviderSetupError: boolean;
+  lastTurnChangedCount: number | null;
+  m: AgentMessages;
+}): string | null {
+  switch (phase) {
+    case 'chat_queued':
+    case 'chat_working':
+    case 'chat_compacting':
+    case 'chat_tool':
+      return statusText ?? m.agentPanel.chatWorking;
+    case 'chat_done':
+      return null;
+    case 'chat_stopped':
+      return statusText;
+    case 'chat_failed':
+      return isProviderSetupError ? m.agentPanel.providerAuthHeader : m.agentPanel.turnFailed;
+    case 'context_recovery':
+      return contextRecoveryTitle;
+    case 'scope_requesting':
+      return m.agentPanel.resolvingScopeHeader;
+    case 'scope_ready':
+      return m.agentPanel.confirmScopeHeader;
+    case 'scope_starting':
+      return m.agentPanel.workbench.startingAnalysis;
+    case 'scope_failed':
+      return null;
+    case 'scope_empty':
+      return m.agentPanel.nothingToAnalyzeHeader;
+    case 'analyzing':
+      return m.agentPanel.analyzingHeader(analysisProgress.completed, analysisProgress.total);
+    case 'reconnecting':
+      return m.agentPanel.workbench.connectionInterrupted;
+    case 'analysis_blocked':
+    case 'review_invalid':
+    case 'failed':
+      return m.agentPanel.workbench.analysisBlockedTitle;
+    case 'review_loading':
+      return m.agentPanel.loadingSuggestions;
+    case 'review_failed':
+      return m.agentPanel.loadFailed;
+    case 'review_ready':
+      return m.agentPanel.needsReviewSelected(selectedCount);
+    case 'applying':
+      return m.agentPanel.applyingHeader(
+        applyProgress?.completed ?? 0,
+        applyProgress?.total ?? selectedCount,
+      );
+    case 'paused':
+      return m.agentPanel.runStateLabel('paused');
+    case 'receipt':
+      return receiptCounts && (receiptCounts.failed > 0 || receiptCounts.skipped > 0)
+        ? m.agentPanel.partialReceiptHeader
+        : m.agentPanel.appliedTagChanges(receiptCounts?.changed ?? 0);
+    case 'completed_no_changes':
+      return m.agentPanel.completedNoChangesHeader;
+    case 'cancelled':
+      return m.agentPanel.stopMidAnalyzeHeader;
+    case 'interrupted':
+      return m.agentPanel.toolbarInterrupted;
+    case 'idle':
+      if (showHandoff) return m.agentPanel.handoffHeader;
+      if (lastTurnChangedCount !== null) return m.agentPanel.agentChanged(lastTurnChangedCount);
+      return statusText;
+  }
+}
+
+function resolveAgentComposerNote({
+  mode,
+  organizeView,
+  m,
+}: {
+  mode: ReturnType<typeof resolveAgentUiPresentation>['composer']['mode'];
+  organizeView: OrganizeWorkbenchView;
+  m: AgentMessages;
+}): string | null {
+  switch (mode) {
+    case 'context_recovery':
+      return m.agentPanel.composerPausedContextRecovery;
+    case 'write_retry_blocked':
+      return m.agentPanel.composerWriteRetryBlocked;
+    case 'applying':
+      return m.agentPanel.composerPausedApplying;
+    case 'scope_pending':
+      return organizeView.phase === 'scope_starting'
+        ? m.agentPanel.workbench.startingAnalysis
+        : m.agentPanel.scopeNotFrozenYet;
+    case 'scope_ready':
+      return m.agentPanel.pendingConfirmationNote(organizeView.analysisProgress.total);
+    case 'review_follow_up':
+      return m.agentPanel.reviewFollowUpNote;
+    case 'receipt':
+      return m.agentPanel.followUpAboutScope;
+    case 'default':
+      return organizeView.phase === 'scope_empty'
+        ? `${organizeView.scopeLabel ?? ''} · ${m.agentPanel.emptyScopeCount}`
+        : null;
+  }
+}
+
 function OrganizeJobRunWorkbench({
   workbench,
+  view,
   readOnly,
-  displayedProcessed,
   onInsertCorrection,
 }: {
   workbench: WorkbenchController;
+  view: OrganizeWorkbenchView;
   readOnly: boolean;
-  displayedProcessed: number;
   onInsertCorrection: (prompt: string) => void;
 }) {
   const { m } = useI18n();
@@ -1034,63 +1065,56 @@ function OrganizeJobRunWorkbench({
   }, [receipt?.applyId]);
 
   useEffect(() => {
-    if (!durableReceipt) return;
+    if (!durableReceipt || state.transport !== 'connected') return;
     workbench.requestOrganizeReceiptPage(0, showChangedOrFailed ? 'changed_or_failed' : 'all');
-  }, [durableReceipt?.applyId, showChangedOrFailed, workbench.requestOrganizeReceiptPage]);
+  }, [
+    durableReceipt?.applyId,
+    showChangedOrFailed,
+    state.transport,
+    workbench.requestOrganizeReceiptPage,
+  ]);
 
-  const processed = analyzedRepositoryCount(state);
-  const total = state.organizeJob?.scopeCount ?? snapshot?.frozenScope.count ?? preflight?.count ?? 0;
-  const automaticContinuation = state.continuationPending;
-  const currentRunState = currentOrganizeJobState(snapshot, state.organizeJob);
-  const analysisInProgress = automaticContinuation || (
-    currentRunState !== null
-    && ['frozen', 'prepared', 'checking_provider', 'analyzing'].includes(currentRunState)
-  );
-  const visibleProcessed = Math.min(total, Math.max(processed, displayedProcessed));
-  const remaining = Math.max(0, total - processed);
-  const displayedRemaining = Math.max(0, total - visibleProcessed);
-  const analysisCoverageComplete = state.organizeJob
-    ? state.organizeJob.coverage.analyzed === state.organizeJob.coverage.total &&
-      state.organizeJob.coverage.analysisFailed === 0
-    : hasCompleteAnalysisCoverage(state);
-  const proposalReadyForReview = currentRunState === 'review' &&
-    !!state.proposal && analysisCoverageComplete;
-  const analysisBlocked = !receipt && !automaticContinuation && currentRunState !== null && [
-    'budget_exhausted',
+  const phase = view.phase;
+  const currentRunState = view.runState;
+  const { completed: processed, total, remaining } = view.analysisProgress;
+  const analysisInProgress = phase === 'analyzing';
+  const proposalReadyForReview = phase === 'review_ready' && !!state.proposal;
+  const analysisBlocked = !receipt && [
     'analysis_blocked',
+    'review_invalid',
     'failed',
-  ].includes(currentRunState);
+    'interrupted',
+  ].includes(phase);
   const snapshotMatchesDurablePresentation = !!snapshot && (
     !state.organizeJob || (
       snapshot.runId === state.organizeJob.runId
       && snapshot.generation === state.organizeJob.generation
     )
   );
-  const blockedSnapshot = snapshotMatchesDurablePresentation ? snapshot : null;
-  const blockedFailureCount = state.organizeJob?.coverage.analysisFailed
-    ?? blockedSnapshot?.coverage?.analysisFailed
-    ?? 0;
+  const blockedFailureCount = view.failedCount;
 
-  if (!preflight && !snapshot && !state.organizeJob && !state.error) return null;
+  if (phase === 'idle' && !state.error) return null;
 
   const selectedCount = state.organizeJob?.selectedRepositories ?? 0;
-  const applyInFlight = currentRunState === 'apply_sealed' || currentRunState === 'applying';
+  const applyInFlight = phase === 'applying'
+    || state.pendingCommand?.kind === 'apply_selection';
   const reviewEditable = (
     !!state.proposal
-    && analysisCoverageComplete
+    && view.coverageComplete
     && !receipt
     && !applyInFlight
+    && state.pendingCommand === null
     && state.organizeReviewRequestId === null
     && !readOnly
     && state.organizeJob?.status === 'review'
   );
 
-  const stopMidAnalyze = currentRunState === 'cancelled'
+  const stopMidAnalyze = phase === 'cancelled'
     && snapshotMatchesDurablePresentation
     && snapshot?.state === 'cancelled'
     && !receipt
     && (snapshot.terminalReason === 'user_stopped' || snapshot.terminalReason === 'user_aborted');
-  const completedNoChanges = currentRunState === 'completed' && !state.organizeJob?.apply;
+  const completedNoChanges = phase === 'completed_no_changes';
   const staleBlockedRows = receipt
     ? receipt.rows.filter((row) => row.reason === 'stale_source')
     : [];
@@ -1099,11 +1123,11 @@ function OrganizeJobRunWorkbench({
       ? receipt.rows.filter((row) => row.outcome === 'changed' || row.outcome === 'failed')
       : receipt.rows)
     : [];
-  const runMode: AgentRunMode = receipt
+  const runMode: AgentRunMode = phase === 'receipt'
     ? 'receipt'
-    : applyInFlight || state.organizeJob?.status === 'paused'
+    : phase === 'applying' || phase === 'paused'
       ? 'apply'
-      : currentRunState === 'review'
+      : phase === 'review_loading' || phase === 'review_failed' || phase === 'review_ready' || phase === 'review_invalid'
         ? 'review'
         : snapshot
           ? 'analyze'
@@ -1111,7 +1135,7 @@ function OrganizeJobRunWorkbench({
   return (
     <div className="space-y-3" data-testid="organize-job-workbench">
       <AgentRunStepper mode={runMode} />
-      {preflight?.status === 'requesting' && (
+      {phase === 'scope_requesting' && preflight && (
         <Message role="system">
           <WorkbenchSection title={m.agentPanel.resolvingScopeHeader} icon={<Spinner />} subtitle={m.agentPanel.workbench.resolvingSubtitle}>
             <p>{m.agentPanel.workbench.resolvingBody}</p>
@@ -1120,7 +1144,7 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {(preflight?.status === 'ready' || preflight?.status === 'starting') && !snapshot && (
+      {(phase === 'scope_ready' || phase === 'scope_starting') && preflight && !snapshot && (
         <Message role="system">
           <WorkbenchSection
             title={m.agentPanel.workbench.confirmScopeTitle}
@@ -1148,7 +1172,6 @@ function OrganizeJobRunWorkbench({
                 variant="ghost"
                 size="sm"
                 onClick={workbench.cancelPreflight}
-                disabled={preflight.status === 'starting'}
               >
                 {m.agentPanel.cancel}
               </Button>
@@ -1157,7 +1180,7 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {preflight?.status === 'no_work' && !snapshot && (
+      {phase === 'scope_empty' && preflight && !snapshot && (
         <Message role="system">
           <WorkbenchSection title={m.agentPanel.nothingToAnalyzeHeader} icon={<CheckCircle2 className="size-4" />} subtitle={preflight.label}>
             <p className="font-medium text-foreground">{m.agentPanel.emptyScopeCount}</p>
@@ -1169,11 +1192,11 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {snapshot && analysisInProgress && !receipt && !analysisBlocked && (
+      {snapshot && phase === 'analyzing' && !receipt && (
         <Message role="system">
           <WorkbenchSection
             title={m.agentPanel.runStateLabel(
-              currentRunState === 'analyzing' || automaticContinuation
+              currentRunState === 'analyzing' || state.continuationPending
                 ? 'analyzing'
                 : currentRunState ?? snapshot.state,
             )}
@@ -1193,18 +1216,18 @@ function OrganizeJobRunWorkbench({
                   aria-label={m.agentPanel.workbench.runProgressLabel}
                   aria-valuemin={0}
                   aria-valuemax={total}
-                  aria-valuenow={visibleProcessed}
+                  aria-valuenow={processed}
                 >
                   <div
                     className="h-full rounded-full bg-foreground/80 transition-[width] motion-reduce:transition-none"
-                    style={{ width: `${total > 0 ? Math.min(100, (visibleProcessed / total) * 100) : 0}%` }}
+                    style={{ width: `${total > 0 ? Math.min(100, (processed / total) * 100) : 0}%` }}
                   />
                 </div>
                 <p
                   className="mt-2 text-[11.5px] text-muted-foreground"
                   data-testid="organize-job-progress-summary"
                 >
-                  {m.agentPanel.workbench.progressSummary(visibleProcessed, displayedRemaining, 0)}
+                  {m.agentPanel.workbench.progressSummary(processed, remaining, 0)}
                 </p>
               </>
             ) : (
@@ -1224,9 +1247,13 @@ function OrganizeJobRunWorkbench({
             icon={<TriangleAlert className="size-4" />}
             subtitle={m.agentPanel.workbench.analysisCoverage(processed, total)}
           >
-            <p>{m.agentPanel.workbench.analysisBlockedBody(blockedFailureCount)}</p>
+            <p>
+              {phase === 'interrupted'
+                ? m.agentPanel.workbench.workerLost
+                : m.agentPanel.workbench.analysisBlockedBody(blockedFailureCount)}
+            </p>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {state.organizeJob?.status === 'analysis_blocked' && blockedSnapshot?.continuationCursor && (
+              {view.capabilities.canResumeAnalysis && (
                 <Button
                   size="sm"
                   onClick={workbench.continueRemaining}
@@ -1242,21 +1269,27 @@ function OrganizeJobRunWorkbench({
                   {m.agentPanel.workbench.continueRemaining}
                 </Button>
               )}
-              <Button
-                variant={state.organizeJob?.status === 'analysis_blocked' ? 'outline' : 'default'}
-                size="sm"
-                onClick={() => workbench.restartWholeLibrary(m.agentPanel.autoAssignPrompt)}
-                disabled={readOnly || state.transport !== 'connected' || state.continuationPending}
-              >
-                <RotateCcw className="size-4" data-icon="inline-start" />
-                {m.agentPanel.workbench.restartWholeLibrary}
-              </Button>
-              {state.organizeJob?.status === 'analysis_blocked' && (
+              {view.capabilities.canRestart && (
+                <Button
+                  variant={view.capabilities.canResumeAnalysis ? 'outline' : 'default'}
+                  size="sm"
+                  onClick={() => workbench.restartWholeLibrary(m.agentPanel.autoAssignPrompt)}
+                  disabled={readOnly || state.continuationPending}
+                >
+                  <RotateCcw className="size-4" data-icon="inline-start" />
+                  {m.agentPanel.workbench.restartWholeLibrary}
+                </Button>
+              )}
+              {view.capabilities.canDiscard && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={workbench.discardBlockedRun}
-                  disabled={readOnly || state.transport !== 'connected' || state.continuationPending}
+                  onClick={phase === 'review_invalid'
+                    ? workbench.discardReview
+                    : phase === 'analysis_blocked'
+                      ? workbench.discardBlockedRun
+                      : workbench.clearTerminal}
+                  disabled={readOnly || state.continuationPending}
                 >
                   <X className="size-4" data-icon="inline-start" />
                   {m.agentPanel.workbench.discardAnalysis}
@@ -1264,6 +1297,69 @@ function OrganizeJobRunWorkbench({
               )}
             </div>
           </WorkbenchSection>
+        </Message>
+      )}
+
+      {phase === 'review_loading' && (
+        <Message role="system">
+          <div data-testid="organize-job-review-loading">
+            <WorkbenchSection
+              title={m.agentPanel.loadingSuggestions}
+              icon={<Spinner />}
+              subtitle={m.agentPanel.workbench.reviewCoverageComplete(total)}
+            >
+              <p>{m.agentPanel.workbench.proposalSelectionNote}</p>
+              {view.capabilities.canDiscard && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-2 h-7 px-2 text-xs"
+                  onClick={workbench.discardReview}
+                  disabled={readOnly || state.transport !== 'connected'}
+                >
+                  <X className="size-4" data-icon="inline-start" />
+                  {m.agentPanel.workbench.discardAnalysis}
+                </Button>
+              )}
+            </WorkbenchSection>
+          </div>
+        </Message>
+      )}
+
+      {phase === 'review_failed' && (
+        <Message role="system">
+          <div data-testid="organize-job-review-failed">
+            <WorkbenchSection
+              title={m.agentPanel.loadFailed}
+              icon={<TriangleAlert className="size-4" />}
+              subtitle={m.agentPanel.workbench.reviewCoverageComplete(total)}
+            >
+              <p>{m.agentPanel.workbench.reviewLoadFailedBody}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <Button
+                  size="sm"
+                  onClick={() => workbench.requestOrganizeReviewPage(
+                    state.organizeReviewPage?.rowOffset ?? 0,
+                  )}
+                  disabled={readOnly || !view.capabilities.canRetryReviewPage}
+                >
+                  <RotateCcw className="size-4" data-icon="inline-start" />
+                  {m.agentPanel.retry}
+                </Button>
+                {view.capabilities.canDiscard && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={workbench.discardReview}
+                    disabled={readOnly || state.transport !== 'connected'}
+                  >
+                    <X className="size-4" data-icon="inline-start" />
+                    {m.agentPanel.workbench.discardAnalysis}
+                  </Button>
+                )}
+              </div>
+            </WorkbenchSection>
+          </div>
         </Message>
       )}
 
@@ -1299,7 +1395,7 @@ function OrganizeJobRunWorkbench({
                 size="sm"
                 className="h-7 px-2 text-xs"
                 onClick={workbench.discardReview}
-                disabled={readOnly || state.transport !== 'connected'}
+                disabled={readOnly || !view.capabilities.canDiscard}
               >
                 <X className="size-4" data-icon="inline-start" />
                 {m.agentPanel.workbench.discardAnalysis}
@@ -1309,7 +1405,7 @@ function OrganizeJobRunWorkbench({
         </>
       )}
 
-      {applyInFlight && state.organizeJob?.apply && !state.proposal && !receipt && (
+      {phase === 'applying' && state.organizeJob?.apply && !receipt && (
         <Message role="system">
           <WorkbenchSection
             title={m.agentPanel.workbench.applyingSelectedChanges}
@@ -1343,7 +1439,7 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {state.organizeJob?.status === 'paused' && state.organizeJob.apply && !receipt && (
+      {phase === 'paused' && state.organizeJob?.apply && !receipt && (
         <Message role="system">
           <WorkbenchSection
             title={m.agentPanel.workbench.applyingSelectedChanges}
@@ -1360,7 +1456,7 @@ function OrganizeJobRunWorkbench({
               size="sm"
               className="mt-2"
               onClick={workbench.resumeOrganizeApply}
-              disabled={readOnly || state.transport !== 'connected'}
+              disabled={readOnly || !view.capabilities.canResumeApply}
             >
               <Play className="size-4" data-icon="inline-start" />
               {m.agentPanel.workbench.continue}
@@ -1369,7 +1465,7 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {receipt && (
+      {phase === 'receipt' && receipt && (
         <Message role="system">
             <div
               className="w-full overflow-hidden rounded-[10px] border border-border bg-card"
@@ -1413,6 +1509,33 @@ function OrganizeJobRunWorkbench({
                   <p className="mt-2 text-[11.5px] text-muted-foreground">
                     {m.agentPanel.workbench.unchangedCount(receipt.counts.unchanged)}
                   </p>
+                )}
+                {state.organizeReceiptError && (
+                  <div
+                    className="mt-2 rounded-md border border-border bg-muted/30 px-2 py-2"
+                    data-testid="organize-job-receipt-failed"
+                    role="alert"
+                  >
+                    <p className="font-medium text-foreground">
+                      {m.agentPanel.workbench.receiptLoadFailed}
+                    </p>
+                    <p className="mt-0.5 text-[11.5px]">
+                      {m.agentPanel.workbench.receiptLoadFailedBody}
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 h-7 px-2 text-xs"
+                      onClick={() => workbench.requestOrganizeReceiptPage(
+                        state.organizeReceiptPage?.rowOffset ?? 0,
+                        showChangedOrFailed ? 'changed_or_failed' : 'all',
+                      )}
+                      disabled={readOnly || !view.capabilities.canRetryReceiptPage}
+                    >
+                      <RotateCcw className="size-4" data-icon="inline-start" />
+                      {m.agentPanel.retry}
+                    </Button>
+                  </div>
                 )}
                 {staleBlockedRows.length > 0 && !showChangedOrFailed ? (
                   <div className="mt-2 rounded-md border border-border bg-muted/30 px-2 py-1.5">
@@ -1575,7 +1698,7 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {state.error && (
+      {state.error && !analysisBlocked && phase !== 'reconnecting' && (
         <Message role="system">
           <div className="rounded-[10px] border border-border bg-card p-3 text-xs text-foreground" role="alert" data-testid="organize-job-error-card">
             {state.error === CONNECTION_INTERRUPTED_COPY
@@ -1638,19 +1761,6 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="text-sm font-semibold text-foreground">{value}</div>
     </div>
   );
-}
-
-function isActiveRunState(state: CurrentOrganizeJobState | null | undefined): boolean {
-  return !!state && ![
-    'analysis_blocked',
-    'review',
-    'completed',
-    'budget_exhausted',
-    'cancelled',
-    'failed',
-    'interrupted',
-    'paused',
-  ].includes(state);
 }
 
 function isStaleOrganizeJobRunError(error: string): boolean {

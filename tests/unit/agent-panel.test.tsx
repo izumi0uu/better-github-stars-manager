@@ -11,8 +11,16 @@ import { createAgentWorkbenchState, type AgentWorkbenchState } from '@/ui/agent-
 import { cleanupMountedRootsAndBody, click, mountReact, type MountedRoot } from './test-utils';
 import type { BgsmAgentTurnHandlers, BgsmOrganizeJobPresentation } from '@/utils/messaging';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';
-import { parseScopeFingerprintV1, type LaunchCandidateContract } from '@/bgsm-agent/scope';
+import {
+  createFrozenScope,
+  parseScopeFingerprintV1,
+  projectFrozenScope,
+  type LaunchCandidateContract,
+} from '@/bgsm-agent/scope';
 import { parseControllerId, parseProposalId, parseRunId } from '@/bgsm-agent/identity';
+import { createEmptyRunBudgetUsage, createProductionRunBudget } from '@/bgsm-agent/policy';
+import type { OrganizeJobRunSnapshot } from '@/bgsm-agent/events';
+import { WORKER_LOST_COPY } from '@/ui/agent-workbench-state';
 
 const messagingMocks = vi.hoisted(() => ({
   startBgsmAgentTurn: vi.fn(),
@@ -52,6 +60,7 @@ function AgentPanel({
   scopeCount,
   workbenchState,
   onClearTerminal,
+  onStop,
 }: {
   open: boolean;
   onClose: () => void;
@@ -63,6 +72,7 @@ function AgentPanel({
   scopeCount?: number;
   workbenchState?: AgentWorkbenchState;
   onClearTerminal?: () => void;
+  onStop?: () => void;
 }) {
   const agent = useBgsmAgent(onDataChanged, {
     kind: 'selected_repository',
@@ -82,7 +92,7 @@ function AgentPanel({
     startWholeLibraryFromAgent: vi.fn(),
     confirmPreflight: vi.fn(),
     cancelPreflight: vi.fn(),
-    stop: vi.fn(),
+    stop: onStop ?? vi.fn(),
     continueRemaining: vi.fn(),
     discardBlockedRun: vi.fn(),
     discardReview: vi.fn(),
@@ -1228,6 +1238,10 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
 
+    expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
+
     await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Try again');
     await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
 
@@ -1801,6 +1815,112 @@ describe('AgentPanel', () => {
     expect(dismiss).toBeDefined();
     await click(dismiss!);
     expect(onClearTerminal).toHaveBeenCalledOnce();
+  });
+
+  it('offers a working Pause action while tag changes are applying', async () => {
+    const onStop = vi.fn();
+    const state = durableWorkbenchState('applying', {
+      apply: {
+        applyId: 'apply:v1:pause-test',
+        total: 3,
+        settled: 1,
+        changed: 1,
+        unchanged: 0,
+        skipped: 0,
+        failed: 0,
+      },
+    });
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={state} onStop={onStop} />,
+    );
+
+    const pause = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Pause');
+    expect(pause).toBeDefined();
+    expect(pause?.disabled).toBe(false);
+    await click(pause!);
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it('presents a temporary transport loss only as reconnecting', async () => {
+    const state: AgentWorkbenchState = {
+      ...createAgentWorkbenchState('controller:v1:reconnecting-test', 'session-reconnecting-test'),
+      snapshot: workbenchSnapshot('analyzing'),
+      transport: 'disconnected',
+      conversationAnchor: { messageId: null, createdAt: 1 },
+    };
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={state} />,
+    );
+
+    expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent)
+      .toBe('Cubby connection was interrupted. Reconnecting…');
+    expect(container.querySelector('[data-testid="organize-job-current-phase"]')).toBeNull();
+    expect(container.querySelector('[data-testid="organize-job-error-card"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('queued');
+  });
+
+  it('gives an interrupted workbench both restart and discard exits', async () => {
+    const onClearTerminal = vi.fn();
+    const state: AgentWorkbenchState = {
+      ...createAgentWorkbenchState('controller:v1:interrupted-test', 'session-interrupted-test'),
+      snapshot: workbenchSnapshot('interrupted'),
+      error: WORKER_LOST_COPY,
+      conversationAnchor: { messageId: null, createdAt: 1 },
+    };
+    const container = await mountAgentPanel(
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        workbenchState={state}
+        onClearTerminal={onClearTerminal}
+      />,
+    );
+
+    expect(container.textContent).toContain('Restart full-library analysis');
+    const discard = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Discard this analysis');
+    expect(discard).toBeDefined();
+    await click(discard!);
+    expect(onClearTerminal).toHaveBeenCalledOnce();
+  });
+
+  it('shows review loading instead of an empty stepper while the first page is pending', async () => {
+    const state = durableWorkbenchState('review', {
+      organizeReviewRequestId: 'review-page:pending',
+    });
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={state} />,
+    );
+
+    expect(container.querySelector('[data-testid="organize-job-review-loading"]')).not.toBeNull();
+    expect(container.textContent).toContain('Loading suggestions');
+    expect(container.querySelector('[data-testid="organize-job-proposal-card"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+  });
+
+  it('blocks an invalid durable review with restart and discard actions', async () => {
+    const base = durableWorkbenchState('review');
+    const state: AgentWorkbenchState = {
+      ...base,
+      organizeJob: {
+        ...base.organizeJob!,
+        coverage: {
+          ...base.organizeJob!.coverage,
+          analyzed: 0,
+          analysisFailed: 1,
+        },
+      },
+    };
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={state} />,
+    );
+
+    expect(container.textContent).toContain('Analysis paused before completion');
+    expect(container.textContent).toContain('Restart full-library analysis');
+    expect(container.textContent).toContain('Discard this analysis');
+    expect(container.querySelector('[data-testid="organize-job-proposal-card"]')).toBeNull();
   });
 
   it('stops a pending turn before resetting and ignores all delayed callbacks', async () => {
@@ -3049,5 +3169,57 @@ function completedWorkbenchState(): AgentWorkbenchState {
   return {
     ...createAgentWorkbenchState(controllerId, sessionId),
     organizeJob,
+  };
+}
+
+function durableWorkbenchState(
+  status: BgsmOrganizeJobPresentation['status'],
+  overrides: Partial<AgentWorkbenchState & Pick<BgsmOrganizeJobPresentation, 'apply'>> = {},
+): AgentWorkbenchState {
+  const base = completedWorkbenchState();
+  const { apply, ...stateOverrides } = overrides;
+  return {
+    ...base,
+    ...stateOverrides,
+    organizeJob: {
+      ...base.organizeJob!,
+      status,
+      apply: apply === undefined ? null : apply,
+    },
+    organizeReceiptPage: null,
+    organizeReceiptRequestId: null,
+  };
+}
+
+function workbenchSnapshot(state: OrganizeJobRunSnapshot['state']): OrganizeJobRunSnapshot {
+  return {
+    controllerId: parseControllerId(`controller:v1:${state}-test`),
+    sessionId: `session-${state}-test`,
+    runId: parseRunId(`run:v1:${state}-test`),
+    generation: 1,
+    state,
+    terminalReason: state === 'interrupted' ? 'worker_lost' : null,
+    frozenScope: projectFrozenScope(createFrozenScope({
+      kind: 'all_live_stars',
+      label: 'All stars',
+      filterSnapshot: '{}',
+      repositoryIds: ['owner/repo'],
+      capturedAt: 1,
+      fingerprint: parseScopeFingerprintV1(`fs:v1:${'w'.repeat(43)}`),
+    })),
+    budget: createProductionRunBudget(),
+    usage: createEmptyRunBudgetUsage(),
+    coverage: {
+      total: 1,
+      analyzed: state === 'analyzing' ? 0 : 1,
+      actionable: 0,
+      unchanged: state === 'analyzing' ? 0 : 1,
+      insufficientEvidence: 0,
+      missing: 0,
+      tombstoned: 0,
+      analysisFailed: 0,
+    },
+    proposalId: null,
+    continuationCursor: null,
   };
 }

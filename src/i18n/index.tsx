@@ -198,6 +198,7 @@ export interface MessageCatalog {
     pendingConfirmationNote: (count: number) => string;
     hideAgent: string;
     stop: string;
+    pause: string;
     cancel: string;
     applyingHeader: (done: number, total: number) => string;
     applyingTitle: string;
@@ -368,6 +369,7 @@ export interface MessageCatalog {
       proposalSelectionNote: string;
       reviewSuggestions: string;
       reviewCoverageComplete: (count: number) => string;
+      reviewLoadFailedBody: string;
       proposalCounts: (actionable: number, nonActionable: number, selected: number) => string;
       finishReviewFirst: string;
       selectRepository: (repositoryId: string) => string;
@@ -396,6 +398,8 @@ export interface MessageCatalog {
       receiptCountSummary: (changed: number, skipped: number, failed: number) => string;
       unchangedCount: (count: number) => string;
       receiptRowsLabel: string;
+      receiptLoadFailed: string;
+      receiptLoadFailedBody: string;
       viewAllRows: string;
       viewFailedChanged: string;
       viewChanged: string;
@@ -1009,13 +1013,14 @@ const messages: Record<Locale, MessageCatalog> = {
       ),
       hideAgent: "Hide Cubby",
       stop: "Stop",
+      pause: "Pause",
       cancel: "Cancel",
       applyingHeader: (done, total) => `Applying · ${done}/${total}`,
       applyingTitle: "Applying selected changes",
       applyingSubtitle: "Manual tags · scope remains locked",
       applyingMeta: (done, total) => `${done} of ${total} changes applied · selection locked`,
       applyingButton: "Applying…",
-      applyingStopbar: "Apply can’t be interrupted mid-row; hide is still allowed.",
+      applyingStopbar: "Pause after the current repository finishes.",
       composerPausedApplying: "Composer paused while applying",
       budgetExhaustedHeader: "Run limit reached",
       budgetExhaustedTitle: (reason) => `Run limit reached · ${reason}`,
@@ -1233,6 +1238,7 @@ const messages: Record<Locale, MessageCatalog> = {
         proposalSelectionNote: "Only selected suggestions will become manual tags.",
         reviewSuggestions: "Review tag suggestions",
         reviewCoverageComplete: (count) => `Full library covered · ${count} repositories analyzed`,
+        reviewLoadFailedBody: "The analysis is complete, but its suggestions could not be loaded. Retry without rerunning the analysis.",
         proposalCounts: (actionable, nonActionable, selected) => `${actionable} suggestions · ${nonActionable} no change · ${selected} selected`,
         finishReviewFirst: "More repositories remain. Finish this review before continuing.",
         selectRepository: (repositoryId) => `Select ${repositoryId}`,
@@ -1261,6 +1267,8 @@ const messages: Record<Locale, MessageCatalog> = {
         receiptCountSummary: (changed, skipped, failed) => `${changed} changed · ${skipped} skipped · ${failed} failed`,
         unchangedCount: (count) => `${count} unchanged`,
         receiptRowsLabel: "Result details",
+        receiptLoadFailed: "Could not load result details",
+        receiptLoadFailedBody: "The tag updates are complete. Retry loading the details, or dismiss these results.",
         viewAllRows: "View all results",
         viewFailedChanged: "View failed & changed",
         viewChanged: "View changed",
@@ -1937,13 +1945,14 @@ const messages: Record<Locale, MessageCatalog> = {
       ),
       hideAgent: "隐藏 Cubby",
       stop: "停止",
+      pause: "暂停",
       cancel: "取消",
       applyingHeader: (done, total) => `应用中 · ${done}/${total}`,
       applyingTitle: "正在应用选中变更",
       applyingSubtitle: "手动标签 · 范围仍保持锁定",
       applyingMeta: (done, total) => `已应用 ${done}/${total} 项变更 · 选择已锁定`,
       applyingButton: "应用中…",
-      applyingStopbar: "单行应用中不可中断；仍可隐藏面板。",
+      applyingStopbar: "当前仓库处理完成后暂停。",
       composerPausedApplying: "应用期间暂停输入",
       budgetExhaustedHeader: "已达到本轮上限",
       budgetExhaustedTitle: (reason) => `已达到本轮上限 · ${reason}`,
@@ -2161,6 +2170,7 @@ const messages: Record<Locale, MessageCatalog> = {
         proposalSelectionNote: "只有选中的建议会写入手动标签。",
         reviewSuggestions: "审阅标签建议",
         reviewCoverageComplete: (count) => `已覆盖完整资料库 · 已分析 ${count} 个仓库`,
+        reviewLoadFailedBody: "分析已完成，但建议暂时无法加载。可以直接重试，无需重新分析。",
         proposalCounts: (actionable, nonActionable, selected) => `${actionable} 条建议 · ${nonActionable} 个无需变更 · 已选择 ${selected} 条`,
         finishReviewFirst: "仍有仓库待处理。请先完成当前审阅再继续。",
         selectRepository: (repositoryId) => `选择 ${repositoryId}`,
@@ -2189,6 +2199,8 @@ const messages: Record<Locale, MessageCatalog> = {
         receiptCountSummary: (changed, skipped, failed) => `已变更 ${changed} · 已跳过 ${skipped} · 失败 ${failed}`,
         unchangedCount: (count) => `${count} 项未变化`,
         receiptRowsLabel: "结果详情",
+        receiptLoadFailed: "无法加载结果详情",
+        receiptLoadFailedBody: "标签更新已经完成。可以重试加载详情，或关闭本次结果。",
         viewAllRows: "查看全部结果",
         viewFailedChanged: "查看失败和已变更项",
         viewChanged: "查看已变更项",
