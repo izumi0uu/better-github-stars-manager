@@ -67,6 +67,7 @@ import {
   type ProposalReviewProjection,
 } from '@/bgsm-agent';
 import {
+  validateBgsmOrganizeJobDeliveryEnvelope,
   validateBgsmOrganizeJobMessageIdentity,
   type BgsmOrganizeJobPortMessage,
 } from '@/utils/messaging';
@@ -727,6 +728,52 @@ describe('first-use disclosure and messaging identities', () => {
       state: 'completed',
       reason: 'timeout',
     }), /inconsistent/u);
+  });
+
+  it('distinguishes a live connection handshake from authoritative no-active state', () => {
+    const connectionReady = {
+      type: 'bgsmOrganizeJobRunConnectionReady' as const,
+      controllerId,
+      sessionId: 'session-1',
+    };
+    const noActive = {
+      type: 'bgsmOrganizeJobRunNoActive' as const,
+      controllerId,
+      sessionId: 'session-1',
+    };
+    validateBgsmOrganizeJobMessageIdentity(connectionReady);
+    validateBgsmOrganizeJobMessageIdentity(noActive);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...noActive,
+      active: false,
+    } as unknown as BgsmOrganizeJobPortMessage), /Unexpected BGSM OrganizeJobRun message keys/u);
+
+    const envelope = {
+      type: 'bgsmOrganizeJobRunDelivery' as const,
+      connectionEpochId: 'organize-connection:v1:contracts',
+      deliverySequence: 0,
+      deliveryKind: 'authoritative_snapshot' as const,
+      durableRevision: null,
+      message: noActive,
+    };
+    validateBgsmOrganizeJobDeliveryEnvelope(envelope);
+    assert.throws(() => validateBgsmOrganizeJobDeliveryEnvelope({
+      ...envelope,
+      deliveryKind: 'live',
+    }), /must be an authoritative/u);
+    assert.throws(() => validateBgsmOrganizeJobDeliveryEnvelope({
+      ...envelope,
+      durableRevision: 1,
+    }), /non-durable/u);
+    validateBgsmOrganizeJobDeliveryEnvelope({
+      ...envelope,
+      deliveryKind: 'live',
+      message: connectionReady,
+    });
+    assert.throws(() => validateBgsmOrganizeJobDeliveryEnvelope({
+      ...envelope,
+      message: connectionReady,
+    }), /must be a live/u);
   });
 
   it('binds proposal-summary events to the durable paged-review identity and count', () => {

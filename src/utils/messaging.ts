@@ -269,11 +269,13 @@ export type BgsmOrganizeJobClientMessage =
     }>)
   | (OrganizeJobRunIdentity & Readonly<{
       type: 'applyBgsmOrganizeSelection';
+      requestId: string;
       jobId: string;
       expectedRevision: number;
     }>)
   | (OrganizeJobRunIdentity & Readonly<{
       type: 'resumeBgsmOrganizeApply';
+      requestId: string;
       jobId: string;
       expectedRevision: number;
     }>)
@@ -292,7 +294,10 @@ export type BgsmOrganizeJobClientMessage =
       filter: 'all' | 'changed_or_failed';
     }>)
   | (OrganizeJobRunIdentity & Readonly<{ type: 'requestBgsmOrganizeJobSnapshot' }>)
-  | (OrganizeJobRunIdentity & Readonly<{ type: 'stopBgsmOrganizeJob' }>)
+  | (OrganizeJobRunIdentity & Readonly<{
+      type: 'stopBgsmOrganizeJob';
+      requestId: string;
+    }>)
   | (OrganizeJobRunIdentity & Readonly<{
       type: 'continueBgsmOrganizeJob';
       continuationCursor: ContinuationCursorToken;
@@ -347,6 +352,10 @@ export type BgsmOrganizeJobConnectionReady = BgsmOrganizeJobControllerIdentity &
   type: 'bgsmOrganizeJobRunConnectionReady';
 }>;
 
+export type BgsmOrganizeJobNoActive = BgsmOrganizeJobControllerIdentity & Readonly<{
+  type: 'bgsmOrganizeJobRunNoActive';
+}>;
+
 export type BgsmOrganizeJobAnalysisProgress = OrganizeJobRunIdentity & Readonly<{
   type: 'bgsmOrganizeJobAnalysisProgress';
   processed: number;
@@ -355,6 +364,7 @@ export type BgsmOrganizeJobAnalysisProgress = OrganizeJobRunIdentity & Readonly<
 
 export type BgsmOrganizeJobServerMessage =
   | BgsmOrganizeJobConnectionReady
+  | BgsmOrganizeJobNoActive
   | BgsmOrganizeJobAnalysisProgress
   | BgsmOrganizeJobPreflightResult
   | Readonly<{ type: 'bgsmOrganizeJobRunEvent'; event: OrganizeJobRunEvent }>
@@ -591,6 +601,21 @@ export function validateBgsmOrganizeJobDeliveryEnvelope(
     assertNonnegativeCount(candidate.durableRevision, 'OrganizeJobRun durable revision');
   }
   validateBgsmOrganizeJobMessageIdentity(candidate.message);
+  if (
+    candidate.message.type === 'bgsmOrganizeJobRunConnectionReady'
+    && (candidate.deliveryKind !== 'live' || candidate.durableRevision !== null)
+  ) {
+    throw new TypeError('OrganizeJobRun connection handshake must be a live, non-durable delivery.');
+  }
+  if (
+    candidate.message.type === 'bgsmOrganizeJobRunNoActive'
+    && (
+      candidate.deliveryKind !== 'authoritative_snapshot'
+      || candidate.durableRevision !== null
+    )
+  ) {
+    throw new TypeError('OrganizeJobRun no-active state must be an authoritative, non-durable delivery.');
+  }
 }
 
 function assertControllerSession(controllerId: unknown, sessionId: unknown): void {
@@ -831,8 +856,10 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
       expected = preflight;
       break;
     case 'requestBgsmOrganizeJobSnapshot':
-    case 'stopBgsmOrganizeJob':
       expected = run;
+      break;
+    case 'stopBgsmOrganizeJob':
+      expected = [...run, 'requestId'];
       break;
     case 'requestBgsmActiveOrganizeJob':
       expected = controller;
@@ -848,7 +875,7 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
       break;
     case 'applyBgsmOrganizeSelection':
     case 'resumeBgsmOrganizeApply':
-      expected = [...run, 'jobId', 'expectedRevision'];
+      expected = [...run, 'requestId', 'jobId', 'expectedRevision'];
       break;
     case 'dismissBgsmOrganizeReceipt':
       expected = [...run, 'jobId', 'applyId'];
@@ -863,6 +890,7 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
       expected = controller;
       break;
     case 'bgsmOrganizeJobRunConnectionReady':
+    case 'bgsmOrganizeJobRunNoActive':
       expected = controller;
       break;
     case 'bgsmOrganizeJobAnalysisProgress':

@@ -2124,7 +2124,7 @@ chrome.runtime.onConnect.addListener((port) => {
         type: 'bgsmOrganizeJobRunConnectionReady',
         controllerId: identity.controllerId,
         sessionId: identity.sessionId,
-      }, { kind: 'authoritative_snapshot' });
+      });
     }
     return true;
   };
@@ -2361,6 +2361,13 @@ chrome.runtime.onConnect.addListener((port) => {
           if (job) await publishOrganizeJobState(job.jobId, port, 'authoritative_snapshot');
         }
         await replayOrganizeJobRunInMemoryAuthority(port, message);
+        if (!snapshot) {
+          safeOrganizeJobRunPost(port, {
+            type: 'bgsmOrganizeJobRunNoActive',
+            controllerId: message.controllerId,
+            sessionId: message.sessionId,
+          }, { kind: 'authoritative_snapshot' });
+        }
         return;
       }
       if (message.type === "requestBgsmOrganizeJobSnapshot") {
@@ -2585,6 +2592,22 @@ chrome.runtime.onConnect.addListener((port) => {
         classifyOrganizeJobRunError(error),
         error instanceof Error ? error.message : "BGSM OrganizeJobRun failed.",
       );
+      if (
+        message.type === 'requestBgsmActiveOrganizeJob'
+        && error instanceof TypeError
+        && error.message === INVALID_ORGANIZE_CHECKPOINT_DISCARDED_MESSAGE
+      ) {
+        try {
+          await replayOrganizeJobRunInMemoryAuthority(port, message);
+        } catch {
+          // The discarded run still needs terminal authority even if preflight replay fails.
+        }
+        safeOrganizeJobRunPost(port, {
+          type: 'bgsmOrganizeJobRunNoActive',
+          controllerId: message.controllerId,
+          sessionId: message.sessionId,
+        }, { kind: 'authoritative_snapshot' });
+      }
     }
   };
 
@@ -3131,6 +3154,8 @@ const organizeJobRestoreFlights = new Map<
   string,
   Promise<OrganizeJobRunSnapshot | null>
 >();
+const INVALID_ORGANIZE_CHECKPOINT_DISCARDED_MESSAGE =
+  'Stored OrganizeJobRun checkpoint was invalid and has been discarded. Start analysis again.';
 
 async function restoreDurableOrganizeJob(identity: Readonly<{
   controllerId: BgsmOrganizeJobClientMessage['controllerId'];
@@ -3281,9 +3306,7 @@ async function restoreDurableOrganizeJob(identity: Readonly<{
         'checkpoint_invalid_discarded',
         'runtime',
       );
-      throw new TypeError(
-        'Stored OrganizeJobRun checkpoint was invalid and has been discarded. Start analysis again.',
-      );
+      throw new TypeError(INVALID_ORGANIZE_CHECKPOINT_DISCARDED_MESSAGE);
     }
     await organizeJobRunTraceCoordinator.flush(restoredJobId);
     throw error;

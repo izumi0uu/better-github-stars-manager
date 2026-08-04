@@ -16,6 +16,8 @@ import type {
 export const CONNECTION_INTERRUPTED_COPY = 'BGSM_AGENT_CONNECTION_INTERRUPTED';
 export const WORKER_LOST_COPY = 'BGSM_AGENT_WORKER_LOST';
 export const PREFLIGHT_INCOMPLETE_COPY = 'BGSM_AGENT_PREFLIGHT_INCOMPLETE';
+export const REVIEW_REQUEST_FAILED_COPY = 'BGSM_AGENT_REVIEW_REQUEST_FAILED';
+export const RECEIPT_REQUEST_FAILED_COPY = 'BGSM_AGENT_RECEIPT_REQUEST_FAILED';
 
 export type WorkbenchPreflight = Readonly<{
   requestId: string;
@@ -60,6 +62,15 @@ export type WorkbenchConversationAnchor = Readonly<{
   createdAt: number;
 }>;
 
+export type WorkbenchPendingCommand = Readonly<{
+  id: string;
+  kind: 'stop_analysis' | 'pause_apply' | 'apply_selection' | 'resume_apply';
+  runId: RunId;
+  generation: number;
+  jobId: string | null;
+  baselineRevision: number | null;
+}>;
+
 export type AgentWorkbenchState = Readonly<{
   controllerId: string;
   sessionId: string;
@@ -71,9 +82,12 @@ export type AgentWorkbenchState = Readonly<{
   organizeReviewPage: WorkbenchOrganizeReviewPage | null;
   organizeReceiptPage: WorkbenchOrganizeReceiptPage | null;
   organizeReviewRequestId: string | null;
+  organizeReviewError: string | null;
   organizeReceiptRequestId: string | null;
+  organizeReceiptError: string | null;
   usageOffset: WorkbenchUsageOffset;
   continuationPending: boolean;
+  pendingCommand: WorkbenchPendingCommand | null;
   /** A failed-suffix retry rewinds repository progress, unlike a budget continuation. */
   retryingFailedSuffix: boolean;
   conversationAnchor: WorkbenchConversationAnchor | null;
@@ -106,14 +120,18 @@ export type AgentWorkbenchAction =
   | Readonly<{ type: 'preflight_start_failed'; message: string }>
   | Readonly<{ type: 'preflight_cancelled' }>
   | Readonly<{ type: 'continue_requested' }>
+  | Readonly<{ type: 'continue_send_failed' }>
+  | Readonly<{ type: 'organize_command_requested'; command: WorkbenchPendingCommand }>
+  | Readonly<{ type: 'organize_command_send_failed'; commandId: string }>
   | Readonly<{ type: 'organize_review_page_requested'; requestId: string }>
+  | Readonly<{ type: 'organize_review_request_failed'; requestId: string }>
   | Readonly<{ type: 'organize_receipt_page_requested'; requestId: string }>
+  | Readonly<{ type: 'organize_receipt_request_failed'; requestId: string }>
   | Readonly<{
       type: 'server_message';
       message: BgsmOrganizeJobServerMessage;
       authoritative?: boolean;
     }>
-  | Readonly<{ type: 'transport_connected' }>
   | Readonly<{ type: 'transport_disconnected' }>
   | Readonly<{ type: 'session_rebound'; controllerId: string; sessionId: string }>
   | Readonly<{ type: 'clear_terminal' }>;
@@ -161,9 +179,12 @@ export function createAgentWorkbenchState(
     organizeReviewPage: null,
     organizeReceiptPage: null,
     organizeReviewRequestId: null,
+    organizeReviewError: null,
     organizeReceiptRequestId: null,
+    organizeReceiptError: null,
     usageOffset: emptyUsageOffset(),
     continuationPending: false,
+    pendingCommand: null,
     retryingFailedSuffix: false,
     conversationAnchor: null,
     analysisProgress: null,
@@ -222,7 +243,12 @@ export function reduceAgentWorkbench(
     };
   }
   if (action.type === 'preflight_start_failed') {
-    return { ...state, preflight: null, error: action.message };
+    return {
+      ...state,
+      preflight: null,
+      conversationAnchor: null,
+      error: action.message,
+    };
   }
   if (action.type === 'preflight_cancelled') {
     return {
@@ -233,7 +259,7 @@ export function reduceAgentWorkbench(
     };
   }
   if (action.type === 'continue_requested') {
-    if (!state.snapshot) return state;
+    if (!state.snapshot || state.continuationPending) return state;
     const retryingFailedSuffix = state.snapshot.state === 'analysis_blocked'
       || state.organizeJob?.status === 'analysis_blocked';
     return {
@@ -244,14 +270,60 @@ export function reduceAgentWorkbench(
       error: null,
     };
   }
+  if (action.type === 'continue_send_failed') {
+    if (!state.continuationPending) return state;
+    return {
+      ...state,
+      continuationPending: false,
+      retryingFailedSuffix: false,
+      error: CONNECTION_INTERRUPTED_COPY,
+    };
+  }
+  if (action.type === 'organize_command_requested') {
+    if (state.pendingCommand) return state;
+    return {
+      ...state,
+      pendingCommand: action.command,
+      error: null,
+    };
+  }
+  if (action.type === 'organize_command_send_failed') {
+    if (state.pendingCommand?.id !== action.commandId) return state;
+    return {
+      ...state,
+      pendingCommand: null,
+      error: CONNECTION_INTERRUPTED_COPY,
+    };
+  }
   if (action.type === 'organize_review_page_requested') {
-    return { ...state, organizeReviewRequestId: action.requestId };
+    return {
+      ...state,
+      organizeReviewRequestId: action.requestId,
+      organizeReviewError: null,
+    };
+  }
+  if (action.type === 'organize_review_request_failed') {
+    if (state.organizeReviewRequestId !== action.requestId) return state;
+    return {
+      ...state,
+      organizeReviewRequestId: null,
+      organizeReviewError: REVIEW_REQUEST_FAILED_COPY,
+    };
   }
   if (action.type === 'organize_receipt_page_requested') {
-    return { ...state, organizeReceiptRequestId: action.requestId };
+    return {
+      ...state,
+      organizeReceiptRequestId: action.requestId,
+      organizeReceiptError: null,
+    };
   }
-  if (action.type === 'transport_connected') {
-    return { ...state, transport: 'connected', error: null };
+  if (action.type === 'organize_receipt_request_failed') {
+    if (state.organizeReceiptRequestId !== action.requestId) return state;
+    return {
+      ...state,
+      organizeReceiptRequestId: null,
+      organizeReceiptError: RECEIPT_REQUEST_FAILED_COPY,
+    };
   }
   if (action.type === 'clear_terminal') {
     return createAgentWorkbenchState(state.controllerId, state.sessionId);
@@ -260,9 +332,9 @@ export function reduceAgentWorkbench(
     return {
       ...state,
       transport: 'disconnected',
-      error: CONNECTION_INTERRUPTED_COPY,
+      error: null,
       continuationPending: false,
-      analysisProgress: null,
+      pendingCommand: null,
       organizeReviewRequestId: null,
       organizeReceiptRequestId: null,
       timeline: appendTimeline(state.timeline, {
@@ -276,10 +348,43 @@ export function reduceAgentWorkbench(
   const message = action.message;
   if (!matchesController(state, message)) return state;
   if (message.type === 'bgsmOrganizeJobRunConnectionReady') return state;
+  if (message.type === 'bgsmOrganizeJobRunNoActive') {
+    if (action.authoritative !== true || state.transport !== 'disconnected') return state;
+    const reset = createAgentWorkbenchState(state.controllerId, state.sessionId);
+    return {
+      ...reset,
+      preflight: state.preflight,
+      conversationAnchor: state.preflight ? state.conversationAnchor : null,
+      transport: 'connected',
+    };
+  }
   if (message.type === 'bgsmOrganizeJobRunPreflightResult') {
     return reducePreflight(state, message);
   }
   if (message.type === 'bgsmOrganizeJobRunError') {
+    if (
+      message.requestId
+      && message.requestId === state.organizeReviewRequestId
+      && state.organizeJob?.status === 'review'
+    ) {
+      return {
+        ...state,
+        organizeReviewRequestId: null,
+        organizeReviewError: REVIEW_REQUEST_FAILED_COPY,
+      };
+    }
+    if (
+      message.requestId
+      && message.requestId === state.organizeReceiptRequestId
+      && state.organizeJob?.status === 'completed'
+      && state.organizeJob.apply
+    ) {
+      return {
+        ...state,
+        organizeReceiptRequestId: null,
+        organizeReceiptError: RECEIPT_REQUEST_FAILED_COPY,
+      };
+    }
     if (
       message.runId === null
       && message.generation === null
@@ -290,6 +395,9 @@ export function reduceAgentWorkbench(
       )
     ) return state;
     if (!matchesActiveRun(state, message.runId, message.generation)) return state;
+    const matchesPendingCommand = !!message.requestId
+      && message.requestId === state.pendingCommand?.id;
+    if (message.requestId && message.runId !== null && !matchesPendingCommand) return state;
     if (
       message.reason === 'internal_error'
       && state.organizeJob?.status === 'analyzing'
@@ -299,11 +407,14 @@ export function reduceAgentWorkbench(
     return {
       ...state,
       preflight: message.runId === null ? null : state.preflight,
+      conversationAnchor: message.runId === null ? null : state.conversationAnchor,
       continuationPending: false,
+      pendingCommand: matchesPendingCommand ? null : state.pendingCommand,
       error: message.message,
     };
   }
   if (message.type === 'bgsmOrganizeJobRunDisconnected') {
+    if (state.transport === 'disconnected' && action.authoritative !== true) return state;
     if (!matchesActiveRun(state, message.runId, message.generation)) return state;
     const reset = createAgentWorkbenchState(state.controllerId, state.sessionId);
     const interruptedSnapshot = state.snapshot
@@ -375,6 +486,9 @@ export function reduceAgentWorkbench(
       if (presentation.generation <= state.snapshot!.generation) return state;
     }
     const leftReview = presentation.status !== 'review';
+    const changedReviewRevision = sameJob
+      && presentation.status === 'review'
+      && presentation.revision !== currentJob.revision;
     const leftReceipt = presentation.status !== 'completed';
     const continuationPending = presentation.status === 'analyzing'
       ? state.continuationPending || snapshotMismatch
@@ -394,10 +508,18 @@ export function reduceAgentWorkbench(
       organizeReviewPage: changedJob || leftReview ? null : state.organizeReviewPage,
       organizeReceiptPage: changedJob || leftReceipt ? null : state.organizeReceiptPage,
       organizeReviewRequestId: changedJob || leftReview ? null : state.organizeReviewRequestId,
+      organizeReviewError: changedJob || leftReview || changedReviewRevision
+        ? null
+        : state.organizeReviewError,
       organizeReceiptRequestId: changedJob || leftReceipt ? null : state.organizeReceiptRequestId,
+      organizeReceiptError: changedJob || leftReceipt ? null : state.organizeReceiptError,
       proposal: leftReview ? null : state.proposal,
       selectedProposalRowIds: leftReview ? new Set() : state.selectedProposalRowIds,
       continuationPending,
+      pendingCommand: reconcilePendingCommandWithPresentation(
+        state.pendingCommand,
+        presentation,
+      ),
       retryingFailedSuffix,
       conversationAnchor: changedJob && !state.preflight && !state.snapshot
         ? fallbackConversationAnchor(presentation.capturedAt)
@@ -405,6 +527,7 @@ export function reduceAgentWorkbench(
       analysisProgress: presentation.status === 'analyzing' && progressMatchesPresentation
         ? state.analysisProgress
         : null,
+      transport: action.authoritative === true ? 'connected' : state.transport,
       error: null,
     };
   }
@@ -433,6 +556,7 @@ export function reduceAgentWorkbench(
       ...state,
       organizeReviewPage: message,
       organizeReviewRequestId: null,
+      organizeReviewError: null,
       proposal: {
         proposalId: message.proposalId,
         actionableCount: message.totalRows,
@@ -452,7 +576,13 @@ export function reduceAgentWorkbench(
       state.organizeJob.runId !== message.runId ||
       state.organizeJob.generation !== message.generation
     ) return state;
-    return { ...state, organizeReceiptPage: message, organizeReceiptRequestId: null, error: null };
+    return {
+      ...state,
+      organizeReceiptPage: message,
+      organizeReceiptRequestId: null,
+      organizeReceiptError: null,
+      error: null,
+    };
   }
   return reduceEvent(state, message.event);
 }
@@ -549,12 +679,13 @@ function reduceSnapshot(
       ? addUsageOffset(state.usageOffset, state.snapshot)
       : childRun ? emptyUsageOffset() : state.usageOffset,
     continuationPending: false,
+    pendingCommand: reconcilePendingCommandWithSnapshot(state.pendingCommand, snapshot),
     retryingFailedSuffix: ['review', 'completed', 'cancelled'].includes(snapshot.state)
       ? false
       : retryingFailedSuffix,
     conversationAnchor: state.conversationAnchor
       ?? fallbackConversationAnchor(snapshot.frozenScope.capturedAt),
-    transport: 'connected',
+    transport: authoritative ? 'connected' : state.transport,
     error: null,
     timeline: appendTimeline(state.timeline, {
       id: `snapshot:${snapshot.runId}:${snapshot.generation}:${snapshot.state}`,
@@ -592,13 +723,52 @@ function reduceEvent(state: AgentWorkbenchState, event: OrganizeJobRunEvent): Ag
       snapshot,
       timeline,
       continuationPending: event.usage.consumedFrozenPositions > 0,
+      pendingCommand: reconcilePendingCommandWithSnapshot(next.pendingCommand, snapshot),
     };
   }
   return {
     ...next,
     snapshot,
     timeline,
+    pendingCommand: reconcilePendingCommandWithSnapshot(next.pendingCommand, snapshot),
   };
+}
+
+function reconcilePendingCommandWithPresentation(
+  command: WorkbenchPendingCommand | null,
+  presentation: BgsmOrganizeJobPresentation,
+): WorkbenchPendingCommand | null {
+  if (!command) return null;
+  if (
+    presentation.runId !== command.runId
+    || presentation.generation !== command.generation
+    || (command.jobId !== null && presentation.jobId !== command.jobId)
+  ) return null;
+  if (command.kind === 'stop_analysis') return command;
+  if (
+    command.baselineRevision !== null
+    && presentation.revision <= command.baselineRevision
+  ) return command;
+  if (command.kind === 'apply_selection') {
+    return presentation.status === 'review' ? command : null;
+  }
+  if (command.kind === 'resume_apply') {
+    return presentation.status === 'paused' ? command : null;
+  }
+  return ['paused', 'completed', 'cancelled'].includes(presentation.status)
+    ? null
+    : command;
+}
+
+function reconcilePendingCommandWithSnapshot(
+  command: WorkbenchPendingCommand | null,
+  snapshot: Pick<OrganizeJobRunSnapshot, 'runId' | 'generation' | 'state'> | null,
+): WorkbenchPendingCommand | null {
+  if (!command || command.kind !== 'stop_analysis' || snapshot === null) return command;
+  if (snapshot.runId !== command.runId || snapshot.generation !== command.generation) return null;
+  return ['completed', 'cancelled', 'failed', 'interrupted'].includes(snapshot.state)
+    ? null
+    : command;
 }
 
 function updateSnapshotFromEvent(
@@ -678,7 +848,7 @@ function matchesActiveRun(
   return !!active && active.runId === runId && active.generation === generation;
 }
 
-function currentWorkbenchRunIdentity(
+export function currentWorkbenchRunIdentity(
   state: AgentWorkbenchState,
 ): Pick<OrganizeJobRunSnapshot, 'runId' | 'generation'> | null {
   const snapshot = state.snapshot;
