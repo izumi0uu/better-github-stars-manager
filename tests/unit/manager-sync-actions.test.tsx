@@ -12,6 +12,10 @@ const mountedRoots: MountedRoot[] = [];
 const sendMessage = vi.fn();
 let latest: ReturnType<typeof useManagerSyncActions> | null = null;
 let messageListeners: Array<(message: { type?: string }) => void> = [];
+let storageListeners: Array<(
+  changes: Record<string, chrome.storage.StorageChange>,
+  areaName: string,
+) => void> = [];
 
 function baseStatus(patch: Partial<SyncStatus> = {}): SyncStatus {
   const backfills = patch.backfills ?? {};
@@ -89,6 +93,7 @@ async function waitFor(assertion: () => void) {
 
 beforeEach(() => {
   messageListeners = [];
+  storageListeners = [];
   sendMessage.mockReset();
   vi.stubGlobal('chrome', {
     runtime: {
@@ -102,6 +107,16 @@ beforeEach(() => {
         }),
       },
     },
+    storage: {
+      onChanged: {
+        addListener: vi.fn((listener) => {
+          storageListeners.push(listener);
+        }),
+        removeListener: vi.fn((listener) => {
+          storageListeners = storageListeners.filter((item) => item !== listener);
+        }),
+      },
+    },
   });
 });
 
@@ -111,6 +126,53 @@ afterEach(() => {
 });
 
 describe('useManagerSyncActions', () => {
+  it('refreshes status on authoritative credential changes without starting a sync', async () => {
+    let hasToken = false;
+    sendMessage.mockImplementation((message: { type: string }) => {
+      if (message.type === 'getStatus') {
+        return ok(baseStatus({
+          hasToken,
+          onboardingStage: hasToken ? 'done' : 'needs_token',
+          seenOnboarding: hasToken,
+        }));
+      }
+      throw new Error(`Unexpected message: ${message.type}`);
+    });
+
+    const hook = mountHook();
+    await waitFor(() => expect(hook.current.statusLoaded).toBe(true));
+    expect(hook.current.status?.hasToken).toBe(false);
+    expect(storageListeners).toHaveLength(1);
+
+    await act(async () => {
+      storageListeners[0]?.({ gsm_github_credentials_v1: { newValue: {} } }, 'sync');
+      storageListeners[0]?.({ gsm_config: { newValue: {} } }, 'local');
+      await Promise.resolve();
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    hasToken = true;
+    await act(async () => {
+      storageListeners[0]?.({
+        gsm_github_credentials_v1: {
+          oldValue: { tokenEncrypted: null },
+          newValue: { tokenEncrypted: 'ciphertext' },
+        },
+      }, 'local');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(hook.current.status?.hasToken).toBe(true);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).not.toHaveBeenCalledWith({ type: 'syncFull' });
+    expect(sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'query' }));
+
+    const root = mountedRoots.pop();
+    act(() => root?.unmount());
+    expect(storageListeners).toHaveLength(0);
+  });
+
   it('runs the initial sync and advances onboarding after data appears', async () => {
     const refreshStars = vi.fn();
     const queryGrandTotals = [0, 3];

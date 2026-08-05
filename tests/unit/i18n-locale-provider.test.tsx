@@ -145,7 +145,7 @@ describe('i18n catalog and locale propagation invariants', () => {
         english.agentPanel.agentSettings,
         english.options.agentHeading,
       ],
-      ['Cubby', 'Cubby', 'Cubby settings', '2. Cubby'],
+      ['Cubby', 'Cubby', 'Cubby settings', '3. Cubby'],
     );
     assert.deepEqual(
       [
@@ -154,7 +154,7 @@ describe('i18n catalog and locale propagation invariants', () => {
         chinese.agentPanel.agentSettings,
         chinese.options.agentHeading,
       ],
-      ['Cubby', 'Cubby', 'Cubby 设置', '2. Cubby'],
+      ['Cubby', 'Cubby', 'Cubby 设置', '3. Cubby'],
     );
   });
 

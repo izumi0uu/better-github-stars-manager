@@ -9,10 +9,12 @@ import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { StarsTable } from '@/ui/components/StarsTable';
+import { WatchInbox } from '@/ui/components/WatchInbox';
 import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
 import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
 import { useAutoTagAgentPrompt } from '@/ui/hooks/use-auto-tag-agent-prompt';
+import { useWatchInbox } from '@/ui/hooks/use-watch-inbox';
 import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
@@ -24,7 +26,7 @@ import { bgCall, type SyncStatus } from '@/utils/messaging';
 import { hidePanel } from '@/content/stars-page/panel-toggle';
 import { cn } from '@/lib/utils';
 import { useI18n, type MessageCatalog } from '@/i18n';
-import type { BackfillState } from '@/types';
+import type { BackfillState, Star, Tag } from '@/types';
 import { COLUMN_DEFS } from '@/ui/column-layout';
 import { layoutViewportFromMeasurements, type LayoutViewportState } from '@/ui/layout-resize-surface';
 import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
@@ -41,6 +43,9 @@ export { layoutViewportFromMeasurements };
 type UnstarFeedback =
   | { kind: 'done'; fullName: string }
   | { kind: 'failed'; fullName: string; error: string };
+
+type ManagerSurface = 'stars' | 'watch';
+type WatchRepositoryDetail = { star: Star | null; tag: Tag | null };
 
 const REPO_MARKER = '__GSM_REPO__';
 const TOKEN_SETTINGS_LABEL = 'github.com/settings/tokens';
@@ -103,6 +108,7 @@ function helperInfoKey(info: string | null, unstarFeedback: UnstarFeedback | nul
 
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
+  const watchInbox = useWatchInbox();
   const f = useFilterStore();
   const {
     status,
@@ -120,7 +126,9 @@ export function ManagerPanel() {
     deferBackfill,
     isOnboardingCardStage,
   } = useManagerSyncActions({ refreshStars });
+  const [surface, setSurface] = useState<ManagerSurface>('stars');
   const [selected, setSelected] = useState<string | null>(null);
+  const [watchDetail, setWatchDetail] = useState<WatchRepositoryDetail | null>(null);
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
   const [agentHostMounted, setAgentHostMounted] = useState(false);
   const [agentPresentation, setAgentPresentation] = useState<AgentHostPresentation>({
@@ -135,6 +143,7 @@ export function ManagerPanel() {
   const listRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const layoutResizeLiveAdapterRef = useRef<LayoutResizeLiveAdapter | null>(null);
+  const watchDetailGeneration = useRef(0);
   const { theme, themeClass, toggle: toggleTheme } = useTheme();
   const { m } = useI18n();
   const {
@@ -188,6 +197,11 @@ export function ManagerPanel() {
   const visibleRows = rows;
   const visibleTotal = total;
   const visibleGrandTotal = grandTotal;
+  const starsSurface = surface === 'stars';
+
+  useEffect(() => () => {
+    watchDetailGeneration.current++;
+  }, []);
 
   useEffect(() => {
     if (info) setUnstarFeedback(null);
@@ -239,17 +253,46 @@ export function ManagerPanel() {
   };
 
   const selectedIdx = useMemo(
-    () => (selected ? visibleRows.findIndex((r) => r.full_name === selected) : -1),
-    [selected, visibleRows],
+    () => (starsSurface && selected ? visibleRows.findIndex((r) => r.full_name === selected) : -1),
+    [selected, starsSurface, visibleRows],
   );
-  const selectedStar = selectedIdx >= 0 ? visibleRows[selectedIdx] : null;
-  const selectedTag = selectedStar ? tagsByFullName.get(selectedStar.full_name) : undefined;
+  const selectedStar = starsSurface
+    ? selectedIdx >= 0 ? visibleRows[selectedIdx] : null
+    : selected ? watchDetail?.star ?? null : null;
+  const selectedTag = starsSurface
+    ? selectedStar ? tagsByFullName.get(selectedStar.full_name) : undefined
+    : watchDetail?.tag ?? undefined;
   useEffect(() => {
     setFavoriteOverrides((current) => pruneFavoriteOverrides(current, tagsByFullName, visibleRows));
   }, [visibleRows, tagsByFullName]);
 
   const handleSelect = (full_name: string) => {
     setSelected((cur) => (cur === full_name ? null : full_name));
+  };
+
+  const handleWatchRepositorySelect = async (fullName: string) => {
+    const requestGeneration = ++watchDetailGeneration.current;
+    setSelected(fullName);
+    setWatchDetail(null);
+    try {
+      const detail = await bgCall<WatchRepositoryDetail>('getWatchRepositoryDetail', { fullName });
+      if (watchDetailGeneration.current !== requestGeneration) return;
+      if (!detail.star) {
+        setSelected(null);
+        return;
+      }
+      setSelected(detail.star.full_name);
+      setWatchDetail(detail);
+    } catch {
+      if (watchDetailGeneration.current === requestGeneration) setSelected(null);
+    }
+  };
+
+  const handleDetailDataChanged = () => {
+    refreshStars();
+    if (!starsSurface && selectedStar) {
+      void handleWatchRepositorySelect(selectedStar.full_name);
+    }
   };
 
   const openAgentPanel = () => {
@@ -266,7 +309,19 @@ export function ManagerPanel() {
     onRunAutoTags: () => { void handleAutoAssignTags(); },
   });
 
-  const agentCandidate = useMemo(() => selected
+  const handleSurfaceChange = (next: ManagerSurface) => {
+    if (next === surface || editingLayout) return;
+    watchDetailGeneration.current++;
+    setSelected(null);
+    setWatchDetail(null);
+    setOpenUnstarFullName(null);
+    setUnstarFeedback(null);
+    setAgentPanelOpen(false);
+    autoTagAgentPrompt.dismiss();
+    setSurface(next);
+  };
+
+  const agentCandidate = useMemo(() => starsSurface && selected
     ? {
         kind: 'selected_repository' as const,
         selectedRepositoryIdHint: selected,
@@ -297,6 +352,7 @@ export function ManagerPanel() {
     f.tagMode,
     f.tags,
     selected,
+    starsSurface,
   ]);
 
   const handleToggleFavorite = async (full_name: string, favorite: boolean) => {
@@ -430,10 +486,13 @@ export function ManagerPanel() {
           onStartLayoutEdit={editingLayout ? cancelLayoutEdit : beginCustomLayoutEdit}
           onPreviewCustomChange={previewCustomLayout}
           layoutEditChrome={layoutEditChrome}
+          surface={surface}
+          onSurfaceChange={handleSurfaceChange}
+          watchUnreadCount={watchInbox.result?.unreadCount ?? 0}
         />
-        {layoutColumnMenu}
+        {starsSurface && layoutColumnMenu}
 
-        {statusLoaded && status && !status.hasToken && status.onboardingStage === 'done' && (
+        {starsSurface && statusLoaded && status && !status.hasToken && status.onboardingStage === 'done' && (
           <div className="flex items-center gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
             <AlertTriangle className="size-4 shrink-0" />
             <span>{m.manager.noTokenBanner}</span>
@@ -447,7 +506,7 @@ export function ManagerPanel() {
           </div>
         )}
 
-        <div
+        {starsSurface && <div
           className={cn('gsm-active-filter-row', { open: hasActiveFilter })}
           aria-hidden={!hasActiveFilter}
           {...getLockedRegionProps(!hasActiveFilter)}
@@ -455,9 +514,9 @@ export function ManagerPanel() {
           <div>
             <ActiveFilterChips f={f} count={visibleTotal} interactionLocked={interactionLocked} />
           </div>
-        </div>
+        </div>}
 
-        {(info || unstarFeedback) && (
+        {starsSurface && (info || unstarFeedback) && (
           <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">
             <span
               key={helperInfoKey(info, unstarFeedback)}
@@ -469,7 +528,7 @@ export function ManagerPanel() {
         )}
 
         <div className="flex min-h-0 flex-1">
-          <FilterSidebar
+          {starsSurface && <FilterSidebar
             f={f}
             languages={languages}
             tagTree={tagTree}
@@ -479,10 +538,27 @@ export function ManagerPanel() {
               if (message) setUnstarFeedback(null);
             }}
             onTagMutationSuccess={refreshStars}
-          />
+          />}
 
-          <div ref={listRef} data-coach-target="repo" className="no-scrollbar flex-1 overflow-auto">
-            {!statusLoaded || !status ? (
+          <div
+            ref={listRef}
+            data-coach-target={starsSurface ? 'repo' : undefined}
+            className="no-scrollbar flex-1 overflow-auto"
+          >
+            {!starsSurface ? (
+              <WatchInbox
+                result={watchInbox.result}
+                loading={watchInbox.loading}
+                refreshing={watchInbox.refreshing}
+                error={watchInbox.error}
+                unreadOnly={watchInbox.unreadOnly}
+                onUnreadOnlyChange={watchInbox.setUnreadOnly}
+                onRefresh={() => { void watchInbox.refresh(); }}
+                onRetryQuery={() => { void watchInbox.reload(); }}
+                onOpenOptions={() => bgCall('openOptions').catch(() => {})}
+                onSelectRepository={(fullName) => { void handleWatchRepositorySelect(fullName); }}
+              />
+            ) : !statusLoaded || !status ? (
               <div className="p-10 text-center text-sm text-muted-foreground">
                 {m.common.loading}
               </div>
@@ -557,12 +633,16 @@ export function ManagerPanel() {
                 tag={selectedTag}
                 selectedTags={f.tags}
                 onToggleTag={f.toggleTag}
-                onDataChanged={refreshStars}
-                onClose={() => setSelected(null)}
-                onPrev={() => selectedIdx > 0 && setSelected(visibleRows[selectedIdx - 1].full_name)}
-                onNext={() => selectedIdx >= 0 && selectedIdx < visibleRows.length - 1 && setSelected(visibleRows[selectedIdx + 1].full_name)}
-                hasPrev={selectedIdx > 0}
-                hasNext={selectedIdx >= 0 && selectedIdx < visibleRows.length - 1}
+                onDataChanged={handleDetailDataChanged}
+                onClose={() => {
+                  watchDetailGeneration.current++;
+                  setSelected(null);
+                  setWatchDetail(null);
+                }}
+                onPrev={() => starsSurface && selectedIdx > 0 && setSelected(visibleRows[selectedIdx - 1].full_name)}
+                onNext={() => starsSurface && selectedIdx >= 0 && selectedIdx < visibleRows.length - 1 && setSelected(visibleRows[selectedIdx + 1].full_name)}
+                hasPrev={starsSurface && selectedIdx > 0}
+                hasNext={starsSurface && selectedIdx >= 0 && selectedIdx < visibleRows.length - 1}
                 interactionLocked={interactionLocked}
               />
             )}
@@ -573,7 +653,7 @@ export function ManagerPanel() {
 
         <LayoutDragGhost ghost={dragGhost} />
 
-        {agentHostMounted && (
+        {starsSurface && agentHostMounted && (
           <Suspense fallback={null}>
             <LazyAgentHost
               open={agentPanelOpen}
@@ -588,14 +668,14 @@ export function ManagerPanel() {
           </Suspense>
         )}
 
-        <AutoTagAgentPrompt
+        {starsSurface && <AutoTagAgentPrompt
           open={autoTagAgentPrompt.open}
           onChooseAgent={autoTagAgentPrompt.chooseAgent}
           onChooseAutoTags={autoTagAgentPrompt.chooseAutoTags}
           onDismiss={autoTagAgentPrompt.dismiss}
-        />
+        />}
 
-        {statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
+        {starsSurface && statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
           <CoachOverlay
             step={coachStep}
             total={COACH_TARGETS.length}
