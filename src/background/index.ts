@@ -63,7 +63,6 @@ import {
   createBgsmAgentToolRegistry,
   createBgsmTurnAuthorization,
   hasSuccessfulRepositoryCodeToolHistory,
-  analyzeBgsmPromptIntent,
   prepareBgsmAgentTurn,
   selectBgsmAgentRawTurnNewMessages,
   type BgsmAgentActiveProjection,
@@ -1217,21 +1216,13 @@ async function runBgsmAgentTurn(
       resolveCandidate: (candidate) => resolveLiveLaunchCandidate(candidate),
     });
     if (liveness.signal.aborted) return terminalAfterAbort();
-    const promptIntent = analyzeBgsmPromptIntent(prompt);
     const hasRepositoryCodeHistory = hasSuccessfulRepositoryCodeToolHistory(input.history);
-    const repositoryCodeAccess = promptIntent.capabilities.repositoryCodeSearch
-      || hasRepositoryCodeHistory;
-    const repositoryCodeReadOnly = promptIntent.capabilities.repositoryCodeSearch
-      || hasRepositoryCodeHistory;
+    const repositoryCodeReadOnly = hasRepositoryCodeHistory;
     options.bind?.(conversation.binding);
     const runtimeProvider = preparedRuntimeProvider.create();
     let changed = false;
     let changedCount = 0;
-    const authorization = createBgsmTurnAuthorization({
-      ...promptIntent.capabilities,
-      repositoryCodeSearch: repositoryCodeAccess,
-      repositoryCodeReadOnly,
-    });
+    const authorization = createBgsmTurnAuthorization({ repositoryCodeReadOnly });
     const repositoryScope = conversation.repositoryIds;
     const scopeLabel = conversation.binding.label;
     const scopeFingerprint = conversation.binding.scopeFingerprint;
@@ -1242,12 +1233,10 @@ async function runBgsmAgentTurn(
     });
     const executionLedger = new AgentExecutionLedger();
     let organizeLibraryHandoffRequested: BgsmAgentOrganizeLibraryAction | null = null;
-    const repositoryCodeRefAuthority = repositoryCodeAccess
-      ? repositoryCodeRefAuthorityFor(
-          sessionId,
-          scopeFingerprint,
-        )
-      : undefined;
+    const repositoryCodeRefAuthority = repositoryCodeRefAuthorityFor(
+      sessionId,
+      scopeFingerprint,
+    );
     const activeOrganizeJob = await getActiveOrganizeJob();
     const organizeApplyActive = organizeApplyBlocksAgentWrites(activeOrganizeJob);
     if (liveness.signal.aborted) return terminalAfterAbort();
@@ -1255,9 +1244,9 @@ async function runBgsmAgentTurn(
       repositoryScope,
       scopeFingerprint,
       scopeLabel,
-      enableRepositoryCodeSearch: repositoryCodeAccess,
+      enableRepositoryCodeSearch: true,
       repositoryCodeRefAuthority,
-      enableRepositoryNotes: promptIntent.capabilities.repositoryNotes,
+      enableRepositoryNotes: true,
       enableOrganizeLibraryHandoff: !repositoryCodeReadOnly,
       enableTagWrites: !repositoryCodeReadOnly && !organizeApplyActive,
       requestOrganizeLibraryHandoff: async (action) => {

@@ -16,10 +16,7 @@ type ReadEvidence = {
 
 const DIRECT_ASSIGNMENT_WRITE_CALL_LIMIT = 8;
 
-export type BgsmTurnCapabilities = Readonly<{
-  manualTagWritesForbidden: boolean;
-  repositoryCodeSearch: boolean;
-  repositoryNotes: boolean;
+export type BgsmTurnAuthorizationOptions = Readonly<{
   repositoryCodeReadOnly?: boolean;
 }>;
 
@@ -33,7 +30,9 @@ export function hasSuccessfulRepositoryCodeToolHistory(
   ));
 }
 
-export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities): {
+export function createBgsmTurnAuthorization(
+  options: BgsmTurnAuthorizationOptions = {},
+): {
   wrapTools: (tools: AgentTool[]) => AgentTool[];
   permissions: PermissionEvaluator;
 } {
@@ -43,25 +42,27 @@ export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities):
     repositoryTags: new Set(),
   };
   let remainingAssignmentWrites = DIRECT_ASSIGNMENT_WRITE_CALL_LIMIT;
+  let repositoryCodeReadOnly = options.repositoryCodeReadOnly === true;
 
   return {
     wrapTools(tools) {
-      return tools.map((tool) => tool.risk === 'read' ? wrapReadTool(tool, evidence) : tool);
+      return tools.map((tool) => tool.risk === 'read'
+        ? wrapReadTool(tool, evidence, () => {
+            repositoryCodeReadOnly = true;
+          })
+        : tool);
     },
     permissions(tool, args) {
       const definition = getBgsmAgentToolDefinition(tool.name);
       if (definition && tool.risk !== definition.risk) return denyCurrentAuthorization();
-      if (definition?.capability === 'repository_notes' && !capabilities.repositoryNotes) {
-        return denyCurrentAuthorization();
-      }
-      if (definition?.capability === 'repository_code' && !capabilities.repositoryCodeSearch) {
+      if (
+        definition?.capability === 'library_organization'
+        && repositoryCodeReadOnly
+      ) {
         return denyCurrentAuthorization();
       }
       if (tool.risk !== 'write') return { type: 'allow' };
-      if (
-        capabilities.repositoryCodeReadOnly
-        || capabilities.manualTagWritesForbidden
-      ) return denyCurrentAuthorization();
+      if (repositoryCodeReadOnly) return denyCurrentAuthorization();
       const value = objectArgs(args);
       if (definition?.writePolicy === 'assign_tags') {
         const repository = stringArg(value, 'full_name');
@@ -103,11 +104,18 @@ export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities):
   };
 }
 
-function wrapReadTool(tool: AgentTool, evidence: ReadEvidence): AgentTool {
+function wrapReadTool(
+  tool: AgentTool,
+  evidence: ReadEvidence,
+  enterRepositoryCodeReadOnly: () => void,
+): AgentTool {
   return {
     ...tool,
     async execute(args, context) {
       const result = await tool.execute(args, context);
+      if (isBgsmAgentToolCapability(tool.name, 'repository_code')) {
+        enterRepositoryCodeReadOnly();
+      }
       recordReadEvidence(tool.name, result, evidence);
       return result;
     },

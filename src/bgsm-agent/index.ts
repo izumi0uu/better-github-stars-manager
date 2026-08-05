@@ -1,7 +1,6 @@
 export * from './context';
 export * from './context-policy';
 export * from './instructions';
-export * from './prompt-intent';
 export * from './session';
 export * from './compaction';
 export * from './conversation-binding';

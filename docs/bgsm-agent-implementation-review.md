@@ -25,7 +25,7 @@ The direct path is still constrained by application code:
 
 - `remove_repo_tags` and `delete_tags_everywhere` are available on regular turns rather than enabled by keyword or intent matching;
 - every repository/tag removal needs same-turn local assignment evidence, and every global tag deletion needs same-turn tag-list evidence;
-- repository-code conversations remain read-only, explicit no-write requests deny every tag mutation, and an active Organize Apply holds the shared write lock;
+- repository-code conversations remain host-enforced read-only, explicit no-write requests are interpreted by the main model, and an active Organize Apply holds the shared write lock;
 - repository removals and global deletions execute as separate atomic IndexedDB batches and preserve Gist dirty-outbox semantics;
 - canonical write effects are recorded in the execution ledger so retries execute only effects that are not already committed;
 - the Cubby UI reports the tool activity and final mutation count without synthesizing a keyword-driven confirmation or unavailable card.
@@ -133,7 +133,7 @@ Application code must:
 | Clean up tags | Explicit cleanup task | Read tools plus proposal creation | Removal requires review and confirmation | Proposed actions with impact counts |
 | Delete tag everywhere | Explicit destructive action | Preview only before confirmation | Commit must be user-owned; never a model-only decision | Precondition-checked receipt and recovery information |
 
-Prompt classification may reduce irrelevant tool descriptions, but it must not grant authority. The regular expression in `src/bgsm-agent/prompt-intent.ts:1-10` is too broad to act as a permission boundary: words such as `list`, `repo`, `tag`, and `search` all select the same registry that contains global write tools.
+The main model selects optional read tools from conversation context instead of a current-prompt regular expression. Tool selection does not grant write authority: repository scope, current-turn local evidence, write budgets, and repository-code read-only mode remain host-enforced.
 
 ## 3. Current implementation map
 
@@ -159,8 +159,8 @@ Toolbar Auto Tags / free-form prompt
 - The content-side session owns ephemeral raw history and a revision. Each turn crosses the Agent Port with `sessionId`, `baseRevision`, history, and an optional compaction checkpoint; stale results cannot commit.
 - The background binds the conversation to Provider fingerprint, repository scope, capability policy, and current authorization before calling the harness.
 - Provider adapters emit incremental text deltas plus strict terminal results. Tool calls become executable only after their complete arguments and protocol envelope validate.
-- Current-prompt intent authorizes only the selected capability and scope. Historical or compacted text never establishes write authority.
-- Notes and repository code are separate explicit read capabilities. They are not attached to every prompt and remain subject to bounded scope and tool-result admission.
+- The main model selects optional read tools from conversation context instead of a current-prompt regular expression. Historical or compacted text never establishes tag-write authority.
+- Notes and repository-code tools are visible on regular turns so follow-up requests can be resolved from conversation context; their descriptions and system instructions restrict use to the current user request. Repository scope, current-turn local evidence, and mutation budgets remain host-enforced.
 - Automatic compaction projects older committed history into a no-tool checkpoint summary while preserving client-owned raw history and the active user/tool suffix.
 - Sessions remain in memory only. Persistent resume, branching session trees, and autonomous background goals are still deferred.
 
@@ -176,11 +176,11 @@ Toolbar Auto Tags / free-form prompt
 | `search_repository_code` | Conditional read | Searches the bounded GitHub code index and returns verified, pinned snippets; at most one search runs per turn |
 | `read_repository_file` | Conditional read | Reads at most 200 text lines using a trusted commit ref returned by list/search |
 | `read_repository_notes` | Conditional private read | Returns bounded private notes only when the current prompt explicitly requests them |
-| `assign_repo_tags` | Write | Adds manual tags after same-turn local repository evidence when the current prompt does not forbid writes |
+| `assign_repo_tags` | Write | Adds manual tags after the main model selects the action and same-turn local repository evidence exists |
 | `remove_repo_tags` | Write | Atomically removes requested visible repository/tag pairs after same-turn assignment evidence |
 | `delete_tags_everywhere` | Write | Atomically removes requested tag names from all repositories and writes exclusion tombstones after same-turn tag evidence |
 
-All three tag mutation tools are present on regular turns; runtime authorization, not prompt keyword matching, decides whether a call can execute. After any repository-code tool runs, that conversation stays read-only; tag changes require a new conversation.
+All three tag mutation tools are present on regular turns. The main model interprets whether the conversation requests a mutation; runtime authorization independently enforces repository scope, same-turn evidence, write budgets, and code-read-only mode. After any repository-code tool runs, that conversation stays read-only; tag changes require a new conversation.
 
 The registry is defined in `src/bgsm-agent/tools.ts` and `src/bgsm-agent/repository-code-search-tool.ts`.
 
@@ -1306,7 +1306,7 @@ Reason: BGSM needs a narrow browser-extension control plane, not a coding-agent 
 | Where Agent-generated additive tags are stored | Choose one explicit layer; prefer `autoTags` if they remain machine-owned, `manualTags` only after explicit acceptance | Preserves provenance |
 | Default Organize scope | All current live stars, confirmed before start; filters and selected rows cannot narrow it | Makes “organize my library” complete and auditable |
 | Direct write for additive Auto Tags | Allowed only for explicit task invocation, immutable scope, and hard budgets | Keeps primary task useful without granting broad autonomy |
-| Notes available to model | Explicit scoped opt-in only | Private notes are read only when the current prompt selects that capability |
+| Notes available to model | Scoped tool selected by the main model | Private note contents are read only when the current request asks to use them |
 | Chat continuity | Ephemeral bounded session only | Follow-ups and compaction work in memory; reload persistence remains deferred |
 | Persistent Agent tables | Durable OrganizeJob/Review/Apply/Receipt tables; chat sessions remain ephemeral | MV3 recovery requires durable job authority without broadening chat persistence |
 | Automatic Gist Push after Agent change | No | Preserves explicit sync ownership |

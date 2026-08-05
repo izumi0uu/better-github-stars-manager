@@ -35,13 +35,13 @@ describe('background agent turn contract', () => {
     assert.match(backgroundSource, /repositoryCodeRefAuthorityFor\(/);
     assert.match(backgroundSource, /repositoryCodeRefAuthority,/);
     assert.match(backgroundSource, /hasRepositoryCodeHistory = hasSuccessfulRepositoryCodeToolHistory\(input\.history\)/);
-    assert.match(backgroundSource, /repositoryCodeAccess = promptIntent\.capabilities\.repositoryCodeSearch[\s\S]*?\|\| hasRepositoryCodeHistory/);
-    assert.match(backgroundSource, /repositoryCodeReadOnly = promptIntent\.capabilities\.repositoryCodeSearch[\s\S]*?\|\| hasRepositoryCodeHistory/);
+    assert.match(backgroundSource, /repositoryCodeReadOnly = hasRepositoryCodeHistory/);
+    assert.doesNotMatch(backgroundSource, /analyzeBgsmPromptIntent|promptIntent|repositoryCodeAccess/);
     assert.doesNotMatch(backgroundSource, /repositoryCodeReference/);
-    assert.doesNotMatch(backgroundSource, /promptIntent\.useTools|manualTagAdditions/);
+    assert.doesNotMatch(backgroundSource, /manualTagAdditions/);
     assert.doesNotMatch(backgroundSource, /interactionScope|interactionParent|scope_selector/);
-    assert.match(backgroundSource, /enableRepositoryCodeSearch: repositoryCodeAccess/);
-    assert.match(backgroundSource, /enableRepositoryNotes: promptIntent\.capabilities\.repositoryNotes/);
+    assert.match(backgroundSource, /enableRepositoryCodeSearch: true/);
+    assert.match(backgroundSource, /enableRepositoryNotes: true/);
     assert.match(backgroundSource, /enableOrganizeLibraryHandoff: !repositoryCodeReadOnly/);
     assert.match(backgroundSource, /requestOrganizeLibraryHandoff: async \(action\) =>/);
     assert.match(backgroundSource, /status: 'blocked_by_existing_job'/);
