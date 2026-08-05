@@ -158,6 +158,16 @@ describe('i18n catalog and locale propagation invariants', () => {
     );
   });
 
+  it('localizes Watch background failures in both product locales', () => {
+    const english = getMessages('en').background;
+    const chinese = getMessages('zh-CN').background;
+
+    assert.equal(english.watchDisconnectFailed, 'Watch Inbox disconnect failed.');
+    assert.equal(chinese.watchDisconnectFailed, '断开 Watch 收件箱失败。');
+    assert.equal(english.watchInboxQueryInvalid, 'Invalid Watch inbox query.');
+    assert.equal(chinese.watchInboxQueryInvalid, 'Watch 收件箱查询无效。');
+  });
+
   it('localizes the development Cubby diagnostics surface while preserving raw evidence identifiers', () => {
     const english = getAgentDiagnosticsMessages('en');
     const chinese = getAgentDiagnosticsMessages('zh-CN');

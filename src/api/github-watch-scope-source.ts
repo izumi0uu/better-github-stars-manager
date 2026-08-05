@@ -7,6 +7,7 @@ import {
 const API_ORIGIN = 'https://api.github.com';
 const SCOPE_PATH = '/user/subscriptions';
 const PER_PAGE = 100;
+const MAX_SCOPE_PAGES = 100;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 type FetchLike = typeof fetch;
@@ -14,6 +15,7 @@ type FetchLike = typeof fetch;
 export interface FetchGitHubWatchScopeOptions {
   token: string;
   fetchImpl?: FetchLike;
+  maxPages?: number;
   now?: () => Date | string | number;
   timeoutMs?: number;
 }
@@ -149,6 +151,8 @@ async function fetchPage(
   }
 }
 
+/** Fetch one complete, bounded native Watch snapshot. Partial scope is never publishable.
+ * @see https://docs.github.com/en/rest/activity/watching#list-repositories-watched-by-the-authenticated-user */
 export async function fetchGitHubWatchScope(
   options: FetchGitHubWatchScopeOptions,
 ): Promise<WatchScopeSnapshot> {
@@ -158,6 +162,9 @@ export async function fetchGitHubWatchScope(
   const timeoutMs = Number.isFinite(options.timeoutMs)
     ? Math.max(1, Math.floor(options.timeoutMs!))
     : DEFAULT_TIMEOUT_MS;
+  const maxPages = Number.isFinite(options.maxPages)
+    ? Math.min(MAX_SCOPE_PAGES, Math.max(1, Math.floor(options.maxPages!)))
+    : MAX_SCOPE_PAGES;
   const fetchedAt = timestampFrom(options.now);
   const byName = new Map<string, ReturnType<typeof normalizeWatchRepository>>();
   let page = 1;
@@ -167,6 +174,9 @@ export async function fetchGitHubWatchScope(
     pageCount++;
     for (const repository of result.repositories) byName.set(repository.full_name, repository);
     if (result.nextPage === null) break;
+    if (pageCount >= maxPages) {
+      throw new GitHubWatchError('page_limit_exceeded', undefined, { page });
+    }
     page = result.nextPage;
   }
   return {

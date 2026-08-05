@@ -434,15 +434,19 @@ async function persistGitHubCredentialsUnlocked(
 
 async function mutateGitHubCredentials(
   update: (current: Config) => Config | Promise<Config>,
+  afterCommit?: (next: Config) => void,
 ): Promise<Config> {
   return runConfigExclusive(async () => {
     const current = await readStoredConfig();
-    return persistGitHubCredentialsUnlocked(current, await update(current));
+    const next = await persistGitHubCredentialsUnlocked(current, await update(current));
+    afterCommit?.(next);
+    return next;
   });
 }
 
 async function mutateStoredConfig(
   update: (current: Config) => Config | null | Promise<Config | null>,
+  afterCommit?: (next: Config) => void,
 ): Promise<Config> {
   return runConfigExclusive(async () => {
     const current = await readStoredConfig();
@@ -451,7 +455,9 @@ async function mutateStoredConfig(
       cache = current;
       return current;
     }
-    return persistConfigUnlocked(current, proposed);
+    const next = await persistConfigUnlocked(current, proposed);
+    afterCommit?.(next);
+    return next;
   });
 }
 
@@ -1095,8 +1101,9 @@ export const authStore = {
           ? null
           : current.watchNotificationsTokenCryptoMeta,
       };
+    }, () => {
+      plaintextToken = { cipher, cryptoMeta: JSON.stringify(meta), value: clean };
     });
-    plaintextToken = { cipher, cryptoMeta: JSON.stringify(meta), value: clean };
     return { username: login, watching };
   },
 
@@ -1115,9 +1122,10 @@ export const authStore = {
         watchNotificationsTokenEncrypted: null,
         watchNotificationsTokenCryptoMeta: null,
       };
+    }, () => {
+      plaintextToken = null;
+      plaintextWatchNotificationsToken = null;
     });
-    plaintextToken = null;
-    plaintextWatchNotificationsToken = null;
   },
 
   async setWatchNotificationsToken(token: string): Promise<{ username: string }> {
@@ -1141,12 +1149,13 @@ export const authStore = {
         watchNotificationsTokenEncrypted: cipher,
         watchNotificationsTokenCryptoMeta: meta,
       };
+    }, () => {
+      plaintextWatchNotificationsToken = {
+        cipher,
+        cryptoMeta: JSON.stringify(meta),
+        value: clean,
+      };
     });
-    plaintextWatchNotificationsToken = {
-      cipher,
-      cryptoMeta: JSON.stringify(meta),
-      value: clean,
-    };
     return { username: login };
   },
 
@@ -1155,8 +1164,9 @@ export const authStore = {
         ...current,
         watchNotificationsTokenEncrypted: null,
         watchNotificationsTokenCryptoMeta: null,
-    }));
-    plaintextWatchNotificationsToken = null;
+    }), () => {
+      plaintextWatchNotificationsToken = null;
+    });
   },
 
   async update(patch: Partial<Config>): Promise<void> {
@@ -1314,8 +1324,9 @@ export const authStore = {
           capability,
         }),
       };
+    }, () => {
+      plaintextAgentApiKey = nextPlaintextAgentApiKey;
     });
-    plaintextAgentApiKey = nextPlaintextAgentApiKey;
   },
 
   async clearAgentProviderApiKey(): Promise<void> {

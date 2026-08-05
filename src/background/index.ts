@@ -440,14 +440,15 @@ if (DEV) {
 }
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
-  const configChange = changes[CONFIG_STORAGE_KEY] ??
-    changes[GITHUB_CREDENTIALS_STORAGE_KEY];
-  if (!configChange || !watchMainAccountChanged(configChange)) return;
+  // Both keys can change atomically; the dedicated credential record owns identity.
+  const credentialsChange = changes[GITHUB_CREDENTIALS_STORAGE_KEY];
+  const accountChange = credentialsChange ?? changes[CONFIG_STORAGE_KEY];
+  if (!accountChange || !watchMainAccountChanged(accountChange)) return;
 
   // The coordinator clears the account-bound token and IDB stores through the
   // shared queue. Wrapping it in another queued operation would deadlock it.
   void watchRefreshCoordinator.reconcileAccount({
-    invalidateNotificationsIdentity: watchNotificationsIdentity(configChange.oldValue),
+    invalidateNotificationsIdentity: watchNotificationsIdentity(accountChange.oldValue),
   }).catch(() => {});
 });
 const organizeJobRunConnections = createBgsmOrganizeJobConnectionRegistry<chrome.runtime.Port>();
@@ -1925,26 +1926,29 @@ async function handle(req: Req): Promise<Res> {
       case "getStatus":
         return { ok: true, data: await getStatusPayload() };
       case 'getWatchStatus': {
+        const m = await getLocaleMessages();
         try {
           return { ok: true, data: await watchRefreshCoordinator.getStatus() };
         } catch {
-          return { ok: false, error: 'Watch status is unavailable.' };
+          return { ok: false, error: m.background.watchStatusUnavailable };
         }
       }
       case 'queryWatchInbox': {
+        const m = await getLocaleMessages();
         if (req.unreadOnly !== undefined && typeof req.unreadOnly !== 'boolean') {
-          return { ok: false, error: 'Invalid Watch inbox query.' };
+          return { ok: false, error: m.background.watchInboxQueryInvalid };
         }
         const unreadOnly = req.unreadOnly ?? true;
         try {
           return { ok: true, data: await watchRefreshCoordinator.queryInbox(unreadOnly) };
         } catch {
-          return { ok: false, error: 'Watch inbox is unavailable.' };
+          return { ok: false, error: m.background.watchInboxUnavailable };
         }
       }
       case 'getWatchRepositoryDetail': {
+        const m = await getLocaleMessages();
         const fullName = canonicalRepositoryFullName(req.fullName);
-        if (!fullName) return { ok: false, error: 'Invalid Watch repository.' };
+        if (!fullName) return { ok: false, error: m.background.watchRepositoryInvalid };
         try {
           const star = await db.stars
             .filter((row) => !row.tombstone && row.full_name.toLowerCase() === fullName)
@@ -1957,28 +1961,31 @@ async function handle(req: Req): Promise<Res> {
             },
           };
         } catch {
-          return { ok: false, error: 'Watch repository detail is unavailable.' };
+          return { ok: false, error: m.background.watchRepositoryDetailUnavailable };
         }
       }
       case 'refreshWatchInbox': {
+        const m = await getLocaleMessages();
         try {
           return { ok: true, data: await watchRefreshCoordinator.refresh() };
         } catch {
-          return { ok: false, error: 'Watch refresh failed.' };
+          return { ok: false, error: m.background.watchRefreshFailed };
         }
       }
       case 'disconnectWatchInbox': {
+        const m = await getLocaleMessages();
         try {
           return { ok: true, data: await watchRefreshCoordinator.disconnectInbox() };
         } catch {
-          return { ok: false, error: 'Watch Inbox disconnect failed.' };
+          return { ok: false, error: m.background.watchDisconnectFailed };
         }
       }
       case 'clearWatchData': {
+        const m = await getLocaleMessages();
         try {
           return { ok: true, data: await watchRefreshCoordinator.clearData() };
         } catch {
-          return { ok: false, error: 'Watch data could not be cleared.' };
+          return { ok: false, error: m.background.watchDataClearFailed };
         }
       }
       case "getUsername":

@@ -209,24 +209,6 @@ export function repositoryHtmlUrl(fullName: unknown): string {
   return `${WEB_ORIGIN}/${normalizeRepositoryFullName(fullName)}`;
 }
 
-function safeRepositoryHtmlUrl(value: unknown, fullName: string): string {
-  if (typeof value !== 'string' || value.trim() === '') return repositoryHtmlUrl(fullName);
-  try {
-    const parsed = new URL(value);
-    if (parsed.origin !== WEB_ORIGIN || parsed.username || parsed.password || parsed.port) {
-      return repositoryHtmlUrl(fullName);
-    }
-    const path = parsed.pathname.replace(/\/$/, '').split('/').filter(Boolean);
-    if (path.length !== 2 || normalizeRepositoryFullName(path.join('/')) !== fullName) {
-      return repositoryHtmlUrl(fullName);
-    }
-    if (parsed.search || parsed.hash) return repositoryHtmlUrl(fullName);
-    return repositoryHtmlUrl(fullName);
-  } catch {
-    return repositoryHtmlUrl(fullName);
-  }
-}
-
 function apiPathSegments(value: string): string[] | null {
   try {
     const parsed = new URL(value);
@@ -376,8 +358,8 @@ export function normalizeNotificationThread(
     }
     subjectApiUrl = typeof subject.url === 'string' ? subject.url : null;
   }
-  const rawRepositoryUrl = repository.html_url;
-  const repositoryUrl = safeRepositoryHtmlUrl(rawRepositoryUrl, repositoryFullName);
+  // Rebuild from the validated repository name instead of trusting a remote URL.
+  const repositoryUrl = repositoryHtmlUrl(repositoryFullName);
   const subjectType = subject.type.trim();
   return {
     id: input.id.trim(),
@@ -439,7 +421,7 @@ export function dedupeNotificationThreads(
 
 export function filterNotificationThreads(
   threads: Iterable<GitHubNotificationThread>,
-  unreadOnly = true,
+  unreadOnly = false,
 ): GitHubNotificationThread[] {
   const selected = unreadOnly ? Array.from(threads).filter((thread) => thread.unread) : Array.from(threads);
   return sortNotificationThreads(selected);

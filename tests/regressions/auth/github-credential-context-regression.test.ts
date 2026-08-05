@@ -32,6 +32,43 @@ function lockManager() {
   };
 }
 
+function delayedFirstLockResult() {
+  let tail: Promise<void> = Promise.resolve();
+  let requestCount = 0;
+  let markFirstOperationFinished!: () => void;
+  let releaseFirstResult!: () => void;
+  const firstOperationFinished = new Promise<void>((resolve) => {
+    markFirstOperationFinished = resolve;
+  });
+  const firstResultGate = new Promise<void>((resolve) => {
+    releaseFirstResult = resolve;
+  });
+  return {
+    manager: {
+      request<T>(_name: string, callback: () => Promise<T>): Promise<T> {
+        const operation = tail.then(callback, callback);
+        tail = operation.then(() => undefined, () => undefined);
+        requestCount++;
+        if (requestCount !== 1) return operation;
+        return operation.then(
+          async (value) => {
+            markFirstOperationFinished();
+            await firstResultGate;
+            return value;
+          },
+          async (error: unknown) => {
+            markFirstOperationFinished();
+            await firstResultGate;
+            throw error;
+          },
+        );
+      },
+    },
+    firstOperationFinished,
+    releaseFirstResult,
+  };
+}
+
 async function loadAuthStores() {
   vi.resetModules();
   const first = await import('@/auth/auth-store');
@@ -63,6 +100,26 @@ afterEach(() => {
 });
 
 describe('GitHub credential context isolation', () => {
+  it('publishes plaintext cache changes before releasing the shared credential lock', async () => {
+    const delayedLock = delayedFirstLockResult();
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { locks: delayedLock.manager },
+      configurable: true,
+    });
+    const { first, second } = await loadAuthStores();
+    globalThis.fetch = mainTokenFetch('idah', 'probe-context-cache-order');
+
+    const setToken = first.authStore.setToken('github_pat_context_cache_order');
+    await delayedLock.firstOperationFinished;
+    await second.authStore.clearToken();
+    delayedLock.releaseFirstResult();
+    await setToken;
+
+    const current = await first.authStore.getConfig();
+    assert.equal(current.tokenEncrypted, null);
+    assert.equal(current.onboardingStage, 'needs_token');
+  });
+
   it('keeps the authoritative credential record after a stale settings write', async () => {
     const { first, second } = await loadAuthStores();
     globalThis.fetch = mainTokenFetch('idah', 'probe-context-main');

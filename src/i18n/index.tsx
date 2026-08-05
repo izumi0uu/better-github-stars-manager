@@ -755,6 +755,14 @@ export interface MessageCatalog {
     gistPushNoChanges: string;
     gistPullDone: (merged: number, total: number) => string;
     gistPullMissing: string;
+    watchStatusUnavailable: string;
+    watchInboxQueryInvalid: string;
+    watchInboxUnavailable: string;
+    watchRepositoryInvalid: string;
+    watchRepositoryDetailUnavailable: string;
+    watchRefreshFailed: string;
+    watchDisconnectFailed: string;
+    watchDataClearFailed: string;
   };
   /** Humanized error strings. Keys are matched against stable error codes thrown
    *  across the codebase (see src/api/errors.ts). `unknown` is the passthrough —
@@ -1752,6 +1760,14 @@ const messages: Record<Locale, MessageCatalog> = {
         `Pulled ${merged} updates from ${total} remote tag records`,
       gistPullMissing:
         "The linked sync Gist was missing; the app unbound it on this device. Push to create a new one.",
+      watchStatusUnavailable: "Watch status is unavailable.",
+      watchInboxQueryInvalid: "Invalid Watch inbox query.",
+      watchInboxUnavailable: "Watch inbox is unavailable.",
+      watchRepositoryInvalid: "Invalid Watch repository.",
+      watchRepositoryDetailUnavailable: "Watch repository detail is unavailable.",
+      watchRefreshFailed: "Watch refresh failed.",
+      watchDisconnectFailed: "Watch Inbox disconnect failed.",
+      watchDataClearFailed: "Watch data could not be cleared.",
     },
     errors: {
       tokenEmpty: "Please paste a token first.",
@@ -2765,6 +2781,14 @@ const messages: Record<Locale, MessageCatalog> = {
         `已从 ${total} 条远端标签记录中合并 ${merged} 条更新`,
       gistPullMissing:
         "已绑定的同步 Gist 不见了；本设备已解绑。你可以点 Push 重新创建。",
+      watchStatusUnavailable: "Watch 状态暂时不可用。",
+      watchInboxQueryInvalid: "Watch 收件箱查询无效。",
+      watchInboxUnavailable: "Watch 收件箱暂时不可用。",
+      watchRepositoryInvalid: "Watch 仓库无效。",
+      watchRepositoryDetailUnavailable: "Watch 仓库详情暂时不可用。",
+      watchRefreshFailed: "Watch 刷新失败。",
+      watchDisconnectFailed: "断开 Watch 收件箱失败。",
+      watchDataClearFailed: "无法清除 Watch 数据。",
     },
     errors: {
       tokenEmpty: "请先粘贴 token。",

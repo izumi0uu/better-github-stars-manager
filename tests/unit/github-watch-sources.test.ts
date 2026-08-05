@@ -95,6 +95,24 @@ describe('GitHub Watch API sources', () => {
       .rejects.toMatchObject({ code: 'github_unavailable', page: 2 });
   });
 
+  it('rejects a scope snapshot that exceeds its bounded page window', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const page = Number(new URL(String(input)).searchParams.get('page'));
+      return jsonResponse([{ full_name: `owner/repo-${page}` }], {
+        headers: {
+          link: `<https://api.github.com/user/subscriptions?per_page=100&page=${page + 1}>; rel="next"`,
+        },
+      });
+    });
+
+    await expect(fetchGitHubWatchScope({
+      token: 'token',
+      fetchImpl,
+      maxPages: 2,
+    })).rejects.toMatchObject({ code: 'page_limit_exceeded', page: 2 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects skipped pages instead of publishing incomplete snapshots', async () => {
     const scopeFetch = vi.fn<typeof fetch>(async () => jsonResponse(
       [{ full_name: 'owner/one' }],

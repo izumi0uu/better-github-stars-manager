@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  filterNotificationThreads,
   groupNotificationThreads,
   KNOWN_NOTIFICATION_REASONS,
   normalizeNotificationThread,
@@ -43,6 +44,28 @@ describe('Watch domain model', () => {
       .toBeNull();
   });
 
+  it('rebuilds repository links from the canonical name instead of remote HTML URLs', () => {
+    const normalized = normalizeNotificationThread({
+      id: 'hostile-repository-url',
+      unread: true,
+      reason: 'mention',
+      updated_at: '2026-08-05T02:00:00Z',
+      last_read_at: null,
+      repository: {
+        full_name: 'Owner/Repo',
+        html_url: 'https://evil.example/owner/repo',
+      },
+      subject: {
+        title: 'Safe fallback',
+        type: 'Release',
+        url: 'https://api.github.com/repos/owner/repo/releases/1',
+      },
+    }, { fetchedAt: '2026-08-05T04:00:00Z' });
+
+    expect(normalized.repositoryHtmlUrl).toBe('https://github.com/owner/repo');
+    expect(normalized.subjectHtmlUrl).toBeNull();
+  });
+
   it('groups newest first with deterministic repository and thread ties', () => {
     const groups = groupNotificationThreads([
       thread('b', 'Beta/Repo', '2026-08-05T02:00:00Z'),
@@ -54,6 +77,16 @@ describe('Watch domain model', () => {
     expect(groups[1]?.threads.map((item) => item.id)).toEqual(['a', 'b']);
     expect(groupNotificationThreads(groups.flatMap((group) => group.threads), { unreadOnly: true })
       .map((group) => group.repositoryFullName)).toEqual(['beta/repo']);
+  });
+
+  it('includes all threads by default and filters unread only when requested', () => {
+    const unread = thread('unread', 'owner/repo', '2026-08-05T03:00:00Z');
+    const read = thread('read', 'owner/repo', '2026-08-05T02:00:00Z', false);
+
+    expect(filterNotificationThreads([read, unread]).map((item) => item.id))
+      .toEqual(['unread', 'read']);
+    expect(filterNotificationThreads([read, unread], true).map((item) => item.id))
+      .toEqual(['unread']);
   });
 
   it('keeps the current documented notification reason catalog', () => {
