@@ -58,7 +58,7 @@ function createLiveness(clock: ManualClock, overrides: Partial<{
   });
 }
 
-describe('BGSM Agent progress-aware liveness', () => {
+describe('Cubby progress-aware liveness', () => {
   it('terminates an unanswered Provider request at the first-response deadline', () => {
     const clock = new ManualClock();
     const liveness = createLiveness(clock);

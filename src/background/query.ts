@@ -1,7 +1,11 @@
 import { db } from '@/storage/db';
 import type { Star, Tag } from '@/types';
 import type { FilterState, SortKey } from '@/ui/filter-store';
-import { visibleTagNames } from '@/tags/tag-model';
+import {
+  canonicalTagKey,
+  excludedCanonicalTagKeys,
+  visibleTagNames,
+} from '@/tags/tag-model';
 import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
 import {
   validateLaunchCandidateContract,
@@ -65,14 +69,15 @@ async function ensureCache() {
     db.tags.toArray(),
     db.tagMeta.toArray(),
   ]);
+  const excluded = excludedCanonicalTagKeys(tagMeta);
   const tagMap = new Map<string, Tag>();
   for (const t of tags) {
     const normalized = normalizeStoredTag(t as LegacyTagRow);
-    tagMap.set(normalized.full_name, normalized);
-  }
-  const excluded = new Set<string>();
-  for (const m of tagMeta) {
-    if (m.excluded) excluded.add(m.name);
+    tagMap.set(normalized.full_name, {
+      ...normalized,
+      manualTags: normalized.manualTags.filter((name) => !excluded.has(canonicalTagKey(name))),
+      autoTags: normalized.autoTags.filter((name) => !excluded.has(canonicalTagKey(name))),
+    });
   }
   cache = { stars, tags: tagMap, excluded, version: cacheVersion };
   return cache;
@@ -127,7 +132,9 @@ function filterAndSortRows(
 ): Star[] {
   const q = filter.query.trim().toLowerCase();
   const langSet = filter.languages.length ? new Set(filter.languages) : null;
-  const tagSet = filter.tags.length ? new Set(filter.tags) : null;
+  const tagSet = filter.tags.length
+    ? new Set(filter.tags.map((tag) => canonicalTagKey(tag)))
+    : null;
 
   const filtered = stars.filter((s) => {
     if (!filter.showTombstone && s.tombstone) return false;
@@ -135,12 +142,13 @@ function filterAndSortRows(
     if (langSet && (s.language === null || !langSet.has(s.language))) return false;
     const tagRecord = tags.get(s.full_name);
     const myTags = visibleTagNames(tagRecord);
+    const myTagKeys = myTags.map((tag) => canonicalTagKey(tag));
     if (filter.onlyFavorite && !tagRecord?.favorite) return false;
     if (filter.onlyUntagged && myTags.length > 0) return false;
     if (tagSet) {
       if (filter.tagMode === 'all') {
-        if (!filter.tags.every((t) => myTags.includes(t))) return false;
-      } else if (!myTags.some((t) => tagSet.has(t))) return false;
+        if (!filter.tags.every((tag) => myTagKeys.includes(canonicalTagKey(tag)))) return false;
+      } else if (!myTagKeys.some((tag) => tagSet.has(tag))) return false;
     }
     if (q) {
       const notes = tagRecord?.notes ?? '';
@@ -241,15 +249,19 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
   // the sidebar tree — they're tombstones, not live filters. The tree is a flat
   // list sorted by count (no dimension grouping); topic-derived and user-authored
   // tags sit side by side.
-  const tagCounts = new Map<string, number>();
+  const tagCounts = new Map<string, { name: string; count: number }>();
   for (const t of tags.values()) {
     for (const tag of visibleTagNames(t)) {
-      if (excluded.has(tag)) continue;
-      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+      const key = canonicalTagKey(tag);
+      if (excluded.has(key)) continue;
+      const current = tagCounts.get(key);
+      tagCounts.set(key, {
+        name: current?.name ?? tag,
+        count: (current?.count ?? 0) + 1,
+      });
     }
   }
-  const tagTree: QueryResult['tagTree'] = [...tagCounts.entries()]
-    .map(([name, count]) => ({ name, count }))
+  const tagTree: QueryResult['tagTree'] = [...tagCounts.values()]
     .sort((a, b) => b.count - a.count);
 
   // Slice for the requested window.

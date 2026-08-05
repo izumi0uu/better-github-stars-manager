@@ -240,7 +240,7 @@ export function createBgsmAgentTurnRegistry(
 
   const failAttempt = async (attempt: AgentTurnAttempt, error: unknown) => {
     if (attempt.terminal) return;
-    let message = 'BGSM Agent turn failed.';
+    let message = 'Cubby turn failed.';
     try {
       message = await dependencies.translateError(error);
     } catch {
@@ -387,7 +387,7 @@ export function createBgsmAgentTurnRegistry(
             turnAttemptId: input.turnAttemptId,
             sessionId: input.sessionId,
             baseRevision: input.baseRevision,
-            message: 'BGSM Agent turnAttemptId was reused with conflicting launch data.',
+            message: 'Cubby turnAttemptId was reused with conflicting launch data.',
             category: 'other',
           },
         }

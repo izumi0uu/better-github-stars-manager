@@ -45,11 +45,13 @@ function renderToolbarViewTabs({
   customPreviewing,
   layoutConfigReady = true,
   layoutEditReady = true,
+  agentActive,
 }: {
   layoutMode: 'default' | 'custom';
   customPreviewing: boolean;
   layoutConfigReady?: boolean;
   layoutEditReady?: boolean;
+  agentActive?: boolean;
 }) {
   return renderToStaticMarkup(
     <TooltipProvider>
@@ -65,6 +67,8 @@ function renderToolbarViewTabs({
         successAction={null}
         onSync={vi.fn()}
         onAutoAssignTags={vi.fn()}
+        onOpenAgent={agentActive === undefined ? undefined : vi.fn()}
+        agentActive={agentActive}
         onToggleTheme={vi.fn()}
         theme="light"
         searchRef={{ current: null }}
@@ -84,6 +88,30 @@ function renderToolbarViewTabs({
 }
 
 describe('layout edit interaction lock render behavior', () => {
+  it('switches the Agent toolbar icon from the static mascot to the working GIF', () => {
+    const idle = renderToolbarViewTabs({
+      layoutMode: 'default',
+      customPreviewing: false,
+      agentActive: false,
+    });
+    const running = renderToolbarViewTabs({
+      layoutMode: 'default',
+      customPreviewing: false,
+      agentActive: true,
+    });
+
+    expect(idle).toContain('data-testid="agent-mascot-icon"');
+    expect(idle).toContain('data-state="idle"');
+    expect(idle).toContain('index-agent-static');
+    expect(idle).not.toContain('index-agent-working');
+    expect(idle).not.toContain('aria-label="Loading"');
+    expect(running).toContain('data-testid="agent-mascot-icon"');
+    expect(running).toContain('data-state="working"');
+    expect(running).toContain('index-agent-working');
+    expect(running).toContain('media="(prefers-reduced-motion: reduce)"');
+    expect(running).not.toContain('aria-label="Loading"');
+  });
+
   it('outlines the Sync caret with the primary button color', () => {
     const markup = renderToolbarViewTabs({ layoutMode: 'default', customPreviewing: false });
     const buttons = [...markup.matchAll(/<button[\s\S]*?<\/button>/g)].map((match) => match[0]);

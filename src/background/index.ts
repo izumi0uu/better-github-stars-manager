@@ -28,11 +28,23 @@ import {
 import { countTopicRepoFrequency, reconcileAutoTagAssignments, suggestTags } from "@/ui/suggest";
 import type { AutoTagBulkUpdate } from "@/api/tag-store";
 import { translateError } from "@/api/errors";
-import { addTagNames, dismissedAutoTagNames, manualTagNames, sameTagNames, visibleTagNames } from "@/tags/tag-model";
+import {
+  addTagNames,
+  canonicalTagKey,
+  dismissedAutoTagNames,
+  excludedCanonicalTagKeys,
+  manualTagNames,
+  sameTagNames,
+  visibleTagNames,
+} from "@/tags/tag-model";
 import { selectActiveBackfillId } from "@/upgrades/backfill-state";
 import { createBackfillConfigStore, getBackfillTask } from "./backfill-config";
 import { createBackfillExecutor } from "./backfill-executor";
-import { createQueuedAgentManualTagWriter } from "./agent-manual-tag-writer";
+import {
+  createQueuedAgentGlobalTagDeletionWriter,
+  createQueuedAgentManualTagWriter,
+  createQueuedAgentVisibleTagRemovalWriter,
+} from "./agent-manual-tag-writer";
 import { createSerializedRunner } from "./serialized-runner";
 import {
   createOrganizeApplyPump,
@@ -46,11 +58,11 @@ import {
   buildBgsmAgentSystemPrompt,
   buildBgsmAgentTerminalPayload,
   compactBgsmAgentCompletedToolEnvelope,
+  createBgsmAgentPromptScope,
   createRepositoryCodeRefAuthority,
-  createBgsmAgentTools,
+  createBgsmAgentToolRegistry,
   createBgsmTurnAuthorization,
   hasSuccessfulRepositoryCodeToolHistory,
-  analyzeBgsmPromptIntent,
   prepareBgsmAgentTurn,
   selectBgsmAgentRawTurnNewMessages,
   type BgsmAgentActiveProjection,
@@ -151,6 +163,7 @@ import {
   activateOrganizePreflight,
   advanceOrganizeJobRun,
   attachOrganizeJob,
+  bindOrganizeJobProvider,
   claimOrganizeApplyChunk,
   checkpointOrganizeAnalysisPage,
   cancelOrganizeJob,
@@ -283,6 +296,16 @@ const agentManualTagWriter = createQueuedAgentManualTagWriter({
   runSerialized: (operation, runOptions) => jobQueue.run(operation, runOptions),
   isBlocked: async () => organizeApplyBlocksAgentWrites(await getActiveOrganizeJob()),
   write: addBgsmAgentManualTags,
+});
+const agentVisibleTagRemovalWriter = createQueuedAgentVisibleTagRemovalWriter({
+  runSerialized: (operation, runOptions) => jobQueue.run(operation, runOptions),
+  isBlocked: async () => organizeApplyBlocksAgentWrites(await getActiveOrganizeJob()),
+  write: (changes) => idbTagStore.removeVisibleTagsBulk(changes),
+});
+const agentGlobalTagDeletionWriter = createQueuedAgentGlobalTagDeletionWriter({
+  runSerialized: (operation, runOptions) => jobQueue.run(operation, runOptions),
+  isBlocked: async () => organizeApplyBlocksAgentWrites(await getActiveOrganizeJob()),
+  write: (tags) => idbTagStore.deleteTagsEverywhere(tags),
 });
 const organizeApplyPump = createOrganizeApplyPump({
   runSerialized: (fn) => jobQueue.run(fn),
@@ -455,7 +478,16 @@ if (DEV) {
 let organizeJobRunScheduler: BgsmOrganizeJobScheduler;
 const organizeJobRunController = createBgsmAgentController({
   resolveCandidate: () => resolveLaunchCandidate({ kind: 'all_live_stars' }),
-  scheduleRun: (identity) => organizeJobRunScheduler.schedule(identity),
+  scheduleRun: (identity) => {
+    const scheduled = organizeJobRunScheduler.schedule(identity);
+    void scheduled.catch((error: unknown) => {
+      console.error(
+        '[GSM] OrganizeJobRun controller schedule failed:',
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+    return scheduled;
+  },
   onPreflightState: (event) => organizeJobRunTraceCoordinator.recordPreflight(event),
   emit: (event) => {
     if (event.type === "run_terminal") {
@@ -609,18 +641,11 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
     const job = await getOrganizeJobForRun(identity.runId, identity.generation);
     if (!job) return;
     if (job.providerBinding === null || job.providerBinding === undefined) {
-      await advanceOrganizeJobRun({
+      await bindOrganizeJobProvider({
         jobId: job.jobId,
-        controllerId: identity.controllerId,
-        sessionId: identity.sessionId,
         runId: identity.runId,
         generation: identity.generation,
-        proposalId: parseProposalId(job.proposalId),
-        budget: job.budget as RunBudget,
-        usage: job.usage as RunBudgetUsage,
         providerBinding,
-        startFrozenIndex: job.nextFrozenIndex,
-        analysisPendingRanges: job.analysisPendingRanges ?? [],
       });
       return;
     }
@@ -1191,43 +1216,39 @@ async function runBgsmAgentTurn(
       resolveCandidate: (candidate) => resolveLiveLaunchCandidate(candidate),
     });
     if (liveness.signal.aborted) return terminalAfterAbort();
-    const promptIntent = analyzeBgsmPromptIntent(prompt);
     const hasRepositoryCodeHistory = hasSuccessfulRepositoryCodeToolHistory(input.history);
-    const repositoryCodeAccess = promptIntent.capabilities.repositoryCodeSearch
-      || hasRepositoryCodeHistory;
-    const repositoryCodeReadOnly = promptIntent.capabilities.repositoryCodeSearch
-      || hasRepositoryCodeHistory;
+    const repositoryCodeReadOnly = hasRepositoryCodeHistory;
     options.bind?.(conversation.binding);
     const runtimeProvider = preparedRuntimeProvider.create();
     let changed = false;
     let changedCount = 0;
-    const authorization = createBgsmTurnAuthorization({
-      ...promptIntent.capabilities,
-      repositoryCodeSearch: repositoryCodeAccess,
-      repositoryCodeReadOnly,
-    });
+    const authorization = createBgsmTurnAuthorization({ repositoryCodeReadOnly });
     const repositoryScope = conversation.repositoryIds;
     const scopeLabel = conversation.binding.label;
     const scopeFingerprint = conversation.binding.scopeFingerprint;
+    const conversationScope = createBgsmAgentPromptScope({
+      kind: conversation.binding.candidateContract.kind,
+      label: scopeLabel,
+      repositoryIds: repositoryScope,
+    });
     const executionLedger = new AgentExecutionLedger();
     let organizeLibraryHandoffRequested: BgsmAgentOrganizeLibraryAction | null = null;
-    const repositoryCodeRefAuthority = repositoryCodeAccess
-      ? repositoryCodeRefAuthorityFor(
-          sessionId,
-          scopeFingerprint,
-        )
-      : undefined;
+    const repositoryCodeRefAuthority = repositoryCodeRefAuthorityFor(
+      sessionId,
+      scopeFingerprint,
+    );
     const activeOrganizeJob = await getActiveOrganizeJob();
     const organizeApplyActive = organizeApplyBlocksAgentWrites(activeOrganizeJob);
     if (liveness.signal.aborted) return terminalAfterAbort();
-    const tools = authorization.wrapTools(createBgsmAgentTools({
+    const toolRegistry = createBgsmAgentToolRegistry({
       repositoryScope,
       scopeFingerprint,
       scopeLabel,
-      enableRepositoryCodeSearch: repositoryCodeAccess,
+      enableRepositoryCodeSearch: true,
       repositoryCodeRefAuthority,
-      enableRepositoryNotes: promptIntent.capabilities.repositoryNotes,
+      enableRepositoryNotes: true,
       enableOrganizeLibraryHandoff: !repositoryCodeReadOnly,
+      enableTagWrites: !repositoryCodeReadOnly && !organizeApplyActive,
       requestOrganizeLibraryHandoff: async (action) => {
         const currentOrganizeJob = await getActiveOrganizeJob();
         if (currentOrganizeJob) {
@@ -1240,17 +1261,21 @@ async function runBgsmAgentTurn(
         return { status: 'accepted' };
       },
       assignManualTags: agentManualTagWriter,
-    }).filter((tool) => (
-      tool.risk !== 'write'
-      || (!repositoryCodeReadOnly && !organizeApplyActive && tool.name === 'assign_repo_tags')
-    ))).map((tool) =>
-      wrapWriteTrackingTool(tool, () => {
+      removeVisibleTags: agentVisibleTagRemovalWriter,
+      deleteTagsEverywhere: agentGlobalTagDeletionWriter,
+    });
+    const tools = authorization.wrapTools([...toolRegistry.getActiveTools()]).map((tool) =>
+      wrapWriteTrackingTool(tool, (count) => {
         changed = true;
-        changedCount++;
+        changedCount += count;
       }),
     );
 
-    const systemPrompt = buildBgsmAgentSystemPrompt({ repositoryCodeReadOnly });
+    const systemPrompt = buildBgsmAgentSystemPrompt({
+      conversationScope,
+      repositoryCodeReadOnly,
+      activeToolNames: toolRegistry.getActiveToolNames(),
+    });
     const provider = runtimeProvider.provider;
     const profile = resolveContextBudgetPolicy({
       capability: runtimeProvider.contextCapability,
@@ -1300,7 +1325,7 @@ async function runBgsmAgentTurn(
       initialRawMessages[0]?.role !== 'user'
       || initialRawMessages[0].content !== input.prompt
     ) {
-      throw new TypeError('BGSM Agent Provider projection must retain the original user prompt.');
+      throw new TypeError('Cubby Provider projection must retain the original user prompt.');
     }
     const continueAfterContextPressure = async (
       continuation: Readonly<{
@@ -1316,7 +1341,7 @@ async function runBgsmAgentTurn(
       }>,
     ) => {
       if (!continuation.rawMessages) {
-        throw new TypeError('BGSM Agent continuation requires an append-only raw turn transcript.');
+        throw new TypeError('Cubby continuation requires an append-only raw turn transcript.');
       }
       const compacted = await compactBgsmAgentCompletedToolEnvelope({
         turn: input,
@@ -1481,29 +1506,39 @@ function repositoryCodeRefAuthorityFor(
 
 function wrapWriteTrackingTool(
   tool: AgentTool,
-  markChanged: () => void,
+  markChanged: (count: number) => void,
 ): AgentTool {
   if (tool.risk !== "write") return tool;
   return {
     ...tool,
     async execute(args, context) {
       const result = await tool.execute(args, context);
-      if (toolResultChanged(result)) markChanged();
+      const changedCount = toolResultChangedCount(result);
+      if (changedCount > 0) markChanged(changedCount);
       return result;
     },
   };
 }
 
-function toolResultChanged(result: unknown): boolean {
-  if (!result || typeof result !== "object") return true;
+function toolResultChangedCount(result: unknown): number {
+  if (!result || typeof result !== "object") return 1;
   const value = result as {
     changed?: unknown;
     removed?: unknown;
+    assignmentsRemoved?: unknown;
+    requestedTags?: unknown;
   };
-  if (typeof value.changed === "boolean") return value.changed;
-  if (typeof value.removed === "boolean") return value.removed;
-  if (typeof value.removed === "number") return value.removed > 0;
-  return true;
+  if (typeof value.changed === "number") return Math.max(0, value.changed);
+  if (typeof value.assignmentsRemoved === "number") {
+    const requestedTags = typeof value.requestedTags === "number"
+      ? value.requestedTags
+      : 0;
+    return Math.max(0, value.assignmentsRemoved, requestedTags);
+  }
+  if (typeof value.changed === "boolean") return value.changed ? 1 : 0;
+  if (typeof value.removed === "boolean") return value.removed ? 1 : 0;
+  if (typeof value.removed === "number") return Math.max(0, value.removed);
+  return 1;
 }
 
 function organizeApplyBlocksAgentWrites(job: OrganizeJobRecord | undefined): boolean {
@@ -1593,11 +1628,9 @@ async function migrateLanguageTags(): Promise<void> {
   try {
     const cfg = await authStore.getConfig();
     if (cfg.langTagMigrationDone) return;
-    const langMetas = await db.tagMeta
-      .where("dimension")
-      .equals("language")
-      .toArray();
-    const toRemove = new Set(langMetas.map((m) => m.name));
+    const tagMetas = await db.tagMeta.toArray();
+    const langMetas = tagMetas.filter((meta) => meta.dimension === "language");
+    const toRemove = new Set(langMetas.map((meta) => canonicalTagKey(meta.name)));
     if (toRemove.size === 0) {
       await authStore.update({ langTagMigrationDone: true });
       return;
@@ -1607,10 +1640,14 @@ async function migrateLanguageTags(): Promise<void> {
     // 200 changed repos so the SW message channel / keepAlive can breathe on large
     // libraries — a long unbroken write chain can starve the SW's 30s lifecycle.
     const allTags = await db.tags.toArray();
+    const excludedTagKeys = excludedCanonicalTagKeys(tagMetas);
     let changed = 0;
     for (const t of allTags) {
       const manualTags = manualTagNames(t);
-      const next = manualTags.filter((x) => !toRemove.has(x));
+      const next = manualTags.filter((name) => {
+        const key = canonicalTagKey(name);
+        return !toRemove.has(key) && !excludedTagKeys.has(key);
+      });
       if (next.length === manualTags.length) continue; // already clean
       // setTags bumps mtime + marks dirty → next gistPush propagates the cleanup.
       await idbTagStore.setTags(t.full_name, next);
@@ -1898,9 +1935,15 @@ async function handle(req: Req): Promise<Res> {
       }
       case "acceptSuggestions": {
         const tags = await run(async () => {
+          const excludedTagKeys = new Set(
+            (await idbTagStore.listExcluded()).map(canonicalTagKey),
+          );
           const existingTag = await idbTagStore.get(req.full_name);
-          const existing = manualTagNames(existingTag);
-          const merged = addTagNames(existing, req.toAdd);
+          const existing = manualTagNames(existingTag)
+            .filter((name) => !excludedTagKeys.has(canonicalTagKey(name)));
+          const additions = req.toAdd
+            .filter((name) => !excludedTagKeys.has(canonicalTagKey(name)));
+          const merged = addTagNames(existing, additions);
           await idbTagStore.setTags(req.full_name, merged);
           return visibleTagNames(await idbTagStore.get(req.full_name));
         });
@@ -2011,13 +2054,18 @@ async function handle(req: Req): Promise<Res> {
       }
       case "acceptSuggestionsBatch": {
         const n = await run(async () => {
+          const excludedTagKeys = new Set(
+            (await idbTagStore.listExcluded()).map(canonicalTagKey),
+          );
           let updated = 0;
           for (const item of req.items) {
             if (item.toAdd.length === 0) continue;
             const existing = manualTagNames(
               await idbTagStore.get(item.full_name),
-            );
-            const merged = addTagNames(existing, item.toAdd);
+            ).filter((name) => !excludedTagKeys.has(canonicalTagKey(name)));
+            const additions = item.toAdd
+              .filter((name) => !excludedTagKeys.has(canonicalTagKey(name)));
+            const merged = addTagNames(existing, additions);
             if (merged.length !== existing.length) {
               await idbTagStore.setTags(item.full_name, merged);
               updated++;
@@ -2065,7 +2113,7 @@ chrome.runtime.onConnect.addListener((port) => {
         type: 'bgsmOrganizeJobRunConnectionReady',
         controllerId: identity.controllerId,
         sessionId: identity.sessionId,
-      }, { kind: 'authoritative_snapshot' });
+      });
     }
     return true;
   };
@@ -2268,7 +2316,12 @@ chrome.runtime.onConnect.addListener((port) => {
             },
           );
           await organizeAnalysisRecovery.arm();
-          void organizeJobRunScheduler.schedule(runIdentity);
+          void organizeJobRunScheduler.schedule(runIdentity).catch((error: unknown) => {
+            console.error(
+              '[GSM] OrganizeJobRun schedule failed:',
+              error instanceof Error ? error.message : String(error),
+            );
+          });
         }
         safeOrganizeJobRunPost(port, { type: "bgsmOrganizeJobRunSnapshot", snapshot }, {
           kind: 'authoritative_snapshot',
@@ -2297,6 +2350,13 @@ chrome.runtime.onConnect.addListener((port) => {
           if (job) await publishOrganizeJobState(job.jobId, port, 'authoritative_snapshot');
         }
         await replayOrganizeJobRunInMemoryAuthority(port, message);
+        if (!snapshot) {
+          safeOrganizeJobRunPost(port, {
+            type: 'bgsmOrganizeJobRunNoActive',
+            controllerId: message.controllerId,
+            sessionId: message.sessionId,
+          }, { kind: 'authoritative_snapshot' });
+        }
         return;
       }
       if (message.type === "requestBgsmOrganizeJobSnapshot") {
@@ -2521,6 +2581,22 @@ chrome.runtime.onConnect.addListener((port) => {
         classifyOrganizeJobRunError(error),
         error instanceof Error ? error.message : "BGSM OrganizeJobRun failed.",
       );
+      if (
+        message.type === 'requestBgsmActiveOrganizeJob'
+        && error instanceof TypeError
+        && error.message === INVALID_ORGANIZE_CHECKPOINT_DISCARDED_MESSAGE
+      ) {
+        try {
+          await replayOrganizeJobRunInMemoryAuthority(port, message);
+        } catch {
+          // The discarded run still needs terminal authority even if preflight replay fails.
+        }
+        safeOrganizeJobRunPost(port, {
+          type: 'bgsmOrganizeJobRunNoActive',
+          controllerId: message.controllerId,
+          sessionId: message.sessionId,
+        }, { kind: 'authoritative_snapshot' });
+      }
     }
   };
 
@@ -2554,6 +2630,9 @@ chrome.runtime.onConnect.addListener((port) => {
             identity: portIdentity!,
             controller: organizeJobRunController,
             abortRun: (runId) => organizeJobRunScheduler.abort(parseRunId(runId)),
+            releaseRuns: (runIds) => {
+              for (const runId of runIds) organizeJobRunScheduler.release(parseRunId(runId));
+            },
           });
         }
       } finally {
@@ -3064,6 +3143,8 @@ const organizeJobRestoreFlights = new Map<
   string,
   Promise<OrganizeJobRunSnapshot | null>
 >();
+const INVALID_ORGANIZE_CHECKPOINT_DISCARDED_MESSAGE =
+  'Stored OrganizeJobRun checkpoint was invalid and has been discarded. Start analysis again.';
 
 async function restoreDurableOrganizeJob(identity: Readonly<{
   controllerId: BgsmOrganizeJobClientMessage['controllerId'];
@@ -3183,7 +3264,12 @@ async function restoreDurableOrganizeJob(identity: Readonly<{
     );
     organizeJobRunScheduler.seedRestoredState(runIdentity.runId, state);
     if (state.status === 'analyzing' && options.schedule !== false) {
-      void organizeJobRunScheduler.schedule(runIdentity);
+      void organizeJobRunScheduler.schedule(runIdentity).catch((error: unknown) => {
+        console.error(
+          '[GSM] Restored OrganizeJobRun schedule failed:',
+          error instanceof Error ? error.message : String(error),
+        );
+      });
     }
     if (attached.applyId && ['apply_sealed', 'applying'].includes(attached.status)) {
       void pumpOrganizeApply(attached.applyId);
@@ -3209,9 +3295,7 @@ async function restoreDurableOrganizeJob(identity: Readonly<{
         'checkpoint_invalid_discarded',
         'runtime',
       );
-      throw new TypeError(
-        'Stored OrganizeJobRun checkpoint was invalid and has been discarded. Start analysis again.',
-      );
+      throw new TypeError(INVALID_ORGANIZE_CHECKPOINT_DISCARDED_MESSAGE);
     }
     await organizeJobRunTraceCoordinator.flush(restoredJobId);
     throw error;

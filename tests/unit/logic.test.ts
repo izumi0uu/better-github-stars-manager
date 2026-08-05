@@ -310,6 +310,15 @@ describe('Auto-suggest', () => {
     assert.deepEqual(s, ['agent']);
   });
 
+  it('matches existing and excluded tags across NFKC-equivalent spellings', () => {
+    const s = suggestTags(
+      { topics: ['ui', 'ＡＧＥＮＴ', 'tools'] },
+      ['ＵＩ'],
+      ['agent'],
+    );
+    assert.deepEqual(s, ['tools']);
+  });
+
   it('custom limit expands auto-suggest batch size', () => {
     const s = suggestTags(
       {
@@ -362,7 +371,7 @@ describe('Auto-suggest', () => {
   it('topic repo coverage counts duplicate topics in the same repo once', () => {
     const stars: S[] = [
       { ...sample[0], topics: ['AI', 'ai', 'agent'] },
-      { ...sample[1], topics: ['ai'] },
+      { ...sample[1], topics: ['ａｉ'] },
     ];
     const topicRepoCounts = countTopicRepoFrequency(stars);
     assert.equal(topicRepoCounts.get('ai'), 2);

@@ -3,6 +3,10 @@ import type {
   AgentTool,
   PermissionEvaluator,
 } from '@/agent-harness';
+import {
+  getBgsmAgentToolDefinition,
+  isBgsmAgentToolCapability,
+} from './tool-catalog';
 
 type ReadEvidence = {
   repositories: Set<string>;
@@ -12,10 +16,7 @@ type ReadEvidence = {
 
 const DIRECT_ASSIGNMENT_WRITE_CALL_LIMIT = 8;
 
-export type BgsmTurnCapabilities = Readonly<{
-  manualTagWritesForbidden: boolean;
-  repositoryCodeSearch: boolean;
-  repositoryNotes: boolean;
+export type BgsmTurnAuthorizationOptions = Readonly<{
   repositoryCodeReadOnly?: boolean;
 }>;
 
@@ -24,12 +25,14 @@ export function hasSuccessfulRepositoryCodeToolHistory(
 ): boolean {
   return messages.some((message) => (
     message.role === 'tool'
-    && isRepositoryCodeTool(message.toolName)
+    && isBgsmAgentToolCapability(message.toolName, 'repository_code')
     && isSuccessfulToolResult(message.content)
   ));
 }
 
-export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities): {
+export function createBgsmTurnAuthorization(
+  options: BgsmTurnAuthorizationOptions = {},
+): {
   wrapTools: (tools: AgentTool[]) => AgentTool[];
   permissions: PermissionEvaluator;
 } {
@@ -39,30 +42,31 @@ export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities):
     repositoryTags: new Set(),
   };
   let remainingAssignmentWrites = DIRECT_ASSIGNMENT_WRITE_CALL_LIMIT;
+  let repositoryCodeReadOnly = options.repositoryCodeReadOnly === true;
 
   return {
     wrapTools(tools) {
-      return tools.map((tool) => tool.risk === 'read' ? wrapReadTool(tool, evidence) : tool);
+      return tools.map((tool) => tool.risk === 'read'
+        ? wrapReadTool(tool, evidence, () => {
+            repositoryCodeReadOnly = true;
+          })
+        : tool);
     },
     permissions(tool, args) {
-      if (tool.name === 'read_repository_notes' && !capabilities.repositoryNotes) {
-        return denyCurrentAuthorization();
-      }
-      if (isRepositoryCodeTool(tool.name) && !capabilities.repositoryCodeSearch) {
+      const definition = getBgsmAgentToolDefinition(tool.name);
+      if (definition && tool.risk !== definition.risk) return denyCurrentAuthorization();
+      if (
+        definition?.capability === 'library_organization'
+        && repositoryCodeReadOnly
+      ) {
         return denyCurrentAuthorization();
       }
       if (tool.risk !== 'write') return { type: 'allow' };
-      if (capabilities.repositoryCodeReadOnly) return denyCurrentAuthorization();
+      if (repositoryCodeReadOnly) return denyCurrentAuthorization();
       const value = objectArgs(args);
-      // Direct model-facing writes are additive only. The model decides whether
-      // the conversation requests a change; the runtime enforces hard policy.
-      if (tool.name === 'remove_repo_tag' || tool.name === 'delete_tag_everywhere') {
-        return denyCurrentAuthorization();
-      }
-      if (tool.name === 'assign_repo_tags') {
+      if (definition?.writePolicy === 'assign_tags') {
         const repository = stringArg(value, 'full_name');
         if (
-          capabilities.manualTagWritesForbidden ||
           !evidence.repositories.has(normalize(repository)) ||
           remainingAssignmentWrites <= 0
         ) {
@@ -71,16 +75,47 @@ export function createBgsmTurnAuthorization(capabilities: BgsmTurnCapabilities):
         remainingAssignmentWrites -= 1;
         return { type: 'allow' };
       }
+      if (definition?.writePolicy === 'remove_tags') {
+        const changes = arrayArg(value, 'changes');
+        if (
+          changes.length === 0
+          || changes.some((rawChange) => {
+            const change = objectArgs(rawChange);
+            const repository = stringArg(change, 'full_name');
+            const tags = stringArrayArg(change, 'tags');
+            return !repository
+              || tags.length === 0
+              || !evidence.repositories.has(normalize(repository))
+              || tags.some((tag) => !evidence.repositoryTags.has(pair(repository, tag)));
+          })
+        ) return denyCurrentAuthorization();
+        return { type: 'allow' };
+      }
+      if (definition?.writePolicy === 'delete_tags') {
+        const tags = stringArrayArg(value, 'tags');
+        if (
+          tags.length === 0
+          || tags.some((tag) => !evidence.tags.has(normalize(tag)))
+        ) return denyCurrentAuthorization();
+        return { type: 'allow' };
+      }
       return denyCurrentAuthorization();
     },
   };
 }
 
-function wrapReadTool(tool: AgentTool, evidence: ReadEvidence): AgentTool {
+function wrapReadTool(
+  tool: AgentTool,
+  evidence: ReadEvidence,
+  enterRepositoryCodeReadOnly: () => void,
+): AgentTool {
   return {
     ...tool,
     async execute(args, context) {
       const result = await tool.execute(args, context);
+      if (isBgsmAgentToolCapability(tool.name, 'repository_code')) {
+        enterRepositoryCodeReadOnly();
+      }
       recordReadEvidence(tool.name, result, evidence);
       return result;
     },
@@ -89,29 +124,31 @@ function wrapReadTool(tool: AgentTool, evidence: ReadEvidence): AgentTool {
 
 function recordReadEvidence(toolName: string, result: unknown, evidence: ReadEvidence): void {
   const value = objectArgs(result);
-  if (toolName === 'get_star') {
-    const repository = optionalStringArg(objectArgs(value.star), 'full_name');
-    if (repository) evidence.repositories.add(normalize(repository));
+  const evidenceSource = getBgsmAgentToolDefinition(toolName)?.evidenceSource ?? 'none';
+  if (evidenceSource === 'repository_from_star') {
+    recordRepositoryEvidence(value.star, evidence);
     return;
   }
-  if (toolName === 'list_stars' || toolName === 'search_stars') {
+  if (evidenceSource === 'repositories_from_stars') {
     for (const star of arrayArg(value, 'stars')) {
-      const repository = optionalStringArg(objectArgs(star), 'full_name');
-      if (repository) evidence.repositories.add(normalize(repository));
+      recordRepositoryEvidence(star, evidence);
     }
     return;
   }
-  if (toolName === 'list_tags') {
+  if (evidenceSource === 'tags_from_list') {
     for (const tagRow of arrayArg(value, 'tags')) {
       const tag = optionalStringArg(objectArgs(tagRow), 'name');
       if (tag) evidence.tags.add(normalize(tag));
     }
     return;
   }
-  if (toolName !== 'inspect_tag') return;
+  if (evidenceSource !== 'repository_tags_from_inspection') return;
   const inspectedTag = optionalStringArg(value, 'tag');
-  if (inspectedTag) evidence.tags.add(normalize(inspectedTag));
-  for (const repoRow of arrayArg(value, 'repos')) {
+  const repositories = arrayArg(value, 'repos');
+  if (inspectedTag && repositories.length > 0) {
+    evidence.tags.add(normalize(inspectedTag));
+  }
+  for (const repoRow of repositories) {
     const repo = objectArgs(repoRow);
     const repository = optionalStringArg(repo, 'full_name');
     if (!repository) continue;
@@ -123,10 +160,14 @@ function recordReadEvidence(toolName: string, result: unknown, evidence: ReadEvi
   }
 }
 
-function isRepositoryCodeTool(toolName: string | undefined): boolean {
-  return toolName === 'list_repository_files'
-    || toolName === 'search_repository_code'
-    || toolName === 'read_repository_file';
+function recordRepositoryEvidence(result: unknown, evidence: ReadEvidence): void {
+  const repository = objectArgs(result);
+  const fullName = optionalStringArg(repository, 'full_name');
+  if (!fullName) return;
+  evidence.repositories.add(normalize(fullName));
+  for (const tag of stringArrayArg(repository, 'tags')) {
+    evidence.repositoryTags.add(pair(fullName, tag));
+  }
 }
 
 function isSuccessfulToolResult(content: string): boolean {
@@ -151,7 +192,7 @@ function pair(repository: string, tag: string): string {
 }
 
 function normalize(value: string): string {
-  return value.trim().toLocaleLowerCase('en-US');
+  return value.trim().normalize('NFKC').toLocaleLowerCase('en-US');
 }
 
 function objectArgs(value: unknown): Record<string, unknown> {
@@ -162,6 +203,10 @@ function objectArgs(value: unknown): Record<string, unknown> {
 
 function arrayArg(value: Record<string, unknown>, name: string): unknown[] {
   return Array.isArray(value[name]) ? value[name] : [];
+}
+
+function stringArrayArg(value: Record<string, unknown>, name: string): string[] {
+  return arrayArg(value, name).filter((item): item is string => typeof item === 'string');
 }
 
 function stringArg(value: Record<string, unknown>, name: string): string {

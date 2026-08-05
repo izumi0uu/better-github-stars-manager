@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Bot, Tags } from 'lucide-react';
 import { useI18n } from '@/i18n';
+import { AgentMascot } from '@/ui/components/AgentMascot';
 import { Button } from '@/ui/shadcn/button';
 
 const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -75,8 +76,8 @@ export function AutoTagAgentPrompt({
         className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl"
       >
         <div className="flex items-start gap-3">
-          <div className="grid size-9 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
-            <Bot className="size-4.5" />
+          <div className="grid size-9 shrink-0 place-items-center rounded-md bg-muted">
+            <AgentMascot state="compacting" />
           </div>
           <div className="min-w-0">
             <h2 id="gsm-auto-tag-agent-title" className="text-sm font-semibold leading-snug">

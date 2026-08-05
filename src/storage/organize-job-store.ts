@@ -31,7 +31,7 @@ import {
   buildSemanticPolicyTaxonomyFromStorage,
   fingerprintSemanticTaxonomy,
 } from '@/bgsm-agent/semantic-dto';
-import { addTagNames, sameTagNames } from '@/tags/tag-model';
+import { addTagNames, excludedCanonicalTagKeys, sameTagNames } from '@/tags/tag-model';
 import { db } from './db';
 import { markDirtyForLocalWrites, queueTagDirtyOutbox } from './idb-tag-store';
 import { normalizeStoredTag, type LegacyTagRow } from './tag-shape';
@@ -856,6 +856,38 @@ export async function splitOrganizeAnalysisPage(input: Readonly<{
   });
 }
 
+/** Binds the current analysis provider without changing durable run phase or progress. */
+export async function bindOrganizeJobProvider(input: Readonly<{
+  jobId: string;
+  runId: RunId;
+  generation: number;
+  providerBinding: unknown;
+  now?: number;
+}>): Promise<OrganizeJobRecord> {
+  if (input.providerBinding === null || input.providerBinding === undefined) {
+    throw new TypeError('Organize provider binding is required.');
+  }
+  const now = input.now ?? Date.now();
+  return db.transaction('rw', db.organizeJobs, async () => {
+    const job = await requireJob(input.jobId);
+    requireAnalysisIdentity(job, input.runId, input.generation);
+    if (!['analyzing', 'analysis_blocked', 'review'].includes(job.status)) {
+      throw new TypeError('Organize provider binding requires an analysis or review job.');
+    }
+    if (job.providerBinding !== null && job.providerBinding !== undefined) {
+      throw new TypeError('Organize analysis provider is already bound.');
+    }
+    const next: OrganizeJobRecord = {
+      ...job,
+      providerBinding: input.providerBinding,
+      revision: job.revision + 1,
+      updatedAt: now,
+    };
+    await db.organizeJobs.put(next);
+    return next;
+  });
+}
+
 export async function advanceOrganizeJobRun(input: Readonly<{
   jobId: string;
   controllerId: string;
@@ -874,8 +906,14 @@ export async function advanceOrganizeJobRun(input: Readonly<{
   const now = input.now ?? Date.now();
   return db.transaction('rw', db.organizeJobs, db.organizeItems, async () => {
     const job = await requireJob(input.jobId);
-    if (job.status === 'completed' || job.status === 'cancelled' || job.status === 'apply_sealed' || job.status === 'applying') {
-      throw new TypeError('A terminal or Apply-stage organize job cannot start another analysis run.');
+    if (job.status === 'review') {
+      throw new TypeError('A review-ready organize job cannot start another analysis run.');
+    }
+    if (job.status !== 'analyzing') {
+      throw new TypeError('Only an actively analyzing organize job can start another analysis run.');
+    }
+    if ((await coverageForJob(input.jobId)).complete) {
+      throw new TypeError('An organize job with complete coverage cannot start another analysis run.');
     }
     const sameDurableIdentity = input.runId === job.runId && input.generation === job.generation;
     if (!sameDurableIdentity) {
@@ -901,7 +939,7 @@ export async function advanceOrganizeJobRun(input: Readonly<{
     if (input.startFrozenIndex < 0 || input.startFrozenIndex > job.itemCount) {
       throw new RangeError('Organize run start is outside the frozen scope.');
     }
-    // Generation and Provider-binding transitions must carry the durable split worklist unchanged.
+    // Generation transitions must carry the durable split worklist unchanged.
     const durablePendingRanges = job.analysisPendingRanges ?? [];
     validateAnalysisRanges(input.analysisPendingRanges, input.startFrozenIndex, job.itemCount);
     const rewinding = input.startFrozenIndex < job.nextFrozenIndex;
@@ -1380,11 +1418,7 @@ export async function settleOrganizeApplyChunk(input: Readonly<{
         throw new TypeError('Organize Apply lease has expired.');
       }
       const tagMeta = await db.tagMeta.toArray();
-      const excluded = new Set(
-        tagMeta
-          .filter((meta) => meta.excluded)
-          .map((meta) => canonicalTag(meta.name)),
-      );
+      const excluded = excludedCanonicalTagKeys(tagMeta);
       const frozenTaxonomy = await db.organizeTaxonomies.get(apply.jobId);
       if (!frozenTaxonomy) throw new TypeError('Organize Apply taxonomy snapshot is missing.');
       const rawTags = await db.tags.toArray();

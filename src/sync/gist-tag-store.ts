@@ -10,6 +10,7 @@ import {
 } from '@/storage/idb-tag-store';
 import { GIST_NO_TOKEN, GIST_CREATE_FAILED, GIST_PUSH_FAILED, GIST_PULL_FAILED } from '@/api/errors';
 import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
+import { canonicalTagKey, preferredCanonicalTagMeta } from '@/tags/tag-model';
 
 /**
  * Gist as a zero-server cross-device sync channel, storing one tags+tagMeta
@@ -116,13 +117,19 @@ async function buildPayload(onProgress?: CountProgressCallback): Promise<{ paylo
     done++;
     if (done === total || done % 50 === 0) tick();
   });
-  const tagMeta: GistPayload['tagMeta'] = {};
-  await db.tagMeta.each((m) => {
-    const { name: _n, ...rest } = m;
-    tagMeta[m.name] = rest;
+  const tagMetaByKey = new Map<string, TagMeta>();
+  await db.tagMeta.each((meta) => {
+    const key = canonicalTagKey(meta.name);
+    const current = tagMetaByKey.get(key);
+    tagMetaByKey.set(key, current ? preferredCanonicalTagMeta(current, meta) : meta);
     done++;
     if (done === total || done % 50 === 0) tick();
   });
+  const tagMeta: GistPayload['tagMeta'] = {};
+  for (const meta of tagMetaByKey.values()) {
+    const { name: _name, ...rest } = meta;
+    tagMeta[meta.name] = rest;
+  }
   tick();
   return { payload: { v: 2, tags, tagMeta, exportedAt: new Date().toISOString() }, total };
 }
@@ -216,17 +223,31 @@ export const gistTagStore = {
     }
     if (mergedTags.length > 0) await db.tags.bulkPut(mergedTags);
 
-    // Merge tagMeta by mtime.
-    for (const [name, remoteMeta] of Object.entries(remote.tagMeta)) {
-      const local = await db.tagMeta.get(name);
-      if (!local || remoteMeta.mtime > local.mtime) {
-        const mergedMeta: TagMeta = { name, ...remoteMeta };
-        await db.tagMeta.put(mergedMeta);
-        merged++;
+    // Merge metadata aliases as one identity. This keeps an older spelling from
+    // reappearing beside a newer delete tombstone after cross-device sync.
+    const remoteMetaGroups = groupTagMeta(
+      Object.entries(remote.tagMeta).map(([name, meta]) => ({ name, ...meta })),
+    );
+    const localMetaGroups = groupTagMeta(await db.tagMeta.toArray());
+    await db.transaction('rw', db.tagMeta, async () => {
+      for (const [key, remoteAliases] of remoteMetaGroups) {
+        const localAliases = localMetaGroups.get(key) ?? [];
+        const local = localAliases.length > 0 ? selectTagMeta(localAliases) : undefined;
+        const remoteWinner = selectTagMeta(remoteAliases);
+        const next = local
+          ? preferredCanonicalTagMeta(local, remoteWinner)
+          : remoteWinner;
+        if (!isCanonicalMetaState(localAliases, next)) {
+          if (localAliases.length > 0) {
+            await db.tagMeta.bulkDelete(localAliases.map((meta) => meta.name));
+          }
+          await db.tagMeta.put(next);
+          merged++;
+        }
+        done += remoteAliases.length;
+        if (done === total || done % 50 === 0) tick();
       }
-      done++;
-      if (done === total || done % 50 === 0) tick();
-    }
+    });
 
     tick();
     return { merged, total, missing: false };
@@ -302,4 +323,31 @@ function mergeTagRowsByLayer(local: Tag, remote: Tag): { tag: Tag; changed: bool
 
   const normalized = normalizeStoredTag(next);
   return { tag: normalized, changed };
+}
+
+function groupTagMeta(rows: readonly TagMeta[]): Map<string, TagMeta[]> {
+  const groups = new Map<string, TagMeta[]>();
+  for (const row of rows) {
+    const key = canonicalTagKey(row.name);
+    const group = groups.get(key);
+    if (group) group.push(row);
+    else groups.set(key, [row]);
+  }
+  return groups;
+}
+
+function selectTagMeta(rows: readonly TagMeta[]): TagMeta {
+  const first = rows[0];
+  if (!first) throw new TypeError('Tag metadata group must not be empty.');
+  return rows.slice(1).reduce(preferredCanonicalTagMeta, first);
+}
+
+function isCanonicalMetaState(rows: readonly TagMeta[], expected: TagMeta): boolean {
+  if (rows.length !== 1) return false;
+  const current = rows[0];
+  return current?.name === expected.name
+    && current.dimension === expected.dimension
+    && current.color === expected.color
+    && current.mtime === expected.mtime
+    && current.excluded === expected.excluded;
 }

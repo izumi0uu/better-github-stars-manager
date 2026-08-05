@@ -29,6 +29,7 @@ import {
   BGSM_AGENT_ACTIVE_TURN_SUMMARY_PREAMBLE,
   BGSM_AGENT_MAX_OUTPUT_TOKENS,
   BGSM_AGENT_SUMMARY_INSTRUCTION,
+  buildDeterministicBgsmFallbackSummary,
   buildBgsmAgentTerminalPayload,
   buildBgsmAgentTurnMessages,
   buildBgsmSummaryMessages,
@@ -171,7 +172,7 @@ const completedEnvelopeTools = [{
   async execute() {},
 }];
 
-describe('BGSM Agent compaction execution', () => {
+describe('Cubby compaction execution', () => {
   it('uses versioned built-in capability and requires explicit capacity for unknown routes', () => {
     const openaiModels = new Map(
       getModels('openai').map((definition) => [definition.id, definition]),
@@ -657,6 +658,46 @@ describe('BGSM Agent compaction execution', () => {
     assert.equal(result.messages.some((message) => message.content.includes('Active-turn progress summary')), true);
     assert.equal(result.messages.some((message) => message.id === completed.suffix[1]?.id), false);
     assert.doesNotThrow(() => validateProviderProtocolHistory(result.messages.map(toModelMessage)));
+  });
+
+  it('reports a no-candidate continuation as successful when the current projection still fits', async () => {
+    const input = turn([]);
+    const completed = completedToolEnvelope(input, undefined, 8);
+    const profile = resolveContextBudgetProfile(2_948);
+    const { provider, calls } = recordingProvider();
+    const events: AgentEvent[] = [];
+
+    const result = await compactBgsmAgentCompletedToolEnvelope({
+      turn: input,
+      systemPrompt: 'fresh',
+      provider,
+      tools: completedEnvelopeTools,
+      profile,
+      maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
+      currentProjectedMessages: completed.messages,
+      currentCheckpoint: undefined,
+      rawMessages: completed.suffix,
+      force: true,
+      trigger: 'completed_tool_envelope',
+      emit: (event) => events.push(event),
+    });
+
+    assert.equal(result.kind, 'ready');
+    assert.equal(calls.length, 0);
+    assert.deepEqual(
+      events
+        .filter((event) => event.type === 'context_compaction_end')
+        .map((event) => ({ ok: event.ok, summarizedMessageCount: event.summarizedMessageCount })),
+      [{ ok: true, summarizedMessageCount: 0 }],
+    );
+    assert.deepEqual(
+      events
+        .filter((event): event is Extract<AgentEvent, { type: 'context_diagnostic' }> => (
+          event.type === 'context_diagnostic' && event.action === 'terminal'
+        ))
+        .map((event) => event.category),
+      ['succeeded'],
+    );
   });
 
   it('allows a memory-only active projection before oversized history is compacted separately', async () => {
@@ -1507,6 +1548,55 @@ describe('BGSM Agent compaction execution', () => {
     }
   });
 
+  it('preserves batch tag deletions as committed writes in deterministic summaries', () => {
+    const messages: AgentMessage[] = [
+      {
+        id: 'fallback-agent-remove',
+        role: 'agent',
+        content: '',
+        createdAt: 1,
+        toolCalls: [{
+          id: 'fallback-remove-call',
+          name: 'remove_repo_tags',
+          arguments: { changes: [{ full_name: 'owner/repo', tags: ['legacy'] }] },
+        }],
+      },
+      {
+        id: 'fallback-tool-remove',
+        role: 'tool',
+        content: JSON.stringify({ ok: true, data: { changed: 1 } }),
+        createdAt: 2,
+        toolCallId: 'fallback-remove-call',
+        toolName: 'remove_repo_tags',
+      },
+      {
+        id: 'fallback-agent-delete',
+        role: 'agent',
+        content: '',
+        createdAt: 3,
+        toolCalls: [{
+          id: 'fallback-delete-call',
+          name: 'delete_tags_everywhere',
+          arguments: { tags: ['obsolete'] },
+        }],
+      },
+      {
+        id: 'fallback-tool-delete',
+        role: 'tool',
+        content: JSON.stringify({ ok: true, data: { assignmentsRemoved: 2 } }),
+        createdAt: 4,
+        toolCallId: 'fallback-delete-call',
+        toolName: 'delete_tags_everywhere',
+      },
+    ];
+
+    const summary = buildDeterministicBgsmFallbackSummary(messages);
+
+    assert.ok(summary);
+    assert.match(summary, /write tool remove_repo_tags: committed with a success receipt/);
+    assert.match(summary, /write tool delete_tags_everywhere: committed with a success receipt/);
+  });
+
   it('classifies an irreducible Provider byte limit separately from token pressure', async () => {
     const provider: ModelProvider = {
       inspectRequest() {
@@ -1955,7 +2045,7 @@ describe('BGSM Agent compaction execution', () => {
         profile: CONTEXT_PROFILE_8192,
         maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
       }),
-      /Unsupported BGSM Agent compaction checkpoint schema/,
+      /Unsupported Cubby compaction checkpoint schema/,
     );
     assert.equal(calls.length, 0);
   });

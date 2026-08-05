@@ -930,6 +930,30 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     assert.equal(run.counters.continuations, 0);
   });
 
+  it('keeps durable analysis recoverable when automatic continuation preparation fails', async () => {
+    const cursorError = new Error('cursor signing temporarily unavailable');
+    const reported: unknown[] = [];
+    const run = createHarness({
+      scopeCount: 176,
+      pageKind: 'live',
+      requestedTokens: 4_096,
+      durable: true,
+      issueContinuationCursorError: cursorError,
+      automaticContinuationFailed: (error) => {
+        reported.push(error);
+      },
+    });
+
+    await run.scheduler.schedule(run.identity);
+    await Promise.resolve();
+
+    assert.equal(run.failures, 0);
+    assert.deepEqual(run.failureReasons, []);
+    assert.deepEqual(reported, [cursorError]);
+    assert.equal(run.counters.exhaustions, 0);
+    assert.equal(run.counters.continuations, 0);
+  });
+
   it('does not publish or schedule a continuation until its durable identity is committed', async () => {
     let releaseInitialization!: () => void;
     const continuationInitializationGate = new Promise<void>((resolve) => {
@@ -1185,9 +1209,11 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
     }
     assert.equal(run.counters.executes, 1);
     assert.equal(run.scheduler.isRunning(run.identity.runId), true);
+    const executesBeforeOldRelease = run.counters.executes;
 
     releaseOldProviderSetup();
     await oldExecution;
+    assert.equal(run.counters.executes, executesBeforeOldRelease);
     assert.equal(run.scheduler.isRunning(run.identity.runId), true);
 
     releaseRestoredAnalyzer();

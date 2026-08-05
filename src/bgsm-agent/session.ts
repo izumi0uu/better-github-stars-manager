@@ -104,7 +104,7 @@ export function createBgsmAgentTurnInput(
   turnAttemptIdFactory: () => string = createTurnAttemptId,
 ): BgsmAgentTurnInput {
   if (!session.binding && !candidateContract) {
-    throw new TypeError('A new BGSM Agent conversation requires a scope candidate.');
+    throw new TypeError('A new Cubby conversation requires a scope candidate.');
   }
   return {
     turnAttemptId: turnAttemptIdFactory(),
@@ -138,10 +138,10 @@ export function applyBgsmAgentSessionTransition(
     && transition.candidateActiveProjection === undefined
     && transition.messageDelta.length === 0
   ) {
-    throw new Error('BGSM Agent session transition must commit a checkpoint, projection, or message delta.');
+    throw new Error('Cubby session transition must commit a checkpoint, projection, or message delta.');
   }
   if (transition.candidateActiveProjection === null && !transition.candidateCheckpoint) {
-    throw new Error('BGSM Agent active projections can only be cleared by an advancing checkpoint.');
+    throw new Error('Cubby active projections can only be cleared by an advancing checkpoint.');
   }
   if (transition.messageDelta.length > 0) {
     validateBgsmAgentSessionHistory(transition.messageDelta);
@@ -155,7 +155,7 @@ export function applyBgsmAgentSessionTransition(
       transition.candidateCheckpoint.summarizedMessageCount <=
         session.compaction.summarizedMessageCount
     ) {
-      throw new Error('BGSM Agent compaction checkpoint must advance.');
+      throw new Error('Cubby compaction checkpoint must advance.');
     }
   }
 
@@ -207,10 +207,10 @@ export function bindBgsmAgentSession(
   binding: BgsmAgentConversationBinding,
 ): BgsmAgentSession {
   if (session.binding && session.binding.scopeFingerprint !== binding.scopeFingerprint) {
-    throw new TypeError('BGSM Agent conversation scope cannot change in place.');
+    throw new TypeError('Cubby conversation scope cannot change in place.');
   }
   if (session.binding && session.binding.providerFingerprint !== binding.providerFingerprint) {
-    throw new TypeError('BGSM Agent conversation provider cannot change in place.');
+    throw new TypeError('Cubby conversation provider cannot change in place.');
   }
   return session.binding ? session : { ...session, binding };
 }
@@ -274,10 +274,10 @@ export function selectBgsmAgentRawTurnNewMessages(
 ): BgsmAgentSessionMessage[] {
   const currentUser = rawMessages[0];
   if (!currentUser || currentUser.role !== 'user' || currentUser.content !== input.prompt) {
-    throw new TypeError('BGSM Agent raw turn transcript must begin with the original user prompt.');
+    throw new TypeError('Cubby raw turn transcript must begin with the original user prompt.');
   }
   if (rawMessages.some((message) => !isBgsmAgentSessionMessage(message))) {
-    throw new TypeError('BGSM Agent raw turn transcript cannot contain system messages.');
+    throw new TypeError('Cubby raw turn transcript cannot contain system messages.');
   }
   validateProviderProtocolHistory(rawMessages.map(toModelMessage));
   return rawMessages.length > 1
@@ -298,7 +298,7 @@ export function validateBgsmAgentSessionHistory(
   while (index < history.length) {
     if (history[index]?.role !== 'user') {
       throw new InvalidCommittedHistoryError(
-        'BGSM Agent session history must begin each turn with a user message.',
+        'Cubby session history must begin each turn with a user message.',
       );
     }
     index += 1;
@@ -306,7 +306,7 @@ export function validateBgsmAgentSessionHistory(
       const assistant = history[index];
       if (!assistant || assistant.role !== 'agent') {
         throw new InvalidCommittedHistoryError(
-          'A BGSM Agent user message must be followed by an assistant message.',
+          'A Cubby user message must be followed by an assistant message.',
         );
       }
       index += 1;
@@ -316,7 +316,7 @@ export function validateBgsmAgentSessionHistory(
       for (const [callIndex, toolCall] of toolCalls.entries()) {
         if (!toolCall.id || !toolCall.name || declaredIds.has(toolCall.id)) {
           throw new InvalidCommittedHistoryError(
-            'BGSM Agent tool-call IDs and names must be non-empty and unique.',
+            'Cubby tool-call IDs and names must be non-empty and unique.',
           );
         }
         declaredIds.add(toolCall.id);
@@ -329,7 +329,7 @@ export function validateBgsmAgentSessionHistory(
           || (result.toolCalls?.length ?? 0) > 0
         ) {
           throw new InvalidCommittedHistoryError(
-            'BGSM Agent tool results must immediately match their assistant envelope.',
+            'Cubby tool results must immediately match their assistant envelope.',
           );
         }
       }
@@ -365,7 +365,7 @@ export function verifyBgsmAgentActiveProjection(
   checkpoint?: BgsmAgentCompactionCheckpoint,
 ): void {
   if (projection.schemaVersion !== 1) {
-    throw new TypeError('Unsupported BGSM Agent active projection schema.');
+    throw new TypeError('Unsupported Cubby active projection schema.');
   }
   if (
     !isNonemptyString(projection.currentUserMessageId)
@@ -375,13 +375,13 @@ export function verifyBgsmAgentActiveProjection(
     || !isNonemptyString(projection.policyRevision)
     || !isNonemptyString(projection.summary)
   ) {
-    throw new TypeError('BGSM Agent active projection has invalid identifiers or summary.');
+    throw new TypeError('Cubby active projection has invalid identifiers or summary.');
   }
   if (
     projection.retainedSuffixFirstMessageId !== null
     && !isNonemptyString(projection.retainedSuffixFirstMessageId)
   ) {
-    throw new TypeError('BGSM Agent active projection has an invalid retained suffix identity.');
+    throw new TypeError('Cubby active projection has an invalid retained suffix identity.');
   }
 
   const currentUserIndex = uniqueMessageIndex(
@@ -395,14 +395,14 @@ export function verifyBgsmAgentActiveProjection(
     'summary boundary',
   );
   if (history[currentUserIndex]?.role !== 'user' || boundaryIndex <= currentUserIndex) {
-    throw new TypeError('BGSM Agent active projection must span a user turn prefix.');
+    throw new TypeError('Cubby active projection must span a user turn prefix.');
   }
   const turnEndIndex = nextUserMessageIndex(history, currentUserIndex + 1);
   if (boundaryIndex >= turnEndIndex) {
-    throw new TypeError('BGSM Agent active projection cannot cross a user turn boundary.');
+    throw new TypeError('Cubby active projection cannot cross a user turn boundary.');
   }
   if (history[boundaryIndex]?.role !== 'tool') {
-    throw new TypeError('BGSM Agent active projection boundary must identify one settled tool result.');
+    throw new TypeError('Cubby active projection boundary must identify one settled tool result.');
   }
   const rawTailIndexAtCreation = currentUserIndex + projection.rawMessageCountAtCreation - 1;
   if (
@@ -412,26 +412,26 @@ export function verifyBgsmAgentActiveProjection(
     || rawTailIndexAtCreation >= turnEndIndex
     || history[rawTailIndexAtCreation]?.id !== projection.rawTailMessageIdAtCreation
   ) {
-    throw new TypeError('BGSM Agent active projection no longer matches its raw creation prefix.');
+    throw new TypeError('Cubby active projection no longer matches its raw creation prefix.');
   }
 
   const retainedSuffixStart = boundaryIndex + 1;
   if (projection.retainedSuffixFirstMessageId === null) {
     if (retainedSuffixStart !== rawTailIndexAtCreation + 1) {
-      throw new TypeError('BGSM Agent active projection is missing its retained suffix identity.');
+      throw new TypeError('Cubby active projection is missing its retained suffix identity.');
     }
   } else if (history[retainedSuffixStart]?.id !== projection.retainedSuffixFirstMessageId) {
-    throw new TypeError('BGSM Agent active projection retained suffix no longer matches raw history.');
+    throw new TypeError('Cubby active projection retained suffix no longer matches raw history.');
   }
   if (
     retainedSuffixStart < turnEndIndex
     && history[retainedSuffixStart]?.role !== 'agent'
   ) {
-    throw new TypeError('BGSM Agent active projection suffix must begin with an assistant envelope.');
+    throw new TypeError('Cubby active projection suffix must begin with an assistant envelope.');
   }
   validateProviderProtocolHistory(history.slice(currentUserIndex, retainedSuffixStart).map(toModelMessage));
   if (checkpoint && currentUserIndex < verifyBgsmAgentCheckpoint(history, checkpoint)) {
-    throw new TypeError('BGSM Agent active projection cannot precede its historical checkpoint.');
+    throw new TypeError('Cubby active projection cannot precede its historical checkpoint.');
   }
 }
 
@@ -445,7 +445,7 @@ export function verifyBgsmAgentActiveProjections(
   for (const projection of projections) {
     verifyBgsmAgentActiveProjection(history, projection, checkpoint);
     if (seenCurrentUsers.has(projection.currentUserMessageId)) {
-      throw new TypeError('BGSM Agent active projections must identify distinct user turns.');
+      throw new TypeError('Cubby active projections must identify distinct user turns.');
     }
     seenCurrentUsers.add(projection.currentUserMessageId);
     const currentUserIndex = uniqueMessageIndex(
@@ -459,7 +459,7 @@ export function verifyBgsmAgentActiveProjections(
       'summary boundary',
     );
     if (currentUserIndex <= previousBoundaryIndex) {
-      throw new TypeError('BGSM Agent active projections must be ordered and non-overlapping.');
+      throw new TypeError('Cubby active projections must be ordered and non-overlapping.');
     }
     previousBoundaryIndex = boundaryIndex;
   }
@@ -503,7 +503,7 @@ function projectRetainedHistory(
       currentUserIndex < retainedCursor
       || boundaryIndex <= currentUserIndex
     ) {
-      throw new TypeError('BGSM Agent active projection is outside retained history.');
+      throw new TypeError('Cubby active projection is outside retained history.');
     }
     projected.push(
       ...retainedHistory.slice(retainedCursor, currentUserIndex + 1),
@@ -567,7 +567,7 @@ function assertCheckpointSchema(
   checkpoint: BgsmAgentCompactionCheckpoint,
 ): asserts checkpoint is BgsmAgentCompactionCheckpoint {
   if (checkpoint.schemaVersion !== 1) {
-    throw new Error('Unsupported BGSM Agent compaction checkpoint schema.');
+    throw new Error('Unsupported Cubby compaction checkpoint schema.');
   }
 }
 
@@ -578,7 +578,7 @@ function uniqueMessageIndex(
 ): number {
   const indexes = messages.flatMap((message, index) => message.id === id ? [index] : []);
   if (indexes.length !== 1) {
-    throw new TypeError(`BGSM Agent active projection ${label} identity is not unique.`);
+    throw new TypeError(`Cubby active projection ${label} identity is not unique.`);
   }
   return indexes[0]!;
 }

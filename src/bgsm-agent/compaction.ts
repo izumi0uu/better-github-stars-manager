@@ -46,6 +46,7 @@ import {
   type ModelMessage,
   type ModelProvider,
 } from '@/agent-harness';
+import { isBgsmAgentTagWriteTool } from './tool-catalog';
 
 export const BGSM_AGENT_MAX_OUTPUT_TOKENS = 1024;
 
@@ -106,7 +107,7 @@ export function buildBgsmAgentTerminalPayload(
   candidateActiveProjection?: BgsmAgentActiveProjection | null;
 } {
   if (!result.rawMessages) {
-    throw new TypeError('BGSM Agent terminal payload requires an append-only raw turn transcript.');
+    throw new TypeError('Cubby terminal payload requires an append-only raw turn transcript.');
   }
   return {
     newMessages: selectBgsmAgentRawTurnNewMessages(result.rawMessages, turn),
@@ -414,7 +415,6 @@ export async function compactBgsmAgentCompletedToolEnvelope(input: {
       baselineProjection,
     });
     if (activeOutcome) return activeOutcome;
-    emitFailedCompaction(input);
     const currentPreflight = preflightContextRequest({
       messages: input.currentProjectedMessages.map(toModelMessage),
       toolSchemas,
@@ -450,8 +450,19 @@ export async function compactBgsmAgentCompletedToolEnvelope(input: {
               ? 'provider_request_byte_limit'
               : 'no_candidate'),
         };
+    if (outcome.kind === 'ready') {
+      input.emit?.({
+        type: 'context_compaction_end',
+        sessionId: input.turn.sessionId,
+        ok: true,
+        summarizedMessageCount: 0,
+      });
+      input.liveness?.markAgentProgress();
+    } else {
+      emitFailedCompaction(input);
+    }
     emitCompactionDiagnostic(input, 'terminal', {
-      category: outcome.kind === 'context_limit' ? outcome.reason : 'no_candidate',
+      category: outcome.kind === 'context_limit' ? outcome.reason : 'succeeded',
     });
     return outcome;
   }
@@ -702,7 +713,7 @@ function activeProjectionStart(
 ): number {
   if (!activeProjection) return 1;
   if (activeProjection.schemaVersion !== 1) {
-    throw new TypeError('Unsupported BGSM Agent active projection schema.');
+    throw new TypeError('Unsupported Cubby active projection schema.');
   }
   if (rawMessages[0]?.id !== activeProjection.currentUserMessageId) {
     throw new TypeError('Active-turn projection no longer matches the original user message.');
@@ -1107,7 +1118,7 @@ function boundedToolCompletionFacts(messages: readonly AgentMessage[]): string {
     if (assistant.role !== 'agent') continue;
     for (const call of assistant.toolCalls ?? []) {
       const result = results.get(call.id);
-      const toolClass = call.name === 'assign_repo_tags' ? 'write' : 'read';
+      const toolClass = isBgsmAgentTagWriteTool(call.name) ? 'write' : 'read';
       const toolName = truncateUtf8(call.name.replace(/[^\w.-]/gu, '?'), 64) || 'unknown';
       facts.push(toolClass + ' tool ' + toolName + ': ' + boundedToolOutcome(toolClass, result));
     }

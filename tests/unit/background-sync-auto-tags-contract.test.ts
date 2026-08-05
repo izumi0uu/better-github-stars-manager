@@ -51,7 +51,7 @@ describe('background sync auto-tag contract', () => {
       ['runBackfill', 'deferBackfill'],
     ] as const) {
       assert.doesNotMatch(caseBlock(name, nextName), /autoTagAll/, `${name} should not call autoTagAll`);
-      assert.doesNotMatch(caseBlock(name, nextName), /runBgsmAgentTurn/, `${name} should not run BGSM Agent automatically`);
+      assert.doesNotMatch(caseBlock(name, nextName), /runBgsmAgentTurn/, `${name} should not run Cubby automatically`);
     }
   });
 });

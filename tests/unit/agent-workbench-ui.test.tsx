@@ -83,21 +83,21 @@ describe('Agent organize-job workbench UI', () => {
     const activeBase = analysisSnapshot(request.controllerId, request.sessionId, 'frozen');
 
     await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: activeBase });
-    expect(currentPhase(container)).toBe('Frozen');
+    expect(currentPhase(container)).toBe('Scope locked');
     expect(container.textContent).not.toContain('Resolving scope');
 
     await emitMessage({
       type: 'bgsmOrganizeJobRunSnapshot',
       snapshot: { ...activeBase, state: 'checking_provider' },
     });
-    expect(currentPhase(container)).toBe('Checking provider');
+    expect(currentPhase(container)).toBe('Checking AI service');
 
     await emitMessage({
       type: 'bgsmOrganizeJobRunSnapshot',
       snapshot: { ...activeBase, state: 'analyzing' },
     });
     expect(currentPhase(container)).toBe('Analyzing');
-    expect(container.querySelector('[aria-label="Agent activity"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Cubby activity"]')).toBeNull();
   });
 
   it('advances every visible progress surface one repository at a time', async () => {
@@ -400,8 +400,8 @@ describe('Agent organize-job workbench UI', () => {
     });
 
     expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent)
-      .toBe('Full-library analysis did not finish');
-    expect(container.textContent).toContain('Full-library analysis did not finish');
+      .toBe('Analysis paused before completion');
+    expect(container.textContent).toContain('Analysis paused before completion');
     expect(currentPhase(container)).toBeUndefined();
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
@@ -437,8 +437,14 @@ describe('Agent organize-job workbench UI', () => {
       count: 290,
     });
     expect(container.textContent).toContain('Confirm analysis scope');
-    expect(container.textContent).toContain('290 repositories will be frozen');
+    expect(container.textContent).toContain('This analysis will include 290 repositories.');
+    expect(container.textContent).not.toContain('frozen for this run');
     expect(container.textContent).toContain('No tags are changed at this step');
+    expect(container.querySelector('textarea')?.closest('form')?.textContent)
+      .toContain('Pending confirmation · 290 repositories');
+    expect(container.textContent?.match(/Pending confirmation · 290 repositories/gu))
+      .toHaveLength(1);
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
     expect(container.innerHTML).not.toContain('preflight:v1:ui-confirm');
     await click(buttonWithText(container, 'Start analysis'));
     expect(activeOrganizePort().posted).toContainEqual(expect.objectContaining({
@@ -728,6 +734,393 @@ describe('Agent organize-job workbench UI', () => {
     });
   });
 
+  it('rolls back a failed Continue send and allows a clean retry', async () => {
+    const container = await mountHarness();
+    await enterBlockedAnalysis(container, 'continue-send-retry');
+    const organizePort = activeOrganizePort();
+    organizePort.rejectPosts = true;
+
+    await click(buttonWithText(container, 'Continue remaining'));
+    const retry = buttonWithText(container, 'Continue remaining');
+    expect(retry.disabled).toBe(false);
+    expect(retry.querySelector('[data-testid="spinner"]')).toBeNull();
+    expect(postedMessages('continueBgsmOrganizeJob')).toHaveLength(0);
+
+    organizePort.rejectPosts = false;
+    await click(retry);
+    expect(postedMessages('continueBgsmOrganizeJob')).toHaveLength(1);
+  });
+
+  it('posts a rapid repeated Continue request only once', async () => {
+    const container = await mountHarness();
+    await enterBlockedAnalysis(container, 'continue-double-click');
+    const button = buttonWithText(container, 'Continue remaining');
+
+    await act(async () => {
+      button.click();
+      button.click();
+      await Promise.resolve();
+    });
+
+    expect(postedMessages('continueBgsmOrganizeJob')).toHaveLength(1);
+  });
+
+  it('posts a rapid repeated Stop request only once', async () => {
+    const container = await mountHarness();
+    const request = await requestOrganizePreflight(container);
+    const analyzing = analysisSnapshot(request.controllerId, request.sessionId, 'analyzing');
+    await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: analyzing });
+    const button = buttonWithText(container, 'Stop');
+
+    await act(async () => {
+      button.click();
+      button.click();
+      await Promise.resolve();
+    });
+
+    expect(postedMessages('stopBgsmOrganizeJob')).toEqual([
+      expect.objectContaining({ requestId: expect.any(String) }),
+    ]);
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+  });
+
+  it('rolls back a failed Stop send and allows a clean retry', async () => {
+    const container = await mountHarness();
+    const request = await requestOrganizePreflight(container);
+    const analyzing = analysisSnapshot(request.controllerId, request.sessionId, 'analyzing');
+    await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: analyzing });
+    const organizePort = activeOrganizePort();
+    organizePort.rejectPosts = true;
+
+    await click(buttonWithText(container, 'Stop'));
+    const retry = buttonWithText(container, 'Stop');
+    expect(retry.disabled).toBe(false);
+    expect(postedMessages('stopBgsmOrganizeJob')).toHaveLength(0);
+
+    organizePort.rejectPosts = false;
+    await click(retry);
+    expect(postedMessages('stopBgsmOrganizeJob')).toHaveLength(1);
+  });
+
+  it('serializes Apply, Pause, and Resume until each durable phase advances', async () => {
+    const container = await mountHarness();
+    const { snapshot, presentation } = await enterDurableReview(container, 'command-serialization');
+    const applyButton = buttonWithText(container, 'Apply 2 tags to 2 repositories');
+
+    await act(async () => {
+      applyButton.click();
+      applyButton.click();
+      await Promise.resolve();
+    });
+
+    expect(postedMessages('applyBgsmOrganizeSelection')).toHaveLength(1);
+    expect(postedMessages('applyBgsmOrganizeSelection')[0]).toEqual(
+      expect.objectContaining({ requestId: expect.any(String) }),
+    );
+    expect(applyButton.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="organize-job-applying-progress"]')).toBeTruthy();
+
+    const apply = {
+      applyId: 'organize-apply:v1:command-serialization',
+      total: 2,
+      settled: 0,
+      changed: 0,
+      unchanged: 0,
+      skipped: 0,
+      failed: 0,
+    };
+    const applying = {
+      ...presentation,
+      revision: presentation.revision + 1,
+      status: 'applying' as const,
+      apply,
+    };
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      presentation: applying,
+    });
+    const pauseButton = buttonWithText(container, 'Pause');
+
+    await act(async () => {
+      pauseButton.click();
+      pauseButton.click();
+      await Promise.resolve();
+    });
+
+    expect(postedMessages('stopBgsmOrganizeJob')).toEqual([
+      expect.objectContaining({ requestId: expect.any(String) }),
+    ]);
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      presentation: { ...applying, revision: applying.revision + 1 },
+    });
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+
+    const paused = {
+      ...applying,
+      revision: applying.revision + 2,
+      status: 'paused' as const,
+    };
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      presentation: paused,
+    });
+    const resumeButton = buttonWithText(container, 'Continue');
+
+    await act(async () => {
+      resumeButton.click();
+      resumeButton.click();
+      await Promise.resolve();
+    });
+
+    expect(postedMessages('resumeBgsmOrganizeApply')).toEqual([
+      expect.objectContaining({ requestId: expect.any(String) }),
+    ]);
+    expect(buttonWithText(container, 'Continue').disabled).toBe(true);
+
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      presentation: { ...paused, revision: paused.revision + 1 },
+    });
+    expect(buttonWithText(container, 'Continue').disabled).toBe(true);
+  });
+
+  it('ignores a stale Pause click after the authoritative state is already paused', async () => {
+    const container = await mountHarness();
+    const { snapshot, presentation } = await enterDurableReview(container, 'stale-pause-click');
+    await click(buttonWithText(container, 'Apply 2 tags to 2 repositories'));
+    const apply = {
+      applyId: 'organize-apply:v1:stale-pause-click',
+      total: 2,
+      settled: 1,
+      changed: 1,
+      unchanged: 0,
+      skipped: 0,
+      failed: 0,
+    };
+    const applying = {
+      ...presentation,
+      revision: presentation.revision + 1,
+      status: 'applying' as const,
+      apply,
+    };
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      presentation: applying,
+    });
+    const stalePauseButton = buttonWithText(container, 'Pause');
+    const paused = {
+      ...applying,
+      revision: applying.revision + 1,
+      status: 'paused' as const,
+    };
+
+    await act(async () => {
+      activeOrganizePort().emit({
+        type: 'bgsmOrganizeJobState',
+        controllerId: snapshot.controllerId,
+        sessionId: snapshot.sessionId,
+        runId: snapshot.runId,
+        generation: snapshot.generation,
+        presentation: paused,
+      });
+      stalePauseButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(postedMessages('stopBgsmOrganizeJob')).toHaveLength(0);
+    expect(buttonWithText(container, 'Continue')).toBeTruthy();
+  });
+
+  it('discards a blocked runtime run even while durable state still says analyzing', async () => {
+    const container = await mountHarness();
+    const request = await requestOrganizePreflight(container);
+    const base = analysisSnapshot(request.controllerId, request.sessionId, 'analysis_blocked');
+    const coverage: OrganizeJobRunCoverageSummary = {
+      total: 3,
+      analyzed: 3,
+      actionable: 0,
+      unchanged: 2,
+      insufficientEvidence: 0,
+      missing: 0,
+      tombstoned: 0,
+      analysisFailed: 1,
+    };
+    const blocked: OrganizeJobRunSnapshot = {
+      ...base,
+      terminalReason: 'analysis_failed',
+      continuationCursor: parseContinuationCursorToken('cursor:v1:mixed-authority-discard'),
+      coverage,
+    };
+    await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: blocked });
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: blocked.controllerId,
+      sessionId: blocked.sessionId,
+      runId: blocked.runId,
+      generation: blocked.generation,
+      presentation: presentationFor(blocked, {
+        jobId: 'organize-job:v1:mixed-authority-discard',
+        status: 'analyzing',
+        coverage,
+      }),
+    });
+
+    expect(container.textContent).toContain('1 repository could not be analyzed');
+    await click(buttonWithText(container, 'Discard this analysis'));
+    expect(postedMessages('stopBgsmOrganizeJob')).toEqual([
+      expect.objectContaining({
+        type: 'stopBgsmOrganizeJob',
+        controllerId: blocked.controllerId,
+        sessionId: blocked.sessionId,
+        runId: blocked.runId,
+        generation: blocked.generation,
+        requestId: expect.any(String),
+      }),
+    ]);
+  });
+
+  it('restarts visible progress from durable coverage when retrying a failed suffix', async () => {
+    const container = await mountHarness();
+    const request = await requestOrganizePreflight(container);
+    const total = 319;
+    const retryFrom = 300;
+    const continuationCursor = parseContinuationCursorToken('cursor:v1:failed-suffix-progress');
+    const parentBase = analysisSnapshot(
+      request.controllerId,
+      request.sessionId,
+      'analysis_blocked',
+      total,
+    );
+    const parentCoverage: OrganizeJobRunCoverageSummary = {
+      total,
+      analyzed: total,
+      actionable: 0,
+      unchanged: retryFrom,
+      insufficientEvidence: 0,
+      missing: 0,
+      tombstoned: 0,
+      analysisFailed: total - retryFrom,
+    };
+    const parent: OrganizeJobRunSnapshot = {
+      ...parentBase,
+      terminalReason: 'analysis_failed',
+      coverage: parentCoverage,
+      continuationCursor,
+    };
+    const parentPresentation = presentationFor(parent, {
+      jobId: 'organize-job:v1:failed-suffix-progress',
+      revision: 20,
+      status: 'analysis_blocked',
+      coverage: parentCoverage,
+    });
+    await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: parent });
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: parent.controllerId,
+      sessionId: parent.sessionId,
+      runId: parent.runId,
+      generation: parent.generation,
+      presentation: parentPresentation,
+    });
+    await click(buttonWithText(container, 'Continue remaining'));
+    expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent)
+      .toBe('Analyzing · 300/319');
+    expect(container.textContent).not.toContain('Analysis paused before completion');
+
+    const childRunId = parseRunId('run:v1:failed-suffix-progress-child');
+    const childCoverage: OrganizeJobRunCoverageSummary = {
+      ...parentCoverage,
+      analyzed: retryFrom,
+      analysisFailed: 0,
+    };
+    const child: OrganizeJobRunSnapshot = {
+      ...parent,
+      runId: childRunId,
+      generation: parent.generation + 1,
+      state: 'analyzing',
+      terminalReason: null,
+      usage: createEmptyRunBudgetUsage(),
+      coverage: childCoverage,
+      continuationCursor: null,
+    };
+    const childPresentation = presentationFor(child, {
+      jobId: parentPresentation.jobId,
+      revision: parentPresentation.revision + 1,
+      status: 'analyzing',
+      coverage: childCoverage,
+    });
+
+    // Durable continuation initialization is published before the child snapshot.
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: child.controllerId,
+      sessionId: child.sessionId,
+      runId: child.runId,
+      generation: child.generation,
+      presentation: childPresentation,
+    });
+    await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: child });
+    expectVisibleProgress(container, retryFrom, total);
+
+    await emitMessage({
+      type: 'bgsmOrganizeJobAnalysisProgress',
+      controllerId: child.controllerId,
+      sessionId: child.sessionId,
+      runId: child.runId,
+      generation: child.generation,
+      processed: retryFrom + 1,
+      total,
+    });
+    expectVisibleProgress(container, retryFrom + 1, total);
+
+    const reviewPresentation = presentationFor(child, {
+      jobId: parentPresentation.jobId,
+      revision: childPresentation.revision + 1,
+      status: 'review',
+      coverage: {
+        ...childCoverage,
+        analyzed: total,
+        unchanged: total,
+      },
+    });
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: child.controllerId,
+      sessionId: child.sessionId,
+      runId: child.runId,
+      generation: child.generation,
+      presentation: reviewPresentation,
+    });
+
+    expect(currentPhase(container)).toBeUndefined();
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+    expect(container.textContent).not.toContain('Analyzing ·');
+  });
+
   it('waits for the durable blocked generation snapshot before exposing Continue', async () => {
     const container = await mountHarness();
     const request = await requestOrganizePreflight(container);
@@ -837,7 +1230,7 @@ describe('Agent organize-job workbench UI', () => {
       },
     });
 
-    expect(container.textContent).not.toContain('Budget exhausted');
+    expect(container.textContent).not.toContain('Run limit reached');
     expect(container.textContent).not.toContain('Continue remaining');
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true);
 
@@ -948,7 +1341,7 @@ describe('Agent organize-job workbench UI', () => {
 
     expectVisibleProgress(container, 125, 315);
     expect(currentPhase(container)).toBe('Analyzing');
-    expect(container.textContent).not.toContain('Full-library analysis did not finish');
+    expect(container.textContent).not.toContain('Analysis paused before completion');
     expect(container.textContent).not.toContain('Continue remaining');
     await click(buttonWithText(container, 'Stop'));
     expect(activeOrganizePort().posted.at(-1)).toEqual({
@@ -957,6 +1350,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: child.sessionId,
       runId: child.runId,
       generation: child.generation,
+      requestId: expect.any(String),
     });
 
     await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: child });
@@ -1017,7 +1411,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(container.querySelector('[data-testid="organize-job-stop-card"]')).toBeTruthy();
     expect(container.textContent).toContain('Completed reads: 9');
     expect(container.textContent).toContain('Not started: 19');
-    expect(container.textContent).not.toContain('Library update receipt');
+    expect(container.textContent).not.toContain('Tag update results');
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
     expect(container.querySelector('[data-testid="organize-job-current-phase"]')).toBeNull();
   });
@@ -1053,7 +1447,7 @@ describe('Agent organize-job workbench UI', () => {
     });
 
     expect(container.querySelector('[data-testid="agent-provider-error-card"]')?.textContent)
-      .toContain('Provider error');
+      .toContain('AI service error');
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value)
       .toBe('Analyze my local stars');
     expect(container.textContent).toContain('Retry');
@@ -1247,9 +1641,196 @@ describe('Agent organize-job workbench UI', () => {
     expect(finalReply).not.toBeUndefined();
     expect(reviewWorkbench!.compareDocumentPosition(finalReply!) & Node.DOCUMENT_POSITION_FOLLOWING)
       .not.toBe(0);
-    expect(container.textContent).toContain('Review actionable suggestions');
+    expect(container.textContent).toContain('Review tag suggestions');
     expect(activeOrganizePort().posted.some((message) => message.type === 'cancelBgsmOrganizeJobRun'))
       .toBe(false);
+  });
+
+  it('surfaces a failed review-page request and retries it only when asked', async () => {
+    const container = await mountHarness();
+    const activeRequest = postedMessages('requestBgsmActiveOrganizeJob').at(-1);
+    if (!activeRequest) throw new Error('Active organize-job request was not sent.');
+    const snapshot = reviewSnapshot(activeRequest.controllerId, activeRequest.sessionId, 1);
+    const durable = presentationFor(snapshot, {
+      status: 'review',
+      coverage: completeCoverage(1, 1),
+      selectedRepositories: 1,
+      selectedActions: 1,
+    });
+    await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot });
+    const port = activeOrganizePort();
+    port.rejectPosts = true;
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      presentation: durable,
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(postedMessages('requestBgsmOrganizeReviewPage')).toHaveLength(0);
+    expect(container.textContent).toContain('Could not load suggestions.');
+    expect(container.querySelector('[data-testid="organize-job-review-loading"]')).toBeNull();
+
+    const retry = buttonWithText(container, 'Retry');
+    await click(retry);
+    expect(postedMessages('requestBgsmOrganizeReviewPage')).toHaveLength(0);
+    expect(container.textContent).toContain('Could not load suggestions.');
+
+    port.rejectPosts = false;
+    await click(retry);
+    expect(postedMessages('requestBgsmOrganizeReviewPage')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="organize-job-review-loading"]')).not.toBeNull();
+  });
+
+  it('keeps completed tag results usable when receipt details need a retry', async () => {
+    const container = await mountHarness();
+    const activeRequest = postedMessages('requestBgsmActiveOrganizeJob').at(-1);
+    if (!activeRequest) throw new Error('Active organize-job request was not sent.');
+    const snapshot = reviewSnapshot(activeRequest.controllerId, activeRequest.sessionId, 1);
+    const apply = {
+      applyId: 'organize-apply:v1:receipt-retry',
+      total: 1,
+      settled: 1,
+      changed: 1,
+      unchanged: 0,
+      skipped: 0,
+      failed: 0,
+    };
+    await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot });
+    const port = activeOrganizePort();
+    port.rejectPosts = true;
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      presentation: presentationFor(snapshot, {
+        status: 'completed',
+        coverage: completeCoverage(1, 1),
+        selectedRepositories: 1,
+        selectedActions: 1,
+        apply,
+      }),
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(postedMessages('requestBgsmOrganizeReceiptPage')).toHaveLength(0);
+    expect(container.textContent).toContain('Could not load result details');
+    expect(container.textContent).toContain('Applied the selected suggestion as a manual tag');
+
+    port.rejectPosts = false;
+    await click(buttonWithText(container, 'Retry'));
+    expect(postedMessages('requestBgsmOrganizeReceiptPage')).toHaveLength(1);
+  });
+
+  it('supersedes an in-flight receipt page when its filter changes', async () => {
+    const container = await mountHarness();
+    const activeRequest = postedMessages('requestBgsmActiveOrganizeJob').at(-1);
+    if (!activeRequest) throw new Error('Active organize-job request was not sent.');
+    const snapshot = reviewSnapshot(activeRequest.controllerId, activeRequest.sessionId, 150);
+    const apply = {
+      applyId: 'organize-apply:v1:receipt-filter-race',
+      total: 150,
+      settled: 150,
+      changed: 120,
+      unchanged: 30,
+      skipped: 0,
+      failed: 0,
+    };
+    await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot });
+    const completedPresentation = presentationFor(snapshot, {
+      status: 'completed',
+      coverage: completeCoverage(150, 150),
+      selectedRepositories: 150,
+      selectedActions: 150,
+      apply,
+    });
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      presentation: completedPresentation,
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    const allRequest = postedMessages('requestBgsmOrganizeReceiptPage').at(-1);
+    if (!allRequest) throw new Error('Initial receipt request was not sent.');
+    expect(allRequest.filter).toBe('all');
+    await click(buttonWithText(container, 'View changed'));
+
+    const requests = postedMessages('requestBgsmOrganizeReceiptPage');
+    expect(requests).toHaveLength(2);
+    const changedRequest = requests[1]!;
+    expect(changedRequest).toEqual(expect.objectContaining({
+      rowOffset: 0,
+      filter: 'changed_or_failed',
+    }));
+    await emitMessage({
+      type: 'bgsmOrganizeReceiptPage',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      requestId: allRequest.requestId,
+      applyId: apply.applyId,
+      rowOffset: 0,
+      rows: [{
+        position: 149,
+        proposalRowId: `${snapshot.proposalId}:row:149`,
+        repositoryId: 'owner/stale-all-filter-row',
+        outcome: 'unchanged',
+        reason: 'no_change',
+      }],
+      nextRowOffset: null,
+    });
+    expect(container.textContent).not.toContain('owner/stale-all-filter-row');
+
+    await emitMessage({
+      type: 'bgsmOrganizeReceiptPage',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      requestId: changedRequest.requestId,
+      applyId: apply.applyId,
+      rowOffset: 0,
+      rows: [{
+        position: 0,
+        proposalRowId: `${snapshot.proposalId}:row:0`,
+        repositoryId: 'owner/changed-filter-row',
+        outcome: 'changed',
+        reason: null,
+      }],
+      nextRowOffset: 1,
+    });
+    expect(postedMessages('requestBgsmOrganizeReceiptPage')).toHaveLength(2);
+    expect(container.textContent).toContain('owner/changed-filter-row');
+
+    const firstPort = activeOrganizePort();
+    await act(async () => {
+      firstPort.disconnect();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const replacement = activeOrganizePort();
+    expect(replacement).not.toBe(firstPort);
+    await emitMessageOn(replacement, {
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      runId: snapshot.runId,
+      generation: snapshot.generation,
+      presentation: completedPresentation,
+    }, 'authoritative_snapshot', completedPresentation.revision);
+    expect(postedMessages('requestBgsmOrganizeReceiptPage')).toEqual([
+      expect.objectContaining({ filter: 'changed_or_failed', rowOffset: 0 }),
+    ]);
   });
 
   it('rotates Chat and workbench session identity together', async () => {
@@ -1292,6 +1873,8 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobRunSnapshot', snapshot: failed,
     }));
     expect(organizePorts()).toHaveLength(2);
+    expect(container.textContent).toContain('Cubby connection was interrupted. Reconnecting');
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
     expect(organizePorts()[1]?.posted).toContainEqual({
       type: 'requestBgsmOrganizeJobSnapshot',
       controllerId: analyzing.controllerId,
@@ -1301,11 +1884,19 @@ describe('Agent organize-job workbench UI', () => {
     });
 
     await emitMessageOn(organizePorts()[1]!, {
+      type: 'bgsmOrganizeJobRunConnectionReady',
+      controllerId: analyzing.controllerId,
+      sessionId: analyzing.sessionId,
+    });
+    expect(container.textContent).toContain('Cubby connection was interrupted. Reconnecting');
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+
+    await emitMessageOn(organizePorts()[1]!, {
       type: 'bgsmOrganizeJobRunSnapshot',
       snapshot: failed,
     }, 'authoritative_snapshot', 11);
     expect(firstPort.disconnectCalls).toBe(1);
-    expect(container.textContent).toContain('Full-library analysis did not finish');
+    expect(container.textContent).toContain('Analysis paused before completion');
   });
 
   it('reconnects an advancing durable job through its active generation', async () => {
@@ -1399,7 +1990,47 @@ describe('Agent organize-job workbench UI', () => {
       snapshot: { ...analyzing, state: 'failed', terminalReason: 'provider_error' },
     }));
     expect(organizePorts()).toHaveLength(2);
+    expect(container.textContent).toContain('Cubby connection was interrupted. Reconnecting');
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+
+    await emitMessageOn(activeOrganizePort(), {
+      type: 'bgsmOrganizeJobRunSnapshot',
+      snapshot: analyzing,
+    }, 'authoritative_snapshot', 1);
     expect(currentPhase(container)).toBe('Analyzing');
+  });
+
+  it('ends reconnecting only after an authoritative no-active response', async () => {
+    const container = await mountHarness();
+    const request = await requestOrganizePreflight(container);
+    const firstPort = activeOrganizePort();
+    const analyzing = analysisSnapshot(request.controllerId, request.sessionId, 'analyzing');
+    await emitMessageOn(firstPort, { type: 'bgsmOrganizeJobRunSnapshot', snapshot: analyzing });
+
+    await act(async () => {
+      firstPort.disconnect();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const replacement = activeOrganizePort();
+    expect(replacement).not.toBe(firstPort);
+    expect(container.textContent).toContain('Cubby connection was interrupted. Reconnecting');
+
+    await emitMessageOn(replacement, {
+      type: 'bgsmOrganizeJobRunConnectionReady',
+      controllerId: analyzing.controllerId,
+      sessionId: analyzing.sessionId,
+    });
+    expect(container.textContent).toContain('Cubby connection was interrupted. Reconnecting');
+
+    await emitMessageOn(replacement, {
+      type: 'bgsmOrganizeJobRunNoActive',
+      controllerId: analyzing.controllerId,
+      sessionId: analyzing.sessionId,
+    }, 'authoritative_snapshot');
+    expect(container.textContent).not.toContain('Cubby connection was interrupted. Reconnecting');
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+    expect(currentPhase(container)).toBeUndefined();
   });
 
   it('reviews, applies, and renders receipts only from durable job pages', async () => {
@@ -1525,6 +2156,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: snapshot.sessionId,
       runId: snapshot.runId,
       generation: snapshot.generation,
+      requestId: expect.any(String),
       jobId: presentation.jobId,
       expectedRevision: 9,
     });
@@ -1547,7 +2179,7 @@ describe('Agent organize-job workbench UI', () => {
       presentation: { ...revised, revision: 10, status: 'applying', apply: durableApply },
     });
     expect(container.textContent).toContain('Applying selected changes');
-    expect(container.textContent).toContain('20 of 99 rows selected · checkboxes locked');
+    expect(container.textContent).toContain('20 of 99 selected · selection locked');
 
     const completedApply = {
       ...durableApply,
@@ -1600,10 +2232,10 @@ describe('Agent organize-job workbench UI', () => {
     });
 
     expect(container.querySelector('[data-testid="organize-job-receipt-card"]')).toBeTruthy();
-    expect(container.textContent).toContain('Library update receipt');
+    expect(container.textContent).toContain('Tag update results');
     expect(container.textContent).toContain('owner/repo-0');
     expect(container.textContent).toContain('owner/repo-1');
-    expect(container.textContent).toContain('Source changed after proposal');
+    expect(container.textContent).toContain('Repository data changed');
 
     const followUpPrompt = 'Which repositories changed?';
     const followUpAnswer = 'I can summarize the completed receipt.';
@@ -1845,7 +2477,7 @@ function Harness() {
   const workbench = useBgsmAgentWorkbench(undefined, agent.sessionId);
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)}>Show Agent</button>
+      <button type="button" onClick={() => setOpen(true)}>Show Cubby</button>
       <AgentPanel
         open={open}
         onHide={() => setOpen(false)}
@@ -1971,6 +2603,97 @@ function analysisSnapshot(
     proposalReviewSummary: null,
     continuationCursor: null,
   };
+}
+
+async function enterBlockedAnalysis(container: HTMLElement, suffix: string) {
+  const request = await requestOrganizePreflight(container);
+  const continuationCursor = parseContinuationCursorToken(`cursor:v1:${suffix}`);
+  const base = analysisSnapshot(request.controllerId, request.sessionId, 'analysis_blocked');
+  const coverage: OrganizeJobRunCoverageSummary = {
+    total: 3,
+    analyzed: 3,
+    actionable: 0,
+    unchanged: 2,
+    insufficientEvidence: 0,
+    missing: 0,
+    tombstoned: 0,
+    analysisFailed: 1,
+  };
+  const blocked: OrganizeJobRunSnapshot = {
+    ...base,
+    terminalReason: 'analysis_failed',
+    continuationCursor,
+    coverage,
+  };
+  await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: blocked });
+  await emitMessage({
+    type: 'bgsmOrganizeJobState',
+    controllerId: blocked.controllerId,
+    sessionId: blocked.sessionId,
+    runId: blocked.runId,
+    generation: blocked.generation,
+    presentation: presentationFor(blocked, {
+      jobId: `organize-job:v1:${suffix}`,
+      status: 'analysis_blocked',
+      coverage,
+      selectedRepositories: 0,
+      selectedActions: 0,
+    }),
+  });
+  return blocked;
+}
+
+async function enterDurableReview(container: HTMLElement, suffix: string) {
+  const request = await requestOrganizePreflight(container);
+  const snapshot = reviewSnapshot(request.controllerId, request.sessionId, 2);
+  const presentation = presentationFor(snapshot, {
+    jobId: `organize-job:v1:${suffix}`,
+    revision: 7,
+    status: 'review',
+    coverage: completeCoverage(2, 2),
+    selectedRepositories: 2,
+    selectedActions: 2,
+  });
+  await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot });
+  await emitMessage({
+    type: 'bgsmOrganizeJobState',
+    controllerId: snapshot.controllerId,
+    sessionId: snapshot.sessionId,
+    runId: snapshot.runId,
+    generation: snapshot.generation,
+    presentation,
+  });
+  await act(async () => { await Promise.resolve(); });
+  const pageRequest = postedMessages('requestBgsmOrganizeReviewPage').at(-1);
+  if (!pageRequest) throw new Error('Review page was not requested.');
+  await emitMessage({
+    type: 'bgsmOrganizeReviewPage',
+    controllerId: snapshot.controllerId,
+    sessionId: snapshot.sessionId,
+    runId: snapshot.runId,
+    generation: snapshot.generation,
+    requestId: pageRequest.requestId,
+    jobId: presentation.jobId,
+    revision: presentation.revision,
+    proposalId: snapshot.proposalId!,
+    totalRows: 2,
+    selectedRepositories: 2,
+    selectedActions: 2,
+    rowOffset: 0,
+    rows: [0, 1].map((position) => ({
+      position,
+      proposalRowId: `${snapshot.proposalId}:row:${position}`,
+      repositoryId: `owner/repo-${position}`,
+      proposedActions: [{
+        kind: 'add_existing_tag' as const,
+        tag: position === 0 ? 'TypeScript' : 'CLI',
+        evidence: 'Repository metadata',
+      }],
+      selected: true,
+    })),
+    nextRowOffset: null,
+  });
+  return { snapshot, presentation };
 }
 
 function reviewSnapshot(controller: string, sessionId: string, count: number): OrganizeJobRunSnapshot {

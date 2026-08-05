@@ -80,7 +80,7 @@ function input(overrides: Partial<BgsmAgentTurnInput> = {}): BgsmAgentTurnInput 
   };
 }
 
-describe('BGSM Agent session', () => {
+describe('Cubby session', () => {
   it('starts at revision zero and creates an isolated UI-owned turn snapshot', () => {
     const session = {
       ...createBgsmAgentSession(() => 'session-1'),

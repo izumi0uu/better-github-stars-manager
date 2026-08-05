@@ -6,6 +6,7 @@ import {
   idbTagStore,
   resetDirtyForDev,
   snapshotDirty,
+  snapshotTagDirtyOutbox,
 } from '@/storage/idb-tag-store';
 import { visibleTagNames } from '@/tags/tag-model';
 import type { Tag, TagMeta } from '@/types';
@@ -128,6 +129,116 @@ describe('idbTagStore.deleteTag', () => {
     assert.equal(missingMeta?.dimension, null);
     assert.equal(missingMeta?.color, null);
     assert.deepEqual(snapshotDirty(), { names: [], meta: true });
+  });
+
+  it('deletes multiple global tags in one operation with canonical request counts', async () => {
+    const result = await idbTagStore.deleteTagsEverywhere([
+      'UI',
+      'topic',
+      'missing-tag',
+      ' ui ',
+    ]);
+
+    assert.deepEqual(result, {
+      requestedTags: 3,
+      assignmentsRemoved: 3,
+      repositoriesChanged: 2,
+    });
+
+    const [react, infra] = await Promise.all([
+      db.tags.get('a/react'),
+      db.tags.get('b/infra'),
+    ]);
+    assert.deepEqual(react?.manualTags, ['react']);
+    assert.deepEqual(react?.autoTags, []);
+    assert.deepEqual(react?.dismissedAutoTags, ['topic']);
+    assert.equal(react?.notes, 'keep notes');
+    assert.equal(react?.favorite, true);
+    assert.equal(react?.gh_list_id, 42);
+    assert.deepEqual(infra?.manualTags, ['infra']);
+    assert.deepEqual(infra?.autoTags, []);
+    assert.deepEqual(infra?.dismissedAutoTags, ['ui']);
+
+    const [uiMeta, topicMeta, missingMeta, duplicateUiMeta] = await Promise.all([
+      db.tagMeta.get('ui'),
+      db.tagMeta.get('topic'),
+      db.tagMeta.get('missing-tag'),
+      db.tagMeta.get('UI'),
+    ]);
+    assert.equal(uiMeta?.excluded, true);
+    assert.equal(uiMeta?.dimension, 'topic');
+    assert.equal(uiMeta?.color, '#ff00aa');
+    assert.equal(topicMeta?.excluded, true);
+    assert.equal(missingMeta?.excluded, true);
+    assert.equal(duplicateUiMeta, undefined);
+    assert.deepEqual(snapshotDirty().names.sort(), ['a/react', 'b/infra']);
+    assert.equal(snapshotDirty().meta, true);
+  });
+
+  it('deduplicates unassigned global tags and writes one tombstone', async () => {
+    const result = await idbTagStore.deleteTagsEverywhere([
+      'missing-tag',
+      'MISSING-TAG',
+      ' ',
+    ]);
+
+    assert.deepEqual(result, {
+      requestedTags: 1,
+      assignmentsRemoved: 0,
+      repositoriesChanged: 0,
+    });
+    assert.equal((await db.tagMeta.get('missing-tag'))?.excluded, true);
+    assert.equal(await db.tagMeta.get('MISSING-TAG'), undefined);
+    assert.deepEqual(snapshotDirty(), { names: [], meta: true });
+  });
+
+  it('collapses canonical metadata aliases into one global tombstone', async () => {
+    await db.tagMeta.bulkPut([
+      {
+        name: 'UI',
+        dimension: null,
+        color: null,
+        excluded: false,
+        mtime: '2026-07-03T00:00:00Z',
+      },
+      {
+        name: 'ＵＩ',
+        dimension: 'interface',
+        color: null,
+        excluded: true,
+        mtime: '2026-07-02T00:00:00Z',
+      },
+    ]);
+
+    await idbTagStore.deleteTagsEverywhere([' ui ']);
+
+    const aliases = (await db.tagMeta.toArray())
+      .filter((meta) => meta.name.trim().normalize('NFKC').toLocaleLowerCase('en-US') === 'ui');
+    assert.equal(aliases.length, 1);
+    assert.equal(aliases[0]?.name, 'UI');
+    assert.equal(aliases[0]?.dimension, 'interface');
+    assert.equal(aliases[0]?.color, '#ff00aa');
+    assert.equal(aliases[0]?.excluded, true);
+  });
+
+  it('rolls back repository, tombstone, outbox, and dirty state when global deletion aborts', async () => {
+    await idbTagStore.setNotes('z/preexisting', 'already dirty');
+    const rowsBefore = await db.tags.toArray();
+    const metaBefore = await db.tagMeta.toArray();
+    const outboxBefore = await snapshotTagDirtyOutbox();
+    const dirtyBefore = snapshotDirty();
+    const bulkPut = vi.spyOn(db.tagMeta, 'bulkPut').mockRejectedValueOnce(new Error('abort global delete'));
+
+    await assert.rejects(
+      () => idbTagStore.deleteTagsEverywhere(['ui', 'topic']),
+      /abort global delete/,
+    );
+    bulkPut.mockRestore();
+
+    assert.deepEqual(await db.tags.toArray(), rowsBefore);
+    assert.deepEqual(await db.tagMeta.toArray(), metaBefore);
+    assert.deepEqual(await snapshotTagDirtyOutbox(), outboxBefore);
+    assert.deepEqual(snapshotDirty(), dirtyBefore);
   });
 
   it('removes one visible tag and records row-level auto dismissal', async () => {

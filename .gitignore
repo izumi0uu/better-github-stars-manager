@@ -6,3 +6,4 @@ artifacts
 .DS_Store
 *.log
 .vite
+.tmp/

@@ -75,9 +75,9 @@ export function publicAgentLivenessTimeoutMessage(reason: AgentLivenessTimeoutRe
     case 'stream_idle_timeout':
       return 'AI provider stopped making progress while streaming.';
     case 'agent_idle_timeout':
-      return 'BGSM Agent stopped making progress.';
+      return 'Cubby stopped making progress.';
     case 'absolute_turn_timeout':
-      return 'BGSM Agent reached the maximum turn duration.';
+      return 'Cubby reached the maximum turn duration.';
   }
 }
 

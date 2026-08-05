@@ -3,11 +3,19 @@ import { describe, it } from 'vitest';
 import { caseBlock } from '../helpers/background-case-block';
 
 describe('background suggestion mutation contract', () => {
-  it('deduplicates single-repo accepted suggestions and broadcasts after the write', () => {
+  it('deduplicates single-repo suggestions without reviving excluded tags', () => {
     const block = caseBlock('acceptSuggestions', 'suggestTags');
 
-    assert.match(block, /const existing = manualTagNames\(existingTag\);/);
-    assert.match(block, /const merged = addTagNames\(existing, req\.toAdd\);/);
+    assert.match(block, /await idbTagStore\.listExcluded\(\)/);
+    assert.match(
+      block,
+      /const existing = manualTagNames\(existingTag\)\s*\.filter\(\(name\) => !excludedTagKeys\.has\(canonicalTagKey\(name\)\)\);/,
+    );
+    assert.match(
+      block,
+      /const additions = req\.toAdd\s*\.filter\(\(name\) => !excludedTagKeys\.has\(canonicalTagKey\(name\)\)\);/,
+    );
+    assert.match(block, /const merged = addTagNames\(existing, additions\);/);
     assert.match(block, /const tags = await run\(async \(\) => \{/);
     assert.match(block, /await idbTagStore\.setTags\(req\.full_name, merged\);/);
     assert.match(
@@ -22,15 +30,19 @@ describe('background suggestion mutation contract', () => {
     assert.match(block, /data:\s*\{ tags \}/);
   });
 
-  it('counts only batch suggestion rows that add at least one new tag', () => {
+  it('counts only batch rows with a new non-excluded suggestion', () => {
     const block = caseBlock('acceptSuggestionsBatch');
 
     assert.match(block, /if \(item\.toAdd\.length === 0\) continue;/);
     assert.match(
       block,
-      /const existing = manualTagNames\(\s*await idbTagStore\.get\(item\.full_name\),?\s*\);/,
+      /const existing = manualTagNames\(\s*await idbTagStore\.get\(item\.full_name\),?\s*\)\.filter\(\(name\) => !excludedTagKeys\.has\(canonicalTagKey\(name\)\)\);/,
     );
-    assert.match(block, /const merged = addTagNames\(existing, item\.toAdd\);/);
+    assert.match(
+      block,
+      /const additions = item\.toAdd\s*\.filter\(\(name\) => !excludedTagKeys\.has\(canonicalTagKey\(name\)\)\);/,
+    );
+    assert.match(block, /const merged = addTagNames\(existing, additions\);/);
     assert.match(block, /if \(merged\.length !== existing\.length\) \{/);
     assert.match(block, /await idbTagStore\.setTags\(item\.full_name, merged\);/);
     assert.match(block, /const n = await run\(async \(\) => \{/);

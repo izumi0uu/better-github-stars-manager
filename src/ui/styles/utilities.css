@@ -27,6 +27,18 @@
 }
 
 @layer utilities {
+  .gsm-agent-mascot {
+    display: block;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    background-position-x: 0;
+    background-repeat: no-repeat;
+    background-size: 256px 288px;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+  }
+
   .gsm-scrollbar-stable {
     scrollbar-gutter: stable;
   }
