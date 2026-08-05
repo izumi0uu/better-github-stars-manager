@@ -12,6 +12,19 @@ import {
   TOKEN_GIST_PROBE_BAD_SHAPE,
   TOKEN_GIST_CLEANUP_STATUS,
   TOKEN_GIST_CLEANUP_NETWORK,
+  TOKEN_WATCHING_FORBIDDEN,
+  TOKEN_WATCHING_BAD_SHAPE,
+  TOKEN_WATCHING_STATUS,
+  TOKEN_WATCHING_NETWORK,
+  WATCH_TOKEN_REJECTED,
+  WATCH_TOKEN_ACCOUNT_MISMATCH,
+  WATCH_TOKEN_PROFILE_STATUS,
+  WATCH_TOKEN_PROFILE_BAD_SHAPE,
+  WATCH_TOKEN_PROFILE_NETWORK,
+  WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN,
+  WATCH_TOKEN_NOTIFICATIONS_STATUS,
+  WATCH_TOKEN_NOTIFICATIONS_NETWORK,
+  WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE,
 } from '@/api/errors';
 
 type FetchLike = typeof fetch;
@@ -21,7 +34,12 @@ export interface TokenProbeIdentity {
   avatarUrl: string | null;
   displayName: string | null;
   scopesHeader: string;
+  watching: TokenWatchingCapability;
 }
+
+export type TokenWatchingCapability =
+  | { available: true }
+  | { available: false; errorCode: string };
 
 const API = 'https://api.github.com';
 
@@ -103,10 +121,89 @@ export async function probeTokenCapabilities(
   if (cleanup.status === 403 || cleanup.status === 404) throw new Error(TOKEN_GISTS_FORBIDDEN);
   if (!cleanup.ok) throw new Error(`${TOKEN_GIST_CLEANUP_STATUS}${cleanup.status}`);
 
+  let watching: TokenWatchingCapability;
+  try {
+    const response = await fetchImpl(`${API}/user/subscriptions?per_page=1&page=1`, {
+      headers: auth,
+      cache: 'no-store',
+    });
+    if (response.ok) {
+      try {
+        watching = Array.isArray(await response.json())
+          ? { available: true }
+          : { available: false, errorCode: TOKEN_WATCHING_BAD_SHAPE };
+      } catch {
+        watching = { available: false, errorCode: TOKEN_WATCHING_BAD_SHAPE };
+      }
+    } else if (response.status === 403) {
+      watching = { available: false, errorCode: TOKEN_WATCHING_FORBIDDEN };
+    } else {
+      watching = { available: false, errorCode: `${TOKEN_WATCHING_STATUS}${response.status}` };
+    }
+  } catch {
+    watching = { available: false, errorCode: TOKEN_WATCHING_NETWORK };
+  }
+
   return {
     login: body.login,
     avatarUrl: body.avatar_url ?? null,
     displayName: body.name ?? null,
     scopesHeader,
+    watching,
   };
+}
+
+export async function probeWatchNotificationsToken(
+  token: string,
+  expectedLogin: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<{ login: string }> {
+  const auth = authHeaders(token);
+  const profile = await fetchWithCode(
+    fetchImpl,
+    `${API}/user`,
+    { headers: auth, cache: 'no-store' },
+    WATCH_TOKEN_PROFILE_NETWORK,
+  );
+  if (profile.status === 401) throw new Error(WATCH_TOKEN_REJECTED);
+  if (!profile.ok) throw new Error(`${WATCH_TOKEN_PROFILE_STATUS}${profile.status}`);
+  let profileBody: unknown;
+  try {
+    profileBody = await profile.json();
+  } catch {
+    throw new Error(WATCH_TOKEN_PROFILE_BAD_SHAPE);
+  }
+  const login = profileBody && typeof profileBody === 'object' && !Array.isArray(profileBody)
+    ? (profileBody as { login?: unknown }).login
+    : null;
+  if (typeof login !== 'string' || !login.trim()) {
+    throw new Error(WATCH_TOKEN_PROFILE_BAD_SHAPE);
+  }
+  if (login.trim().toLowerCase() !== expectedLogin.trim().toLowerCase()) {
+    throw new Error(WATCH_TOKEN_ACCOUNT_MISMATCH);
+  }
+
+  const notifications = await fetchWithCode(
+    fetchImpl,
+    `${API}/notifications?all=true&per_page=1`,
+    { headers: auth, cache: 'no-store' },
+    WATCH_TOKEN_NOTIFICATIONS_NETWORK,
+  );
+  if (notifications.status === 401) throw new Error(WATCH_TOKEN_REJECTED);
+  if (notifications.status === 403 || notifications.status === 404) {
+    throw new Error(WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN);
+  }
+  if (!notifications.ok) {
+    throw new Error(`${WATCH_TOKEN_NOTIFICATIONS_STATUS}${notifications.status}`);
+  }
+  let notificationsBody: unknown;
+  try {
+    notificationsBody = await notifications.json();
+  } catch {
+    throw new Error(WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE);
+  }
+  if (!Array.isArray(notificationsBody)) {
+    throw new Error(WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE);
+  }
+  return { login: login.trim() };
 }

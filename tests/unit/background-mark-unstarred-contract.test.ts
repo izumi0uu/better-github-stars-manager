@@ -35,8 +35,9 @@ const chromeHarness = vi.hoisted(() => {
   const api = {
     storage: {
       local: {
-        async get(key: string) {
-          return { [key]: storageState[key] };
+        async get(key: string | string[]) {
+          const keys = Array.isArray(key) ? key : [key];
+          return Object.fromEntries(keys.map((item) => [item, storageState[item]]));
         },
         async set(next: Record<string, unknown>) {
           const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};

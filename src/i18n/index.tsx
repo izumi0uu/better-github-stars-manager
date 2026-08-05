@@ -51,6 +51,60 @@ export interface MessageCatalog {
     backfillSyncRunning: string;
     backfillSyncFailed: (error: string) => string;
   };
+  watch: {
+    starsSurface: string;
+    watchSurface: string;
+    watchSurfaceUnread: (count: number) => string;
+    title: string;
+    filterLabel: string;
+    searchPlaceholder: string;
+    clearSearch: string;
+    reasonFilter: string;
+    reasonFilterSelected: (count: number) => string;
+    reasonFilterClear: string;
+    reasonPresets: string;
+    reasonPresetAll: string;
+    reasonPresetDirect: string;
+    reasonPresetSecurity: string;
+    reasonPresetParticipation: string;
+    reasonPresetWatching: string;
+    reasonPresetOther: string;
+    reasonThreadCount: (count: number) => string;
+    unread: string;
+    all: string;
+    refresh: string;
+    refreshing: string;
+    openOptions: string;
+    configureMainToken: string;
+    configureNotificationsToken: string;
+    scopeNeverLoaded: string;
+    inboxNeverLoaded: string;
+    queryFailed: string;
+    refreshFailed: string;
+    retry: string;
+    scopePermissionDenied: string;
+    inboxPermissionDenied: string;
+    scopeUnavailable: string;
+    noWatchedRepositories: string;
+    noUnreadThreads: string;
+    noThreads: string;
+    noMatchingThreads: string;
+    staleSnapshot: string;
+    scopeFailed: string;
+    inboxFailed: string;
+    truncated: string;
+    cooldownUntil: (time: string) => string;
+    watchedRepositoryCount: (count: number) => string;
+    threadCount: (count: number) => string;
+    snapshotAt: (time: string) => string;
+    manageOnGitHub: string;
+    watchedOnGitHub: string;
+    repositoryUnreadCount: (count: number) => string;
+    openOnGitHub: string;
+    unreadSnapshot: string;
+    expandRepository: (repository: string) => string;
+    collapseRepository: (repository: string) => string;
+  };
   toolbar: {
     searchPlaceholder: string;
     searchClearTitle: string;
@@ -629,6 +683,7 @@ export interface MessageCatalog {
     tokenIntroSuffix: string;
     tokenPublicRepos: string;
     tokenGists: string;
+    tokenWatchingOptional: string;
     tokenGistNote: string;
     authenticatedAs: (username: string) => string;
     openVerifiedStars: string;
@@ -638,7 +693,22 @@ export interface MessageCatalog {
     saveVerify: string;
     verifying: string;
     tokenVerified: (username: string) => string;
+    tokenVerifiedWatchForbidden: (username: string) => string;
+    tokenVerifiedWatchUnverified: (username: string) => string;
     tokenRemoved: string;
+    watchTokenHeading: string;
+    watchTokenIntroPrefix: string;
+    watchTokenLinkLabel: string;
+    watchTokenIntroSuffix: string;
+    watchTokenAccountHint: string;
+    watchTokenLabel: string;
+    watchTokenMainRequired: string;
+    watchTokenConnect: string;
+    watchTokenReplace: string;
+    watchTokenDisconnect: string;
+    watchTokenVerifying: string;
+    watchTokenConnected: (username: string) => string;
+    watchTokenDisconnected: string;
     /** Detailed PAT-creation walkthrough (numbered steps + screenshot captions). */
     tokenStepsTitle: string;
     tokenStep1: string;
@@ -685,6 +755,14 @@ export interface MessageCatalog {
     gistPushNoChanges: string;
     gistPullDone: (merged: number, total: number) => string;
     gistPullMissing: string;
+    watchStatusUnavailable: string;
+    watchInboxQueryInvalid: string;
+    watchInboxUnavailable: string;
+    watchRepositoryInvalid: string;
+    watchRepositoryDetailUnavailable: string;
+    watchRefreshFailed: string;
+    watchDisconnectFailed: string;
+    watchDataClearFailed: string;
   };
   /** Humanized error strings. Keys are matched against stable error codes thrown
    *  across the codebase (see src/api/errors.ts). `unknown` is the passthrough —
@@ -708,6 +786,18 @@ export interface MessageCatalog {
     /** Step 3 cleanup (DELETE /gists/{id}) — best-effort; surfaced as a soft warning. */
     tokenGistCleanupStatus: (status: number | string) => string;
     tokenGistCleanupNetwork: string;
+    watchTokenEmpty: string;
+    watchTokenMainAccountRequired: string;
+    watchTokenRejected: string;
+    watchTokenAccountMismatch: string;
+    watchTokenAccountChanged: string;
+    watchTokenProfileStatus: (status: number | string) => string;
+    watchTokenProfileBadShape: string;
+    watchTokenProfileNetwork: string;
+    watchTokenNotificationsForbidden: string;
+    watchTokenNotificationsStatus: (status: number | string) => string;
+    watchTokenNotificationsNetwork: string;
+    watchTokenNotificationsBadShape: string;
     ghTokenRejected: string;
     ghRateLimit: string;
     ghForbidden: string;
@@ -832,6 +922,60 @@ const messages: Record<Locale, MessageCatalog> = {
       backfillSyncLater: "Later",
       backfillSyncRunning: "Syncing your data…",
       backfillSyncFailed: (error) => `Sync failed: ${error}`,
+    },
+    watch: {
+      starsSurface: "Stars",
+      watchSurface: "Watch",
+      watchSurfaceUnread: (count) => `Watch, ${count} unread ${count === 1 ? "thread" : "threads"}`,
+      title: "Watched stars inbox",
+      filterLabel: "Inbox thread filter",
+      searchPlaceholder: "Search repositories and threads",
+      clearSearch: "Clear Watch search",
+      reasonFilter: "Notification reasons",
+      reasonFilterSelected: (count) => `Notification reasons, ${count} selected`,
+      reasonFilterClear: "Clear reasons",
+      reasonPresets: "Reason presets",
+      reasonPresetAll: "All",
+      reasonPresetDirect: "Direct",
+      reasonPresetSecurity: "Security",
+      reasonPresetParticipation: "Participation",
+      reasonPresetWatching: "Watching",
+      reasonPresetOther: "Other",
+      reasonThreadCount: (count) => `${count} ${count === 1 ? "thread" : "threads"}`,
+      unread: "Unread",
+      all: "All",
+      refresh: "Refresh Watch inbox",
+      refreshing: "Refreshing…",
+      openOptions: "Open options",
+      configureMainToken: "Add Watching: read to the main GitHub token to load watched repositories.",
+      configureNotificationsToken: "Connect a separate classic token with the notifications scope to load Inbox threads.",
+      scopeNeverLoaded: "Refresh to load watched repositories from GitHub.",
+      inboxNeverLoaded: "Refresh to load the latest bounded Inbox snapshot.",
+      queryFailed: "The Watch snapshot could not be loaded.",
+      refreshFailed: "The latest Watch refresh failed; the previous snapshot remains available.",
+      retry: "Retry",
+      scopePermissionDenied: "The main token cannot read Watching. Add the optional Watching: read permission and reconnect it in Options.",
+      inboxPermissionDenied: "The Notifications token cannot read GitHub Inbox. Reconnect a classic token with notifications access in Options.",
+      scopeUnavailable: "The watched-repository scope is not available yet, so Inbox threads cannot be matched.",
+      noWatchedRepositories: "None of the currently starred repositories are watched on GitHub.",
+      noUnreadThreads: "No unread threads in the latest Watch snapshot.",
+      noThreads: "No Inbox threads matched the watched starred repositories in this snapshot.",
+      noMatchingThreads: "No threads match the current Watch search and reason filters.",
+      staleSnapshot: "Showing the last successful snapshot because the latest refresh failed.",
+      scopeFailed: "Watched repositories could not be refreshed.",
+      inboxFailed: "Inbox threads could not be refreshed.",
+      truncated: "This is the newest bounded window; more GitHub threads exist beyond it.",
+      cooldownUntil: (time) => `GitHub asks clients to wait until ${time} before refreshing again.`,
+      watchedRepositoryCount: (count) => `${count} watched starred ${count === 1 ? "repository" : "repositories"}`,
+      threadCount: (count) => `${count} ${count === 1 ? "thread" : "threads"}`,
+      snapshotAt: (time) => `Snapshot checked ${time}`,
+      manageOnGitHub: "Manage Watch settings on GitHub",
+      watchedOnGitHub: "watched on GitHub",
+      repositoryUnreadCount: (count) => `${count} unread`,
+      openOnGitHub: "Open on GitHub",
+      unreadSnapshot: "Unread at the time of this snapshot",
+      expandRepository: (repository) => `Expand ${repository}`,
+      collapseRepository: (repository) => `Collapse ${repository}`,
     },
     toolbar: {
       searchPlaceholder:
@@ -1450,7 +1594,7 @@ const messages: Record<Locale, MessageCatalog> = {
     options: {
       title: "Better GitHub Stars Manager — Options",
       starRepoButton: "Like the project? Leave a star:)",
-      agentHeading: "2. Cubby",
+      agentHeading: "3. Cubby",
       agentIntro:
         "Connect an AI service. Cubby sends requests directly to it and shows the results in the extension.",
       agentServiceLabel: "AI service",
@@ -1513,7 +1657,7 @@ const messages: Record<Locale, MessageCatalog> = {
       agentGrantAccess: "Allow access",
       agentAccessGranted: "Access allowed",
       agentHostAccessRequired: "Allow Chrome access to test or use this custom service.",
-      behaviorHeading: "4. Preference",
+      behaviorHeading: "5. Preference",
       maxTagsPerRepoLabel: "Max Auto Tags per repo",
       maxTagsPerRepoHint:
         "When you run Auto Tags, each repo can receive at most this many topic tags.",
@@ -1530,6 +1674,8 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenPublicRepos:
         "Account · Starring (read/write, for sync and unstar)",
       tokenGists: "Account · Gists (read/write, for cross-device tag sync)",
+      tokenWatchingOptional:
+        "Optional for Watch · Watching (read, to list watched repositories)",
       tokenGistNote:
         "Note: GitHub Gist scope is account-wide (no per-gist isolation for fine-grained tokens). We create one dedicated secret gist for sync.",
       authenticatedAs: (username) => `Authenticated as @${username}.`,
@@ -1540,8 +1686,24 @@ const messages: Record<Locale, MessageCatalog> = {
       clearCachedAuth: "Clear cached auth",
       saveVerify: "Save & verify",
       verifying: "Verifying…",
-      tokenVerified: (username) => `Token verified. Logged in as ${username}. Sync and Gist access checked; unstar also needs Starring read/write.`,
+      tokenVerified: (username) => `Token verified. Logged in as ${username}. Sync, Gist, and Watch access checked; unstar also needs Starring read/write.`,
+      tokenVerifiedWatchForbidden: (username) => `Token saved for ${username}. Sync and Gist access checked, but Watch needs Account · Watching (read). Add that permission, then Save & verify again.`,
+      tokenVerifiedWatchUnverified: (username) => `Token saved for ${username}. Sync and Gist access checked, but Watch access could not be verified. Try Save & verify again; if this persists, confirm Account · Watching (read).`,
       tokenRemoved: "Token removed.",
+      watchTokenHeading: "2. Watch Inbox Token",
+      watchTokenIntroPrefix: "Create a classic PAT with only the notifications scope at",
+      watchTokenLinkLabel: "GitHub token settings",
+      watchTokenIntroSuffix: "This token is used only for the optional Watch Inbox.",
+      watchTokenAccountHint:
+        "It must belong to the same GitHub account as the main token. The extension verifies both identity and Inbox access before saving it.",
+      watchTokenLabel: "Classic Notifications token",
+      watchTokenMainRequired: "Connect a usable main GitHub token first.",
+      watchTokenConnect: "Connect Inbox",
+      watchTokenReplace: "Replace token",
+      watchTokenDisconnect: "Disconnect Inbox",
+      watchTokenVerifying: "Verifying…",
+      watchTokenConnected: (username) => `Watch Inbox connected as @${username}.`,
+      watchTokenDisconnected: "Watch Inbox disconnected and cached threads removed.",
       tokenStepsTitle: "How to create the token (fine-grained PAT)",
       tokenStep1:
         "Open GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token.",
@@ -1550,16 +1712,16 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenStep3:
         'Repository access → select "All public repositories" (the extension reads your starred public repos).',
       tokenStep4:
-        'Account permissions → enable "Starring (read and write)" and "Gists (read and write)". Leave everything else off.',
+        'Account permissions → enable "Starring (read and write)" and "Gists (read and write)". Optionally enable "Watching (read)" for Watch.',
       tokenStep5:
         "Generate → copy the token (starts with github_pat_…) → paste it above → Save & verify.",
       shotNewToken: 'Screenshot: the "Generate new token" form',
       shotRepoAccess:
         "Screenshot: repository access set to all public repositories",
       shotPermissions:
-        "Screenshot: account permissions — Starring (read/write) + Gists (read and write)",
+        "Screenshot: account permissions — Starring + Gists, with optional Watching (read)",
       languageLabel: "Language",
-      gistHeading: "3. Gist sync",
+      gistHeading: "4. Gist sync",
       gistBoundPrefix: "Bound to gist",
       gistBoundSuffix:
         "Tags sync to and from this gist. If the same repo is edited in two places, the newer change wins.",
@@ -1598,6 +1760,14 @@ const messages: Record<Locale, MessageCatalog> = {
         `Pulled ${merged} updates from ${total} remote tag records`,
       gistPullMissing:
         "The linked sync Gist was missing; the app unbound it on this device. Push to create a new one.",
+      watchStatusUnavailable: "Watch status is unavailable.",
+      watchInboxQueryInvalid: "Invalid Watch inbox query.",
+      watchInboxUnavailable: "Watch inbox is unavailable.",
+      watchRepositoryInvalid: "Invalid Watch repository.",
+      watchRepositoryDetailUnavailable: "Watch repository detail is unavailable.",
+      watchRefreshFailed: "Watch refresh failed.",
+      watchDisconnectFailed: "Watch Inbox disconnect failed.",
+      watchDataClearFailed: "Watch data could not be cleared.",
     },
     errors: {
       tokenEmpty: "Please paste a token first.",
@@ -1627,6 +1797,20 @@ const messages: Record<Locale, MessageCatalog> = {
         `GitHub created the probe Gist but cleanup failed (${status}). Nothing was saved; retry.`,
       tokenGistCleanupNetwork:
         "GitHub created the probe Gist but cleanup could not be confirmed. Nothing was saved; retry.",
+      watchTokenEmpty: "Paste a classic GitHub token first.",
+      watchTokenMainAccountRequired: "Connect the main GitHub account before configuring Watch Inbox.",
+      watchTokenRejected: "GitHub rejected this classic token. Check that you copied the complete value.",
+      watchTokenAccountMismatch: "This classic token belongs to a different GitHub account.",
+      watchTokenAccountChanged: "The main GitHub account changed during verification. Retry with the matching account.",
+      watchTokenProfileStatus: (status) =>
+        `GitHub responded with ${status} while checking the classic token account. Nothing was saved.`,
+      watchTokenProfileBadShape: "GitHub returned an unexpected account response for the classic token.",
+      watchTokenProfileNetwork: "Could not reach GitHub while checking the classic token account.",
+      watchTokenNotificationsForbidden: "This classic token cannot read Notifications. Create one with the notifications scope.",
+      watchTokenNotificationsStatus: (status) =>
+        `GitHub responded with ${status} while checking Notifications access. Nothing was saved.`,
+      watchTokenNotificationsNetwork: "Could not reach GitHub while checking Notifications access.",
+      watchTokenNotificationsBadShape: "GitHub returned an unexpected Notifications response. Nothing was saved.",
       ghTokenRejected: "GitHub rejected the saved token. Re-add it in Options.",
       ghRateLimit: "GitHub rate limit reached. Wait a minute and retry.",
       ghForbidden:
@@ -1766,6 +1950,60 @@ const messages: Record<Locale, MessageCatalog> = {
       backfillSyncLater: "稍后再说",
       backfillSyncRunning: "正在同步数据…",
       backfillSyncFailed: (error) => `同步失败: ${error}`,
+    },
+    watch: {
+      starsSurface: "Stars",
+      watchSurface: "Watch",
+      watchSurfaceUnread: (count) => `Watch，${count} 个未读 threads`,
+      title: "已 Watch 的 Stars 收件箱",
+      filterLabel: "Inbox thread 筛选",
+      searchPlaceholder: "搜索仓库和 threads",
+      clearSearch: "清除 Watch 搜索",
+      reasonFilter: "通知原因",
+      reasonFilterSelected: (count) => `通知原因，已选 ${count} 项`,
+      reasonFilterClear: "清除原因筛选",
+      reasonPresets: "原因预设",
+      reasonPresetAll: "全部",
+      reasonPresetDirect: "直接相关",
+      reasonPresetSecurity: "安全",
+      reasonPresetParticipation: "参与过",
+      reasonPresetWatching: "Watching",
+      reasonPresetOther: "其他",
+      reasonThreadCount: (count) => `${count} 个 threads`,
+      unread: "未读",
+      all: "全部",
+      refresh: "刷新 Watch 收件箱",
+      refreshing: "刷新中…",
+      openOptions: "打开选项页",
+      configureMainToken: "请为主 GitHub token 添加 Watching: read 权限，以读取已 Watch 的仓库。",
+      configureNotificationsToken: "请另行连接仅含 notifications scope 的 classic token，以读取 Inbox threads。",
+      scopeNeverLoaded: "刷新后可从 GitHub 加载已 Watch 的仓库。",
+      inboxNeverLoaded: "刷新后可加载最新的有界 Inbox 快照。",
+      queryFailed: "无法加载 Watch 快照。",
+      refreshFailed: "最近一次 Watch 刷新失败，仍可查看之前的快照。",
+      retry: "重试",
+      scopePermissionDenied: "主 token 无法读取 Watching。请在选项页添加可选的 Watching: read 权限后重新连接。",
+      inboxPermissionDenied: "Notifications token 无法读取 GitHub Inbox。请在选项页重新连接有 notifications 权限的 classic token。",
+      scopeUnavailable: "已 Watch 的仓库范围尚未可用，因此无法匹配 Inbox threads。",
+      noWatchedRepositories: "当前已 Star 的仓库中，没有在 GitHub 上处于 Watch 状态的仓库。",
+      noUnreadThreads: "最近一次 Watch 快照中没有未读 thread。",
+      noThreads: "这次快照中没有 Inbox thread 匹配已 Watch 且已 Star 的仓库。",
+      noMatchingThreads: "没有 thread 匹配当前 Watch 搜索和通知原因筛选。",
+      staleSnapshot: "最近一次刷新失败，当前仍显示上一次成功快照。",
+      scopeFailed: "无法刷新已 Watch 的仓库范围。",
+      inboxFailed: "无法刷新 Inbox threads。",
+      truncated: "这里只显示最新的有界窗口，GitHub 上仍有更早的 threads。",
+      cooldownUntil: (time) => `GitHub 要求客户端等到 ${time} 后再刷新。`,
+      watchedRepositoryCount: (count) => `${count} 个已 Watch 且已 Star 的仓库`,
+      threadCount: (count) => `${count} 个 threads`,
+      snapshotAt: (time) => `快照检查于 ${time}`,
+      manageOnGitHub: "在 GitHub 管理 Watch 设置",
+      watchedOnGitHub: "已在 GitHub Watch",
+      repositoryUnreadCount: (count) => `${count} 个未读`,
+      openOnGitHub: "在 GitHub 打开",
+      unreadSnapshot: "未读状态来自这次快照",
+      expandRepository: (repository) => `展开 ${repository}`,
+      collapseRepository: (repository) => `收起 ${repository}`,
     },
     toolbar: {
       searchPlaceholder: "搜索 名称 / 描述 / topics / notes   (按 / 聚焦)",
@@ -2381,7 +2619,7 @@ const messages: Record<Locale, MessageCatalog> = {
     options: {
       title: "Better GitHub Stars Manager — 选项",
       starRepoButton: "点个Star~",
-      agentHeading: "2. Cubby",
+      agentHeading: "3. Cubby",
       agentIntro:
         "连接 AI 服务后，Cubby 会直接向该服务发送请求，并在扩展内显示结果。",
       agentServiceLabel: "AI 服务",
@@ -2444,7 +2682,7 @@ const messages: Record<Locale, MessageCatalog> = {
       agentGrantAccess: "允许访问",
       agentAccessGranted: "已允许访问",
       agentHostAccessRequired: "测试或使用此自定义服务前，请先允许 Chrome 访问。",
-      behaviorHeading: "4. 偏好",
+      behaviorHeading: "5. 偏好",
       maxTagsPerRepoLabel: "每个仓库最多自动标签数",
       maxTagsPerRepoHint:
         "点击 Auto Tags 时，单个仓库最多自动添加这么多个主题标签。",
@@ -2461,6 +2699,8 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenPublicRepos:
         "Account · Starring（读写，用于同步和 unstar）",
       tokenGists: "Account · Gists（读写，用于跨设备标签同步）",
+      tokenWatchingOptional:
+        "Watch 可选权限 · Watching（只读，用于列出已 Watch 的仓库）",
       tokenGistNote:
         "注意：GitHub Gist 权限是账号级的（细粒度 token 不能按 gist 隔离）。我们会为同步创建一个专用 secret gist。",
       authenticatedAs: (username) => `已认证为 @${username}。`,
@@ -2471,8 +2711,24 @@ const messages: Record<Locale, MessageCatalog> = {
       clearCachedAuth: "清除缓存认证",
       saveVerify: "保存并验证",
       verifying: "验证中…",
-      tokenVerified: (username) => `Token 验证成功，当前登录为 ${username}。已检查同步和 Gist 权限；取消 Star 还需要 Starring read/write。`,
+      tokenVerified: (username) => `Token 验证成功，当前登录为 ${username}。已检查同步、Gist 和 Watch 访问权限；取消 Star 还需要 Starring read/write。`,
+      tokenVerifiedWatchForbidden: (username) => `已保存 ${username} 的 token，并检查同步和 Gist 权限，但 Watch 还需要 Account · Watching（只读）权限。添加后请再次保存并验证。`,
+      tokenVerifiedWatchUnverified: (username) => `已保存 ${username} 的 token，并检查同步和 Gist 权限，但暂时无法验证 Watch 访问权限。请再次保存并验证；若问题持续，请确认已添加 Account · Watching（只读）权限。`,
       tokenRemoved: "Token 已移除。",
+      watchTokenHeading: "2. Watch Inbox Token",
+      watchTokenIntroPrefix: "在这里创建仅含 notifications scope 的 classic PAT：",
+      watchTokenLinkLabel: "GitHub token 设置",
+      watchTokenIntroSuffix: "该 token 只用于可选的 Watch Inbox。",
+      watchTokenAccountHint:
+        "它必须与主 token 属于同一 GitHub 账号。扩展会在保存前验证账号身份和 Inbox 访问权限。",
+      watchTokenLabel: "Classic Notifications token",
+      watchTokenMainRequired: "请先连接可用的主 GitHub token。",
+      watchTokenConnect: "连接 Inbox",
+      watchTokenReplace: "替换 token",
+      watchTokenDisconnect: "断开 Inbox",
+      watchTokenVerifying: "验证中…",
+      watchTokenConnected: (username) => `Watch Inbox 已连接为 @${username}。`,
+      watchTokenDisconnected: "已断开 Watch Inbox，并移除缓存的 threads。",
       tokenStepsTitle: "如何创建 token(fine-grained PAT)",
       tokenStep1:
         "打开 GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token。",
@@ -2480,15 +2736,15 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenStep3:
         "Repository access → 选「All public repositories」(扩展只读你 star 的公开仓库)。",
       tokenStep4:
-        "Account permissions → 开启「Starring (read and write)」和「Gists (read and write)」,其余全部关闭。",
+        "Account permissions → 开启「Starring (read and write)」和「Gists (read and write)」；使用 Watch 时可选开启「Watching (read)」。",
       tokenStep5:
         "Generate → 复制 token(以 github_pat_ 开头)→ 粘贴到上面 → 保存并验证。",
       shotNewToken: "截图:「Generate new token」表单",
       shotRepoAccess: "截图:仓库访问设为所有公开仓库",
       shotPermissions:
-        "截图:账号权限 —— Starring (read/write) + Gists (read and write)",
+        "截图:账号权限 —— Starring + Gists，以及可选的 Watching (read)",
       languageLabel: "语言",
-      gistHeading: "3. Gist 同步",
+      gistHeading: "4. Gist 同步",
       gistBoundPrefix: "已绑定 gist",
       gistBoundSuffix:
         "标签会与该 gist 双向同步；如果同一仓库在两处被改动，较新的改动会生效。",
@@ -2525,6 +2781,14 @@ const messages: Record<Locale, MessageCatalog> = {
         `已从 ${total} 条远端标签记录中合并 ${merged} 条更新`,
       gistPullMissing:
         "已绑定的同步 Gist 不见了；本设备已解绑。你可以点 Push 重新创建。",
+      watchStatusUnavailable: "Watch 状态暂时不可用。",
+      watchInboxQueryInvalid: "Watch 收件箱查询无效。",
+      watchInboxUnavailable: "Watch 收件箱暂时不可用。",
+      watchRepositoryInvalid: "Watch 仓库无效。",
+      watchRepositoryDetailUnavailable: "Watch 仓库详情暂时不可用。",
+      watchRefreshFailed: "Watch 刷新失败。",
+      watchDisconnectFailed: "断开 Watch 收件箱失败。",
+      watchDataClearFailed: "无法清除 Watch 数据。",
     },
     errors: {
       tokenEmpty: "请先粘贴 token。",
@@ -2551,6 +2815,20 @@ const messages: Record<Locale, MessageCatalog> = {
         `GitHub 已创建探针 Gist,但清理失败(${status})。未保存 token,请重试。`,
       tokenGistCleanupNetwork:
         "GitHub 已创建探针 Gist,但无法确认清理是否完成。未保存 token,请重试。",
+      watchTokenEmpty: "请先粘贴 classic GitHub token。",
+      watchTokenMainAccountRequired: "请先连接主 GitHub 账户，再配置 Watch 收件箱。",
+      watchTokenRejected: "GitHub 拒绝了这个 classic token，请确认已完整复制。",
+      watchTokenAccountMismatch: "这个 classic token 属于另一个 GitHub 账户。",
+      watchTokenAccountChanged: "验证期间主 GitHub 账户发生变化，请使用匹配账户重试。",
+      watchTokenProfileStatus: (status) =>
+        `GitHub 在检查 classic token 账户时返回 ${status}，未保存 token。`,
+      watchTokenProfileBadShape: "GitHub 为 classic token 返回了非预期的账户信息。",
+      watchTokenProfileNetwork: "检查 classic token 账户时无法连接 GitHub。",
+      watchTokenNotificationsForbidden: "这个 classic token 无法读取 Notifications，请创建包含 notifications scope 的 token。",
+      watchTokenNotificationsStatus: (status) =>
+        `GitHub 在检查 Notifications 权限时返回 ${status}，未保存 token。`,
+      watchTokenNotificationsNetwork: "检查 Notifications 权限时无法连接 GitHub。",
+      watchTokenNotificationsBadShape: "GitHub 返回了非预期的 Notifications 响应，未保存 token。",
       ghTokenRejected: "GitHub 拒绝了已保存的 token,请在选项页重新添加。",
       ghRateLimit: "已达到 GitHub 速率限制,请稍候重试。",
       ghForbidden:

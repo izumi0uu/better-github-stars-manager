@@ -76,10 +76,16 @@ describe('Dexie tag schema upgrades', () => {
             'tagDirtyOutbox',
             'tagMeta',
             'tags',
+            'watchNotificationThreads',
+            'watchRepositories',
+            'watchState',
           ].sort(),
         );
         assert.equal(await current.organizeJobs.count(), 0);
         assert.equal(await current.tagDirtyOutbox.count(), 0);
+        assert.equal(await current.watchRepositories.count(), 0);
+        assert.equal(await current.watchNotificationThreads.count(), 0);
+        assert.equal(await current.watchState.count(), 0);
       } finally {
         await current.close();
         await Dexie.delete(DB_NAME);
