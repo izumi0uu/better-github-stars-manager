@@ -193,6 +193,9 @@ export function Toolbar({
   onStartLayoutEdit,
   onPreviewCustomChange,
   layoutEditChrome,
+  surface = 'stars',
+  onSurfaceChange,
+  watchUnreadCount = 0,
 }: {
   f: FilterState;
   status: SyncStatus | null;
@@ -225,11 +228,15 @@ export function Toolbar({
   onStartLayoutEdit: () => void;
   onPreviewCustomChange: (previewing: boolean) => void;
   layoutEditChrome?: ReactNode;
+  surface?: 'stars' | 'watch';
+  onSurfaceChange?: (surface: 'stars' | 'watch') => void;
+  watchUnreadCount?: number;
 }) {
   const { m } = useI18n();
   const [account, setAccount] = useState<Account | null>(null);
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [gistMenuOpen, setGistMenuOpen] = useState(false);
+  const starsSurface = surface === 'stars';
   const syncing = !!status?.inFlight && status.progress.phase !== 'idle';
   const phase = syncing ? status!.progress : null;
   const actionBusy = busy || syncing || pendingAction !== null;
@@ -315,6 +322,13 @@ export function Toolbar({
     }
   }, [layoutEditing]);
 
+  useEffect(() => {
+    if (starsSurface) return;
+    setSyncMenuOpen(false);
+    setGistMenuOpen(false);
+    customPreviewIntent.clear();
+  }, [customPreviewIntent.clear, starsSurface]);
+
   const seenTooltips = status?.seenTooltips ?? 0;
 
   const runSync = (type: string, label: string) => {
@@ -354,6 +368,45 @@ export function Toolbar({
           <TooltipContent>{m.toolbar.starRepoTitle}</TooltipContent>
         </Tooltip>
 
+        {onSurfaceChange && <div
+          className="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5 text-xs"
+          role="group"
+          aria-label={m.watch.title}
+        >
+          <button
+            type="button"
+            aria-pressed={starsSurface}
+            disabled={layoutEditing}
+            onClick={() => onSurfaceChange('stars')}
+            className={cn('h-7 rounded px-2.5 font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
+              'bg-background text-foreground shadow-sm': starsSurface,
+            })}
+          >
+            {m.watch.starsSurface}
+          </button>
+          <button
+            type="button"
+            aria-pressed={!starsSurface}
+            aria-label={watchUnreadCount > 0
+              ? m.watch.watchSurfaceUnread(watchUnreadCount)
+              : m.watch.watchSurface}
+            disabled={layoutEditing}
+            onClick={() => onSurfaceChange('watch')}
+            className={cn('inline-flex h-7 items-center gap-1.5 rounded px-2.5 font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
+              'bg-background text-foreground shadow-sm': !starsSurface,
+            })}
+          >
+            {m.watch.watchSurface}
+            {watchUnreadCount > 0 && (
+              <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground tabular-nums">
+                {watchUnreadCount > 99 ? '99+' : watchUnreadCount}
+              </span>
+            )}
+          </button>
+        </div>}
+
+        {starsSurface && (
+          <>
         <div className="relative min-w-[220px] flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -507,11 +560,13 @@ export function Toolbar({
           />
           {m.toolbar.autoAssignButton}
         </TButton>
+          </>
+        )}
 
         <span className="flex-1" />
 
         {/* Optional AI workbench entry — post-spacer, independent of Auto Tags. */}
-        {onOpenAgent && (
+        {starsSurface && onOpenAgent && (
           <TButton
             variant="outline"
             size="sm"
@@ -533,6 +588,7 @@ export function Toolbar({
         )}
 
         {/* Gist hover bar: Push / Pull / Open. */}
+        {starsSurface && (
         <ToolHoverBar
           open={gistMenuOpen}
           onOpenChange={setGistMenuOpen}
@@ -614,6 +670,7 @@ export function Toolbar({
             )}
           </div>
         </ToolHoverBar>
+        )}
 
         <Tooltip>
           <TooltipTrigger asChild>
@@ -687,7 +744,7 @@ export function Toolbar({
 
       <div className="flex flex-col gap-1 border-t border-border/50 px-3 py-1 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-4">
-          <span
+          {starsSurface && <span
             className="tabular-nums"
             style={{
               opacity: listPhase === 'fading-out' ? 0 : 1,
@@ -702,8 +759,8 @@ export function Toolbar({
             ) : (
               m.toolbar.shownTotal(total, grandTotal)
             )}
-          </span>
-          {syncing && phase && (
+          </span>}
+          {starsSurface && syncing && phase && (
             <span className="inline-flex items-center gap-2 text-primary">
               <Spinner className="size-3" />
               {m.common.phase(phase.phase)}: {phase.message}
@@ -717,7 +774,7 @@ export function Toolbar({
             </span>
           )}
           <span className="flex-1" />
-          <div className="relative ml-auto inline-flex shrink-0 items-center gap-2">
+          {starsSurface && <div className="relative ml-auto inline-flex shrink-0 items-center gap-2">
             <span className="text-[11px]">{m.toolbar.viewLabel}</span>
             <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted p-0.5 text-[11px]">
               <div className={cn('inline-flex items-center gap-0.5', { 'pointer-events-none opacity-[0.35]': layoutControlsDisabled })}>
@@ -784,16 +841,20 @@ export function Toolbar({
                 {m.toolbar.previewCustomLayout}
               </span>
             )}
-          </div>
+          </div>}
         </div>
-        {syncing && progressValue != null && (
+        {starsSurface && syncing && progressValue != null && (
           <div className="flex items-center gap-2">
             <Progress value={progressValue} className="h-2 flex-1" />
             <span className="gsm-progress-count">{progressCount}</span>
           </div>
         )}
       </div>
-      {layoutEditChrome}
+      {starsSurface && (
+        <>
+          {layoutEditChrome}
+        </>
+      )}
     </div>
   );
 }

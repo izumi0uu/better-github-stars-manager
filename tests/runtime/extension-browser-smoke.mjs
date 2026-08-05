@@ -11,6 +11,8 @@ const POPUP_PATH = '/src/popup/index.html';
 const INVALID_TOKEN = 'github_pat_invalid_extension_browser_smoke';
 const STARS_URL = 'https://github.com/smoke-user?tab=stars';
 const REPO_URL = 'https://github.com/smoke-user/smoke-repo';
+const WATCH_DESKTOP_SCREENSHOT = '/tmp/github-stars-watch-desktop.png';
+const WATCH_NARROW_SCREENSHOT = '/tmp/github-stars-watch-narrow.png';
 const DOM_POLLING_MS = 100;
 
 if (!existsSync(path.join(DIST, 'manifest.json'))) {
@@ -21,6 +23,7 @@ if (!existsSync(path.join(DIST, 'manifest.json'))) {
 const profile = mkdtempSync(path.join(os.tmpdir(), 'gsm-extension-smoke-'));
 const failures = [];
 const pageIssues = [];
+let backgroundGitHubApiGuard = null;
 
 function step(message) {
   console.log(`\n${message}`);
@@ -38,6 +41,7 @@ let browser;
 try {
   browser = await launchExtensionBrowser({ dist: DIST, userDataDir: profile });
   const extId = await detectExtensionId(browser);
+  await installBackgroundGitHubApiGuard(browser, extId);
   ok(`extension loaded: ${extId}`);
 
   step('1) Popup no-token path opens Options');
@@ -80,7 +84,7 @@ try {
   await seedConfig(extId, {
     username: 'smoke-user',
     tokenEncrypted: 'smoke-ciphertext',
-    tokenCryptoMeta: null,
+    tokenCryptoMeta: { iv: 'smoke-iv', salt: 'smoke-salt' },
     starsPanelDefaultEnabled: true,
   });
   const ownStars = await browser.newPage();
@@ -131,6 +135,73 @@ try {
     return false;
   }, { polling: DOM_POLLING_MS, timeout: 10_000 });
   ok('repo fixture received a shadow-root tag chip');
+
+  await waitForBackgroundIdle(optionsFromPopup);
+  resetBackgroundGitHubApiCalls(browser, extId);
+
+  step('8) Watch renders the bounded stored snapshot without GitHub API calls');
+  const seededWatch = await seedWatchFixture(extId);
+  assert.deepEqual(seededWatch, {
+    databaseVersion: 4,
+    hasMainToken: true,
+    hasNotificationsToken: true,
+    allThreadCount: 3,
+    allGroupCount: 2,
+    outOfScopeVisible: false,
+  });
+  await ownStars.bringToFront();
+  await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+  await openWatchSurface(ownStars, 'Unread issue thread');
+  const unreadSnapshot = await readWatchSnapshot(ownStars);
+  assert.deepEqual(unreadSnapshot, {
+    unreadPressed: true,
+    allPressed: false,
+    unreadTitleVisible: true,
+    readTitleVisible: false,
+    unknownTitleVisible: true,
+    unknownTypeVisible: true,
+    unknownFallbackHref: 'https://github.com/smoke-user/secondary-repo',
+    outOfScopeVisible: false,
+    staleBannerVisible: true,
+    truncatedBannerVisible: true,
+  });
+
+  await clickWatchFilter(ownStars, 'All');
+  const allSnapshot = await readWatchSnapshot(ownStars);
+  assert.equal(allSnapshot.unreadPressed, false);
+  assert.equal(allSnapshot.allPressed, true);
+  assert.equal(allSnapshot.readTitleVisible, true);
+  assert.equal(allSnapshot.outOfScopeVisible, false);
+  ok('Unread/All changed the stored projection and unknown subjects fell back safely');
+
+  step('9) Watch repository headers open local detail and remain coherent responsively');
+  await openWatchRepositoryDetail(ownStars, 'smoke-user/smoke-repo');
+  await assertWatchRepositoryDetail(ownStars, 'smoke-user/smoke-repo');
+  await assertWatchLayout(ownStars, 'desktop');
+  await ownStars.screenshot({ path: WATCH_DESKTOP_SCREENSHOT });
+
+  await closeWatchRepositoryDetail(ownStars);
+  await ownStars.setViewport({ width: 360, height: 740, deviceScaleFactor: 1 });
+  await waitForStableLayout(ownStars);
+  await assertWatchLayout(ownStars, 'narrow');
+  await ownStars.screenshot({ path: WATCH_NARROW_SCREENSHOT });
+  ok(`Watch detail and responsive layout verified (${WATCH_DESKTOP_SCREENSHOT}, ${WATCH_NARROW_SCREENSHOT})`);
+
+  step('10) Removing only the classic token shows Watch setup without ejecting Manager');
+  await markManagerMount(ownStars);
+  const disconnected = await clearWatchNotificationsCredential(extId);
+  assert.deepEqual(disconnected, {
+    mainCredentialPreserved: true,
+    watchCredentialCleared: true,
+    watchChangeDelivered: true,
+  });
+  await openWatchSurface(
+    ownStars,
+    'Connect a separate classic token with the notifications scope',
+  );
+  await assertWatchSetupState(ownStars);
+  await assertNoBackgroundGitHubApiCalls(browser, extId);
+  ok('classic-token removal kept the main Manager mounted and rendered Watch setup');
 
   if (pageIssues.length) {
     failures.push(`unexpected browser diagnostics:\n${pageIssues.join('\n')}`);
@@ -240,6 +311,406 @@ async function seedConfig(extId, patch) {
     await chrome.storage.local.set({ [key]: { ...(current[key] ?? {}), ...nextPatch } });
   }, patch);
   await page.close();
+}
+
+async function seedWatchFixture(extId) {
+  const page = await openExtensionPage(extId, OPTIONS_PATH, 'seed-watch');
+  const seeded = await page.evaluate(async () => {
+    const APP_SECRET = 'better-github-stars-manager/v1/static-derivation-secret';
+    const DB_NAME = 'better-github-stars-manager';
+    const DEXIE_VERSION = 4;
+    const IDB_VERSION = DEXIE_VERSION * 10;
+    const CONFIG_KEY = 'gsm_config';
+    const CREDENTIALS_KEY = 'gsm_github_credentials_v1';
+    const fetchedAt = '2026-08-05T12:35:00.000Z';
+
+    const b64encode = (value) => {
+      const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary);
+    };
+    const encrypt = async (plaintext, saltBytes, ivBytes) => {
+      const encoder = new TextEncoder();
+      const salt = new Uint8Array(saltBytes);
+      const iv = new Uint8Array(ivBytes);
+      const base = await crypto.subtle.importKey(
+        'raw',
+        encoder.encode(APP_SECRET),
+        'PBKDF2',
+        false,
+        ['deriveKey'],
+      );
+      const key = await crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt, iterations: 150_000, hash: 'SHA-256' },
+        base,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt'],
+      );
+      const cipher = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        encoder.encode(plaintext),
+      );
+      return {
+        cipher: b64encode(cipher),
+        meta: { salt: b64encode(salt), iv: b64encode(iv) },
+      };
+    };
+    const openDatabase = () => new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME);
+      let unexpectedUpgrade = false;
+      request.onupgradeneeded = () => {
+        unexpectedUpgrade = true;
+        request.transaction?.abort();
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(new Error(unexpectedUpgrade
+        ? 'the extension did not initialize its Dexie v4 schema before Watch fixture setup'
+        : `failed to open extension IndexedDB: ${request.error?.message ?? 'unknown error'}`));
+      request.onblocked = () => reject(new Error('extension IndexedDB v4 fixture open was blocked'));
+    });
+    const transactionDone = (transaction) => new Promise((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('Watch fixture transaction failed'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('Watch fixture transaction aborted'));
+    });
+
+    const [mainCredential, watchCredential] = await Promise.all([
+      encrypt(
+        'github_pat_runtime_smoke_main',
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      ),
+      encrypt(
+        'ghp_runtime_smoke_notifications',
+        [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
+        [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
+      ),
+    ]);
+    const current = await chrome.storage.local.get(CONFIG_KEY);
+    const credentials = {
+      version: 1,
+      tokenEncrypted: mainCredential.cipher,
+      tokenCryptoMeta: mainCredential.meta,
+      watchNotificationsTokenEncrypted: watchCredential.cipher,
+      watchNotificationsTokenCryptoMeta: watchCredential.meta,
+      username: 'smoke-user',
+      avatarUrl: null,
+      displayName: null,
+    };
+    await chrome.storage.local.set({
+      [CONFIG_KEY]: {
+        ...(current[CONFIG_KEY] ?? {}),
+        ...credentials,
+        locale: 'en',
+        theme: 'light',
+        onboardingStage: 'done',
+        seenOnboarding: true,
+        autoTagAgentPromptSeen: true,
+        starsPanelDefaultEnabled: true,
+      },
+      [CREDENTIALS_KEY]: credentials,
+    });
+
+    // This message serializes account reconciliation before account-bound rows
+    // are written, so a delayed cleanup cannot erase the new fixture.
+    const initialStatus = await chrome.runtime.sendMessage({ type: 'getWatchStatus' });
+    if (!initialStatus?.ok) {
+      throw new Error(initialStatus?.error ?? 'Watch status did not accept seeded credentials');
+    }
+
+    const database = await openDatabase();
+    if (database.version !== IDB_VERSION) {
+      database.close();
+      throw new Error(`expected Dexie v${DEXIE_VERSION} (IndexedDB ${IDB_VERSION}), got ${database.version}`);
+    }
+    const requiredStores = [
+      'stars',
+      'watchRepositories',
+      'watchNotificationThreads',
+      'watchState',
+    ];
+    for (const storeName of requiredStores) {
+      if (!database.objectStoreNames.contains(storeName)) {
+        database.close();
+        throw new Error(`Dexie v4 is missing required store ${storeName}`);
+      }
+    }
+
+    const star = (fullName, description, language, count) => ({
+      full_name: fullName,
+      html_url: `https://github.com/${fullName}`,
+      description,
+      language,
+      stargazers_count: count,
+      topics: ['runtime-smoke'],
+      pushed_at: '2026-08-04T08:00:00.000Z',
+      created_at: '2024-01-02T03:04:05.000Z',
+      fork: false,
+      archived: false,
+      starred_at: '2026-07-01T09:00:00.000Z',
+      tombstone: false,
+      synced_at: fetchedAt,
+    });
+    const thread = ({ id, repository, title, type, unread, updatedAt, subjectHtmlUrl }) => ({
+      id,
+      repositoryFullName: repository,
+      repositoryHtmlUrl: `https://github.com/${repository}`,
+      reason: unread ? 'subscribed' : 'comment',
+      subjectType: type,
+      subjectTitle: title,
+      subjectApiUrl: null,
+      subjectHtmlUrl,
+      unread,
+      updatedAt,
+      lastReadAt: unread ? null : '2026-08-05T10:45:00.000Z',
+      fetchedAt,
+    });
+    const transaction = database.transaction(requiredStores, 'readwrite');
+    const stars = transaction.objectStore('stars');
+    const repositories = transaction.objectStore('watchRepositories');
+    const threads = transaction.objectStore('watchNotificationThreads');
+    const state = transaction.objectStore('watchState');
+    stars.clear();
+    repositories.clear();
+    threads.clear();
+    state.clear();
+    stars.put(star(
+      'smoke-user/smoke-repo',
+      'Primary repository detail loaded from the live local Star row.',
+      'TypeScript',
+      3210,
+    ));
+    stars.put(star(
+      'smoke-user/secondary-repo',
+      'Secondary watched repository used by the unknown-subject fixture.',
+      'Rust',
+      87,
+    ));
+    stars.put(star(
+      'smoke-user/out-of-scope',
+      'Live star intentionally excluded from the watched-repository scope.',
+      'Go',
+      14,
+    ));
+    repositories.put({ full_name: 'smoke-user/smoke-repo' });
+    repositories.put({ full_name: 'smoke-user/secondary-repo' });
+    threads.put(thread({
+      id: 'watch-unread-issue',
+      repository: 'smoke-user/smoke-repo',
+      title: 'Unread issue thread',
+      type: 'Issue',
+      unread: true,
+      updatedAt: '2026-08-05T12:30:00.000Z',
+      subjectHtmlUrl: 'https://github.com/smoke-user/smoke-repo/issues/17',
+    }));
+    threads.put(thread({
+      id: 'watch-read-pull',
+      repository: 'smoke-user/smoke-repo',
+      title: 'Read pull request thread',
+      type: 'PullRequest',
+      unread: false,
+      updatedAt: '2026-08-05T10:30:00.000Z',
+      subjectHtmlUrl: 'https://github.com/smoke-user/smoke-repo/pull/9',
+    }));
+    threads.put(thread({
+      id: 'watch-unknown-subject',
+      repository: 'smoke-user/secondary-repo',
+      title: 'Future event thread',
+      type: 'FutureEvent',
+      unread: true,
+      updatedAt: '2026-08-05T11:30:00.000Z',
+      subjectHtmlUrl: null,
+    }));
+    threads.put(thread({
+      id: 'watch-out-of-scope',
+      repository: 'smoke-user/out-of-scope',
+      title: 'OUT OF SCOPE MUST NOT RENDER',
+      type: 'Issue',
+      unread: true,
+      updatedAt: '2026-08-05T13:30:00.000Z',
+      subjectHtmlUrl: 'https://github.com/smoke-user/out-of-scope/issues/1',
+    }));
+    state.put({
+      id: 'singleton',
+      accountLogin: 'smoke-user',
+      scope: {
+        lastAttemptAt: '2026-08-05T12:34:00.000Z',
+        lastSuccessfulAt: '2026-08-05T12:00:00.000Z',
+        errorCode: 'network_error',
+        repositoryCount: 2,
+      },
+      inbox: {
+        lastAttemptAt: '2026-08-05T12:35:00.000Z',
+        lastSuccessfulAt: '2026-08-05T12:05:00.000Z',
+        errorCode: 'github_unavailable',
+        lastModified: 'Wed, 05 Aug 2026 12:05:00 GMT',
+        nextAllowedAt: null,
+        candidateCount: 4,
+        matchedCount: 3,
+        truncated: true,
+      },
+    });
+    await transactionDone(transaction);
+    const databaseVersion = database.version / 10;
+    database.close();
+
+    // Direct fixture writes bypass the background publication boundary. Touch
+    // the authoritative same-account credential record after commit so an
+    // already-open Manager exercises its real credential invalidation path.
+    const finalizedCredentials = {
+      ...credentials,
+      avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
+    };
+    const finalized = await chrome.storage.local.get(CONFIG_KEY);
+    await chrome.storage.local.set({
+      [CONFIG_KEY]: {
+        ...(finalized[CONFIG_KEY] ?? {}),
+        ...finalizedCredentials,
+      },
+      [CREDENTIALS_KEY]: finalizedCredentials,
+    });
+
+    const allInbox = await chrome.runtime.sendMessage({
+      type: 'queryWatchInbox',
+      unreadOnly: false,
+    });
+    if (!allInbox?.ok) throw new Error(allInbox?.error ?? 'seeded Watch inbox query failed');
+    const repositoryDetail = await chrome.runtime.sendMessage({
+      type: 'getWatchRepositoryDetail',
+      fullName: 'smoke-user/smoke-repo',
+    });
+    if (
+      !repositoryDetail?.ok ||
+      repositoryDetail.data?.star?.full_name !== 'smoke-user/smoke-repo'
+    ) {
+      throw new Error(repositoryDetail?.error ?? 'seeded Watch repository detail was unavailable');
+    }
+    return {
+      databaseVersion,
+      hasMainToken: allInbox.data.status.hasMainToken,
+      hasNotificationsToken: allInbox.data.status.hasNotificationsToken,
+      allThreadCount: allInbox.data.totalCount,
+      allGroupCount: allInbox.data.groups.length,
+      outOfScopeVisible: allInbox.data.threads.some((item) => item.id === 'watch-out-of-scope'),
+    };
+  });
+  await page.close();
+  return seeded;
+}
+
+async function clearWatchNotificationsCredential(extId) {
+  const page = await openExtensionPage(extId, OPTIONS_PATH, 'clear-watch-credential');
+  const result = await page.evaluate(async () => {
+    const CONFIG_KEY = 'gsm_config';
+    const CREDENTIALS_KEY = 'gsm_github_credentials_v1';
+    const current = await chrome.storage.local.get([CONFIG_KEY, CREDENTIALS_KEY]);
+    const beforeConfig = current[CONFIG_KEY] ?? {};
+    const beforeCredentials = current[CREDENTIALS_KEY] ?? {};
+    let listener;
+    const changed = new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        chrome.runtime.onMessage.removeListener(listener);
+        resolve(false);
+      }, 5_000);
+      listener = (message) => {
+        if (message?.type !== 'watchChanged') return;
+        clearTimeout(timeout);
+        chrome.runtime.onMessage.removeListener(listener);
+        resolve(true);
+      };
+      chrome.runtime.onMessage.addListener(listener);
+    });
+    const response = await chrome.runtime.sendMessage({ type: 'disconnectWatchInbox' });
+    if (!response?.ok) {
+      chrome.runtime.onMessage.removeListener(listener);
+      throw new Error(response?.error ?? 'Watch disconnect failed');
+    }
+    const watchChangeDelivered = await changed;
+    const stored = await chrome.storage.local.get([CONFIG_KEY, CREDENTIALS_KEY]);
+    const afterConfig = stored[CONFIG_KEY] ?? {};
+    const afterCredentials = stored[CREDENTIALS_KEY] ?? {};
+    return {
+      mainCredentialPreserved:
+        afterCredentials.tokenEncrypted === beforeCredentials.tokenEncrypted &&
+        JSON.stringify(afterCredentials.tokenCryptoMeta ?? null) ===
+          JSON.stringify(beforeCredentials.tokenCryptoMeta ?? null) &&
+        afterCredentials.username === beforeCredentials.username &&
+        afterConfig.tokenEncrypted === beforeConfig.tokenEncrypted &&
+        afterConfig.username === beforeConfig.username,
+      watchCredentialCleared:
+        afterCredentials.watchNotificationsTokenEncrypted === null &&
+        afterCredentials.watchNotificationsTokenCryptoMeta === null &&
+        afterConfig.watchNotificationsTokenEncrypted === null &&
+        afterConfig.watchNotificationsTokenCryptoMeta === null,
+      watchChangeDelivered,
+    };
+  });
+  await page.close();
+  return result;
+}
+
+async function installBackgroundGitHubApiGuard(browser, extId) {
+  const unexpectedUrls = [];
+  const clients = new Set();
+  const attach = async (target) => {
+    if (
+      target.type() !== 'service_worker' ||
+      !target.url().startsWith(`chrome-extension://${extId}/`)
+    ) return;
+    const client = await target.createCDPSession();
+    clients.add(client);
+    await client.send('Fetch.enable', {
+      patterns: [{ urlPattern: 'https://api.github.com/*', requestStage: 'Request' }],
+    });
+    client.on('Fetch.requestPaused', (event) => {
+      unexpectedUrls.push(event.request.url);
+      void client.send('Fetch.failRequest', {
+        requestId: event.requestId,
+        errorReason: 'BlockedByClient',
+      }).catch(() => {});
+    });
+  };
+  const targetListener = (target) => {
+    void attach(target).catch((error) => {
+      recordPageIssue('background-network-guard', formatError(error));
+    });
+  };
+  browser.on('targetcreated', targetListener);
+  await Promise.all(browser.targets().map(attach));
+  backgroundGitHubApiGuard = { browser, targetListener, clients, unexpectedUrls };
+}
+
+async function assertNoBackgroundGitHubApiCalls(browser, extId) {
+  await delay(100);
+  const guard = backgroundGitHubApiGuard;
+  assert.equal(guard?.browser, browser, `GitHub API guard was not installed for ${extId}`);
+  assert.deepEqual(
+    guard.unexpectedUrls,
+    [],
+    `background unexpectedly requested GitHub API URLs: ${guard.unexpectedUrls.join(', ')}`,
+  );
+  browser.off('targetcreated', guard.targetListener);
+  await Promise.all([...guard.clients].map((client) => client.detach().catch(() => {})));
+  backgroundGitHubApiGuard = null;
+}
+
+async function waitForBackgroundIdle(page) {
+  await page.waitForFunction(
+    async () => {
+      const response = await chrome.runtime.sendMessage({ type: 'getStatus' });
+      return response?.ok && response.data?.inFlight === false;
+    },
+    { polling: DOM_POLLING_MS, timeout: 30_000 },
+  );
+}
+
+function resetBackgroundGitHubApiCalls(browser, extId) {
+  const guard = backgroundGitHubApiGuard;
+  assert.equal(guard?.browser, browser, `GitHub API guard was not installed for ${extId}`);
+  guard.unexpectedUrls.length = 0;
 }
 
 async function interceptGitHubApi(page, handler) {
@@ -448,6 +919,317 @@ async function waitForManagerRoot(page) {
     () => !!document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root'),
     { polling: DOM_POLLING_MS, timeout: 20_000 },
   );
+}
+
+async function markManagerMount(page) {
+  const marked = await page.evaluate(() => {
+    const host = document.getElementById('gsm-manager-host');
+    if (!host?.shadowRoot?.getElementById('gsm-manager-root')) return false;
+    host.dataset.watchSmokeMount = 'preserved';
+    return true;
+  });
+  assert.equal(marked, true, 'could not mark the mounted Manager before Watch disconnect');
+}
+
+async function openWatchSurface(page, expectedText) {
+  try {
+    await page.waitForFunction(
+      () => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+        const surfaceGroup = [...(root?.querySelectorAll('[role="group"]') ?? [])]
+          .find((candidate) => candidate.getAttribute('aria-label') === 'Watched stars inbox');
+        const button = [...(surfaceGroup?.querySelectorAll('button') ?? [])]
+          .find((candidate) => candidate.textContent?.trim().startsWith('Watch'));
+        return !!button && !button.disabled;
+      },
+      { polling: DOM_POLLING_MS, timeout: 20_000 },
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'Watch Manager surface switch did not become interactive', error);
+  }
+  const clicked = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const surfaceGroup = [...(root?.querySelectorAll('[role="group"]') ?? [])]
+      .find((candidate) => candidate.getAttribute('aria-label') === 'Watched stars inbox');
+    const button = [...(surfaceGroup?.querySelectorAll('button') ?? [])]
+      .find((candidate) => candidate.textContent?.trim().startsWith('Watch'));
+    button?.click();
+    return !!button;
+  });
+  assert.equal(clicked, true, 'could not activate the Watch Manager surface');
+  try {
+    await page.waitForFunction(
+      (text) => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+        const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+        const watchButton = [...(root?.querySelectorAll('button') ?? [])]
+          .find((candidate) => candidate.textContent?.trim().startsWith('Watch'));
+        return !!section && watchButton?.getAttribute('aria-pressed') === 'true' &&
+          !section.textContent?.includes('Loading') && section.textContent?.includes(text);
+      },
+      { polling: DOM_POLLING_MS, timeout: 20_000 },
+      expectedText,
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'Watch surface did not finish rendering', error);
+  }
+}
+
+async function clickWatchFilter(page, label) {
+  const clicked = await page.evaluate((filterLabel) => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const group = root?.querySelector('[role="group"][aria-label="Inbox thread filter"]');
+    const button = [...(group?.querySelectorAll('button') ?? [])]
+      .find((candidate) => candidate.textContent?.trim() === filterLabel);
+    button?.click();
+    return !!button;
+  }, label);
+  assert.equal(clicked, true, `could not activate Watch filter ${label}`);
+  try {
+    await page.waitForFunction(
+      (filterLabel) => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+        const group = root?.querySelector('[role="group"][aria-label="Inbox thread filter"]');
+        const button = [...(group?.querySelectorAll('button') ?? [])]
+          .find((candidate) => candidate.textContent?.trim() === filterLabel);
+        return button?.getAttribute('aria-pressed') === 'true' && (
+          filterLabel !== 'All' || root?.textContent?.includes('Read pull request thread')
+        );
+      },
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+      label,
+    );
+  } catch (error) {
+    throw await pageWaitError(page, `Watch filter ${label} did not settle`, error);
+  }
+}
+
+async function readWatchSnapshot(page) {
+  return page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+    const text = section?.textContent ?? '';
+    const filterGroup = section?.querySelector('[role="group"][aria-label="Inbox thread filter"]');
+    const buttonPressed = (label) => [...(filterGroup?.querySelectorAll('button') ?? [])]
+      .find((candidate) => candidate.textContent?.trim() === label)
+      ?.getAttribute('aria-pressed') === 'true';
+    const unknownLink = [...(section?.querySelectorAll('a') ?? [])]
+      .find((candidate) => candidate.getAttribute('aria-label') === 'Open on GitHub: Future event thread');
+    const statuses = [...(section?.querySelectorAll('[role="status"]') ?? [])]
+      .map((candidate) => candidate.textContent ?? '');
+    return {
+      unreadPressed: buttonPressed('Unread'),
+      allPressed: buttonPressed('All'),
+      unreadTitleVisible: text.includes('Unread issue thread'),
+      readTitleVisible: text.includes('Read pull request thread'),
+      unknownTitleVisible: text.includes('Future event thread'),
+      unknownTypeVisible: text.includes('FutureEvent'),
+      unknownFallbackHref: unknownLink?.href ?? null,
+      outOfScopeVisible: text.includes('OUT OF SCOPE MUST NOT RENDER'),
+      staleBannerVisible: statuses.some((value) => value.includes(
+        'Showing the last successful snapshot because the latest refresh failed.',
+      )),
+      truncatedBannerVisible: statuses.some((value) => value.includes(
+        'This is the newest bounded window; more GitHub threads exist beyond it.',
+      )),
+    };
+  });
+}
+
+async function openWatchRepositoryDetail(page, fullName) {
+  const clicked = await page.evaluate((repository) => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+    const button = [...(section?.querySelectorAll('button') ?? [])]
+      .find((candidate) => candidate.textContent?.trim() === repository);
+    button?.click();
+    return !!button;
+  }, fullName);
+  assert.equal(clicked, true, `could not select Watch repository ${fullName}`);
+  try {
+    await page.waitForFunction(
+      (repository) => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+        const drawer = root?.querySelector('.drawer-anim.drawer-enter');
+        const link = [...(drawer?.querySelectorAll('a') ?? [])]
+          .find((candidate) => candidate.textContent?.trim() === repository);
+        return !!link && !!drawer?.querySelector('textarea') && drawer.getBoundingClientRect().width >= 339;
+      },
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+      fullName,
+    );
+  } catch (error) {
+    const drawerState = await page.evaluate(() => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      const drawer = root?.querySelector('.drawer-anim');
+      return {
+        className: drawer?.className ?? null,
+        width: drawer?.getBoundingClientRect().width ?? null,
+        text: drawer?.textContent?.slice(0, 500) ?? null,
+        textareaCount: drawer?.querySelectorAll('textarea').length ?? 0,
+      };
+    }).catch(() => null);
+    const waitError = await pageWaitError(page, `Watch detail did not open for ${fullName}`, error);
+    throw new Error(`${waitError.message}\nDrawer state: ${JSON.stringify(drawerState)}`);
+  }
+}
+
+async function assertWatchRepositoryDetail(page, fullName) {
+  const detail = await page.evaluate((repository) => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const drawer = root?.querySelector('.drawer-anim.drawer-enter');
+    const link = [...(drawer?.querySelectorAll('a') ?? [])]
+      .find((candidate) => candidate.textContent?.trim() === repository);
+    return {
+      width: drawer?.getBoundingClientRect().width ?? 0,
+      href: link?.href ?? null,
+      descriptionVisible: drawer?.textContent?.includes(
+        'Primary repository detail loaded from the live local Star row.',
+      ) ?? false,
+      languageVisible: drawer?.textContent?.includes('TypeScript') ?? false,
+      notesPlaceholder: drawer?.querySelector('textarea')?.getAttribute('placeholder') ?? null,
+      closeButtonVisible: !!drawer?.querySelector('button[title="Close (Esc)"]'),
+    };
+  }, fullName);
+  assert.equal(detail.width >= 339 && detail.width <= 341, true, 'Watch detail drawer width was not stable');
+  assert.deepEqual({ ...detail, width: 340 }, {
+    width: 340,
+    href: `https://github.com/${fullName}`,
+    descriptionVisible: true,
+    languageVisible: true,
+    notesPlaceholder: 'Why did you star this repo?',
+    closeButtonVisible: true,
+  });
+}
+
+async function closeWatchRepositoryDetail(page) {
+  const clicked = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const button = root?.querySelector('.drawer-anim.drawer-enter button[title="Close (Esc)"]');
+    button?.click();
+    return !!button;
+  });
+  assert.equal(clicked, true, 'could not close Watch repository detail');
+  await page.waitForFunction(
+    () => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      const drawer = root?.querySelector('.drawer-anim');
+      return !!drawer && drawer.classList.contains('drawer-exit') && drawer.getBoundingClientRect().width <= 1;
+    },
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+}
+
+async function waitForStableLayout(page) {
+  await page.evaluate(async () => {
+    const fontsReady = document.fonts?.ready ?? Promise.resolve();
+    await Promise.race([
+      fontsReady,
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ]);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+}
+
+async function assertWatchLayout(page, label) {
+  await waitForStableLayout(page);
+  const layout = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+    const scrollPane = section?.parentElement;
+    const headerRow = section?.querySelector('header > div');
+    const rootRect = root?.getBoundingClientRect();
+    const sectionRect = section?.getBoundingClientRect();
+    const headerChildren = [...(headerRow?.children ?? [])]
+      .filter((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+      })
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+      });
+    const overlappingHeaderPairs = headerChildren.flatMap((left, leftIndex) =>
+      headerChildren.slice(leftIndex + 1).filter((right) => (
+        Math.min(left.right, right.right) - Math.max(left.left, right.left) > 1 &&
+        Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top) > 1
+      )).map(() => leftIndex),
+    ).length;
+    const controlsOutsideSection = [...(section?.querySelectorAll('button, a') ?? [])]
+      .filter((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        if (style.visibility === 'hidden' || style.display === 'none' || rect.width === 0 || rect.height === 0) {
+          return false;
+        }
+        return !sectionRect || rect.left < sectionRect.left - 1 || rect.right > sectionRect.right + 1;
+      }).length;
+    return {
+      viewportWidth: innerWidth,
+      rootLeft: rootRect?.left ?? -1,
+      rootRight: rootRect?.right ?? -1,
+      rootOverflow: root ? root.scrollWidth - root.clientWidth : -1,
+      scrollPaneOverflow: scrollPane ? scrollPane.scrollWidth - scrollPane.clientWidth : -1,
+      sectionOverflow: section ? section.scrollWidth - section.clientWidth : -1,
+      sectionLeft: sectionRect?.left ?? -1,
+      sectionRight: sectionRect?.right ?? -1,
+      headerChildren: headerChildren.length,
+      overlappingHeaderPairs,
+      controlsOutsideSection,
+    };
+  });
+  assert.equal(layout.rootLeft >= 0, true, `${label} Manager extended left of the viewport`);
+  assert.equal(layout.rootRight <= layout.viewportWidth + 1, true, `${label} Manager extended right of the viewport`);
+  assert.equal(layout.rootOverflow <= 1, true, `${label} Manager has horizontal overflow`);
+  assert.equal(layout.scrollPaneOverflow <= 1, true, `${label} Watch scroll pane has horizontal overflow`);
+  assert.equal(layout.sectionOverflow <= 1, true, `${label} Watch section has horizontal overflow`);
+  assert.equal(layout.sectionLeft >= -1, true, `${label} Watch section extended left of its viewport`);
+  assert.equal(layout.sectionRight <= layout.viewportWidth + 1, true, `${label} Watch section extended right of its viewport`);
+  assert.equal(layout.headerChildren >= 4, true, `${label} Watch header controls were incomplete`);
+  assert.equal(layout.overlappingHeaderPairs, 0, `${label} Watch header controls overlapped`);
+  assert.equal(layout.controlsOutsideSection, 0, `${label} Watch controls were clipped outside the section`);
+}
+
+async function assertWatchSetupState(page) {
+  try {
+    await page.waitForFunction(
+      () => {
+        const host = document.getElementById('gsm-manager-host');
+        const root = host?.shadowRoot?.getElementById('gsm-manager-root');
+        const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+        const text = section?.textContent ?? '';
+        return document.querySelectorAll('#gsm-manager-host').length === 1 &&
+          !!root && !!section &&
+          text.includes('Connect a separate classic token with the notifications scope') &&
+          [...(section?.querySelectorAll('button') ?? [])]
+            .some((candidate) => candidate.textContent?.trim() === 'Open options');
+      },
+      { polling: DOM_POLLING_MS, timeout: 20_000 },
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'Watch classic-token setup state did not render', error);
+  }
+  const state = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const surfaceGroup = [...(root?.querySelectorAll('[role="group"]') ?? [])]
+      .find((candidate) => candidate.getAttribute('aria-label') === 'Watched stars inbox');
+    const buttons = [...(surfaceGroup?.querySelectorAll('button') ?? [])];
+    return {
+      managerMounted: !!root,
+      managerMountPreserved: root?.getRootNode()?.host?.dataset?.watchSmokeMount === 'preserved',
+      starsControlPresent: buttons.some((candidate) => candidate.textContent?.trim() === 'Stars'),
+      watchPressed: buttons.some((candidate) => (
+        candidate.textContent?.trim().startsWith('Watch') && candidate.getAttribute('aria-pressed') === 'true'
+      )),
+    };
+  });
+  assert.deepEqual(state, {
+    managerMounted: true,
+    managerMountPreserved: true,
+    starsControlPresent: true,
+    watchPressed: true,
+  });
 }
 
 async function assertScrollLocked(page) {

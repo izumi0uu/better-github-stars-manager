@@ -15,8 +15,9 @@ function createChromeMock() {
     api: {
       storage: {
         local: {
-          async get(key: string) {
-            return { [key]: state[key] };
+          async get(key: string | string[]) {
+            const keys = Array.isArray(key) ? key : [key];
+            return Object.fromEntries(keys.map((item) => [item, state[item]]));
           },
           async set(next: Record<string, unknown>) {
             const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};

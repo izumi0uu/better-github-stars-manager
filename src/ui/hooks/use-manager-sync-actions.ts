@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { GITHUB_CREDENTIALS_STORAGE_KEY } from '@/auth/auth-store';
 import type { BackfillId } from '@/types';
 import { useI18n } from '@/i18n';
 import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnboardingSync } from '@/onboarding/state';
@@ -166,6 +167,23 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
         .finally(() => setPendingAction((cur) => (cur === syncType ? null : cur)));
     })().finally(() => setStatusLoaded(true));
     return () => off();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onChanged = chrome.storage?.onChanged;
+    if (!onChanged) return;
+    const listener = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      if (areaName !== 'local' || !changes[GITHUB_CREDENTIALS_STORAGE_KEY]) return;
+      void refreshStatus();
+    };
+    onChanged.addListener(listener);
+    return () => onChanged.removeListener(listener);
+    // Credential changes refresh presentation only; initial-sync selection is
+    // intentionally owned by the mount effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

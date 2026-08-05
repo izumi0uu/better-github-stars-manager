@@ -4,8 +4,13 @@ import type {
   Config,
 } from "@/types";
 import { encrypt, decrypt } from "./crypto";
-import { TOKEN_EMPTY } from "@/api/errors";
-import { probeTokenCapabilities } from "./token-probe";
+import {
+  TOKEN_EMPTY,
+  WATCH_TOKEN_ACCOUNT_CHANGED,
+  WATCH_TOKEN_EMPTY,
+  WATCH_TOKEN_MAIN_ACCOUNT_REQUIRED,
+} from "@/api/errors";
+import { probeTokenCapabilities, probeWatchNotificationsToken } from "./token-probe";
 import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
@@ -50,6 +55,18 @@ import {
  */
 
 export const CONFIG_STORAGE_KEY = "gsm_config";
+export const GITHUB_CREDENTIALS_STORAGE_KEY = 'gsm_github_credentials_v1';
+
+type StoredGitHubCredentials = Readonly<{
+  version: 1;
+  tokenEncrypted: string | null;
+  tokenCryptoMeta: Config['tokenCryptoMeta'];
+  watchNotificationsTokenEncrypted: string | null;
+  watchNotificationsTokenCryptoMeta: Config['watchNotificationsTokenCryptoMeta'];
+  username: string | null;
+  avatarUrl: string | null;
+  displayName: string | null;
+}>;
 
 export type AgentProviderCredentialSnapshot = Readonly<{
   provider: Config["agentProvider"]["provider"];
@@ -77,6 +94,8 @@ export type AgentProviderCredentialSnapshot = Readonly<{
 const DEFAULT_CONFIG: Config = {
   tokenEncrypted: null,
   tokenCryptoMeta: null,
+  watchNotificationsTokenEncrypted: null,
+  watchNotificationsTokenCryptoMeta: null,
   agentProvider: {
     provider: "openai",
     protocol: null,
@@ -116,18 +135,78 @@ const DEFAULT_CONFIG: Config = {
   backfills: {},
 };
 
+type PlaintextCredentialCache = {
+  cipher: string;
+  cryptoMeta: string;
+  value: string;
+};
+
+export type GitHubCredentialSnapshot = Readonly<{
+  accountLogin: string | null;
+  mainToken: string | null;
+  notificationsToken: string | null;
+  notificationsConfigured: boolean;
+  mainIdentity: string;
+  notificationsIdentity: string;
+}>;
+
+const CONFIG_OPERATION_LOCK = 'better-github-stars-manager:config:v1';
+
 let cache: Config | null = null;
-let plaintextToken: string | null = null; // in-memory only
+let plaintextToken: PlaintextCredentialCache | null = null; // in-memory only
+let plaintextWatchNotificationsToken: PlaintextCredentialCache | null = null; // in-memory only
 let plaintextAgentApiKey: {
   cipher: string;
   cryptoMeta: string;
   revision: string;
   value: string;
 } | null = null; // in-memory only
+let configOperationTail: Promise<void> = Promise.resolve();
+
+type ConfigLockManager = {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+};
+
+function getConfigLockManager(): ConfigLockManager | null {
+  const locks = (globalThis as typeof globalThis & {
+    navigator?: { locks?: unknown };
+  }).navigator?.locks;
+  if (!locks || typeof (locks as { request?: unknown }).request !== 'function') return null;
+  return locks as ConfigLockManager;
+}
+
+/** Serialize whole-config reads/writes across extension pages and the MV3 worker. */
+function runConfigExclusive<T>(operation: () => Promise<T>): Promise<T> {
+  const execute = () => {
+    const locks = getConfigLockManager();
+    return locks ? locks.request(CONFIG_OPERATION_LOCK, operation) : operation();
+  };
+  const result = configOperationTail.then(execute, execute);
+  configOperationTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 function mergeStoredConfig(stored: Partial<Config>): Config {
   const maxTagsPerRepo =
     stored.maxTagsPerRepo === undefined ? stored.autoTagLimit : stored.maxTagsPerRepo;
+  const watchTokenEncrypted = typeof stored.watchNotificationsTokenEncrypted === 'string' &&
+    stored.watchNotificationsTokenEncrypted.length > 0
+    ? stored.watchNotificationsTokenEncrypted
+    : null;
+  const watchTokenMeta = validCryptoMeta(stored.watchNotificationsTokenCryptoMeta)
+    ? stored.watchNotificationsTokenCryptoMeta
+    : null;
+  const hasBoundMainCredential = typeof stored.username === 'string' &&
+    stored.username.trim().length > 0 &&
+    typeof stored.tokenEncrypted === 'string' &&
+    stored.tokenEncrypted.length > 0 &&
+    validCryptoMeta(stored.tokenCryptoMeta);
+  const hasCompleteWatchToken = !!(
+    hasBoundMainCredential && watchTokenEncrypted && watchTokenMeta
+  );
   return {
     ...DEFAULT_CONFIG,
     ...stored,
@@ -140,11 +219,88 @@ function mergeStoredConfig(stored: Partial<Config>): Config {
     ),
     autoTagAgentPromptSeen: stored.autoTagAgentPromptSeen === true,
     maxTagsPerRepo: maxTagsPerRepo ?? DEFAULT_CONFIG.maxTagsPerRepo,
+    watchNotificationsTokenEncrypted: hasCompleteWatchToken ? watchTokenEncrypted : null,
+    watchNotificationsTokenCryptoMeta: hasCompleteWatchToken ? watchTokenMeta : null,
+  };
+}
+
+function validCryptoMeta(value: unknown): value is Config['tokenCryptoMeta'] & object {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const meta = value as { iv?: unknown; salt?: unknown };
+  return typeof meta.iv === 'string' && !!meta.iv && typeof meta.salt === 'string' && !!meta.salt;
+}
+
+function credentialsFromConfig(config: Config): StoredGitHubCredentials {
+  return {
+    version: 1,
+    tokenEncrypted: config.tokenEncrypted,
+    tokenCryptoMeta: config.tokenCryptoMeta,
+    watchNotificationsTokenEncrypted: config.watchNotificationsTokenEncrypted,
+    watchNotificationsTokenCryptoMeta: config.watchNotificationsTokenCryptoMeta,
+    username: config.username,
+    avatarUrl: config.avatarUrl,
+    displayName: config.displayName,
+  };
+}
+
+function normalizeStoredGitHubCredentials(value: unknown): StoredGitHubCredentials {
+  const stored = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Partial<StoredGitHubCredentials>
+    : {};
+  const username = typeof stored.username === 'string' && stored.username.trim()
+    ? stored.username
+    : null;
+  const tokenEncrypted = typeof stored.tokenEncrypted === 'string' && stored.tokenEncrypted
+    ? stored.tokenEncrypted
+    : null;
+  const tokenCryptoMeta = validCryptoMeta(stored.tokenCryptoMeta)
+    ? stored.tokenCryptoMeta
+    : null;
+  const hasMainCredential = !!(username && tokenEncrypted && tokenCryptoMeta);
+  const watchTokenEncrypted = typeof stored.watchNotificationsTokenEncrypted === 'string' &&
+    stored.watchNotificationsTokenEncrypted
+    ? stored.watchNotificationsTokenEncrypted
+    : null;
+  const watchTokenCryptoMeta = validCryptoMeta(stored.watchNotificationsTokenCryptoMeta)
+    ? stored.watchNotificationsTokenCryptoMeta
+    : null;
+  const hasWatchCredential = !!(
+    hasMainCredential && watchTokenEncrypted && watchTokenCryptoMeta
+  );
+  return {
+    version: 1,
+    tokenEncrypted: hasMainCredential ? tokenEncrypted : null,
+    tokenCryptoMeta: hasMainCredential ? tokenCryptoMeta : null,
+    watchNotificationsTokenEncrypted: hasWatchCredential ? watchTokenEncrypted : null,
+    watchNotificationsTokenCryptoMeta: hasWatchCredential ? watchTokenCryptoMeta : null,
+    username: hasMainCredential ? username : null,
+    avatarUrl: hasMainCredential && typeof stored.avatarUrl === 'string'
+      ? stored.avatarUrl
+      : null,
+    displayName: hasMainCredential && typeof stored.displayName === 'string'
+      ? stored.displayName
+      : null,
+  };
+}
+
+function withGitHubCredentials(
+  config: Config,
+  credentials: StoredGitHubCredentials,
+): Config {
+  return {
+    ...config,
+    tokenEncrypted: credentials.tokenEncrypted,
+    tokenCryptoMeta: credentials.tokenCryptoMeta,
+    watchNotificationsTokenEncrypted: credentials.watchNotificationsTokenEncrypted,
+    watchNotificationsTokenCryptoMeta: credentials.watchNotificationsTokenCryptoMeta,
+    username: credentials.username,
+    avatarUrl: credentials.avatarUrl,
+    displayName: credentials.displayName,
   };
 }
 
 function withNormalizedConfig(config: Config): Config {
-  const hasTokenHint = !!(plaintextToken || config.tokenEncrypted);
+  const hasTokenHint = !!(plaintextToken?.value || config.tokenEncrypted);
   const onboardingStage = normalizeOnboardingStage(
     config.onboardingStage,
     config.seenOnboarding,
@@ -177,29 +333,226 @@ function withNormalizedConfig(config: Config): Config {
 }
 
 async function read(): Promise<Config> {
-  if (cache) return cache;
   cache = await readStoredConfig();
   return cache;
 }
 
 async function readStoredConfig(): Promise<Config> {
-  const raw = await chrome.storage.local.get(CONFIG_STORAGE_KEY);
+  const raw = await chrome.storage.local.get([
+    CONFIG_STORAGE_KEY,
+    GITHUB_CREDENTIALS_STORAGE_KEY,
+  ]);
   const stored = (raw[CONFIG_STORAGE_KEY] ?? {}) as Partial<Config>;
-  return withNormalizedConfig(mergeStoredConfig(stored));
+  const hasCredentialRecord = Object.prototype.hasOwnProperty.call(
+    raw,
+    GITHUB_CREDENTIALS_STORAGE_KEY,
+  );
+  const credentials = normalizeStoredGitHubCredentials(
+    hasCredentialRecord
+      ? raw[GITHUB_CREDENTIALS_STORAGE_KEY]
+      : { version: 1, ...stored },
+  );
+  return withNormalizedConfig(withGitHubCredentials(mergeStoredConfig(stored), credentials));
 }
 
-async function write(next: Config): Promise<void> {
-  const normalized = withNormalizedConfig(next);
-  await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: normalized });
+function normalizedAccountLogin(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || null;
+}
+
+function mainCredentialIdentity(config: Config): string {
+  return JSON.stringify([
+    normalizedAccountLogin(config.username),
+    config.tokenEncrypted,
+    config.tokenCryptoMeta,
+  ]);
+}
+
+function notificationsCredentialIdentity(config: Config): string {
+  return JSON.stringify([
+    config.watchNotificationsTokenEncrypted,
+    config.watchNotificationsTokenCryptoMeta,
+  ]);
+}
+
+function hasCompleteMainCredential(config: Config): boolean {
+  return !!(
+    normalizedAccountLogin(config.username) &&
+    config.tokenEncrypted &&
+    validCryptoMeta(config.tokenCryptoMeta)
+  );
+}
+
+function preserveCredentialBinding(previous: Config, proposed: Config): Config {
+  const accountChanged = normalizedAccountLogin(previous.username) !==
+    normalizedAccountLogin(proposed.username);
+  if (!accountChanged && hasCompleteMainCredential(proposed)) return proposed;
+  return {
+    ...proposed,
+    watchNotificationsTokenEncrypted: null,
+    watchNotificationsTokenCryptoMeta: null,
+  };
+}
+
+function updateCredentialCaches(previous: Config, normalized: Config): void {
   cache = normalized;
+  if (mainCredentialIdentity(previous) !== mainCredentialIdentity(normalized)) {
+    plaintextToken = null;
+  }
+  if (
+    notificationsCredentialIdentity(previous) !== notificationsCredentialIdentity(normalized) ||
+    normalizedAccountLogin(previous.username) !== normalizedAccountLogin(normalized.username)
+  ) {
+    plaintextWatchNotificationsToken = null;
+  }
+}
+
+async function persistConfigUnlocked(previous: Config, proposed: Config): Promise<Config> {
+  const normalized = withNormalizedConfig(withGitHubCredentials(
+    proposed,
+    credentialsFromConfig(previous),
+  ));
+  await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: normalized });
+  updateCredentialCaches(previous, normalized);
+  return normalized;
+}
+
+async function persistGitHubCredentialsUnlocked(
+  previous: Config,
+  proposed: Config,
+): Promise<Config> {
+  const normalized = withNormalizedConfig(preserveCredentialBinding(previous, proposed));
+  const credentials = normalizeStoredGitHubCredentials(credentialsFromConfig(normalized));
+  const next = withGitHubCredentials(normalized, credentials);
+  await chrome.storage.local.set({
+    [CONFIG_STORAGE_KEY]: next,
+    [GITHUB_CREDENTIALS_STORAGE_KEY]: credentials,
+  });
+  updateCredentialCaches(previous, next);
+  return next;
+}
+
+async function mutateGitHubCredentials(
+  update: (current: Config) => Config | Promise<Config>,
+  afterCommit?: (next: Config) => void,
+): Promise<Config> {
+  return runConfigExclusive(async () => {
+    const current = await readStoredConfig();
+    const next = await persistGitHubCredentialsUnlocked(current, await update(current));
+    afterCommit?.(next);
+    return next;
+  });
+}
+
+async function mutateStoredConfig(
+  update: (current: Config) => Config | null | Promise<Config | null>,
+  afterCommit?: (next: Config) => void,
+): Promise<Config> {
+  return runConfigExclusive(async () => {
+    const current = await readStoredConfig();
+    const proposed = await update(current);
+    if (proposed === null) {
+      cache = current;
+      return current;
+    }
+    const next = await persistConfigUnlocked(current, proposed);
+    afterCommit?.(next);
+    return next;
+  });
+}
+
+async function decryptCredential(
+  cipher: string | null,
+  meta: Config['tokenCryptoMeta'],
+  cached: PlaintextCredentialCache | null,
+): Promise<PlaintextCredentialCache | null> {
+  if (!cipher || !meta) return null;
+  const cryptoMeta = JSON.stringify(meta);
+  if (cached?.cipher === cipher && cached.cryptoMeta === cryptoMeta) return cached;
+  const value = await decrypt(cipher, meta);
+  return value ? { cipher, cryptoMeta, value } : null;
 }
 
 async function readDecryptedToken(): Promise<string | null> {
-  if (plaintextToken) return plaintextToken;
-  const c = await read();
-  if (!c.tokenEncrypted || !c.tokenCryptoMeta) return null;
-  plaintextToken = await decrypt(c.tokenEncrypted, c.tokenCryptoMeta);
-  return plaintextToken;
+  return runConfigExclusive(async () => {
+    const before = await readStoredConfig();
+    const decrypted = await decryptCredential(
+      before.tokenEncrypted,
+      before.tokenCryptoMeta,
+      plaintextToken,
+    );
+    const latest = await readStoredConfig();
+    if (mainCredentialIdentity(before) !== mainCredentialIdentity(latest)) return null;
+    cache = latest;
+    plaintextToken = decrypted;
+    return decrypted?.value ?? null;
+  });
+}
+
+async function readDecryptedWatchNotificationsToken(): Promise<string | null> {
+  return runConfigExclusive(async () => {
+    const before = await readStoredConfig();
+    const decrypted = await decryptCredential(
+      before.watchNotificationsTokenEncrypted,
+      before.watchNotificationsTokenCryptoMeta,
+      plaintextWatchNotificationsToken,
+    );
+    const latest = await readStoredConfig();
+    if (
+      normalizedAccountLogin(before.username) !== normalizedAccountLogin(latest.username) ||
+      notificationsCredentialIdentity(before) !== notificationsCredentialIdentity(latest)
+    ) return null;
+    cache = latest;
+    plaintextWatchNotificationsToken = decrypted;
+    return decrypted?.value ?? null;
+  });
+}
+
+async function readGitHubCredentialSnapshot(): Promise<GitHubCredentialSnapshot> {
+  return runConfigExclusive(async () => {
+    const before = await readStoredConfig();
+    const [main, notifications] = await Promise.all([
+      decryptCredential(before.tokenEncrypted, before.tokenCryptoMeta, plaintextToken),
+      decryptCredential(
+        before.watchNotificationsTokenEncrypted,
+        before.watchNotificationsTokenCryptoMeta,
+        plaintextWatchNotificationsToken,
+      ),
+    ]);
+    const latest = await readStoredConfig();
+    const mainIdentity = mainCredentialIdentity(before);
+    const notificationsIdentity = notificationsCredentialIdentity(before);
+    if (
+      mainIdentity !== mainCredentialIdentity(latest) ||
+      notificationsIdentity !== notificationsCredentialIdentity(latest)
+    ) {
+      return {
+        accountLogin: normalizedAccountLogin(latest.username),
+        mainToken: null,
+        notificationsToken: null,
+        notificationsConfigured: !!(
+          latest.watchNotificationsTokenEncrypted &&
+          latest.watchNotificationsTokenCryptoMeta
+        ),
+        mainIdentity: mainCredentialIdentity(latest),
+        notificationsIdentity: notificationsCredentialIdentity(latest),
+      };
+    }
+    cache = latest;
+    plaintextToken = main;
+    plaintextWatchNotificationsToken = notifications;
+    return {
+      accountLogin: normalizedAccountLogin(before.username),
+      mainToken: main?.value ?? null,
+      notificationsToken: notifications?.value ?? null,
+      notificationsConfigured: !!(
+        before.watchNotificationsTokenEncrypted &&
+        before.watchNotificationsTokenCryptoMeta
+      ),
+      mainIdentity,
+      notificationsIdentity,
+    };
+  });
 }
 
 async function readDecryptedAgentApiKey(
@@ -321,18 +674,34 @@ function createAgentCredentialRevision(): string {
 if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
-    const change = changes[CONFIG_STORAGE_KEY];
-    if (!change) return;
+    const configChange = changes[CONFIG_STORAGE_KEY];
+    const credentialsChange = changes[GITHUB_CREDENTIALS_STORAGE_KEY];
+    if (!configChange && !credentialsChange) return;
 
     const prev = cache;
-    const stored = (change.newValue ?? {}) as Partial<Config>;
-    cache = withNormalizedConfig(mergeStoredConfig(stored));
+    const stored = (configChange?.newValue ?? cache ?? {}) as Partial<Config>;
+    const credentials = credentialsChange
+      ? normalizeStoredGitHubCredentials(credentialsChange.newValue)
+      : prev
+        ? credentialsFromConfig(prev)
+        : normalizeStoredGitHubCredentials({ version: 1, ...stored });
+    cache = withNormalizedConfig(withGitHubCredentials(
+      mergeStoredConfig(stored),
+      credentials,
+    ));
 
     const tokenChanged =
       prev?.tokenEncrypted !== cache.tokenEncrypted ||
       JSON.stringify(prev?.tokenCryptoMeta ?? null) !==
         JSON.stringify(cache.tokenCryptoMeta ?? null);
     if (tokenChanged) plaintextToken = null;
+
+    const watchTokenChanged =
+      prev?.watchNotificationsTokenEncrypted !== cache.watchNotificationsTokenEncrypted ||
+      JSON.stringify(prev?.watchNotificationsTokenCryptoMeta ?? null) !==
+        JSON.stringify(cache.watchNotificationsTokenCryptoMeta ?? null) ||
+      prev?.username?.trim().toLowerCase() !== cache.username?.trim().toLowerCase();
+    if (watchTokenChanged) plaintextWatchNotificationsToken = null;
 
     plaintextAgentApiKey = null;
   });
@@ -350,6 +719,19 @@ export const authStore = {
   /** The decrypted token, or null. Held only in memory. */
   async getToken(): Promise<string | null> {
     return readDecryptedToken();
+  },
+
+  /** A single account-bound credential view for background Watch operations. */
+  async getGitHubCredentialSnapshot(): Promise<GitHubCredentialSnapshot> {
+    return readGitHubCredentialSnapshot();
+  },
+
+  async hasWatchNotificationsToken(): Promise<boolean> {
+    return !!(await readDecryptedWatchNotificationsToken());
+  },
+
+  async getWatchNotificationsToken(): Promise<string | null> {
+    return readDecryptedWatchNotificationsToken();
   },
 
   /** The decrypted AI service API key, or null. Held only in memory. */
@@ -566,8 +948,10 @@ export const authStore = {
       origin: endpoint.canonicalOrigin,
       acceptedAt: input.acceptedAt ?? Date.now(),
     });
-    const current = await readStoredConfig();
-    await write({ ...current, agentDataDisclosureAcceptance: acceptance });
+    await mutateStoredConfig((current) => ({
+      ...current,
+      agentDataDisclosureAcceptance: acceptance,
+    }));
     return acceptance;
   },
 
@@ -588,13 +972,6 @@ export const authStore = {
       !Number.isSafeInteger(input.verifiedAt) ||
       input.verifiedAt < 0
     ) return false;
-    const current = await readStoredConfig();
-    const config = current.agentProvider;
-    if (
-      config.credentialRevision !== input.credentialRevision ||
-      !isSavedAgentCredentialEligible(config, input)
-    ) return false;
-    if (!matchesProviderTarget(config, input)) return false;
     const contextCapability = resolveAgentModelContextCapability({
       provider: input.provider,
       model: input.model,
@@ -610,46 +987,47 @@ export const authStore = {
       declaredContextWindow: input.declaredContextWindow ?? null,
       workingContextWindow: input.workingContextWindow ?? null,
     });
-    const latest = await readStoredConfig();
-    if (
-      latest.agentProvider.credentialRevision !== input.credentialRevision ||
-      !sameCredentialRecord(config, latest.agentProvider) ||
-      !matchesProviderTarget(latest.agentProvider, input)
-    ) return false;
-    await write({
-      ...latest,
-      agentProvider: {
-        ...latest.agentProvider,
-        capability: {
-          fingerprint,
-          verifiedAt: input.verifiedAt,
-          textChat: true,
-          namedToolRoundTrip: true,
-          contextCapability,
+    let recorded = false;
+    await mutateStoredConfig((current) => {
+      const config = current.agentProvider;
+      if (
+        config.credentialRevision !== input.credentialRevision ||
+        !isSavedAgentCredentialEligible(config, input) ||
+        !matchesProviderTarget(config, input)
+      ) return null;
+      recorded = true;
+      return {
+        ...current,
+        agentProvider: {
+          ...config,
+          capability: {
+            fingerprint,
+            verifiedAt: input.verifiedAt,
+            textChat: true,
+            namedToolRoundTrip: true,
+            contextCapability,
+          },
         },
-      },
+      };
     });
-    return true;
+    return recorded;
   },
 
   async invalidateAgentProviderCapability(fingerprint: string): Promise<boolean> {
     if (!/^pcf:v1:[A-Za-z0-9_-]{43}$/u.test(fingerprint)) return false;
-    const current = await readStoredConfig();
-    if (current.agentProvider.capability?.fingerprint !== fingerprint) return false;
-    const latest = await readStoredConfig();
-    if (
-      latest.agentProvider.capability?.fingerprint !== fingerprint ||
-      !sameCredentialRecord(current.agentProvider, latest.agentProvider) ||
-      !sameProviderConfiguration(current.agentProvider, latest.agentProvider)
-    ) return false;
-    await write({
-      ...latest,
-      agentProvider: {
-        ...latest.agentProvider,
-        capability: null,
-      },
+    let invalidated = false;
+    await mutateStoredConfig((current) => {
+      if (current.agentProvider.capability?.fingerprint !== fingerprint) return null;
+      invalidated = true;
+      return {
+        ...current,
+        agentProvider: {
+          ...current.agentProvider,
+          capability: null,
+        },
+      };
     });
-    return true;
+    return invalidated;
   },
 
   async getUsername(): Promise<string | null> {
@@ -681,11 +1059,11 @@ export const authStore = {
   },
 
   async setTheme(theme: "dark" | "light"): Promise<void> {
-    await write({ ...(await read()), theme });
+    await mutateStoredConfig((current) => ({ ...current, theme }));
   },
 
   async setLocale(locale: "en" | "zh-CN"): Promise<void> {
-    await write({ ...(await read()), locale });
+    await mutateStoredConfig((current) => ({ ...current, locale }));
   },
 
   /**
@@ -693,55 +1071,119 @@ export const authStore = {
    * encrypt+persist. Failure throws an errors.ts code; the token is never
    * persisted on failure.
    */
-  async setToken(token: string): Promise<{ username: string }> {
+  async setToken(token: string): Promise<{
+    username: string;
+    watching: Awaited<ReturnType<typeof probeTokenCapabilities>>['watching'];
+  }> {
     const clean = token.trim();
     if (!clean) throw new Error(TOKEN_EMPTY);
 
-    const { login, avatarUrl, displayName, scopesHeader } =
+    const { login, avatarUrl, displayName, watching } =
       await probeTokenCapabilities(clean);
-    const classicOk =
-      scopesHeader.includes("public_repo") && scopesHeader.includes("gist");
-    if (scopesHeader && !classicOk)
-      console.warn(
-        "[gsm] classic-token scopes may be insufficient:",
-        scopesHeader,
-      );
-
     const { cipher, meta } = await encrypt(clean);
-    const current = await read();
-    const onboardingStage =
-      current.onboardingStage === "done" ? "done" : "awaiting_sync";
-    await write({
-      ...current,
-      tokenEncrypted: cipher,
-      tokenCryptoMeta: meta,
-      username: login,
-      avatarUrl,
-      displayName,
-      onboardingStage,
+    await mutateGitHubCredentials((current) => {
+      const accountChanged = !!current.username &&
+        current.username.trim().toLowerCase() !== login.trim().toLowerCase();
+      const onboardingStage =
+        current.onboardingStage === "done" ? "done" : "awaiting_sync";
+      return {
+        ...current,
+        tokenEncrypted: cipher,
+        tokenCryptoMeta: meta,
+        username: login,
+        avatarUrl,
+        displayName,
+        onboardingStage,
+        watchNotificationsTokenEncrypted: accountChanged
+          ? null
+          : current.watchNotificationsTokenEncrypted,
+        watchNotificationsTokenCryptoMeta: accountChanged
+          ? null
+          : current.watchNotificationsTokenCryptoMeta,
+      };
+    }, () => {
+      plaintextToken = { cipher, cryptoMeta: JSON.stringify(meta), value: clean };
     });
-    plaintextToken = clean;
-    return { username: login };
+    return { username: login, watching };
   },
 
   async clearToken(): Promise<void> {
-    plaintextToken = null;
-    const current = await read();
-    const onboardingStage =
-      current.onboardingStage === "done" ? "done" : "needs_token";
-    await write({
-      ...current,
-      tokenEncrypted: null,
-      tokenCryptoMeta: null,
-      username: null,
-      avatarUrl: null,
-      displayName: null,
-      onboardingStage,
+    await mutateGitHubCredentials((current) => {
+      const onboardingStage =
+        current.onboardingStage === "done" ? "done" : "needs_token";
+      return {
+        ...current,
+        tokenEncrypted: null,
+        tokenCryptoMeta: null,
+        username: null,
+        avatarUrl: null,
+        displayName: null,
+        onboardingStage,
+        watchNotificationsTokenEncrypted: null,
+        watchNotificationsTokenCryptoMeta: null,
+      };
+    }, () => {
+      plaintextToken = null;
+      plaintextWatchNotificationsToken = null;
+    });
+  },
+
+  async setWatchNotificationsToken(token: string): Promise<{ username: string }> {
+    const clean = token.trim();
+    if (!clean) throw new Error(WATCH_TOKEN_EMPTY);
+    const before = await readGitHubCredentialSnapshot();
+    if (!before.mainToken || !before.accountLogin) {
+      throw new Error(WATCH_TOKEN_MAIN_ACCOUNT_REQUIRED);
+    }
+    const { login } = await probeWatchNotificationsToken(clean, before.accountLogin);
+    const { cipher, meta } = await encrypt(clean);
+    await mutateGitHubCredentials((current) => {
+      if (
+        normalizedAccountLogin(current.username) !== before.accountLogin ||
+        !hasCompleteMainCredential(current)
+      ) {
+        throw new Error(WATCH_TOKEN_ACCOUNT_CHANGED);
+      }
+      return {
+        ...current,
+        watchNotificationsTokenEncrypted: cipher,
+        watchNotificationsTokenCryptoMeta: meta,
+      };
+    }, () => {
+      plaintextWatchNotificationsToken = {
+        cipher,
+        cryptoMeta: JSON.stringify(meta),
+        value: clean,
+      };
+    });
+    return { username: login };
+  },
+
+  async clearWatchNotificationsToken(): Promise<void> {
+    await mutateGitHubCredentials((current) => ({
+        ...current,
+        watchNotificationsTokenEncrypted: null,
+        watchNotificationsTokenCryptoMeta: null,
+    }), () => {
+      plaintextWatchNotificationsToken = null;
     });
   },
 
   async update(patch: Partial<Config>): Promise<void> {
-    await write({ ...(await read()), ...patch });
+    const touchesGitHubCredentials = [
+      'tokenEncrypted',
+      'tokenCryptoMeta',
+      'watchNotificationsTokenEncrypted',
+      'watchNotificationsTokenCryptoMeta',
+      'username',
+      'avatarUrl',
+      'displayName',
+    ].some((key) => Object.prototype.hasOwnProperty.call(patch, key));
+    if (touchesGitHubCredentials) {
+      await mutateGitHubCredentials((current) => ({ ...current, ...patch }));
+      return;
+    }
+    await mutateStoredConfig((current) => ({ ...current, ...patch }));
   },
 
   async updateAgentProviderConfig(patch: {
@@ -754,100 +1196,136 @@ export const authStore = {
     apiKey?: string;
     clearApiKey?: boolean;
   }): Promise<void> {
-    const current = await readStoredConfig();
-    const nextProvider = patch.provider ?? current.agentProvider.provider;
+    const initial = await readStoredConfig();
+    const initialProvider = initial.agentProvider;
+    const nextProvider = patch.provider ?? initialProvider.provider;
     const nextProtocol = patch.protocol === undefined
-      ? current.agentProvider.protocol
+      ? initialProvider.protocol
       : patch.protocol;
-    const nextModel =
-      patch.model === undefined ? current.agentProvider.model : patch.model;
+    const nextModel = patch.model === undefined ? initialProvider.model : patch.model;
     const nextDeclaredContextWindow = patch.declaredContextWindow === undefined
-      ? current.agentProvider.declaredContextWindow ?? null
+      ? initialProvider.declaredContextWindow ?? null
       : patch.declaredContextWindow;
     const nextWorkingContextWindow = patch.workingContextWindow === undefined
-      ? current.agentProvider.workingContextWindow ?? null
+      ? initialProvider.workingContextWindow ?? null
       : patch.workingContextWindow;
-    let apiKeyEncrypted = current.agentProvider.apiKeyEncrypted;
-    let apiKeyCryptoMeta = current.agentProvider.apiKeyCryptoMeta;
-    let credentialScope = current.agentProvider.credentialScope;
-    let credentialRevision = current.agentProvider.credentialRevision;
-    let capability = current.agentProvider.capability;
     const nextBaseUrl = patch.baseUrl === undefined
-      ? current.agentProvider.baseUrl
+      ? initialProvider.baseUrl
       : patch.baseUrl;
-    const targetChanged =
-      patch.provider !== undefined ||
-      patch.protocol !== undefined ||
-      patch.baseUrl !== undefined;
+    const targetChanged = patch.provider !== undefined ||
+      patch.protocol !== undefined || patch.baseUrl !== undefined;
     const validatedEndpoint = targetChanged
       ? resolveAgentProviderEndpoint(nextProvider, nextBaseUrl, nextProtocol)
       : null;
-    let savedReplacementCredential = false;
-
-    if (patch.clearApiKey) {
-      apiKeyEncrypted = null;
-      apiKeyCryptoMeta = null;
-      credentialScope = null;
-      credentialRevision = null;
-      capability = null;
-      plaintextAgentApiKey = null;
-    } else if (patch.apiKey !== undefined) {
-      const clean = patch.apiKey.trim();
-      if (clean) {
-        const endpoint = validatedEndpoint ?? resolveAgentProviderEndpoint(
-          nextProvider, nextBaseUrl, nextProtocol,
-        );
-        const { cipher, meta } = await encrypt(clean);
-        apiKeyEncrypted = cipher;
-        apiKeyCryptoMeta = meta;
-        credentialScope = {
-          provider: endpoint.provider,
-          origin: endpoint.canonicalOrigin,
-        };
-        credentialRevision = createAgentCredentialRevision();
-        capability = null;
-        plaintextAgentApiKey = {
-          cipher,
-          cryptoMeta: JSON.stringify(meta),
-          revision: credentialRevision,
-          value: clean,
-        };
-        savedReplacementCredential = true;
-      }
-    }
-
-    if (!patch.clearApiKey && !savedReplacementCredential) {
+    let replacementCredential: {
+      cipher: string;
+      meta: NonNullable<Config['agentProvider']['apiKeyCryptoMeta']>;
+      scope: NonNullable<Config['agentProvider']['credentialScope']>;
+      revision: string;
+      value: string;
+    } | null = null;
+    const cleanApiKey = patch.apiKey?.trim() ?? null;
+    if (!patch.clearApiKey && cleanApiKey) {
       const endpoint = validatedEndpoint ?? resolveAgentProviderEndpoint(
         nextProvider, nextBaseUrl, nextProtocol,
       );
-      const credentialTargetChanged = credentialScope?.provider !== endpoint.provider ||
-        credentialScope.origin !== endpoint.canonicalOrigin;
-      if (credentialTargetChanged) {
+      const { cipher, meta } = await encrypt(cleanApiKey);
+      const revision = createAgentCredentialRevision();
+      replacementCredential = {
+        cipher,
+        meta,
+        scope: {
+          provider: endpoint.provider,
+          origin: endpoint.canonicalOrigin,
+        },
+        revision,
+        value: cleanApiKey,
+      };
+    }
+    const initialMutationIdentity = JSON.stringify([
+      initialProvider.provider,
+      initialProvider.protocol,
+      initialProvider.baseUrl,
+      initialProvider.apiKeyEncrypted,
+      initialProvider.apiKeyCryptoMeta,
+      initialProvider.credentialRevision,
+      initialProvider.credentialScope,
+    ]);
+    let nextPlaintextAgentApiKey = plaintextAgentApiKey;
+    await mutateStoredConfig((current) => {
+      const currentProvider = current.agentProvider;
+      const currentMutationIdentity = JSON.stringify([
+        currentProvider.provider,
+        currentProvider.protocol,
+        currentProvider.baseUrl,
+        currentProvider.apiKeyEncrypted,
+        currentProvider.apiKeyCryptoMeta,
+        currentProvider.credentialRevision,
+        currentProvider.credentialScope,
+      ]);
+      if (
+        (patch.clearApiKey || replacementCredential || targetChanged) &&
+        currentMutationIdentity !== initialMutationIdentity
+      ) return null;
+
+      let apiKeyEncrypted = currentProvider.apiKeyEncrypted;
+      let apiKeyCryptoMeta = currentProvider.apiKeyCryptoMeta;
+      let credentialScope = currentProvider.credentialScope;
+      let credentialRevision = currentProvider.credentialRevision;
+      let capability = currentProvider.capability;
+      if (patch.clearApiKey) {
         apiKeyEncrypted = null;
         apiKeyCryptoMeta = null;
         credentialScope = null;
         credentialRevision = null;
         capability = null;
-        plaintextAgentApiKey = null;
+        nextPlaintextAgentApiKey = null;
+      } else if (replacementCredential) {
+        apiKeyEncrypted = replacementCredential.cipher;
+        apiKeyCryptoMeta = replacementCredential.meta;
+        credentialScope = replacementCredential.scope;
+        credentialRevision = replacementCredential.revision;
+        capability = null;
+        nextPlaintextAgentApiKey = {
+          cipher: replacementCredential.cipher,
+          cryptoMeta: JSON.stringify(replacementCredential.meta),
+          revision: replacementCredential.revision,
+          value: replacementCredential.value,
+        };
+      } else {
+        const endpoint = validatedEndpoint ?? resolveAgentProviderEndpoint(
+          nextProvider, nextBaseUrl, nextProtocol,
+        );
+        const credentialTargetChanged = credentialScope?.provider !== endpoint.provider ||
+          credentialScope?.origin !== endpoint.canonicalOrigin;
+        if (credentialTargetChanged) {
+          apiKeyEncrypted = null;
+          apiKeyCryptoMeta = null;
+          credentialScope = null;
+          credentialRevision = null;
+          capability = null;
+          nextPlaintextAgentApiKey = null;
+        }
       }
-    }
 
-    const latest = await readStoredConfig();
-    await write({
-      ...latest,
-      agentProvider: normalizeAgentProviderConfig({
-        provider: nextProvider,
-        protocol: nextProtocol,
-        baseUrl: nextBaseUrl,
-        model: nextModel,
-        declaredContextWindow: nextDeclaredContextWindow,
-        workingContextWindow: nextWorkingContextWindow,
-        apiKeyEncrypted,
-        apiKeyCryptoMeta,
-        credentialScope,
-        credentialRevision,
-        capability,
-      }),
+      return {
+        ...current,
+        agentProvider: normalizeAgentProviderConfig({
+          provider: nextProvider,
+          protocol: nextProtocol,
+          baseUrl: nextBaseUrl,
+          model: nextModel,
+          declaredContextWindow: nextDeclaredContextWindow,
+          workingContextWindow: nextWorkingContextWindow,
+          apiKeyEncrypted,
+          apiKeyCryptoMeta,
+          credentialScope,
+          credentialRevision,
+          capability,
+        }),
+      };
+    }, () => {
+      plaintextAgentApiKey = nextPlaintextAgentApiKey;
     });
   },
 
@@ -859,30 +1337,27 @@ export const authStore = {
     maxTagsPerRepo?: number;
     minTopicRepoCount?: number;
   }): Promise<void> {
-    // Fresh-read avoids stale module-cache clobbering across extension contexts.
-    const current = await readStoredConfig();
-    const maxTagsPerRepo = patch.maxTagsPerRepo === undefined
-      ? current.maxTagsPerRepo
-      : normalizeMaxTagsPerRepo(patch.maxTagsPerRepo, current.autoTagLimit);
-    const minTopicRepoCount = patch.minTopicRepoCount === undefined
-      ? current.minTopicRepoCount
-      : normalizeMinTopicRepoCount(patch.minTopicRepoCount);
-    await write({
-      ...current,
-      autoTagLimit: maxTagsPerRepo,
-      maxTagsPerRepo,
-      minTopicRepoCount,
+    await mutateStoredConfig((current) => {
+      const maxTagsPerRepo = patch.maxTagsPerRepo === undefined
+        ? current.maxTagsPerRepo
+        : normalizeMaxTagsPerRepo(patch.maxTagsPerRepo, current.autoTagLimit);
+      const minTopicRepoCount = patch.minTopicRepoCount === undefined
+        ? current.minTopicRepoCount
+        : normalizeMinTopicRepoCount(patch.minTopicRepoCount);
+      return {
+        ...current,
+        autoTagLimit: maxTagsPerRepo,
+        maxTagsPerRepo,
+        minTopicRepoCount,
+      };
     });
   },
 
   async updateLibraryViewPrefs(libraryView: Config['libraryView']): Promise<void> {
-    // Fresh-read avoids stale module-cache clobbering across extension contexts.
-    // This remains last-write-wins, not transactional compare-and-swap.
-    const current = await readStoredConfig();
-    await write({
+    await mutateStoredConfig((current) => ({
       ...current,
       libraryView: normalizeLibraryViewPrefs(libraryView),
-    });
+    }));
   },
 };
 

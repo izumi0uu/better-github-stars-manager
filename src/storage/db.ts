@@ -10,6 +10,11 @@ import type {
   TagDirtyOutboxRecord,
   TagMeta,
 } from '@/types';
+import type {
+  GitHubNotificationThread,
+  GitHubWatchRepository,
+  GitHubWatchStateRecord,
+} from '@/watch/watch-model';
 import { normalizeStoredTag, type LegacyTagRow } from './tag-shape';
 
 /**
@@ -27,6 +32,9 @@ export class StarsDB extends Dexie {
   organizeApplies!: Table<OrganizeApplyRecord, string>;
   organizeApplyRows!: Table<OrganizeApplyRowRecord, string>;
   tagDirtyOutbox!: Table<TagDirtyOutboxRecord, string>;
+  watchRepositories!: Table<GitHubWatchRepository, string>;
+  watchNotificationThreads!: Table<GitHubNotificationThread, string>;
+  watchState!: Table<GitHubWatchStateRecord, 'singleton'>;
 
   constructor() {
     super('better-github-stars-manager');
@@ -56,8 +64,8 @@ export class StarsDB extends Dexie {
       const rows = await table.toArray() as LegacyTagRow[];
       await table.bulkPut(rows.map((row) => normalizeStoredTag(row)));
     });
-    // v4 adds isolated durable artifacts for whole-library tag organization and
-    // Gist dirtiness. The non-indexed analysis split worklist lives on organizeJobs.
+    // v4 adds isolated durable artifacts for whole-library tag organization,
+    // Gist dirtiness, and the account-bound Watch snapshots.
     this.version(4).stores({
       stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
       tags: 'full_name, mtime',
@@ -68,6 +76,9 @@ export class StarsDB extends Dexie {
       organizeApplies: 'applyId, jobId, status',
       organizeApplyRows: 'id, [applyId+position], [applyId+state], applyId, state, leaseExpiresAt',
       tagDirtyOutbox: 'id, kind, updatedAt',
+      watchRepositories: 'full_name',
+      watchNotificationThreads: 'id, repositoryFullName, updatedAt, [repositoryFullName+updatedAt]',
+      watchState: 'id',
     });
   }
 }
