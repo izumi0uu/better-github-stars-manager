@@ -253,7 +253,7 @@ describe('ManagerPanel Auto Tags coach step', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('Step 2 of 5');
       expect(container.textContent).toContain('Generate tags when you choose');
-      expect(container.textContent).toContain('sync and full sync leave tags untouched');
+      expect(container.textContent).toContain('Sync and Full Sync never change tags');
     });
   });
 

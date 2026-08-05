@@ -171,7 +171,7 @@ async function verifyRawCaptureLifecycle(page) {
   );
   await clickSelector(page, '[data-testid="agent-diagnostics-toggle-raw-capture"]');
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent?.includes('Armed for the next real Agent run'),
+    () => document.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent?.includes('Armed for the next real Cubby run'),
     { timeout: TIMEOUT_MS },
   );
 
@@ -183,7 +183,7 @@ async function verifyRawCaptureLifecycle(page) {
   );
   await clickSelector(page, '[data-testid="agent-diagnostics-toggle-raw-capture"]');
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent?.includes('Armed for the next real Agent run'),
+    () => document.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent?.includes('Armed for the next real Cubby run'),
     { timeout: TIMEOUT_MS },
   );
   await clickSelector(page, '[data-testid="agent-diagnostics-toggle-raw-capture"]');

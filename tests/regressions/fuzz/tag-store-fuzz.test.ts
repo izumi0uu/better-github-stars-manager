@@ -305,20 +305,19 @@ function setTagsModel(
   const dismissedAutoTags = addTagNames(existingDismissed, removedManualTags)
     .filter((tag) => !includesTagName(manualTags, tag));
   const changed = !arraysEqual(existingTags, manualTags) || !arraysEqual(existingDismissed, dismissedAutoTags);
-  if (options.bulk && !changed) return;
-  const row = existing ?? ensureModelRow(model, repo);
-  const previousTags = new Set(existingTags);
-  row.manualTags = manualTags;
-  row.autoTags = row.autoTags.filter((tag) => !includesTagName(manualTags, tag));
-  row.dismissedAutoTags = dismissedAutoTags;
-  model.dirty.add(repo);
   for (const tag of manualTags) {
     const meta = model.meta.get(tag);
-    if (meta?.excluded && !previousTags.has(tag)) {
+    if (meta?.excluded) {
       model.meta.set(tag, { ...meta, excluded: false });
       model.dirtyMeta = true;
     }
   }
+  if (options.bulk && !changed) return;
+  const row = existing ?? ensureModelRow(model, repo);
+  row.manualTags = manualTags;
+  row.autoTags = row.autoTags.filter((tag) => !includesTagName(manualTags, tag));
+  row.dismissedAutoTags = dismissedAutoTags;
+  model.dirty.add(repo);
 }
 
 function setAutoTagsModel(model: TagModel, repo: string, tags: string[]): void {
@@ -326,7 +325,9 @@ function setAutoTagsModel(model: TagModel, repo: string, tags: string[]): void {
   const manualTags = existing?.manualTags ?? [];
   const dismissedAutoTags = existing?.dismissedAutoTags ?? [];
   const autoTags = addTagNames([], tags).filter((tag) => (
-    !includesTagName(manualTags, tag) && !includesTagName(dismissedAutoTags, tag)
+    !includesTagName(manualTags, tag)
+    && !includesTagName(dismissedAutoTags, tag)
+    && !model.meta.get(tag)?.excluded
   ));
   if (!existing && autoTags.length === 0) return;
   const row = existing ?? ensureModelRow(model, repo);
@@ -421,7 +422,7 @@ function normalizeTagNames(names: string[]): string[] {
   for (const raw of names) {
     const name = raw.trim();
     if (!name) continue;
-    const key = name.toLowerCase();
+    const key = canonicalTagKey(name);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(name);
@@ -434,13 +435,17 @@ function addTagNames(names: string[], additions: string[]): string[] {
 }
 
 function withoutTagName(names: string[], name: string): string[] {
-  const key = name.toLowerCase();
-  return names.filter((tag) => tag.toLowerCase() !== key);
+  const key = canonicalTagKey(name);
+  return names.filter((tag) => canonicalTagKey(tag) !== key);
 }
 
 function includesTagName(names: string[], name: string): boolean {
-  const key = name.toLowerCase();
-  return names.some((tag) => tag.toLowerCase() === key);
+  const key = canonicalTagKey(name);
+  return names.some((tag) => canonicalTagKey(tag) === key);
+}
+
+function canonicalTagKey(value: string): string {
+  return value.trim().normalize('NFKC').toLocaleLowerCase('en-US');
 }
 
 function visibleModelTags(row: ModelTag): string[] {

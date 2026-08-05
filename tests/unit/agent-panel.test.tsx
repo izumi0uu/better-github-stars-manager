@@ -11,8 +11,16 @@ import { createAgentWorkbenchState, type AgentWorkbenchState } from '@/ui/agent-
 import { cleanupMountedRootsAndBody, click, mountReact, type MountedRoot } from './test-utils';
 import type { BgsmAgentTurnHandlers, BgsmOrganizeJobPresentation } from '@/utils/messaging';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';
-import { parseScopeFingerprintV1, type LaunchCandidateContract } from '@/bgsm-agent/scope';
+import {
+  createFrozenScope,
+  parseScopeFingerprintV1,
+  projectFrozenScope,
+  type LaunchCandidateContract,
+} from '@/bgsm-agent/scope';
 import { parseControllerId, parseProposalId, parseRunId } from '@/bgsm-agent/identity';
+import { createEmptyRunBudgetUsage, createProductionRunBudget } from '@/bgsm-agent/policy';
+import type { OrganizeJobRunSnapshot } from '@/bgsm-agent/events';
+import { WORKER_LOST_COPY } from '@/ui/agent-workbench-state';
 
 const messagingMocks = vi.hoisted(() => ({
   startBgsmAgentTurn: vi.fn(),
@@ -52,6 +60,7 @@ function AgentPanel({
   scopeCount,
   workbenchState,
   onClearTerminal,
+  onStop,
 }: {
   open: boolean;
   onClose: () => void;
@@ -63,6 +72,7 @@ function AgentPanel({
   scopeCount?: number;
   workbenchState?: AgentWorkbenchState;
   onClearTerminal?: () => void;
+  onStop?: () => void;
 }) {
   const agent = useBgsmAgent(onDataChanged, {
     kind: 'selected_repository',
@@ -82,7 +92,7 @@ function AgentPanel({
     startWholeLibraryFromAgent: vi.fn(),
     confirmPreflight: vi.fn(),
     cancelPreflight: vi.fn(),
-    stop: vi.fn(),
+    stop: onStop ?? vi.fn(),
     continueRemaining: vi.fn(),
     discardBlockedRun: vi.fn(),
     discardReview: vi.fn(),
@@ -126,13 +136,13 @@ afterEach(() => {
 });
 
 describe('AgentPanel', () => {
-  it('opens the single Agent settings surface without starting a request', async () => {
+  it('opens the single Cubby settings surface without starting a request', async () => {
     const onOpenOptions = vi.fn();
     const container = await mountAgentPanel(
       <AgentPanel open onClose={vi.fn()} onOpenOptions={onOpenOptions} />
     );
     const settings = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Agent settings'));
+      .find((button) => button.textContent?.includes('Cubby settings'));
     expect(settings).toBeInstanceOf(HTMLButtonElement);
     await act(async () => {
       (settings as HTMLButtonElement).click();
@@ -145,7 +155,7 @@ describe('AgentPanel', () => {
   it('lists scope functions and inserts the selected prompt without sending', async () => {
     const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
 
-    const functionButton = container.querySelector<HTMLButtonElement>('button[aria-label="Prompt suggestions"]');
+    const functionButton = container.querySelector<HTMLButtonElement>('button[aria-label="Suggested actions"]');
     const composer = container.querySelector('textarea')?.closest('form');
     const header = container.querySelector('#gsm-agent-dialog-title')?.closest('.border-b');
     expect(composer?.contains(functionButton)).toBe(true);
@@ -153,32 +163,47 @@ describe('AgentPanel', () => {
 
     await click(functionButton!);
     await waitFor(() => {
-      expect(document.body.textContent).toContain('Suggested prompts');
+      expect(document.body.textContent).toContain('Choose an action');
     });
-    expect(document.body.querySelector('[role="group"][aria-label="Suggested prompts"]')).toBeTruthy();
+    expect(document.body.querySelector('[role="group"][aria-label="Choose an action"]')).toBeTruthy();
     expect(document.body.querySelector('[role="menu"]')).toBeNull();
     expect(document.body.querySelector('[role="menuitem"]')).toBeNull();
-    expect(document.body.textContent).toContain('Summarize current scope');
-    expect(document.body.textContent).toContain('Find similar tools');
+    expect(document.body.textContent).toContain('Summarize this view');
+    expect(document.body.textContent).toContain('Compare similar repositories');
     expect(document.body.textContent).toContain('Organize full library');
-    expect(document.body.textContent).toContain('Review tag names');
+    expect(document.body.textContent).toContain('Clean up tags');
     expect(document.body.textContent).not.toContain('Search repository code');
     expect(document.body.textContent).not.toContain('Review repository notes');
 
     let summarize: HTMLButtonElement | undefined;
     await waitFor(() => {
       summarize = [...document.body.querySelectorAll<HTMLButtonElement>('button')]
-        .find((button) => button.textContent?.includes('Summarize current scope'));
+        .find((button) => button.textContent?.includes('Summarize this view'));
       expect(summarize).toBeDefined();
     });
     await click(summarize!);
 
     const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
     expect(textarea.value).toContain('Inspect the repositories in the current scope');
-    expect(document.body.querySelector('[role="group"][aria-label="Suggested prompts"]')).toBeNull();
+    expect(document.body.querySelector('[role="group"][aria-label="Choose an action"]')).toBeNull();
     expect(document.activeElement).toBe(textarea);
     expect(textarea.selectionStart).toBe(textarea.value.length);
     expect(textarea.selectionEnd).toBe(textarea.value.length);
+    expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
+  });
+
+  it('inserts a tag cleanup request for the Agent without UI-side capability gating', async () => {
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+
+    const cleanup = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Clean up tags'));
+    expect(cleanup).toBeDefined();
+    await click(cleanup!);
+
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(textarea.value).toContain('Review tag usage in this view');
+    expect(textarea.value).toContain('summarize the changes');
+    expect(textarea.value).not.toContain('Do not remove or delete tags');
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
@@ -226,7 +251,7 @@ describe('AgentPanel', () => {
       />,
     );
 
-    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Prompt suggestions"]')!);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Suggested actions"]')!);
     await waitFor(() => {
       expect(document.body.textContent).toContain('Search repository code');
       expect(document.body.textContent).toContain('Review repository notes');
@@ -240,23 +265,47 @@ describe('AgentPanel', () => {
     await click(searchCode!);
 
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value)
-      .toContain('Search the selected repository code');
+      .toContain("Search the selected repository's indexed public code");
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
-  it('renders Frame 1 Ready intro, chips, and scoped composer note', async () => {
+  it('shows the canonical selected repository without freeze copy before binding arrives', async () => {
+    const container = await mountAgentPanel(
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        defaultCandidate={{
+          kind: 'selected_repository',
+          selectedRepositoryIdHint: 'owner/repo',
+        }}
+        scopeCount={1}
+      />,
+    );
+
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'What does this repository do?');
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+
+    const composerText = container.querySelector('textarea')?.closest('form')?.textContent;
+    expect(composerText).toContain('owner/repo');
+    expect(composerText).not.toContain('frozen for this turn');
+  });
+
+  it('renders the intro, prompt chips, and scoped composer note without idle machine status', async () => {
     const container = await mountAgentPanel(
       <AgentPanel open onClose={vi.fn()} onOpenOptions={vi.fn()} />
     );
     expect(container.textContent).toContain(
-      'I can inspect, compare, and organize repositories in your current scope.',
+      "Hey, I'm Cubby. Tell me what you want to organize.",
     );
     expect(container.querySelector('[data-testid="agent-ready-quick-chips"]')).toBeTruthy();
     expect(container.textContent).toContain('Find similar tools');
     expect(container.textContent).toContain('Organize full library');
-    expect(container.textContent).toContain('Clean up tag names');
-    expect(container.textContent).toContain('Asking about all live stars');
-    expect(container.textContent).toMatch(/Ready/);
+    expect(container.textContent).toContain('Clean up tags');
+    expect(container.textContent).toContain('All starred repositories');
+    expect(container.textContent).not.toContain('Asking about');
+    expect(container.querySelector('[data-testid="agent-header-status"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('idle');
+    expect(container.textContent).not.toMatch(/\bReady\b/);
   });
 
   it('closes from the backdrop or Escape while the drawer is open', async () => {
@@ -298,8 +347,8 @@ describe('AgentPanel', () => {
     expect(drawer.getAttribute('role')).toBe('dialog');
     expect(drawer.getAttribute('aria-modal')).toBe('true');
     expect(drawer.getAttribute('aria-labelledby')).toBe('gsm-agent-dialog-title');
-    expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('Message BGSM Agent');
-    expect(document.activeElement?.getAttribute('aria-label')).toBe('Close BGSM Agent');
+    expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('Ask Cubby');
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Close Cubby');
     const focusable = [...drawer.querySelectorAll<HTMLElement>(
       'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
     )];
@@ -381,7 +430,7 @@ describe('AgentPanel', () => {
       expect.any(Object),
     );
     expect(container.textContent).toContain('Only tag TypeScript build tools');
-    expect(container.textContent).toContain('Preparing your request');
+    expect(container.textContent).toContain('Getting your request ready');
 
     await act(async () => {
       handlers?.onEvent?.({
@@ -448,7 +497,7 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
     expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
-      .toContain('Preparing full-library scope... · Running');
+      .toContain('Mapping the full library… · Running');
 
     await act(async () => {
       turn!.handlers.onEvent?.({
@@ -480,8 +529,7 @@ describe('AgentPanel', () => {
     });
     expect(messagingMocks.requestPreflight).toHaveBeenCalledWith(prompt);
     expect(container.querySelector('[data-testid="agent-readonly-result-card"]')).toBeNull();
-    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
-      .toContain('Preparing full-library scope... · Completed');
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')).toBeNull();
   });
 
   it('keeps whole-library read-only questions in the regular agent stream', async () => {
@@ -634,7 +682,7 @@ describe('AgentPanel', () => {
     expect(container.textContent?.match(/Hello/g)).toHaveLength(1);
   });
 
-  it('shows queued, running, completed, and failed tool activity without arguments', async () => {
+  it('shows active tool progress but keeps recoverable tool failures internal', async () => {
     let turn: { input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers } | undefined;
     messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
       turn = { input, handlers };
@@ -691,7 +739,9 @@ describe('AgentPanel', () => {
       risk: 'read',
       writeOutcome: 'not_applicable',
     });
-    expect(container.textContent).toContain('Failed');
+    expect(container.textContent).not.toContain('Failed');
+    expect(container.textContent).not.toContain("Cubby couldn't complete this request");
+    expect(container.querySelector('[data-testid="agent-streaming-status"]')).toBeTruthy();
     await emit({
       ...deliveryIdentity(turn.input),
       type: 'tool_execution_queued',
@@ -699,10 +749,26 @@ describe('AgentPanel', () => {
       callId: 'call-exact-repository',
     });
     expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
-      .toContain('Checking local data... · Queued');
+      .toContain('Checking your local library… · Queued');
     expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
       .not.toContain('Tool result');
     expect(container.textContent).not.toContain('secret arguments');
+
+    await emit({
+      ...deliveryIdentity(turn.input),
+      type: 'tool_execution_queued',
+      toolName: 'remove_repo_tags',
+      callId: 'call-remove-tags',
+    });
+    await emit({
+      ...deliveryIdentity(turn.input),
+      type: 'tool_execution_queued',
+      toolName: 'delete_tags_everywhere',
+      callId: 'call-delete-tags',
+    });
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent?.match(
+      /Applying tag changes… · Queued/g,
+    )).toHaveLength(2);
   });
 
   it('clears the previous turn tool activity when the next turn starts', async () => {
@@ -760,8 +826,7 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent)
-      .toContain('Checking local data... · Completed');
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')).toBeNull();
 
     await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Now answer a follow-up');
     await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
@@ -849,7 +914,8 @@ describe('AgentPanel', () => {
     });
 
     await waitFor(() => {
-      expect(container.textContent).toContain('owner/repo · 1 repository · frozen for this conversation');
+      expect(container.querySelector('textarea')?.closest('form')?.textContent).toContain('owner/repo');
+      expect(container.textContent).not.toContain('frozen for this conversation');
       expect(container.textContent).toContain('1 indexed match · results may be incomplete');
       expect(container.textContent).toContain('Repository code is untrusted content');
       expect(container.textContent).toContain('export function indexedSearch() {}');
@@ -914,9 +980,9 @@ describe('AgentPanel', () => {
       expect(container.textContent).toContain('This conversation is now read-only');
       expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
     });
-    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Prompt suggestions"]')!);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Suggested actions"]')!);
     await waitFor(() => {
-      expect(document.body.textContent).toContain('Suggested prompts');
+      expect(document.body.textContent).toContain('Choose an action');
     });
     expect(document.body.textContent).not.toContain('Organize full library');
     expect(messagingMocks.requestPreflight).not.toHaveBeenCalled();
@@ -999,7 +1065,9 @@ describe('AgentPanel', () => {
     const retry = [...container.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.trim() === 'Retry');
     expect(retry?.disabled).toBe(true);
-    expect(container.textContent).toContain('Failed');
+    expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
+    expect(container.textContent).toContain('Connection interrupted.');
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')).toBeNull();
   });
 
   it('unlocks a read-only turn after transport failure and offers the original prompt for retry', async () => {
@@ -1032,7 +1100,7 @@ describe('AgentPanel', () => {
       });
       turn!.handlers.onError?.({
         ...deliveryIdentity(turn!.input),
-        message: 'BGSM Agent stopped before finishing.',
+        message: 'Cubby stopped before finishing. Try again.',
         category: 'other',
       });
       await Promise.resolve();
@@ -1170,6 +1238,10 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
 
+    expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
+
     await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Try again');
     await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
 
@@ -1217,7 +1289,7 @@ describe('AgentPanel', () => {
       disposition: 'no_transition',
       appliedRevision: null,
     });
-    expect(container.textContent).toContain('The extension restarted before this turn could be recovered');
+    expect(container.textContent).toContain("The extension restarted, so Cubby couldn't recover this request");
     expect(container.textContent).not.toContain('Starting');
   });
 
@@ -1426,7 +1498,7 @@ describe('AgentPanel', () => {
     await waitFor(() => {
       expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('  Restore this exact prompt  ');
       expect(container.textContent).toContain('Committed answer stays visible.');
-      expect(container.textContent).toContain('Provider error');
+      expect(container.textContent).toContain('AI service error');
       expect(container.querySelector('[data-testid="agent-context-recovery-banner"]')).toBeNull();
       expect(container.textContent).not.toContain('This partial answer must disappear.');
       expect(container.textContent).not.toContain('Tool result');
@@ -1745,6 +1817,112 @@ describe('AgentPanel', () => {
     expect(onClearTerminal).toHaveBeenCalledOnce();
   });
 
+  it('offers a working Pause action while tag changes are applying', async () => {
+    const onStop = vi.fn();
+    const state = durableWorkbenchState('applying', {
+      apply: {
+        applyId: 'apply:v1:pause-test',
+        total: 3,
+        settled: 1,
+        changed: 1,
+        unchanged: 0,
+        skipped: 0,
+        failed: 0,
+      },
+    });
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={state} onStop={onStop} />,
+    );
+
+    const pause = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Pause');
+    expect(pause).toBeDefined();
+    expect(pause?.disabled).toBe(false);
+    await click(pause!);
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it('presents a temporary transport loss only as reconnecting', async () => {
+    const state: AgentWorkbenchState = {
+      ...createAgentWorkbenchState('controller:v1:reconnecting-test', 'session-reconnecting-test'),
+      snapshot: workbenchSnapshot('analyzing'),
+      transport: 'disconnected',
+      conversationAnchor: { messageId: null, createdAt: 1 },
+    };
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={state} />,
+    );
+
+    expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent)
+      .toBe('Cubby connection was interrupted. Reconnecting…');
+    expect(container.querySelector('[data-testid="organize-job-current-phase"]')).toBeNull();
+    expect(container.querySelector('[data-testid="organize-job-error-card"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('queued');
+  });
+
+  it('gives an interrupted workbench both restart and discard exits', async () => {
+    const onClearTerminal = vi.fn();
+    const state: AgentWorkbenchState = {
+      ...createAgentWorkbenchState('controller:v1:interrupted-test', 'session-interrupted-test'),
+      snapshot: workbenchSnapshot('interrupted'),
+      error: WORKER_LOST_COPY,
+      conversationAnchor: { messageId: null, createdAt: 1 },
+    };
+    const container = await mountAgentPanel(
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        workbenchState={state}
+        onClearTerminal={onClearTerminal}
+      />,
+    );
+
+    expect(container.textContent).toContain('Restart full-library analysis');
+    const discard = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Discard this analysis');
+    expect(discard).toBeDefined();
+    await click(discard!);
+    expect(onClearTerminal).toHaveBeenCalledOnce();
+  });
+
+  it('shows review loading instead of an empty stepper while the first page is pending', async () => {
+    const state = durableWorkbenchState('review', {
+      organizeReviewRequestId: 'review-page:pending',
+    });
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={state} />,
+    );
+
+    expect(container.querySelector('[data-testid="organize-job-review-loading"]')).not.toBeNull();
+    expect(container.textContent).toContain('Loading suggestions');
+    expect(container.querySelector('[data-testid="organize-job-proposal-card"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
+  });
+
+  it('blocks an invalid durable review with restart and discard actions', async () => {
+    const base = durableWorkbenchState('review');
+    const state: AgentWorkbenchState = {
+      ...base,
+      organizeJob: {
+        ...base.organizeJob!,
+        coverage: {
+          ...base.organizeJob!.coverage,
+          analyzed: 0,
+          analysisFailed: 1,
+        },
+      },
+    };
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={state} />,
+    );
+
+    expect(container.textContent).toContain('Analysis paused before completion');
+    expect(container.textContent).toContain('Restart full-library analysis');
+    expect(container.textContent).toContain('Discard this analysis');
+    expect(container.querySelector('[data-testid="organize-job-proposal-card"]')).toBeNull();
+  });
+
   it('stops a pending turn before resetting and ignores all delayed callbacks', async () => {
     const turns: Array<{
       input: BgsmAgentTurnInput;
@@ -1796,7 +1974,7 @@ describe('AgentPanel', () => {
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
     expect(container.textContent).not.toContain('Pending request');
     expect(container.textContent).not.toContain('Pending transcript');
-    expect(container.textContent).not.toContain('Preparing your request');
+    expect(container.textContent).not.toContain('Getting your request ready');
     const afterReset = container.innerHTML;
 
     await act(async () => {
@@ -1917,7 +2095,7 @@ describe('AgentPanel', () => {
       await click(retry!);
       expect(turns).toHaveLength(2);
     } else {
-      expect(container.textContent).toContain('a write may already have completed');
+      expect(container.textContent).toContain('A change may already be applied');
       await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, `${prompt} - verify first`);
       expect(send.disabled).toBe(false);
     }
@@ -2212,7 +2390,7 @@ describe('AgentPanel', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('Model provider timed out while streaming.');
       expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
-      expect(container.textContent).toContain('Provider error');
+      expect(container.textContent).toContain('AI service error');
       expect(container.textContent).toContain('Retry');
     });
   });
@@ -2249,7 +2427,7 @@ describe('AgentPanel', () => {
     expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
-  it('keeps disclosure copy out of chat and shows a destructive unavailable card for cleanup asks', async () => {
+  it('keeps disclosure copy and synthetic capability warnings out of cleanup answers', async () => {
     const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} onOpenOptions={vi.fn()} />);
     expect(container.querySelector('[data-testid="agent-privacy-disclosure"]')).toBeNull();
     expect(container.textContent).not.toContain('What this chat can send');
@@ -2271,7 +2449,7 @@ describe('AgentPanel', () => {
         message: {
           id: 'cleanup-answer',
           role: 'agent',
-          content: 'I found candidates, but destructive cleanup needs a dedicated confirm path.',
+          content: 'I inspected local tag usage and found no cleanup needed.',
           createdAt: 1,
         },
       });
@@ -2285,7 +2463,7 @@ describe('AgentPanel', () => {
           {
             id: 'cleanup-answer',
             role: 'agent',
-            content: 'I found candidates, but destructive cleanup needs a dedicated confirm path.',
+            content: 'I inspected local tag usage and found no cleanup needed.',
             createdAt: 2,
           },
         ],
@@ -2293,9 +2471,10 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
     await waitFor(() => {
-      expect(container.querySelector('[data-testid="agent-destructive-confirm-card"]')).toBeTruthy();
-      expect(container.textContent).toContain('Confirm tag library changes');
-      expect(container.textContent).toContain('Not available in first-safe release');
+      expect(container.textContent).toContain('I inspected local tag usage and found no cleanup needed.');
+      expect(container.querySelector('[data-testid="agent-destructive-confirm-card"]')).toBeNull();
+      expect(container.textContent).not.toContain('Confirm tag library changes');
+      expect(container.textContent).not.toContain('Not available in first-safe release');
     });
   });
   it('keeps a short context compaction silent and out of the transcript', async () => {
@@ -2363,6 +2542,86 @@ describe('AgentPanel', () => {
     });
   });
 
+  it('does not flash a failed bubble while recovering through compaction', async () => {
+    vi.useFakeTimers();
+    let handlers: BgsmAgentTurnHandlers | undefined;
+    let turnInput: BgsmAgentTurnInput | undefined;
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input: BgsmAgentTurnInput, nextHandlers: BgsmAgentTurnHandlers) => {
+      turnInput = input;
+      handlers = nextHandlers;
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Continue organizing tags');
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    await act(async () => {
+      handlers?.onEvent?.({
+        ...deliveryIdentity(turnInput!),
+        type: 'tool_execution_start',
+        toolName: 'list_stars',
+        callId: 'overflowing-read',
+        risk: 'read',
+      });
+      handlers?.onEvent?.({
+        ...deliveryIdentity(turnInput!),
+        type: 'tool_execution_end',
+        toolName: 'list_stars',
+        callId: 'overflowing-read',
+        ok: false,
+        risk: 'read',
+        writeOutcome: 'not_applicable',
+      });
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain('Failed');
+    expect(container.textContent).not.toContain("Cubby couldn't complete this request");
+    expect(container.querySelector('[data-testid="agent-streaming-status"]')).toBeTruthy();
+
+    await act(async () => {
+      handlers?.onEvent?.({
+        ...deliveryIdentity(turnInput!),
+        type: 'context_compaction_start',
+      });
+      vi.advanceTimersByTime(299);
+    });
+    expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
+    expect(container.textContent).not.toContain('Failed');
+    expect(container.textContent).not.toContain("Cubby couldn't complete this request");
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeTruthy();
+    expect(container.textContent).not.toContain('Failed');
+    expect(container.textContent).not.toContain("Cubby couldn't complete this request");
+
+    await act(async () => {
+      handlers?.onEvent?.({
+        ...deliveryIdentity(turnInput!),
+        type: 'context_compaction_end',
+        ok: true,
+        summarizedMessageCount: 12,
+      });
+      handlers?.onResult?.({
+        ...deliveryIdentity(turnInput!),
+        reason: 'final_answer',
+        changed: false,
+        changedCount: 0,
+        newMessages: [
+          { id: 'u-after-compaction', role: 'user', content: turnInput!.prompt, createdAt: 1 },
+          { id: 'a-after-compaction', role: 'agent', content: 'Organization continued successfully.', createdAt: 2 },
+        ],
+      });
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('Organization continued successfully.');
+    expect(container.textContent).not.toContain('Failed');
+    expect(container.textContent).not.toContain("Cubby couldn't complete this request");
+  });
+
   it('shows only a delayed compaction status and restores the previous tool status', async () => {
     vi.useFakeTimers();
     let handlers: BgsmAgentTurnHandlers | undefined;
@@ -2391,12 +2650,14 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
 
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('tool');
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
     await act(async () => {
       vi.advanceTimersByTime(300);
     });
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeTruthy();
-    expect(container.textContent).toContain('Organizing conversation context');
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('compacting');
+    expect(container.textContent).toContain('Tidying up our conversation');
 
     await act(async () => {
       handlers?.onEvent?.({
@@ -2409,7 +2670,8 @@ describe('AgentPanel', () => {
     });
 
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
-    expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent).toContain('Checking local data');
+    expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent).toContain('Checking your local library');
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('tool');
 
     await act(async () => {
       handlers?.onEvent?.({
@@ -2426,6 +2688,7 @@ describe('AgentPanel', () => {
     });
     expect(container.querySelector('[data-testid="agent-compacting-status"]')).toBeNull();
     expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent).toContain('Stopped');
+    expect(container.querySelector('[data-testid="agent-mascot"]')?.getAttribute('data-state')).toBe('stopped');
   });
 
   it('shows a single streaming status line without reasoning theater', async () => {
@@ -2457,11 +2720,11 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent).toContain('Checking local data');
+    expect(container.querySelector('[data-testid="agent-tool-activity"]')?.textContent).toContain('Checking your local library');
     expect(container.querySelector('[data-testid="agent-streaming-status"]')).toBeNull();
   });
 
-  it('renders a read-only result card after a discovery answer', async () => {
+  it('keeps a completed discovery answer free of redundant machine status UI', async () => {
     let handlers: BgsmAgentTurnHandlers | undefined;
     let turnInput: BgsmAgentTurnInput | undefined;
     messagingMocks.startBgsmAgentTurn.mockImplementation((input: BgsmAgentTurnInput, nextHandlers: BgsmAgentTurnHandlers) => {
@@ -2499,10 +2762,27 @@ describe('AgentPanel', () => {
     });
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Answer ready');
-      expect(container.querySelector('[data-testid="agent-readonly-result-card"]')).toBeTruthy();
-      expect(container.textContent).toContain('No tag changes proposed');
+      expect(container.textContent).toContain('Obsidian and Logseq stand out.');
+      expect(container.querySelector('[data-testid="agent-header-status"]')).toBeNull();
+      expect(container.querySelector('[data-testid="agent-readonly-result-card"]')).toBeNull();
+      expect(container.textContent).not.toContain('Answer ready');
+      expect(container.textContent).not.toContain('Read-only answer');
+      expect(container.textContent).not.toContain('No tag changes proposed');
     });
+  });
+
+  it('does not render an organize stepper for stale timeline-only state', async () => {
+    const base = createAgentWorkbenchState('controller:v1:timeline-only', 'session-timeline-only');
+    const workbenchState: AgentWorkbenchState = {
+      ...base,
+      timeline: [{ id: 'old-preflight', state: 'preflight', label: 'Scope requested' }],
+    };
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={workbenchState} />,
+    );
+
+    expect(container.querySelector('[data-testid="organize-job-workbench"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-run-stepper"]')).toBeNull();
   });
 
 
@@ -2527,12 +2807,11 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
     await waitFor(() => {
-      expect(container.textContent).toContain('Provider auth failed');
-      expect(container.textContent).toContain('OpenAI-compatible auth failed');
-      expect(container.textContent).toContain('Open Options');
-      expect(container.textContent).toContain('Retry after fix');
+      expect(container.textContent).toContain('AI service authorization failed');
+      expect(container.textContent).toContain('Open options');
+      expect(container.textContent).toContain('Retry after updating settings');
     });
-    const openOptions = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('Open Options'));
+    const openOptions = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('Open options'));
     expect(openOptions).toBeTruthy();
     await click(openOptions as HTMLButtonElement);
     expect(onOpenOptions).toHaveBeenCalled();
@@ -2543,7 +2822,7 @@ describe('AgentPanel', () => {
     ['provider_context_overflow_repeated', 'settings', 'AI service settings need attention', 'Adjust AI service settings'],
     ['provider_request_byte_limit_repeated', 'settings', 'AI service settings need attention', 'Adjust AI service settings'],
     ['current_turn_too_large', 'edit', 'This request is too large', 'Edit prompt'],
-    ['tool_result_memory_limit', 'retry', 'BGSM reached an internal tool-data limit', 'Retry'],
+    ['tool_result_memory_limit', 'retry', "Cubby reached this request's data limit", 'Retry'],
   ] as const)(
     'maps irreducible %s to a focused recovery action without exposing internal identifiers',
     async (reason, action, title, actionLabel) => {
@@ -2666,7 +2945,7 @@ describe('AgentPanel', () => {
     const edit = [...container.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.trim() === 'Edit prompt');
     expect(edit).toBeDefined();
-    expect(container.textContent).toContain('a write may already have finished');
+    expect(container.textContent).toContain('a change may already be applied');
     expect(container.textContent).not.toContain('Retry to continue');
     await click(edit!);
     const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
@@ -2716,7 +2995,7 @@ describe('AgentPanel', () => {
       await waitFor(() => {
         expect(container.querySelector('[data-testid="agent-context-recovery-banner"]')).toBeNull();
         const errorCard = container.querySelector<HTMLElement>('[data-testid="agent-provider-error-card"]');
-        expect(errorCard?.textContent).toContain('Provider error');
+        expect(errorCard?.textContent).toContain('AI service error');
         expect(errorCard?.textContent).toContain('Retry');
         expect(container.textContent).not.toContain('Context limit reached');
         expect(errorCard?.textContent).not.toContain(reason);
@@ -2781,8 +3060,8 @@ describe('AgentPanel', () => {
 
     const drawer = container.querySelector('aside');
     expect(drawer?.getAttribute('data-agent-active')).toBe('true');
-    expect(container.querySelector('button[aria-label="Hide BGSM Agent"]')).toBeTruthy();
-    await click(container.querySelector('button[aria-label="Hide BGSM Agent"]')!);
+    expect(container.querySelector('button[aria-label="Hide Cubby"]')).toBeTruthy();
+    await click(container.querySelector('button[aria-label="Hide Cubby"]')!);
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -2809,7 +3088,7 @@ describe('AgentPanel', () => {
 
     await waitFor(() => {
       expect(container.querySelector('[data-testid="agent-context-recovery-banner"]')).toBeNull();
-      expect(container.textContent).toContain('Provider error');
+      expect(container.textContent).toContain('AI service error');
       expect(container.textContent).not.toContain('Context limit reached');
       expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Overflowing prompt');
       expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
@@ -2890,5 +3169,57 @@ function completedWorkbenchState(): AgentWorkbenchState {
   return {
     ...createAgentWorkbenchState(controllerId, sessionId),
     organizeJob,
+  };
+}
+
+function durableWorkbenchState(
+  status: BgsmOrganizeJobPresentation['status'],
+  overrides: Partial<AgentWorkbenchState & Pick<BgsmOrganizeJobPresentation, 'apply'>> = {},
+): AgentWorkbenchState {
+  const base = completedWorkbenchState();
+  const { apply, ...stateOverrides } = overrides;
+  return {
+    ...base,
+    ...stateOverrides,
+    organizeJob: {
+      ...base.organizeJob!,
+      status,
+      apply: apply === undefined ? null : apply,
+    },
+    organizeReceiptPage: null,
+    organizeReceiptRequestId: null,
+  };
+}
+
+function workbenchSnapshot(state: OrganizeJobRunSnapshot['state']): OrganizeJobRunSnapshot {
+  return {
+    controllerId: parseControllerId(`controller:v1:${state}-test`),
+    sessionId: `session-${state}-test`,
+    runId: parseRunId(`run:v1:${state}-test`),
+    generation: 1,
+    state,
+    terminalReason: state === 'interrupted' ? 'worker_lost' : null,
+    frozenScope: projectFrozenScope(createFrozenScope({
+      kind: 'all_live_stars',
+      label: 'All stars',
+      filterSnapshot: '{}',
+      repositoryIds: ['owner/repo'],
+      capturedAt: 1,
+      fingerprint: parseScopeFingerprintV1(`fs:v1:${'w'.repeat(43)}`),
+    })),
+    budget: createProductionRunBudget(),
+    usage: createEmptyRunBudgetUsage(),
+    coverage: {
+      total: 1,
+      analyzed: state === 'analyzing' ? 0 : 1,
+      actionable: 0,
+      unchanged: state === 'analyzing' ? 0 : 1,
+      insufficientEvidence: 0,
+      missing: 0,
+      tombstoned: 0,
+      analysisFailed: 0,
+    },
+    proposalId: null,
+    continuationCursor: null,
   };
 }

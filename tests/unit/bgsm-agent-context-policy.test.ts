@@ -3,7 +3,7 @@ import { describe, it } from 'vitest';
 import { resolveAgentModelContextCapability } from '@/agent-harness';
 import { assertBgsmAgentContextCapabilityFeasible } from '@/bgsm-agent';
 
-describe('BGSM Agent context policy feasibility', () => {
+describe('Cubby context policy feasibility', () => {
   it('accepts a practical declared window and rejects a working cap below fixed framing', () => {
     const capability = resolveAgentModelContextCapability({
       provider: 'custom-openai-compatible',

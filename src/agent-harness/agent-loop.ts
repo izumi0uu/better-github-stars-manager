@@ -164,7 +164,7 @@ const EXCLUSIVE_TOOL_ENVELOPE_REQUIRED_MESSAGE =
   'This tool must be requested by itself. Retry it without sibling tool calls.';
 const CONTEXT_LIMIT_EXCEEDED_MESSAGE = 'Context limit exceeded.';
 const TOOL_RESULT_MEMORY_LIMIT_MESSAGE =
-  'The Agent could not free enough internal tool-result memory to continue.';
+  'Cubby could not free enough internal tool-result memory to continue.';
 
 export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopResult> {
   const emit = input.emit ?? (() => {});

@@ -1,4 +1,5 @@
 import type { Star, Tag, TagMeta } from '@/types';
+import { canonicalTagMetaWinners } from '@/tags/tag-model';
 import { MAX_SEMANTIC_TAG_NAME_BYTES } from './policy';
 import type { SourceFingerprintV1 } from './proposal';
 import {
@@ -143,7 +144,10 @@ export function buildSemanticPolicyTaxonomyFromStorage(
 ): SemanticTaxonomyDto {
   return Object.freeze({
     version: 1,
-    entries: Object.freeze(canonicalTaxonomyEntries(tagMeta, tags).map((entry) =>
+    entries: Object.freeze(canonicalTaxonomyEntries(
+      [...canonicalTagMetaWinners(tagMeta).values()],
+      tags,
+    ).map((entry) =>
       Object.freeze({ ...entry }))),
   });
 }

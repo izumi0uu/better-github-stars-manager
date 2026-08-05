@@ -8,7 +8,7 @@ const extensionDir = path.join(root, 'dist');
 runPnpm(['build']);
 
 console.log('');
-console.log('BGSM Agent diagnostics is ready.');
+console.log('Cubby diagnostics is ready.');
 console.log(`Load or reload this stable unpacked extension directory:\n  ${extensionDir}`);
 console.log('Keep this process running while Provider monitoring is active.');
 console.log('');

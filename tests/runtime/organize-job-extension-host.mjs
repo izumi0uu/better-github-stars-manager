@@ -59,7 +59,12 @@ try {
   });
   assert.match(corruptRestore.error, /discarded/i);
   assert.equal(corruptRestore.jobExists, false);
-  console.log('  ✓ invalid Analysis artifacts released the durable slot after one failed restore');
+  assert.equal(corruptRestore.noActiveDeliveryKind, 'authoritative_snapshot');
+  assert.equal(corruptRestore.noActiveDurableRevision, null);
+  assert.equal(Number.isSafeInteger(corruptRestore.errorSequence), true);
+  assert.equal(Number.isSafeInteger(corruptRestore.noActiveSequence), true);
+  assert.equal(corruptRestore.errorSequence < corruptRestore.noActiveSequence, true);
+  console.log('  ✓ invalid Analysis artifacts released the durable slot and returned terminal no-active authority');
 
   console.log('\n3) A new Start replaces a same-owner blocked job without restoring it first');
   provider.analyzerMode = 'unchanged';
@@ -907,7 +912,7 @@ async function pollPageConfig(page, predicate) {
     if (predicate(config)) return config;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error('Timed out waiting for BGSM Agent config state.');
+  throw new Error('Timed out waiting for Cubby config state.');
 }
 
 async function clickButton(page, matcher) {
@@ -960,14 +965,22 @@ async function runCorruptActiveRestoreScenario({ timeoutMs }) {
   port.postMessage({ type: 'requestBgsmActiveOrganizeJob', controllerId, sessionId });
   const deadline = Date.now() + timeoutMs;
   let failure = null;
+  let noActive = null;
   while (Date.now() < deadline) {
     failure = messages.find((message) => message.type === 'bgsmOrganizeJobRunError') ?? null;
-    if (failure) break;
+    noActive = messages.find((message) => message.type === 'bgsmOrganizeJobRunNoActive') ?? null;
+    if (failure && noActive) break;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  if (!failure) {
+  if (!failure || !noActive) {
     throw new Error(`Corrupt restore did not settle: ${JSON.stringify(messages.slice(-6))}`);
   }
+  const errorDelivery = deliveryMetadata.find((delivery) => (
+    delivery.messageType === 'bgsmOrganizeJobRunError'
+  ));
+  const noActiveDelivery = deliveryMetadata.find((delivery) => (
+    delivery.messageType === 'bgsmOrganizeJobRunNoActive'
+  ));
   const jobs = await globalThis.__readOrganizeJobs();
   port.postMessage({ type: 'disconnectBgsmOrganizeJob', controllerId, sessionId });
   port.disconnect();
@@ -975,6 +988,10 @@ async function runCorruptActiveRestoreScenario({ timeoutMs }) {
     error: failure.message,
     jobExists: jobs.some((job) => job.jobId === seeded.jobId),
     finalRevision: jobs.find((job) => job.jobId === seeded.jobId)?.revision ?? null,
+    errorSequence: errorDelivery?.deliverySequence ?? null,
+    noActiveSequence: noActiveDelivery?.deliverySequence ?? null,
+    noActiveDeliveryKind: noActiveDelivery?.deliveryKind ?? null,
+    noActiveDurableRevision: noActiveDelivery?.durableRevision ?? null,
   };
 }
 
@@ -1032,6 +1049,7 @@ async function runCorruptBlockedReplacementScenario({ timeoutMs }) {
       sessionId,
       runId: outcome.snapshot.runId,
       generation: outcome.snapshot.generation,
+      requestId: 'runtime-stop-cleanup',
     });
     await waitFor((message) => (
       message.type === 'bgsmOrganizeJobRunResult' && message.runId === outcome.snapshot.runId
@@ -1117,6 +1135,7 @@ async function runRepeatedPreflightStartScenario({ timeoutMs }) {
     sessionId,
     runId: first.snapshot.runId,
     generation: first.snapshot.generation,
+    requestId: 'runtime-stop-first-run',
   });
   await waitFor((message) => (
     message.type === 'bgsmOrganizeJobRunResult' &&
@@ -1341,6 +1360,7 @@ async function runDurableFullLibraryApplyScenario({ rowCount, timeoutMs }) {
     sessionId,
     runId: job.runId,
     generation: job.generation,
+    requestId: 'runtime-apply-selection',
     jobId: job.jobId,
     expectedRevision: reviewPage.revision,
   });

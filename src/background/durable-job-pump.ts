@@ -126,9 +126,12 @@ export function createDurableJobPump<
         }
       })
       .finally(async () => {
-        executions.delete(operationId);
         try {
+          // Keep this execution registered while restart authority and backoff are
+          // being resolved. A recovery wake during that window must join the
+          // existing restart reservation instead of starting a second chain.
           if (!(await dependencies.shouldRestart(operationId))) {
+            if (executions.get(operationId) === execution) executions.delete(operationId);
             consecutiveFailures.delete(operationId);
             return;
           }
@@ -136,8 +139,20 @@ export function createDurableJobPump<
           if (failures > 0) {
             await (dependencies.delayBeforeRestart ?? defaultDelayBeforeRestart)(failures);
           }
+          // The durable operation may have completed while the backoff timer was
+          // pending, so do not restart from the stale pre-delay decision.
+          if (!(await dependencies.shouldRestart(operationId))) {
+            if (executions.get(operationId) === execution) executions.delete(operationId);
+            consecutiveFailures.delete(operationId);
+            return;
+          }
+          if (executions.get(operationId) !== execution) return;
+          // Replace the reservation atomically before starting the next attempt.
+          // JavaScript does not yield between these two synchronous operations.
+          executions.delete(operationId);
           void start(operationId);
         } catch {
+          if (executions.get(operationId) === execution) executions.delete(operationId);
           consecutiveFailures.delete(operationId);
           // A later wake or attach can rediscover the durable operation.
         }

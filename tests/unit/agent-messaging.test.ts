@@ -39,7 +39,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('BGSM Agent messaging', () => {
+describe('Cubby messaging', () => {
   it('delivers context preflight diagnostics across the Port', () => {
     const runtime = createRuntimePort();
     vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
@@ -298,7 +298,7 @@ describe('BGSM Agent messaging', () => {
       turnAttemptId: input.turnAttemptId,
       sessionId: 'session-1',
       baseRevision: 3,
-      message: 'BGSM Agent stopped before finishing.',
+      message: 'Cubby stopped before finishing. Try again.',
     });
   });
 
@@ -609,7 +609,7 @@ describe('BGSM Agent messaging', () => {
 
     expect(onEvent).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'BGSM Agent background deliveries arrived out of order.',
+      message: "Cubby's connection was interrupted. Try again.",
     }));
     expect(disconnect).toHaveBeenCalledOnce();
 

@@ -31,7 +31,7 @@ afterEach(async () => {
   }));
 });
 
-describe('BGSM Agent OrganizeJobRun trace', () => {
+describe('Cubby OrganizeJobRun trace', () => {
   it('uses one preallocated job root across mutable generations and worker restore', async () => {
     const db = database('identity');
     const jobId = parseOrganizeJobId('organize-job:v1:trace-identity');

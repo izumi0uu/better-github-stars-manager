@@ -10,7 +10,7 @@ const turnPortSource = readFileSync(
 const deliverySource = `${backgroundSource}\n${turnPortSource}`;
 
 describe('background agent turn contract', () => {
-  it('routes BGSM Agent through the agent loop and configured provider', () => {
+  it('routes Cubby through the agent loop and configured provider', () => {
 
     assert.doesNotMatch(backgroundSource, /type: ["']startBgsmAgentTurn["']/);
     assert.match(backgroundSource, /chrome\.runtime\.onConnect\.addListener/);
@@ -28,30 +28,32 @@ describe('background agent turn contract', () => {
     assert.match(backgroundSource, /resolveBgsmAgentConversation\(input/);
     assert.match(backgroundSource, /const repositoryScope = conversation\.repositoryIds/);
     assert.doesNotMatch(backgroundSource, /loadLiveBgsmAgentRepositoryScope/);
-    assert.match(backgroundSource, /createBgsmAgentTools\(\{[\s\S]*?repositoryScope,/);
+    assert.match(backgroundSource, /createBgsmAgentToolRegistry\(\{[\s\S]*?repositoryScope,/);
     assert.match(backgroundSource, /const scopeFingerprint = conversation\.binding\.scopeFingerprint/);
-    assert.match(backgroundSource, /createBgsmAgentTools\(\{[\s\S]*?scopeFingerprint,/);
+    assert.match(backgroundSource, /createBgsmAgentToolRegistry\(\{[\s\S]*?scopeFingerprint,/);
     assert.match(backgroundSource, /scopeLabel,/);
     assert.match(backgroundSource, /repositoryCodeRefAuthorityFor\(/);
     assert.match(backgroundSource, /repositoryCodeRefAuthority,/);
     assert.match(backgroundSource, /hasRepositoryCodeHistory = hasSuccessfulRepositoryCodeToolHistory\(input\.history\)/);
-    assert.match(backgroundSource, /repositoryCodeAccess = promptIntent\.capabilities\.repositoryCodeSearch[\s\S]*?\|\| hasRepositoryCodeHistory/);
-    assert.match(backgroundSource, /repositoryCodeReadOnly = promptIntent\.capabilities\.repositoryCodeSearch[\s\S]*?\|\| hasRepositoryCodeHistory/);
+    assert.match(backgroundSource, /repositoryCodeReadOnly = hasRepositoryCodeHistory/);
+    assert.doesNotMatch(backgroundSource, /analyzeBgsmPromptIntent|promptIntent|repositoryCodeAccess/);
     assert.doesNotMatch(backgroundSource, /repositoryCodeReference/);
-    assert.doesNotMatch(backgroundSource, /promptIntent\.useTools|manualTagAdditions/);
+    assert.doesNotMatch(backgroundSource, /manualTagAdditions/);
     assert.doesNotMatch(backgroundSource, /interactionScope|interactionParent|scope_selector/);
-    assert.match(backgroundSource, /enableRepositoryCodeSearch: repositoryCodeAccess/);
-    assert.match(backgroundSource, /enableRepositoryNotes: promptIntent\.capabilities\.repositoryNotes/);
+    assert.match(backgroundSource, /enableRepositoryCodeSearch: true/);
+    assert.match(backgroundSource, /enableRepositoryNotes: true/);
     assert.match(backgroundSource, /enableOrganizeLibraryHandoff: !repositoryCodeReadOnly/);
     assert.match(backgroundSource, /requestOrganizeLibraryHandoff: async \(action\) =>/);
     assert.match(backgroundSource, /status: 'blocked_by_existing_job'/);
     assert.match(backgroundSource, /organizeLibraryHandoffRequested \?\?= action/);
-    assert.match(backgroundSource, /tool\.risk !== 'write'/);
     assert.match(
       backgroundSource,
-      /!repositoryCodeReadOnly && !organizeApplyActive && tool\.name === 'assign_repo_tags'/,
+      /enableTagWrites: !repositoryCodeReadOnly && !organizeApplyActive/,
     );
-    assert.match(backgroundSource, /buildBgsmAgentSystemPrompt\(\{ repositoryCodeReadOnly \}\)/);
+    assert.match(backgroundSource, /toolRegistry\.getActiveTools\(\)/);
+    assert.doesNotMatch(backgroundSource, /isDirectBgsmAgentTagWriteTool/);
+    assert.match(backgroundSource, /createBgsmAgentPromptScope\(\{[\s\S]*?kind: conversation\.binding\.candidateContract\.kind,[\s\S]*?label: scopeLabel,[\s\S]*?repositoryIds: repositoryScope/);
+    assert.match(backgroundSource, /buildBgsmAgentSystemPrompt\(\{[\s\S]*?conversationScope,[\s\S]*?repositoryCodeReadOnly,[\s\S]*?activeToolNames: toolRegistry\.getActiveToolNames\(\)/);
     assert.match(backgroundSource, /systemPrompt,/);
     assert.match(backgroundSource, /prepareBgsmAgentTurn\(/);
     assert.match(backgroundSource, /emit: options\.emit/);
@@ -87,7 +89,13 @@ describe('background agent turn contract', () => {
   it('allows agent write tools and broadcasts after tool-driven changes', () => {
     assert.match(backgroundSource, /permissions: authorization\.permissions/);
     assert.match(backgroundSource, /assignManualTags: agentManualTagWriter/);
+    assert.match(backgroundSource, /removeVisibleTags: agentVisibleTagRemovalWriter/);
+    assert.match(backgroundSource, /deleteTagsEverywhere: agentGlobalTagDeletionWriter/);
     assert.match(backgroundSource, /createQueuedAgentManualTagWriter/);
+    assert.match(backgroundSource, /createQueuedAgentVisibleTagRemovalWriter/);
+    assert.match(backgroundSource, /createQueuedAgentGlobalTagDeletionWriter/);
+    assert.match(backgroundSource, /idbTagStore\.removeVisibleTagsBulk\(changes\)/);
+    assert.match(backgroundSource, /idbTagStore\.deleteTagsEverywhere\(tags\)/);
     assert.match(
       backgroundSource,
       /runSerialized: \(operation, runOptions\) => jobQueue\.run\(operation, runOptions\)/,
@@ -100,9 +108,14 @@ describe('background agent turn contract', () => {
     assert.match(backgroundSource, /wrapWriteTrackingTool/);
     assert.match(
       backgroundSource,
+      /typeof value\.assignmentsRemoved === ["']number["'][\s\S]*?Math\.max\(0, value\.assignmentsRemoved, requestedTags\)/,
+    );
+    assert.match(
+      backgroundSource,
       /message\.type === "applyBgsmOrganizeSelection"[\s\S]*?jobQueue\.run\(async \(\) => \{[\s\S]*?sealOrganizeApply[\s\S]*?\}\);[\s\S]*?pumpOrganizeApply/,
     );
     assert.match(backgroundSource, /if \(changed\) broadcastDataChanged\(\)/);
+    assert.doesNotMatch(backgroundSource, /function isDirectBgsmAgentTagWriteTool/);
   });
 
   it('prepares compaction before the loop and transports checkpoints without partial deltas', () => {

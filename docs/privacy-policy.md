@@ -6,12 +6,12 @@ Better GitHub Stars Manager is a Chrome extension for organizing GitHub starred 
 
 ## Limited Use disclosure
 
-Better GitHub Stars Manager uses Chrome extension access to your GitHub data and, when you enable BGSM Agent, the AI service you select only to provide user-facing features you explicitly request inside the extension.
+Better GitHub Stars Manager uses Chrome extension access to your GitHub data only to provide user-facing features you explicitly request. When you enable Cubby, the extension's optional AI assistant, the extension also connects directly to the AI service you select for Cubby tasks.
 
 The extension does not:
 
 - sell your data
-- transfer data except to GitHub for GitHub/Gist features you invoke and to the AI service you explicitly select for BGSM Agent tasks
+- transfer data except to GitHub for GitHub/Gist features you invoke and to the AI service you explicitly select for Cubby tasks
 - use your data for advertising
 - use your data for credit or lending decisions
 - operate a developer-controlled proxy for GitHub or AI-provider traffic
@@ -21,7 +21,7 @@ Your data is processed only to:
 - authenticate your GitHub token
 - fetch and display your starred repositories
 - store and sync your own tags and notes when you choose to use Gist sync
-- test or run BGSM Agent through the AI service and origin you select
+- test or run Cubby through the AI service and origin you select
 
 ## What the extension processes
 
@@ -32,7 +32,7 @@ The extension processes the following categories of data:
 - GitHub star metadata returned by `GET /user/starred`, such as repository name, URL, description, language, topics, star count, pushed time, and starred time
 - Tags and notes that you create inside the extension
 - Optional sync metadata for the dedicated secret GitHub Gist used by the extension
-- BGSM Agent service, model, canonical origin, encrypted API-key material, and connection readiness stored locally
+- AI service configuration for Cubby, including provider, model, canonical origin, encrypted API-key material, and connection readiness stored locally
 
 ## How the extension uses data
 
@@ -63,16 +63,16 @@ Depending on the features you choose, the extension communicates directly with:
 - `https://api.anthropic.com/*` when Anthropic is selected
 - a custom OpenAI-compatible HTTP(S) origin that you enter and explicitly allow
 
-## BGSM Agent data sharing
+## Cubby data sharing
 
-The Options page shows a collapsed data-use summary naming the selected provider and exact canonical origin. This notice is informational and does not block connection tests or Agent use.
+The Options page shows a collapsed data-use summary naming the selected provider and exact canonical origin. This notice is informational and does not block connection tests or Cubby use.
 
-BGSM Agent may send these task-data categories when needed:
+When you use Cubby, the extension may send these task-data categories to your selected AI service when needed:
 
 - your prompt or bounded task instruction
 - public repository metadata for the selected or frozen scope
 - bounded public code snippets and file paths when you request indexed repository code search
-- private notes for repositories in the selected or frozen scope only when your current prompt asks BGSM Agent to read or use them
+- private notes for repositories in the selected or frozen scope only when your current prompt asks Cubby to read or use them
 - the visible, bounded tag taxonomy
 - protocol observations required for the interaction, such as tool definitions, bounded tool results, interaction choices, and app-authored run summaries
 
@@ -80,9 +80,9 @@ Indexed repository code search is not an exhaustive scan. GitHub searches its de
 
 Private notes are read only through a scoped tool after the current prompt explicitly asks to use them. Notes and code snippets are treated as untrusted data, remain only in the in-memory conversation, and may be sent again or summarized only to the same bound AI provider during follow-up turns. Starting a new conversation clears that conversation context.
 
-BGSM Agent does not send these as model-visible task data by default:
+When you use Cubby, the extension does not send these as model-visible task data by default:
 
-- private notes you did not ask BGSM Agent to use
+- private notes you did not ask Cubby to use
 - credentials or secrets
 - your GitHub token
 - unrelated or out-of-scope stars
@@ -111,7 +111,7 @@ You can remove data at any time:
 
 If you uninstall the extension, Chrome removes the extension's local storage. Any sync Gist created under your GitHub account remains in your account until you delete it.
 
-Requests already sent to an AI provider are subject to that provider's retention and deletion controls. BGSM does not keep a durable remote Agent session or a copy on a developer server.
+Requests already sent to an AI provider are subject to that provider's retention and deletion controls. BGSM does not keep a durable remote Cubby session or a copy on a developer server.
 
 ## Security notes
 

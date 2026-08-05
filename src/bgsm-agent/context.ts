@@ -3,7 +3,7 @@ export const BGSM_AGENT_CONTEXT_MAX_CHARS = 4_096;
 export type BgsmAgentContext = {
   schemaVersion: 1;
   application: {
-    name: 'GitHub Stars Manager';
+    name: 'Better GitHub Stars Manager';
     runtime: 'Chrome extension';
     purpose: 'Organize the user\'s GitHub starred repositories with local search, tags, notes, and favorites.';
   };
@@ -30,7 +30,7 @@ export function buildBgsmAgentContext(): BgsmAgentContext {
   return {
     schemaVersion: 1,
     application: {
-      name: 'GitHub Stars Manager',
+      name: 'Better GitHub Stars Manager',
       runtime: 'Chrome extension',
       purpose: 'Organize the user\'s GitHub starred repositories with local search, tags, notes, and favorites.',
     },
@@ -51,6 +51,8 @@ export function buildBgsmAgentContext(): BgsmAgentContext {
       ],
       write: [
         'Add manual tags to a repository after inspecting local data',
+        'Remove visible tags from repositories in the authorized scope after inspecting local data',
+        'Delete tags from every repository after inspecting current tag usage',
       ],
     },
     safety: {
@@ -75,7 +77,7 @@ export function limitBgsmAgentContext(
   return {
     schemaVersion: 1,
     application: {
-      name: 'GitHub Stars Manager',
+      name: 'Better GitHub Stars Manager',
       runtime: 'Chrome extension',
       purpose: 'Organize the user\'s GitHub starred repositories with local search, tags, notes, and favorites.',
     },
@@ -96,6 +98,8 @@ export function limitBgsmAgentContext(
       ],
       write: [
         'Add manual tags to a repository after inspecting local data',
+        'Remove visible tags from repositories in the authorized scope after inspecting local data',
+        'Delete tags from every repository after inspecting current tag usage',
       ],
     },
     safety: {

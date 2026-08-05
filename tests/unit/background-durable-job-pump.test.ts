@@ -114,4 +114,52 @@ describe('durable job pump', () => {
     assert.equal(attempts, 3);
     assert.deepEqual(delays, [1, 2]);
   });
+
+  it('keeps a restart reservation during backoff and rechecks authority', async () => {
+    let attempts = 0;
+    let shouldRestartChecks = 0;
+    let releaseBackoff!: () => void;
+    let backoffStarted!: () => void;
+    const backoffStartedPromise = new Promise<void>((resolve) => {
+      backoffStarted = resolve;
+    });
+    const backoff = new Promise<void>((resolve) => {
+      releaseBackoff = resolve;
+    });
+    const pump = createDurableJobPump({
+      runSerialized: (run) => run(),
+      async claim() {
+        attempts += 1;
+        throw new Error('claim failed');
+      },
+      async settle() {
+        return { complete: true };
+      },
+      async onProgress() {},
+      onComplete() {},
+      async onFailure() {},
+      async shouldRestart() {
+        shouldRestartChecks += 1;
+        return shouldRestartChecks === 1;
+      },
+      async delayBeforeRestart() {
+        backoffStarted();
+        await backoff;
+      },
+      createExecutionId: () => `execution-${attempts + 1}`,
+    });
+
+    const first = pump.start('operation-reservation');
+    await backoffStartedPromise;
+    assert.equal(pump.isRunning('operation-reservation'), true);
+    assert.equal(pump.start('operation-reservation'), first);
+
+    releaseBackoff();
+    await first;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(attempts, 1);
+    assert.equal(shouldRestartChecks, 2);
+    assert.equal(pump.isRunning('operation-reservation'), false);
+  });
 });

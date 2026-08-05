@@ -374,6 +374,47 @@ describe('Gist recovery regressions', () => {
     assert.deepEqual(snapshotDirty(), { names: [], meta: false });
   });
 
+  it('push exports only the newest metadata spelling for each canonical tag', async () => {
+    await resetState();
+    await storeSyntheticToken();
+    await authStore.update({ gistId: 'bound-gist' });
+    await db.tagMeta.bulkPut([
+      {
+        name: 'UI',
+        color: '#ff0000',
+        dimension: null,
+        excluded: false,
+        mtime: '2026-06-24T12:00:00.000Z',
+      },
+      {
+        name: 'ＵＩ',
+        color: '#000000',
+        dimension: null,
+        excluded: true,
+        mtime: '2026-06-24T12:10:00.000Z',
+      },
+    ]);
+    const patched = { payload: null as GistPayload | null };
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/gists/bound-gist') && method === 'GET') return response(200, {});
+      if (url.endsWith('/gists/bound-gist') && method === 'PATCH') {
+        patched.payload = parsePatchedPayload(init);
+        return response(200, {});
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    const result = await gistTagStore.push({ names: [], meta: true, metaVersion: 0 });
+
+    assert.equal(result.snapshot, 2);
+    assert.deepEqual(Object.keys(patched.payload?.tagMeta ?? {}), ['ＵＩ']);
+    assert.equal(patched.payload?.tagMeta['ＵＩ']?.excluded, true);
+    assert.equal(patched.payload?.tagMeta['ＵＩ']?.color, '#000000');
+  });
+
   it('pull imports v1 tags as manual tags', async () => {
     await resetState();
     await storeSyntheticToken();
@@ -398,6 +439,37 @@ describe('Gist recovery regressions', () => {
     assert.deepEqual((await db.tags.get('owner/v1'))?.manualTags, ['legacy']);
     assert.deepEqual((await db.tags.get('owner/v1'))?.autoTags, []);
     assert.deepEqual((await db.tags.get('owner/v1'))?.dismissedAutoTags, []);
+  });
+
+  it('pull imports metadata for a canonical tag that does not exist locally', async () => {
+    await resetState();
+    await storeSyntheticToken();
+    await authStore.update({ gistId: 'bound-gist' });
+    const payload: GistPayload = {
+      v: 2,
+      exportedAt: '2026-06-24T12:00:00.000Z',
+      tags: {},
+      tagMeta: {
+        'ＵＩ': {
+          color: '#123456',
+          dimension: 'kind',
+          excluded: true,
+          mtime: '2026-06-24T12:00:00.000Z',
+        },
+      },
+    };
+    globalThis.fetch = gistGet(payload);
+
+    const result = await gistTagStore.pull();
+
+    assert.deepEqual(result, { merged: 1, total: 1, missing: false });
+    assert.deepEqual(await db.tagMeta.toArray(), [{
+      name: 'ＵＩ',
+      color: '#123456',
+      dimension: 'kind',
+      excluded: true,
+      mtime: '2026-06-24T12:00:00.000Z',
+    }]);
   });
 
   it('pull imports v2 explicit layers as source of truth', async () => {
@@ -593,5 +665,123 @@ describe('Gist recovery regressions', () => {
     assert.deepEqual(layered?.autoTags, ['new-auto']);
     assert.deepEqual(layered?.manualTagsMtime, '2026-06-24T12:10:00.000Z');
     assert.deepEqual(layered?.autoTagsMtime, '2026-06-24T12:20:00.000Z');
+  });
+
+  it('pull keeps a newer local delete tombstone and collapses canonical metadata aliases', async () => {
+    await resetState();
+    await storeSyntheticToken();
+    await authStore.update({ gistId: 'bound-gist' });
+    await db.tagMeta.bulkPut([
+      {
+        name: 'UI',
+        color: '#000000',
+        dimension: 'kind',
+        excluded: true,
+        mtime: '2026-06-24T12:20:00.000Z',
+      },
+      {
+        name: 'ui',
+        color: '#ffffff',
+        dimension: null,
+        excluded: false,
+        mtime: '2026-06-24T12:00:00.000Z',
+      },
+    ]);
+    const payload: GistPayload = {
+      v: 2,
+      exportedAt: '2026-06-24T12:10:00.000Z',
+      tags: {},
+      tagMeta: {
+        'ＵＩ': {
+          color: '#123456',
+          dimension: null,
+          excluded: false,
+          mtime: '2026-06-24T12:10:00.000Z',
+        },
+      },
+    };
+    globalThis.fetch = gistGet(payload);
+
+    const result = await gistTagStore.pull();
+
+    assert.deepEqual(result, { merged: 1, total: 1, missing: false });
+    assert.deepEqual(await db.tagMeta.toArray(), [{
+      name: 'UI',
+      color: '#000000',
+      dimension: 'kind',
+      excluded: true,
+      mtime: '2026-06-24T12:20:00.000Z',
+    }]);
+  });
+
+  it('resolves equal-mtime metadata conflicts in favor of deletion on every device', async () => {
+    await resetState();
+    await storeSyntheticToken();
+    await authStore.update({ gistId: 'bound-gist' });
+    await db.tagMeta.put({
+      name: 'ui',
+      color: '#ffffff',
+      dimension: null,
+      excluded: false,
+      mtime: '2026-06-24T12:20:00.000Z',
+    });
+    const payload: GistPayload = {
+      v: 2,
+      exportedAt: '2026-06-24T12:20:00.000Z',
+      tags: {},
+      tagMeta: {
+        UI: {
+          color: '#000000',
+          dimension: 'kind',
+          excluded: true,
+          mtime: '2026-06-24T12:20:00.000Z',
+        },
+      },
+    };
+    globalThis.fetch = gistGet(payload);
+
+    const result = await gistTagStore.pull();
+
+    assert.deepEqual(result, { merged: 1, total: 1, missing: false });
+    assert.equal((await db.tagMeta.toArray())[0]?.name, 'UI');
+    assert.equal((await db.tagMeta.toArray())[0]?.excluded, true);
+  });
+
+  it('converges equal-mtime Gist metadata regardless of which state is local', async () => {
+    const mtime = '2026-06-24T12:20:00.000Z';
+    const preferred = {
+      name: 'ui',
+      color: '#000000',
+      dimension: 'topic',
+      excluded: false,
+      mtime,
+    };
+    const alternate = {
+      name: 'ui',
+      color: '#ffffff',
+      dimension: 'topic',
+      excluded: false,
+      mtime,
+    };
+
+    const pullAgainst = async (local: typeof preferred, remote: typeof preferred) => {
+      await resetState();
+      await storeSyntheticToken();
+      await authStore.update({ gistId: 'bound-gist' });
+      await db.tagMeta.put(local);
+      const { name, ...remoteMeta } = remote;
+      globalThis.fetch = gistGet({
+        v: 2,
+        exportedAt: mtime,
+        tags: {},
+        tagMeta: { [name]: remoteMeta },
+      } satisfies GistPayload);
+
+      await gistTagStore.pull();
+      return db.tagMeta.get('ui');
+    };
+
+    assert.deepEqual(await pullAgainst(alternate, preferred), preferred);
+    assert.deepEqual(await pullAgainst(preferred, alternate), preferred);
   });
 });

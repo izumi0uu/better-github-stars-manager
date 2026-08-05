@@ -27,7 +27,7 @@ export async function resolveBgsmAgentConversation(
     }
     validateBgsmAgentConversationBinding(input.binding);
     if (input.binding.providerFingerprint !== dependencies.providerFingerprint) {
-      throw new TypeError('BGSM Agent provider changed. Start a new conversation.');
+      throw new TypeError('Cubby provider changed. Start a new conversation.');
     }
     const candidate = await dependencies.resolveCandidate(input.binding.candidateContract);
     const recomputed = await bindingFor(
@@ -40,7 +40,7 @@ export async function resolveBgsmAgentConversation(
       || recomputed.label !== input.binding.label
       || recomputed.count !== input.binding.count
     ) {
-      throw new TypeError('BGSM Agent scope changed. Start a new conversation.');
+      throw new TypeError('Cubby scope changed. Start a new conversation.');
     }
     return Object.freeze({
       binding: input.binding,
@@ -49,7 +49,7 @@ export async function resolveBgsmAgentConversation(
   }
 
   if (!input.candidateContract) {
-    throw new TypeError('A new BGSM Agent conversation requires a scope candidate.');
+    throw new TypeError('A new Cubby conversation requires a scope candidate.');
   }
   if (input.baseRevision !== 0 || input.history.length !== 0 || input.checkpoint) {
     throw new TypeError('Only an empty first turn may create a conversation binding.');
@@ -74,7 +74,7 @@ async function bindingFor(
 ): Promise<BgsmAgentConversationBinding> {
   validateBgsmAgentConversationCandidate(candidate.contract);
   if (candidate.repositoryIds.length === 0) {
-    throw new TypeError('BGSM Agent conversation scope is empty.');
+    throw new TypeError('Cubby conversation scope is empty.');
   }
   const scopeFingerprint = await createBgsmAgentConversationScopeFingerprint({
     candidateContract,

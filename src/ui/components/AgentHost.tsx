@@ -6,8 +6,11 @@ import { AgentPanel } from '@/ui/components/AgentPanel';
 import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
 import { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
 import {
-  currentOrganizeJobState,
-} from '@/ui/agent-workbench-state';
+  resolveAgentUiPresentation,
+  selectOrganizeWorkbenchView,
+  type AgentUiPresentation,
+} from '@/ui/agent-ui-presentation';
+import type { MessageCatalog } from '@/i18n';
 
 export type AgentHostPresentation = Readonly<{
   status: string | null;
@@ -41,45 +44,29 @@ export function AgentHost({
   const agent = useBgsmAgent(onDataChanged, chatCandidate);
   const workbench = useBgsmAgentWorkbench(onDataChanged, agent.sessionId);
   const presentation = useMemo<AgentHostPresentation>(() => {
-    const snapshot = workbench.state.snapshot;
-    const organizeJob = workbench.state.organizeJob;
-    const total = organizeJob?.scopeCount ?? snapshot?.frozenScope.count ?? 0;
-    const processed = Math.min(total, workbench.displayedProcessed);
-    const automaticContinuation = workbench.state.continuationPending;
-    const currentRunState = currentOrganizeJobState(snapshot, organizeJob);
-    const analyzing = currentRunState !== null && (
-      ['frozen', 'prepared', 'checking_provider', 'analyzing'].includes(currentRunState)
-      || automaticContinuation
+    const organizeView = selectOrganizeWorkbenchView(
+      workbench.state,
+      workbench.displayedProcessed,
     );
-    const applying = currentRunState === 'apply_sealed' || currentRunState === 'applying';
-    const status = analyzing && total > 0
-      ? `${processed}/${total}`
-      : applying
-        ? m.agentPanel.toolbarApplying
-        : currentRunState === 'paused'
-          ? m.agentPanel.runStateLabel('paused')
-        : currentRunState === 'completed'
-          ? m.agentPanel.runStateLabel('completed')
-          : currentRunState === 'review'
-          ? m.agentPanel.toolbarReview
-          : currentRunState
-              ? m.agentPanel.runStateLabel(currentRunState)
-              : workbench.state.preflight?.status === 'requesting'
-                ? m.agentPanel.resolvingScopeHeader
-                : workbench.state.preflight?.status === 'starting'
-                  ? m.agentPanel.workbench.startingAnalysis
-                : workbench.state.preflight?.status === 'ready'
-                  ? m.agentPanel.scopeReady
-                  : agent.running
-                    ? agent.status?.text ?? m.agentPanel.chatWorking
-                    : null;
-    const active = agent.running
-      || workbench.state.preflight?.status === 'requesting'
-      || workbench.state.preflight?.status === 'starting'
-      || analyzing
-      || applying;
-    return { status, active };
-  }, [agent.running, agent.status?.text, m.agentPanel, workbench.displayedProcessed, workbench.state]);
+    const ui = resolveAgentUiPresentation({
+      phase: agent.phase,
+      hasError: agent.error !== null,
+      hasContextRecovery: agent.contextLimitRecovery !== null,
+      unsafeReplayBlocked: false,
+    }, organizeView);
+    return {
+      status: resolveToolbarStatus(ui, agent.status?.text ?? null, m.agentPanel),
+      active: ui.toolbar.active,
+    };
+  }, [
+    agent.contextLimitRecovery,
+    agent.error,
+    agent.phase,
+    agent.status?.text,
+    m.agentPanel,
+    workbench.displayedProcessed,
+    workbench.state,
+  ]);
 
   useEffect(() => {
     onPresentationChange(presentation);
@@ -98,4 +85,61 @@ export function AgentHost({
       onDismissHandoff={onDismissHandoff}
     />
   );
+}
+
+function resolveToolbarStatus(
+  presentation: AgentUiPresentation,
+  chatStatus: string | null,
+  labels: MessageCatalog['agentPanel'],
+): string | null {
+  const { kind, progress, active } = presentation.toolbar;
+  switch (kind) {
+    case 'chat_queued':
+    case 'chat_working':
+    case 'chat_compacting':
+    case 'chat_tool':
+    case 'chat_done':
+    case 'chat_stopped':
+    case 'chat_failed':
+      return active ? chatStatus ?? labels.chatWorking : null;
+    case 'scope_requesting':
+      return labels.resolvingScopeHeader;
+    case 'scope_ready':
+      return labels.scopeReady;
+    case 'scope_starting':
+      return labels.workbench.startingAnalysis;
+    case 'scope_failed':
+      return null;
+    case 'analyzing':
+      return progress && progress.total > 0
+        ? `${progress.completed}/${progress.total}`
+        : labels.runStateLabel('analyzing');
+    case 'reconnecting':
+      return labels.toolbarInterrupted;
+    case 'analysis_blocked':
+    case 'review_invalid':
+      return labels.runStateLabel('analysis_blocked');
+    case 'review_loading':
+    case 'review_ready':
+      return labels.toolbarReview;
+    case 'review_failed':
+      return null;
+    case 'applying':
+      return labels.toolbarApplying;
+    case 'paused':
+      return labels.runStateLabel('paused');
+    case 'receipt':
+    case 'completed_no_changes':
+      return labels.runStateLabel('completed');
+    case 'cancelled':
+      return labels.runStateLabel('cancelled');
+    case 'interrupted':
+      return labels.toolbarInterrupted;
+    case 'failed':
+      return labels.runStateLabel('failed');
+    case 'context_recovery':
+    case 'scope_empty':
+    case 'idle':
+      return null;
+  }
 }

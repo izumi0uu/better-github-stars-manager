@@ -258,15 +258,23 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
     state: OrganizeJobRunAnalysisState,
     reason: BudgetExhaustionReason,
     analyzer: Analyzer,
+    isCurrentExecution: () => boolean,
   ): Promise<void> => {
     try {
+      if (!isCurrentExecution()) return;
       const cursor = await dependencies.issueContinuationCursor(identity, state.nextFrozenIndex);
+      if (!isCurrentExecution()) return;
       dependencies.controller.exhaustBudget(identity, state.usage, reason, cursor);
+      if (!isCurrentExecution()) return;
       const generationStart = dependencies.controller.getExecutionContext(identity).startFrozenIndex;
       if (state.nextFrozenIndex <= generationStart) return;
-      await prepareContinuation(identity, state, state.nextFrozenIndex, cursor, analyzer);
+      await prepareContinuation(identity, state, state.nextFrozenIndex, cursor, analyzer, isCurrentExecution);
     } catch (error) {
-      dependencies.controller.failRun(identity, 'internal_error');
+      if (!isCurrentExecution()) return;
+      // Durable analysis remains authoritative and is retried from its checkpoint.
+      if (!dependencies.initializeDurableRun) {
+        dependencies.controller.failRun(identity, 'internal_error');
+      }
       reportAutomaticContinuationFailure(identity, error);
     }
   };
@@ -277,7 +285,11 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
     nextFrozenIndex: number,
     continuationCursor: ContinuationCursorToken,
     analyzer?: Analyzer,
+    isCurrentExecution: () => boolean = () => true,
   ): Promise<ReturnType<BgsmAgentController['continueRun']>> => {
+    if (!isCurrentExecution()) {
+      throw new TypeError('OrganizeJobRun execution authority is stale.');
+    }
     const child = dependencies.controller.continueRun(
       parentIdentity,
       nextFrozenIndex,
@@ -313,9 +325,12 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
           providerBinding: analyzer?.providerBinding ?? null,
         });
       }
+      if (!isCurrentExecution()) return child;
       states.set(identity.runId, state);
       continuationSeeds.set(identity.runId, Object.freeze({ state, analyzer }));
+      if (!isCurrentExecution()) return child;
       dependencies.publishSnapshot?.(child, parentIdentity);
+      if (!isCurrentExecution()) return child;
       void scheduleRun(identity).catch((error: unknown) => {
         void reportExecutionFailure(identity, error);
       });
@@ -327,8 +342,10 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
     return preparation;
   };
 
-  const execute = async (identity: OrganizeRunIdentity): Promise<void> => {
+  const execute = async (identity: OrganizeRunIdentity, token: object): Promise<void> => {
+    const isCurrentExecution = (): boolean => executionTokens.get(identity.runId) === token;
     const abortController = new AbortController();
+    if (!isCurrentExecution()) return;
     abortControllers.set(identity.runId, abortController);
     let providerReady = false;
     let activeAnalyzer: Analyzer | null = null;
@@ -338,12 +355,17 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
     let deadlineTraceState: 'idle' | 'armed' | 'expired' | 'cancelled' = 'idle';
     let deadlineLimitMs: number | null = null;
     let activeDurableLease: SchedulerAnalysisPageLease | null = null;
+    const traceOwned = (event: BgsmOrganizeJobSchedulerTraceEvent): void => {
+      if (!isCurrentExecution()) return;
+      trace(event);
+    };
     const traceWatchdog = (
       watchdog: 'organize_heartbeat' | 'organize_wall_deadline',
       state: 'armed' | 'progress' | 'expired' | 'cancelled',
       limitMs: number,
     ): void => {
-      trace({ type: 'watchdog_state', identity, watchdog, state, limitMs });
+      if (!isCurrentExecution()) return;
+      traceOwned({ type: 'watchdog_state', identity, watchdog, state, limitMs });
     };
     const recordWallDeadlineExpired = (limitMs: number): void => {
       if (deadlineTraceState === 'expired' || deadlineTraceState === 'cancelled') return;
@@ -357,9 +379,10 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
       abortController.abort();
     };
     const releaseActiveDurablePage = async (): Promise<void> => {
-      if (!activeDurableLease || !dependencies.releaseDurablePage) return;
+      if (!isCurrentExecution() || !activeDurableLease || !dependencies.releaseDurablePage) return;
       const lease = activeDurableLease;
       await dependencies.releaseDurablePage({ identity, lease });
+      if (!isCurrentExecution()) return;
       if (activeDurableLease === lease) activeDurableLease = null;
     };
 
@@ -367,6 +390,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
       if (dependencies.heartbeat) {
         traceWatchdog('organize_heartbeat', 'armed', ORGANIZE_JOB_HEARTBEAT_INTERVAL_MS);
         heartbeatTimer = setHeartbeatInterval(() => {
+          if (!isCurrentExecution()) return;
           traceWatchdog('organize_heartbeat', 'progress', ORGANIZE_JOB_HEARTBEAT_INTERVAL_MS);
           try {
             dependencies.heartbeat?.(identity);
@@ -375,21 +399,24 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
           }
         }, ORGANIZE_JOB_HEARTBEAT_INTERVAL_MS);
       }
+      if (!isCurrentExecution()) return;
       dependencies.controller.setRunState(identity, 'checking_provider');
       const continuationSeed = continuationSeeds.get(identity.runId);
       continuationSeeds.delete(identity.runId);
       const restoredSeed = restoredSeeds.get(identity.runId);
       restoredSeeds.delete(identity.runId);
       const analyzer = continuationSeed?.analyzer ?? await dependencies.createAnalyzer(identity);
+      if (!isCurrentExecution()) return;
       activeAnalyzer = analyzer;
       if (dependencies.validateDurableProviderBinding) {
         await dependencies.validateDurableProviderBinding({
           identity,
           providerBinding: analyzer.providerBinding ?? null,
         });
+        if (!isCurrentExecution()) return;
       }
       providerReady = true;
-      if (abortController.signal.aborted) return;
+      if (abortController.signal.aborted || !isCurrentExecution()) return;
       const context = dependencies.controller.getExecutionContext(identity);
       if (continuationSeed && continuationSeed.state.nextFrozenIndex !== context.startFrozenIndex) {
         throw new TypeError('Continuation analysis seed does not match the authoritative start index.');
@@ -403,6 +430,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             budget: context.budget,
             startFrozenIndex: context.startFrozenIndex,
           });
+      if (!isCurrentExecution()) return;
       states.set(identity.runId, state);
       if (!restoredSeed && !continuationSeed && dependencies.initializeDurableRun) {
         await dependencies.initializeDurableRun({
@@ -412,10 +440,12 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
           parentIdentity: null,
           providerBinding: analyzer.providerBinding ?? null,
         });
+        if (!isCurrentExecution()) return;
       }
+      if (!isCurrentExecution()) return;
       dependencies.controller.setRunState(identity, 'analyzing');
 
-      while (!abortController.signal.aborted) {
+      while (!abortController.signal.aborted && isCurrentExecution()) {
         const pendingRange = state.analysisPendingRanges[0];
         const estimatedPageSize = pendingRange
           ? pendingRange.endFrozenIndexExclusive - pendingRange.startFrozenIndex
@@ -435,16 +465,19 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
         });
         if (decision.status === 'budget_exhausted') {
           state = decision.state;
+          if (!isCurrentExecution()) return;
           states.set(identity.runId, state);
           if (decision.reason === 'wall_deadline') {
             recordWallDeadlineExpired(state.budget.wallDeadlineMs);
           }
-          await exhaustAndMaybeContinue(identity, state, decision.reason, analyzer);
+          await exhaustAndMaybeContinue(identity, state, decision.reason, analyzer, isCurrentExecution);
           return;
         }
         if (decision.status === 'review') {
           state = decision.state;
+          if (!isCurrentExecution()) return;
           states.set(identity.runId, state);
+          if (!isCurrentExecution()) return;
           dependencies.controller.updateAnalysisProgress(
             identity,
             state.usage,
@@ -453,41 +486,49 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
           if (state.actionableProposalRows.length === 0) {
             if (dependencies.completeDurableWithoutProposal) {
               await dependencies.completeDurableWithoutProposal({ identity, state });
+              if (!isCurrentExecution()) return;
             }
+            if (!isCurrentExecution()) return;
             dependencies.controller.completeWithoutProposal(identity, state.usage);
           } else {
+            if (!isCurrentExecution()) return;
             dependencies.controller.updateUsage(identity, state.usage);
             const cursor = state.stopReason === 'proposal_limit'
               ? await dependencies.issueContinuationCursor(identity, state.nextFrozenIndex)
               : undefined;
+            if (!isCurrentExecution()) return;
             const proposal = createOrganizeProposal(state);
             const handled = dependencies.registerDurableReview
               ? await dependencies.registerDurableReview({ identity, state, proposal })
               : false;
+            if (!isCurrentExecution()) return;
             if (!handled) dependencies.controller.registerDurableProposal(identity, proposal, cursor);
           }
           return;
         }
         if (decision.status === 'stopped') {
+          if (!isCurrentExecution()) return;
           if (state.status === 'analysis_blocked') {
             const failed = state.nonActionableAnalysisOutcomes.find(
               (row) => row.kind === 'analysis_failed',
             );
             if (!failed) throw new TypeError('Blocked analysis is missing its failed position.');
             const cursor = await dependencies.issueContinuationCursor(identity, failed.frozenIndex);
+            if (!isCurrentExecution()) return;
             const blocked = dependencies.controller.blockAnalysis(
               identity,
               state.usage,
               coverageFor(state),
               cursor,
             );
+            if (!isCurrentExecution()) return;
             dependencies.publishSnapshot?.(blocked);
           }
           return;
         }
 
         const previousUsage = state.usage;
-        trace({
+        traceOwned({
           type: 'batch_state',
           identity,
           batchStart: decision.batch.startFrozenIndex,
@@ -498,6 +539,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
           state: 'scheduled',
         });
         state = decision.batch.state;
+        if (!isCurrentExecution()) return;
         states.set(identity.runId, state);
         dependencies.controller.updateAnalysisProgress(
           identity,
@@ -513,6 +555,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
               endFrozenIndexExclusive: decision.batch.endFrozenIndexExclusive,
             })
           : undefined;
+        if (!isCurrentExecution()) return;
         if (durableLease === null) return;
         activeDurableLease = durableLease ?? null;
         const page = await dependencies.loadPage({
@@ -521,8 +564,9 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
           startFrozenIndex: decision.batch.startFrozenIndex,
           endFrozenIndexExclusive: decision.batch.endFrozenIndexExclusive,
         });
+        if (!isCurrentExecution()) return;
         if (abortController.signal.aborted) {
-          trace({
+          traceOwned({
             type: 'batch_state',
             identity,
             batchStart: decision.batch.startFrozenIndex,
@@ -534,7 +578,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
           });
           if (deadlineExpired) {
             await releaseActiveDurablePage();
-            await exhaustAndMaybeContinue(identity, state, 'wall_deadline', analyzer);
+            await exhaustAndMaybeContinue(identity, state, 'wall_deadline', analyzer, isCurrentExecution);
           }
           return;
         }
@@ -545,7 +589,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
           taxonomy: page.taxonomy,
         });
         const providerCount = batch?.repositories.length ?? 0;
-        trace({
+        traceOwned({
           type: 'batch_state',
           identity,
           batchStart: decision.batch.startFrozenIndex,
@@ -557,7 +601,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
         });
         if (!batch) {
           state = finalizeLocalOnlyBatch(state, page.positions).state;
-          trace({
+          traceOwned({
             type: 'batch_state',
             identity,
             batchStart: decision.batch.startFrozenIndex,
@@ -575,13 +619,16 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             batch,
             getState: () => state,
             setState(next) {
+              if (!isCurrentExecution()) return;
               state = next;
               states.set(identity.runId, state);
               dependencies.controller.updateUsage(identity, state.usage);
             },
+            isCurrentExecution,
             now,
             signal: abortController.signal,
             onProgress: (completedRows) => {
+              if (!isCurrentExecution()) return;
               try {
                 dependencies.publishAnalysisProgress?.(
                   identity,
@@ -595,13 +642,16 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
                 // Presentation progress cannot alter Provider execution or durable checkpoints.
               }
             },
-            traceAttempt: (attempt) => trace({
-              type: 'provider_attempt',
-              identity,
-              batchStart: decision.batch.startFrozenIndex,
-              batchEnd: decision.batch.endFrozenIndexExclusive,
-              ...attempt,
-            }),
+            traceAttempt: (attempt) => {
+              if (!isCurrentExecution()) return;
+              traceOwned({
+                type: 'provider_attempt',
+                identity,
+                batchStart: decision.batch.startFrozenIndex,
+                batchEnd: decision.batch.endFrozenIndexExclusive,
+                ...attempt,
+              });
+            },
             reserveDurableAttempt: durableLease && dependencies.reserveDurableProviderAttempt
               ? async ({ state: next, previousUsage: before, attempt, reservedAt }) => {
                   const renewed = await dependencies.reserveDurableProviderAttempt!({
@@ -612,11 +662,13 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
                     reservedAt,
                     lease: durableLease!,
                   });
+                  if (!isCurrentExecution()) return;
                   durableLease = renewed;
                   activeDurableLease = renewed;
                 }
               : undefined,
             armDeadline(deadlineAt, limitMs) {
+              if (!isCurrentExecution()) return;
               if (deadlineTimer !== null) return;
               deadlineTraceState = 'armed';
               deadlineLimitMs = limitMs;
@@ -626,8 +678,9 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
               }, Math.max(0, deadlineAt - now()));
             },
           });
+          if (!isCurrentExecution()) return;
           if (abortController.signal.aborted) {
-            trace({
+            traceOwned({
               type: 'batch_state',
               identity,
               batchStart: decision.batch.startFrozenIndex,
@@ -639,7 +692,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             });
             if (deadlineExpired) {
               await releaseActiveDurablePage();
-              await exhaustAndMaybeContinue(identity, state, 'wall_deadline', analyzer);
+              await exhaustAndMaybeContinue(identity, state, 'wall_deadline', analyzer, isCurrentExecution);
             }
             return;
           }
@@ -647,7 +700,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             if (result.reason === 'wall_deadline') {
               recordWallDeadlineExpired(state.budget.wallDeadlineMs);
             }
-            trace({
+            traceOwned({
               type: 'batch_state',
               identity,
               batchStart: decision.batch.startFrozenIndex,
@@ -658,7 +711,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
               state: 'budget_exhausted',
             });
             await releaseActiveDurablePage();
-            await exhaustAndMaybeContinue(identity, state, result.reason, analyzer);
+            await exhaustAndMaybeContinue(identity, state, result.reason, analyzer, isCurrentExecution);
             return;
           }
           if (
@@ -676,11 +729,13 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
                 state: split.state,
                 lease: durableLease,
               });
+              if (!isCurrentExecution()) return;
               activeDurableLease = null;
             }
             state = split.state;
+            if (!isCurrentExecution()) return;
             states.set(identity.runId, state);
-            trace({
+            traceOwned({
               type: 'batch_state',
               identity,
               batchStart: decision.batch.startFrozenIndex,
@@ -690,6 +745,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
               providerCount: batch.repositories.length,
               state: 'split',
             });
+            if (!isCurrentExecution()) return;
             dependencies.controller.updateUsage(identity, state.usage);
             continue;
           }
@@ -706,7 +762,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             : degraded
               ? finalizeInsufficientEvidenceBatch(state, page.positions).state
               : finalizeAnalysisFailure(state, page.positions).state;
-          trace({
+          traceOwned({
             type: 'batch_state',
             identity,
             batchStart: decision.batch.startFrozenIndex,
@@ -717,6 +773,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             state: result.status === 'success' || degraded ? 'provider_completed' : 'analysis_failed',
           });
         }
+        if (!isCurrentExecution()) return;
         states.set(identity.runId, state);
         if (durableLease && dependencies.checkpointDurablePage) {
           await dependencies.checkpointDurablePage({
@@ -725,15 +782,18 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
             positions: page.positions,
             lease: durableLease,
           });
+          if (!isCurrentExecution()) return;
           activeDurableLease = null;
         }
+        if (!isCurrentExecution()) return;
         dependencies.controller.updateUsage(identity, state.usage);
       }
     } catch (error) {
+      if (!isCurrentExecution()) return;
       const state = states.get(identity.runId);
       if (deadlineExpired && state && activeAnalyzer) {
         await releaseActiveDurablePage();
-        await exhaustAndMaybeContinue(identity, state, 'wall_deadline', activeAnalyzer);
+        await exhaustAndMaybeContinue(identity, state, 'wall_deadline', activeAnalyzer, isCurrentExecution);
       }
       else if (!abortController.signal.aborted) {
         try {
@@ -742,10 +802,11 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
         } catch {
           // Failure compensation cannot replace the authoritative run failure.
         }
+        if (!isCurrentExecution()) return;
         dependencies.controller.failRun(identity, providerReady ? 'internal_error' : 'provider_error');
       }
     } finally {
-      if (activeDurableLease && dependencies.releaseDurablePage) {
+      if (isCurrentExecution() && activeDurableLease && dependencies.releaseDurablePage) {
         try {
           await releaseActiveDurablePage();
         } catch {
@@ -771,7 +832,7 @@ export function createBgsmOrganizeJobScheduler(dependencies: Readonly<{
     if (existing) return existing;
     const token = {};
     executionTokens.set(identity.runId, token);
-    const execution = execute(identity).finally(() => {
+    const execution = execute(identity, token).finally(() => {
       if (executionTokens.get(identity.runId) !== token) return;
       executionTokens.delete(identity.runId);
       executions.delete(identity.runId);
@@ -837,6 +898,7 @@ async function runAnalyzer(input: Readonly<{
   batch: SemanticAnalyzerBatch;
   getState(): OrganizeJobRunAnalysisState;
   setState(state: OrganizeJobRunAnalysisState): void;
+  isCurrentExecution(): boolean;
   now(): number;
   signal: AbortSignal;
   onProgress?(completedRows: number): void;

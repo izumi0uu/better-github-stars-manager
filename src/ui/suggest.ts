@@ -1,5 +1,6 @@
 import type { Star } from '@/types';
 import { DEFAULT_AUTO_TAG_LIMIT, normalizeAutoTagLimit, normalizeMinTopicRepoCount } from '@/preferences';
+import { canonicalTagKey } from '@/tags/tag-model';
 
 export type AutoTagSuggestionPolicy =
   | number
@@ -31,7 +32,7 @@ function resolveSuggestionPolicy(policy: AutoTagSuggestionPolicy): {
 export function countTopicRepoFrequency(stars: Pick<Star, 'topics'>[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const star of stars) {
-    const repoTopics = new Set(star.topics.map((topic) => topic.toLowerCase()));
+    const repoTopics = new Set(star.topics.map((topic) => canonicalTagKey(topic)));
     for (const topic of repoTopics) {
       counts.set(topic, (counts.get(topic) ?? 0) + 1);
     }
@@ -52,15 +53,15 @@ export function suggestTags(
   policy: AutoTagSuggestionPolicy = DEFAULT_AUTO_TAG_LIMIT,
 ): string[] {
   const { limit, minRepoCount, topicRepoCounts } = resolveSuggestionPolicy(policy);
-  const have = new Set(existing.map((t) => t.toLowerCase()));
-  const skip = new Set([...excluded].map((t) => t.toLowerCase()));
+  const have = new Set(existing.map((tag) => canonicalTagKey(tag)));
+  const skip = new Set([...excluded].map((tag) => canonicalTagKey(tag)));
   const out: string[] = [];
   for (const t of star.topics) {
-    const lc = t.toLowerCase();
-    if (have.has(lc) || skip.has(lc)) continue;
-    if (topicRepoCounts && (topicRepoCounts.get(lc) ?? 0) < minRepoCount) continue;
+    const key = canonicalTagKey(t);
+    if (!key || have.has(key) || skip.has(key)) continue;
+    if (topicRepoCounts && (topicRepoCounts.get(key) ?? 0) < minRepoCount) continue;
     out.push(t);
-    have.add(lc);
+    have.add(key);
   }
   return out.slice(0, limit);
 }
@@ -81,7 +82,7 @@ export function reconcileAutoTagAssignments(
   for (const plan of plans) {
     const seenInRepo = new Set<string>();
     for (const tag of plan.autoTags) {
-      const key = tag.trim().toLowerCase();
+      const key = canonicalTagKey(tag);
       if (!key || seenInRepo.has(key)) continue;
       seenInRepo.add(key);
       counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -91,7 +92,7 @@ export function reconcileAutoTagAssignments(
   return plans.map((plan) => ({
     ...plan,
     autoTags: plan.autoTags.filter((tag) => (
-      (counts.get(tag.trim().toLowerCase()) ?? 0) >= minCount
+      (counts.get(canonicalTagKey(tag)) ?? 0) >= minCount
     )),
   }));
 }

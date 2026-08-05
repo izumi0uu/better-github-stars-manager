@@ -1,4 +1,4 @@
-# BGSM Agent Implementation Review and Production-Safety Plan
+# Cubby Implementation Review and Production-Safety Plan
 
 ## Document status
 
@@ -8,14 +8,29 @@
 - **Original review date:** 2026-07-10
 - **Remediation date:** 2026-07-14
 - **Context v2 integration date:** 2026-07-17
-- **Audience:** maintainers implementing, reviewing, and testing BGSM Agent
-- **Scope:** the BGSM Agent runtime, provider adapters, background orchestration, Port protocols, release evidence, and packaged-extension runtime
+- **Audience:** maintainers implementing, reviewing, and testing Cubby
+- **Scope:** the Cubby runtime, provider adapters, background orchestration, Port protocols, release evidence, and packaged-extension runtime
 
 This document preserves the original findings and remediation plan as review history. The 2026-07-14 closure record does not by itself prove context v2 release readiness; executable source, current tests, and the fresh verification matrix remain the enforced runtime contract.
 
 The earlier [MVP Agent Harness Blueprint](./bgsm-agent-tag-assistant-plan.md) remains useful as design history, but its proposal-only implementation checkpoint does not describe the current branch. Where the two documents conflict, this review describes the current code and the required merge gates; a later accepted product decision should replace both with one canonical specification.
 
 The product and interaction contract was reviewed separately and is intentionally not checked into this branch. This document owns implementation and safety findings; executable source and regression tests own the enforced runtime behavior.
+
+## Product autonomy decision — 2026-08-03
+
+Repository tags are treated as low-impact local annotations. Regular Cubby conversations may directly remove visible tags from repositories and delete tag names globally; the earlier recommendation that every removal require a proposal and separate Apply confirmation is retained below as review history but no longer describes the accepted product contract.
+
+The direct path is still constrained by application code:
+
+- `remove_repo_tags` and `delete_tags_everywhere` are available on regular turns rather than enabled by keyword or intent matching;
+- every repository/tag removal needs same-turn local assignment evidence, and every global tag deletion needs same-turn tag-list evidence;
+- repository-code conversations remain host-enforced read-only, explicit no-write requests are interpreted by the main model, and an active Organize Apply holds the shared write lock;
+- repository removals and global deletions execute as separate atomic IndexedDB batches and preserve Gist dirty-outbox semantics;
+- canonical write effects are recorded in the execution ledger so retries execute only effects that are not already committed;
+- the Cubby UI reports the tool activity and final mutation count without synthesizing a keyword-driven confirmation or unavailable card.
+
+Global deletion writes `TagMeta.excluded` tombstones and therefore remains semantically different from removing a visible tag on selected repositories. The model must not substitute one operation for the other or broaden the requested repositories or tag names.
 
 ## Remediation closure — 2026-07-14
 
@@ -118,7 +133,7 @@ Application code must:
 | Clean up tags | Explicit cleanup task | Read tools plus proposal creation | Removal requires review and confirmation | Proposed actions with impact counts |
 | Delete tag everywhere | Explicit destructive action | Preview only before confirmation | Commit must be user-owned; never a model-only decision | Precondition-checked receipt and recovery information |
 
-Prompt classification may reduce irrelevant tool descriptions, but it must not grant authority. The regular expression in `src/bgsm-agent/prompt-intent.ts:1-10` is too broad to act as a permission boundary: words such as `list`, `repo`, `tag`, and `search` all select the same registry that contains global write tools.
+The main model selects optional read tools from conversation context instead of a current-prompt regular expression. Tool selection does not grant write authority: repository scope, current-turn local evidence, write budgets, and repository-code read-only mode remain host-enforced.
 
 ## 3. Current implementation map
 
@@ -144,8 +159,8 @@ Toolbar Auto Tags / free-form prompt
 - The content-side session owns ephemeral raw history and a revision. Each turn crosses the Agent Port with `sessionId`, `baseRevision`, history, and an optional compaction checkpoint; stale results cannot commit.
 - The background binds the conversation to Provider fingerprint, repository scope, capability policy, and current authorization before calling the harness.
 - Provider adapters emit incremental text deltas plus strict terminal results. Tool calls become executable only after their complete arguments and protocol envelope validate.
-- Current-prompt intent authorizes only the selected capability and scope. Historical or compacted text never establishes write authority.
-- Notes and repository code are separate explicit read capabilities. They are not attached to every prompt and remain subject to bounded scope and tool-result admission.
+- The main model selects optional read tools from conversation context instead of a current-prompt regular expression. Historical or compacted text never establishes tag-write authority.
+- Notes and repository-code tools are visible on regular turns so follow-up requests can be resolved from conversation context; their descriptions and system instructions restrict use to the current user request. Repository scope, current-turn local evidence, and mutation budgets remain host-enforced.
 - Automatic compaction projects older committed history into a no-tool checkpoint summary while preserving client-owned raw history and the active user/tool suffix.
 - Sessions remain in memory only. Persistent resume, branching session trees, and autonomous background goals are still deferred.
 
@@ -161,9 +176,11 @@ Toolbar Auto Tags / free-form prompt
 | `search_repository_code` | Conditional read | Searches the bounded GitHub code index and returns verified, pinned snippets; at most one search runs per turn |
 | `read_repository_file` | Conditional read | Reads at most 200 text lines using a trusted commit ref returned by list/search |
 | `read_repository_notes` | Conditional private read | Returns bounded private notes only when the current prompt explicitly requests them |
-| `assign_repo_tags` | Write | Adds manual tags only after explicit current-turn intent and same-turn local repository evidence |
+| `assign_repo_tags` | Write | Adds manual tags after the main model selects the action and same-turn local repository evidence exists |
+| `remove_repo_tags` | Write | Atomically removes requested visible repository/tag pairs after same-turn assignment evidence |
+| `delete_tags_everywhere` | Write | Atomically removes requested tag names from all repositories and writes exclusion tombstones after same-turn tag evidence |
 
-Destructive tag tools remain opt-in and are not exposed by the first-release background flow. After any repository-code tool runs, that conversation stays read-only; tag changes require a new conversation.
+All three tag mutation tools are present on regular turns. The main model interprets whether the conversation requests a mutation; runtime authorization independently enforces repository scope, same-turn evidence, write budgets, and code-read-only mode. After any repository-code tool runs, that conversation stays read-only; tag changes require a new conversation.
 
 The registry is defined in `src/bgsm-agent/tools.ts` and `src/bgsm-agent/repository-code-search-tool.ts`.
 
@@ -582,7 +599,7 @@ The target should remain GitHub-native and border-led, with one dominant task/re
 
 ### B-10 — Bundle cost should be paid on demand
 
-The audited build passed but reported a large JavaScript chunk after adding Streamdown and Agent UI. Lazy-load the panel and markdown renderer when the user first opens BGSM Agent. Verify that the content-script CSS build still contains no runtime `@import`.
+The audited build passed but reported a large JavaScript chunk after adding Streamdown and Agent UI. Lazy-load the panel and markdown renderer when the user first opens Cubby. Verify that the content-script CSS build still contains no runtime `@import`.
 
 ## 8. Target architecture
 
@@ -799,7 +816,7 @@ The primary surface should be a task workbench. Free-form chat remains useful as
 
 ```text
 Header
-  BGSM Agent
+  Cubby
   Provider/model
   Scope: Current filter · 32 repositories
   Run status
@@ -1289,7 +1306,7 @@ Reason: BGSM needs a narrow browser-extension control plane, not a coding-agent 
 | Where Agent-generated additive tags are stored | Choose one explicit layer; prefer `autoTags` if they remain machine-owned, `manualTags` only after explicit acceptance | Preserves provenance |
 | Default Organize scope | All current live stars, confirmed before start; filters and selected rows cannot narrow it | Makes “organize my library” complete and auditable |
 | Direct write for additive Auto Tags | Allowed only for explicit task invocation, immutable scope, and hard budgets | Keeps primary task useful without granting broad autonomy |
-| Notes available to model | Explicit scoped opt-in only | Private notes are read only when the current prompt selects that capability |
+| Notes available to model | Scoped tool selected by the main model | Private note contents are read only when the current request asks to use them |
 | Chat continuity | Ephemeral bounded session only | Follow-ups and compaction work in memory; reload persistence remains deferred |
 | Persistent Agent tables | Durable OrganizeJob/Review/Apply/Receipt tables; chat sessions remain ephemeral | MV3 recovery requires durable job authority without broadening chat persistence |
 | Automatic Gist Push after Agent change | No | Preserves explicit sync ownership |
@@ -1305,7 +1322,7 @@ Historical evidence from the implementation audit before this document was writt
 - built CSS: no runtime `@import` remained;
 - `pnpm test`: failed with 1 failing suite and 66 passing suites;
 - `pnpm test:runtime`: passed, but covers only Puppeteer runtime availability;
-- `pnpm test:smoke`: passed six base-extension scenarios and did not exercise BGSM Agent;
+- `pnpm test:smoke`: passed six base-extension scenarios and did not exercise Cubby;
 - ShadowRoot keyboard reproduction: the target textarea did not receive `keydown` when the ancestor capture listener stopped propagation.
 
 Fresh context v2 evidence from 2026-07-17:

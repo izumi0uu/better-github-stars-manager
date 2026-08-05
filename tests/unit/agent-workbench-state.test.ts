@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   canContinueOrganizeJobRun,
+  CONNECTION_INTERRUPTED_COPY,
   createAgentWorkbenchState,
   currentOrganizeJobState,
   displayedAnalyzedRepositoryCount,
   isDurableOrganizeJobAuthoritative,
   reduceAgentWorkbench,
+  type WorkbenchPendingCommand,
   WORKER_LOST_COPY,
 } from '@/ui/agent-workbench-state';
 import {
@@ -33,6 +35,378 @@ const runId = parseRunId('run:v1:parent');
 const proposalId = parseProposalId('proposal:v1:parent');
 
 describe('Agent workbench durable organize-job reducer', () => {
+  it('serializes organize commands and makes synchronous send failures retryable', () => {
+    let state = deliverJob(
+      withSnapshot({ ...baseSnapshot(), state: 'review', proposalId }),
+      presentation(),
+    );
+    state = reduceAgentWorkbench(state, {
+      type: 'organize_command_requested',
+      command: pendingCommand('apply-current', 'apply_selection'),
+    });
+
+    expect(state.pendingCommand).toEqual(pendingCommand('apply-current', 'apply_selection'));
+    expect(reduceAgentWorkbench(state, {
+      type: 'organize_command_requested',
+      command: pendingCommand('apply-duplicate', 'apply_selection'),
+    })).toBe(state);
+    expect(reduceAgentWorkbench(state, {
+      type: 'organize_command_send_failed',
+      commandId: 'apply-stale',
+    })).toBe(state);
+
+    const failed = reduceAgentWorkbench(state, {
+      type: 'organize_command_send_failed',
+      commandId: 'apply-current',
+    });
+    expect(failed.pendingCommand).toBeNull();
+    expect(failed.error).toBe(CONNECTION_INTERRUPTED_COPY);
+
+    const retrying = reduceAgentWorkbench(failed, {
+      type: 'organize_command_requested',
+      command: pendingCommand('apply-retry', 'apply_selection'),
+    });
+    expect(retrying.pendingCommand?.id).toBe('apply-retry');
+    expect(retrying.error).toBeNull();
+  });
+
+  it('holds organize commands until their matching authoritative transition arrives', () => {
+    const applyProgress = {
+      applyId: 'organize-apply:v1:pending-command',
+      total: 2,
+      settled: 0,
+      changed: 0,
+      unchanged: 0,
+      skipped: 0,
+      failed: 0,
+    };
+
+    let applySelection = deliverJob(
+      withSnapshot({ ...baseSnapshot(), state: 'review', proposalId }),
+      presentation(),
+    );
+    applySelection = reduceAgentWorkbench(applySelection, {
+      type: 'organize_command_requested',
+      command: pendingCommand('apply-selection', 'apply_selection'),
+    });
+    const staleApplying = deliverJob(applySelection, {
+      ...presentation(),
+      status: 'applying',
+      apply: applyProgress,
+    });
+    expect(staleApplying.pendingCommand?.kind).toBe('apply_selection');
+    const unchangedReview = deliverJob(staleApplying, {
+      ...presentation(),
+      revision: 8,
+    });
+    expect(unchangedReview.pendingCommand?.kind).toBe('apply_selection');
+    const applying = deliverJob(unchangedReview, {
+      ...presentation(),
+      revision: 9,
+      status: 'applying',
+      apply: applyProgress,
+    });
+    expect(applying.pendingCommand).toBeNull();
+
+    let pauseApply = reduceAgentWorkbench(applying, {
+      type: 'organize_command_requested',
+      command: pendingCommand('pause-apply', 'pause_apply', 9),
+    });
+    pauseApply = deliverJob(pauseApply, {
+      ...presentation(),
+      revision: 10,
+      status: 'applying',
+      apply: applyProgress,
+    });
+    expect(pauseApply.pendingCommand?.kind).toBe('pause_apply');
+    const paused = deliverJob(pauseApply, {
+      ...presentation(),
+      revision: 11,
+      status: 'paused',
+      apply: applyProgress,
+    });
+    expect(paused.pendingCommand).toBeNull();
+
+    let resumeApply = reduceAgentWorkbench(paused, {
+      type: 'organize_command_requested',
+      command: pendingCommand('resume-apply', 'resume_apply', 11),
+    });
+    resumeApply = deliverJob(resumeApply, {
+      ...presentation(),
+      revision: 12,
+      status: 'paused',
+      apply: applyProgress,
+    });
+    expect(resumeApply.pendingCommand?.kind).toBe('resume_apply');
+    const resumed = deliverJob(resumeApply, {
+      ...presentation(),
+      revision: 13,
+      status: 'applying',
+      apply: applyProgress,
+    });
+    expect(resumed.pendingCommand).toBeNull();
+  });
+
+  it('keeps Stop pending through active snapshots and clears it on a terminal result', () => {
+    let state = withSnapshot(baseSnapshot());
+    state = reduceAgentWorkbench(state, {
+      type: 'organize_command_requested',
+      command: pendingCommand('stop-analysis', 'stop_analysis', null),
+    });
+
+    const stillAnalyzing = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: { type: 'bgsmOrganizeJobRunSnapshot', snapshot: baseSnapshot() },
+    });
+    expect(stillAnalyzing.pendingCommand?.kind).toBe('stop_analysis');
+
+    const stopped = reduceAgentWorkbench(stillAnalyzing, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunResult',
+        controllerId,
+        sessionId,
+        runId,
+        generation: 1,
+        snapshot: {
+          ...baseSnapshot(),
+          state: 'cancelled',
+          terminalReason: 'user_stopped',
+        },
+      },
+    });
+    expect(stopped.pendingCommand).toBeNull();
+  });
+
+  it('clears a pending organize command only when the run error matches its request', () => {
+    let state = withSnapshot(baseSnapshot());
+    state = reduceAgentWorkbench(state, {
+      type: 'organize_command_requested',
+      command: pendingCommand('stop-error', 'stop_analysis', null),
+    });
+
+    const unrelated = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunError',
+        controllerId,
+        sessionId,
+        runId,
+        generation: 1,
+        requestId: 'another-command',
+        reason: 'internal_error',
+        message: 'An unrelated request failed.',
+      },
+    });
+    expect(unrelated.pendingCommand?.id).toBe('stop-error');
+    expect(unrelated.error).toBeNull();
+
+    const failed = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunError',
+        controllerId,
+        sessionId,
+        runId,
+        generation: 1,
+        requestId: 'stop-error',
+        reason: 'internal_error',
+        message: 'Stop failed.',
+      },
+    });
+    expect(failed.pendingCommand).toBeNull();
+    expect(failed.error).toBe('Stop failed.');
+
+    const retrying = reduceAgentWorkbench(failed, {
+      type: 'organize_command_requested',
+      command: pendingCommand('stop-disconnect', 'stop_analysis', null),
+    });
+    const disconnected = reduceAgentWorkbench(retrying, { type: 'transport_disconnected' });
+    expect(disconnected.pendingCommand).toBeNull();
+  });
+
+  it('keeps reconnecting after the connection handshake until authoritative state arrives', () => {
+    const active = deliverJob(withSnapshot(baseSnapshot()), {
+      ...presentation(),
+      status: 'analyzing',
+    });
+    const disconnected = reduceAgentWorkbench(active, { type: 'transport_disconnected' });
+    const handshake = reduceAgentWorkbench(disconnected, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunConnectionReady',
+        controllerId,
+        sessionId,
+      },
+    });
+
+    expect(handshake.transport).toBe('disconnected');
+    expect(handshake.snapshot?.runId).toBe(runId);
+    expect(handshake.organizeJob?.jobId).toBe(presentation().jobId);
+
+    const restored = reduceAgentWorkbench(handshake, {
+      type: 'server_message',
+      authoritative: true,
+      message: { type: 'bgsmOrganizeJobRunSnapshot', snapshot: baseSnapshot() },
+    });
+    expect(restored.transport).toBe('connected');
+  });
+
+  it('clears stale organize state when an authoritative reconnect reports no active job', () => {
+    const active = deliverJob(withSnapshot(baseSnapshot()), {
+      ...presentation(),
+      status: 'analyzing',
+    });
+    const disconnected = reduceAgentWorkbench(active, { type: 'transport_disconnected' });
+    const liveNoActive = reduceAgentWorkbench(disconnected, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunNoActive',
+        controllerId,
+        sessionId,
+      },
+    });
+    expect(liveNoActive).toBe(disconnected);
+
+    const noActive = reduceAgentWorkbench(disconnected, {
+      type: 'server_message',
+      authoritative: true,
+      message: {
+        type: 'bgsmOrganizeJobRunNoActive',
+        controllerId,
+        sessionId,
+      },
+    });
+
+    expect(noActive.transport).toBe('connected');
+    expect(noActive.snapshot).toBeNull();
+    expect(noActive.organizeJob).toBeNull();
+    expect(noActive.pendingCommand).toBeNull();
+    expect(reduceAgentWorkbench(noActive, {
+      type: 'server_message',
+      authoritative: true,
+      message: {
+        type: 'bgsmOrganizeJobRunNoActive',
+        controllerId,
+        sessionId,
+      },
+    })).toBe(noActive);
+  });
+
+  it('preserves a ready preflight when reconnect authority reports no active run', () => {
+    const anchor = { messageId: 'preflight-message', createdAt: 10 };
+    let state = reduceAgentWorkbench(createAgentWorkbenchState(controllerId, sessionId), {
+      type: 'preflight_requested',
+      requestId: 'preflight-reconnect',
+      taskInstruction: 'Organize everything.',
+      conversationAnchor: anchor,
+    });
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunPreflightResult',
+        controllerId,
+        sessionId,
+        requestId: 'preflight-reconnect',
+        status: 'ready',
+        preflightToken: parsePreflightToken('preflight:v1:reconnect'),
+        label: 'All live stars',
+        count: 3,
+      },
+    });
+    state = reduceAgentWorkbench(state, { type: 'transport_disconnected' });
+    const restored = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      authoritative: true,
+      message: {
+        type: 'bgsmOrganizeJobRunNoActive',
+        controllerId,
+        sessionId,
+      },
+    });
+
+    expect(restored.transport).toBe('connected');
+    expect(restored.preflight?.status).toBe('ready');
+    expect(restored.conversationAnchor).toEqual(anchor);
+  });
+
+  it('makes a failed review-page request explicitly retryable without accepting stale failures', () => {
+    let state = deliverJob(
+      withSnapshot({ ...baseSnapshot(), state: 'review', proposalId }),
+      presentation(),
+    );
+    state = reduceAgentWorkbench(state, {
+      type: 'organize_review_page_requested',
+      requestId: 'review-current',
+    });
+
+    const stale = reduceAgentWorkbench(state, {
+      type: 'organize_review_request_failed',
+      requestId: 'review-stale',
+    });
+    expect(stale).toBe(state);
+
+    const failed = reduceAgentWorkbench(state, {
+      type: 'organize_review_request_failed',
+      requestId: 'review-current',
+    });
+    expect(failed.organizeReviewRequestId).toBeNull();
+    expect(failed.organizeReviewError).not.toBeNull();
+
+    const retrying = reduceAgentWorkbench(failed, {
+      type: 'organize_review_page_requested',
+      requestId: 'review-retry',
+    });
+    expect(retrying.organizeReviewRequestId).toBe('review-retry');
+    expect(retrying.organizeReviewError).toBeNull();
+
+    const serverFailed = reduceAgentWorkbench(retrying, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunError',
+        controllerId,
+        sessionId,
+        runId,
+        generation: 1,
+        requestId: 'review-retry',
+        reason: 'internal_error',
+        message: 'The review page could not be loaded.',
+      },
+    });
+    expect(serverFailed.organizeReviewRequestId).toBeNull();
+    expect(serverFailed.organizeReviewError).not.toBeNull();
+    expect(serverFailed.error).toBeNull();
+  });
+
+  it('rolls back a failed continuation request so the same suffix can be retried', () => {
+    const parent = {
+      ...baseSnapshot(),
+      state: 'analysis_blocked' as const,
+      terminalReason: 'analysis_failed' as const,
+      continuationCursor: parseContinuationCursorToken('cursor:v1:retryable-send-failure'),
+    };
+    const state = withSnapshot(parent);
+    const pending = reduceAgentWorkbench(state, { type: 'continue_requested' });
+    const duplicate = reduceAgentWorkbench(pending, { type: 'continue_requested' });
+
+    expect(pending.continuationPending).toBe(true);
+    expect(duplicate).toBe(pending);
+
+    const recovered = reduceAgentWorkbench(pending, { type: 'continue_send_failed' });
+    expect(recovered.continuationPending).toBe(false);
+    expect(recovered.retryingFailedSuffix).toBe(false);
+    expect(recovered.error).toBe(CONNECTION_INTERRUPTED_COPY);
+  });
+
+  it('models a temporary transport disconnect as reconnecting, not as a run failure', () => {
+    const state = withSnapshot(baseSnapshot());
+    const disconnected = reduceAgentWorkbench(state, { type: 'transport_disconnected' });
+
+    expect(disconnected.transport).toBe('disconnected');
+    expect(disconnected.snapshot?.state).toBe('analyzing');
+    expect(disconnected.error).toBeNull();
+  });
+
   it('uses runtime terminal detail until the durable job advances past analyzing', () => {
     const snapshot = baseSnapshot();
     const durableAnalyzing = { ...presentation(), status: 'analyzing' as const };
@@ -115,6 +489,36 @@ describe('Agent workbench durable organize-job reducer', () => {
     }));
   });
 
+  it('clears preflight timeline state when scope confirmation is cancelled', () => {
+    let state = createAgentWorkbenchState(controllerId, sessionId);
+    state = reduceAgentWorkbench(state, {
+      type: 'preflight_requested',
+      requestId: 'request-cancel',
+      taskInstruction: 'Organize every starred repository.',
+      conversationAnchor: { messageId: 'request-cancel-message', createdAt: 1 },
+    });
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunPreflightResult',
+        controllerId,
+        sessionId,
+        requestId: 'request-cancel',
+        status: 'ready',
+        preflightToken: parsePreflightToken('preflight:v1:cancel'),
+        label: 'All live stars',
+        count: 303,
+      },
+    });
+    expect(state.timeline.length).toBeGreaterThan(0);
+
+    const cancelled = reduceAgentWorkbench(state, { type: 'preflight_cancelled' });
+
+    expect(cancelled.preflight).toBeNull();
+    expect(cancelled.conversationAnchor).toBeNull();
+    expect(cancelled.timeline).toEqual([]);
+  });
+
   it('accepts an unscoped start error only while start is pending', () => {
     const errorMessage = {
       type: 'bgsmOrganizeJobRunError' as const,
@@ -164,6 +568,7 @@ describe('Agent workbench durable organize-job reducer', () => {
       message: { ...errorMessage, requestId: 'request-race' },
     });
     expect(failed.preflight).toBeNull();
+    expect(failed.conversationAnchor).toBeNull();
     expect(failed.error).toBe(errorMessage.message);
   });
 
@@ -279,6 +684,38 @@ describe('Agent workbench durable organize-job reducer', () => {
     });
     expect(current.organizeReceiptPage?.requestId).toBe('receipt-new');
     expect(current.organizeReceiptRequestId).toBeNull();
+
+    const loading = reduceAgentWorkbench(current, {
+      type: 'organize_receipt_page_requested',
+      requestId: 'receipt-retry',
+    });
+    const failed = reduceAgentWorkbench(loading, {
+      type: 'organize_receipt_request_failed',
+      requestId: 'receipt-retry',
+    });
+    expect(failed.organizeReceiptRequestId).toBeNull();
+    expect(failed.organizeReceiptError).not.toBeNull();
+
+    const retrying = reduceAgentWorkbench(failed, {
+      type: 'organize_receipt_page_requested',
+      requestId: 'receipt-server-failure',
+    });
+    const serverFailed = reduceAgentWorkbench(retrying, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunError',
+        controllerId,
+        sessionId,
+        runId,
+        generation: 1,
+        requestId: 'receipt-server-failure',
+        reason: 'internal_error',
+        message: 'The receipt could not be loaded.',
+      },
+    });
+    expect(serverFailed.organizeReceiptRequestId).toBeNull();
+    expect(serverFailed.organizeReceiptError).not.toBeNull();
+    expect(serverFailed.error).toBeNull();
   });
 
   it('accepts a new generation only after continuation is requested', () => {
@@ -306,6 +743,143 @@ describe('Agent workbench durable organize-job reducer', () => {
     });
     expect(accepted.snapshot?.runId).toBe(child.runId);
     expect(accepted.continuationPending).toBe(false);
+  });
+
+  it('rewinds visible progress while a failed suffix is retried', () => {
+    const continuationCursor = parseContinuationCursorToken('cursor:v1:failed-suffix-retry');
+    const parentCoverage = {
+      total: 3,
+      analyzed: 3,
+      actionable: 0,
+      unchanged: 2,
+      insufficientEvidence: 0,
+      missing: 0,
+      tombstoned: 0,
+      analysisFailed: 1,
+    };
+    const parent: OrganizeJobRunSnapshot = {
+      ...baseSnapshot(),
+      state: 'analysis_blocked',
+      terminalReason: 'analysis_failed',
+      coverage: parentCoverage,
+      continuationCursor,
+    };
+    let state = deliverJob(withSnapshot(parent), {
+      ...presentation(),
+      status: 'analysis_blocked',
+      coverage: parentCoverage,
+    });
+
+    state = reduceAgentWorkbench(state, { type: 'continue_requested' });
+    expect(state.retryingFailedSuffix).toBe(true);
+    expect(displayedAnalyzedRepositoryCount(state)).toBe(2);
+
+    const childRunId = parseRunId('run:v1:failed-suffix-retry-child');
+    const childCoverage = {
+      ...parentCoverage,
+      analyzed: 2,
+      analysisFailed: 0,
+    };
+    state = deliverJob(state, {
+      ...presentation(),
+      runId: childRunId,
+      generation: 2,
+      revision: 8,
+      status: 'analyzing',
+      coverage: childCoverage,
+    });
+    const child: OrganizeJobRunSnapshot = {
+      ...parent,
+      runId: childRunId,
+      generation: 2,
+      state: 'analyzing',
+      terminalReason: null,
+      usage: createEmptyRunBudgetUsage(),
+      coverage: childCoverage,
+      continuationCursor: null,
+    };
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: { type: 'bgsmOrganizeJobRunSnapshot', snapshot: child },
+    });
+    expect(displayedAnalyzedRepositoryCount(state)).toBe(2);
+
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobAnalysisProgress',
+        controllerId,
+        sessionId,
+        runId: childRunId,
+        generation: 2,
+        processed: 3,
+        total: 3,
+      },
+    });
+    expect(displayedAnalyzedRepositoryCount(state)).toBe(3);
+
+    state = deliverJob(state, {
+      ...presentation(),
+      runId: childRunId,
+      generation: 2,
+      revision: 9,
+    });
+    expect(state.retryingFailedSuffix).toBe(false);
+  });
+
+  it('surfaces a failed manual continuation instead of treating it as automatic recovery', () => {
+    const continuationCursor = parseContinuationCursorToken('cursor:v1:manual-retry-error');
+    const parent: OrganizeJobRunSnapshot = {
+      ...baseSnapshot(),
+      state: 'analysis_blocked',
+      terminalReason: 'analysis_failed',
+      coverage: {
+        total: 3,
+        analyzed: 3,
+        actionable: 0,
+        unchanged: 2,
+        insufficientEvidence: 0,
+        missing: 0,
+        tombstoned: 0,
+        analysisFailed: 1,
+      },
+      continuationCursor,
+    };
+    let state = deliverJob(withSnapshot(parent), {
+      ...presentation(),
+      status: 'analysis_blocked',
+      coverage: parent.coverage!,
+    });
+    state = reduceAgentWorkbench(state, { type: 'continue_requested' });
+
+    const childRunId = parseRunId('run:v1:manual-retry-error-child');
+    state = deliverJob(state, {
+      ...presentation(),
+      runId: childRunId,
+      generation: 2,
+      revision: 8,
+      status: 'analyzing',
+      coverage: {
+        ...parent.coverage!,
+        analyzed: 2,
+        analysisFailed: 0,
+      },
+    });
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunError',
+        controllerId,
+        sessionId,
+        runId: childRunId,
+        generation: 2,
+        reason: 'internal_error',
+        message: 'Manual retry could not start.',
+      },
+    });
+
+    expect(state.error).toBe('Manual retry could not start.');
+    expect(state.continuationPending).toBe(false);
   });
 
   it('keeps streamed repository progress monotonic and separate from durable coverage', () => {
@@ -355,6 +929,40 @@ describe('Agent workbench durable organize-job reducer', () => {
     });
     expect(reconnected.analysisProgress).toBeNull();
     expect(displayedAnalyzedRepositoryCount(reconnected)).toBe(0);
+  });
+
+  it('keeps visible progress monotonic across a same-job authoritative restore', () => {
+    let state = deliverJob(withSnapshot(baseSnapshot()), {
+      ...presentation(),
+      status: 'analyzing',
+      coverage: {
+        ...presentation().coverage,
+        analyzed: 2,
+        actionable: 1,
+        unchanged: 1,
+      },
+    });
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobAnalysisProgress',
+        controllerId,
+        sessionId,
+        runId,
+        generation: 1,
+        processed: 3,
+        total: 3,
+      },
+    });
+    expect(displayedAnalyzedRepositoryCount(state)).toBe(3);
+
+    const restored = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      authoritative: true,
+      message: { type: 'bgsmOrganizeJobRunSnapshot', snapshot: baseSnapshot() },
+    });
+
+    expect(displayedAnalyzedRepositoryCount(restored)).toBe(3);
   });
 
   it('accepts a newer authoritative durable generation after reconnect', () => {
@@ -474,8 +1082,7 @@ describe('Agent workbench durable organize-job reducer', () => {
         message: 'Child generation failed before publishing its snapshot.',
       },
     });
-    expect(childError.error).toBe('Child generation failed before publishing its snapshot.');
-    expect(childError.continuationPending).toBe(false);
+    expect(childError).toBe(state);
 
     const staleParent = deliverJob(state, {
       ...parentJob,
@@ -559,6 +1166,67 @@ describe('Agent workbench durable organize-job reducer', () => {
     expect(state.error).toBe('Automatic continuation could not start.');
   });
 
+  it('keeps showing progress while a durable automatic continuation is recoverable', () => {
+    const parent = {
+      ...baseSnapshot(),
+      usage: {
+        ...baseSnapshot().usage,
+        firstAnalyzerRequestAt: 1,
+        consumedFrozenPositions: 100,
+        analyzerBatches: 4,
+        providerAttempts: 4,
+        requestedOutputTokens: 4_096,
+      },
+    };
+    let state = deliverJob(withSnapshot(parent), {
+      ...presentation(),
+      status: 'analyzing',
+      coverage: {
+        ...presentation().coverage,
+        analyzed: 100,
+        unchanged: 100,
+      },
+    });
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunEvent',
+        event: {
+          type: 'budget_exhausted',
+          controllerId,
+          sessionId,
+          runId,
+          generation: 1,
+          eventId: 'event-durable-auto-continuation',
+          state: 'budget_exhausted',
+          reason: 'requested_output_tokens',
+          budget: parent.budget,
+          usage: parent.usage,
+          continuationCursor: parseContinuationCursorToken('cursor:v1:durable-auto-retry'),
+        },
+      },
+    });
+    expect(state.continuationPending).toBe(true);
+
+    const transientError = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunError',
+        controllerId,
+        sessionId,
+        runId,
+        generation: 1,
+        reason: 'internal_error',
+        message: 'Organize continuation generation must advance exactly once from its parent.',
+      },
+    });
+
+    expect(transientError).toBe(state);
+    expect(transientError.error).toBeNull();
+    expect(transientError.continuationPending).toBe(true);
+    expect(transientError.snapshot?.state).toBe('budget_exhausted');
+  });
+
   it('drops an active durable presentation when its matching run is cancelled', () => {
     const activeSnapshot = baseSnapshot();
     const activeJob = {
@@ -619,16 +1287,24 @@ describe('Agent workbench durable organize-job reducer', () => {
   });
 
   it('marks an in-memory run interrupted when the replacement worker confirms it is gone', () => {
-    const state = withSnapshot(baseSnapshot());
+    const state = reduceAgentWorkbench(withSnapshot(baseSnapshot()), {
+      type: 'transport_disconnected',
+    });
+    const message = {
+      type: 'bgsmOrganizeJobRunDisconnected' as const,
+      controllerId,
+      sessionId,
+      runId,
+      generation: 1,
+    };
+    expect(reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message,
+    })).toBe(state);
     const disconnected = reduceAgentWorkbench(state, {
       type: 'server_message',
-      message: {
-        type: 'bgsmOrganizeJobRunDisconnected',
-        controllerId,
-        sessionId,
-        runId,
-        generation: 1,
-      },
+      authoritative: true,
+      message,
     });
     expect(disconnected.snapshot?.state).toBe('interrupted');
     expect(disconnected.snapshot?.terminalReason).toBe('worker_lost');
@@ -685,6 +1361,21 @@ function deliverJob(
       presentation: job,
     },
   });
+}
+
+function pendingCommand(
+  id: string,
+  kind: WorkbenchPendingCommand['kind'],
+  baselineRevision: number | null = 7,
+): WorkbenchPendingCommand {
+  return {
+    id,
+    kind,
+    runId,
+    generation: 1,
+    jobId: baselineRevision === null ? null : presentation().jobId,
+    baselineRevision,
+  };
 }
 
 function presentation(): BgsmOrganizeJobPresentation {

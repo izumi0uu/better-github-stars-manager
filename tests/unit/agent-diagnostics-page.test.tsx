@@ -859,7 +859,7 @@ describe('Agent diagnostics page', () => {
     });
     expect(toggle.textContent).toBe('Disarm');
     expect(container.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent)
-      .toContain('Armed for the next real Agent run');
+      .toContain('Armed for the next real Cubby run');
 
     const common = {
       version: 1 as const,

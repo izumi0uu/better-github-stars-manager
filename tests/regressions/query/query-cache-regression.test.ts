@@ -238,4 +238,80 @@ describe('Query cache and semantics regressions', () => {
     ]);
     assert.equal(result.tagTotal, 2);
   });
+
+  it('uses canonical tag identity for excluded facets and tag filters', async () => {
+    await putFixtures({
+      stars: [
+        star({ full_name: 'a/full-width', starred_at: '2026-01-01T00:00:00Z' }),
+        star({ full_name: 'b/ascii', starred_at: '2026-01-02T00:00:00Z' }),
+      ],
+      tags: [
+        tag('a/full-width', ['ＵＩ']),
+        tag('b/ascii', ['Agent']),
+      ],
+      tagMeta: [
+        tagMeta('ui', { excluded: true }),
+        tagMeta('agent'),
+      ],
+    });
+
+    const result = await queryStars({
+      filter: { ...filter(), tags: ['ＡＧＥＮＴ'] },
+      offset: 0,
+      limit: 20,
+    });
+
+    assert.deepEqual(result.rows.map((row) => row.full_name), ['b/ascii']);
+    assert.deepEqual(result.tagTree, [{ name: 'Agent', count: 1 }]);
+    assert.equal(result.tagTotal, 1);
+  });
+
+  it('treats stale excluded assignments as untagged and never matches them as filters', async () => {
+    await putFixtures({
+      stars: [star({
+        full_name: 'a/stale-deleted-tag',
+        starred_at: '2026-01-01T00:00:00Z',
+      })],
+      tags: [tag('a/stale-deleted-tag', ['ui'])],
+      tagMeta: [tagMeta('ＵＩ', { excluded: true })],
+    });
+
+    const untagged = await queryStars({
+      filter: { ...filter(), onlyUntagged: true },
+      offset: 0,
+      limit: 20,
+    });
+    const filtered = await queryStars({
+      filter: { ...filter(), tags: ['UI'] },
+      offset: 0,
+      limit: 20,
+    });
+
+    assert.deepEqual(untagged.rows.map((row) => row.full_name), ['a/stale-deleted-tag']);
+    assert.deepEqual(visibleTagNames(untagged.tagsForRows['a/stale-deleted-tag']), []);
+    assert.deepEqual(filtered.rows, []);
+  });
+
+  it('uses the newest canonical metadata state when an older alias is excluded', async () => {
+    await putFixtures({
+      stars: [star({
+        full_name: 'a/re-added-tag',
+        starred_at: '2026-01-01T00:00:00Z',
+      })],
+      tags: [tag('a/re-added-tag', ['UI'])],
+      tagMeta: [
+        tagMeta('ＵＩ', { excluded: true, mtime: '2026-01-01T00:00:00Z' }),
+        tagMeta('ui', { excluded: false, mtime: '2026-01-02T00:00:00Z' }),
+      ],
+    });
+
+    const result = await queryStars({
+      filter: { ...filter(), tags: ['ui'] },
+      offset: 0,
+      limit: 20,
+    });
+
+    assert.deepEqual(result.rows.map((row) => row.full_name), ['a/re-added-tag']);
+    assert.deepEqual(result.tagTree, [{ name: 'UI', count: 1 }]);
+  });
 });

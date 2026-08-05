@@ -18,7 +18,7 @@ Better GitHub Stars Manager
 
 ### Short description
 
-Organize GitHub stars with search, tags, notes, filters, optional Gist sync, and a review-first AI Agent.
+Organize GitHub stars with search, tags, notes, filters, optional Gist sync, and Cubby, a review-first AI assistant.
 
 ### Detailed description
 
@@ -33,7 +33,7 @@ Use it to:
 - sync only your annotation layer across devices through your own secret GitHub Gist
 - use your own OpenAI, OpenRouter, Anthropic, or compatible AI service to analyze a frozen repository scope and review additive tag suggestions before applying them
 
-The extension UI runs on GitHub. GitHub/Gist requests go directly to GitHub, and optional Agent requests go directly to the AI service the user selects. The developer operates no proxy or custom backend.
+The extension UI runs on GitHub. GitHub/Gist requests go directly to GitHub, and optional Cubby requests go directly to the AI service the user selects. The developer operates no proxy or custom backend.
 
 ## Suggested store category
 
@@ -82,19 +82,19 @@ Used to authenticate the provided token, fetch the authenticated user's starred 
 
 ### `https://api.openai.com/*`
 
-Required in the current package so a user who explicitly configures OpenAI can test the connection and run BGSM Agent. Options shows the exact service origin in a collapsed data-use notice.
+Required in the current package so a user who explicitly configures OpenAI can test the connection and run Cubby. Options shows the exact service origin in a collapsed data-use notice.
 
 ### `https://openrouter.ai/*`
 
-Required in the current package so a user who explicitly configures OpenRouter can test the connection and run BGSM Agent. Options shows the exact service origin in a collapsed data-use notice.
+Required in the current package so a user who explicitly configures OpenRouter can test the connection and run Cubby. Options shows the exact service origin in a collapsed data-use notice.
 
 ### `https://api.anthropic.com/*`
 
-Required in the current package so a user who explicitly configures Anthropic can test the connection and run BGSM Agent. Options shows the exact service origin in a collapsed data-use notice.
+Required in the current package so a user who explicitly configures Anthropic can test the connection and run Cubby. Options shows the exact service origin in a collapsed data-use notice.
 
 ### Optional custom AI-service hosts
 
-The manifest declares broad HTTPS plus localhost/127.0.0.1 development patterns as optional host permissions because a custom compatible service cannot be known at install time. Options requests access only from an explicit **Grant access** user action for the configured hostname. Chrome's permission pattern may cover ports, while BGSM's credential and fetch gates remain exact-origin and port-sensitive.
+The manifest declares broad HTTPS plus localhost/127.0.0.1 development patterns as optional host permissions because a custom compatible service cannot be known at install time. Options requests access only from an explicit **Allow access** user action for the configured hostname. Chrome's permission pattern may cover ports, while BGSM's credential and fetch gates remain exact-origin and port-sensitive.
 
 ## Privacy practices form notes
 
@@ -107,8 +107,8 @@ When filling the Chrome Web Store privacy section, the current codebase supports
 - Data is not shared with third-party analytics or ad SDKs.
 - Remote services are GitHub/Gist plus, only when enabled, the user's selected OpenAI, OpenRouter, Anthropic, or custom OpenAI-compatible origin.
 - The extension stores star metadata locally and optionally stores user-created annotations in the user's own secret GitHub Gist.
-- Agent task data may include the prompt or bounded task instruction, scoped public repository metadata, bounded public code snippets and file paths when indexed code search is requested, private notes for scoped repositories only when the current prompt asks to use them, visible, bounded tag taxonomy, and protocol observations. Indexed search can be partial and is not presented as an exhaustive repository scan. Requested notes and code snippets are untrusted and may remain in the in-memory conversation for follow-ups or summaries with the same AI service.
-- Agent task data excludes private notes the user did not ask BGSM Agent to use, credentials or secrets, the GitHub token, and unrelated or out-of-scope stars by default.
+- Cubby task data may include the prompt or bounded task instruction, scoped public repository metadata, bounded public code snippets and file paths when indexed code search is requested, private notes for scoped repositories only when the current prompt asks to use them, visible, bounded tag taxonomy, and protocol observations. Indexed search can be partial and is not presented as an exhaustive repository scan. Requested notes and code snippets are untrusted and may remain in the in-memory conversation for follow-ups or summaries with the same AI service.
+- Cubby task data excludes private notes the user did not ask Cubby to use, credentials or secrets, the GitHub token, and unrelated or out-of-scope stars by default.
 - The selected AI-provider API key is sent only to its bound origin as an authorization header, never as model-visible prompt/tool data or logs.
 - No developer-operated proxy receives the traffic; provider requests go directly from the extension to the selected service.
 
@@ -127,8 +127,8 @@ If the dashboard asks for a Limited Use statement, reuse the language from `docs
 9. Click `Push` to create or update the dedicated secret sync Gist, then click `Pull` to fetch it back.
 10. In Options, choose OpenAI, OpenRouter, or Anthropic and confirm the collapsed data-use notice names the service and exact origin.
 11. Enter a model and test API key, then confirm **Test connection** is available without a separate disclosure acknowledgement.
-12. For a custom compatible Base URL, click the separate **Grant access** control and verify denial makes no provider request.
-13. Open the Agent workbench, start a bounded tag analysis, review selected rows, and apply only the chosen additive tag suggestions.
+12. For a custom compatible Base URL, click the separate **Allow access** control and verify denial makes no provider request.
+13. Open the Cubby workbench, start a bounded tag analysis, review selected rows, and apply only the chosen additive tag suggestions.
 
 ## Pre-submit checklist
 

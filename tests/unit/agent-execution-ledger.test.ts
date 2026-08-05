@@ -9,6 +9,7 @@ import {
   type AgentTool,
   runAgentLoop,
 } from '@/agent-harness';
+import { createBgsmAgentTools } from '@/bgsm-agent';
 
 const user: AgentMessage = {
   id: 'ledger-user',
@@ -273,6 +274,79 @@ describe('agent execution ledger', () => {
     assert.deepEqual(received, [['A'], ['B']]);
     assert.equal(ledger.stateForEffect(['assign_repo_tags', 'scope:test', 'owner/repo', 'a']), 'committed');
     assert.equal(ledger.stateForEffect(['assign_repo_tags', 'scope:test', 'owner/repo', 'b']), 'committed');
+  });
+
+  it('executes only new repository-removal and global-deletion effects across retries', async () => {
+    const ledger = new AgentExecutionLedger();
+    const removals: unknown[] = [];
+    const deletions: unknown[] = [];
+    const tools = createBgsmAgentTools({
+      repositoryScope: ['owner/repo'],
+      scopeFingerprint: 'scope:test',
+      removeVisibleTags: async (changes, context) => {
+        context.markWriteStarted?.();
+        removals.push(changes);
+        const changed = changes.reduce((total, change) => total + change.tags.length, 0);
+        return {
+          requested: changed,
+          changed,
+          skipped: 0,
+          repositoriesChanged: changes.length,
+        };
+      },
+      deleteTagsEverywhere: async (tags, context) => {
+        context.markWriteStarted?.();
+        deletions.push(tags);
+        return {
+          requestedTags: tags.length,
+          assignmentsRemoved: tags.length,
+          repositoriesChanged: tags.length,
+        };
+      },
+    });
+    const remove = tools.find((tool) => tool.name === 'remove_repo_tags');
+    const del = tools.find((tool) => tool.name === 'delete_tags_everywhere');
+    assert.ok(remove);
+    assert.ok(del);
+
+    const run = (callId: string, tool: AgentTool, args: unknown) => runAgentLoop({
+      sessionId: 'ledger-batch-tag-delete',
+      messages: [user],
+      provider: {
+        async generate() {
+          return { toolCalls: [{ id: callId, name: tool.name, arguments: args }] };
+        },
+      },
+      tools: [tool],
+      permissions: allow,
+      executionLedger: ledger,
+      maxSteps: 1,
+    });
+
+    await run('remove-a', remove, {
+      changes: [{ full_name: 'owner/repo', tags: ['legacy'] }],
+    });
+    await run('remove-b', remove, {
+      changes: [{ full_name: 'OWNER/REPO', tags: ['LEGACY', 'unused'] }],
+    });
+    await run('delete-a', del, { tags: ['obsolete'] });
+    await run('delete-b', del, { tags: ['OBSOLETE', 'unused'] });
+
+    assert.deepEqual(removals, [
+      [{ full_name: 'owner/repo', tags: ['legacy'] }],
+      [{ full_name: 'owner/repo', tags: ['unused'] }],
+    ]);
+    assert.deepEqual(deletions, [['obsolete'], ['unused']]);
+    assert.equal(
+      ledger.stateForEffect(['remove_repo_tags', 'scope:test', 'owner/repo', 'legacy']),
+      'committed',
+    );
+    assert.equal(
+      ledger.stateForEffect(['remove_repo_tags', 'scope:test', 'owner/repo', 'unused']),
+      'committed',
+    );
+    assert.equal(ledger.stateForEffect(['delete_tags_everywhere', 'obsolete']), 'committed');
+    assert.equal(ledger.stateForEffect(['delete_tags_everywhere', 'unused']), 'committed');
   });
 
   it('blocks automatic replay after an uncertain writer outcome', async () => {

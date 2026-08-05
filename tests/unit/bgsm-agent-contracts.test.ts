@@ -67,6 +67,7 @@ import {
   type ProposalReviewProjection,
 } from '@/bgsm-agent';
 import {
+  validateBgsmOrganizeJobDeliveryEnvelope,
   validateBgsmOrganizeJobMessageIdentity,
   type BgsmOrganizeJobPortMessage,
 } from '@/utils/messaging';
@@ -79,7 +80,23 @@ const controllerId = parseControllerId('controller:v1:controller-1');
 const sourceFingerprint = parseSourceFingerprintV1(`sf:v1:${DIGEST}`);
 const taxonomyFingerprint = parseTaxonomyFingerprintV1(`tf:v1:${DIGEST}`);
 
-describe('BGSM Agent response completeness contract', () => {
+describe('Cubby response completeness contract', () => {
+  it('keeps the Cubby persona warm, precise, and restrained', () => {
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /optional AI tag assistant in Better GitHub Stars Manager/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /calm, capable library companion/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /do not role-play, use pet sounds/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /errors, recovery steps, data boundaries, and write confirmations precise and neutral/u);
+  });
+
+  it('keeps full-library scope confirmation actions in the UI', () => {
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /confirmation_requested/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /analysis scope is being prepared/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Do not ask the user to reply with a fixed phrase/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Do not claim that the scope is ready/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Do not mention the UI, tool, handoff, status, or protocol/u);
+    assert.match(BGSM_AGENT_INSTRUCTIONS, /Start analysis and Cancel controls/u);
+  });
+
   it('requires exact requested counts or an explicit qualified-result shortage', () => {
     assert.match(BGSM_AGENT_INSTRUCTIONS, /exact number of repositories/u);
     assert.match(BGSM_AGENT_INSTRUCTIONS, /exactly that many distinct qualifying repositories/u);
@@ -166,7 +183,7 @@ function validateProposalActions(actions: readonly ProposalAction[]): void {
   });
 }
 
-describe('BGSM Agent frozen RunBudget contract', () => {
+describe('Cubby frozen RunBudget contract', () => {
   it('exposes the exact production defaults and deeply immutable policy value', () => {
     const budget = createProductionRunBudget();
     assert.deepEqual(budget, {
@@ -711,6 +728,52 @@ describe('first-use disclosure and messaging identities', () => {
       state: 'completed',
       reason: 'timeout',
     }), /inconsistent/u);
+  });
+
+  it('distinguishes a live connection handshake from authoritative no-active state', () => {
+    const connectionReady = {
+      type: 'bgsmOrganizeJobRunConnectionReady' as const,
+      controllerId,
+      sessionId: 'session-1',
+    };
+    const noActive = {
+      type: 'bgsmOrganizeJobRunNoActive' as const,
+      controllerId,
+      sessionId: 'session-1',
+    };
+    validateBgsmOrganizeJobMessageIdentity(connectionReady);
+    validateBgsmOrganizeJobMessageIdentity(noActive);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...noActive,
+      active: false,
+    } as unknown as BgsmOrganizeJobPortMessage), /Unexpected BGSM OrganizeJobRun message keys/u);
+
+    const envelope = {
+      type: 'bgsmOrganizeJobRunDelivery' as const,
+      connectionEpochId: 'organize-connection:v1:contracts',
+      deliverySequence: 0,
+      deliveryKind: 'authoritative_snapshot' as const,
+      durableRevision: null,
+      message: noActive,
+    };
+    validateBgsmOrganizeJobDeliveryEnvelope(envelope);
+    assert.throws(() => validateBgsmOrganizeJobDeliveryEnvelope({
+      ...envelope,
+      deliveryKind: 'live',
+    }), /must be an authoritative/u);
+    assert.throws(() => validateBgsmOrganizeJobDeliveryEnvelope({
+      ...envelope,
+      durableRevision: 1,
+    }), /non-durable/u);
+    validateBgsmOrganizeJobDeliveryEnvelope({
+      ...envelope,
+      deliveryKind: 'live',
+      message: connectionReady,
+    });
+    assert.throws(() => validateBgsmOrganizeJobDeliveryEnvelope({
+      ...envelope,
+      message: connectionReady,
+    }), /must be a live/u);
   });
 
   it('binds proposal-summary events to the durable paged-review identity and count', () => {

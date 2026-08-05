@@ -1,4 +1,4 @@
-# BGSM Agent Provider Plans
+# AI Provider Plans for Cubby
 
 These plans are neutral `plan-bundle/v1` contracts. They are tracked product
 documents and have no dependency on OMX, `.omx`, or a task-management runtime.

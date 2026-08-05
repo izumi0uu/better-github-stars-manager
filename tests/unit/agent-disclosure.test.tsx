@@ -38,9 +38,9 @@ describe('Agent data disclosure', () => {
 
     (summary as HTMLElement).click();
     expect(details?.open).toBe(true);
-    expect(container.textContent).toContain('Requested code snippets or private notes');
-    expect(container.textContent).toContain('GitHub token, credentials in model data');
-    expect(container.textContent).toContain('Authorization header for this exact origin');
+    expect(container.textContent).toContain('Code snippets or private notes only when you ask Cubby');
+    expect(container.textContent).toContain('GitHub token, API keys, other credentials');
+    expect(container.textContent).toContain('exact address above as an Authorization header');
   });
 
   it('shows custom host access as the only required action', async () => {
@@ -58,9 +58,9 @@ describe('Agent data disclosure', () => {
     );
 
     const grant = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Grant access'));
+      .find((button) => button.textContent?.includes('Allow access'));
     expect(grant).toBeInstanceOf(HTMLButtonElement);
-    expect(container.textContent).toContain('Grant host access to test or use this custom service.');
+    expect(container.textContent).toContain('Allow Chrome access to test or use this custom service.');
     await click(grant as HTMLButtonElement);
     expect(onGrantAccess).toHaveBeenCalledOnce();
   });
@@ -78,7 +78,7 @@ describe('Agent data disclosure', () => {
       mountedRoots,
     );
 
-    expect(container.textContent).toContain('built-in host access');
+    expect(container.textContent).toContain('built-in Chrome access');
     expect(container.querySelector('button')).toBeNull();
   });
 });

@@ -14,6 +14,7 @@ import {
   attachOrganizeJob,
   activateOrganizePreflight,
   advanceOrganizeJobRun,
+  bindOrganizeJobProvider,
   cancelOrganizePreflight,
   checkpointOrganizeAnalysisPage,
   cancelOrganizeJob,
@@ -220,7 +221,14 @@ describe('durable whole-library organize job store', () => {
   }, 20_000);
 
   it('blocks review when terminal analysis failures leave incomplete coverage', async () => {
-    const job = await createOrganizeJob(jobInput(['owner/fails']));
+    const runId = parseRunId('run:v1:blocked-at-end');
+    const job = await createOrganizeJob({
+      ...jobInput(['owner/fails']),
+      runId,
+      proposalId: parseProposalId('proposal:v1:blocked-at-end'),
+      budget: createProductionRunBudget(),
+      usage: createEmptyRunBudgetUsage(),
+    });
     const claim = await claimOrganizeAnalysisBatch(job.jobId, 25, { ownerId: 'analysis' });
     await settleOrganizeAnalysisBatch({
       jobId: job.jobId,
@@ -232,6 +240,19 @@ describe('durable whole-library organize job store', () => {
     assert.equal(coverage.failed, 1);
     assert.equal(coverage.complete, false);
     assert.equal((await getOrganizeJob(job.jobId))?.status, 'analysis_blocked');
+    await assert.rejects(() => advanceOrganizeJobRun({
+      jobId: job.jobId,
+      controllerId: job.controllerId,
+      sessionId: job.sessionId,
+      runId: parseRunId('run:v1:blocked-at-end-child'),
+      generation: 2,
+      expectedParent: { runId, generation: 1 },
+      proposalId: parseProposalId('proposal:v1:blocked-at-end-child'),
+      budget: createProductionRunBudget(),
+      usage: createEmptyRunBudgetUsage(),
+      startFrozenIndex: 1,
+      analysisPendingRanges: [],
+    }), /actively analyzing/u);
   });
 
   it('recovers expired leases and rejects settlement from the stale claimant', async () => {
@@ -397,6 +418,73 @@ describe('durable whole-library organize job store', () => {
       'unchanged',
       'tombstoned',
     ]);
+  });
+
+  it('does not advance a review-ready run or a complete durable ledger back to analyzing', async () => {
+    const runId = parseRunId('run:v1:review-phase-guard');
+    const emptyUsage = createEmptyRunBudgetUsage();
+    const pageUsage = { ...emptyUsage, analyzerBatches: 1 };
+    const job = await createOrganizeJob({
+      ...jobInput(['owner/review-phase-guard']),
+      runId,
+      proposalId: parseProposalId('proposal:v1:review-phase-guard'),
+      budget: createProductionRunBudget(),
+      usage: emptyUsage,
+    });
+    const page = await reserveOrganizeAnalysisPage({
+      jobId: job.jobId,
+      runId,
+      generation: 1,
+      expectedRevision: job.revision,
+      startFrozenIndex: 0,
+      endFrozenIndexExclusive: 1,
+      previousUsage: emptyUsage,
+      usage: pageUsage,
+      lease: { ownerId: 'scheduler:review-phase-guard', now: 100 },
+    });
+    const reviewed = await checkpointOrganizeAnalysisPage({
+      jobId: job.jobId,
+      runId,
+      generation: 1,
+      expectedRevision: page!.job.revision,
+      leaseToken: page!.leaseToken,
+      expectedNextFrozenIndex: 1,
+      outcomes: [{ position: 0, state: 'unchanged' }],
+      usage: { ...pageUsage, consumedFrozenPositions: 1 },
+      analysisPendingRanges: [],
+      now: 101,
+    });
+    assert.equal(reviewed.job.status, 'review');
+    assert.equal(reviewed.coverage.complete, true);
+
+    const bound = await bindOrganizeJobProvider({
+      jobId: job.jobId,
+      runId,
+      generation: 1,
+      providerBinding: { provider: 'test', model: 'review-safe' },
+      now: 102,
+    });
+    assert.equal(bound.status, 'review');
+    assert.equal(bound.nextFrozenIndex, 1);
+    assert.deepEqual(bound.providerBinding, { provider: 'test', model: 'review-safe' });
+
+    const advance = () => advanceOrganizeJobRun({
+      jobId: job.jobId,
+      controllerId: job.controllerId,
+      sessionId: job.sessionId,
+      runId,
+      generation: 1,
+      proposalId: parseProposalId(job.proposalId),
+      budget: bound.budget as ReturnType<typeof createProductionRunBudget>,
+      usage: bound.usage as ReturnType<typeof createEmptyRunBudgetUsage>,
+      startFrozenIndex: 1,
+      analysisPendingRanges: [],
+      now: 103,
+    });
+    await assert.rejects(advance, /review-ready|complete coverage/u);
+
+    await db.organizeJobs.update(job.jobId, { status: 'analyzing' });
+    await assert.rejects(advance, /complete coverage/u);
   });
 
   it('renews a slow retry lease through checkpoint beyond the original expiry', async () => {
@@ -721,21 +809,15 @@ describe('durable whole-library organize job store', () => {
       now: 102,
     }), /pending range worklist is stale/u);
 
-    const providerBound = await advanceOrganizeJobRun({
+    const providerBound = await bindOrganizeJobProvider({
       jobId: job.jobId,
-      controllerId: job.controllerId,
-      sessionId: job.sessionId,
       runId: parentRunId,
       generation: 1,
-      proposalId: parseProposalId(job.proposalId),
-      budget: job.budget as ReturnType<typeof createProductionRunBudget>,
-      usage: parentPageUsage,
       providerBinding: { provider: 'test', model: 'split-safe' },
-      startFrozenIndex: 0,
-      analysisPendingRanges: split.pendingRanges,
       now: 102,
     });
     assert.equal(providerBound.nextFrozenIndex, 0);
+    assert.equal(providerBound.status, 'analyzing');
     assert.deepEqual(providerBound.analysisPendingRanges, split.pendingRanges);
 
     const childRunId = parseRunId('run:v1:split-continuation-child');

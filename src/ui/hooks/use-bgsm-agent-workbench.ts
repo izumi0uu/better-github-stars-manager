@@ -6,10 +6,12 @@ import {
 import {
   canContinueOrganizeJobRun,
   createAgentWorkbenchState,
+  currentOrganizeJobState,
   displayedAnalyzedRepositoryCount,
   PREFLIGHT_INCOMPLETE_COPY,
   reduceAgentWorkbench,
   type WorkbenchConversationAnchor,
+  type WorkbenchPendingCommand,
 } from '@/ui/agent-workbench-state';
 import type { BgsmAgentOrganizeLibraryHandoff } from '@/bgsm-agent/tools';
 import {
@@ -28,6 +30,13 @@ type DeferredOrganizeHandoffCommand = Extract<
   }
 >;
 
+type PendingReceiptPageRequest = Readonly<{
+  requestId: string;
+  applyId: string;
+  rowOffset: number;
+  filter: 'all' | 'changed_or_failed';
+}>;
+
 export function useBgsmAgentWorkbench(
   onAuthoritativeDataChanged?: () => void,
   sharedSessionId?: string,
@@ -39,6 +48,7 @@ export function useBgsmAgentWorkbench(
   const agentAutoStartRequestIdRef = useRef<string | null>(null);
   const agentHandoffAuthorityRef = useRef(0);
   const deferredHandoffCommandRef = useRef<DeferredOrganizeHandoffCommand | null>(null);
+  const pendingReceiptPageRequestRef = useRef<PendingReceiptPageRequest | null>(null);
   const onAuthoritativeDataChangedRef = useRef(onAuthoritativeDataChanged);
   onAuthoritativeDataChangedRef.current = onAuthoritativeDataChanged;
   const [state, dispatch] = useReducer(
@@ -69,13 +79,31 @@ export function useBgsmAgentWorkbench(
   }, []);
 
   const post = useCallback((message: BgsmOrganizeJobClientMessage) => {
-    if (!tryPost(message)) throw new Error('BGSM Agent is not connected.');
+    if (!tryPost(message)) throw new Error('Cubby is not connected.');
   }, [tryPost]);
 
   const postOrDeferHandoff = useCallback((message: DeferredOrganizeHandoffCommand) => {
     deferredHandoffCommandRef.current = message;
     if (tryPost(message)) deferredHandoffCommandRef.current = null;
   }, [tryPost]);
+
+  const sendOrganizeCommand = useCallback((
+    command: Omit<WorkbenchPendingCommand, 'id'>,
+    createMessage: (requestId: string) => BgsmOrganizeJobClientMessage,
+  ): boolean => {
+    if (
+      stateRef.current.pendingCommand
+      || stateRef.current.transport !== 'connected'
+    ) return false;
+    const id = `organize-command:${command.kind}:${createNonce()}`;
+    dispatchTracked({
+      type: 'organize_command_requested',
+      command: { id, ...command },
+    });
+    if (tryPost(createMessage(id))) return true;
+    dispatchTracked({ type: 'organize_command_send_failed', commandId: id });
+    return false;
+  }, [dispatchTracked, tryPost]);
 
   useEffect(() => {
     const nextSessionId = sharedSessionId ?? sessionIdRef.current;
@@ -86,6 +114,7 @@ export function useBgsmAgentWorkbench(
       agentAutoStartRequestIdRef.current = null;
       agentHandoffAuthorityRef.current += 1;
       deferredHandoffCommandRef.current = null;
+      pendingReceiptPageRequestRef.current = null;
       const rebound = createAgentWorkbenchState(controllerIdRef.current, nextSessionId);
       stateRef.current = rebound;
       snapshotRef.current = null;
@@ -113,7 +142,6 @@ export function useBgsmAgentWorkbench(
       let predecessor = retiringPort;
       activePort = port;
       portRef.current = port;
-      dispatch({ type: 'transport_connected' });
 
       const releasePredecessor = () => {
         const stalePort = predecessor;
@@ -134,6 +162,8 @@ export function useBgsmAgentWorkbench(
         activePort = null;
         if (portRef.current === port) portRef.current = null;
         retiringPorts.add(port);
+        pendingReceiptPageRequestRef.current = null;
+        dispatchTracked({ type: 'transport_disconnected' });
         // A failed deferred handoff must survive the reconnect. Schedule the
         // replacement asynchronously so a throwing Port cannot recurse through
         // connect() synchronously and overflow the worker/UI stack.
@@ -171,6 +201,24 @@ export function useBgsmAgentWorkbench(
         try {
           const message = delivery.message;
           validateBgsmOrganizeJobMessageIdentity(message);
+          const pendingReceipt = pendingReceiptPageRequestRef.current;
+          if (pendingReceipt) {
+            if (
+              message.type === 'bgsmOrganizeReceiptPage'
+              && message.controllerId === controllerId
+              && message.sessionId === sessionId
+              && message.requestId === pendingReceipt.requestId
+            ) {
+              pendingReceiptPageRequestRef.current = null;
+            } else if (
+              message.type === 'bgsmOrganizeJobRunError'
+              && message.controllerId === controllerId
+              && message.sessionId === sessionId
+              && message.requestId === pendingReceipt.requestId
+            ) {
+              pendingReceiptPageRequestRef.current = null;
+            }
+          }
           const action = {
             type: 'server_message' as const,
             message,
@@ -199,7 +247,8 @@ export function useBgsmAgentWorkbench(
         activePort = null;
         if (portRef.current === port) portRef.current = null;
         releasePredecessor();
-        dispatch({ type: 'transport_disconnected' });
+        pendingReceiptPageRequestRef.current = null;
+        dispatchTracked({ type: 'transport_disconnected' });
         queueMicrotask(connect);
       };
       const detachPort = () => {
@@ -257,6 +306,7 @@ export function useBgsmAgentWorkbench(
       const port = activePort;
       activePort = null;
       portRef.current = null;
+      pendingReceiptPageRequestRef.current = null;
       if (!port) return;
       try {
         port.postMessage({
@@ -277,14 +327,15 @@ export function useBgsmAgentWorkbench(
       }
       retiringPorts.clear();
     };
-  }, [sharedSessionId]);
+  }, [dispatchTracked, sharedSessionId]);
 
   const requestOrganizeReviewPage = useCallback((rowOffset: number) => {
-    const job = stateRef.current.organizeJob;
-    if (!job || job.status !== 'review') return;
+    const current = stateRef.current;
+    const job = current.organizeJob;
+    if (!job || job.status !== 'review' || current.organizeReviewRequestId !== null) return;
     const requestId = `organize-review:${createNonce()}`;
     dispatchTracked({ type: 'organize_review_page_requested', requestId });
-    post({
+    const sent = tryPost({
       type: 'requestBgsmOrganizeReviewPage',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
@@ -295,7 +346,10 @@ export function useBgsmAgentWorkbench(
       rowOffset,
       limit: 100,
     });
-  }, [dispatchTracked, post]);
+    if (!sent) {
+      dispatchTracked({ type: 'organize_review_request_failed', requestId });
+    }
+  }, [dispatchTracked, tryPost]);
 
   const requestOrganizeReceiptPage = useCallback((
     rowOffset: number,
@@ -303,9 +357,21 @@ export function useBgsmAgentWorkbench(
   ) => {
     const job = stateRef.current.organizeJob;
     if (!job?.apply || job.status !== 'completed') return;
+    const pending = pendingReceiptPageRequestRef.current;
+    if (
+      pending?.applyId === job.apply.applyId
+      && pending.rowOffset === rowOffset
+      && pending.filter === filter
+    ) return;
     const requestId = `organize-receipt:${createNonce()}`;
+    pendingReceiptPageRequestRef.current = {
+      requestId,
+      applyId: job.apply.applyId,
+      rowOffset,
+      filter,
+    };
     dispatchTracked({ type: 'organize_receipt_page_requested', requestId });
-    post({
+    const sent = tryPost({
       type: 'requestBgsmOrganizeReceiptPage',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
@@ -318,7 +384,13 @@ export function useBgsmAgentWorkbench(
       limit: 100,
       filter,
     });
-  }, [dispatchTracked, post]);
+    if (!sent) {
+      if (pendingReceiptPageRequestRef.current?.requestId === requestId) {
+        pendingReceiptPageRequestRef.current = null;
+      }
+      dispatchTracked({ type: 'organize_receipt_request_failed', requestId });
+    }
+  }, [dispatchTracked, tryPost]);
 
   useEffect(() => {
     const job = state.organizeJob;
@@ -327,6 +399,7 @@ export function useBgsmAgentWorkbench(
       !job ||
       job.status !== 'review' ||
       state.organizeReviewRequestId !== null ||
+      state.organizeReviewError !== null ||
       (state.organizeReviewPage?.jobId === job.jobId &&
         state.organizeReviewPage.revision === job.revision)
     ) return;
@@ -335,25 +408,8 @@ export function useBgsmAgentWorkbench(
     requestOrganizeReviewPage,
     state.organizeJob,
     state.organizeReviewPage,
+    state.organizeReviewError,
     state.organizeReviewRequestId,
-    state.transport,
-  ]);
-
-  useEffect(() => {
-    const job = state.organizeJob;
-    if (
-      state.transport !== 'connected' ||
-      !job?.apply ||
-      job.status !== 'completed' ||
-      state.organizeReceiptRequestId !== null ||
-      state.organizeReceiptPage?.applyId === job.apply.applyId
-    ) return;
-    requestOrganizeReceiptPage(0, 'all');
-  }, [
-    requestOrganizeReceiptPage,
-    state.organizeJob,
-    state.organizeReceiptPage,
-    state.organizeReceiptRequestId,
     state.transport,
   ]);
 
@@ -529,38 +585,60 @@ export function useBgsmAgentWorkbench(
   }, [dispatchTracked, post, postOrDeferHandoff, state.preflight?.requestId]);
 
   const stop = useCallback(() => {
-    const identity = !state.organizeJob
-      ? state.snapshot
-      : !state.snapshot || state.organizeJob.generation >= state.snapshot.generation
-        ? state.organizeJob
-        : state.snapshot;
+    const current = stateRef.current;
+    if (current.pendingCommand || current.transport !== 'connected') return;
+    const identity = !current.organizeJob
+      ? current.snapshot
+      : !current.snapshot || current.organizeJob.generation >= current.snapshot.generation
+        ? current.organizeJob
+        : current.snapshot;
     if (!identity) return;
-    post({
+    const job = current.organizeJob?.runId === identity.runId
+      && current.organizeJob.generation === identity.generation
+      ? current.organizeJob
+      : null;
+    const phase = currentOrganizeJobState(current.snapshot, current.organizeJob);
+    const kind = job?.apply && ['apply_sealed', 'applying'].includes(job.status)
+      ? 'pause_apply'
+      : ['frozen', 'prepared', 'checking_provider', 'analyzing'].includes(phase ?? '')
+        ? 'stop_analysis'
+        : null;
+    if (!kind) return;
+    sendOrganizeCommand({
+      kind,
+      runId: identity.runId,
+      generation: identity.generation,
+      jobId: job?.jobId ?? null,
+      baselineRevision: job?.revision ?? null,
+    }, (requestId) => ({
       type: 'stopBgsmOrganizeJob',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
       runId: identity.runId,
       generation: identity.generation,
-    });
-  }, [post, state.organizeJob, state.snapshot]);
+      requestId,
+    }));
+  }, [sendOrganizeCommand]);
 
   const continueRemaining = useCallback(() => {
-    const snapshot = state.snapshot;
+    const current = stateRef.current;
+    const snapshot = current.snapshot;
     const continuationCursor = snapshot?.continuationCursor;
     if (
       !snapshot ||
       !continuationCursor ||
+      current.continuationPending ||
       (
-        state.organizeJob
+        current.organizeJob
         && (
-          state.organizeJob.runId !== snapshot.runId
-          || state.organizeJob.generation !== snapshot.generation
+          current.organizeJob.runId !== snapshot.runId
+          || current.organizeJob.generation !== snapshot.generation
         )
       ) ||
       !canContinueOrganizeJobRun(snapshot)
     ) return;
-    dispatch({ type: 'continue_requested' });
-    post({
+    dispatchTracked({ type: 'continue_requested' });
+    const sent = tryPost({
       type: 'continueBgsmOrganizeJob',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
@@ -568,10 +646,12 @@ export function useBgsmAgentWorkbench(
       generation: snapshot.generation,
       continuationCursor,
     });
-  }, [post, state.organizeJob, state.snapshot]);
+    if (!sent) dispatchTracked({ type: 'continue_send_failed' });
+  }, [dispatchTracked, tryPost]);
 
   const discardBlockedRun = useCallback(() => {
     const current = stateRef.current;
+    if (current.pendingCommand || current.transport !== 'connected') return;
     const snapshot = current.snapshot;
     const identity = current.organizeJob?.status === 'analysis_blocked'
       ? current.organizeJob
@@ -579,42 +659,51 @@ export function useBgsmAgentWorkbench(
         ? snapshot
         : null;
     if (!identity) return;
-    post({
+    const sent = tryPost({
       type: 'stopBgsmOrganizeJob',
       controllerId: identity.controllerId,
       sessionId: identity.sessionId,
       runId: identity.runId,
       generation: identity.generation,
+      requestId: `organize-command:discard-blocked:${createNonce()}`,
     });
-    dispatch({ type: 'clear_terminal' });
-  }, [post]);
+    if (sent) dispatchTracked({ type: 'clear_terminal' });
+  }, [dispatchTracked, tryPost]);
 
   const discardReview = useCallback(() => {
     const current = stateRef.current;
+    if (current.pendingCommand || current.transport !== 'connected') return;
     const identity = current.organizeJob?.status === 'review'
       ? current.organizeJob
       : current.snapshot?.state === 'review'
         ? current.snapshot
         : null;
     if (!identity) return;
-    post({
+    const sent = tryPost({
       type: 'stopBgsmOrganizeJob',
       controllerId: identity.controllerId,
       sessionId: identity.sessionId,
       runId: identity.runId,
       generation: identity.generation,
+      requestId: `organize-command:discard-review:${createNonce()}`,
     });
-    dispatch({ type: 'clear_terminal' });
-  }, [post]);
+    if (sent) dispatchTracked({ type: 'clear_terminal' });
+  }, [dispatchTracked, tryPost]);
 
   const toggleProposalRow = useCallback((proposalRowId: string) => {
-    const job = state.organizeJob;
-    const page = state.organizeReviewPage;
+    const current = stateRef.current;
+    const job = current.organizeJob;
+    const page = current.organizeReviewPage;
     const row = page?.rows.find((candidate) => candidate.proposalRowId === proposalRowId);
-    if (job?.status === 'review' && page && row) {
+    if (
+      job?.status === 'review'
+      && page
+      && row
+      && current.organizeReviewRequestId === null
+    ) {
       const requestId = `organize-selection:${createNonce()}`;
       dispatchTracked({ type: 'organize_review_page_requested', requestId });
-      post({
+      const sent = tryPost({
         type: 'updateBgsmOrganizeSelection',
         controllerId: controllerIdRef.current,
         sessionId: sessionIdRef.current,
@@ -626,16 +715,18 @@ export function useBgsmAgentWorkbench(
         rowOffset: page.rowOffset,
         selections: [{ position: row.position, selected: !row.selected }],
       });
+      if (!sent) dispatchTracked({ type: 'organize_review_request_failed', requestId });
       return;
     }
-  }, [dispatchTracked, post, state.organizeJob, state.organizeReviewPage]);
+  }, [dispatchTracked, tryPost]);
 
   const setAllProposalRowsSelected = useCallback((selected: boolean) => {
-    const job = state.organizeJob;
-    if (job?.status === 'review') {
+    const current = stateRef.current;
+    const job = current.organizeJob;
+    if (job?.status === 'review' && current.organizeReviewRequestId === null) {
       const requestId = `organize-selection-all:${createNonce()}`;
       dispatchTracked({ type: 'organize_review_page_requested', requestId });
-      post({
+      const sent = tryPost({
         type: 'setAllBgsmOrganizeSelections',
         controllerId: controllerIdRef.current,
         sessionId: sessionIdRef.current,
@@ -644,43 +735,58 @@ export function useBgsmAgentWorkbench(
         requestId,
         jobId: job.jobId,
         expectedRevision: job.revision,
-        rowOffset: state.organizeReviewPage?.rowOffset ?? 0,
+        rowOffset: current.organizeReviewPage?.rowOffset ?? 0,
         selected,
       });
+      if (!sent) dispatchTracked({ type: 'organize_review_request_failed', requestId });
       return;
     }
-  }, [dispatchTracked, post, state.organizeJob, state.organizeReviewPage?.rowOffset]);
+  }, [dispatchTracked, tryPost]);
 
   const applySelected = useCallback(() => {
-    const organizeJob = state.organizeJob;
+    const organizeJob = stateRef.current.organizeJob;
     if (organizeJob?.status === 'review') {
       if (organizeJob.selectedRepositories === 0) return;
-      post({
+      sendOrganizeCommand({
+        kind: 'apply_selection',
+        runId: organizeJob.runId,
+        generation: organizeJob.generation,
+        jobId: organizeJob.jobId,
+        baselineRevision: organizeJob.revision,
+      }, (requestId) => ({
         type: 'applyBgsmOrganizeSelection',
         controllerId: controllerIdRef.current,
         sessionId: sessionIdRef.current,
         runId: organizeJob.runId,
         generation: organizeJob.generation,
+        requestId,
         jobId: organizeJob.jobId,
         expectedRevision: organizeJob.revision,
-      });
+      }));
       return;
     }
-  }, [post, state.organizeJob]);
+  }, [sendOrganizeCommand]);
 
   const resumeOrganizeApply = useCallback(() => {
-    const job = state.organizeJob;
+    const job = stateRef.current.organizeJob;
     if (!job?.apply || job.status !== 'paused') return;
-    post({
+    sendOrganizeCommand({
+      kind: 'resume_apply',
+      runId: job.runId,
+      generation: job.generation,
+      jobId: job.jobId,
+      baselineRevision: job.revision,
+    }, (requestId) => ({
       type: 'resumeBgsmOrganizeApply',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
       runId: job.runId,
       generation: job.generation,
+      requestId,
       jobId: job.jobId,
       expectedRevision: job.revision,
-    });
-  }, [post, state.organizeJob]);
+    }));
+  }, [sendOrganizeCommand]);
 
   const clearTerminal = useCallback(() => {
     agentHandoffAuthorityRef.current += 1;
@@ -697,8 +803,8 @@ export function useBgsmAgentWorkbench(
         applyId: job.apply.applyId,
       });
     }
-    dispatch({ type: 'clear_terminal' });
-  }, [post]);
+    dispatchTracked({ type: 'clear_terminal' });
+  }, [dispatchTracked, post]);
 
   return useMemo(() => ({
     state,
