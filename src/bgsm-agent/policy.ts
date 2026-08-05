@@ -1,3 +1,14 @@
+import type {
+  OrganizeProposedAction,
+  OrganizeTagPolicySnapshot,
+} from '@/types';
+import {
+  MAX_AUTO_TAG_LIMIT,
+  normalizeMaxTagsPerRepo,
+  normalizeMinTopicRepoCount,
+} from '@/preferences';
+import { canonicalTagKey } from '@/tags/tag-model';
+
 export const FROZEN_SCOPE_PAGE_DEFAULT = 25;
 export const FROZEN_SCOPE_PAGE_HARD_LIMIT = 50;
 export const ANALYZER_OUTPUT_TOKENS_DEFAULT = 4_096;
@@ -10,6 +21,61 @@ export const PROPOSAL_REVIEW_PAGE_HARD_LIMIT = 100;
 export const TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT = 5;
 export const MAX_SEMANTIC_TAG_NAME_BYTES = 256;
 export const MAX_SEMANTIC_EVIDENCE_BYTES = 1_024;
+
+export function createOrganizeTagPolicySnapshot(value: unknown): OrganizeTagPolicySnapshot {
+  const source = isRecord(value) ? value : {};
+  return Object.freeze({
+    maxTagsPerRepo: Math.min(
+      TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT,
+      normalizeMaxTagsPerRepo(source.maxTagsPerRepo, source.autoTagLimit),
+    ),
+    minTopicRepoCount: normalizeMinTopicRepoCount(source.minTopicRepoCount),
+  });
+}
+
+export function validateOrganizeTagPolicySnapshot(
+  value: unknown,
+): asserts value is OrganizeTagPolicySnapshot {
+  if (!isRecord(value)) throw new TypeError('Organize tag policy must be an object.');
+  assertExactKeys(value, ['maxTagsPerRepo', 'minTopicRepoCount']);
+  assertPositiveSafeInteger(value.maxTagsPerRepo, 'Organize tag policy maxTagsPerRepo');
+  if (value.maxTagsPerRepo > TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT) {
+    throw new RangeError('Organize tag policy maxTagsPerRepo exceeds the hard limit.');
+  }
+  assertPositiveSafeInteger(value.minTopicRepoCount, 'Organize tag policy minTopicRepoCount');
+  if (value.minTopicRepoCount > MAX_AUTO_TAG_LIMIT) {
+    throw new RangeError('Organize tag policy minTopicRepoCount exceeds the preference limit.');
+  }
+}
+
+export type OrganizeTagCoverageRow = Readonly<{
+  repositoryId: string;
+  actions: readonly OrganizeProposedAction[];
+}>;
+
+/** Filters tag actions by distinct-repository coverage across the complete live analysis. */
+export function reconcileOrganizeTagCoverage(
+  rows: readonly OrganizeTagCoverageRow[],
+  policy: OrganizeTagPolicySnapshot,
+): readonly (readonly OrganizeProposedAction[])[] {
+  validateOrganizeTagPolicySnapshot(policy);
+  const repositoriesByTag = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const seenForRepository = new Set<string>();
+    for (const action of row.actions) {
+      const key = canonicalTagKey(action.tag);
+      if (!key || seenForRepository.has(key)) continue;
+      seenForRepository.add(key);
+      const repositories = repositoriesByTag.get(key) ?? new Set<string>();
+      repositories.add(row.repositoryId);
+      repositoriesByTag.set(key, repositories);
+    }
+  }
+
+  return Object.freeze(rows.map((row) => Object.freeze(row.actions.filter((action) => (
+    (repositoriesByTag.get(canonicalTagKey(action.tag))?.size ?? 0) >= policy.minTopicRepoCount
+  )))));
+}
 
 export type RunBudget = Readonly<{
   wallDeadlineMs: number;

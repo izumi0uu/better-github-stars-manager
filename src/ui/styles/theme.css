@@ -33,6 +33,8 @@
     --favorite-muted-hover: 352 96% 71%;
     --success: 142 71% 45%;
     --warning: 38 92% 50%;
+    --search-match: 48 96% 72%;
+    --search-match-foreground: 0 0% 9%;
     --border: 0 0% 90%;
     --input: 0 0% 90%;
     --ring: 0 0% 9%;
@@ -93,6 +95,8 @@
     --favorite-muted-hover: 352 96% 71%;
     --success: 142 71% 45%;
     --warning: 38 92% 50%;
+    --search-match: 45 80% 40%;
+    --search-match-foreground: 0 0% 4%;
     --border: 0 0% 20%;
     --input: 0 0% 20%;
     --ring: 0 0% 98%;

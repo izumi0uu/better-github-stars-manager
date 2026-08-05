@@ -24,6 +24,8 @@ export type ColumnLayout = {
   order: ColumnId[];
   hidden: ColumnId[];
   widths?: Partial<Record<ColumnId, number>>;
+  /** Omitted is the default: render repository names as owner/repo. */
+  showRepositoryOwner?: boolean;
 };
 
 export type ColumnLayoutMode = 'default' | 'custom';
@@ -178,7 +180,11 @@ export function normalizeColumnLayout(layout: ColumnLayout): ColumnLayout {
     seenHidden.add(id);
     return true;
   });
-  const normalized = { order: moveLockedColumnsToEnd(order), hidden };
+  const normalized: ColumnLayout = {
+    order: moveLockedColumnsToEnd(order),
+    hidden,
+    ...(layout.showRepositoryOwner === false ? { showRepositoryOwner: false } : {}),
+  };
   const widths = normalizeColumnWidths(layout.widths);
   return Object.keys(widths).length > 0 ? { ...normalized, widths } : normalized;
 }
@@ -189,12 +195,18 @@ export function normalizeColumnLayoutMode(value: unknown): ColumnLayoutMode {
 
 export function normalizeStoredColumnLayoutPreference(value: unknown): ColumnLayout | null {
   if (!value || typeof value !== 'object') return null;
-  const layout = value as { order?: unknown; hidden?: unknown; widths?: unknown };
+  const layout = value as {
+    order?: unknown;
+    hidden?: unknown;
+    widths?: unknown;
+    showRepositoryOwner?: unknown;
+  };
   if (!Array.isArray(layout.order) || !Array.isArray(layout.hidden)) return null;
   const normalized = normalizeColumnLayout({
     order: layout.order as ColumnId[],
     hidden: layout.hidden as ColumnId[],
     widths: layout.widths as Partial<Record<ColumnId, number>> | undefined,
+    showRepositoryOwner: layout.showRepositoryOwner === false ? false : undefined,
   });
   return layoutsEqual(normalized, DEFAULT_COLUMN_LAYOUT) ? null : normalized;
 }
@@ -204,6 +216,7 @@ export function cloneColumnLayout(layout: ColumnLayout): ColumnLayout {
     order: [...layout.order],
     hidden: [...layout.hidden],
     ...(layout.widths ? { widths: { ...layout.widths } } : {}),
+    ...(layout.showRepositoryOwner === false ? { showRepositoryOwner: false } : {}),
   };
 }
 
@@ -211,7 +224,8 @@ export function layoutsEqual(a: ColumnLayout, b: ColumnLayout): boolean {
   return (
     a.order.join('|') === b.order.join('|') &&
     a.hidden.join('|') === b.hidden.join('|') &&
-    widthSignature(a.widths) === widthSignature(b.widths)
+    widthSignature(a.widths) === widthSignature(b.widths) &&
+    (a.showRepositoryOwner !== false) === (b.showRepositoryOwner !== false)
   );
 }
 
@@ -249,6 +263,7 @@ export function restoreColumn(layout: ColumnLayout, id: ColumnId, insertIndex?: 
     order: mergeVisibleOrder(layout.order, withoutId),
     hidden,
     widths: layout.widths,
+    showRepositoryOwner: layout.showRepositoryOwner,
   });
 }
 

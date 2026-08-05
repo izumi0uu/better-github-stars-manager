@@ -123,7 +123,18 @@ function generateQueryCase(rng: SeededRng, options: { forceStars?: number } = {}
       mtime: iso(index + 400),
       excluded: rng.bool(0.2) ? true : undefined,
     } satisfies TagMeta));
-  const queryTerm = rng.pick(['', '', 'repo', 'agent', 'sync', 'note', 'cache', rng.pick(words)]);
+  const queryTerm = rng.pick([
+    '',
+    '',
+    'repo',
+    'rpo',
+    'owner1/repo',
+    'agent',
+    'sync',
+    'note',
+    'cache',
+    rng.pick(words),
+  ]);
   const params: QueryParams = {
     filter: {
       query: rng.bool(0.2) ? `  ${queryTerm.toUpperCase()}  ` : queryTerm,
@@ -194,7 +205,8 @@ function referenceQuery(input: GeneratedQueryCase): QueryResult {
     }))
     .sort((a, b) => a.full_name.localeCompare(b.full_name));
   const tagMap = new Map(indexedTags.map((tag) => [tag.full_name, tag]));
-  const q = input.params.filter.query.trim().toLowerCase();
+  const q = normalizeReferenceSearchText(input.params.filter.query.trim());
+  const relevanceByFullName = new Map<string, number>();
   const langSet = input.params.filter.languages.length ? new Set(input.params.filter.languages) : null;
   const tagSet = input.params.filter.tags.length
     ? new Set(input.params.filter.tags.map((tag) => referenceTagKey(tag)))
@@ -216,12 +228,18 @@ function referenceQuery(input: GeneratedQueryCase): QueryResult {
       }
     }
     if (q) {
-      const haystack = `${star.full_name} ${star.description} ${star.topics.join(' ')} ${tagRecord?.notes ?? ''}`.toLowerCase();
-      if (!haystack.includes(q)) return false;
+      const relevance = referenceSearchRelevance(star, tagRecord?.notes ?? '', q);
+      if (relevance === 0) return false;
+      relevanceByFullName.set(star.full_name, relevance);
     }
     return true;
   });
-  const sorted = sortReferenceRows(filtered, input.params.filter.sortKey, input.params.filter.sortDir);
+  const sorted = sortReferenceRows(
+    filtered,
+    input.params.filter.sortKey,
+    input.params.filter.sortDir,
+    q ? relevanceByFullName : undefined,
+  );
   const rows = sorted.slice(input.params.offset, input.params.offset + input.params.limit);
   const languagesFacet = [...countLanguages(indexedStars).entries()].sort((a, b) => b[1] - a[1]).slice(0, 40);
   const tagCounts = countTags(indexedTags, excluded);
@@ -239,9 +257,18 @@ function referenceQuery(input: GeneratedQueryCase): QueryResult {
   };
 }
 
-function sortReferenceRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Star[] {
+function sortReferenceRows(
+  rows: Star[],
+  key: SortKey,
+  dir: 'asc' | 'desc',
+  relevance?: ReadonlyMap<string, number>,
+): Star[] {
   const mul = dir === 'asc' ? 1 : -1;
   return [...rows].sort((a, b) => {
+    if (relevance) {
+      const difference = (relevance.get(b.full_name) ?? 0) - (relevance.get(a.full_name) ?? 0);
+      if (difference !== 0) return difference;
+    }
     switch (key) {
       case 'pushed_at':
         return compareNullableDate(a.pushed_at, b.pushed_at, a.full_name, b.full_name, dir);
@@ -255,6 +282,47 @@ function sortReferenceRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Sta
         return a.full_name.localeCompare(b.full_name) * mul;
     }
   });
+}
+
+function referenceSearchRelevance(star: Star, notes: string, query: string): number {
+  const fullName = normalizeReferenceSearchText(star.full_name);
+  const slash = star.full_name.lastIndexOf('/');
+  const repositoryName = normalizeReferenceSearchText(star.full_name.slice(slash + 1));
+
+  if (fullName === query) return 900;
+  const fuzzyQuery = compactReferenceFuzzyQuery(query);
+  if (!query.includes('/')) {
+    if (repositoryName === query) return 800;
+    if (repositoryName.startsWith(query)) return 700;
+    if (repositoryName.includes(query)) return 600;
+    if (referenceSequenceMatch(repositoryName, fuzzyQuery)) return 500;
+  }
+  if (fullName.startsWith(query)) return 400;
+  if (fullName.includes(query)) return 300;
+  if (referenceSequenceMatch(fullName, fuzzyQuery)) return 200;
+
+  const metadata = normalizeReferenceSearchText(
+    `${star.description} ${star.topics.join(' ')} ${notes}`,
+  );
+  return metadata.includes(query) ? 100 : 0;
+}
+
+function referenceSequenceMatch(candidate: string, query: string): boolean {
+  let searchFrom = 0;
+  for (const character of query) {
+    const index = candidate.indexOf(character, searchFrom);
+    if (index < 0) return false;
+    searchFrom = index + character.length;
+  }
+  return query.length > 0;
+}
+
+function normalizeReferenceSearchText(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase('en-US');
+}
+
+function compactReferenceFuzzyQuery(value: string): string {
+  return value.replace(/[-_./\s]+/gu, '');
 }
 
 function countLanguages(stars: Star[]): Map<string, number> {

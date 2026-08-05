@@ -153,6 +153,7 @@ export function ManagerPanel() {
     layoutEditReady,
     previewingCustomLayout,
     draftLayout,
+    showRepositoryOwner,
     visibleColumns,
     gridTemplateColumns,
     tableMinWidth,
@@ -182,6 +183,7 @@ export function ManagerPanel() {
     resetLayoutEdit,
     resetLayoutWidths,
     setColumnHidden,
+    setRepositoryOwnerVisible,
     beginColumnDrag,
     beginColumnResize,
     moveColumnByKeyboard,
@@ -419,6 +421,7 @@ export function ManagerPanel() {
       position={columnMenuPosition}
       draftLayout={draftLayout}
       onSetColumnHidden={setColumnHidden}
+      onSetRepositoryOwnerVisible={setRepositoryOwnerVisible}
     />
   );
 
@@ -582,6 +585,8 @@ export function ManagerPanel() {
             ) : (
               <StarsTable
                 rows={visibleRows}
+                searchQuery={f.query}
+                showRepositoryOwner={showRepositoryOwner}
                 loading={loading}
                 phase={phase}
                 tagsByFullName={tagsByFullName}

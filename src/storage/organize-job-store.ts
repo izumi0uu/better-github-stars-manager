@@ -13,6 +13,8 @@ import type {
   Tag,
 } from '@/types';
 import {
+  createOrganizeTagPolicySnapshot,
+  reconcileOrganizeTagCoverage,
   validateProviderAttemptReservation,
   validateRunBudgetUsage,
   type RunBudget,
@@ -68,6 +70,7 @@ export type CreateOrganizeJobInput = Readonly<{
   proposalId?: string;
   frozenScope: OrganizeFrozenScopeSnapshot;
   taskInstruction: string;
+  tagPolicy?: unknown;
   taxonomy: Readonly<{ fingerprint: string; snapshot: unknown }>;
   budget: unknown;
   usage: unknown;
@@ -164,6 +167,7 @@ export async function createOrganizeJob(
     proposalId: input.proposalId ?? `proposal:v1:${jobId}`,
     frozenScope: { ...input.frozenScope, repositoryIds },
     taskInstruction: input.taskInstruction,
+    tagPolicy: createOrganizeTagPolicySnapshot(input.tagPolicy),
     budget: input.budget,
     usage: input.usage,
     nextFrozenIndex: input.nextFrozenIndex ?? 0,
@@ -250,6 +254,7 @@ export async function createOrganizePreflight(
     proposalId: input.proposalId ?? `proposal:v1:${jobId}`,
     frozenScope: { ...input.frozenScope, repositoryIds },
     taskInstruction: input.taskInstruction,
+    tagPolicy: createOrganizeTagPolicySnapshot(input.tagPolicy),
     budget: input.budget,
     usage: input.usage,
     nextFrozenIndex: 0,
@@ -772,16 +777,27 @@ export async function checkpointOrganizeAnalysisPage(input: Readonly<{
     if (outcomes.size !== claimed.length || claimed.some((row) => !outcomes.has(row.position))) {
       throw new TypeError('Analysis checkpoint must cover the exact leased page.');
     }
-    const settled = claimed.map((row) => settleAnalysisRow(row, outcomes.get(row.position)!, now));
+    const tagPolicy = createOrganizeTagPolicySnapshot(job.tagPolicy);
+    const settled = claimed.map((row) => settleAnalysisRow(
+      row,
+      outcomes.get(row.position)!,
+      now,
+      tagPolicy.maxTagsPerRepo,
+    ));
     await db.organizeItems.bulkPut(settled);
-    const coverage = await coverageForJob(input.jobId);
+    let coverage = await coverageForJob(input.jobId);
     const firstFailed = settled.find((row) => row.analysisState === 'failed')?.position ?? null;
     const complete = coverage.complete && end === job.itemCount;
     if (coverage.complete && end !== job.itemCount) {
       throw new TypeError('Organize coverage cannot complete before the frozen cursor reaches the end.');
     }
+    if (complete) {
+      await reconcileStoredOrganizeTagCoverage(input.jobId, tagPolicy);
+      coverage = await coverageForJob(input.jobId);
+    }
     const next: OrganizeJobRecord = {
       ...job,
+      tagPolicy,
       usage: input.usage,
       providerBinding: input.providerBinding ?? job.providerBinding,
       nextFrozenIndex: end,
@@ -1063,19 +1079,28 @@ export async function settleOrganizeAnalysisBatch(input: Readonly<{
     if (outcomes.size !== claimed.length || claimed.some((row) => !outcomes.has(row.position))) {
       throw new TypeError('Analysis settlement must cover the exact claimed batch.');
     }
-    const settled = claimed.map((row) => settleAnalysisRow(row, outcomes.get(row.position)!, now));
+    const tagPolicy = createOrganizeTagPolicySnapshot(job.tagPolicy);
+    const settled = claimed.map((row) => settleAnalysisRow(
+      row,
+      outcomes.get(row.position)!,
+      now,
+      tagPolicy.maxTagsPerRepo,
+    ));
     await db.organizeItems.bulkPut(settled);
     const unresolved = await firstUnresolvedPosition(input.jobId);
     const nextRevision = job.revision + 1;
     await db.organizeJobs.update(input.jobId, {
+      tagPolicy,
       usage: input.usage ?? job.usage,
       providerBinding: input.providerBinding ?? job.providerBinding,
       nextFrozenIndex: unresolved ?? job.itemCount,
       revision: nextRevision,
       updatedAt: now,
     });
-    const coverage = await coverageForJob(input.jobId);
+    let coverage = await coverageForJob(input.jobId);
     if (coverage.complete) {
+      await reconcileStoredOrganizeTagCoverage(input.jobId, tagPolicy);
+      coverage = await coverageForJob(input.jobId);
       await db.organizeJobs.update(input.jobId, {
         status: 'review',
         revision: nextRevision + 1,
@@ -2003,10 +2028,13 @@ async function firstUnresolvedPosition(jobId: string): Promise<number | null> {
 }
 
 async function finishAnalysisIfCovered(job: OrganizeJobRecord, now: number): Promise<void> {
+  const tagPolicy = createOrganizeTagPolicySnapshot(job.tagPolicy);
   const coverage = await coverageForJob(job.jobId);
   if (coverage.complete) {
+    await reconcileStoredOrganizeTagCoverage(job.jobId, tagPolicy);
     await db.organizeJobs.put({
       ...job,
+      tagPolicy,
       status: 'review',
       nextFrozenIndex: job.itemCount,
       revision: job.revision + 1,
@@ -2015,12 +2043,49 @@ async function finishAnalysisIfCovered(job: OrganizeJobRecord, now: number): Pro
   } else if (coverage.pending === 0 && coverage.leased === 0 && coverage.failed > 0) {
     await db.organizeJobs.put({
       ...job,
+      tagPolicy,
       status: 'analysis_blocked',
       nextFrozenIndex: job.itemCount,
       revision: job.revision + 1,
       updatedAt: now,
     });
   }
+}
+
+async function reconcileStoredOrganizeTagCoverage(
+  jobId: string,
+  tagPolicy: ReturnType<typeof createOrganizeTagPolicySnapshot>,
+): Promise<void> {
+  const actionable = await db.organizeItems
+    .where('[jobId+analysisState]')
+    .equals([jobId, 'actionable'])
+    .sortBy('position');
+  const retainedActions = reconcileOrganizeTagCoverage(
+    actionable.map((row) => ({ repositoryId: row.fullName, actions: row.proposedActions })),
+    tagPolicy,
+  );
+  const reconciled = actionable.flatMap((row, index): OrganizeItemRecord[] => {
+    const actions = retainedActions[index] ?? [];
+    if (actions.length === 0) {
+      return [{
+        ...row,
+        analysisState: 'insufficient_evidence',
+        proposedActions: [],
+        approvedActions: [],
+        proposedAdditions: [],
+        sourceFingerprint: null,
+        selected: false,
+      }];
+    }
+    if (actions.length === row.proposedActions.length) return [];
+    return [{
+      ...row,
+      proposedActions: actions.map((action) => ({ ...action })),
+      approvedActions: actions.map((action) => ({ ...action })),
+      proposedAdditions: actions.map((action) => action.tag),
+    }];
+  });
+  if (reconciled.length > 0) await db.organizeItems.bulkPut(reconciled);
 }
 
 async function recoverAnalysisLeases(jobId: string, now: number): Promise<void> {
@@ -2222,10 +2287,13 @@ function settleAnalysisRow(
   row: OrganizeItemRecord,
   outcome: OrganizeAnalysisOutcome,
   now: number,
+  maxTagsPerRepo = 5,
 ): OrganizeItemRecord {
   validateAnalysisOutcome(outcome);
   const retry = outcome.state === 'retry';
-  const proposedActions = retry ? [] : normalizeActions(outcome.proposedActions ?? []);
+  const proposedActions = retry
+    ? []
+    : normalizeActions(outcome.proposedActions ?? [], maxTagsPerRepo);
   const proposedAdditions = proposedActions.map((action) => action.tag);
   if (outcome.state === 'actionable' && proposedActions.length === 0) {
     throw new TypeError('Actionable organization outcomes require proposed actions.');
@@ -2321,8 +2389,14 @@ async function validateOrganizeLedger(
   return rows;
 }
 
-function normalizeActions(values: readonly OrganizeProposedAction[]): OrganizeProposedAction[] {
-  if (values.length > 5) throw new RangeError('At most 5 proposed actions are allowed per repository.');
+function normalizeActions(
+  values: readonly OrganizeProposedAction[],
+  maxTagsPerRepo = 5,
+): OrganizeProposedAction[] {
+  assertLimit(maxTagsPerRepo, 5, 'proposed actions');
+  if (values.length > maxTagsPerRepo) {
+    throw new RangeError(`At most ${maxTagsPerRepo} proposed actions are allowed per repository.`);
+  }
   const tags = addTagNames([], values.map((action) => action.tag));
   return tags.map((tag) => {
     const action = values.find((candidate) => canonicalTag(candidate.tag) === canonicalTag(tag));

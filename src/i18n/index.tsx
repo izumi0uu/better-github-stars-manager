@@ -161,6 +161,7 @@ export interface MessageCatalog {
     editingLayout: string;
     columnsButton: string;
     columnsButtonTitle: string;
+    showRepositoryOwner: string;
     hiddenColumns: (count: number) => string;
     hiddenColumnsTip: string;
     hideColumn: (label: string) => string;
@@ -216,6 +217,7 @@ export interface MessageCatalog {
     functionReviewNotesDescription: string;
     askingAboutCurrentView: (count: number) => string;
     askingAboutAllLiveStars: (count?: number) => string;
+    conversationSwitchPending: (scope: string) => string;
     agentChanged: (count: number) => string;
     turnFailed: string;
     attemptStateLost: string;
@@ -1032,6 +1034,7 @@ const messages: Record<Locale, MessageCatalog> = {
       editingLayout: "Editing layout",
       columnsButton: "Columns",
       columnsButtonTitle: "Show or hide columns",
+      showRepositoryOwner: "Show repository owner",
       hiddenColumns: (count) => `${count} hidden`,
       hiddenColumnsTip: "Click to restore · drag into the header to place",
       hideColumn: (label) => `Hide ${label}`,
@@ -1110,6 +1113,9 @@ const messages: Record<Locale, MessageCatalog> = {
             ? "All starred repositories · 1 repository"
             : `All starred repositories · ${count} repositories`)
           : "All starred repositories"
+      ),
+      conversationSwitchPending: (scope) => (
+        `Selected ${scope} · finish or discard the current Organize run to switch conversations`
       ),
       agentChanged: (count) => `${count} tag update${count === 1 ? '' : 's'} applied`,
       turnFailed: "Cubby couldn't complete this request",
@@ -1658,12 +1664,12 @@ const messages: Record<Locale, MessageCatalog> = {
       agentAccessGranted: "Access allowed",
       agentHostAccessRequired: "Allow Chrome access to test or use this custom service.",
       behaviorHeading: "5. Preference",
-      maxTagsPerRepoLabel: "Max Auto Tags per repo",
+      maxTagsPerRepoLabel: "Max automatic tags per repo",
       maxTagsPerRepoHint:
-        "When you run Auto Tags, each repo can receive at most this many topic tags.",
-      minTopicRepoCountLabel: "Minimum topic coverage",
+        "Auto Tags uses this limit. In Chat, Cubby may add at most this many tags to a repository per turn; Organize uses the lower of this value and its 5-tag safety cap.",
+      minTopicRepoCountLabel: "Minimum shared tag coverage",
       minTopicRepoCountHint:
-        "Auto Tags adds a topic only when it appears on at least this many repositories.",
+        "Cubby Chat assigns a tag only when the target brings its topic-or-visible-tag coverage to this many live repositories. Organize uses proposal-wide coverage; Auto Tags applies the same threshold to topics.",
       starsPanelDefaultLabel: "Open my stars page with the manager panel by default",
       starsPanelDefaultHint:
         "Turn this off if you prefer to land on GitHub's native stars list and open the overlay manually.",
@@ -2058,6 +2064,7 @@ const messages: Record<Locale, MessageCatalog> = {
       editingLayout: "正在编辑布局",
       columnsButton: "列",
       columnsButtonTitle: "显示或隐藏列",
+      showRepositoryOwner: "显示仓库作者名",
       hiddenColumns: (count) => `已隐藏 ${count}`,
       hiddenColumnsTip: "点击恢复 · 拖回表头可插入位置",
       hideColumn: (label) => `隐藏「${label}」`,
@@ -2136,6 +2143,9 @@ const messages: Record<Locale, MessageCatalog> = {
             ? "全部星标仓库 · 1 个仓库"
             : `全部星标仓库 · ${count} 个仓库`)
           : "全部星标仓库"
+      ),
+      conversationSwitchPending: (scope) => (
+        `已选择 ${scope} · 完成或放弃当前整理任务后切换对话`
       ),
       agentChanged: (count) => `已应用 ${count} 次标签更新`,
       turnFailed: "Cubby 未能完成这次请求",
@@ -2685,10 +2695,10 @@ const messages: Record<Locale, MessageCatalog> = {
       behaviorHeading: "5. 偏好",
       maxTagsPerRepoLabel: "每个仓库最多自动标签数",
       maxTagsPerRepoHint:
-        "点击 Auto Tags 时，单个仓库最多自动添加这么多个主题标签。",
-      minTopicRepoCountLabel: "主题最低覆盖数",
+        "Auto Tags 使用此上限；聊天中 Cubby 每轮最多为单个仓库新增这么多个标签；整理功能取此值与 5 个标签安全上限中的较小值。",
+      minTopicRepoCountLabel: "共同标签最低覆盖数",
       minTopicRepoCountHint:
-        "只有当一个主题至少出现在这么多个仓库中，Auto Tags 才会添加它。",
+        "聊天中，只有目标仓库加入后，同一主题或可见标签至少覆盖这么多个有效仓库，Cubby 才会分配该标签；整理功能按整批建议计算，Auto Tags 对主题使用相同阈值。",
       starsPanelDefaultLabel: "默认打开自己的 stars 页面时显示管理面板",
       starsPanelDefaultHint:
         "关闭后会优先显示 GitHub 原生 stars 列表，需要时再手动打开悬浮面板。",

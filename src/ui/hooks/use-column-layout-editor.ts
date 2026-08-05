@@ -147,6 +147,7 @@ export function useColumnLayoutEditor(
     ? customLayout
     : DEFAULT_COLUMN_LAYOUT;
   const activeLayout = editingLayout ? draftLayout : renderedBrowseLayout;
+  const showRepositoryOwner = activeLayout.showRepositoryOwner !== false;
   const displayLayout = layoutResize
     ? normalizeColumnLayout({ ...draftLayout, widths: { ...draftLayout.widths, ...layoutResize.liveWidths } })
     : activeLayout;
@@ -424,6 +425,14 @@ export function useColumnLayoutEditor(
   const setColumnHidden = (id: ColumnId, hidden: boolean) => {
     if (blockLayoutMutationDuringResize()) return;
     setDraftLayout((current) => (hidden ? hideColumn(current, id) : restoreColumnWithMeasuredWidth(current, id)));
+  };
+
+  const setRepositoryOwnerVisible = (visible: boolean) => {
+    if (blockLayoutMutationDuringResize()) return;
+    setDraftLayout((current) => normalizeColumnLayout({
+      ...current,
+      showRepositoryOwner: visible ? undefined : false,
+    }));
   };
 
   const flashColumn = (id: ColumnId) => {
@@ -820,6 +829,7 @@ export function useColumnLayoutEditor(
     layoutEditReady,
     previewingCustomLayout,
     draftLayout,
+    showRepositoryOwner,
     visibleColumns,
     gridTemplateColumns,
     tableMinWidth,
@@ -849,6 +859,7 @@ export function useColumnLayoutEditor(
     resetLayoutEdit,
     resetLayoutWidths,
     setColumnHidden,
+    setRepositoryOwnerVisible,
     beginColumnDrag,
     beginColumnResize,
     moveColumnByKeyboard,

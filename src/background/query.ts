@@ -11,6 +11,7 @@ import {
   validateLaunchCandidateContract,
   type LaunchCandidateContract,
 } from '@/bgsm-agent/scope';
+import { createRepositorySearchMatcher } from '@/search/repository-search';
 
 /**
  * Star query engine (runs in the SW, owns IDB); returns a filtered+sorted window
@@ -100,9 +101,18 @@ export function compareNullableDate(
   return dir === 'asc' ? cmp : -cmp;
 }
 
-function sortRows(rows: Star[], key: SortKey, dir: 'asc' | 'desc'): Star[] {
+function sortRows(
+  rows: Star[],
+  key: SortKey,
+  dir: 'asc' | 'desc',
+  relevance?: ReadonlyMap<Star, number>,
+): Star[] {
   const mul = dir === 'asc' ? 1 : -1;
   return rows.sort((a, b) => {
+    if (relevance) {
+      const relevanceDifference = (relevance.get(b) ?? 0) - (relevance.get(a) ?? 0);
+      if (relevanceDifference !== 0) return relevanceDifference;
+    }
     let cmp = 0;
     switch (key) {
       case 'starred_at':
@@ -130,7 +140,8 @@ function filterAndSortRows(
   tags: ReadonlyMap<string, Tag>,
   filter: QueryFilter,
 ): Star[] {
-  const q = filter.query.trim().toLowerCase();
+  const search = createRepositorySearchMatcher(filter.query);
+  const relevance = new Map<Star, number>();
   const langSet = filter.languages.length ? new Set(filter.languages) : null;
   const tagSet = filter.tags.length
     ? new Set(filter.tags.map((tag) => canonicalTagKey(tag)))
@@ -150,15 +161,26 @@ function filterAndSortRows(
         if (!filter.tags.every((tag) => myTagKeys.includes(canonicalTagKey(tag)))) return false;
       } else if (!myTagKeys.some((tag) => tagSet.has(tag))) return false;
     }
-    if (q) {
+    if (!search.empty) {
       const notes = tagRecord?.notes ?? '';
-      const hay = `${s.full_name} ${s.description} ${s.topics.join(' ')} ${notes}`.toLowerCase();
-      if (!hay.includes(q)) return false;
+      const match = search.match({
+        fullName: s.full_name,
+        description: s.description,
+        topics: s.topics,
+        notes,
+      });
+      if (!match.matched) return false;
+      relevance.set(s, match.relevance);
     }
     return true;
   });
 
-  return sortRows(filtered, filter.sortKey, filter.sortDir);
+  return sortRows(
+    filtered,
+    filter.sortKey,
+    filter.sortDir,
+    search.empty ? undefined : relevance,
+  );
 }
 
 /** Resolves every matching repository ID using the same authoritative filter/sort semantics as queryStars. */

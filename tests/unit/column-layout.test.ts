@@ -174,6 +174,24 @@ describe('column layout editing', () => {
     expect(normalizeStoredColumnLayoutPreference(DEFAULT_COLUMN_LAYOUT)).toBeNull();
   });
 
+  it('defaults legacy layouts to owner/repo and preserves hiding the owner', () => {
+    expect(normalizeStoredColumnLayoutPreference({
+      ...DEFAULT_COLUMN_LAYOUT,
+      showRepositoryOwner: true,
+    })).toBeNull();
+
+    const ownerHidden = normalizeStoredColumnLayoutPreference({
+      ...DEFAULT_COLUMN_LAYOUT,
+      showRepositoryOwner: false,
+    });
+
+    expect(ownerHidden).toEqual({
+      ...DEFAULT_COLUMN_LAYOUT,
+      showRepositoryOwner: false,
+    });
+    expect(layoutsEqual(ownerHidden!, DEFAULT_COLUMN_LAYOUT)).toBe(false);
+  });
+
   it('keeps default order and hidden as custom when explicit widths exist', () => {
     expect(normalizeStoredColumnLayoutPreference({
       ...DEFAULT_COLUMN_LAYOUT,

@@ -42,6 +42,8 @@ export interface StarsTableLayoutEdit {
 
 export function StarsTable({
   rows,
+  searchQuery = '',
+  showRepositoryOwner = true,
   loading,
   phase,
   tagsByFullName,
@@ -70,6 +72,8 @@ export function StarsTable({
   onAutoFitColumnWidth = () => {},
 }: {
   rows: Star[];
+  searchQuery?: string;
+  showRepositoryOwner?: boolean;
   loading: boolean;
   phase: StarsTablePhase;
   tagsByFullName: Map<string, Tag>;
@@ -384,6 +388,8 @@ export function StarsTable({
               >
                 <StarRow
                   star={star}
+                  searchQuery={searchQuery}
+                  showRepositoryOwner={showRepositoryOwner}
                   tags={visibleTagNames(tag)}
                   hasNotes={!!(tag?.notes && tag.notes.trim())}
                   favorite={favorite}

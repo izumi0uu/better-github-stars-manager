@@ -31,6 +31,9 @@ describe('background agent turn contract', () => {
     assert.match(backgroundSource, /createBgsmAgentToolRegistry\(\{[\s\S]*?repositoryScope,/);
     assert.match(backgroundSource, /const scopeFingerprint = conversation\.binding\.scopeFingerprint/);
     assert.match(backgroundSource, /createBgsmAgentToolRegistry\(\{[\s\S]*?scopeFingerprint,/);
+    assert.match(backgroundSource, /createBgsmAgentTagAssignmentPolicy\(agentConfig, async \(\) =>/);
+    assert.match(backgroundSource, /storedTags\.map\(\(tag\) => normalizeStoredTag\(tag as LegacyTagRow\)\)/);
+    assert.match(backgroundSource, /createBgsmAgentToolRegistry\(\{[\s\S]*?tagAssignmentPolicy,/);
     assert.match(backgroundSource, /scopeLabel,/);
     assert.match(backgroundSource, /repositoryCodeRefAuthorityFor\(/);
     assert.match(backgroundSource, /repositoryCodeRefAuthority,/);

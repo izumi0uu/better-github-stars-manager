@@ -123,6 +123,7 @@ import {
   type OrganizeRunIdentity,
 } from "./organize-job-controller";
 import { OrganizeProposalAnalyzer } from "@/bgsm-agent/organize-proposal-analyzer";
+import { createBgsmAgentTagAssignmentPolicy } from '@/bgsm-agent/tag-assignment-policy';
 import {
   issueContinuationCursor,
   resolveContinuationCursor,
@@ -154,6 +155,7 @@ import {
 } from "@/bgsm-agent/organize-job";
 import {
   createEmptyRunBudgetUsage,
+  createOrganizeTagPolicySnapshot,
   createProductionRunBudget,
   type RunBudget,
   type RunBudgetUsage,
@@ -743,6 +745,7 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
           fingerprint: state.frozenScope.fingerprint,
         },
         taskInstruction: context.taskInstruction,
+        tagPolicy: state.tagPolicy,
         taxonomy: {
           fingerprint: taxonomyBundle.fingerprint,
           snapshot: {
@@ -1335,8 +1338,23 @@ async function runBgsmAgentTurn(
       sessionId,
       scopeFingerprint,
     );
-    const activeOrganizeJob = await getActiveOrganizeJob();
+    const [activeOrganizeJob, agentConfig] = await Promise.all([
+      getActiveOrganizeJob(),
+      authStore.getConfig(),
+    ]);
     const organizeApplyActive = organizeApplyBlocksAgentWrites(activeOrganizeJob);
+    const tagAssignmentPolicy = createBgsmAgentTagAssignmentPolicy(agentConfig, async () => {
+      const [stars, storedTags, tagMeta] = await Promise.all([
+        db.stars.toArray(),
+        db.tags.toArray(),
+        db.tagMeta.toArray(),
+      ]);
+      return {
+        stars,
+        tags: storedTags.map((tag) => normalizeStoredTag(tag as LegacyTagRow)),
+        tagMeta,
+      };
+    });
     if (liveness.signal.aborted) return terminalAfterAbort();
     const toolRegistry = createBgsmAgentToolRegistry({
       repositoryScope,
@@ -1359,6 +1377,7 @@ async function runBgsmAgentTurn(
         return { status: 'accepted' };
       },
       assignManualTags: agentManualTagWriter,
+      tagAssignmentPolicy,
       removeVisibleTags: agentVisibleTagRemovalWriter,
       deleteTagsEverywhere: agentGlobalTagDeletionWriter,
     });
@@ -2326,7 +2345,10 @@ chrome.runtime.onConnect.addListener((port) => {
               message,
               result.preflightToken,
             );
-            const taxonomyBundle = await loadOrganizeJobRunTaxonomy();
+            const [taxonomyBundle, config] = await Promise.all([
+              loadOrganizeJobRunTaxonomy(),
+              authStore.getConfig(),
+            ]);
             await createOrganizePreflight({
               jobId: context.jobId,
               controllerId: message.controllerId,
@@ -2342,6 +2364,7 @@ chrome.runtime.onConnect.addListener((port) => {
                 fingerprint: context.frozenScope.fingerprint,
               },
               taskInstruction: message.taskInstruction,
+              tagPolicy: createOrganizeTagPolicySnapshot(config),
               taxonomy: {
                 fingerprint: taxonomyBundle.fingerprint,
                 snapshot: {
@@ -3554,6 +3577,7 @@ function buildRestoredOrganizeAnalysisState(
       capturedAt: job.frozenScope.capturedAt,
       fingerprint: parseScopeFingerprintV1(job.frozenScope.fingerprint),
     }),
+    tagPolicy: createOrganizeTagPolicySnapshot(job.tagPolicy),
     budget: job.budget as RunBudget,
     usage: job.usage as RunBudgetUsage,
     nextFrozenIndex: job.nextFrozenIndex,
