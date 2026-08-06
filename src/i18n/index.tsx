@@ -2064,7 +2064,7 @@ const messages: Record<Locale, MessageCatalog> = {
       editingLayout: "正在编辑布局",
       columnsButton: "列",
       columnsButtonTitle: "显示或隐藏列",
-      showRepositoryOwner: "显示仓库作者名",
+      showRepositoryOwner: "显示仓库所有者",
       hiddenColumns: (count) => `已隐藏 ${count}`,
       hiddenColumnsTip: "点击恢复 · 拖回表头可插入位置",
       hideColumn: (label) => `隐藏「${label}」`,

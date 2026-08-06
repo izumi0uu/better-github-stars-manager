@@ -24,6 +24,9 @@ const messagingMocks = vi.hoisted(() => ({
 const presentationMocks = vi.hoisted(() => ({
   ownsWorkbench: false,
 }));
+const workbenchMocks = vi.hoisted(() => ({
+  releaseOwnership: null as (() => void) | null,
+}));
 
 vi.mock('@/utils/messaging', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/messaging')>();
@@ -53,6 +56,18 @@ vi.mock('@/ui/agent-ui-presentation', async (importOriginal) => {
   };
 });
 
+vi.mock('@/ui/hooks/use-bgsm-agent-workbench', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/ui/hooks/use-bgsm-agent-workbench')>();
+  return {
+    ...actual,
+    useBgsmAgentWorkbench: (...args: Parameters<typeof actual.useBgsmAgentWorkbench>) => {
+      const workbench = actual.useBgsmAgentWorkbench(...args);
+      workbenchMocks.releaseOwnership = workbench.clearTerminal;
+      return workbench;
+    },
+  };
+});
+
 type CapturedTurn = Readonly<{
   input: BgsmAgentTurnInput;
   handlers: BgsmAgentTurnHandlers;
@@ -64,6 +79,7 @@ let turns: CapturedTurn[];
 beforeEach(() => {
   turns = [];
   presentationMocks.ownsWorkbench = false;
+  workbenchMocks.releaseOwnership = null;
   messagingMocks.startBgsmAgentTurn.mockReset();
   messagingMocks.startBgsmAgentTurn.mockImplementation((
     input: BgsmAgentTurnInput,
@@ -155,6 +171,13 @@ describe('AgentHost repository selection', () => {
       'Selected owner/repo-b · finish or discard the current Organize run to switch conversations',
     );
     expect(turns).toHaveLength(1);
+
+    await releaseWorkbenchOwnership();
+    await flushEffects();
+
+    await expectSessionCount(container, 2);
+    expect(composerText(container)).toContain('owner/repo-b');
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
   });
 
   it('does not rotate a bound current-view conversation when its filters change', async () => {
@@ -217,6 +240,16 @@ async function mountHarness(initialCandidate: BgsmAgentConversationCandidate) {
   const container = mountReact(<Harness initialCandidate={initialCandidate} />, mountedRoots);
   await flushEffects();
   return container;
+}
+
+async function releaseWorkbenchOwnership(): Promise<void> {
+  const releaseOwnership = workbenchMocks.releaseOwnership;
+  if (!releaseOwnership) throw new Error('Workbench release callback not found.');
+  await act(async () => {
+    presentationMocks.ownsWorkbench = false;
+    releaseOwnership();
+    await Promise.resolve();
+  });
 }
 
 async function sendPrompt(container: HTMLElement, prompt: string): Promise<CapturedTurn> {

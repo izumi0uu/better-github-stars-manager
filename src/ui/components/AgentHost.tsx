@@ -79,6 +79,8 @@ export function AgentHost({
   const boundContextKey = agent.conversationBinding
     ? conversationCandidateContextKey(agent.conversationBinding.candidateContract)
     : null;
+  // Organize ownership implies !canSwitchSession; while a candidate is blocked,
+  // the effect cannot consume its pending switch before ownership releases and rerenders.
   const blockedConversationCandidate = organizeView.ownsSession
     && pendingContextKey !== null
     && pendingContextKey !== boundContextKey
@@ -91,8 +93,8 @@ export function AgentHost({
       pendingCandidateContextKeyRef.current = candidateContextKey;
     }
 
-    const pendingContextKey = pendingCandidateContextKeyRef.current;
-    if (!pendingContextKey) return;
+    const queuedCandidateContextKey = pendingCandidateContextKeyRef.current;
+    if (!queuedCandidateContextKey) return;
     if (!agent.conversationBinding) {
       if (uiPresentation.sessionPolicy.canSwitchSession) {
         pendingCandidateContextKeyRef.current = null;
@@ -100,7 +102,7 @@ export function AgentHost({
       return;
     }
     if (conversationCandidateContextKey(agent.conversationBinding.candidateContract)
-      === pendingContextKey) {
+      === queuedCandidateContextKey) {
       pendingCandidateContextKeyRef.current = null;
       return;
     }

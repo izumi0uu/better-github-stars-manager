@@ -274,6 +274,49 @@ describe('Cubby Chat tag assignment policy', () => {
     assert.equal(minOneWrites, 1);
   });
 
+  it('reuses cached coverage safely across sequential successful assignments', async () => {
+    const stars = [
+      star('a/repo'),
+      star('b/repo'),
+      star('c/repo'),
+      star('d/repo'),
+    ];
+    let tags = [
+      tag('a/repo', { manual: ['shared'] }),
+      tag('b/repo', { manual: ['shared'] }),
+    ];
+    let loads = 0;
+    const writes: string[] = [];
+    const assign = assignmentTool({
+      repositoryScope: stars.map((item) => item.full_name),
+      tagAssignmentPolicy: createBgsmAgentTagAssignmentPolicy(
+        { maxTagsPerRepo: 5, minTopicRepoCount: 3 },
+        () => {
+          loads += 1;
+          return { stars, tags, tagMeta: [] };
+        },
+      ),
+      assignManualTags: async (fullName, submitted) => {
+        writes.push(fullName);
+        tags = [...tags, tag(fullName, { manual: [...submitted] })];
+        return { manualTags: [...submitted], changed: true, reason: null };
+      },
+    });
+
+    await assign.execute(
+      assign.validate?.({ full_name: 'c/repo', tags: ['shared'] }),
+      { sessionId: 'monotonic-coverage', callId: 'assign-c' },
+    );
+    await assign.execute(
+      assign.validate?.({ full_name: 'd/repo', tags: ['shared'] }),
+      { sessionId: 'monotonic-coverage', callId: 'assign-d' },
+    );
+
+    assert.deepEqual(writes, ['c/repo', 'd/repo']);
+    assert.equal(tags.length, 4);
+    assert.equal(loads, 1);
+  });
+
   it('reloads coverage after repository removals and global deletions', async () => {
     const stars = [
       star('one/repo'),

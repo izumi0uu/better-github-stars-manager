@@ -15,6 +15,7 @@ import type {
 import {
   createOrganizeTagPolicySnapshot,
   reconcileOrganizeTagCoverage,
+  TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT,
   validateProviderAttemptReservation,
   validateRunBudgetUsage,
   type RunBudget,
@@ -2287,7 +2288,7 @@ function settleAnalysisRow(
   row: OrganizeItemRecord,
   outcome: OrganizeAnalysisOutcome,
   now: number,
-  maxTagsPerRepo = 5,
+  maxTagsPerRepo = TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT,
 ): OrganizeItemRecord {
   validateAnalysisOutcome(outcome);
   const retry = outcome.state === 'retry';
@@ -2391,9 +2392,13 @@ async function validateOrganizeLedger(
 
 function normalizeActions(
   values: readonly OrganizeProposedAction[],
-  maxTagsPerRepo = 5,
+  maxTagsPerRepo = TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT,
 ): OrganizeProposedAction[] {
-  assertLimit(maxTagsPerRepo, 5, 'proposed actions');
+  assertLimit(
+    maxTagsPerRepo,
+    TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT,
+    'proposed actions',
+  );
   if (values.length > maxTagsPerRepo) {
     throw new RangeError(`At most ${maxTagsPerRepo} proposed actions are allowed per repository.`);
   }
