@@ -1,5 +1,7 @@
 import {
   createEmptyRunBudgetUsage,
+  createOrganizeTagPolicySnapshot,
+  reconcileOrganizeTagCoverage,
   validateRunBudget,
   validateRunBudgetUsage,
   type BudgetExhaustionReason,
@@ -36,6 +38,7 @@ import {
   reserveAnalyzerBatch,
   reserveProviderAttempt,
 } from './run-budget';
+import type { OrganizeTagPolicySnapshot } from '@/types';
 
 export type OrganizeJobRunAnalysisStatus =
   | 'analyzing'
@@ -55,6 +58,7 @@ export type OrganizeJobRunAnalysisState = Readonly<{
   generation: number;
   proposalId: ProposalId;
   frozenScope: FrozenScope;
+  tagPolicy: OrganizeTagPolicySnapshot;
   budget: RunBudget;
   usage: RunBudgetUsage;
   startFrozenIndex: number;
@@ -118,6 +122,7 @@ export function restoreOrganizeJobRunAnalysisState(input: Readonly<{
   generation: number;
   proposalId: ProposalId;
   frozenScope: FrozenScope;
+  tagPolicy?: unknown;
   budget: RunBudget;
   usage: RunBudgetUsage;
   startFrozenIndex?: number;
@@ -133,6 +138,7 @@ export function restoreOrganizeJobRunAnalysisState(input: Readonly<{
     generation: input.generation,
     proposalId: input.proposalId,
     frozenScope: input.frozenScope,
+    tagPolicy: input.tagPolicy,
     budget: input.budget,
     startFrozenIndex: input.startFrozenIndex ?? 0,
   });
@@ -170,6 +176,7 @@ export function createOrganizeJobRunAnalysisState(input: Readonly<{
   generation: number;
   proposalId: ProposalId;
   frozenScope: FrozenScope;
+  tagPolicy?: unknown;
   budget: RunBudget;
   startFrozenIndex?: number;
 }>): OrganizeJobRunAnalysisState {
@@ -188,6 +195,7 @@ export function createOrganizeJobRunAnalysisState(input: Readonly<{
     generation: input.generation,
     proposalId: input.proposalId,
     frozenScope: input.frozenScope,
+    tagPolicy: createOrganizeTagPolicySnapshot(input.tagPolicy),
     budget: input.budget,
     usage: createEmptyRunBudgetUsage(),
     startFrozenIndex,
@@ -220,6 +228,7 @@ export function resumeOrganizeJobRunAnalysisState(input: Readonly<{
     generation: input.generation,
     proposalId: input.proposalId,
     frozenScope: input.previous.frozenScope,
+    tagPolicy: input.previous.tagPolicy,
     budget: input.budget,
     startFrozenIndex: input.previous.startFrozenIndex,
   });
@@ -384,6 +393,11 @@ export function finalizeAnalyzerBatch(input: Readonly<{
   taxonomyFingerprint: TaxonomyFingerprintV1;
 }>): FinalizedBatch {
   validateAnalyzerBatchProposal(input.proposal);
+  for (const row of input.proposal.rows) {
+    if (row.classifications.length > input.state.tagPolicy.maxTagsPerRepo) {
+      throw new RangeError('Analyzer classifications exceed the snapshotted per-repository tag limit.');
+    }
+  }
   validateAnalyzerIdentity(input.state, input.proposal);
   const live = input.positions.filter(
     (position): position is Extract<OrganizeJobRunPagePosition, { kind: 'live' }> =>
@@ -537,6 +551,7 @@ export function buildSemanticAnalyzerBatch(input: Readonly<{
     generation: input.state.generation,
     scopeFingerprint: input.state.frozenScope.fingerprint,
     taskInstruction: input.taskInstruction,
+    tagPolicy: input.state.tagPolicy,
     repositories: Object.freeze(repositories),
     taxonomy: input.taxonomy,
   });
@@ -629,6 +644,9 @@ function finalizeClassifications(
     completedScope &&
     analyzed.length === state.frozenScope.count;
   const analysisBlocked = nonActionable.some((row) => row.kind === 'analysis_failed');
+  const reconciled = completedCoverage && !analysisBlocked
+    ? reconcileCompletedTagCoverage(state.tagPolicy, analyzed, nonActionable, actionable)
+    : { analyzed, nonActionable, actionable };
   const nextState = freezeState({
     ...state,
     usage: consumeFrozenPositions(state.budget, state.usage, accepted),
@@ -645,15 +663,60 @@ function finalizeClassifications(
       : completedCoverage
         ? 'scope_complete'
         : null,
-    analyzedFrozenPositions: analyzed,
-    nonActionableAnalysisOutcomes: nonActionable,
-    actionableProposalRows: actionable,
+    analyzedFrozenPositions: reconciled.analyzed,
+    nonActionableAnalysisOutcomes: reconciled.nonActionable,
+    actionableProposalRows: reconciled.actionable,
   });
   validateAnalysisUniverses(nextState);
   return Object.freeze({
     state: nextState,
     continuationRequired: false,
     nextFrozenIndex,
+  });
+}
+
+function reconcileCompletedTagCoverage(
+  policy: OrganizeTagPolicySnapshot,
+  analyzed: readonly AnalyzedFrozenPosition[],
+  nonActionable: readonly NonActionableAnalysisOutcome[],
+  actionable: readonly ActionableProposalRow[],
+): Readonly<{
+  analyzed: readonly AnalyzedFrozenPosition[];
+  nonActionable: readonly NonActionableAnalysisOutcome[];
+  actionable: readonly ActionableProposalRow[];
+}> {
+  const retainedActions = reconcileOrganizeTagCoverage(
+    actionable.map((row) => ({ repositoryId: row.repositoryId, actions: row.actions })),
+    policy,
+  );
+  const emptied = new Map<number, ActionableProposalRow>();
+  const retainedRows: ActionableProposalRow[] = [];
+  actionable.forEach((row, index) => {
+    const actions = retainedActions[index] ?? [];
+    if (actions.length === 0) {
+      emptied.set(row.frozenIndex, row);
+      return;
+    }
+    retainedRows.push(actions.length === row.actions.length
+      ? row
+      : Object.freeze({ ...row, actions }));
+  });
+  if (emptied.size === 0) {
+    return Object.freeze({ analyzed, nonActionable, actionable: retainedRows });
+  }
+
+  const coverageOutcomes = [...emptied.values()].map((row) => Object.freeze({
+    frozenIndex: row.frozenIndex,
+    repositoryId: row.repositoryId,
+    kind: 'insufficient_evidence' as const,
+  }));
+  return Object.freeze({
+    analyzed: analyzed.map((row) => emptied.has(row.frozenIndex)
+      ? Object.freeze({ ...row, classification: 'non_actionable' as const })
+      : row),
+    nonActionable: [...nonActionable, ...coverageOutcomes]
+      .sort((left, right) => left.frozenIndex - right.frozenIndex),
+    actionable: retainedRows,
   });
 }
 
@@ -820,6 +883,7 @@ function freezeState(input: OrganizeJobRunAnalysisState): OrganizeJobRunAnalysis
   validateAnalysisSplitState(input);
   return Object.freeze({
     ...input,
+    tagPolicy: Object.freeze({ ...input.tagPolicy }),
     analysisPendingRanges: Object.freeze(input.analysisPendingRanges.map((range) => Object.freeze({ ...range }))),
     analyzedFrozenPositions: Object.freeze([...input.analyzedFrozenPositions]),
     nonActionableAnalysisOutcomes: Object.freeze([...input.nonActionableAnalysisOutcomes]),

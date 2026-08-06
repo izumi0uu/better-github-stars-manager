@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import type { LaunchCandidateContract } from '@/bgsm-agent/scope';
+import type { BgsmAgentConversationCandidate } from '@/bgsm-agent/conversation-binding';
 import {
   BGSM_AGENT_TOOL_NAMES,
   getBgsmAgentToolDefinition,
@@ -63,6 +64,7 @@ export function AgentPanel({
   agent,
   workbench,
   defaultCandidate,
+  blockedConversationCandidate = null,
   scopeCount,
   handoff,
   onDismissHandoff,
@@ -73,6 +75,7 @@ export function AgentPanel({
   agent: ChatController;
   workbench: WorkbenchController;
   defaultCandidate: LaunchCandidateContract;
+  blockedConversationCandidate?: BgsmAgentConversationCandidate | null;
   scopeCount?: number;
   handoff?: { remainingUntagged: number; autoTagged: number } | null;
   onDismissHandoff?: () => void;
@@ -149,7 +152,8 @@ export function AgentPanel({
   const active = uiPresentation.active;
   const showStopbar = uiPresentation.stopbar !== null;
   const sessionTransitionBlocked = !uiPresentation.sessionPolicy.canSwitchSession;
-  const chatDisabled = uiPresentation.composer.disabled;
+  const conversationSwitchBlocked = blockedConversationCandidate !== null;
+  const chatDisabled = uiPresentation.composer.disabled || conversationSwitchBlocked;
   const mascotState = uiPresentation.mascot;
   const contextFailureReason = contextLimitRecovery?.reason ?? null;
   const contextNeedsProviderSettings = contextFailureReason === 'capability_unresolved'
@@ -327,7 +331,7 @@ export function AgentPanel({
   };
 
   const handleRetryContextLimitedPrompt = () => {
-    if (!contextLimitRecovery || active || !canRetryLastTurn) return;
+    if (!contextLimitRecovery || active || !canRetryLastTurn || conversationSwitchBlocked) return;
     const prompt = contextLimitRecovery.prompt;
     editContextLimitedPrompt();
     setInput('');
@@ -400,7 +404,14 @@ export function AgentPanel({
     organizeView,
     m,
   });
-  const composerNote = stateComposerNote
+  const blockedConversationLabel = blockedConversationCandidate?.kind === 'selected_repository'
+    ? blockedConversationCandidate.selectedRepositoryIdHint
+    : blockedConversationCandidate
+      ? m.agentPanel.askingAboutCurrentViewUnknown
+      : null;
+  const composerNote = blockedConversationLabel
+    ? m.agentPanel.conversationSwitchPending(blockedConversationLabel)
+    : stateComposerNote
     ?? (showHandoff
       ? m.agentPanel.handoffScopeNote(handoff!.remainingUntagged)
       : organize.snapshot
@@ -799,7 +810,7 @@ export function AgentPanel({
                           size="sm"
                           className="h-7 px-2 text-xs"
                           onClick={handleRetry}
-                          disabled={!retryPrompt || active || !canRetryLastTurn}
+                          disabled={!retryPrompt || active || !canRetryLastTurn || chatDisabled}
                         >
                           {isProviderSetupError ? m.agentPanel.providerAuthRetry : m.agentPanel.retry}
                         </Button>
@@ -834,7 +845,11 @@ export function AgentPanel({
                     </Button>
                   )}
                   {contextNeedsInternalRetry && (
-                    <Button size="sm" onClick={handleRetryContextLimitedPrompt} disabled={!canRetryLastTurn}>
+                    <Button
+                      size="sm"
+                      onClick={handleRetryContextLimitedPrompt}
+                      disabled={!canRetryLastTurn || conversationSwitchBlocked}
+                    >
                       {m.agentPanel.retry}
                     </Button>
                   )}

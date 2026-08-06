@@ -153,6 +153,12 @@ export interface OrganizeAnalysisRange {
   depth: number;
 }
 
+/** Preference snapshot that stays fixed for one whole-library organization job. */
+export interface OrganizeTagPolicySnapshot {
+  maxTagsPerRepo: number;
+  minTopicRepoCount: number;
+}
+
 /** Durable header for a resumable whole-library tag organization job. */
 export interface OrganizeJobRecord {
   jobId: string;
@@ -165,6 +171,8 @@ export interface OrganizeJobRecord {
   proposalId: string;
   frozenScope: OrganizeFrozenScopeSnapshot;
   taskInstruction: string;
+  /** Optional only for legacy v4 rows created before organization preferences were snapshotted. */
+  tagPolicy?: OrganizeTagPolicySnapshot;
   budget: unknown;
   usage: unknown;
   nextFrozenIndex: number;
@@ -339,9 +347,9 @@ export interface Config {
   autoTagAgentPromptSeen: boolean;
   /** Legacy max topic-derived tags per repo. Read as compatibility input only. */
   autoTagLimit: number;
-  /** Max topic-derived tags per repo for Auto Tags. */
+  /** Max topic-derived tags per repo for automated organization. */
   maxTagsPerRepo: number;
-  /** Minimum repos that must share a topic before bulk Auto Tags generates it. */
+  /** Minimum repos that must share a topic/tag before automated organization uses it. */
   minTopicRepoCount: number;
   /** Durable library view intent for filters and primary sort. */
   libraryView: LibraryViewPrefs;
@@ -354,6 +362,7 @@ export interface Config {
     order: string[];
     hidden: string[];
     widths?: Partial<Record<ColumnId, number>>;
+    showRepositoryOwner?: boolean;
   } | null;
   /** One-shot migration flag: clear auto-derived `language` tags (now that
    *  language is a first-class filter, not a tag). Set true after the migration

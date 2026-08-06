@@ -24,6 +24,7 @@ import {
 import {
   ANALYZER_OUTPUT_TOKENS_DEFAULT,
   ANALYZER_OUTPUT_TOKENS_HARD_LIMIT,
+  validateOrganizeTagPolicySnapshot,
 } from './policy';
 import {
   ORGANIZE_PROPOSAL_ANALYZER_TOOL_NAME,
@@ -34,6 +35,7 @@ import type { RunId } from './identity';
 import type { ScopeFingerprintV1 } from './scope';
 import type { SemanticRepositoryDto, SemanticTaxonomyDto } from './semantic-dto';
 import type { BudgetExhaustionReason, ProviderActualTokenTelemetry } from './policy';
+import type { OrganizeTagPolicySnapshot } from '@/types';
 
 export const MAX_ANALYZER_TASK_INSTRUCTION_BYTES = 4_096;
 export const MAX_ANALYZER_RETRY_DETAIL_BYTES = 1_024;
@@ -69,6 +71,7 @@ export type SemanticAnalyzerBatch = Readonly<{
   generation: number;
   scopeFingerprint: ScopeFingerprintV1;
   taskInstruction: string;
+  tagPolicy: OrganizeTagPolicySnapshot;
   repositories: readonly SemanticRepositoryDto[];
   taxonomy: SemanticTaxonomyDto;
 }>;
@@ -210,7 +213,7 @@ function analyzerToolForBatch(batch: SemanticAnalyzerBatch): AgentToolDefinition
                   {
                     type: 'array',
                     minItems: 1,
-                    maxItems: 5,
+                    maxItems: batch.tagPolicy.maxTagsPerRepo,
                     items: actionableClassification,
                   },
                   {
@@ -744,9 +747,17 @@ function proposalContractDiagnostic(
   const receivedCounts = new Map<number, number>();
   const unexpectedFrozenIndexes: number[] = [];
   const identityMismatchFrozenIndexes: number[] = [];
+  let classificationLimitExceeded = false;
   let diagnosticIndexesTruncated = false;
 
   for (const row of value.rows) {
+    if (
+      isRecord(row)
+      && Array.isArray(row.classifications)
+      && row.classifications.length > batch.tagPolicy.maxTagsPerRepo
+    ) {
+      classificationLimitExceeded = true;
+    }
     if (!isRecord(row) || !isNonnegativeSafeInteger(row.frozenIndex)) continue;
     const frozenIndex = row.frozenIndex;
     const expected = expectedByIndex.get(frozenIndex);
@@ -791,6 +802,7 @@ function proposalContractDiagnostic(
     && duplicateFrozenIndexes.length === 0
     && unexpectedFrozenIndexes.length === 0
     && identityMismatchFrozenIndexes.length === 0
+    && !classificationLimitExceeded
   ) {
     return null;
   }
@@ -803,7 +815,9 @@ function proposalContractDiagnostic(
         ? 'row_coverage'
         : identityMismatchFrozenIndexes.length > 0
           ? 'row_identity'
-          : schemaRejectionCode ?? 'schema',
+          : classificationLimitExceeded
+            ? 'classification'
+            : schemaRejectionCode ?? 'schema',
     expectedRowCount: batch.repositories.length,
     receivedRowCount: value.rows.length,
     batchIdentityMismatch,
@@ -811,9 +825,12 @@ function proposalContractDiagnostic(
     duplicateFrozenIndexes,
     unexpectedFrozenIndexes,
     identityMismatchFrozenIndexes,
-    schemaViolation: schemaViolation ?? (batchIdentityMismatch
-      ? 'Proposal run, generation, or scope identity did not match the unchanged batch.'
-      : null),
+    schemaViolation: schemaViolation
+      ?? (batchIdentityMismatch
+        ? 'Proposal run, generation, or scope identity did not match the unchanged batch.'
+        : classificationLimitExceeded
+          ? 'Proposal classifications exceeded the snapshotted per-repository tag limit.'
+          : null),
   }, diagnosticIndexesTruncated);
 }
 
@@ -1001,6 +1018,7 @@ function isNonnegativeSafeInteger(value: unknown): value is number {
 }
 
 function validateBatch(batch: SemanticAnalyzerBatch): void {
+  validateOrganizeTagPolicySnapshot(batch.tagPolicy);
   if (!batch.taskInstruction.trim() || batch.taskInstruction.trim() !== batch.taskInstruction) {
     throw new TypeError('Analyzer task instruction must be trimmed and nonempty.');
   }
