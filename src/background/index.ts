@@ -64,14 +64,15 @@ import {
   createBgsmTurnAuthorization,
   hasSuccessfulRepositoryCodeToolHistory,
   prepareBgsmAgentTurn,
-  selectBgsmAgentRawTurnNewMessages,
+  type AgentSessionLaunchDigest,
+  type OrganizeJobRunSnapshot,
   type BgsmAgentActiveProjection,
-  type BgsmAgentCompactionCheckpoint,
+  type BgsmAgentConversationBinding,
   type BgsmAgentOrganizeLibraryAction,
   type BgsmAgentOrganizeLibraryHandoff,
-  type RepositoryCodeRefAuthority,
+  type BgsmAgentSessionTransition,
   type BgsmAgentTurnInput,
-  type OrganizeJobRunSnapshot,
+  type RepositoryCodeRefAuthority,
 } from "@/bgsm-agent";
 import {
   AgentExecutionLedger,
@@ -83,10 +84,10 @@ import {
   runAgentLoop,
   resolveContextBudgetPolicy,
   testRegisteredAgentProviderConnection,
+  type AgentContentCaptureSink,
   type AgentEvent,
-  type AgentContextFailureReason,
   type AgentExecutionTraceSink,
-  type AgentStopReason,
+  type AgentMessage,
   type AgentTool,
   type AgentTraceProviderIdentity,
 } from "@/agent-harness";
@@ -203,6 +204,28 @@ import {
 } from "@/storage/organize-job-store";
 import type { SemanticTaxonomyDto } from "@/bgsm-agent/semantic-dto";
 import {
+  createAgentSession,
+  deleteAgentSession,
+  inspectAgentSessionCatalog,
+  loadCommittedAgentSessionTurn,
+  loadAgentSessionTranscriptPage,
+  loadCanonicalAgentSession,
+  loadAgentSession,
+  readAgentSessionRetryDraftCandidate,
+  type AgentSessionCommitResult,
+  type AgentSessionTerminalOutcome,
+} from "@/storage/agent-session-store";
+import { createAgentAttemptCoordinator } from './agent-attempt-coordinator';
+import {
+  AGENT_ARTIFACT_UNBOUND_TTL_MS,
+  AgentStorageCapacityError,
+  cleanupAgentToolCache,
+  clearAgentToolCache,
+  getAgentStorageUsage,
+  markAgentArtifactOrphaned,
+  storeAgentArtifact,
+} from "@/storage/agent-storage-store";
+import {
   canReplaceBlockedDurableRun,
   resolveBgsmOrganizeJobReconnect,
   settleBgsmOrganizeJobDisconnect,
@@ -231,6 +254,8 @@ import {
   type BgsmOrganizeJobDeliveryKind,
   type BgsmOrganizeJobErrorReason,
   type BgsmOrganizeJobServerMessage,
+  type BgsmAgentTurnLaunch,
+  type BgsmAgentTurnResult,
 } from "@/utils/messaging";
 
 /**
@@ -282,12 +307,30 @@ type Req =
     }
   | { type: "openOptions" }
   | { type: "devClearLocalData" }
+  | { type: "inspectAgentSessionCatalog" }
+  | { type: "inspectActiveAgentSessionTurn"; sessionId: string }
+  | { type: "createAgentSession"; sessionId?: string }
+  | { type: "loadAgentSession"; sessionId: string }
+  | {
+      type: "loadCommittedAgentSessionTurn";
+      sessionId: string;
+      turnAttemptId: string;
+      launchDigest: AgentSessionLaunchDigest;
+    }
+  | { type: "readAgentRetryDraftCandidate"; sessionId: string }
+  | { type: "dismissAgentSessionRetry"; sessionId: string; turnAttemptId: string }
+  | { type: "discardDamagedAgentSessionRecovery"; sessionId: string }
+  | { type: "loadAgentSessionTranscriptPage"; sessionId: string; beforeSequence: number }
+  | { type: "deleteAgentSession"; sessionId: string }
+  | { type: "getAgentStorageUsage" }
+  | { type: "clearAgentToolCache" }
   | { type: "runBackfill"; id: string }
   | { type: "deferBackfill"; id: string };
 
 type Res = { ok: true; data?: unknown } | {
   ok: false;
   error: string;
+  code?: string;
   details?: unknown;
 };
 
@@ -1058,20 +1101,6 @@ function broadcastDataChanged() {
   chrome.runtime.sendMessage({ type: "dataChanged" }).catch(() => {});
 }
 
-type BgsmAgentTurnResult = {
-  turnAttemptId: string;
-  sessionId: string;
-  baseRevision: number;
-  reason: AgentStopReason;
-  changed: boolean;
-  changedCount: number;
-  newMessages: ReturnType<typeof selectBgsmAgentRawTurnNewMessages>;
-  candidateCheckpoint?: BgsmAgentCompactionCheckpoint;
-  candidateActiveProjection?: BgsmAgentActiveProjection | null;
-  contextFailureReason?: AgentContextFailureReason;
-  organizeLibraryHandoff?: BgsmAgentOrganizeLibraryHandoff;
-};
-
 async function clearLocalDataForDev() {
   if (!DEV) throw new Error("DEV_ONLY");
   if (persistTimer) {
@@ -1163,16 +1192,30 @@ async function autoTagAll(
 }
 
 async function runBgsmAgentTurn(
-  input: BgsmAgentTurnInput,
+  launch: BgsmAgentTurnLaunch,
   options: {
     emit?: (event: AgentEvent) => void;
     signal?: AbortSignal;
-    bind?: (binding: import('@/bgsm-agent').BgsmAgentConversationBinding) => void;
+    bind?: (binding: BgsmAgentConversationBinding) => void;
     trace?: AgentExecutionTraceSink;
-    contentCapture?: import('@/agent-harness').AgentContentCaptureSink;
-  } = {},
+    contentCapture?: AgentContentCaptureSink;
+    executionEpochId: string;
+  },
 ): Promise<BgsmAgentTurnResult> {
-  const { prompt, sessionId, baseRevision, turnAttemptId } = input;
+  const { prompt, sessionId, baseRevision, turnAttemptId } = launch;
+  const canonicalSession = await loadCanonicalAgentSession(sessionId);
+  const recoveryClass = hasSuccessfulRepositoryCodeToolHistory(canonicalSession.messages)
+    ? 'statically_read_only'
+    : 'write_capable_or_unknown';
+  const { launchDigest, admission } = await bgsmAgentAttemptCoordinator.admit(
+    launch,
+    recoveryClass,
+  );
+  if (admission.kind === 'replay') return resultFromCommit(launch, admission.commit);
+  let changed = false;
+  let changedCount = 0;
+  let executionLedger: AgentExecutionLedger | null = null;
+  let attemptSettled = false;
   const controller = new AbortController();
   const liveness = createAgentTurnLiveness({
     signal: controller.signal,
@@ -1189,6 +1232,30 @@ async function runBgsmAgentTurn(
     options.signal?.addEventListener("abort", abortFromOptions, { once: true });
   }
   try {
+    const settleWithoutTransition = async (
+      result: BgsmAgentTurnResult,
+    ): Promise<BgsmAgentTurnResult> => {
+      if (!attemptSettled) {
+        await bgsmAgentAttemptCoordinator.settleWithoutTransition({
+          turnAttemptId,
+          sessionId,
+          launchDigest,
+          outcome: {
+            reason: result.reason,
+            changed,
+            changedCount,
+            writeSettlement: changed
+              ? 'unsafe'
+              : executionLedger?.writeSettlement() ?? 'none',
+            ...(result.contextFailureReason
+              ? { contextFailureReason: result.contextFailureReason }
+              : {}),
+          },
+        });
+        attemptSettled = true;
+      }
+      return result;
+    };
     const terminalAfterAbort = (): BgsmAgentTurnResult => {
       const timeoutReason = liveness.timeoutReason;
       if (timeoutReason) {
@@ -1206,22 +1273,41 @@ async function runBgsmAgentTurn(
         reason: timeoutReason ? 'provider_error' : 'aborted',
         changed: false,
         changedCount: 0,
-        newMessages: [],
+        commit: null,
       };
     };
+    if (canonicalSession.revision !== baseRevision) {
+      throw new TypeError('Cubby durable session changed after turn admission.');
+    }
+    if (!canonicalSession.binding && !launch.candidateContract) {
+      throw new TypeError('A new Cubby conversation requires a scope candidate.');
+    }
+    const input: BgsmAgentTurnInput = {
+      turnAttemptId,
+      sessionId,
+      baseRevision,
+      prompt,
+      history: canonicalSession.messages,
+      ...(canonicalSession.compaction
+        ? { checkpoint: canonicalSession.compaction }
+        : {}),
+      ...(canonicalSession.activeProjections?.length
+        ? { activeProjections: canonicalSession.activeProjections }
+        : {}),
+      ...(canonicalSession.binding
+        ? { binding: canonicalSession.binding }
+        : { candidateContract: launch.candidateContract! }),
+    };
     const preparedRuntimeProvider = await agentProviderGate.prepareRuntimeProvider();
-    if (liveness.signal.aborted) return terminalAfterAbort();
+    if (liveness.signal.aborted) return settleWithoutTransition(terminalAfterAbort());
     const conversation = await resolveBgsmAgentConversation(input, {
       providerFingerprint: preparedRuntimeProvider.fingerprint,
       resolveCandidate: (candidate) => resolveLiveLaunchCandidate(candidate),
     });
-    if (liveness.signal.aborted) return terminalAfterAbort();
-    const hasRepositoryCodeHistory = hasSuccessfulRepositoryCodeToolHistory(input.history);
-    const repositoryCodeReadOnly = hasRepositoryCodeHistory;
+    if (liveness.signal.aborted) return settleWithoutTransition(terminalAfterAbort());
+    const repositoryCodeReadOnly = recoveryClass === 'statically_read_only';
     options.bind?.(conversation.binding);
     const runtimeProvider = preparedRuntimeProvider.create();
-    let changed = false;
-    let changedCount = 0;
     const authorization = createBgsmTurnAuthorization({ repositoryCodeReadOnly });
     const repositoryScope = conversation.repositoryIds;
     const scopeLabel = conversation.binding.label;
@@ -1231,7 +1317,8 @@ async function runBgsmAgentTurn(
       label: scopeLabel,
       repositoryIds: repositoryScope,
     });
-    const executionLedger = new AgentExecutionLedger();
+    const ledger = new AgentExecutionLedger();
+    executionLedger = ledger;
     let organizeLibraryHandoffRequested: BgsmAgentOrganizeLibraryAction | null = null;
     const repositoryCodeRefAuthority = repositoryCodeRefAuthorityFor(
       sessionId,
@@ -1239,7 +1326,7 @@ async function runBgsmAgentTurn(
     );
     const activeOrganizeJob = await getActiveOrganizeJob();
     const organizeApplyActive = organizeApplyBlocksAgentWrites(activeOrganizeJob);
-    if (liveness.signal.aborted) return terminalAfterAbort();
+    if (liveness.signal.aborted) return settleWithoutTransition(terminalAfterAbort());
     const toolRegistry = createBgsmAgentToolRegistry({
       repositoryScope,
       scopeFingerprint,
@@ -1298,19 +1385,19 @@ async function runBgsmAgentTurn(
       contentCapture: options.contentCapture,
     });
     if (prepared.kind === "context_limit") {
-      return {
+      return settleWithoutTransition({
         turnAttemptId,
         sessionId,
         baseRevision,
         reason: "context_limit",
         changed: false,
         changedCount: 0,
-        newMessages: [],
+        commit: null,
         contextFailureReason: prepared.reason,
-      };
+      });
     }
     if (prepared.kind === "aborted") {
-      return terminalAfterAbort();
+      return settleWithoutTransition(terminalAfterAbort());
     }
     let activeCheckpoint = prepared.candidateCheckpoint ?? input.checkpoint;
     let checkpointToCommit = prepared.candidateCheckpoint;
@@ -1329,8 +1416,8 @@ async function runBgsmAgentTurn(
     }
     const continueAfterContextPressure = async (
       continuation: Readonly<{
-        messages: readonly import('@/agent-harness').AgentMessage[];
-        rawMessages?: readonly import('@/agent-harness').AgentMessage[];
+        messages: readonly AgentMessage[];
+        rawMessages?: readonly AgentMessage[];
         trigger:
           | 'completed_tool_envelope'
           | 'tool_result_memory_pressure'
@@ -1392,10 +1479,53 @@ async function runBgsmAgentTurn(
       maxSteps: 8,
       maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
       contextPolicy: profile,
-      executionLedger,
+      executionLedger: ledger,
       trace: options.trace,
       traceProvider,
       contentCapture: options.contentCapture,
+      toolResultArtifactWriter: async ({
+        sessionId: artifactSessionId,
+        toolName,
+        toolCallId,
+        content,
+        contentType,
+      }) => {
+        const artifactId = `tool-result:v1:${await sha256Base64Url(canonicalJson({
+          sessionId: artifactSessionId,
+          turnAttemptId,
+          toolName,
+          toolCallId,
+        }))}`;
+        const artifactInput = {
+          artifactId,
+          sessionId: artifactSessionId,
+          turnAttemptId,
+          toolCallId,
+          toolName,
+          storageClass: 'cache' as const,
+          content,
+          contentType,
+          expiresAt: Date.now() + AGENT_ARTIFACT_UNBOUND_TTL_MS,
+        };
+        const store = () => storeAgentArtifact(artifactInput);
+        let artifact: Awaited<ReturnType<typeof store>>;
+        try {
+          artifact = await store();
+        } catch (error) {
+          if (!isRecoverableAgentArtifactWriteError(error)) throw error;
+          const cleanup = await cleanupAgentToolCache({ targetTotalBytes: 0 });
+          if (cleanup.freedBytes === 0) throw error;
+          artifact = await store();
+        }
+        return {
+          artifactId: artifact.id,
+          byteLength: artifact.byteLength,
+          contentType: artifact.contentType,
+        };
+      },
+      toolResultArtifactDisposer: async ({ artifactId }) => {
+        await markAgentArtifactOrphaned(artifactId);
+      },
       onToolEnvelopeSettled: continueAfterContextPressure,
       onContextOverflow: continueAfterContextPressure,
       messages: prepared.messages,
@@ -1424,26 +1554,112 @@ async function runBgsmAgentTurn(
     const effectiveInput = activeCheckpoint
       ? { ...input, checkpoint: activeCheckpoint }
       : input;
-    return {
-      turnAttemptId,
-      sessionId: result.sessionId,
+    const terminalPayload = buildBgsmAgentTerminalPayload(
+      { ...result, reason: effectiveReason },
+      effectiveInput,
+      checkpointToCommit,
+      candidateActiveProjection,
+    );
+    const transition: BgsmAgentSessionTransition = {
+      sessionId,
       baseRevision,
+      messageDelta: terminalPayload.newMessages,
+      ...(checkpointToCommit ? { candidateCheckpoint: checkpointToCommit } : {}),
+      ...(candidateActiveProjection === undefined
+        ? {}
+        : { candidateActiveProjection }),
+      binding: conversation.binding,
+    };
+    const handoffAnchor = organizeLibraryHandoff
+      ? selectHandoffAnchor(terminalPayload.newMessages)
+      : undefined;
+    const outcome: AgentSessionTerminalOutcome = {
       reason: effectiveReason,
       changed,
       changedCount,
+      writeSettlement: changed ? 'unsafe' : ledger.writeSettlement(),
       ...(contextFailureReason ? { contextFailureReason } : {}),
-      ...(organizeLibraryHandoff ? { organizeLibraryHandoff } : {}),
-      ...buildBgsmAgentTerminalPayload(
-        { ...result, reason: effectiveReason },
-        effectiveInput,
-        checkpointToCommit,
-        candidateActiveProjection,
-      ),
+      ...(organizeLibraryHandoff
+        ? {
+            organizeLibraryAction: organizeLibraryHandoff.action,
+            handoffAnchor,
+          }
+        : {}),
     };
+    const commit = await bgsmAgentAttemptCoordinator.commit({
+      turnAttemptId,
+      transition,
+      launchDigest,
+      outcome,
+    });
+    attemptSettled = true;
+    return resultFromCommit(
+      launch,
+      commit,
+      organizeLibraryHandoff,
+    );
+  } catch (error) {
+    if (!attemptSettled) {
+      await bgsmAgentAttemptCoordinator.settleWithoutTransition({
+        turnAttemptId,
+        sessionId,
+        launchDigest,
+        outcome: {
+          reason: 'provider_error',
+          changed,
+          changedCount,
+          writeSettlement: changed
+            ? 'unsafe'
+            : executionLedger?.writeSettlement() ?? 'none',
+        },
+      });
+      attemptSettled = true;
+    }
+    throw error;
   } finally {
     options.signal?.removeEventListener("abort", abortFromOptions);
     liveness.dispose();
   }
+}
+
+function resultFromCommit(
+  launch: BgsmAgentTurnLaunch,
+  commit: AgentSessionCommitResult,
+  handoff?: BgsmAgentOrganizeLibraryHandoff,
+): BgsmAgentTurnResult {
+  const outcome = commit.outcome;
+  const organizeLibraryHandoff = outcome.organizeLibraryAction
+    ? handoff ?? {
+        type: 'organize_whole_library' as const,
+        action: outcome.organizeLibraryAction,
+        instruction: launch.prompt,
+      }
+    : undefined;
+  return {
+    turnAttemptId: launch.turnAttemptId,
+    sessionId: launch.sessionId,
+    baseRevision: launch.baseRevision,
+    reason: outcome.reason,
+    changed: outcome.changed,
+    changedCount: outcome.changedCount,
+    commit,
+    ...(outcome.contextFailureReason
+      ? { contextFailureReason: outcome.contextFailureReason }
+      : {}),
+    ...(organizeLibraryHandoff ? { organizeLibraryHandoff } : {}),
+  };
+}
+
+function selectHandoffAnchor(
+  messages: readonly import('@/bgsm-agent').BgsmAgentSessionMessage[],
+): AgentSessionTerminalOutcome['handoffAnchor'] {
+  const assistant = [...messages]
+    .reverse()
+    .find((message) => message.role === 'agent' && message.content.trim().length > 0);
+  return {
+    messageId: assistant?.id ?? null,
+    createdAt: assistant?.createdAt ?? Date.now(),
+  };
 }
 
 function agentTraceProviderIdentity(
@@ -2029,6 +2245,64 @@ async function handle(req: Req): Promise<Res> {
         await chrome.runtime.openOptionsPage();
         return { ok: true };
       }
+      case "inspectAgentSessionCatalog":
+        return { ok: true, data: await inspectAgentSessionCatalog() };
+      case "inspectActiveAgentSessionTurn": {
+        const active = bgsmAgentTurnRegistry.inspectActiveTurn(req.sessionId)
+          ?? await bgsmAgentAttemptCoordinator.inspectActive(req.sessionId);
+        return { ok: true, data: active };
+      }
+      case "createAgentSession":
+        return {
+          ok: true,
+          data: await createAgentSession(
+            req.sessionId ? { idFactory: () => req.sessionId! } : undefined,
+          ),
+        };
+      case "loadAgentSession":
+        return { ok: true, data: await loadAgentSession(req.sessionId) };
+      case "loadCommittedAgentSessionTurn":
+        return {
+          ok: true,
+          data: await loadCommittedAgentSessionTurn({
+            sessionId: req.sessionId,
+            turnAttemptId: req.turnAttemptId,
+            launchDigest: req.launchDigest,
+          }),
+        };
+      case "readAgentRetryDraftCandidate":
+        return {
+          ok: true,
+          data: await readAgentSessionRetryDraftCandidate(req.sessionId),
+        };
+      case "dismissAgentSessionRetry":
+        return {
+          ok: true,
+          data: await bgsmAgentAttemptCoordinator.dismissRetry(req),
+        };
+      case "discardDamagedAgentSessionRecovery":
+        return {
+          ok: true,
+          data: await bgsmAgentAttemptCoordinator.discardDamagedRecovery(req.sessionId),
+        };
+      case "loadAgentSessionTranscriptPage":
+        return {
+          ok: true,
+          data: await loadAgentSessionTranscriptPage(req.sessionId, req.beforeSequence),
+        };
+      case "deleteAgentSession":
+        return {
+          ok: true,
+          data: {
+            deleted: await deleteAgentSession(req.sessionId, {
+              executionEpochId: bgsmAgentTurnExecutionEpochId,
+            }),
+          },
+        };
+      case "getAgentStorageUsage":
+        return { ok: true, data: await getAgentStorageUsage() };
+      case "clearAgentToolCache":
+        return { ok: true, data: await clearAgentToolCache() };
       case "devClearLocalData": {
         const result = await run(clearLocalDataForDev);
         return { ok: true, data: result };
@@ -2080,9 +2354,91 @@ async function handle(req: Req): Promise<Res> {
     return { ok: false, error: 'Unsupported background request.' };
   } catch (e) {
     const msg = translateError(e, await getLocaleMessages());
-    setProgress({ phase: "idle", done: 0, total: null, message: `${msg}` });
-    return { ok: false, error: msg };
+    const agentSessionFailure = describeAgentSessionFailure(e);
+    if (!isAgentSessionRequest(req)) {
+      setProgress({ phase: "idle", done: 0, total: null, message: `${msg}` });
+    }
+    return {
+      ok: false,
+      error: msg,
+      ...(agentSessionFailure ?? {}),
+    };
   }
+}
+
+function isAgentSessionRequest(req: Req): boolean {
+  return [
+    'inspectAgentSessionCatalog',
+    'inspectActiveAgentSessionTurn',
+    'createAgentSession',
+    'loadAgentSession',
+    'loadCommittedAgentSessionTurn',
+    'readAgentRetryDraftCandidate',
+    'dismissAgentSessionRetry',
+    'discardDamagedAgentSessionRecovery',
+    'loadAgentSessionTranscriptPage',
+    'deleteAgentSession',
+    'getAgentStorageUsage',
+    'clearAgentToolCache',
+  ].includes(req.type);
+}
+
+function describeAgentSessionFailure(error: unknown): Readonly<{
+  code: string;
+  details?: Record<string, string | number>;
+}> | null {
+  if (error && typeof error === 'object') {
+    const value = error as Record<string, unknown>;
+    if (value.name === 'QuotaExceededError') {
+      return { code: 'agent_session_quota_exceeded' };
+    }
+    if (typeof value.code === 'string' && [
+      'agent_session_not_found',
+      'agent_session_revision_conflict',
+      'agent_session_attempt_conflict',
+      'agent_session_corrupt',
+      'agent_session_deletion_blocked',
+      'agent_session_turn_active',
+      'agent_session_turn_lease_mismatch',
+      'agent_storage_capacity_exceeded',
+      'agent_artifact_not_found',
+      'agent_artifact_not_ready',
+      'agent_artifact_corrupt',
+      'agent_artifact_conflict',
+      'agent_artifact_state_conflict',
+      'agent_artifact_access_denied',
+    ].includes(value.code)) {
+      const details = Object.fromEntries(
+        [
+          'sessionId',
+          'jobId',
+          'turnAttemptId',
+          'artifactId',
+          'expectedRevision',
+          'actualRevision',
+          'requiredBytes',
+          'availableBytes',
+          'hardLimitBytes',
+        ]
+          .flatMap((key) => (
+            typeof value[key] === 'string' || typeof value[key] === 'number'
+              ? [[key, value[key] as string | number] as const]
+              : []
+          )),
+      );
+      return {
+        code: value.code,
+        ...(Object.keys(details).length > 0 ? { details } : {}),
+      };
+    }
+  }
+  return null;
+}
+
+function isRecoverableAgentArtifactWriteError(error: unknown): boolean {
+  return error instanceof AgentStorageCapacityError
+    || (!!error && typeof error === 'object'
+      && (error as { name?: unknown }).name === 'QuotaExceededError');
 }
 
 chrome.runtime.onMessage.addListener((req: Req, _sender, sendResponse) => {
@@ -2643,8 +2999,17 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
+const bgsmAgentTurnExecutionEpochId = `bgsm_worker_${crypto.randomUUID()}`;
+const bgsmAgentAttemptCoordinator = createAgentAttemptCoordinator(
+  bgsmAgentTurnExecutionEpochId,
+);
 const bgsmAgentTurnRegistry = createBgsmAgentTurnRegistry({
-  runTurn: (input, options) => runBgsmAgentTurn(input, options),
+  executionEpochId: bgsmAgentTurnExecutionEpochId,
+  runTurn: (input, options) => runBgsmAgentTurn(input, {
+    ...options,
+    executionEpochId: bgsmAgentTurnExecutionEpochId,
+  }),
+  releaseTurnLease: (input) => bgsmAgentAttemptCoordinator.release(input),
   translateError: async (error) => translateError(error, await getLocaleMessages()),
   traceFactory: DEV ? createDevAgentTurnTraceFactory({
     observeExecutionEvent: ({ rootOperationId, event }) => {

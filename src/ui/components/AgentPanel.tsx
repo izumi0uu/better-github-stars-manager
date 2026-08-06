@@ -86,29 +86,41 @@ export function AgentPanel({
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const reviewTranscriptMessageIdRef = useRef<string | null>(null);
   const onHideRef = useRef(onHide);
+  const previousDurableRetryDraftRef = useRef(agent.durableRetryDraft);
   onHideRef.current = onHide;
   const {
     messages,
     running,
     status,
-    error,
+    error: turnError,
     lastTurnResult,
     contextLimitRecovery,
     draftRecovery,
+    durableRetryDraft,
     canRetryLastTurn,
     toolActivities,
     errorCategory,
     startTurn,
     stopTurn,
     editContextLimitedPrompt,
+    sessionReady: agentSessionReady,
+    sessionOperationPending,
+    sessionInitializationError,
     activeSessionId,
     sessions,
+    hasEarlierMessages,
+    loadingEarlierMessages,
     createSession,
     switchSession,
     deleteSession,
+    loadEarlierMessages,
     resetConversation,
+    retrySessionHydration,
   } = agent;
   const organize = workbench.state;
+  const error = sessionInitializationError ?? turnError;
+  const sessionIdentityReady = agentSessionReady && organize.sessionId === activeSessionId;
+  const sessionReady = sessionIdentityReady && !sessionOperationPending;
   const organizeView = selectOrganizeWorkbenchView(organize, workbench.displayedProcessed);
   const receiptCounts = organizeView.receiptCounts;
   const reviewFocused = organizeView.phase === 'review_ready';
@@ -119,6 +131,7 @@ export function AgentPanel({
     && !error
     && !lastTurnResult
     && !contextLimitRecovery
+    && !durableRetryDraft
     && messages.length === 0;
   const showHandoff = !!handoff
     && handoff.remainingUntagged > 0
@@ -128,9 +141,10 @@ export function AgentPanel({
     && !organizeView.hasReceipt
     && !error
     && !contextLimitRecovery
+    && !durableRetryDraft
     && messages.length === 0;
   const lastUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content ?? null;
-  const retryPrompt = draftRecovery ?? lastFailedPrompt ?? lastUserPrompt;
+  const retryPrompt = durableRetryDraft?.prompt ?? draftRecovery ?? lastFailedPrompt ?? lastUserPrompt;
   const unsafeReplayBlocked = !canRetryLastTurn
     && !!retryPrompt
     && input.trim() === retryPrompt.trim();
@@ -148,8 +162,10 @@ export function AgentPanel({
   }, organizeView);
   const active = uiPresentation.active;
   const showStopbar = uiPresentation.stopbar !== null;
-  const sessionTransitionBlocked = !uiPresentation.sessionPolicy.canSwitchSession;
-  const chatDisabled = uiPresentation.composer.disabled;
+  const sessionTransitionBlocked = !sessionReady || !uiPresentation.sessionPolicy.canSwitchSession;
+  const sessionMenuDisabled = !sessionIdentityReady
+    || !uiPresentation.sessionPolicy.canSwitchSession;
+  const chatDisabled = !sessionReady || uiPresentation.composer.disabled;
   const mascotState = uiPresentation.mascot;
   const contextFailureReason = contextLimitRecovery?.reason ?? null;
   const contextNeedsProviderSettings = contextFailureReason === 'capability_unresolved'
@@ -174,6 +190,18 @@ export function AgentPanel({
     getBgsmAgentToolDefinition(message.toolName)?.capability === 'repository_code'
   ));
   const showProviderErrorCard = !running && !!error && !contextLimitRecovery;
+  const isSessionInitializationFailure = sessionInitializationError !== null;
+  const showDurableRetryCard = !!durableRetryDraft
+    && !running
+    && !turnError
+    && !contextLimitRecovery
+    && !sessionInitializationError;
+  const durableRetryPending = durableRetryDraft?.settlement === 'stop_pending';
+  const durableRetryTitle = durableRetryDraft?.kind === 'stopped'
+    ? m.agentPanel.retryDraftStoppedTitle
+    : durableRetryDraft?.kind === 'context_limit'
+      ? m.agentPanel.retryDraftContextTitle
+      : m.agentPanel.retryDraftFailedTitle;
   const codeSearchMessages = toolMessages.filter((message) => (
     message.toolName === BGSM_AGENT_TOOL_NAMES.searchRepositoryCode
   ));
@@ -224,6 +252,22 @@ export function AgentPanel({
   useEffect(() => {
     if (draftRecovery) setInput(draftRecovery);
   }, [draftRecovery]);
+
+  useEffect(() => {
+    const previousDraft = previousDurableRetryDraftRef.current;
+    previousDurableRetryDraftRef.current = durableRetryDraft;
+    if (!durableRetryDraft) return;
+    // A retry CAS claim changes the same draft from retryable to stop_pending.
+    // Keep the composer clear while that claimed attempt is running.
+    if (
+      previousDraft?.settlement === 'retryable'
+      && durableRetryDraft.settlement === 'stop_pending'
+      && previousDraft.sessionId === durableRetryDraft.sessionId
+      && previousDraft.baseRevision === durableRetryDraft.baseRevision
+      && previousDraft.prompt === durableRetryDraft.prompt
+    ) return;
+    setInput((current) => current.trim() ? current : durableRetryDraft.prompt);
+  }, [durableRetryDraft]);
 
   useEffect(() => {
     if (error && lastUserPrompt) setLastFailedPrompt(lastUserPrompt);
@@ -285,20 +329,24 @@ export function AgentPanel({
     };
   }, [open]);
 
-  const runAgentPrompt = (prompt: string) => {
+  const runAgentPrompt = async (prompt: string, retrySourceAttemptId?: string) => {
     const handoffAuthority = workbench.captureAgentHandoffAuthority();
-    void startTurn(prompt).then((result) => {
-      if (result?.organizeLibraryHandoff?.type !== 'organize_whole_library') return;
-      const anchorMessage = result.newMessages.at(-1);
+    const result = await startTurn(
+      prompt,
+      retrySourceAttemptId ? { retrySourceAttemptId } : undefined,
+    );
+    if (result?.organizeLibraryHandoff?.type === 'organize_whole_library') {
+      // The terminal handoff anchor is durable commit metadata. It is nested in
+      // the receipt so a replayed result follows the same message boundary as
+      // the original turn, without relying on the transient stream state.
+      const handoffAnchor = result.commit?.outcome.handoffAnchor;
       workbench.applyAgentHandoff(
         result.organizeLibraryHandoff,
         handoffAuthority,
-        {
-          messageId: anchorMessage?.id ?? null,
-          createdAt: anchorMessage?.createdAt ?? Date.now(),
-        },
+        handoffAnchor ?? { messageId: null, createdAt: Date.now() },
       );
-    });
+    }
+    return result;
   };
 
   const handlePromptSuggestion = (prompt: string) => {
@@ -311,13 +359,17 @@ export function AgentPanel({
     if (!input.trim() || chatDisabled || unsafeReplayBlocked) return;
     const prompt = input;
     setInput('');
-    runAgentPrompt(prompt);
+    void runAgentPrompt(prompt).then((result) => {
+      if (!result) setInput((current) => current || prompt);
+    });
   };
 
   const handleRetry = () => {
-    if (!retryPrompt || chatDisabled) return;
+    if (!retryPrompt || chatDisabled || active || !canRetryLastTurn) return;
     setInput('');
-    runAgentPrompt(retryPrompt);
+    void runAgentPrompt(retryPrompt, durableRetryDraft?.turnAttemptId).then((result) => {
+      if (!result) setInput((current) => current || retryPrompt);
+    });
   };
 
   const handleEditContextLimitedPrompt = () => {
@@ -331,7 +383,14 @@ export function AgentPanel({
     const prompt = contextLimitRecovery.prompt;
     editContextLimitedPrompt();
     setInput('');
-    runAgentPrompt(prompt);
+    void runAgentPrompt(
+      prompt,
+      durableRetryDraft?.prompt.trim() === prompt.trim()
+        ? durableRetryDraft.turnAttemptId
+        : undefined,
+    ).then((result) => {
+      if (!result) setInput((current) => current || prompt);
+    });
   };
 
   const handleOpenContextSettings = () => {
@@ -340,17 +399,18 @@ export function AgentPanel({
     focusComposerAtEnd();
   };
 
-  const handleResetConversation = () => {
+  const handleResetConversation = async () => {
     if (sessionTransitionBlocked) return;
-    resetConversation();
-    setLastFailedPrompt(null);
-    setInput('');
-    focusComposerAtEnd();
+    if (await resetConversation()) {
+      setLastFailedPrompt(null);
+      setInput('');
+      focusComposerAtEnd();
+    }
   };
 
-  const handleCreateSession = (): boolean => {
+  const handleCreateSession = async (): Promise<boolean> => {
     if (sessionTransitionBlocked) return false;
-    if (createSession()) {
+    if (await createSession()) {
       setLastFailedPrompt(null);
       setInput('');
       focusComposerAtEnd();
@@ -359,17 +419,17 @@ export function AgentPanel({
     return false;
   };
 
-  const handleSwitchSession = (nextSessionId: string): boolean => {
-    if (sessionTransitionBlocked || !switchSession(nextSessionId)) return false;
+  const handleSwitchSession = async (nextSessionId: string): Promise<boolean> => {
+    if (sessionTransitionBlocked || !await switchSession(nextSessionId)) return false;
     setLastFailedPrompt(null);
     setInput('');
     focusComposerAtEnd();
     return true;
   };
 
-  const handleDeleteSession = (sessionIdToDelete: string): boolean => {
+  const handleDeleteSession = async (sessionIdToDelete: string): Promise<boolean> => {
     if (sessionTransitionBlocked) return false;
-    if (deleteSession(sessionIdToDelete)) {
+    if (await deleteSession(sessionIdToDelete)) {
       setLastFailedPrompt(null);
       setInput('');
       focusComposerAtEnd();
@@ -382,7 +442,7 @@ export function AgentPanel({
   const selectedCount = organizeView.selectedCount;
   const resolvedScopeCount = resolvedScopeCountValue(scopeCount, defaultCandidate);
   const isProviderSetupError = !!error && !!errorCategory && !['provider', 'other'].includes(errorCategory);
-  const headerStatus = resolveAgentHeaderStatus({
+  const headerStatus = isSessionInitializationFailure ? null : resolveAgentHeaderStatus({
     phase: uiPresentation.header.kind,
     statusText: status?.text ?? null,
     contextRecoveryTitle,
@@ -587,7 +647,7 @@ export function AgentPanel({
           <AgentSessionMenu
             sessions={sessions}
             activeSessionId={activeSessionId}
-            disabled={sessionTransitionBlocked || !open}
+            disabled={sessionMenuDisabled || !open}
             onCreate={handleCreateSession}
             onSwitch={handleSwitchSession}
             onDelete={handleDeleteSession}
@@ -622,6 +682,29 @@ export function AgentPanel({
               scrollKey={conversationScrollKey}
               resumeLabel={m.agentPanel.resumeConversationFollow}
             >
+              {hasEarlierMessages && (
+                <Message role="system">
+                  <div className="flex w-full justify-center">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground"
+                      data-testid="agent-load-earlier-messages"
+                      aria-busy={loadingEarlierMessages}
+                      disabled={loadingEarlierMessages || running || !agentSessionReady}
+                      onClick={() => {
+                        void loadEarlierMessages();
+                      }}
+                    >
+                      {loadingEarlierMessages && <Spinner />}
+                      {loadingEarlierMessages
+                        ? m.agentPanel.loadingEarlierMessages
+                        : m.agentPanel.loadEarlierMessages}
+                    </Button>
+                  </div>
+                </Message>
+              )}
+
               {isReadyIdle && (
                 <Message role="assistant">
                   <MessageContent>{m.agentPanel.chatIntro}</MessageContent>
@@ -762,6 +845,54 @@ export function AgentPanel({
 
               {conversationTranscriptAfterWorkbench}
 
+              {showDurableRetryCard && durableRetryDraft && (
+                <Message role="system">
+                  <div
+                    className="w-full overflow-hidden rounded-[8px] border border-border bg-card"
+                    data-testid="agent-durable-retry-card"
+                    role="status"
+                  >
+                    <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
+                      <div className="mt-0.5 grid size-5 place-items-center text-muted-foreground">
+                        <RotateCcw className="size-3.5" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12.5px] font-semibold leading-tight text-foreground">
+                          {durableRetryTitle}
+                        </div>
+                        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                          {durableRetryPending
+                            ? m.agentPanel.retryDraftPendingSubtitle
+                            : m.agentPanel.retryDraftSubtitle}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
+                      <p>
+                        {durableRetryPending
+                          ? m.agentPanel.retryDraftPendingBody
+                          : m.agentPanel.retryDraftBody}
+                      </p>
+                      <p className="max-h-16 overflow-hidden whitespace-pre-wrap break-words font-medium text-foreground">
+                        {durableRetryDraft.prompt}
+                      </p>
+                      {!durableRetryPending && (
+                        <Button
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          data-testid="agent-durable-retry-button"
+                          onClick={handleRetry}
+                          disabled={chatDisabled || active || !canRetryLastTurn}
+                        >
+                          <RotateCcw className="size-3.5" data-icon="inline-start" />
+                          {m.agentPanel.retry}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </Message>
+              )}
+
               {showProviderErrorCard && (
                 <Message role="system">
                   <div
@@ -775,18 +906,34 @@ export function AgentPanel({
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="text-[12.5px] font-semibold leading-tight text-foreground">
-                          {isProviderSetupError ? m.agentPanel.providerAuthTitle : m.agentPanel.providerErrorTitle}
+                          {isSessionInitializationFailure
+                            ? m.agentPanel.sessionLoadTitle
+                            : isProviderSetupError
+                              ? m.agentPanel.providerAuthTitle
+                              : m.agentPanel.providerErrorTitle}
                         </div>
                         <div className="mt-0.5 text-[11.5px] text-muted-foreground">
-                          {isProviderSetupError ? m.agentPanel.providerAuthSubtitle : m.agentPanel.providerErrorSubtitle}
+                          {isSessionInitializationFailure
+                            ? m.agentPanel.sessionLoadSubtitle
+                            : isProviderSetupError
+                              ? m.agentPanel.providerAuthSubtitle
+                              : m.agentPanel.providerErrorSubtitle}
                         </div>
                       </div>
                     </div>
                     <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
                       <p className="font-medium text-foreground">{error}</p>
-                      <p>{isProviderSetupError ? m.agentPanel.providerAuthBody : m.agentPanel.providerErrorBody}</p>
+                      <p>
+                        {isSessionInitializationFailure
+                          ? m.agentPanel.sessionLoadBody
+                          : isProviderSetupError
+                            ? m.agentPanel.providerAuthBody
+                            : canRetryLastTurn
+                              ? m.agentPanel.providerErrorBody
+                              : m.agentPanel.composerWriteRetryBlocked}
+                      </p>
                       <div className="flex flex-wrap gap-1.5">
-                        {isProviderSetupError && onOpenOptions && (
+                        {!isSessionInitializationFailure && isProviderSetupError && onOpenOptions && (
                           <Button
                             size="sm"
                             className="h-7 px-2 text-xs"
@@ -795,14 +942,24 @@ export function AgentPanel({
                             {m.agentPanel.providerAuthOpenOptions}
                           </Button>
                         )}
-                        <Button
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                          onClick={handleRetry}
-                          disabled={!retryPrompt || active || !canRetryLastTurn}
-                        >
-                          {isProviderSetupError ? m.agentPanel.providerAuthRetry : m.agentPanel.retry}
-                        </Button>
+                        {(isSessionInitializationFailure || canRetryLastTurn) && (
+                          <Button
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={isSessionInitializationFailure
+                              ? retrySessionHydration
+                              : handleRetry}
+                            disabled={isSessionInitializationFailure
+                              ? sessionOperationPending
+                              : !retryPrompt || chatDisabled || active}
+                          >
+                            {isSessionInitializationFailure
+                              ? m.agentPanel.sessionLoadRetry
+                              : isProviderSetupError
+                                ? m.agentPanel.providerAuthRetry
+                                : m.agentPanel.retry}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>

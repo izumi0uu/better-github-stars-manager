@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
 import {
+  BGSM_AGENT_SUMMARY_MAX_BYTES,
   BGSM_AGENT_HISTORICAL_SUMMARY_PREAMBLE,
   applyBgsmAgentSessionTransition,
   bindBgsmAgentSession,
@@ -9,6 +10,9 @@ import {
   createBgsmAgentTurnInput,
   parseScopeFingerprintV1,
   selectBgsmAgentTurnNewMessages,
+  validateBgsmAgentActiveProjection,
+  validateBgsmAgentCompactionCheckpoint,
+  type BgsmAgentActiveProjection,
   type BgsmAgentCompactionCheckpoint,
   type BgsmAgentSessionMessage,
   type BgsmAgentTurnInput,
@@ -67,7 +71,7 @@ const firstActiveProjection = {
   capabilityRevision: 'capability-v1',
   policyRevision: 'policy-v1',
   summary: 'The repository inspection completed; retain the final response.',
-};
+} satisfies BgsmAgentActiveProjection;
 
 function input(overrides: Partial<BgsmAgentTurnInput> = {}): BgsmAgentTurnInput {
   return {
@@ -81,6 +85,68 @@ function input(overrides: Partial<BgsmAgentTurnInput> = {}): BgsmAgentTurnInput 
 }
 
 describe('Cubby session', () => {
+  it('strictly validates persisted checkpoint and projection shapes', () => {
+    assert.doesNotThrow(() => validateBgsmAgentCompactionCheckpoint({
+      ...firstCheckpoint,
+      summary: 'a'.repeat(BGSM_AGENT_SUMMARY_MAX_BYTES),
+    }));
+    assert.doesNotThrow(() => validateBgsmAgentActiveProjection({
+      ...firstActiveProjection,
+      summary: 'a'.repeat(BGSM_AGENT_SUMMARY_MAX_BYTES),
+    }));
+
+    assert.throws(
+      () => validateBgsmAgentCompactionCheckpoint({ ...firstCheckpoint, injected: true }),
+      /compaction checkpoint has unexpected fields/i,
+    );
+    assert.throws(
+      () => validateBgsmAgentCompactionCheckpoint({
+        ...firstCheckpoint,
+        summary: 'a'.repeat(BGSM_AGENT_SUMMARY_MAX_BYTES + 1),
+      }),
+      /checkpoint summary is too large/i,
+    );
+    assert.throws(
+      () => validateBgsmAgentCompactionCheckpoint({
+        ...firstCheckpoint,
+        summarizedMessageCount: Number.MAX_SAFE_INTEGER + 1,
+      }),
+      /message count must be a positive safe integer/i,
+    );
+    assert.throws(
+      () => validateBgsmAgentActiveProjection({ ...firstActiveProjection, debug: true }),
+      /active projection has unexpected fields/i,
+    );
+    assert.throws(
+      () => validateBgsmAgentActiveProjection({
+        ...firstActiveProjection,
+        summary: 'a'.repeat(BGSM_AGENT_SUMMARY_MAX_BYTES + 1),
+      }),
+      /projection summary is too large/i,
+    );
+    assert.throws(
+      () => validateBgsmAgentActiveProjection({
+        ...firstActiveProjection,
+        rawMessageCountAtCreation: 1.5,
+      }),
+      /raw message count must be a positive safe integer/i,
+    );
+    assert.throws(
+      () => validateBgsmAgentActiveProjection({
+        ...firstActiveProjection,
+        capabilityRevision: ' ',
+      }),
+      /capability revision must be trimmed and nonempty/i,
+    );
+    assert.throws(
+      () => validateBgsmAgentActiveProjection({
+        ...firstActiveProjection,
+        currentUserMessageId: 'a'.repeat(513),
+      }),
+      /current user message id is too large/i,
+    );
+  });
+
   it('starts at revision zero and creates an isolated UI-owned turn snapshot', () => {
     const session = {
       ...createBgsmAgentSession(() => 'session-1'),
@@ -624,7 +690,7 @@ describe('Cubby session', () => {
         baseRevision: 2,
         messageDelta: [],
       }),
-      /checkpoint, projection, or message delta/i,
+      /binding, checkpoint, projection, or message delta/i,
     );
     assert.throws(
       () => applyBgsmAgentSessionTransition(session, {
@@ -645,5 +711,52 @@ describe('Cubby session', () => {
     );
     assert.equal(session.revision, 2);
     assert.deepEqual(session.messages, firstTurnMessages);
+  });
+
+  it('commits a first binding without fabricating a message and rejects rebinding', () => {
+    const binding = {
+      version: 1 as const,
+      candidateContract: {
+        kind: 'selected_repository' as const,
+        selectedRepositoryIdHint: 'owner/repo',
+      },
+      scopeFingerprint: parseScopeFingerprintV1(`fs:v1:${'a'.repeat(43)}`),
+      label: 'owner/repo',
+      count: 1,
+      providerFingerprint: `pcf:v1:${'b'.repeat(43)}`,
+    };
+    const session = createBgsmAgentSession(() => 'session-binding-only');
+    const accepted = applyBgsmAgentSessionTransition(session, {
+      sessionId: session.id,
+      baseRevision: session.revision,
+      binding,
+      messageDelta: [],
+    });
+
+    assert.equal(accepted.applied, true);
+    assert.equal(accepted.session.revision, 1);
+    assert.deepEqual(accepted.session.messages, []);
+    assert.deepEqual(accepted.session.binding, binding);
+    assert.throws(
+      () => applyBgsmAgentSessionTransition(accepted.session, {
+        sessionId: accepted.session.id,
+        baseRevision: accepted.session.revision,
+        binding,
+        messageDelta: [],
+      }),
+      /binding, checkpoint, projection, or message delta/i,
+    );
+    assert.throws(
+      () => applyBgsmAgentSessionTransition(accepted.session, {
+        sessionId: accepted.session.id,
+        baseRevision: accepted.session.revision,
+        binding: {
+          ...binding,
+          scopeFingerprint: parseScopeFingerprintV1(`fs:v1:${'c'.repeat(43)}`),
+        },
+        messageDelta: [],
+      }),
+      /scope cannot change/i,
+    );
   });
 });

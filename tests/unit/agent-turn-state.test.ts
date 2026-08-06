@@ -287,6 +287,11 @@ describe('useBgsmAgent stop ownership', () => {
     });
 
     expect(stop).toHaveBeenCalledTimes(1);
+    expect(agent!.durableRetryDraft).toMatchObject({
+      prompt: 'Inspect all stars',
+      kind: 'stopped',
+      settlement: 'stop_pending',
+    });
   });
 
   it('ignores late progress and buffered stream flushes after Stop is requested', async () => {
@@ -428,6 +433,6 @@ function result(reason: AgentStopReason): BgsmAgentTurnResult {
     reason,
     changed: false,
     changedCount: 0,
-    newMessages: [],
+    commit: null,
   };
 }

@@ -9,8 +9,16 @@ import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
 import type { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
 import { createAgentWorkbenchState, type AgentWorkbenchState } from '@/ui/agent-workbench-state';
 import { cleanupMountedRootsAndBody, click, mountReact, type MountedRoot } from './test-utils';
-import type { BgsmAgentTurnHandlers, BgsmOrganizeJobPresentation } from '@/utils/messaging';
+import type {
+  BgsmAgentTurnHandlers,
+  BgsmAgentTurnResult,
+  BgsmOrganizeJobPresentation,
+} from '@/utils/messaging';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';
+import type {
+  AgentRetryDraft,
+  AgentSessionCommitResult,
+} from '@/storage/agent-session-store';
 import {
   createFrozenScope,
   parseScopeFingerprintV1,
@@ -38,9 +46,106 @@ vi.mock('@/utils/messaging', async (importOriginal) => {
 const mountedRoots: MountedRoot[] = [];
 const scrollIntoViewMock = vi.fn();
 
+function commitForMessages(
+  input: Pick<BgsmAgentTurnInput, 'sessionId' | 'turnAttemptId' | 'baseRevision' | 'prompt'>,
+  messages: readonly {
+    id: string;
+    role: 'user' | 'agent' | 'tool';
+    content: string;
+    createdAt: number;
+    toolCallId?: string;
+    toolName?: string;
+    toolCalls?: readonly { id: string; name: string; arguments: unknown }[];
+  }[],
+  options: Readonly<{
+    reason?: 'final_answer' | 'provider_error' | 'aborted' | 'context_limit';
+    changed?: boolean;
+    changedCount?: number;
+    writeSettlement?: 'none' | 'all_failed' | 'unsafe';
+    contextFailureReason?: string;
+    organizeLibraryAction?: 'request_confirmation' | 'start_analysis';
+    candidateCheckpoint?: unknown;
+    binding?: unknown;
+  }> = {},
+): AgentSessionCommitResult {
+  const appliedRevision = input.baseRevision + 1;
+  const transcript = messages.map((message, index) => ({
+    sequence: index + 1,
+    ...message,
+    ...(message.toolCalls ? { toolCalls: [...message.toolCalls] } : {}),
+  }));
+  const presentationMessages = transcript
+    .filter((message): message is typeof message & { role: 'user' | 'agent' } => (
+      message.role === 'user' || message.role === 'agent'
+    ))
+    .filter((message) => message.content.trim().length > 0);
+  return {
+    session: {
+      id: input.sessionId,
+      revision: appliedRevision,
+      ...(options.candidateCheckpoint ? { compaction: options.candidateCheckpoint as never } : {}),
+      ...(options.binding ? { binding: options.binding as never } : {}),
+    },
+    summary: {
+      id: input.sessionId,
+      title: input.prompt,
+      createdAt: 1,
+      updatedAt: 2,
+    },
+    turnAttemptId: input.turnAttemptId,
+    idempotent: false,
+    appliedRevision,
+    digest: `asd:v1:${'a'.repeat(43)}`,
+    launchDigest: `asl:v1:${'b'.repeat(43)}`,
+    outcome: {
+      reason: options.reason ?? 'final_answer',
+      changed: options.changed ?? false,
+      changedCount: options.changedCount ?? 0,
+      writeSettlement: options.writeSettlement ?? 'none',
+      ...(options.contextFailureReason ? { contextFailureReason: options.contextFailureReason as never } : {}),
+      ...(options.organizeLibraryAction
+        ? {
+            organizeLibraryAction: options.organizeLibraryAction,
+            handoffAnchor: { messageId: presentationMessages.at(-1)?.id ?? null, createdAt: 2 },
+          }
+        : {}),
+    },
+    transcript: {
+      sessionId: input.sessionId,
+      messages: transcript,
+      nextBeforeSequence: null,
+    },
+    presentationMessages: presentationMessages.map((message) => ({
+      sequence: message.sequence,
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt,
+    })),
+  } as AgentSessionCommitResult;
+}
+
+function selectedRepositoryBinding(): Record<string, unknown> {
+  return {
+    version: 1,
+    candidateContract: {
+      kind: 'selected_repository',
+      selectedRepositoryIdHint: 'owner/repo',
+    },
+    scopeFingerprint: `fs:v1:${'a'.repeat(43)}`,
+    label: 'owner/repo',
+    count: 1,
+    providerFingerprint: `pcf:v1:${'b'.repeat(43)}`,
+  };
+}
+
 beforeEach(() => {
   messagingMocks.startBgsmAgentTurn.mockReset();
-  messagingMocks.startBgsmAgentTurn.mockReturnValue({ stop: vi.fn(), acknowledge: vi.fn() });
+  messagingMocks.startBgsmAgentTurn.mockReturnValue({
+    stop: vi.fn(),
+    detach: vi.fn(),
+    acknowledge: vi.fn(),
+  });
   messagingMocks.requestPreflight.mockReset();
   scrollIntoViewMock.mockReset();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
@@ -61,6 +166,7 @@ function AgentPanel({
   workbenchState,
   onClearTerminal,
   onStop,
+  agentOverrides,
 }: {
   open: boolean;
   onClose: () => void;
@@ -73,13 +179,15 @@ function AgentPanel({
   workbenchState?: AgentWorkbenchState;
   onClearTerminal?: () => void;
   onStop?: () => void;
+  agentOverrides?: Partial<ReturnType<typeof useBgsmAgent>>;
 }) {
   const agent = useBgsmAgent(onDataChanged, {
     kind: 'selected_repository',
     selectedRepositoryIdHint: 'owner/repo',
   });
+  const presentedAgent = { ...agent, ...agentOverrides };
   const workbench = {
-    state: workbenchState ?? createAgentWorkbenchState('controller:v1:test', 'session-test'),
+    state: workbenchState ?? createAgentWorkbenchState('controller:v1:test', presentedAgent.sessionId),
     displayedProcessed: 0,
     requestPreflight: messagingMocks.requestPreflight,
     captureAgentHandoffAuthority: vi.fn(() => 0),
@@ -110,7 +218,7 @@ function AgentPanel({
       open={open}
       onHide={onClose}
       onOpenOptions={onOpenOptions}
-      agent={agent}
+      agent={presentedAgent}
       workbench={workbench}
       defaultCandidate={defaultCandidate}
       scopeCount={scopeCount}
@@ -136,6 +244,23 @@ afterEach(() => {
 });
 
 describe('AgentPanel', () => {
+  it('keeps chat disabled until Agent and Workbench share the same session identity', async () => {
+    const container = await mountAgentPanel(
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        workbenchState={createAgentWorkbenchState(
+          'controller:v1:session-rebind',
+          'session-awaiting-rebind',
+        )}
+      />,
+    );
+
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled)
+      .toBe(true);
+  });
+
   it('opens the single Cubby settings surface without starting a request', async () => {
     const onOpenOptions = vi.fn();
     const container = await mountAgentPanel(
@@ -352,8 +477,8 @@ describe('AgentPanel', () => {
     const focusable = [...drawer.querySelectorAll<HTMLElement>(
       'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
     )];
-    focusable.at(-1)?.focus();
     await act(async () => {
+      focusable.at(-1)?.focus();
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
       await Promise.resolve();
     });
@@ -448,7 +573,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turnInput!, [
           { id: 'custom-user', role: 'user', content: turnInput!.prompt, createdAt: 1 },
           {
             id: 'm-agent',
@@ -456,7 +581,7 @@ describe('AgentPanel', () => {
             content: 'I inspected your tags and skipped unclear repos.',
             createdAt: 2,
           },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -514,10 +639,10 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turn!.input, [
           { id: 'whole-user', role: 'user', content: prompt, createdAt: 1 },
           { id: 'whole-agent', role: 'agent', content: 'Opening scope confirmation.', createdAt: 2 },
-        ],
+        ]),
         organizeLibraryHandoff: {
           type: 'organize_whole_library',
           action: 'request_confirmation',
@@ -555,7 +680,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turn!.input, [
           { id: 'read-only-whole-user', role: 'user', content: prompt, createdAt: 1 },
           {
             id: 'read-only-whole-agent',
@@ -563,7 +688,7 @@ describe('AgentPanel', () => {
             content: 'Here is the requested read-only summary.',
             createdAt: 2,
           },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -591,7 +716,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turn!.input, [
           { id: 'handoff-user', role: 'user', content: prompt, createdAt: 1 },
           {
             id: 'handoff-agent',
@@ -599,7 +724,7 @@ describe('AgentPanel', () => {
             content: 'I will open scope confirmation.',
             createdAt: 2,
           },
-        ],
+        ]),
         organizeLibraryHandoff: {
           type: 'organize_whole_library',
           action: 'request_confirmation',
@@ -670,7 +795,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: finalMessages,
+        commit: commitForMessages(turn!.input, finalMessages),
       });
       await Promise.resolve();
     });
@@ -803,7 +928,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turns[0].input, [
           { id: 'first-user', role: 'user', content: turns[0].input.prompt, createdAt: 1 },
           {
             id: 'first-tool-call',
@@ -821,7 +946,7 @@ describe('AgentPanel', () => {
             toolName: 'search_stars',
           },
           { id: 'first-answer', role: 'agent', content: 'Inspection complete.', createdAt: 4 },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -890,7 +1015,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turn!.input, [
           { id: 'code-user', role: 'user', content: turn!.input.prompt, createdAt: 1 },
           {
             id: 'code-call',
@@ -908,7 +1033,7 @@ describe('AgentPanel', () => {
             toolName: 'search_repository_code',
           },
           { id: 'code-answer', role: 'agent', content: 'Found one indexed match.', createdAt: 4 },
-        ],
+        ], { binding }),
       });
       await Promise.resolve();
     });
@@ -952,7 +1077,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turn!.input, [
           { id: 'list-user', role: 'user', content: turn!.input.prompt, createdAt: 1 },
           {
             id: 'list-call',
@@ -970,7 +1095,7 @@ describe('AgentPanel', () => {
             toolName: 'list_repository_files',
           },
           { id: 'list-answer', role: 'agent', content: 'The repository root is empty.', createdAt: 4 },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -1004,7 +1129,24 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turn!.input, [
+          { id: 'list-user', role: 'user', content: 'List repository files', createdAt: 1 },
+          {
+            id: 'list-call',
+            role: 'agent',
+            content: '',
+            createdAt: 2,
+            toolCalls: [{ id: 'call-list', name: 'list_repository_files', arguments: { repository: 'owner/repo' } }],
+          },
+          {
+            id: 'list-result',
+            role: 'tool',
+            content: JSON.stringify({ ok: true, data: { entries: [], ref: 'a'.repeat(40) } }),
+            createdAt: 3,
+            toolCallId: 'call-list',
+            toolName: 'list_repository_files',
+          },
+          { id: 'list-answer', role: 'agent', content: 'The repository root is empty.', createdAt: 4 },
           { id: 'readonly-user', role: 'user', content: turn!.input.prompt, createdAt: 5 },
           {
             id: 'readonly-answer',
@@ -1012,7 +1154,7 @@ describe('AgentPanel', () => {
             content: 'Start a new conversation before changing tags.',
             createdAt: 6,
           },
-        ],
+        ], { binding: selectedRepositoryBinding() }),
       });
       await Promise.resolve();
     });
@@ -1064,7 +1206,8 @@ describe('AgentPanel', () => {
     expect(container.textContent).not.toContain('Partial output');
     const retry = [...container.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.trim() === 'Retry');
-    expect(retry?.disabled).toBe(true);
+    expect(retry).toBeUndefined();
+    expect(container.textContent).toContain('A change may already be applied. Review the results before retrying.');
     expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
     expect(container.textContent).toContain('Connection interrupted.');
     expect(container.querySelector('[data-testid="agent-tool-activity"]')).toBeNull();
@@ -1168,7 +1311,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: firstTurnMessages,
+        commit: commitForMessages(turns[0].input, firstTurnMessages),
       });
       await Promise.resolve();
     });
@@ -1220,7 +1363,7 @@ describe('AgentPanel', () => {
         reason: 'provider_error',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turns[0].input, [
           {
             id: 'failed-user',
             role: 'user',
@@ -1233,7 +1376,7 @@ describe('AgentPanel', () => {
             content: 'Partial response',
             createdAt: 2,
           },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -1280,7 +1423,7 @@ describe('AgentPanel', () => {
         reason: 'attempt_state_lost',
         changed: false,
         changedCount: 0,
-        newMessages: [],
+        commit: null,
       });
       await Promise.resolve();
     });
@@ -1293,7 +1436,7 @@ describe('AgentPanel', () => {
     expect(container.textContent).not.toContain('Starting');
   });
 
-  it('acknowledges a rejected Session transition separately from a result with no transition', async () => {
+  it('accepts only the background commit projection and ignores legacy transition fields', async () => {
     let turn: { input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers } | undefined;
     const acknowledge = vi.fn();
     messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
@@ -1310,26 +1453,20 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        candidateCheckpoint: {
-          schemaVersion: 1,
-          summary: 'Invalid checkpoint evidence',
-          summarizedMessageCount: 2,
-          summarizedThroughMessageId: 'missing-message',
-        },
-        newMessages: [
+        commit: commitForMessages(turn.input, [
           { id: 'rejected-user', role: 'user', content: turn.input.prompt, createdAt: 1 },
           { id: 'rejected-answer', role: 'agent', content: 'Uncommitted answer', createdAt: 2 },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
 
     expect(acknowledge).toHaveBeenCalledWith({
-      disposition: 'transition_rejected',
-      appliedRevision: null,
+      disposition: 'applied',
+      appliedRevision: 1,
     });
-    expect(container.textContent).not.toContain('Uncommitted answer');
-    expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
+    expect(container.textContent).toContain('Uncommitted answer');
+    expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeNull();
   });
 
   it('ignores stale event, result, and error delivery before changing any UI state', async () => {
@@ -1351,10 +1488,10 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turns[0].input, [
           { id: 'first-user', role: 'user', content: 'First turn', createdAt: 1 },
           { id: 'first-agent', role: 'agent', content: 'First answer', createdAt: 2 },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -1385,7 +1522,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: true,
         changedCount: 99,
-        newMessages: [],
+        commit: null,
       });
       turns[0].handlers.onError?.({
         ...deliveryIdentity(turns[0].input),
@@ -1405,7 +1542,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: true,
         changedCount: 100,
-        newMessages: [],
+        commit: null,
       });
       turns[0].handlers.onError?.({
         turnAttemptId: turns[1].input.turnAttemptId,
@@ -1452,10 +1589,10 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turns[0].input, [
           { id: 'committed-user', role: 'user', content: turns[0].input.prompt, createdAt: 1 },
           { id: 'committed-answer', role: 'agent', content: 'Committed answer stays visible.', createdAt: 2 },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -1490,7 +1627,7 @@ describe('AgentPanel', () => {
         reason: 'context_limit',
         changed: false,
         changedCount: 0,
-        newMessages: [],
+        commit: null,
       });
       await Promise.resolve();
     });
@@ -1511,7 +1648,7 @@ describe('AgentPanel', () => {
         reason: 'context_limit',
         changed: false,
         changedCount: 0,
-        newMessages: [],
+        commit: null,
       });
       turns[1].handlers.onEvent?.({
         ...deliveryIdentity(turns[1].input),
@@ -1577,7 +1714,7 @@ describe('AgentPanel', () => {
         contextFailureReason: 'provider_context_overflow_repeated',
         changed: true,
         changedCount: 1,
-        newMessages: [
+        commit: commitForMessages(input, [
           { id: 'settled-user', role: 'user', content: input.prompt, createdAt: 1 },
           {
             id: 'settled-write-envelope',
@@ -1598,7 +1735,12 @@ describe('AgentPanel', () => {
             toolCallId: 'write-before-overflow',
             toolName: 'assign_repo_tags',
           },
-        ],
+        ], {
+          reason: 'context_limit',
+          changed: true,
+          changedCount: 1,
+          writeSettlement: 'unsafe',
+        }),
       });
       await Promise.resolve();
     });
@@ -1634,10 +1776,10 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turns[0].input, [
           { id: 'old-user', role: 'user', content: turns[0].input.prompt, createdAt: 1 },
           { id: 'old-answer', role: 'agent', content: 'Old transcript', createdAt: 2 },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -1649,7 +1791,7 @@ describe('AgentPanel', () => {
         reason: 'context_limit',
         changed: false,
         changedCount: 0,
-        newMessages: [],
+        commit: null,
       });
       await Promise.resolve();
     });
@@ -1688,10 +1830,10 @@ describe('AgentPanel', () => {
           reason: 'final_answer',
           changed: false,
           changedCount: 0,
-          newMessages: [
+          commit: commitForMessages(turn.input, [
             { id: `${turns.length}-user`, role: 'user', content: prompt, createdAt: turns.length },
             { id: `${turns.length}-answer`, role: 'agent', content: answer, createdAt: turns.length + 1 },
-          ],
+          ]),
         });
         await Promise.resolve();
       });
@@ -1705,13 +1847,21 @@ describe('AgentPanel', () => {
     expect(secondSessionId).not.toBe(firstSessionId);
 
     await click(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!);
-    const firstItem = container.querySelector<HTMLElement>(
+    const firstItem = document.body.querySelector<HTMLElement>(
       `[data-testid="agent-session-item"][data-session-id="${firstSessionId}"]`,
     );
     expect(firstItem?.textContent).toContain('First conversation');
     await click(firstItem!.querySelector<HTMLButtonElement>('button')!);
     expect(container.textContent).toContain('First answer');
     expect(container.textContent).not.toContain('Second answer');
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!);
+    const currentItem = document.body.querySelector<HTMLElement>(
+      `[data-testid="agent-session-item"][data-session-id="${firstSessionId}"]`,
+    );
+    await click(currentItem!.querySelector<HTMLButtonElement>('button')!);
+    expect(document.body.querySelector('[data-testid="agent-session-list"]')).toBeNull();
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
 
     await send('Continue first conversation', 'Follow-up answer');
     expect(turns[2].input.sessionId).toBe(firstSessionId);
@@ -1723,12 +1873,13 @@ describe('AgentPanel', () => {
   });
 
   it('requires confirmation before deleting a conversation and preserves the last one', async () => {
+    const onClose = vi.fn();
     let firstTurn: { input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers } | null = null;
     messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
       firstTurn = { input, handlers };
       return { stop: vi.fn(), acknowledge: vi.fn() };
     });
-    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    const container = await mountAgentPanel(<AgentPanel open onClose={onClose} />);
     await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Conversation to keep');
     await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
     await act(async () => {
@@ -1738,46 +1889,72 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(firstTurn.input, [
           { id: 'delete-user', role: 'user', content: 'Conversation to keep', createdAt: 1 },
           { id: 'delete-answer', role: 'agent', content: 'Saved answer', createdAt: 2 },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
     await click(container.querySelector<HTMLButtonElement>('button[aria-label="Start new conversation"]')!);
     await click(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!);
 
-    const items = [...container.querySelectorAll<HTMLElement>('[data-testid="agent-session-item"]')];
+    const items = [...document.body.querySelectorAll<HTMLElement>('[data-testid="agent-session-item"]')];
     expect(items).toHaveLength(2);
     const firstDelete = items[0].querySelector<HTMLButtonElement>('[data-testid="agent-session-delete"]')!;
     await click(firstDelete);
-    expect(container.querySelector('[data-testid="agent-session-delete-confirm"]')).not.toBeNull();
-    expect(container.querySelectorAll('[data-testid="agent-session-item"]')).toHaveLength(2);
+    const confirmation = document.body.querySelector<HTMLElement>('[data-testid="agent-session-delete-confirm"]');
+    expect(confirmation).not.toBeNull();
+    expect(document.body.querySelectorAll('[data-testid="agent-session-item"]')).toHaveLength(2);
+    const cancelDelete = [...confirmation!.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Cancel'))!;
+    expect(document.activeElement).toBe(cancelDelete);
 
-    await click([...container.querySelectorAll<HTMLButtonElement>('[data-testid="agent-session-delete-confirm"] button')]
-      .find((button) => button.textContent?.includes('Cancel'))!);
-    expect(container.querySelector('[data-testid="agent-session-delete-confirm"]')).toBeNull();
+    await click(cancelDelete);
+    expect(document.body.querySelector('[data-testid="agent-session-delete-confirm"]')).toBeNull();
+    expect(document.activeElement).toBe(firstDelete);
 
-    await click(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-item"] [data-testid="agent-session-delete"]')!);
-    await click([...container.querySelectorAll<HTMLButtonElement>('[data-testid="agent-session-delete-confirm"] button')]
+    await click(firstDelete);
+    const focusedCancel = document.activeElement as HTMLButtonElement;
+    expect(focusedCancel.textContent).toContain('Cancel');
+    await act(async () => {
+      focusedCancel.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      }));
+      await Promise.resolve();
+    });
+    expect(document.body.querySelector('[data-testid="agent-session-delete-confirm"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="agent-session-list"]')).not.toBeNull();
+    expect(document.activeElement).toBe(firstDelete);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await click(firstDelete);
+    await click([...document.body.querySelectorAll<HTMLButtonElement>('[data-testid="agent-session-delete-confirm"] button')]
       .find((button) => button.textContent?.includes('Delete'))!);
     await click(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!);
-    expect(container.querySelectorAll('[data-testid="agent-session-item"]')).toHaveLength(1);
+    expect(document.body.querySelectorAll('[data-testid="agent-session-item"]')).toHaveLength(1);
 
-    const remainingDelete = container.querySelector<HTMLButtonElement>('[data-testid="agent-session-delete"]');
+    const remainingDelete = document.body.querySelector<HTMLButtonElement>('[data-testid="agent-session-delete"]');
     expect(remainingDelete?.disabled).toBe(true);
   });
 
-  it('closes the conversation menu on Escape without hiding the Agent drawer', async () => {
+  it('focuses and positions the conversation popover, then closes it on Escape', async () => {
     const onClose = vi.fn();
     const container = await mountAgentPanel(<AgentPanel open onClose={onClose} />);
     const toggle = container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!;
     await click(toggle);
-    toggle.focus();
+    const menu = document.body.querySelector<HTMLElement>('[data-testid="agent-session-list"]')!;
+    expect(menu.parentElement?.hasAttribute('data-radix-popper-content-wrapper')).toBe(true);
+    expect(menu.dataset.align).toBe('end');
+    expect(menu.dataset.side).toBe('bottom');
+    expect(document.activeElement).toBe(
+      menu.querySelector<HTMLButtonElement>('button[aria-label="Start new conversation"]'),
+    );
 
     await act(async () => {
-      toggle.dispatchEvent(new KeyboardEvent('keydown', {
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', {
         key: 'Escape',
         bubbles: true,
         cancelable: true,
@@ -1785,9 +1962,41 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[data-testid="agent-session-list"]')).toBeNull();
+    await waitFor(() => {
+      expect(document.body.querySelector('[data-testid="agent-session-list"]')).toBeNull();
+      expect(document.activeElement).toBe(toggle);
+    });
     expect(onClose).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(toggle);
+  });
+
+  it('dismisses the conversation popover on an outside pointer interaction', async () => {
+    const onClose = vi.fn();
+    const container = await mountAgentPanel(<AgentPanel open onClose={onClose} />);
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!;
+    await click(toggle);
+    expect(document.body.querySelector('[data-testid="agent-session-list"]')).not.toBeNull();
+
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      outside.dispatchEvent(new MouseEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        button: 0,
+      }));
+      outside.click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(document.body.querySelector('[data-testid="agent-session-list"]')).toBeNull();
+      expect(document.activeElement).toBe(toggle);
+    });
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('locks conversation transitions until the completed workbench receipt is dismissed', async () => {
@@ -1962,10 +2171,16 @@ describe('AgentPanel', () => {
         reason: 'aborted',
         changed: false,
         changedCount: 0,
-        newMessages: [],
+        commit: null,
       });
       await Promise.resolve();
     });
+
+    const recoveredCard = container.querySelector('[data-testid="agent-durable-retry-card"]');
+    expect(recoveredCard?.textContent).toContain('Stopped request restored');
+    expect(recoveredCard?.textContent).toContain('Pending request');
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="agent-durable-retry-button"]')?.disabled)
+      .toBe(false);
 
     const resetButton = container.querySelector<HTMLButtonElement>('button[aria-label="Start new conversation"]');
     expect(resetButton).not.toBeNull();
@@ -1988,7 +2203,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: true,
         changedCount: 1,
-        newMessages: [],
+        commit: null,
       });
       turns[0].handlers.onError?.({
         ...deliveryIdentity(turns[0].input),
@@ -2006,18 +2221,123 @@ describe('AgentPanel', () => {
     expect(turns[1].input.history).toEqual([]);
   });
 
-  it('detaches a stopped turn after a bounded wait when the background never returns a terminal result', async () => {
+  it('does not refill the composer when a durable retry is claimed by a new attempt', async () => {
+    const prompt = 'Retry this durable read-only request';
+    const retryableDraft: AgentRetryDraft = {
+      sessionId: 'session-durable-retry-claim',
+      turnAttemptId: 'attempt-stopped-original',
+      baseRevision: 2,
+      prompt,
+      kind: 'stopped',
+      settlement: 'retryable',
+      updatedAt: 1,
+    };
+    let resolveRetry!: (result: BgsmAgentTurnResult | null) => void;
+    const retryPromise = new Promise<BgsmAgentTurnResult | null>((resolve) => {
+      resolveRetry = resolve;
+    });
+    const startTurn = vi.fn(() => retryPromise);
+    const onClose = vi.fn();
+    const renderPanel = (
+      overrides: Partial<ReturnType<typeof useBgsmAgent>>,
+    ) => (
+      <AgentPanel
+        open
+        onClose={onClose}
+        agentOverrides={{
+          error: null,
+          contextLimitRecovery: null,
+          draftRecovery: null,
+          lastTurnResult: null,
+          startTurn,
+          ...overrides,
+        }}
+      />
+    );
+    const container = await mountAgentPanel(renderPanel({
+      phase: 'stopped',
+      running: false,
+      durableRetryDraft: retryableDraft,
+      canRetryLastTurn: true,
+    }));
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+
+    expect(textarea.value).toBe(prompt);
+    await click(container.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-durable-retry-button"]',
+    )!);
+    expect(startTurn).toHaveBeenCalledWith(prompt, {
+      retrySourceAttemptId: retryableDraft.turnAttemptId,
+    });
+    expect(textarea.value).toBe('');
+
+    const claimedDraft: AgentRetryDraft = {
+      ...retryableDraft,
+      turnAttemptId: 'attempt-retry-claimed',
+      settlement: 'stop_pending',
+      updatedAt: 2,
+    };
+    const root = mountedRoots.at(-1)!;
+    await act(async () => {
+      root.render(renderPanel({
+        phase: 'working',
+        running: true,
+        durableRetryDraft: claimedDraft,
+        canRetryLastTurn: false,
+      }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('');
+    expect(container.querySelector('[data-testid="agent-durable-retry-button"]')).toBeNull();
+
+    const retryInput: BgsmAgentTurnInput = {
+      sessionId: claimedDraft.sessionId,
+      turnAttemptId: claimedDraft.turnAttemptId,
+      baseRevision: claimedDraft.baseRevision,
+      prompt,
+      history: [],
+    };
+    const successfulResult: BgsmAgentTurnResult = {
+      ...deliveryIdentity(retryInput),
+      reason: 'final_answer',
+      changed: false,
+      changedCount: 0,
+      commit: commitForMessages(retryInput, [
+        { id: 'claimed-retry-user', role: 'user', content: prompt, createdAt: 1 },
+        { id: 'claimed-retry-agent', role: 'agent', content: 'Retry completed.', createdAt: 2 },
+      ]),
+    };
+    await act(async () => {
+      resolveRetry(successfulResult);
+      await retryPromise;
+      root.render(renderPanel({
+        phase: 'done',
+        running: false,
+        durableRetryDraft: null,
+        canRetryLastTurn: false,
+        lastTurnResult: successfulResult,
+      }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('');
+  });
+
+  it('detaches a stopped turn after a bounded wait without authorizing an unproven exact retry', async () => {
     vi.useFakeTimers();
     try {
       const turns: Array<{
         input: BgsmAgentTurnInput;
         handlers: BgsmAgentTurnHandlers;
         stop: ReturnType<typeof vi.fn>;
+        detach: ReturnType<typeof vi.fn>;
       }> = [];
       messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
         const stop = vi.fn();
-        turns.push({ input, handlers, stop });
-        return { stop, acknowledge: vi.fn() };
+        const detach = vi.fn();
+        turns.push({ input, handlers, stop, detach });
+        return { stop, detach, acknowledge: vi.fn() };
       });
 
       const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
@@ -2033,10 +2353,21 @@ describe('AgentPanel', () => {
         await Promise.resolve();
       });
 
-      expect(turns[0].stop).toHaveBeenNthCalledWith(1);
-      expect(turns[0].stop).toHaveBeenNthCalledWith(2, { detach: true });
+      expect(turns[0].stop).toHaveBeenCalledOnce();
+      expect(turns[0].detach).toHaveBeenCalledOnce();
       expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
       expect(container.querySelector<HTMLButtonElement>('button[aria-label="Start new conversation"]')?.disabled)
+        .toBe(false);
+      expect(container.querySelector<HTMLButtonElement>('[data-testid="agent-durable-retry-button"]'))
+        .toBeNull();
+      expect(container.textContent).toContain('Retry needs confirmation');
+      expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled)
+        .toBe(true);
+      await setTextareaValue(
+        container.querySelector<HTMLTextAreaElement>('textarea')!,
+        'Stop without terminal, reviewed',
+      );
+      expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled)
         .toBe(false);
       await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
       expect(turns).toHaveLength(2);
@@ -2088,7 +2419,11 @@ describe('AgentPanel', () => {
     const retry = [...container.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.trim() === 'Retry');
     const send = container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!;
-    expect(retry?.disabled).toBe(!safeToRetry);
+    if (safeToRetry) {
+      expect(retry?.disabled).toBe(false);
+    } else {
+      expect(retry).toBeUndefined();
+    }
     expect(send.disabled).toBe(!safeToRetry);
 
     if (safeToRetry) {
@@ -2141,7 +2476,7 @@ describe('AgentPanel', () => {
         reason: 'aborted',
         changed: true,
         changedCount: 1,
-        newMessages: [],
+        commit: null,
       });
       await Promise.resolve();
     });
@@ -2178,7 +2513,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: firstMessages,
+        commit: commitForMessages(turns[0].input, firstMessages),
       });
       await Promise.resolve();
     });
@@ -2196,16 +2531,18 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        candidateCheckpoint: {
-          schemaVersion: 1,
-          summary: 'Earlier conversation summary',
-          summarizedMessageCount: 2,
-          summarizedThroughMessageId: 'checkpoint-answer',
-        },
-        newMessages: [
+        commit: commitForMessages(turns[1].input, [
+          ...firstMessages,
           { id: 'second-user', role: 'user', content: 'Second request', createdAt: 3 },
           { id: 'second-answer', role: 'agent', content: 'Second visible answer', createdAt: 4 },
-        ],
+        ], {
+          candidateCheckpoint: {
+            schemaVersion: 1,
+            summary: 'Earlier conversation summary',
+            summarizedMessageCount: 2,
+            summarizedThroughMessageId: 'checkpoint-answer',
+          },
+        }),
       });
       await Promise.resolve();
     });
@@ -2233,7 +2570,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turns[0].input, [
           {
             id: 'first-user',
             role: 'user',
@@ -2246,7 +2583,7 @@ describe('AgentPanel', () => {
             content: 'Committed reply',
             createdAt: 2,
           },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -2268,8 +2605,10 @@ describe('AgentPanel', () => {
 
   it('detaches an in-flight turn when the Agent panel unmounts', async () => {
     const stop = vi.fn();
+    const detach = vi.fn();
     messagingMocks.startBgsmAgentTurn.mockReturnValue({
       stop,
+      detach,
       acknowledge: vi.fn(),
     });
     const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
@@ -2282,7 +2621,8 @@ describe('AgentPanel', () => {
       await Promise.resolve();
     });
 
-    expect(stop).toHaveBeenCalledWith({ detach: true });
+    expect(detach).toHaveBeenCalledOnce();
+    expect(stop).not.toHaveBeenCalled();
   });
 
   it('renders assistant replies as markdown while keeping user prompts plain', async () => {
@@ -2458,7 +2798,7 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turnInput!, [
           { id: 'cleanup-user', role: 'user', content: turnInput!.prompt, createdAt: 1 },
           {
             id: 'cleanup-answer',
@@ -2466,7 +2806,7 @@ describe('AgentPanel', () => {
             content: 'I inspected local tag usage and found no cleanup needed.',
             createdAt: 2,
           },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -2528,10 +2868,10 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turnInput!, [
           { id: 'u1', role: 'user', content: turnInput!.prompt, createdAt: 1 },
           { id: 'a1', role: 'agent', content: 'Done reviewing the compacted history.', createdAt: 2 },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -2609,10 +2949,10 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turnInput!, [
           { id: 'u-after-compaction', role: 'user', content: turnInput!.prompt, createdAt: 1 },
           { id: 'a-after-compaction', role: 'agent', content: 'Organization continued successfully.', createdAt: 2 },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -2753,10 +3093,10 @@ describe('AgentPanel', () => {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: commitForMessages(turnInput!, [
           { id: 'user-1', role: 'user', content: turnInput!.prompt, createdAt: 1 },
           { id: 'answer-1', role: 'agent', content: 'Obsidian and Logseq stand out.', createdAt: 2 },
-        ],
+        ]),
       });
       await Promise.resolve();
     });
@@ -2846,7 +3186,7 @@ describe('AgentPanel', () => {
           contextFailureReason: reason,
           changed: false,
           changedCount: 0,
-          newMessages: [],
+          commit: null,
         });
         await Promise.resolve();
       });
@@ -2937,7 +3277,7 @@ describe('AgentPanel', () => {
         contextFailureReason: 'tool_result_memory_limit',
         changed: true,
         changedCount: 1,
-        newMessages: [],
+        commit: null,
       });
       await Promise.resolve();
     });
@@ -2987,7 +3327,7 @@ describe('AgentPanel', () => {
           contextFailureReason: reason,
           changed: false,
           changedCount: 0,
-          newMessages: [],
+          commit: null,
         });
         await Promise.resolve();
       });
@@ -3026,7 +3366,7 @@ describe('AgentPanel', () => {
         contextFailureReason: 'current_turn_too_large',
         changed: false,
         changedCount: 0,
-        newMessages: [],
+        commit: null,
       });
       await Promise.resolve();
     });
@@ -3081,7 +3421,7 @@ describe('AgentPanel', () => {
         reason: 'context_limit',
         changed: false,
         changedCount: 0,
-        newMessages: [],
+        commit: null,
       });
       await Promise.resolve();
     });

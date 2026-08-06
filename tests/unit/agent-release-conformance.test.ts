@@ -31,7 +31,9 @@ describe('Agent Phase 4 release conformance', () => {
       'public repository metadata',
       'public code snippets',
       'current prompt',
-      'in-memory conversation',
+      'local conversation history',
+      'unencrypted',
+      'diagnostics',
       'visible, bounded tag taxonomy',
       'protocol observations',
       'private notes',
@@ -155,6 +157,25 @@ describe('Agent Phase 4 release conformance', () => {
     const plan = read('docs/bgsm-agent-tag-assistant-plan.md');
     expect(plan).toContain('compacts before a turn and after a complete tool');
     expect(plan).not.toContain('MVP does not need full chat memory compaction yet');
+  });
+
+  it('keeps Agent session RPC failures isolated from global sync progress', () => {
+    const background = read('src/background/index.ts');
+    expect(background).toContain('if (!isAgentSessionRequest(req))');
+    for (const request of [
+      'inspectAgentSessionCatalog',
+      'createAgentSession',
+      'loadAgentSession',
+      'loadAgentSessionTranscriptPage',
+      'deleteAgentSession',
+      'getAgentStorageUsage',
+      'clearAgentToolCache',
+    ]) {
+      expect(background).toContain(`'${request}'`);
+    }
+    // Turn commits are owned by the admitted background lease. They must not
+    // be exposed as a UI-callable RPC that could carry a large transition.
+    expect(background).not.toContain("'commitAgentSessionTransition'");
   });
 });
 

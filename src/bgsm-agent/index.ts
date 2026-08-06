@@ -2,6 +2,7 @@ export * from './context';
 export * from './context-policy';
 export * from './instructions';
 export * from './session';
+export * from './session-transport';
 export * from './compaction';
 export * from './conversation-binding';
 export * from './authorization';

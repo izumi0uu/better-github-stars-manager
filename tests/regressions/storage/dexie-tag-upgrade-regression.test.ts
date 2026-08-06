@@ -67,6 +67,12 @@ describe('Dexie tag schema upgrades', () => {
         assert.deepEqual(
           current.tables.map((table) => table.name).sort(),
           [
+            'agentArtifactChunks',
+            'agentArtifacts',
+            'agentAttempts',
+            'agentMessages',
+            'agentSessions',
+            'agentStorageUsage',
             'organizeApplies',
             'organizeApplyRows',
             'organizeItems',
@@ -80,6 +86,30 @@ describe('Dexie tag schema upgrades', () => {
         );
         assert.equal(await current.organizeJobs.count(), 0);
         assert.equal(await current.tagDirtyOutbox.count(), 0);
+        assert.equal(await current.agentSessions.count(), 0);
+        assert.equal(await current.agentAttempts.count(), 0);
+        assert.equal(await current.agentMessages.count(), 0);
+        assert.equal(await current.agentArtifacts.count(), 0);
+        assert.equal(await current.agentArtifactChunks.count(), 0);
+        assert.equal(await current.agentStorageUsage.count(), 0);
+        assert.equal(
+          current.agentMessages.schema.indexes.some(
+            (index) => index.name === '[sessionId+sequence]' && index.unique,
+          ),
+          true,
+        );
+        assert.equal(
+          current.agentArtifactChunks.schema.indexes.some(
+            (index) => index.name === '[artifactId+index]' && index.unique,
+          ),
+          true,
+        );
+        assert.equal(
+          current.agentAttempts.schema.indexes.some(
+            (index) => index.name === '[sessionId+turnAttemptId]' && index.unique,
+          ),
+          true,
+        );
       } finally {
         await current.close();
         await Dexie.delete(DB_NAME);

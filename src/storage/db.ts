@@ -10,6 +10,16 @@ import type {
   TagDirtyOutboxRecord,
   TagMeta,
 } from '@/types';
+import type {
+  AgentSessionMessageRecord,
+  AgentSessionRecord,
+} from './agent-session-model';
+import type {
+  AgentArtifactChunkRecord,
+  AgentArtifactRecord,
+  AgentStorageUsageRecord,
+} from './agent-storage-model';
+import type { AgentAttemptRecord } from './agent-attempt-model';
 import { normalizeStoredTag, type LegacyTagRow } from './tag-shape';
 
 /**
@@ -27,6 +37,12 @@ export class StarsDB extends Dexie {
   organizeApplies!: Table<OrganizeApplyRecord, string>;
   organizeApplyRows!: Table<OrganizeApplyRowRecord, string>;
   tagDirtyOutbox!: Table<TagDirtyOutboxRecord, string>;
+  agentSessions!: Table<AgentSessionRecord, string>;
+  agentAttempts!: Table<AgentAttemptRecord, string>;
+  agentMessages!: Table<AgentSessionMessageRecord, string>;
+  agentArtifacts!: Table<AgentArtifactRecord, string>;
+  agentArtifactChunks!: Table<AgentArtifactChunkRecord, string>;
+  agentStorageUsage!: Table<AgentStorageUsageRecord, string>;
 
   constructor() {
     super('better-github-stars-manager');
@@ -56,8 +72,10 @@ export class StarsDB extends Dexie {
       const rows = await table.toArray() as LegacyTagRow[];
       await table.bulkPut(rows.map((row) => normalizeStoredTag(row)));
     });
-    // v4 adds isolated durable artifacts for whole-library tag organization and
-    // Gist dirtiness. The non-indexed analysis split worklist lives on organizeJobs.
+    // v4 adds isolated durable artifacts for whole-library tag organization,
+    // Gist dirtiness, and local Agent data. Transcripts, in-flight launch/retry
+    // authority, and chunked tool artifacts stay in IndexedDB so extension
+    // messages remain bounded and worker restarts do not lose admitted prompts.
     this.version(4).stores({
       stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
       tags: 'full_name, mtime',
@@ -68,6 +86,12 @@ export class StarsDB extends Dexie {
       organizeApplies: 'applyId, jobId, status',
       organizeApplyRows: 'id, [applyId+position], [applyId+state], applyId, state, leaseExpiresAt',
       tagDirtyOutbox: 'id, kind, updatedAt',
+      agentSessions: 'id, updatedAt, createdAt',
+      agentMessages: 'id, sessionId, &[sessionId+sequence], [sessionId+turnAttemptId]',
+      agentAttempts: 'id, sessionId, &[sessionId+turnAttemptId], [sessionId+state], updatedAt',
+      agentArtifacts: 'id, sessionId, turnAttemptId, ownerMessageId, storageClass, [sessionId+storageClass], [storageClass+state+lastAccessedAt], [state+createdAt], expiresAt',
+      agentArtifactChunks: 'id, artifactId, &[artifactId+index]',
+      agentStorageUsage: 'id',
     });
   }
 }
