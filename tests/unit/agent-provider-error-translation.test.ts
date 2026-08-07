@@ -6,7 +6,7 @@ import {
   publicAgentProviderErrorMessage,
 } from '@/agent-harness/provider';
 import { getMessages } from '@/i18n';
-import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/session-transport';
+import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/turn-protocol';
 
 describe('Agent provider error translation', () => {
   it('uses fixed content-free copy for context overflow', () => {

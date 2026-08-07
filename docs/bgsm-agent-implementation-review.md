@@ -1411,6 +1411,16 @@ Conversation/workflow ownership Phase 2 evidence from 2026-08-06:
 - rendered ownership UI QA passed 66/66 checks: the real `AgentPanel`, hooks, reducer, and CSS rendered observer/owner-lost/takeover/terminal/session-menu states at 1280×800 and 640×800 in an out-of-repo fake-Chrome harness, while the real packaged Options page verified the retention note in light and dark themes;
 - the rendered panel harness replaces only Chrome Port/RPC transport. Packaged two-page role arbitration, ShadowRoot/runtime boundaries, service-worker behavior, and durable storage remain covered by the packaged host rather than claimed as visual-harness evidence.
 
+Agent turn protocol Phase 4 evidence from 2026-08-07:
+
+- `src/bgsm-agent/turn-protocol.ts` is now the sole compile-time and runtime owner of Agent turn client/server unions, exact parsers, delivery/event/result/error/acknowledgement types, and bounded error codes; the Chrome and background files retain lifecycle authority without private wire schemas;
+- launch identity now preserves `retrySourceAttemptId` through client production and background conflict fingerprints, while malformed starts still disconnect and malformed or wrong-epoch stop/ack messages remain non-authoritative;
+- the background validates each fully sequenced published delivery once before replay-buffer admission and reuses the typed object for fan-out and replay;
+- the independent check fixed discriminated acknowledgement construction, a client hello-path variable-shadowing defect, and two typed protocol-test fixtures before the final gates;
+- `pnpm typecheck` passed with 0 errors; the focused protocol/adapter set passed 8 files / 190 tests; `pnpm test:logic` passed 138 files / 1,810 tests; and `pnpm test:regressions` passed 15 files / 673 tests;
+- `pnpm build` passed after transforming 2,398 modules with build identity `6ecba87f-25456a-abd36e`; the existing large-chunk advisory remains unsuppressed;
+- the packaged Scenario Lab passed all 9 fixtures with 9 trace roots, 413 events, and zero network requests, proving the shared protocol in the MV3 extension rather than only in source-level tests.
+
 This is not yet clean-tree Release Candidate evidence. The remaining release-only gaps are a clean commit/package identity run and credential-dependent unpacked-Chrome checks against a live native Provider and the intended Custom service. The controlled packaged-host Provider proves protocol/runtime behavior without sending live traffic; it must not be described as a live Provider credential test.
 
 No real API credential was used during the original audit. Provider conclusions are based on current source, mock tests, protocol behavior, official model/schema evidence, and the local Pi comparison. Line numbers are review anchors for this branch and may move; symbol names and stated invariants are authoritative.

@@ -6,7 +6,7 @@ import type {
   BgsmAgentActiveTurn,
   BgsmAgentTurnEvent,
   BgsmAgentTurnResult,
-} from '@/utils/messaging';
+} from '@/bgsm-agent/turn-protocol';
 
 export type PendingRetryAuthority =
   | 'fresh'

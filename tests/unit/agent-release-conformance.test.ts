@@ -177,6 +177,30 @@ describe('Agent Phase 4 release conformance', () => {
     // be exposed as a UI-callable RPC that could carry a large transition.
     expect(background).not.toContain("'commitAgentSessionTransition'");
   });
+  it('keeps Agent turn wire ownership in the shared protocol', () => {
+    const protocol = read('src/bgsm-agent/turn-protocol.ts');
+    const messaging = read('src/utils/messaging.ts');
+    const backgroundPort = read('src/background/bgsm-agent-turn-port.ts');
+    const sessionTransport = read('src/bgsm-agent/session-transport.ts');
+
+    expect(protocol).not.toContain('export type BgsmAgentTurnEventPayload');
+    for (const adapter of [messaging, backgroundPort]) {
+      expect(adapter).toContain("from '@/bgsm-agent/turn-protocol'");
+      for (const duplicateOwner of [
+        'type BgsmAgentTurnClientMessage =',
+        'type BgsmAgentTurnServerMessage =',
+        'type BgsmAgentTurnPublishedMessage =',
+        'type BgsmAgentTurnSequencedServerMessage =',
+        'function validateAgentTurnEvent(',
+        'function validateAgentTurnResult(',
+        'function validateAgentTurnError(',
+      ]) {
+        expect(adapter).not.toContain(duplicateOwner);
+      }
+    }
+    expect(sessionTransport).not.toContain('turn-protocol');
+  });
+
   it('keeps product artifact policy outside the generic Agent harness', () => {
     const source = readSourceTree('src/agent-harness');
     for (const forbidden of [

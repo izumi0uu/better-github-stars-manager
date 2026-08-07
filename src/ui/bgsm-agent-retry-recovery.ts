@@ -3,7 +3,7 @@ import {
   sameDraftTurn,
   type PendingRetryAuthority,
 } from '@/ui/bgsm-agent-retry-policy';
-import type { BgsmAgentActiveTurn } from '@/utils/messaging';
+import type { BgsmAgentActiveTurn } from '@/bgsm-agent/turn-protocol';
 
 export type HydratedActiveTurn = Readonly<{
   turn: BgsmAgentActiveTurn;

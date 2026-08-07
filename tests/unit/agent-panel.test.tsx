@@ -9,9 +9,9 @@ import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
 import type { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
 import { createAgentWorkbenchState, type AgentWorkbenchState } from '@/ui/agent-workbench-state';
 import { cleanupMountedRootsAndBody, click, mountReact, type MountedRoot } from './test-utils';
+import type { BgsmAgentTurnResult } from '@/bgsm-agent/turn-protocol';
 import type {
   BgsmAgentTurnHandlers,
-  BgsmAgentTurnResult,
   BgsmOrganizeJobPresentation,
 } from '@/utils/messaging';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';

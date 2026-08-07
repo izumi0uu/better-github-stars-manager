@@ -6,6 +6,10 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from 'react';
+import type {
+  BgsmAgentActiveTurn,
+  BgsmAgentTurnResult,
+} from '@/bgsm-agent/turn-protocol';
 import {
   createDurableBgsmAgentSession,
   deleteDurableBgsmAgentSession,
@@ -16,8 +20,6 @@ import {
   loadDurableBgsmAgentSessionTranscriptPage,
   readDurableAgentRetryDraftCandidate,
   BackgroundCallError,
-  type BgsmAgentActiveTurn,
-  type BgsmAgentTurnResult,
 } from '@/utils/messaging';
 import {
   createBgsmAgentSession,

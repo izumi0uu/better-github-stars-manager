@@ -5,10 +5,7 @@ import {
   stageMarksOnboardingSeen,
 } from '@/onboarding/state';
 import { normalizeBackfillMap, selectActiveBackfillId } from '@/upgrades/backfill-state';
-import type {
-  BgsmAgentSessionMessage,
-  BgsmAgentTurnInput,
-} from '@/bgsm-agent/session';
+import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';
 import type {
   AgentRetryDraft,
   AgentSessionTranscriptPage,
@@ -17,25 +14,20 @@ import type {
   LoadedAgentSession,
 } from '@/storage/agent-session-store';
 import {
-  assertAgentSessionTransportPayloadSize,
-  parseAgentTurnErrorCode,
   validateAgentSessionLaunchIdentity,
-  validateAgentTurnOpaqueReferences,
-  type AgentActiveTurnTransport,
   type AgentSessionLaunchDigest,
-  type AgentSessionLaunchIdentity,
-  type AgentTurnErrorCode,
 } from '@/bgsm-agent/session-transport';
 import {
-  validateBgsmAgentConversationBinding,
-  type BgsmAgentConversationBinding,
-} from '@/bgsm-agent/conversation-binding';
-import {
-  type AgentContextFailureReason,
-  type AgentErrorCategory,
-  type AgentStopReason,
-  type ToolRisk,
-} from '@/agent-harness';
+  parseBgsmAgentTurnServerMessage,
+  type BgsmAgentActiveTurn,
+  type BgsmAgentTurnAck,
+  type BgsmAgentTurnClientMessage,
+  type BgsmAgentTurnError,
+  type BgsmAgentTurnEvent,
+  type BgsmAgentTurnLaunch,
+  type BgsmAgentTurnResult,
+  type BgsmAgentTurnServerMessage,
+} from '@/bgsm-agent/turn-protocol';
 import type {
   OrganizeJobRunEvent,
   OrganizeJobRunCoverageSummary,
@@ -43,7 +35,6 @@ import type {
   OrganizeJobRunSnapshot,
 } from '@/bgsm-agent/events';
 import type { ProposalAction } from '@/bgsm-agent/proposal';
-import type { BgsmAgentOrganizeLibraryHandoff } from '@/bgsm-agent/tools';
 import {
   COMMIT_RECEIPT_OUTCOMES,
   COMMIT_RECEIPT_REASONS,
@@ -93,90 +84,6 @@ export interface SyncStatus {
   inFlight: boolean;
 }
 
-export interface BgsmAgentTurnResult {
-  turnAttemptId: string;
-  sessionId: string;
-  baseRevision: number;
-  reason: AgentStopReason;
-  changed: boolean;
-  changedCount: number;
-  commit: AgentSessionCommitResult | null;
-  contextFailureReason?: AgentContextFailureReason;
-  organizeLibraryHandoff?: BgsmAgentOrganizeLibraryHandoff;
-}
-
-export type BgsmAgentTurnLaunch = AgentSessionLaunchIdentity;
-
-type BgsmAgentDeliveryIdentity = {
-  turnAttemptId: string;
-  sessionId: string;
-  baseRevision: number;
-};
-
-type BgsmAgentTurnEventPayload =
-  | { type: 'agent_queued' }
-  | { type: 'conversation_bound'; binding: BgsmAgentConversationBinding }
-  | { type: 'agent_start' }
-  | { type: 'turn_start'; step: number }
-  | { type: 'assistant_stream_start'; step: number }
-  | { type: 'assistant_text_delta'; step: number; delta: string }
-  | { type: 'message_update'; message: BgsmAgentSessionMessage }
-  | { type: 'tool_execution_queued'; toolName: string; callId: string }
-  | { type: 'tool_execution_start'; toolName: string; callId: string; risk: ToolRisk }
-  | {
-      type: 'tool_execution_end';
-      toolName: string;
-      callId: string;
-      risk: ToolRisk;
-      ok: boolean;
-      writeOutcome: 'not_applicable' | 'committed' | 'failed' | 'unknown';
-    }
-  | { type: 'approval_required'; callId: string; summary: string }
-  | { type: 'context_compaction_start' }
-  | {
-      type: 'context_diagnostic';
-      stage: 'preflight' | 'tool_allowance' | 'post_tool' | 'compaction';
-      providerWindow: number;
-      workingWindow: number;
-      softLimit: number;
-      hardLimit: number;
-      capabilitySource: 'builtin-official' | 'provider-verified' | 'user-declared';
-      capabilityRevision: string;
-      policyRevision: string;
-      inputTokens?: number;
-      deterministicInputTokens?: number;
-      usageAdjustmentTokens?: number;
-      observedPrefixTokens?: number | null;
-      contextRemainingTokens?: number;
-      toolAllowanceBytes?: number;
-      toolMemoryRemainingBytes?: number;
-      toolProviderResultCeilingBytes?: number;
-      toolBudgetLimitedBy?: 'context' | 'memory' | 'provider' | 'multiple';
-      toolResultBytes?: number;
-      toolResultReduced?: boolean;
-      action?: 'triggered' | 'summary_retry' | 'fallback' | 'terminal';
-      trigger?: 'pre_turn_soft_limit' | 'pre_turn_byte_limit' | 'completed_tool_envelope_soft_limit' | 'completed_tool_envelope_byte_limit' | 'forced_completed_tool_envelope' | 'tool_result_memory_pressure' | 'context_preflight' | 'provider_context_overflow' | 'provider_request_byte_limit';
-      category?: 'succeeded' | 'current_turn_too_large' | 'no_candidate' | 'summary_provider_failed' | 'summary_invalid' | 'fallback_too_large' | 'final_preflight_failed' | 'tool_result_memory_limit' | 'capability_unresolved' | 'provider_context_overflow' | 'provider_context_overflow_repeated' | 'provider_request_byte_limit' | 'provider_request_byte_limit_repeated';
-    }
-  | {
-      type: 'context_compaction_end';
-      ok: boolean;
-      summarizedMessageCount: number;
-    }
-  | { type: 'agent_error'; message: string; category?: AgentErrorCategory }
-  | {
-      type: 'agent_done';
-      reason: AgentStopReason;
-      contextFailureReason?: AgentContextFailureReason;
-    };
-
-export type BgsmAgentTurnEvent = BgsmAgentTurnEventPayload & BgsmAgentDeliveryIdentity;
-
-export type BgsmAgentTurnError = BgsmAgentDeliveryIdentity & {
-  message: string;
-  category?: AgentErrorCategory;
-  code?: AgentTurnErrorCode;
-};
 
 export type BgsmAgentTurnHandlers = {
   onEvent?: (event: BgsmAgentTurnEvent) => void;
@@ -184,26 +91,11 @@ export type BgsmAgentTurnHandlers = {
   onError?: (error: BgsmAgentTurnError) => void;
 };
 
-export type BgsmAgentActiveTurn = AgentActiveTurnTransport;
-
 export type BgsmAgentTurnStartOptions = Readonly<{
   expectedExecutionEpochId?: string;
   resumeOnly?: true;
 }>;
 
-export type BgsmAgentTurnAckDisposition =
-  | 'applied'
-  | 'no_transition'
-  | 'transition_rejected'
-  | 'detached';
-
-export type BgsmAgentTurnAck = Readonly<
-  | { disposition: 'applied'; appliedRevision: number }
-  | {
-      disposition: Exclude<BgsmAgentTurnAckDisposition, 'applied'>;
-      appliedRevision: null;
-    }
->;
 
 export type BgsmOrganizeJobControllerIdentity = Readonly<{
   controllerId: ControllerId;
@@ -1059,19 +951,6 @@ function assertExactKeys(value: Record<string, unknown>, expected: readonly stri
   }
 }
 
-type BgsmAgentTurnPortMessage =
-  | { type: 'bgsmAgentTurnHello'; executionEpochId: string }
-  | {
-      type: 'bgsmAgentTurnAck';
-      turnAttemptId: string;
-      sessionId: string;
-      baseRevision: number;
-      disposition: BgsmAgentTurnAckDisposition;
-      appliedRevision: number | null;
-    }
-  | { type: 'bgsmAgentTurnEvent'; sequence: number; event: BgsmAgentTurnEvent }
-  | { type: 'bgsmAgentTurnResult'; sequence: number; result: BgsmAgentTurnResult }
-  | { type: 'bgsmAgentTurnError'; sequence: number; error: BgsmAgentTurnError };
 
 const BGSM_AGENT_TURN_RECONNECT_LIMIT = 2;
 
@@ -1083,6 +962,9 @@ function toBgsmAgentTurnLaunch(
     sessionId: input.sessionId,
     baseRevision: input.baseRevision,
     prompt: input.prompt,
+    ...('retrySourceAttemptId' in input && input.retrySourceAttemptId !== undefined
+      ? { retrySourceAttemptId: input.retrySourceAttemptId }
+      : {}),
     ...(input.candidateContract === undefined
       ? {}
       : { candidateContract: structuredClone(input.candidateContract) }),
@@ -1130,14 +1012,15 @@ export function startBgsmAgentTurn(
 
   const postStop = () => {
     if (!executionEpochId || !activePort || !activePortReady) return;
+    const message: BgsmAgentTurnClientMessage = {
+      type: 'stopBgsmAgentTurn',
+      executionEpochId,
+      turnAttemptId: input.turnAttemptId,
+      sessionId: input.sessionId,
+      baseRevision: input.baseRevision,
+    };
     try {
-      activePort.postMessage({
-        type: 'stopBgsmAgentTurn',
-        executionEpochId,
-        turnAttemptId: input.turnAttemptId,
-        sessionId: input.sessionId,
-        baseRevision: input.baseRevision,
-      });
+      activePort.postMessage(message);
     } catch {
       disconnect(activePort);
     }
@@ -1152,16 +1035,27 @@ export function startBgsmAgentTurn(
       || !activePort
       || !activePortReady
     ) return;
+    const message: BgsmAgentTurnClientMessage = pendingAcknowledgement.disposition === 'applied'
+      ? {
+          type: 'ackBgsmAgentTurnResult',
+          executionEpochId: activeExecutionEpochId,
+          turnAttemptId: input.turnAttemptId,
+          sessionId: input.sessionId,
+          baseRevision: input.baseRevision,
+          disposition: 'applied',
+          appliedRevision: pendingAcknowledgement.appliedRevision,
+        }
+      : {
+          type: 'ackBgsmAgentTurnResult',
+          executionEpochId: activeExecutionEpochId,
+          turnAttemptId: input.turnAttemptId,
+          sessionId: input.sessionId,
+          baseRevision: input.baseRevision,
+          disposition: pendingAcknowledgement.disposition,
+          appliedRevision: null,
+        };
     try {
-      activePort.postMessage({
-        type: 'ackBgsmAgentTurnResult',
-        executionEpochId: activeExecutionEpochId,
-        turnAttemptId: input.turnAttemptId,
-        sessionId: input.sessionId,
-        baseRevision: input.baseRevision,
-        disposition: pendingAcknowledgement.disposition,
-        appliedRevision: pendingAcknowledgement.appliedRevision,
-      });
+      activePort.postMessage(message);
     } catch {
       disconnect(activePort);
       return;
@@ -1194,9 +1088,9 @@ export function startBgsmAgentTurn(
 
     port.onMessage.addListener((rawMessage: unknown) => {
       if (finished || activePort !== port) return;
-      let message: BgsmAgentTurnPortMessage;
+      let message: BgsmAgentTurnServerMessage;
       try {
-        message = parseBgsmAgentTurnPortMessage(rawMessage);
+        message = parseBgsmAgentTurnServerMessage(rawMessage);
       } catch {
         finishWithError({
           turnAttemptId: input.turnAttemptId,
@@ -1244,13 +1138,14 @@ export function startBgsmAgentTurn(
           sawAgentDone = false;
         }
         activePortReady = true;
+        const startMessage: BgsmAgentTurnClientMessage = {
+          type: 'startBgsmAgentTurn',
+          executionEpochId,
+          ...launch,
+          ...(options.resumeOnly ? { resumeOnly: true } : {}),
+        };
         try {
-          port.postMessage({
-            type: 'startBgsmAgentTurn',
-            executionEpochId,
-            ...launch,
-            ...(options.resumeOnly ? { resumeOnly: true } : {}),
-          });
+          port.postMessage(startMessage);
         } catch (error) {
           activePort = null;
           activePortReady = false;
@@ -1400,692 +1295,6 @@ export function startBgsmAgentTurn(
   };
 }
 
-function parseBgsmAgentTurnPortMessage(value: unknown): BgsmAgentTurnPortMessage {
-  if (!isAgentRecord(value)) throw new TypeError('Agent Port message must be an object.');
-  if (value.type === 'bgsmAgentTurnHello') {
-    assertAgentExactKeys(value, ['type', 'executionEpochId']);
-    assertAgentText(value.executionEpochId, 'executionEpochId', 512, true);
-    return value as unknown as BgsmAgentTurnPortMessage;
-  }
-  if (value.type === 'bgsmAgentTurnAck') {
-    assertAgentExactKeys(value, [
-      'type',
-      'turnAttemptId',
-      'sessionId',
-      'baseRevision',
-      'disposition',
-      'appliedRevision',
-    ]);
-    validateAgentDeliveryIdentity(value);
-    if (value.disposition !== 'applied') {
-      if (!['no_transition', 'transition_rejected', 'detached'].includes(String(value.disposition))) {
-        throw new TypeError('Agent acknowledgement disposition is invalid.');
-      }
-      if (value.appliedRevision !== null) {
-        throw new TypeError('Agent acknowledgement revision is invalid.');
-      }
-    } else if (
-      value.disposition !== 'applied'
-      || !Number.isSafeInteger(value.appliedRevision)
-      || Number(value.appliedRevision) !== Number(value.baseRevision) + 1
-    ) {
-      throw new TypeError('Agent acknowledgement revision is invalid.');
-    }
-    return value as unknown as BgsmAgentTurnPortMessage;
-  }
-  if (!Number.isSafeInteger(value.sequence) || Number(value.sequence) < 0) {
-    throw new TypeError('Agent Port sequence is invalid.');
-  }
-  if (value.type === 'bgsmAgentTurnEvent') {
-    assertAgentExactKeys(value, ['type', 'sequence', 'event']);
-    validateAgentTurnEvent(value.event);
-    return value as unknown as BgsmAgentTurnPortMessage;
-  }
-  if (value.type === 'bgsmAgentTurnResult') {
-    assertAgentExactKeys(value, ['type', 'sequence', 'result']);
-    validateAgentTurnResult(value.result);
-    return value as unknown as BgsmAgentTurnPortMessage;
-  }
-  if (value.type === 'bgsmAgentTurnError') {
-    assertAgentExactKeys(value, ['type', 'sequence', 'error']);
-    validateAgentTurnError(value.error);
-    return value as unknown as BgsmAgentTurnPortMessage;
-  }
-  throw new TypeError('Unsupported Agent Port message type.');
-}
-
-function validateAgentTurnEvent(value: unknown): asserts value is BgsmAgentTurnEvent {
-  if (!isAgentRecord(value)) throw new TypeError('Agent event must be an object.');
-  validateAgentDeliveryIdentity(value);
-  const base = ['type', 'turnAttemptId', 'sessionId', 'baseRevision'];
-  let keys: string[];
-  switch (value.type) {
-    case 'agent_queued':
-    case 'agent_start':
-      keys = base;
-      break;
-    case 'conversation_bound':
-      keys = [...base, 'binding'];
-      validateBgsmAgentConversationBinding(value.binding);
-      break;
-    case 'turn_start':
-    case 'assistant_stream_start':
-      keys = [...base, 'step'];
-      assertAgentSequenceNumber(value.step, 'step');
-      break;
-    case 'assistant_text_delta':
-      keys = [...base, 'step', 'delta'];
-      assertAgentSequenceNumber(value.step, 'step');
-      assertAgentText(value.delta, 'delta', 256 * 1024, false);
-      break;
-    case 'message_update':
-      keys = [...base, 'message'];
-      validateAgentSessionMessage(value.message, 'live');
-      break;
-    case 'tool_execution_queued':
-      keys = [...base, 'toolName', 'callId'];
-      assertAgentText(value.toolName, 'toolName', 256, true);
-      assertAgentText(value.callId, 'callId', 512, true);
-      break;
-    case 'tool_execution_start':
-      keys = [...base, 'toolName', 'callId', 'risk'];
-      assertAgentText(value.toolName, 'toolName', 256, true);
-      assertAgentText(value.callId, 'callId', 512, true);
-      validateToolRisk(value.risk);
-      break;
-    case 'tool_execution_end':
-      keys = [...base, 'toolName', 'callId', 'risk', 'ok', 'writeOutcome'];
-      assertAgentText(value.toolName, 'toolName', 256, true);
-      assertAgentText(value.callId, 'callId', 512, true);
-      validateToolRisk(value.risk);
-      if (typeof value.ok !== 'boolean') throw new TypeError('Agent tool result is invalid.');
-      if (!['not_applicable', 'committed', 'failed', 'unknown'].includes(String(value.writeOutcome))) {
-        throw new TypeError('Agent tool write outcome is invalid.');
-      }
-      if ((value.risk === 'write') === (value.writeOutcome === 'not_applicable')) {
-        throw new TypeError('Agent tool write outcome does not match its risk.');
-      }
-      break;
-    case 'approval_required':
-      keys = [...base, 'callId', 'summary'];
-      assertAgentText(value.callId, 'callId', 512, true);
-      assertAgentText(value.summary, 'summary', 4_096, true);
-      break;
-    case 'context_compaction_start':
-      keys = base;
-      break;
-    case 'context_diagnostic':
-      keys = [
-        ...base,
-        'stage',
-        'providerWindow',
-        'workingWindow',
-        'softLimit',
-        'hardLimit',
-        'capabilitySource',
-        'capabilityRevision',
-        'policyRevision',
-        ...(value.inputTokens === undefined ? [] : ['inputTokens']),
-        ...(value.deterministicInputTokens === undefined ? [] : ['deterministicInputTokens']),
-        ...(value.usageAdjustmentTokens === undefined ? [] : ['usageAdjustmentTokens']),
-        ...(value.observedPrefixTokens === undefined ? [] : ['observedPrefixTokens']),
-        ...(value.contextRemainingTokens === undefined ? [] : ['contextRemainingTokens']),
-        ...(value.toolAllowanceBytes === undefined ? [] : ['toolAllowanceBytes']),
-        ...(value.toolMemoryRemainingBytes === undefined ? [] : ['toolMemoryRemainingBytes']),
-        ...(value.toolProviderResultCeilingBytes === undefined
-          ? []
-          : ['toolProviderResultCeilingBytes']),
-        ...(value.toolBudgetLimitedBy === undefined ? [] : ['toolBudgetLimitedBy']),
-        ...(value.toolResultBytes === undefined ? [] : ['toolResultBytes']),
-        ...(value.toolResultReduced === undefined ? [] : ['toolResultReduced']),
-        ...(value.action === undefined ? [] : ['action']),
-        ...(value.trigger === undefined ? [] : ['trigger']),
-        ...(value.category === undefined ? [] : ['category']),
-      ];
-      if (!['preflight', 'tool_allowance', 'post_tool', 'compaction'].includes(String(value.stage))) {
-        throw new TypeError('Agent context diagnostic stage is invalid.');
-      }
-      for (const field of ['providerWindow', 'workingWindow', 'softLimit', 'hardLimit'] as const) {
-        assertAgentSequenceNumber(value[field], field);
-      }
-      if (!['builtin-official', 'provider-verified', 'user-declared'].includes(String(value.capabilitySource))) {
-        throw new TypeError('Agent context capability source is invalid.');
-      }
-      assertAgentText(value.capabilityRevision, 'capabilityRevision', 512, true);
-      assertAgentText(value.policyRevision, 'policyRevision', 1_024, true);
-      for (const field of [
-        'inputTokens',
-        'deterministicInputTokens',
-        'usageAdjustmentTokens',
-        'contextRemainingTokens',
-        'toolAllowanceBytes',
-        'toolMemoryRemainingBytes',
-        'toolProviderResultCeilingBytes',
-        'toolResultBytes',
-      ] as const) {
-        if (value[field] !== undefined) assertAgentSequenceNumber(value[field], field);
-      }
-      if (value.observedPrefixTokens !== undefined && value.observedPrefixTokens !== null) {
-        assertAgentSequenceNumber(value.observedPrefixTokens, 'observedPrefixTokens');
-      }
-      if (value.toolBudgetLimitedBy !== undefined &&
-        !['context', 'memory', 'provider', 'multiple'].includes(String(value.toolBudgetLimitedBy))) {
-        throw new TypeError('Agent tool budget limiting factor is invalid.');
-      }
-      if (value.toolResultReduced !== undefined && typeof value.toolResultReduced !== 'boolean') {
-        throw new TypeError('Agent tool result reduction flag is invalid.');
-      }
-      if (value.action !== undefined &&
-        !['triggered', 'summary_retry', 'fallback', 'terminal'].includes(String(value.action))) {
-        throw new TypeError('Agent context diagnostic action is invalid.');
-      }
-      if (value.trigger !== undefined && ![
-        'pre_turn_soft_limit',
-        'pre_turn_byte_limit',
-        'completed_tool_envelope_soft_limit',
-        'completed_tool_envelope_byte_limit',
-        'forced_completed_tool_envelope',
-        'tool_result_memory_pressure',
-        'context_preflight',
-        'provider_context_overflow',
-        'provider_request_byte_limit',
-      ].includes(String(value.trigger))) {
-        throw new TypeError('Agent compaction trigger is invalid.');
-      }
-      if (value.category !== undefined && ![
-        'succeeded',
-        'current_turn_too_large',
-        'no_candidate',
-        'summary_provider_failed',
-        'summary_invalid',
-        'fallback_too_large',
-        'final_preflight_failed',
-        'tool_result_memory_limit',
-        'capability_unresolved',
-        'provider_context_overflow',
-        'provider_context_overflow_repeated',
-        'provider_request_byte_limit',
-        'provider_request_byte_limit_repeated',
-      ].includes(String(value.category))) {
-        throw new TypeError('Agent context diagnostic category is invalid.');
-      }
-      break;
-    case 'context_compaction_end':
-      keys = [...base, 'ok', 'summarizedMessageCount'];
-      if (typeof value.ok !== 'boolean') throw new TypeError('Agent compaction result is invalid.');
-      assertAgentSequenceNumber(value.summarizedMessageCount, 'summarizedMessageCount');
-      break;
-    case 'agent_error':
-      keys = [...base, 'message', ...(value.category === undefined ? [] : ['category'])];
-      assertAgentText(value.message, 'message', 4_096, true);
-      validateAgentErrorCategory(value.category);
-      break;
-    case 'agent_done':
-      keys = [
-        ...base,
-        'reason',
-        ...(value.contextFailureReason === undefined ? [] : ['contextFailureReason']),
-      ];
-      validateAgentStopReason(value.reason);
-      if (value.contextFailureReason !== undefined) {
-        validateAgentContextFailureReason(value.contextFailureReason);
-      }
-      break;
-    default:
-      throw new TypeError('Unsupported Agent event type.');
-  }
-  assertAgentExactKeys(value, keys);
-}
-
-function validateAgentTurnResult(value: unknown): asserts value is BgsmAgentTurnResult {
-  if (!isAgentRecord(value)) throw new TypeError('Agent result must be an object.');
-  assertAgentSessionTransportPayloadSize(value, 'Agent turn result');
-  validateAgentDeliveryIdentity(value);
-  const keys = [
-    'turnAttemptId',
-    'sessionId',
-    'baseRevision',
-    'reason',
-    'changed',
-    'changedCount',
-    'commit',
-    ...(value.contextFailureReason === undefined ? [] : ['contextFailureReason']),
-    ...(value.organizeLibraryHandoff === undefined ? [] : ['organizeLibraryHandoff']),
-  ];
-  assertAgentExactKeys(value, keys);
-  validateAgentStopReason(value.reason);
-  if (value.contextFailureReason !== undefined) {
-    validateAgentContextFailureReason(value.contextFailureReason);
-  }
-  if (typeof value.changed !== 'boolean') throw new TypeError('Agent changed flag is invalid.');
-  assertAgentSequenceNumber(value.changedCount, 'changedCount');
-  if ((Number(value.changedCount) > 0) !== value.changed) {
-    throw new TypeError('Agent changed count does not match its changed flag.');
-  }
-  if (value.commit !== null) validateAgentSessionCommitResult(value.commit, value);
-  if (value.organizeLibraryHandoff !== undefined) {
-    if (!isAgentRecord(value.organizeLibraryHandoff)) {
-      throw new TypeError('Agent organize-library handoff is invalid.');
-    }
-    assertAgentExactKeys(value.organizeLibraryHandoff, ['type', 'action', 'instruction']);
-    if (value.organizeLibraryHandoff.type !== 'organize_whole_library') {
-      throw new TypeError('Agent organize-library handoff type is invalid.');
-    }
-    if (
-      value.organizeLibraryHandoff.action !== 'request_confirmation'
-      && value.organizeLibraryHandoff.action !== 'start_analysis'
-    ) {
-      throw new TypeError('Agent organize-library handoff action is invalid.');
-    }
-    assertAgentText(
-      value.organizeLibraryHandoff.instruction,
-      'organizeLibraryHandoff.instruction',
-      512 * 1024,
-      true,
-    );
-  }
-  if (value.organizeLibraryHandoff !== undefined && value.commit === null) {
-    throw new TypeError('Agent organize-library handoff requires a durable commit.');
-  }
-}
-
-function validateAgentSessionCommitResult(
-  value: unknown,
-  result: Record<string, unknown>,
-): asserts value is AgentSessionCommitResult {
-  if (!isAgentRecord(value)) throw new TypeError('Agent commit receipt must be an object.');
-  assertAgentExactKeys(value, [
-    'session',
-    'summary',
-    'turnAttemptId',
-    'idempotent',
-    'appliedRevision',
-    'digest',
-    'launchDigest',
-    'outcome',
-    'transcript',
-    'presentationMessages',
-  ]);
-  assertAgentText(value.turnAttemptId, 'commit.turnAttemptId', 512, true);
-  if (value.turnAttemptId !== result.turnAttemptId) {
-    throw new TypeError('Agent commit receipt belongs to another attempt.');
-  }
-  if (typeof value.idempotent !== 'boolean') {
-    throw new TypeError('Agent commit idempotency flag is invalid.');
-  }
-  assertAgentSequenceNumber(value.appliedRevision, 'commit.appliedRevision');
-  if (!/^asd:v1:[A-Za-z0-9_-]{43}$/u.test(String(value.digest))) {
-    throw new TypeError('Agent commit transition digest is invalid.');
-  }
-  if (!/^asl:v1:[A-Za-z0-9_-]{43}$/u.test(String(value.launchDigest))) {
-    throw new TypeError('Agent commit launch digest is invalid.');
-  }
-  validateAgentSessionMetadata(value.session, result, Number(value.appliedRevision));
-  validateAgentSessionSummary(value.summary, result);
-  validateAgentSessionTranscript(value.transcript, result);
-  validateAgentSessionPresentation(value.presentationMessages);
-  validateAgentTerminalOutcome(value.outcome, result);
-}
-
-function validateAgentSessionMetadata(
-  value: unknown,
-  result: Record<string, unknown>,
-  appliedRevision: number,
-): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent session metadata must be an object.');
-  assertAgentExactKeys(value, [
-    'id',
-    'revision',
-    ...(value.compaction === undefined ? [] : ['compaction']),
-    ...(value.activeProjections === undefined ? [] : ['activeProjections']),
-    ...(value.binding === undefined ? [] : ['binding']),
-  ]);
-  assertAgentText(value.id, 'commit.session.id', 512, true);
-  assertAgentSequenceNumber(value.revision, 'commit.session.revision');
-  if (
-    value.id !== result.sessionId
-    || Number(value.revision) < appliedRevision
-    || appliedRevision <= Number(result.baseRevision)
-  ) {
-    throw new TypeError('Agent commit revision identity is invalid.');
-  }
-  if (value.compaction !== undefined) validateAgentCheckpoint(value.compaction);
-  if (value.activeProjections !== undefined) {
-    if (!Array.isArray(value.activeProjections)) {
-      throw new TypeError('Agent session active projections are invalid.');
-    }
-    value.activeProjections.forEach(validateAgentActiveProjection);
-  }
-  if (value.binding !== undefined) validateBgsmAgentConversationBinding(value.binding);
-}
-
-function validateAgentSessionSummary(
-  value: unknown,
-  result: Record<string, unknown>,
-): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent session summary must be an object.');
-  assertAgentExactKeys(value, ['id', 'title', 'createdAt', 'updatedAt']);
-  assertAgentText(value.id, 'commit.summary.id', 512, true);
-  assertAgentText(value.title, 'commit.summary.title', 512, false);
-  assertAgentSequenceNumber(value.createdAt, 'commit.summary.createdAt');
-  assertAgentSequenceNumber(value.updatedAt, 'commit.summary.updatedAt');
-  if (value.id !== result.sessionId || Number(value.updatedAt) < Number(value.createdAt)) {
-    throw new TypeError('Agent session summary identity is invalid.');
-  }
-}
-
-function validateAgentSessionTranscript(
-  value: unknown,
-  result: Record<string, unknown>,
-): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent transcript page must be an object.');
-  assertAgentExactKeys(value, ['sessionId', 'messages', 'nextBeforeSequence']);
-  assertAgentText(value.sessionId, 'commit.transcript.sessionId', 512, true);
-  if (value.sessionId !== result.sessionId || !Array.isArray(value.messages)) {
-    throw new TypeError('Agent transcript page identity is invalid.');
-  }
-  value.messages.forEach((message) => validateAgentSessionMessage(message, 'durable'));
-  if (value.nextBeforeSequence !== null) {
-    assertAgentSequenceNumber(value.nextBeforeSequence, 'commit.transcript.nextBeforeSequence');
-    if (Number(value.nextBeforeSequence) < 1) {
-      throw new TypeError('Agent transcript cursor is invalid.');
-    }
-  }
-}
-
-function validateAgentSessionPresentation(value: unknown): void {
-  if (!Array.isArray(value)) throw new TypeError('Agent turn presentation is invalid.');
-  let priorSequence = 0;
-  const seenIds = new Set<string>();
-  for (const message of value) {
-    if (!isAgentRecord(message)) throw new TypeError('Agent presentation message is invalid.');
-    assertAgentExactKeys(message, ['sequence', 'id', 'role', 'content', 'createdAt']);
-    assertAgentSequenceNumber(message.sequence, 'commit.presentation.sequence');
-    assertAgentText(message.id, 'commit.presentation.id', 512, true);
-    assertAgentText(message.content, 'commit.presentation.content', 512 * 1024, false);
-    assertAgentSequenceNumber(message.createdAt, 'commit.presentation.createdAt');
-    if (
-      Number(message.sequence) <= priorSequence
-      || seenIds.has(String(message.id))
-      || (message.role !== 'user' && message.role !== 'agent')
-    ) {
-      throw new TypeError('Agent presentation messages are not canonical.');
-    }
-    priorSequence = Number(message.sequence);
-    seenIds.add(String(message.id));
-  }
-}
-
-function validateAgentTerminalOutcome(
-  value: unknown,
-  result: Record<string, unknown>,
-): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent terminal outcome must be an object.');
-  assertAgentExactKeys(value, [
-    'reason',
-    'changed',
-    'changedCount',
-    'writeSettlement',
-    ...(value.contextFailureReason === undefined ? [] : ['contextFailureReason']),
-    ...(value.organizeLibraryAction === undefined ? [] : ['organizeLibraryAction']),
-    ...(value.handoffAnchor === undefined ? [] : ['handoffAnchor']),
-  ]);
-  validateAgentStopReason(value.reason);
-  if (typeof value.changed !== 'boolean') throw new TypeError('Agent outcome changed flag is invalid.');
-  assertAgentSequenceNumber(value.changedCount, 'commit.outcome.changedCount');
-  if (
-    value.writeSettlement !== 'none'
-    && value.writeSettlement !== 'all_failed'
-    && value.writeSettlement !== 'unsafe'
-  ) throw new TypeError('Agent outcome write settlement is invalid.');
-  if (value.changed && value.writeSettlement !== 'unsafe') {
-    throw new TypeError('Agent changed outcome must have an unsafe write settlement.');
-  }
-  if (value.contextFailureReason !== undefined) {
-    validateAgentContextFailureReason(value.contextFailureReason);
-  }
-  if (value.organizeLibraryAction !== undefined && ![
-    'request_confirmation',
-    'start_analysis',
-  ].includes(String(value.organizeLibraryAction))) {
-    throw new TypeError('Agent outcome organize action is invalid.');
-  }
-  if (value.handoffAnchor !== undefined) {
-    if (!isAgentRecord(value.handoffAnchor)) throw new TypeError('Agent handoff anchor is invalid.');
-    assertAgentExactKeys(value.handoffAnchor, ['messageId', 'createdAt']);
-    if (value.handoffAnchor.messageId !== null) {
-      assertAgentText(value.handoffAnchor.messageId, 'commit.outcome.handoffAnchor.messageId', 512, true);
-    }
-    assertAgentSequenceNumber(
-      value.handoffAnchor.createdAt,
-      'commit.outcome.handoffAnchor.createdAt',
-    );
-  }
-  const handoff = isAgentRecord(result.organizeLibraryHandoff)
-    ? result.organizeLibraryHandoff
-    : null;
-  if (
-    value.reason !== result.reason
-    || value.changed !== result.changed
-    || value.changedCount !== result.changedCount
-    || (value.contextFailureReason ?? null) !== (result.contextFailureReason ?? null)
-    || (value.organizeLibraryAction ?? null) !== (handoff?.action ?? null)
-    || ((value.organizeLibraryAction === undefined) !== (value.handoffAnchor === undefined))
-  ) {
-    throw new TypeError('Agent terminal outcome does not match its delivery.');
-  }
-}
-
-function validateAgentTurnError(value: unknown): asserts value is BgsmAgentTurnError {
-  if (!isAgentRecord(value)) throw new TypeError('Agent error must be an object.');
-  validateAgentDeliveryIdentity(value);
-  assertAgentExactKeys(value, [
-    'turnAttemptId',
-    'sessionId',
-    'baseRevision',
-    'message',
-    ...(value.category === undefined ? [] : ['category']),
-    ...(value.code === undefined ? [] : ['code']),
-  ]);
-  assertAgentText(value.message, 'message', 4_096, true);
-  validateAgentErrorCategory(value.category);
-  if (value.code !== undefined) {
-    assertAgentText(value.code, 'code', 128, true);
-    if (parseAgentTurnErrorCode(value.code) === null) {
-      throw new TypeError('Agent error code is invalid.');
-    }
-  }
-}
-
-function validateAgentDeliveryIdentity(value: Record<string, unknown>): void {
-  assertAgentText(value.turnAttemptId, 'turnAttemptId', 512, true);
-  assertAgentText(value.sessionId, 'sessionId', 512, true);
-  assertAgentSequenceNumber(value.baseRevision, 'baseRevision');
-}
-
-/**
- * Live loop messages have no durable sequence yet; transcript messages do.
- * Keeping the modes explicit prevents transient delivery from masquerading as
- * canonical history while still validating artifact-backed tool rows.
- */
-function validateAgentSessionMessage(value: unknown, mode: 'live' | 'durable'): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent session message must be an object.');
-  const baseKeys = [
-    ...(mode === 'durable' ? ['sequence'] : []),
-    'id',
-    'role',
-    'content',
-    'createdAt',
-  ];
-  if (mode === 'durable') assertAgentSequenceNumber(value.sequence, 'message.sequence');
-  assertAgentText(value.id, 'message.id', 512, true);
-  assertAgentText(value.content, 'message.content', 512 * 1024, false);
-  if (!Number.isSafeInteger(value.createdAt) || Number(value.createdAt) < 0) {
-    throw new TypeError('Agent session message timestamp is invalid.');
-  }
-  if (value.role === 'user') {
-    assertAgentExactKeys(value, baseKeys);
-    return;
-  }
-  if (value.role === 'agent') {
-    const keys = value.toolCalls === undefined ? baseKeys : [...baseKeys, 'toolCalls'];
-    assertAgentExactKeys(value, keys);
-    if (value.toolCalls !== undefined) {
-      if (!Array.isArray(value.toolCalls) || value.toolCalls.length === 0 || value.toolCalls.length > 64) {
-        throw new TypeError('Agent message tool calls are invalid.');
-      }
-      value.toolCalls.forEach(validateAgentToolCall);
-    }
-    return;
-  }
-  if (value.role === 'tool') {
-    assertAgentExactKeys(value, [
-      ...baseKeys,
-      'toolCallId',
-      'toolName',
-      ...(value.opaqueReferences === undefined ? [] : ['opaqueReferences']),
-    ]);
-    assertAgentText(value.toolCallId, 'message.toolCallId', 512, true);
-    assertAgentText(value.toolName, 'message.toolName', 256, true);
-    if (value.opaqueReferences !== undefined) {
-      validateAgentTurnOpaqueReferences(value.opaqueReferences);
-    }
-    return;
-  }
-  throw new TypeError('Agent session message role is invalid.');
-}
-
-function validateAgentToolCall(value: unknown): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent tool call must be an object.');
-  assertAgentExactKeys(value, ['id', 'name', 'arguments']);
-  assertAgentText(value.id, 'toolCall.id', 512, true);
-  assertAgentText(value.name, 'toolCall.name', 256, true);
-  let serialized: string | undefined;
-  try {
-    serialized = JSON.stringify(value.arguments);
-  } catch {
-    throw new TypeError('Agent tool call arguments are not serializable.');
-  }
-  if (serialized === undefined || new TextEncoder().encode(serialized).byteLength > 256 * 1024) {
-    throw new RangeError('Agent tool call arguments are too large.');
-  }
-}
-
-function validateAgentCheckpoint(value: unknown): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent checkpoint must be an object.');
-  assertAgentExactKeys(value, [
-    'schemaVersion',
-    'summary',
-    'summarizedMessageCount',
-    'summarizedThroughMessageId',
-  ]);
-  if (value.schemaVersion !== 1) throw new TypeError('Agent checkpoint version is invalid.');
-  assertAgentText(value.summary, 'checkpoint.summary', 64 * 1024, true);
-  if (!Number.isSafeInteger(value.summarizedMessageCount) || Number(value.summarizedMessageCount) <= 0) {
-    throw new TypeError('Agent checkpoint message count is invalid.');
-  }
-  assertAgentText(value.summarizedThroughMessageId, 'checkpoint.cursor', 512, true);
-}
-
-function validateAgentActiveProjection(value: unknown): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent active projection must be an object.');
-  assertAgentExactKeys(value, [
-    'schemaVersion',
-    'currentUserMessageId',
-    'summarizedThroughMessageId',
-    'retainedSuffixFirstMessageId',
-    'rawMessageCountAtCreation',
-    'rawTailMessageIdAtCreation',
-    'capabilityRevision',
-    'policyRevision',
-    'summary',
-  ]);
-  if (value.schemaVersion !== 1) throw new TypeError('Agent active projection version is invalid.');
-  assertAgentText(value.currentUserMessageId, 'active projection user cursor', 512, true);
-  assertAgentText(value.summarizedThroughMessageId, 'active projection summary cursor', 512, true);
-  if (value.retainedSuffixFirstMessageId !== null) {
-    assertAgentText(value.retainedSuffixFirstMessageId, 'active projection suffix cursor', 512, true);
-  }
-  if (!Number.isSafeInteger(value.rawMessageCountAtCreation) || Number(value.rawMessageCountAtCreation) <= 0) {
-    throw new TypeError('Agent active projection raw message count is invalid.');
-  }
-  assertAgentText(value.rawTailMessageIdAtCreation, 'active projection raw tail cursor', 512, true);
-  assertAgentText(value.capabilityRevision, 'active projection capability revision', 512, true);
-  assertAgentText(value.policyRevision, 'active projection policy revision', 512, true);
-  assertAgentText(value.summary, 'active projection summary', 64 * 1024, true);
-}
-
-function validateAgentErrorCategory(value: unknown): void {
-  if (value === undefined) return;
-  if (!['authentication', 'configuration', 'permission', 'disclosure', 'capability', 'provider', 'other'].includes(String(value))) {
-    throw new TypeError('Agent error category is invalid.');
-  }
-}
-
-function validateToolRisk(value: unknown): asserts value is ToolRisk {
-  if (!['read', 'suggest', 'write'].includes(String(value))) {
-    throw new TypeError('Agent tool risk is invalid.');
-  }
-}
-
-function validateAgentStopReason(value: unknown): void {
-  if (!['final_answer', 'approval_required', 'interaction_required', 'protocol_error', 'step_budget_reached', 'context_limit', 'provider_error', 'attempt_state_lost', 'aborted'].includes(String(value))) {
-    throw new TypeError('Agent stop reason is invalid.');
-  }
-}
-
-function validateAgentContextFailureReason(
-  value: unknown,
-): asserts value is AgentContextFailureReason {
-  if (![
-    'capability_unresolved',
-    'current_turn_too_large',
-    'no_candidate',
-    'summary_provider_failed',
-    'summary_invalid',
-    'fallback_too_large',
-    'final_preflight_failed',
-    'tool_result_memory_limit',
-    'provider_context_overflow',
-    'provider_context_overflow_repeated',
-    'provider_request_byte_limit',
-    'provider_request_byte_limit_repeated',
-  ].includes(String(value))) {
-    throw new TypeError('Agent context failure reason is invalid.');
-  }
-}
-
-function assertAgentText(
-  value: unknown,
-  field: string,
-  maxBytes: number,
-  requireNonempty: boolean,
-): void {
-  if (typeof value !== 'string' || (requireNonempty && value.length === 0)) {
-    throw new TypeError(`Agent ${field} is invalid.`);
-  }
-  if (new TextEncoder().encode(value).byteLength > maxBytes) {
-    throw new RangeError(`Agent ${field} is too large.`);
-  }
-}
-
-function assertAgentSequenceNumber(value: unknown, field: string): void {
-  if (!Number.isSafeInteger(value) || Number(value) < 0) {
-    throw new TypeError(`Agent ${field} is invalid.`);
-  }
-}
-
-function assertAgentExactKeys(value: Record<string, unknown>, expected: string[]): void {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
-    throw new TypeError('Agent Port message has unexpected fields.');
-  }
-}
-
-function isAgentRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
 
 export function mergeProgressStatus(
   current: SyncStatus | null,

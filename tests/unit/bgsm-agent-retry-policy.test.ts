@@ -9,7 +9,7 @@ import {
   trackPendingWriteOutcome,
 } from '@/ui/bgsm-agent-retry-policy';
 import type { AgentRetryDraft } from '@/storage/agent-session-store';
-import type { BgsmAgentTurnEvent } from '@/utils/messaging';
+import type { BgsmAgentTurnEvent } from '@/bgsm-agent/turn-protocol';
 
 const delivery = {
   turnAttemptId: 'attempt-one',

@@ -54,7 +54,6 @@ import { createOrganizeApplyRecovery } from './organize-apply-recovery';
 import { createOrganizeAnalysisRecovery } from './organize-analysis-recovery';
 import {
   BGSM_AGENT_MAX_OUTPUT_TOKENS,
-  AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE,
   assertBgsmAgentContextCapabilityFeasible,
   buildBgsmAgentSystemPrompt,
   buildBgsmAgentTerminalPayload,
@@ -261,9 +260,12 @@ import {
   type BgsmOrganizeJobControlFailureReason,
   type BgsmOrganizeJobErrorReason,
   type BgsmOrganizeJobServerMessage,
+} from "@/utils/messaging";
+import {
+  AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE,
   type BgsmAgentTurnLaunch,
   type BgsmAgentTurnResult,
-} from "@/utils/messaging";
+} from '@/bgsm-agent/turn-protocol';
 
 /**
  * Background SW — sync orchestrator and sole owner of the extension-origin

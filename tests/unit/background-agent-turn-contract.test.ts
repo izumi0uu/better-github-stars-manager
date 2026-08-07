@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
 import {
-  AGENT_TURN_ERROR_CODES,
   BGSM_AGENT_PROMPT_MAX_BYTES,
-  type AgentActiveTurnTransport,
   type AgentSessionLaunchIdentity,
-  type AgentTurnErrorCode,
 } from '@/bgsm-agent';
 import {
   createBgsmAgentTurnRegistry,
   type BgsmAgentTurnRunner,
 } from '@/background/bgsm-agent-turn-port';
-import type { BgsmAgentTurnResult } from '@/utils/messaging';
+import {
+  AGENT_TURN_ERROR_CODES,
+  type AgentTurnErrorCode,
+  type BgsmAgentActiveTurn,
+  type BgsmAgentTurnResult,
+} from '@/bgsm-agent/turn-protocol';
 
 type Listener<T> = (value: T) => void;
 
@@ -154,7 +156,7 @@ describe('background Agent turn transport contract', () => {
     start(transport, input);
 
     assert.deepEqual(received, input);
-    const active: AgentActiveTurnTransport | null = registry.inspectActiveTurn(input.sessionId);
+    const active: BgsmAgentActiveTurn | null = registry.inspectActiveTurn(input.sessionId);
     assert.ok(active);
     assert.equal(active.executionEpochId, registry.executionEpochId);
     assert.deepEqual(active.launch, input);

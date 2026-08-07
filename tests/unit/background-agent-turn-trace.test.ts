@@ -9,7 +9,7 @@ import {
   createBgsmAgentTurnRegistry,
 } from '@/background/bgsm-agent-turn-port';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent';
-import type { BgsmAgentTurnLaunch } from '@/utils/messaging';
+import type { BgsmAgentTurnLaunch } from '@/bgsm-agent/turn-protocol';
 
 const databases: DevTraceDB[] = [];
 

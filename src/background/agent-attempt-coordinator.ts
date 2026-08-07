@@ -4,7 +4,7 @@ import {
   digestAgentSessionLaunch,
   type AgentSessionLaunchDigest,
 } from '@/bgsm-agent/session-transport';
-import type { BgsmAgentTurnLaunch } from '@/utils/messaging';
+import type { BgsmAgentTurnLaunch } from '@/bgsm-agent/turn-protocol';
 import {
   admitAgentSessionTurn,
   commitLeasedAgentSessionTurn,

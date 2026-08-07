@@ -5,7 +5,7 @@ import {
   createBgsmAgentTurnRegistry,
   type BgsmAgentTurnRunner,
 } from '@/background/bgsm-agent-turn-port';
-import type { BgsmAgentTurnResult } from '@/utils/messaging';
+import type { BgsmAgentTurnResult } from '@/bgsm-agent/turn-protocol';
 
 type Listener<T> = (value: T) => void;
 
@@ -479,6 +479,18 @@ describe('Cubby turn single-flight registry', () => {
     assert.equal(run.runCount, 1);
     assert.match(
       messagesOfType(conflicting.posted, 'bgsmAgentTurnError')[0]?.error.message ?? '',
+      /conflicting launch data/u,
+    );
+
+    const conflictingRetry = fakePort();
+    registry.attach(conflictingRetry.port);
+    conflictingRetry.deliver({
+      ...startMessage(turn),
+      retrySourceAttemptId: 'turn-attempt-prior',
+    });
+    assert.equal(run.runCount, 1);
+    assert.match(
+      messagesOfType(conflictingRetry.posted, 'bgsmAgentTurnError')[0]?.error.message ?? '',
       /conflicting launch data/u,
     );
     conflicting.deliver({

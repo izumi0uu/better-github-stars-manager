@@ -13,7 +13,7 @@ import type {
   BgsmAgentTurnAckDisposition,
   BgsmAgentTurnLaunch,
   BgsmAgentTurnResult,
-} from '@/utils/messaging';
+} from '@/bgsm-agent/turn-protocol';
 import { AGENT_CONTEXT_CAPABILITY_REQUIRED } from '@/api/errors';
 
 type Listener<T> = (value: T) => void;

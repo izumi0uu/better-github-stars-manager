@@ -17,45 +17,8 @@ import type { BgsmAgentSessionTransition } from './session';
 export const AGENT_SESSION_TURN_TRANSPORT_MAX_BYTES = 8 * 1024 * 1024;
 export const BGSM_AGENT_PROMPT_MAX_BYTES = 512 * 1024;
 export const AGENT_TURN_IDENTIFIER_MAX_BYTES = 512;
-export const AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE = 'agent_artifact_coverage_stalled' as const;
 
 const UTF8_ENCODER = new TextEncoder();
-
-/** Shared producer/consumer authority for typed Agent Port failures. */
-export const AGENT_TURN_ERROR_CODES = Object.freeze([
-  'agent_session_not_found',
-  'agent_session_revision_conflict',
-  'agent_session_attempt_conflict',
-  'agent_session_turn_active',
-  'agent_session_turn_lease_mismatch',
-  'agent_session_corrupt',
-  'agent_session_quota_exceeded',
-  'agent_storage_capacity_exceeded',
-  'agent_artifact_not_found',
-  'agent_artifact_not_ready',
-  'agent_artifact_corrupt',
-  'agent_artifact_conflict',
-  'agent_artifact_state_conflict',
-  'agent_artifact_access_denied',
-  AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE,
-  'agent_turn_resume_epoch_changed',
-] as const);
-
-export type AgentTurnErrorCode = typeof AGENT_TURN_ERROR_CODES[number];
-
-export function parseAgentTurnErrorCode(value: unknown): AgentTurnErrorCode | null {
-  if (typeof value !== 'string') return null;
-  return AGENT_TURN_ERROR_CODES.find((code) => code === value) ?? null;
-}
-
-export function normalizeAgentTurnErrorCode(error: unknown): AgentTurnErrorCode | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const code = 'code' in error ? parseAgentTurnErrorCode(error.code) : null;
-  if (code !== null) return code;
-  return 'name' in error && error.name === 'QuotaExceededError'
-    ? 'agent_session_quota_exceeded'
-    : undefined;
-}
 
 export type AgentSessionAttemptDigest = `asd:v1:${string}`;
 export type AgentSessionLaunchDigest = `asl:v1:${string}`;

@@ -33,10 +33,8 @@ import type {
   BgsmAgentArtifactReadAuthorization,
 } from '@/bgsm-agent/tool-result-externalizer';
 import type { BgsmAgentSessionMessage } from '@/bgsm-agent/session';
-import {
-  AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE,
-  type AgentSessionLaunchDigest,
-} from '@/bgsm-agent/session-transport';
+import type { AgentSessionLaunchDigest } from '@/bgsm-agent/session-transport';
+import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/turn-protocol';
 import type {
   AgentArtifactCoverageCheckpointProposal,
   AgentArtifactEnvelopeCheckpointResult,

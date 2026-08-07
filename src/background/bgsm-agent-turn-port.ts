@@ -7,18 +7,19 @@ import {
   type AgentEvent,
 } from '@/agent-harness';
 import {
-  type BgsmAgentTurnAckDisposition,
-  type BgsmAgentTurnLaunch,
-  type BgsmAgentTurnResult,
-} from '@/utils/messaging';
-import {
-  assertAgentSessionTransportPayloadSize,
-  assertAgentTurnTransportIdentifier,
   normalizeAgentTurnErrorCode,
-  validateAgentSessionLaunchIdentity,
-  type AgentActiveTurnTransport,
-  type AgentTurnErrorCode,
-} from '@/bgsm-agent/session-transport';
+  parseBgsmAgentTurnClientMessage,
+  parseBgsmAgentTurnServerMessage,
+  type BgsmAgentActiveTurn,
+  type BgsmAgentDeliveryIdentity,
+  type BgsmAgentTurnClientMessage,
+  type BgsmAgentTurnEvent,
+  type BgsmAgentTurnLaunch,
+  type BgsmAgentTurnPublishedMessage,
+  type BgsmAgentTurnResult,
+  type BgsmAgentTurnSequencedServerMessage,
+  type BgsmAgentTurnServerMessage,
+} from '@/bgsm-agent/turn-protocol';
 import type {
   AgentTurnTrace,
   AgentTurnTraceFactory,
@@ -48,49 +49,13 @@ type AgentTurnPort = {
   onDisconnect: { addListener(listener: () => void): void };
 };
 
-type AgentTurnErrorDelivery = {
-  turnAttemptId: string;
-  sessionId: string;
-  baseRevision: number;
-  message: string;
-  category: AgentErrorCategory;
-  code?: AgentTurnErrorCode;
-};
-
-type AgentTurnServerMessage =
-  | { type: 'bgsmAgentTurnHello'; executionEpochId: string }
-  | {
-      type: 'bgsmAgentTurnAck';
-      turnAttemptId: string;
-      sessionId: string;
-      baseRevision: number;
-      disposition: BgsmAgentTurnAckDisposition;
-      appliedRevision: number | null;
-    }
-  | { type: 'bgsmAgentTurnEvent'; sequence: number; event: Record<string, unknown> }
-  | { type: 'bgsmAgentTurnResult'; sequence: number; result: BgsmAgentTurnResult }
-  | {
-      type: 'bgsmAgentTurnError';
-      sequence: number;
-      error: AgentTurnErrorDelivery;
-    };
-
-type AgentTurnPublishedMessage =
-  | { type: 'bgsmAgentTurnEvent'; event: Record<string, unknown> }
-  | { type: 'bgsmAgentTurnResult'; result: BgsmAgentTurnResult }
-  | {
-      type: 'bgsmAgentTurnError';
-      error: AgentTurnErrorDelivery;
-    };
-
-type AgentTurnSequencedServerMessage = Extract<AgentTurnServerMessage, { sequence: number }>;
 
 type AgentTurnAttempt = {
   input: BgsmAgentTurnLaunch;
   fingerprint: string;
   controller: AbortController;
   subscribers: Set<AgentTurnPort>;
-  deliveries: AgentTurnSequencedServerMessage[];
+  deliveries: BgsmAgentTurnSequencedServerMessage[];
   terminal: boolean;
   cleanupTimer: ReturnType<typeof setTimeout> | null;
   finalization: Promise<boolean> | null;
@@ -113,7 +78,7 @@ type AgentTurnPortTraceState = {
 
 export type BgsmAgentTurnRegistry = Readonly<{
   executionEpochId: string;
-  inspectActiveTurn(sessionId: string): AgentActiveTurnTransport | null;
+  inspectActiveTurn(sessionId: string): BgsmAgentActiveTurn | null;
   attach(port: AgentTurnPort): void;
 }>;
 
@@ -253,7 +218,7 @@ export function createBgsmAgentTurnRegistry(
 
   const postSequenced = (
     port: AgentTurnPort,
-    delivery: AgentTurnSequencedServerMessage,
+    delivery: BgsmAgentTurnSequencedServerMessage,
     trace: AgentTurnTrace | undefined,
     deliveryKind: 'live' | 'replay',
   ): boolean => {
@@ -272,12 +237,22 @@ export function createBgsmAgentTurnRegistry(
     return true;
   };
 
-  const publish = (attempt: AgentTurnAttempt, message: AgentTurnPublishedMessage) => {
+  const prepareDelivery = (
+    attempt: AgentTurnAttempt,
+    message: BgsmAgentTurnPublishedMessage,
+  ): BgsmAgentTurnSequencedServerMessage => {
     const delivery = {
       ...message,
       sequence: attempt.deliveries.length,
-    } as AgentTurnSequencedServerMessage;
-    assertAgentSessionTransportPayloadSize(delivery, 'Agent turn delivery');
+    } as BgsmAgentTurnSequencedServerMessage;
+    parseBgsmAgentTurnServerMessage(delivery);
+    return delivery;
+  };
+
+  const publish = (
+    attempt: AgentTurnAttempt,
+    delivery: BgsmAgentTurnSequencedServerMessage,
+  ): void => {
     attempt.deliveries.push(delivery);
     for (const subscriber of [...attempt.subscribers]) {
       if (!postSequenced(subscriber, delivery, attempt.trace, 'live')) {
@@ -289,26 +264,23 @@ export function createBgsmAgentTurnRegistry(
 
   const finishAttempt = (attempt: AgentTurnAttempt, result: BgsmAgentTurnResult) => {
     if (attempt.terminal) return;
+    let delivery: BgsmAgentTurnSequencedServerMessage;
     try {
-      assertAgentSessionTransportPayloadSize({
+      delivery = prepareDelivery(attempt, {
         type: 'bgsmAgentTurnResult',
-        sequence: attempt.deliveries.length,
-        result,
-      }, 'Agent turn result delivery');
+        result: {
+          ...result,
+          turnAttemptId: attempt.input.turnAttemptId,
+          sessionId: attempt.input.sessionId,
+          baseRevision: attempt.input.baseRevision,
+        },
+      });
     } catch (error) {
       void failAttempt(attempt, error);
       return;
     }
     attempt.terminal = true;
-    publish(attempt, {
-      type: 'bgsmAgentTurnResult',
-      result: {
-        ...result,
-        turnAttemptId: attempt.input.turnAttemptId,
-        sessionId: attempt.input.sessionId,
-        baseRevision: attempt.input.baseRevision,
-      },
-    });
+    publish(attempt, delivery);
     observeTrace(() => attempt.trace?.finish(
       result.reason === 'final_answer' ? 'completed'
         : result.reason === 'aborted' ? 'cancelled'
@@ -332,8 +304,7 @@ export function createBgsmAgentTurnRegistry(
     }
     if (attempt.terminal) return;
     const failureCode = normalizeAgentTurnErrorCode(error);
-    attempt.terminal = true;
-    publish(attempt, {
+    const delivery = prepareDelivery(attempt, {
       type: 'bgsmAgentTurnError',
       error: {
         turnAttemptId: attempt.input.turnAttemptId,
@@ -344,6 +315,8 @@ export function createBgsmAgentTurnRegistry(
         ...(failureCode ? { code: failureCode } : {}),
       },
     });
+    attempt.terminal = true;
+    publish(attempt, delivery);
     observeTrace(() => attempt.trace?.finish('failed', classifyTurnError(error)));
     observeAgentContentCapture(attempt.contentCapture, (capture) => {
       capture.finish(classifyTurnError(error));
@@ -406,10 +379,10 @@ export function createBgsmAgentTurnRegistry(
 
   const start = (input: BgsmAgentTurnLaunch): AgentTurnAttempt => {
     const attempt = createAttempt(input);
-    publish(attempt, {
+    publish(attempt, prepareDelivery(attempt, {
       type: 'bgsmAgentTurnEvent',
       event: deliveryEvent(input, { type: 'agent_queued' }),
-    });
+    }));
     void dependencies.runTurn(input, {
       signal: attempt.controller.signal,
       trace: attempt.trace
@@ -421,18 +394,18 @@ export function createBgsmAgentTurnRegistry(
       emit: (event) => {
         if (!attempt.terminal) {
           observeTrace(() => attempt.trace?.recordAgentEvent(event));
-          publish(attempt, {
+          publish(attempt, prepareDelivery(attempt, {
             type: 'bgsmAgentTurnEvent',
             event: deliveryEvent(input, event),
-          });
+          }));
         }
       },
       bind: (binding) => {
         if (!attempt.terminal) {
-          publish(attempt, {
+          publish(attempt, prepareDelivery(attempt, {
             type: 'bgsmAgentTurnEvent',
             event: deliveryEvent(input, { type: 'conversation_bound', binding }),
-          });
+          }));
         }
       },
     }).then(
@@ -477,7 +450,7 @@ export function createBgsmAgentTurnRegistry(
       connectionState.trace = trace;
     }
     observeTrace(() => trace?.recordAttemptRejected(reason));
-    const delivery: AgentTurnSequencedServerMessage = options.identityConflict
+    const delivery: BgsmAgentTurnSequencedServerMessage = options.identityConflict
       ? {
           type: 'bgsmAgentTurnError',
           sequence: 0,
@@ -502,6 +475,7 @@ export function createBgsmAgentTurnRegistry(
         commit: null,
       },
         };
+    parseBgsmAgentTurnServerMessage(delivery);
     postSequenced(port, delivery, trace, 'live');
     if (!options.identityConflict && options.terminateTrace !== false) {
       observeTrace(() => trace?.finish('attempt_state_lost', 'attempt_state_lost'));
@@ -511,10 +485,10 @@ export function createBgsmAgentTurnRegistry(
 
   const acknowledge = (
     port: AgentTurnPort,
-    message: Record<string, unknown>,
+    message: Extract<BgsmAgentTurnClientMessage, { type: 'ackBgsmAgentTurnResult' }>,
     attemptId: string | null,
   ) => {
-    if (!isAckMessage(message, executionEpochId) || message.turnAttemptId !== attemptId) return;
+    if (message.executionEpochId !== executionEpochId || message.turnAttemptId !== attemptId) return;
     const attempt = attempts.get(message.turnAttemptId);
     if (!attempt) {
       confirmAcknowledgement(port, message);
@@ -593,51 +567,71 @@ export function createBgsmAgentTurnRegistry(
         markDisconnected(port, connectionState);
       });
       port.onMessage.addListener((rawMessage: unknown) => {
-        if (!isRecord(rawMessage)) return;
-        if (rawMessage.type === 'ackBgsmAgentTurnResult') {
+        let message: BgsmAgentTurnClientMessage;
+        try {
+          message = parseBgsmAgentTurnClientMessage(rawMessage);
+        } catch {
           if (
-            connectionState.attachmentMode === 'rejected'
-            && isAckMessage(rawMessage, executionEpochId)
-            && rawMessage.turnAttemptId === connectionState.attachedAttemptId
+            typeof rawMessage === 'object'
+            && rawMessage !== null
+            && 'type' in rawMessage
+            && rawMessage.type === 'startBgsmAgentTurn'
           ) {
-            observeTrace(() => connectionState.trace?.recordAcknowledgement({
-              disposition: rawMessage.disposition,
-              appliedRevision: rawMessage.appliedRevision,
-            }));
-            confirmAcknowledgement(port, rawMessage);
-          } else if (connectionState.attachmentMode === 'attempt') {
-            acknowledge(port, rawMessage, connectionState.attachedAttemptId);
+            port.disconnect();
           }
           return;
         }
-        if (rawMessage.type === 'stopBgsmAgentTurn') {
-          if (!isStopMessage(rawMessage, executionEpochId)) return;
+        if (message.type === 'ackBgsmAgentTurnResult') {
+          if (message.executionEpochId !== executionEpochId) return;
+          if (
+            connectionState.attachmentMode === 'rejected'
+            && message.turnAttemptId === connectionState.attachedAttemptId
+          ) {
+            observeTrace(() => connectionState.trace?.recordAcknowledgement({
+              disposition: message.disposition,
+              appliedRevision: message.appliedRevision,
+            }));
+            confirmAcknowledgement(port, message);
+          } else if (connectionState.attachmentMode === 'attempt') {
+            acknowledge(port, message, connectionState.attachedAttemptId);
+          }
+          return;
+        }
+        if (message.type === 'stopBgsmAgentTurn') {
+          if (message.executionEpochId !== executionEpochId) return;
           if (
             connectionState.pendingLaunch
-            && sameTurnIdentity(connectionState.pendingLaunch, rawMessage)
+            && sameTurnIdentity(connectionState.pendingLaunch, message)
           ) {
             connectionState.stopRequested = true;
           }
-          const attempt = attempts.get(rawMessage.turnAttemptId as string);
-          if (attempt && sameTurnIdentity(attempt.input, rawMessage)) {
+          const attempt = attempts.get(message.turnAttemptId);
+          if (attempt && sameTurnIdentity(attempt.input, message)) {
             observeTrace(() => attempt.trace?.recordCancellation('user'));
             attempt.controller.abort();
           }
           return;
         }
-        if (rawMessage.type !== 'startBgsmAgentTurn' || connectionState.attachedAttemptId) return;
-        const parsed = parseStartMessage(rawMessage);
-        if (!parsed) {
-          port.disconnect();
-          return;
-        }
-        if (rawMessage.executionEpochId !== executionEpochId) {
+        if (connectionState.attachedAttemptId) return;
+        const parsed: BgsmAgentTurnLaunch = {
+          turnAttemptId: message.turnAttemptId,
+          sessionId: message.sessionId,
+          baseRevision: message.baseRevision,
+          prompt: message.prompt,
+          ...(message.retrySourceAttemptId === undefined
+            ? {}
+            : { retrySourceAttemptId: message.retrySourceAttemptId }),
+          ...(message.candidateContract === undefined
+            ? {}
+            : { candidateContract: message.candidateContract }),
+        };
+        if (message.executionEpochId !== executionEpochId) {
           connectionState.attachedAttemptId = parsed.turnAttemptId;
           connectionState.attachmentMode = 'rejected';
           connectionState.trace = rejectAttempt(port, parsed, 'execution_epoch_mismatch');
           return;
         }
-        if (rawMessage.resumeOnly === true) {
+        if (message.resumeOnly === true) {
           const attempt = attempts.get(parsed.turnAttemptId);
           if (
             !attempt
@@ -839,22 +833,26 @@ function observeTrace(work: () => void): void {
 
 function confirmAcknowledgement(
   port: AgentTurnPort,
-  message: Readonly<{
-    turnAttemptId: string;
-    sessionId: string;
-    baseRevision: number;
-    disposition: BgsmAgentTurnAckDisposition;
-    appliedRevision: number | null;
-  }>,
+  message: Extract<BgsmAgentTurnClientMessage, { type: 'ackBgsmAgentTurnResult' }>,
 ): void {
-  safePost(port, {
-    type: 'bgsmAgentTurnAck',
-    turnAttemptId: message.turnAttemptId,
-    sessionId: message.sessionId,
-    baseRevision: message.baseRevision,
-    disposition: message.disposition,
-    appliedRevision: message.appliedRevision,
-  });
+  const confirmation: BgsmAgentTurnServerMessage = message.disposition === 'applied'
+    ? {
+        type: 'bgsmAgentTurnAck',
+        turnAttemptId: message.turnAttemptId,
+        sessionId: message.sessionId,
+        baseRevision: message.baseRevision,
+        disposition: 'applied',
+        appliedRevision: message.appliedRevision,
+      }
+    : {
+        type: 'bgsmAgentTurnAck',
+        turnAttemptId: message.turnAttemptId,
+        sessionId: message.sessionId,
+        baseRevision: message.baseRevision,
+        disposition: message.disposition,
+        appliedRevision: null,
+      };
+  safePost(port, confirmation);
 }
 
 export function attachBgsmAgentTurnPort(
@@ -870,7 +868,7 @@ export function attachBgsmAgentTurnPort(
   registry.attach(port);
 }
 
-function safePost(port: AgentTurnPort, message: AgentTurnServerMessage): boolean {
+function safePost(port: AgentTurnPort, message: BgsmAgentTurnServerMessage): boolean {
   try {
     port.postMessage(message);
     return true;
@@ -885,13 +883,13 @@ function deliveryEvent(
     type: 'conversation_bound';
     binding: BgsmAgentConversationBinding;
   }> | Readonly<{ type: 'agent_queued' }>,
-): Record<string, unknown> {
+): BgsmAgentTurnEvent {
   return {
     ...event,
     turnAttemptId: input.turnAttemptId,
     sessionId: input.sessionId,
     baseRevision: input.baseRevision,
-  };
+  } as BgsmAgentTurnEvent;
 }
 
 function turnLaunchFingerprint(input: BgsmAgentTurnLaunch): string {
@@ -900,86 +898,20 @@ function turnLaunchFingerprint(input: BgsmAgentTurnLaunch): string {
     sessionId: input.sessionId,
     baseRevision: input.baseRevision,
     prompt: input.prompt,
+    retrySourceAttemptId: input.retrySourceAttemptId ?? null,
     candidateContract: input.candidateContract ?? null,
   });
 }
 
 function sameTurnIdentity(
-  input: Pick<BgsmAgentTurnLaunch, 'turnAttemptId' | 'sessionId' | 'baseRevision'>,
-  value: Record<string, unknown>,
+  input: BgsmAgentDeliveryIdentity,
+  value: BgsmAgentDeliveryIdentity,
 ): boolean {
   return value.turnAttemptId === input.turnAttemptId
     && value.sessionId === input.sessionId
     && value.baseRevision === input.baseRevision;
 }
 
-function isStopMessage(value: Record<string, unknown>, executionEpochId: string): boolean {
-  return hasExactKeys(value, [
-    'type',
-    'executionEpochId',
-    'turnAttemptId',
-    'sessionId',
-    'baseRevision',
-  ])
-    && hasBoundedTurnControlIdentity(value, 'Agent turn stop delivery')
-    && value.executionEpochId === executionEpochId;
-}
-
-function isAckMessage(value: Record<string, unknown>, executionEpochId: string): value is Record<string, unknown> & {
-  turnAttemptId: string;
-  sessionId: string;
-  baseRevision: number;
-  disposition: BgsmAgentTurnAckDisposition;
-  appliedRevision: number | null;
-} {
-  if (!hasExactKeys(value, [
-    'type',
-    'executionEpochId',
-    'turnAttemptId',
-    'sessionId',
-    'baseRevision',
-    'disposition',
-    'appliedRevision',
-  ])) return false;
-  if (
-    !hasBoundedTurnControlIdentity(value, 'Agent turn acknowledgement delivery')
-    || value.executionEpochId !== executionEpochId
-  ) return false;
-  if (value.disposition !== 'applied') {
-    return ['no_transition', 'transition_rejected', 'detached'].includes(String(value.disposition))
-      && value.appliedRevision === null;
-  }
-  return value.disposition === 'applied'
-    && Number.isSafeInteger(value.appliedRevision)
-    && Number(value.appliedRevision) === Number(value.baseRevision) + 1;
-}
-
-function hasBoundedTurnControlIdentity(
-  value: Record<string, unknown>,
-  label: string,
-): value is Record<string, unknown> & {
-  executionEpochId: string;
-  turnAttemptId: string;
-  sessionId: string;
-  baseRevision: number;
-} {
-  try {
-    assertAgentTurnTransportIdentifier(value.executionEpochId, 'Agent execution epoch ID');
-    assertAgentTurnTransportIdentifier(value.turnAttemptId, 'Agent turn attempt ID');
-    assertAgentTurnTransportIdentifier(value.sessionId, 'Agent session ID');
-    assertAgentSessionTransportPayloadSize(value, label);
-  } catch {
-    return false;
-  }
-  return Number.isSafeInteger(value.baseRevision) && Number(value.baseRevision) >= 0;
-}
-
-function hasExactKeys(value: object, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length
-    && actual.every((key, index) => key === wanted[index]);
-}
 
 function isContextCapabilityFailure(error: unknown): boolean {
   const code = error instanceof Error ? error.message : String(error);
@@ -987,50 +919,6 @@ function isContextCapabilityFailure(error: unknown): boolean {
     code === AGENT_CONTEXT_CAPABILITY_INFEASIBLE;
 }
 
-function parseStartMessage(value: unknown): BgsmAgentTurnLaunch | null {
-  if (!isRecord(value)) return null;
-  const expectedKeys = [
-    'type',
-    'executionEpochId',
-    'turnAttemptId',
-    'sessionId',
-    'baseRevision',
-    'prompt',
-    ...(value.retrySourceAttemptId === undefined ? [] : ['retrySourceAttemptId']),
-    ...(value.candidateContract === undefined ? [] : ['candidateContract']),
-    ...(value.resumeOnly === undefined ? [] : ['resumeOnly']),
-  ];
-  if (
-    value.type !== 'startBgsmAgentTurn'
-    || !hasExactKeys(value, expectedKeys)
-    || (value.resumeOnly !== undefined && value.resumeOnly !== true)
-  ) return null;
-
-  const launch = {
-    turnAttemptId: value.turnAttemptId,
-    sessionId: value.sessionId,
-    baseRevision: value.baseRevision,
-    prompt: value.prompt,
-    ...(value.retrySourceAttemptId === undefined
-      ? {}
-      : { retrySourceAttemptId: value.retrySourceAttemptId }),
-    ...(value.candidateContract === undefined
-      ? {}
-      : { candidateContract: value.candidateContract }),
-  };
-  try {
-    assertAgentTurnTransportIdentifier(value.executionEpochId, 'Agent execution epoch ID');
-    validateAgentSessionLaunchIdentity(launch);
-    assertAgentSessionTransportPayloadSize(value, 'Agent turn start delivery');
-  } catch {
-    return null;
-  }
-  return launch;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
 
 
 function classifyTurnError(error: unknown): AgentErrorCategory {

@@ -10,7 +10,8 @@ import {
 } from '@/ui/agent-turn-state';
 import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
 import type { AgentStopReason } from '@/agent-harness';
-import type { BgsmAgentTurnHandlers, BgsmAgentTurnResult } from '@/utils/messaging';
+import type { BgsmAgentTurnResult } from '@/bgsm-agent/turn-protocol';
+import type { BgsmAgentTurnHandlers } from '@/utils/messaging';
 import { cleanupMountedRootsAndBody, mountReact, type MountedRoot } from './test-utils';
 
 const messagingMocks = vi.hoisted(() => ({

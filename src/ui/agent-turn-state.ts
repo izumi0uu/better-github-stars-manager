@@ -1,5 +1,5 @@
 import type { AgentErrorCategory } from '@/agent-harness';
-import type { BgsmAgentTurnResult } from '@/utils/messaging';
+import type { BgsmAgentTurnResult } from '@/bgsm-agent/turn-protocol';
 
 export type BgsmAgentStatus = Readonly<{
   kind: 'idle' | 'queued' | 'working' | 'compacting' | 'tool' | 'done' | 'stopped' | 'error';

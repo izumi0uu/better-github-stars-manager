@@ -1,5 +1,5 @@
 import type { MessageCatalog } from '@/i18n';
-import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/session-transport';
+import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/turn-protocol';
 
 /**
  * Errors are thrown at their origin as stable code strings; `translateError`

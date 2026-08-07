@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { BgsmAgentTurnInput } from '@/bgsm-agent';
 import {
   AGENT_TURN_ERROR_CODES,
   normalizeAgentTurnErrorCode,
   parseAgentTurnErrorCode,
   type AgentTurnErrorCode,
-  type BgsmAgentTurnInput,
-} from '@/bgsm-agent';
+  type BgsmAgentTurnError,
+  type BgsmAgentTurnLaunch,
+  type BgsmAgentTurnResult,
+} from '@/bgsm-agent/turn-protocol';
 import type { AgentRetryDraft, AgentSessionCommitResult } from '@/storage/agent-session-store';
 import {
   BackgroundCallError,
@@ -15,8 +18,6 @@ import {
   loadDurableBgsmAgentSessionCommittedTurn,
   readDurableAgentRetryDraftCandidate,
   startBgsmAgentTurn,
-  type BgsmAgentTurnError,
-  type BgsmAgentTurnResult,
 } from '@/utils/messaging';
 
 type Listener<T> = (value: T) => void;
@@ -583,6 +584,31 @@ describe('Cubby messaging', () => {
     runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
 
     expect(onResult).toHaveBeenCalledWith(result);
+  });
+
+  it('preserves every durable launch identity field in the start message', () => {
+    const runtime = createRuntimePort();
+    vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
+    const launch: BgsmAgentTurnLaunch = {
+      turnAttemptId: 'turn-attempt-retry',
+      sessionId: 'session-retry',
+      baseRevision: 4,
+      prompt: 'Retry the same request.',
+      retrySourceAttemptId: 'turn-attempt-source',
+      candidateContract: {
+        kind: 'selected_repository',
+        selectedRepositoryIdHint: 'owner/repository',
+      },
+    };
+
+    startBgsmAgentTurn(launch, {});
+    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+
+    expect(runtime.port.postMessage).toHaveBeenCalledWith({
+      type: 'startBgsmAgentTurn',
+      executionEpochId: 'worker-epoch-1',
+      ...launch,
+    });
   });
 
   it('keeps canonical history out of the launch Port while preserving turn results', () => {

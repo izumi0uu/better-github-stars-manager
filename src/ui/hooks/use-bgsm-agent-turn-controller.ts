@@ -17,6 +17,11 @@ import type { BgsmAgentConversationBinding } from '@/bgsm-agent/conversation-bin
 import type { BgsmAgentConversationCandidate } from '@/bgsm-agent/conversation-binding';
 import { getBgsmAgentToolDefinition } from '@/bgsm-agent/tool-catalog';
 import type {
+  BgsmAgentTurnAck,
+  BgsmAgentTurnEvent,
+  BgsmAgentTurnResult,
+} from '@/bgsm-agent/turn-protocol';
+import type {
   AgentRetryDraft,
   AgentRetryDraftKind,
   AgentSessionCommitResult,
@@ -43,10 +48,7 @@ import type {
 import {
   loadDurableBgsmAgentSession,
   startBgsmAgentTurn,
-  type BgsmAgentTurnAck,
-  type BgsmAgentTurnEvent,
   type BgsmAgentTurnHandlers,
-  type BgsmAgentTurnResult,
 } from '@/utils/messaging';
 
 type PendingCompactionUi = {

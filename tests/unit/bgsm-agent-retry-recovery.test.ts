@@ -4,7 +4,7 @@ import {
   resolveBgsmAgentHydratedRetryState,
   type BgsmAgentRetryRecoveryGateway,
 } from '@/ui/bgsm-agent-retry-recovery';
-import type { BgsmAgentActiveTurn } from '@/utils/messaging';
+import type { BgsmAgentActiveTurn } from '@/bgsm-agent/turn-protocol';
 
 describe('BGSM Agent retry recovery', () => {
   it('adopts a same-revision retryable projection without mutating it', async () => {
