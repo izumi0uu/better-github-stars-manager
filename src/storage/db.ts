@@ -20,6 +20,7 @@ import type {
   AgentStorageUsageRecord,
 } from './agent-storage-model';
 import type { AgentAttemptRecord } from './agent-attempt-model';
+import type { AgentAttemptRecoveryRecord } from './agent-attempt-recovery-model';
 import { normalizeStoredTag, type LegacyTagRow } from './tag-shape';
 
 /**
@@ -39,6 +40,7 @@ export class StarsDB extends Dexie {
   tagDirtyOutbox!: Table<TagDirtyOutboxRecord, string>;
   agentSessions!: Table<AgentSessionRecord, string>;
   agentAttempts!: Table<AgentAttemptRecord, string>;
+  agentAttemptRecoveries!: Table<AgentAttemptRecoveryRecord, string>;
   agentMessages!: Table<AgentSessionMessageRecord, string>;
   agentArtifacts!: Table<AgentArtifactRecord, string>;
   agentArtifactChunks!: Table<AgentArtifactChunkRecord, string>;
@@ -89,6 +91,7 @@ export class StarsDB extends Dexie {
       agentSessions: 'id, updatedAt, createdAt',
       agentMessages: 'id, sessionId, &[sessionId+sequence], [sessionId+turnAttemptId]',
       agentAttempts: 'id, sessionId, &[sessionId+turnAttemptId], [sessionId+state], updatedAt',
+      agentAttemptRecoveries: 'id, sessionId, &[sessionId+turnAttemptId], updatedAt',
       agentArtifacts: 'id, sessionId, turnAttemptId, ownerMessageId, storageClass, [sessionId+storageClass], [storageClass+state+lastAccessedAt], [state+createdAt], expiresAt',
       agentArtifactChunks: 'id, artifactId, &[artifactId+index]',
       agentStorageUsage: 'id',

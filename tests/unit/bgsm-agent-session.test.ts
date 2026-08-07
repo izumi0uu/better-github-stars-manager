@@ -4,6 +4,7 @@ import {
   BGSM_AGENT_SUMMARY_MAX_BYTES,
   BGSM_AGENT_HISTORICAL_SUMMARY_PREAMBLE,
   applyBgsmAgentSessionTransition,
+  applyBgsmAgentSessionTransitionToValidatedPrefix,
   bindBgsmAgentSession,
   buildBgsmAgentTurnMessages,
   createBgsmAgentSession,
@@ -309,6 +310,234 @@ describe('Cubby session', () => {
     assert.deepEqual(accepted.session.messages, firstTurnMessages);
     assert.deepEqual(session.messages, []);
     assert.deepEqual(duplicate, { applied: false, session: accepted.session });
+  });
+
+  it('applies a delta to a validated prefix with full-transition behavior and isolated input', () => {
+    const prefix = applyBgsmAgentSessionTransition(
+      createBgsmAgentSession(() => 'session-validated-prefix'),
+      {
+        sessionId: 'session-validated-prefix',
+        baseRevision: 0,
+        messageDelta: firstTurnMessages,
+      },
+    ).session;
+    const transition = {
+      sessionId: prefix.id,
+      baseRevision: prefix.revision,
+      messageDelta: structuredClone(secondTurnMessages),
+    };
+
+    const appended = applyBgsmAgentSessionTransitionToValidatedPrefix(prefix, transition);
+    const fullyValidated = applyBgsmAgentSessionTransition(prefix, structuredClone(transition));
+    transition.messageDelta[0]!.content = 'Mutated append input.';
+
+    assert.deepEqual(appended, fullyValidated);
+    assert.deepEqual(prefix.messages, firstTurnMessages);
+    assert.notEqual(appended.session.messages, prefix.messages);
+    assert.equal(appended.session.messages.at(-2)?.content, 'What changed?');
+  });
+
+  it('fails closed for malformed user, assistant, and tool append boundaries', () => {
+    const prefix = applyBgsmAgentSessionTransition(
+      createBgsmAgentSession(() => 'session-invalid-prefix'),
+      {
+        sessionId: 'session-invalid-prefix',
+        baseRevision: 0,
+        messageDelta: firstTurnMessages,
+      },
+    ).session;
+    const assistantFirst: BgsmAgentSessionMessage[] = [
+      { id: 'invalid-assistant', role: 'agent', content: 'Unexpected.', createdAt: 5 },
+    ];
+    const partialUser: BgsmAgentSessionMessage[] = [
+      { id: 'partial-user', role: 'user', content: 'Incomplete.', createdAt: 5 },
+    ];
+    const mismatchedTool: BgsmAgentSessionMessage[] = [
+      { id: 'tool-user', role: 'user', content: 'Inspect tools.', createdAt: 5 },
+      {
+        id: 'tool-assistant',
+        role: 'agent',
+        content: '',
+        createdAt: 6,
+        toolCalls: [{ id: 'expected-call', name: 'inspect_tools', arguments: {} }],
+      },
+      {
+        id: 'wrong-tool-result',
+        role: 'tool',
+        content: '{}',
+        createdAt: 7,
+        toolCallId: 'other-call',
+        toolName: 'inspect_tools',
+      },
+    ];
+
+    assert.throws(
+      () => applyBgsmAgentSessionTransitionToValidatedPrefix(prefix, {
+        sessionId: prefix.id,
+        baseRevision: prefix.revision,
+        messageDelta: assistantFirst,
+      }),
+      /begin each turn with a user message/i,
+    );
+    assert.throws(
+      () => applyBgsmAgentSessionTransitionToValidatedPrefix(prefix, {
+        sessionId: prefix.id,
+        baseRevision: prefix.revision,
+        messageDelta: partialUser,
+      }),
+      /assistant message/i,
+    );
+    assert.throws(
+      () => applyBgsmAgentSessionTransitionToValidatedPrefix(prefix, {
+        sessionId: prefix.id,
+        baseRevision: prefix.revision,
+        messageDelta: mismatchedTool,
+      }),
+      /tool results must immediately match/i,
+    );
+
+    assert.throws(
+      () => applyBgsmAgentSessionTransition(prefix, {
+        sessionId: prefix.id,
+        baseRevision: prefix.revision,
+        messageDelta: structuredClone(assistantFirst),
+      }),
+      /begin each turn with a user message/i,
+    );
+    assert.throws(
+      () => applyBgsmAgentSessionTransition(prefix, {
+        sessionId: prefix.id,
+        baseRevision: prefix.revision,
+        messageDelta: structuredClone(partialUser),
+      }),
+      /assistant message/i,
+    );
+
+    assert.throws(
+      () => applyBgsmAgentSessionTransition(prefix, {
+        sessionId: prefix.id,
+        baseRevision: prefix.revision,
+        messageDelta: structuredClone(mismatchedTool),
+      }),
+      /tool results must immediately match/i,
+    );
+  });
+
+  it('returns the trusted prefix unchanged on an exact revision conflict', () => {
+    const prefix = applyBgsmAgentSessionTransition(
+      createBgsmAgentSession(() => 'session-revision-conflict'),
+      {
+        sessionId: 'session-revision-conflict',
+        baseRevision: 0,
+        messageDelta: firstTurnMessages,
+      },
+    ).session;
+    const conflicted = applyBgsmAgentSessionTransitionToValidatedPrefix(prefix, {
+      sessionId: prefix.id,
+      baseRevision: prefix.revision - 1,
+      messageDelta: [{ id: 'ignored-tool', role: 'tool', content: '{}', createdAt: 5 }],
+    });
+
+    assert.deepEqual(conflicted, { applied: false, session: prefix });
+    assert.equal(conflicted.session, prefix);
+    assert.deepEqual(prefix.messages, firstTurnMessages);
+  });
+
+  it('verifies changed compaction and active-projection cursors against the appended history', () => {
+    const prefix = applyBgsmAgentSessionTransition(
+      createBgsmAgentSession(() => 'session-cursor-prefix'),
+      {
+        sessionId: 'session-cursor-prefix',
+        baseRevision: 0,
+        messageDelta: firstTurnMessages,
+      },
+    ).session;
+    const advancedCheckpoint: BgsmAgentCompactionCheckpoint = {
+      schemaVersion: 1,
+      summary: 'Both completed turns are historical.',
+      summarizedMessageCount: firstTurnMessages.length + secondTurnMessages.length,
+      summarizedThroughMessageId: 'assistant-3',
+    };
+    const checkpointTransition = {
+      sessionId: prefix.id,
+      baseRevision: prefix.revision,
+      candidateCheckpoint: advancedCheckpoint,
+      messageDelta: structuredClone(secondTurnMessages),
+    };
+    const checkpointed = applyBgsmAgentSessionTransitionToValidatedPrefix(
+      prefix,
+      checkpointTransition,
+    );
+
+    assert.deepEqual(
+      checkpointed,
+      applyBgsmAgentSessionTransition(prefix, structuredClone(checkpointTransition)),
+    );
+    assert.throws(
+      () => applyBgsmAgentSessionTransitionToValidatedPrefix(prefix, {
+        sessionId: prefix.id,
+        baseRevision: prefix.revision,
+        candidateCheckpoint: { ...advancedCheckpoint, summarizedMessageCount: 2 },
+        messageDelta: secondTurnMessages,
+      }),
+      /complete-turn boundary/i,
+    );
+
+    const projectedDelta: BgsmAgentSessionMessage[] = [
+      { id: 'projection-user', role: 'user', content: 'Inspect the final page.', createdAt: 5 },
+      {
+        id: 'projection-assistant-tool',
+        role: 'agent',
+        content: '',
+        createdAt: 6,
+        toolCalls: [{ id: 'projection-call', name: 'inspect_page', arguments: {} }],
+      },
+      {
+        id: 'projection-tool',
+        role: 'tool',
+        content: '{"ok":true,"data":{}}',
+        createdAt: 7,
+        toolCallId: 'projection-call',
+        toolName: 'inspect_page',
+      },
+      { id: 'projection-answer', role: 'agent', content: 'The page is clear.', createdAt: 8 },
+    ];
+    const candidateProjection: BgsmAgentActiveProjection = {
+      ...firstActiveProjection,
+      currentUserMessageId: 'projection-user',
+      summarizedThroughMessageId: 'projection-tool',
+      retainedSuffixFirstMessageId: 'projection-answer',
+      rawMessageCountAtCreation: 3,
+      rawTailMessageIdAtCreation: 'projection-tool',
+    };
+    const projectionTransition = {
+      sessionId: prefix.id,
+      baseRevision: prefix.revision,
+      candidateActiveProjection: candidateProjection,
+      messageDelta: projectedDelta,
+    };
+    const projected = applyBgsmAgentSessionTransitionToValidatedPrefix(
+      prefix,
+      projectionTransition,
+    );
+
+    assert.deepEqual(
+      projected,
+      applyBgsmAgentSessionTransition(prefix, structuredClone(projectionTransition)),
+    );
+    assert.deepEqual(projected.session.activeProjections, [candidateProjection]);
+    assert.throws(
+      () => applyBgsmAgentSessionTransitionToValidatedPrefix(prefix, {
+        sessionId: prefix.id,
+        baseRevision: prefix.revision,
+        candidateActiveProjection: {
+          ...candidateProjection,
+          rawTailMessageIdAtCreation: 'missing-tail',
+        },
+        messageDelta: projectedDelta,
+      }),
+      /raw creation prefix/i,
+    );
   });
 
   it('applies a candidate checkpoint and complete delta in one transition', () => {

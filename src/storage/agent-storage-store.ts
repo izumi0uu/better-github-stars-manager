@@ -53,10 +53,12 @@ import {
   type BeginAgentArtifactWriteInput,
 } from './agent-storage-model';
 import type { AgentAttemptRecord } from './agent-attempt-model';
+import type { AgentAttemptRecoveryRecord } from './agent-attempt-recovery-model';
 import { db } from './db';
 
 export * from './agent-storage-model';
 export * from './agent-attempt-model';
+export * from './agent-attempt-recovery-model';
 
 const AGENT_ARTIFACT_CURSOR_PREFIX = 'agent-artifact-page:v1:';
 const AGENT_ARTIFACT_CURSOR_MAX_CHARS = 2_048;
@@ -82,6 +84,7 @@ export async function reconcileAgentStorageUsage(
       db.agentStorageUsage,
       db.agentSessions,
       db.agentAttempts,
+      db.agentAttemptRecoveries,
       db.agentMessages,
       db.agentArtifacts,
       db.agentArtifactChunks,
@@ -97,6 +100,14 @@ export async function reconcileAgentStorageUsageInCurrentTransaction(
   assertTimestamp(updatedAt, 'Agent storage reconciliation time');
   const artifacts = await db.agentArtifacts.toArray();
   const attempts = await db.agentAttempts.toArray();
+  const recoveries = await db.agentAttemptRecoveries.toArray();
+  const orphanRecoveryIds = recoveries.flatMap((recovery) => (
+    isUnambiguousOrphanAgentAttemptRecovery(recovery, attempts) ? [recovery.id] : []
+  ));
+  if (orphanRecoveryIds.length > 0) {
+    await db.agentAttemptRecoveries.bulkDelete(orphanRecoveryIds);
+  }
+  const orphanRecoveryIdSet = new Set(orphanRecoveryIds);
   const artifactIds = new Set(
     artifacts.flatMap((artifact) => (
       typeof artifact?.id === 'string' ? [artifact.id] : []
@@ -139,6 +150,13 @@ export async function reconcileAgentStorageUsageInCurrentTransaction(
     canonicalBytes = addAccountingBytes(
       canonicalBytes,
       repairAgentAttemptLogicalByteLength(attempt),
+    );
+  }
+  for (const recovery of recoveries) {
+    if (orphanRecoveryIdSet.has(recovery.id)) continue;
+    canonicalBytes = addAccountingBytes(
+      canonicalBytes,
+      repairAgentAttemptRecoveryLogicalByteLength(recovery),
     );
   }
   await db.agentMessages.each((message) => {
@@ -254,6 +272,49 @@ export async function accountAgentAttemptDeleted(
   now: number,
 ): Promise<void> {
   const byteLength = agentAttemptLogicalByteLength(record);
+  const usage = await requireUsageRecord();
+  const canonicalBytes = usage.canonicalBytes - byteLength;
+  assertNonnegativeSafeInteger(canonicalBytes, 'Agent canonical storage bytes');
+  await putUsage({ ...usage, canonicalBytes }, now);
+}
+
+/** Must run inside a transaction that includes agentStorageUsage and agentAttemptRecoveries. */
+export async function accountAgentAttemptRecoveryCreated(
+  record: AgentAttemptRecoveryRecord,
+  now: number,
+): Promise<void> {
+  const byteLength = agentAttemptRecoveryLogicalByteLength(record);
+  const usage = await requireUsageRecord();
+  assertStorageAdmission(usage, byteLength, 'canonical');
+  await putUsage({
+    ...usage,
+    canonicalBytes: usage.canonicalBytes + byteLength,
+  }, now);
+}
+
+/** Must run inside a transaction that includes agentStorageUsage and agentAttemptRecoveries. */
+export async function accountAgentAttemptRecoveryUpdated(
+  previous: AgentAttemptRecoveryRecord,
+  next: AgentAttemptRecoveryRecord,
+  now: number,
+): Promise<void> {
+  const previousBytes = agentAttemptRecoveryLogicalByteLength(previous);
+  const nextBytes = agentAttemptRecoveryLogicalByteLength(next);
+  const usage = await requireUsageRecord();
+  if (nextBytes > previousBytes) {
+    assertStorageAdmission(usage, nextBytes - previousBytes, 'canonical');
+  }
+  const canonicalBytes = usage.canonicalBytes - previousBytes + nextBytes;
+  assertNonnegativeSafeInteger(canonicalBytes, 'Agent canonical storage bytes');
+  await putUsage({ ...usage, canonicalBytes }, now);
+}
+
+/** Must run inside a transaction that includes agentStorageUsage and agentAttemptRecoveries. */
+export async function accountAgentAttemptRecoveryDeleted(
+  record: AgentAttemptRecoveryRecord,
+  now: number,
+): Promise<void> {
+  const byteLength = agentAttemptRecoveryLogicalByteLength(record);
   const usage = await requireUsageRecord();
   const canonicalBytes = usage.canonicalBytes - byteLength;
   assertNonnegativeSafeInteger(canonicalBytes, 'Agent canonical storage bytes');
@@ -1200,6 +1261,7 @@ export async function cleanupAgentToolCache(
     [
       db.agentSessions,
       db.agentAttempts,
+      db.agentAttemptRecoveries,
       db.agentMessages,
       db.agentArtifacts,
       db.agentArtifactChunks,
@@ -1318,6 +1380,13 @@ export function agentAttemptLogicalByteLength(
   return new TextEncoder().encode(canonicalJson(row)).byteLength;
 }
 
+/** Counts every persisted recovery-message field outside compact attempt authority. */
+export function agentAttemptRecoveryLogicalByteLength(
+  row: Readonly<Record<string, unknown>>,
+): number {
+  return new TextEncoder().encode(canonicalJson(row)).byteLength;
+}
+
 /** Counts every persisted canonical session field. */
 export function agentSessionLogicalByteLength(
   row: Readonly<Record<string, unknown>>,
@@ -1341,6 +1410,30 @@ function repairAgentAttemptLogicalByteLength(record: AgentAttemptRecord): number
   } catch {
     return bestEffortJsonByteLength(record);
   }
+}
+
+function repairAgentAttemptRecoveryLogicalByteLength(record: AgentAttemptRecoveryRecord): number {
+  try {
+    return agentAttemptRecoveryLogicalByteLength(record);
+  } catch {
+    return bestEffortJsonByteLength(record);
+  }
+}
+
+function isUnambiguousOrphanAgentAttemptRecovery(
+  recovery: AgentAttemptRecoveryRecord,
+  attempts: readonly AgentAttemptRecord[],
+): boolean {
+  const id = typeof recovery?.id === 'string' ? recovery.id : null;
+  const sessionId = typeof recovery?.sessionId === 'string' ? recovery.sessionId : null;
+  const turnAttemptId = typeof recovery?.turnAttemptId === 'string'
+    ? recovery.turnAttemptId
+    : null;
+  if (!id || !sessionId || !turnAttemptId) return false;
+  return !attempts.some((attempt) => attempt?.id === id)
+    && !attempts.some((attempt) => (
+      attempt?.sessionId === sessionId && attempt?.turnAttemptId === turnAttemptId
+    ));
 }
 
 function repairAgentMessageLogicalByteLength(

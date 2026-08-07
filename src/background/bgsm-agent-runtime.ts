@@ -1,4 +1,5 @@
 import type { AgentTurnTraceFactory } from '@/agent-observability/agent-turn-types';
+import { AgentCanonicalSessionCache } from '@/storage/agent-session-cache';
 import { createAgentAttemptCoordinator, type AgentAttemptCoordinator } from './agent-attempt-coordinator';
 import {
   createBgsmAgentSessionRpcRouter,
@@ -18,7 +19,10 @@ import {
 type BgsmAgentTurnRegistryDependencies = Parameters<typeof createBgsmAgentTurnRegistry>[0];
 
 export type BgsmAgentRuntimeFactories = Readonly<{
-  createAttemptCoordinator?(executionEpochId: string): AgentAttemptCoordinator;
+  createAttemptCoordinator?(
+    executionEpochId: string,
+    sessionCache: AgentCanonicalSessionCache,
+  ): AgentAttemptCoordinator;
   createTurnService?(dependencies: BgsmAgentTurnServiceDependencies): BgsmAgentTurnService;
   createTurnRegistry?(dependencies: BgsmAgentTurnRegistryDependencies): BgsmAgentTurnRegistry;
   createSessionRpcRouter?(dependencies: BgsmAgentSessionRpcDependencies): BgsmAgentSessionRpcRouter;
@@ -26,7 +30,7 @@ export type BgsmAgentRuntimeFactories = Readonly<{
 
 export type BgsmAgentRuntimeDependencies = Omit<
   BgsmAgentTurnServiceDependencies,
-  'attemptCoordinator'
+  'attemptCoordinator' | 'sessionCache'
 > & Readonly<{
   executionEpochId?: string;
   translateError(error: unknown): Promise<string>;
@@ -53,10 +57,12 @@ export function createBgsmAgentRuntime(
 ): BgsmAgentRuntime {
   const executionEpochId = dependencies.executionEpochId ?? `bgsm_worker_${crypto.randomUUID()}`;
   const factories = dependencies.factories;
-  const attemptCoordinator = factories?.createAttemptCoordinator?.(executionEpochId)
-    ?? createAgentAttemptCoordinator(executionEpochId);
+  const sessionCache = new AgentCanonicalSessionCache();
+  const attemptCoordinator = factories?.createAttemptCoordinator?.(executionEpochId, sessionCache)
+    ?? createAgentAttemptCoordinator(executionEpochId, sessionCache);
   const turnServiceDependencies: BgsmAgentTurnServiceDependencies = {
     ...dependencies,
+    sessionCache,
     attemptCoordinator,
   };
   const turnService = factories?.createTurnService?.(turnServiceDependencies)
@@ -75,6 +81,7 @@ export function createBgsmAgentRuntime(
     ?? createBgsmAgentTurnRegistry(turnRegistryDependencies);
   const sessionRpcDependencies: BgsmAgentSessionRpcDependencies = {
     executionEpochId,
+    sessionCache,
     inspectActiveTurn: (sessionId) => turnRegistry.inspectActiveTurn(sessionId),
     inspectDurableTurn: (sessionId) => attemptCoordinator.inspectActive(sessionId),
     dismissRetry: (input) => attemptCoordinator.dismissRetry(input),

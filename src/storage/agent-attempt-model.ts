@@ -4,15 +4,13 @@ import type {
   AgentSessionLaunchDigest,
   AgentSessionLaunchIdentity,
 } from '@/bgsm-agent/session-transport';
-import type {
-  AgentArtifactContinuationCheckpoint,
-  AgentArtifactCoverageRecord,
-} from '@/bgsm-agent/artifact-coverage';
+import type { AgentArtifactCoverageRecord } from '@/bgsm-agent/artifact-coverage';
 import type {
   AgentSessionAttemptReceipt,
   AgentSessionRetryKind,
   AgentSessionTurnLease,
 } from './agent-session-model';
+import type { AgentArtifactContinuationControl } from './agent-attempt-recovery-model';
 
 export type AgentAttemptState =
   | 'running'
@@ -52,7 +50,7 @@ export type AgentAttemptRecord = Readonly<{
   writeSettlement: AgentWriteSettlement | null;
   receipt: AgentSessionAttemptReceipt | null;
   artifactCoverage: readonly AgentArtifactCoverageRecord[];
-  artifactContinuation: AgentArtifactContinuationCheckpoint | null;
+  artifactContinuationControl: AgentArtifactContinuationControl | null;
   lease: AgentSessionTurnLease | null;
   updatedAt: number;
 }>;

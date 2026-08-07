@@ -9,6 +9,7 @@ import {
   loadCommittedAgentSessionTurn,
   readAgentSessionRetryDraftCandidate,
 } from '@/storage/agent-session-store';
+import type { AgentCanonicalSessionCache } from '@/storage/agent-session-cache';
 import {
   clearAgentToolCache,
   getAgentStorageUsage,
@@ -148,6 +149,7 @@ export type BgsmAgentSessionRpcOperations = Readonly<{
 
 export type BgsmAgentSessionRpcDependencies = Readonly<{
   executionEpochId: string;
+  sessionCache?: AgentCanonicalSessionCache;
   inspectActiveTurn(sessionId: string): unknown | null;
   inspectDurableTurn(sessionId: string): Promise<unknown | null>;
   dismissRetry(input: Readonly<{
@@ -164,7 +166,7 @@ export type BgsmAgentSessionRpcRouter = Readonly<{
   describeFailure(error: unknown): BgsmAgentSessionFailure | null;
 }>;
 
-const productionOperations: BgsmAgentSessionRpcOperations = Object.freeze({
+const productionOperations: Omit<BgsmAgentSessionRpcOperations, 'deleteSession'> = Object.freeze({
   inspectCatalog: inspectAgentSessionCatalog,
   createSession: (sessionId) => createAgentSession(
     sessionId ? { idFactory: () => sessionId } : undefined,
@@ -173,9 +175,6 @@ const productionOperations: BgsmAgentSessionRpcOperations = Object.freeze({
   loadCommittedTurn: loadCommittedAgentSessionTurn,
   readRetryDraft: readAgentSessionRetryDraftCandidate,
   loadTranscriptPage: loadAgentSessionTranscriptPage,
-  deleteSession: ({ sessionId, executionEpochId }) => deleteAgentSession(sessionId, {
-    executionEpochId,
-  }),
   getStorageUsage: getAgentStorageUsage,
   clearToolCache: clearAgentToolCache,
 });
@@ -196,7 +195,11 @@ export function createBgsmAgentSessionRpcRouter(
     readRetryDraft: dependencies.operations?.readRetryDraft ?? productionOperations.readRetryDraft,
     loadTranscriptPage: dependencies.operations?.loadTranscriptPage
       ?? productionOperations.loadTranscriptPage,
-    deleteSession: dependencies.operations?.deleteSession ?? productionOperations.deleteSession,
+    deleteSession: dependencies.operations?.deleteSession
+      ?? (({ sessionId, executionEpochId }) => deleteAgentSession(sessionId, {
+        executionEpochId,
+        cache: dependencies.sessionCache,
+      })),
     getStorageUsage: dependencies.operations?.getStorageUsage ?? productionOperations.getStorageUsage,
     clearToolCache: dependencies.operations?.clearToolCache ?? productionOperations.clearToolCache,
   };

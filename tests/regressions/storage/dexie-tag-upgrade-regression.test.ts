@@ -70,6 +70,7 @@ describe('Dexie tag schema upgrades', () => {
             'agentArtifactChunks',
             'agentArtifacts',
             'agentAttempts',
+            'agentAttemptRecoveries',
             'agentMessages',
             'agentSessions',
             'agentStorageUsage',
@@ -88,6 +89,7 @@ describe('Dexie tag schema upgrades', () => {
         assert.equal(await current.tagDirtyOutbox.count(), 0);
         assert.equal(await current.agentSessions.count(), 0);
         assert.equal(await current.agentAttempts.count(), 0);
+        assert.equal(await current.agentAttemptRecoveries.count(), 0);
         assert.equal(await current.agentMessages.count(), 0);
         assert.equal(await current.agentArtifacts.count(), 0);
         assert.equal(await current.agentArtifactChunks.count(), 0);
@@ -118,6 +120,12 @@ describe('Dexie tag schema upgrades', () => {
         );
         assert.equal(
           current.agentAttempts.schema.indexes.some(
+            (index) => index.name === '[sessionId+turnAttemptId]' && index.unique,
+          ),
+          true,
+        );
+        assert.equal(
+          current.agentAttemptRecoveries.schema.indexes.some(
             (index) => index.name === '[sessionId+turnAttemptId]' && index.unique,
           ),
           true,

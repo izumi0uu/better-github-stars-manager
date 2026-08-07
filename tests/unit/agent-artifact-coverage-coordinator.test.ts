@@ -346,6 +346,38 @@ describe('background Agent artifact coverage coordinator', () => {
     const attempt = (await db.agentAttempts.toArray()).find((row) => (
       row.turnAttemptId === launch.turnAttemptId
     ));
-    assert.equal(attempt?.artifactContinuation?.nonProgressRepromptUsed, true);
+    assert.ok(attempt);
+    assert.deepEqual(Object.keys(attempt).sort(), [
+      'admittedLaunch',
+      'admittedLaunchDigest',
+      'artifactContinuationControl',
+      'artifactCoverage',
+      'id',
+      'lease',
+      'receipt',
+      'recoveryClass',
+      'retryKind',
+      'sessionId',
+      'state',
+      'terminalReason',
+      'turnAttemptId',
+      'updatedAt',
+      'writeSettlement',
+    ].sort());
+    assert.equal(attempt.artifactContinuationControl?.nonProgressRepromptUsed, true);
+    const recovery = await db.agentAttemptRecoveries.get(attempt.id);
+    assert.ok(recovery);
+    assert.deepEqual(Object.keys(recovery).sort(), [
+      'canonicalRawMessages',
+      'id',
+      'projectedMessages',
+      'schemaVersion',
+      'sessionId',
+      'turnAttemptId',
+      'updatedAt',
+    ].sort());
+    assert.equal(recovery.updatedAt, 12);
+    assert.deepEqual(recovery.projectedMessages, messages.slice(0, 3));
+    assert.deepEqual(recovery.canonicalRawMessages, messages.slice(0, 3));
   });
 });

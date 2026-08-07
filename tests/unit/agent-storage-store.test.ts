@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it, vi } from 'vitest';
 import { sha256Base64Url } from '@/agent-harness/canonical-json';
 import {
+  agentArtifactCoverageDirectives,
+  createAgentArtifactCoverage,
+} from '@/bgsm-agent/artifact-coverage';
+import {
   AGENT_ARTIFACT_CHUNK_MAX_BYTES,
   AGENT_ARTIFACT_PAGE_MAX_BYTES,
   AGENT_ARTIFACT_SEARCH_MAX_QUERY_BYTES,
@@ -14,6 +18,8 @@ import {
   AgentArtifactNotReadyError,
   AgentArtifactStateConflictError,
   AgentStorageCapacityError,
+  agentAttemptLogicalByteLength,
+  agentAttemptRecoveryLogicalByteLength,
   agentMessageLogicalByteLength,
   agentSessionLogicalByteLength,
   beginAgentArtifactWrite,
@@ -44,11 +50,17 @@ describe('Agent storage governance', () => {
   });
 
   it('declares the v4 stores, indexes, logical thresholds and deterministic message bytes', () => {
-    for (const name of ['agentArtifacts', 'agentArtifactChunks', 'agentStorageUsage']) {
+    for (const name of ['agentArtifacts', 'agentArtifactChunks', 'agentAttemptRecoveries', 'agentStorageUsage']) {
       assert.equal(db.tables.some((table) => table.name === name), true);
     }
     assert.equal(
       db.agentMessages.schema.indexes.some((index) => index.name === '[sessionId+turnAttemptId]'),
+      true,
+    );
+    assert.equal(
+      db.agentAttemptRecoveries.schema.indexes.some(
+        (index) => index.name === '[sessionId+turnAttemptId]' && index.unique,
+      ),
       true,
     );
     assert.equal(
@@ -62,6 +74,10 @@ describe('Agent storage governance', () => {
     assert.equal(
       agentMessageLogicalByteLength({ b: 2, a: 1 }),
       agentMessageLogicalByteLength({ a: 1, b: 2 }),
+    );
+    assert.equal(
+      agentAttemptRecoveryLogicalByteLength({ b: 2, a: 1 }),
+      agentAttemptRecoveryLogicalByteLength({ a: 1, b: 2 }),
     );
   });
 
@@ -84,6 +100,79 @@ describe('Agent storage governance', () => {
     assert.equal(repaired.messageCount, 1);
     assert.equal(repaired.canonicalBytes, sessionBytes + row.byteLength);
     assert.equal(await db.agentStorageUsage.count(), 1);
+  });
+
+  it('counts recovery messages as canonical bytes and removes only unambiguous orphans', async () => {
+    const sessionId = 'session-recovery-accounting';
+    await createAgentSession({ idFactory: () => sessionId, now: () => 1 });
+    const launch = {
+      sessionId,
+      turnAttemptId: 'attempt-recovery-accounting',
+      baseRevision: 0,
+      prompt: 'Recover this attempt.',
+    };
+    const launchDigest = await digestAgentSessionLaunch(launch);
+    await admitAgentSessionTurn({
+      ...launch,
+      launch,
+      launchDigest,
+      executionEpochId: 'worker-recovery-accounting',
+      recoveryClass: 'statically_read_only',
+      now: () => 2,
+    });
+    const attempt = (await db.agentAttempts
+      .where('[sessionId+turnAttemptId]')
+      .equals([sessionId, launch.turnAttemptId])
+      .first())!;
+    const coverage = await createAgentArtifactCoverage({
+      artifactId: 'artifact-recovery-accounting',
+      sourceToolCallId: 'call-recovery-accounting',
+      expectedBytes: 1,
+      artifactSha256: 'a'.repeat(43),
+      integrityManifestSha256: 'b'.repeat(43),
+    });
+    const control = {
+      schemaVersion: 1 as const,
+      directives: agentArtifactCoverageDirectives([coverage]),
+      nonProgressRepromptUsed: false,
+      updatedAt: 3,
+    };
+    await db.agentAttempts.put({
+      ...attempt,
+      artifactCoverage: [coverage],
+      artifactContinuationControl: control,
+      updatedAt: 3,
+    });
+    const recovery = {
+      id: attempt.id,
+      schemaVersion: 1 as const,
+      sessionId,
+      turnAttemptId: launch.turnAttemptId,
+      projectedMessages: [],
+      canonicalRawMessages: [],
+      updatedAt: 3,
+    };
+    await db.agentAttemptRecoveries.put(recovery);
+    const orphan = {
+      ...recovery,
+      id: `aat:v1:${'o'.repeat(43)}`,
+      sessionId: 'session-orphan-recovery',
+      turnAttemptId: 'attempt-orphan-recovery',
+    };
+    await db.agentAttemptRecoveries.put(orphan);
+    await db.agentStorageUsage.delete('agent');
+
+    const reconciled = await reconcileAgentStorageUsage(() => 4);
+    const storedSession = (await db.agentSessions.get(sessionId))!;
+    const storedAttempt = (await db.agentAttempts.get(attempt.id))!;
+    assert.equal(
+      reconciled.canonicalBytes,
+      agentSessionLogicalByteLength(storedSession)
+        + agentAttemptLogicalByteLength(storedAttempt)
+        + agentAttemptRecoveryLogicalByteLength(recovery),
+    );
+    assert.ok(await db.agentAttemptRecoveries.get(attempt.id));
+    assert.equal(await db.agentAttemptRecoveries.get(orphan.id), undefined);
   });
 
   it('isolates corrupt records while rebuilding usage and removes parentless chunks', async () => {

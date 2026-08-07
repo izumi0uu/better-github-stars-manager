@@ -26,8 +26,8 @@ import {
   type AgentArtifactCoverageReceipt,
 } from '@/bgsm-agent/artifact-coverage';
 import {
-  applyBgsmAgentSessionTransition,
   createBgsmAgentSession,
+  applyBgsmAgentSessionTransitionToValidatedPrefix,
   validateBgsmAgentActiveProjection,
   validateBgsmAgentCompactionCheckpoint,
   validateBgsmAgentSessionHistory,
@@ -52,6 +52,9 @@ import {
   AgentStorageCapacityError,
   accountAgentAttemptCreated,
   accountAgentAttemptDeleted,
+  accountAgentAttemptRecoveryCreated,
+  accountAgentAttemptRecoveryDeleted,
+  accountAgentAttemptRecoveryUpdated,
   accountAgentAttemptUpdated,
   accountAgentMessagesAdded,
   accountAgentSessionCreated,
@@ -97,7 +100,15 @@ import {
   type AgentAttemptRecord,
   type AgentAttemptTerminalReason,
 } from './agent-attempt-model';
+import {
+  joinAgentArtifactContinuation,
+  splitAgentArtifactContinuation,
+  validateAgentArtifactContinuationControl,
+  validateAgentAttemptRecoveryRecord,
+  type AgentAttemptRecoveryRecord,
+} from './agent-attempt-recovery-model';
 import { db } from './db';
+import type { AgentCanonicalSessionCache } from './agent-session-cache';
 import { getOrganizeJobsLinkedToAgentSession } from './organize-job-store';
 
 export {
@@ -135,10 +146,15 @@ export type {
   AgentAttemptState,
   AgentAttemptTerminalReason,
 } from './agent-attempt-model';
+export type {
+  AgentArtifactContinuationControl,
+  AgentAttemptRecoveryRecord,
+} from './agent-attempt-recovery-model';
 
 const AGENT_SESSION_RECENT_ATTEMPT_LIMIT = 128;
 
 type AgentAttemptRow = AgentAttemptRecord;
+type AgentAttemptRecoveryRow = AgentAttemptRecoveryRecord;
 
 
 async function readAgentAttemptRows(sessionId: string): Promise<AgentAttemptRow[]> {
@@ -155,7 +171,74 @@ async function readAgentAttempt(
     .first();
 }
 
+async function loadAgentAttemptContinuation(
+  attempt: AgentAttemptRow,
+): Promise<AgentArtifactContinuationCheckpoint | null> {
+  const control = attempt.artifactContinuationControl;
+  if (control === null) {
+    await assertNoAgentAttemptRecovery(attempt);
+    return null;
+  }
+  validateAgentArtifactContinuationControl(control);
+  const [exactRecoveryCount, recoveryById] = await Promise.all([
+    db.agentAttemptRecoveries
+      .where('[sessionId+turnAttemptId]')
+      .equals([attempt.sessionId, attempt.turnAttemptId])
+      .count(),
+    db.agentAttemptRecoveries.get(attempt.id),
+  ]);
+  if (exactRecoveryCount !== 1 || recoveryById === undefined) {
+    throw new TypeError('Agent attempt recovery does not have an exact one-to-one identity.');
+  }
+  return joinAgentArtifactContinuation(control, recoveryById, {
+    id: attempt.id,
+    sessionId: attempt.sessionId,
+    turnAttemptId: attempt.turnAttemptId,
+  });
+}
+async function assertNoAgentAttemptRecovery(attempt: AgentAttemptRow): Promise<void> {
+  const [exactRecoveryCount, recoveryByIdCount] = await Promise.all([
+    db.agentAttemptRecoveries
+      .where('[sessionId+turnAttemptId]')
+      .equals([attempt.sessionId, attempt.turnAttemptId])
+      .count(),
+    db.agentAttemptRecoveries
+      .where('id')
+      .equals(attempt.id)
+      .count(),
+  ]);
+  if (exactRecoveryCount !== 0 || recoveryByIdCount !== 0) {
+    throw new AgentAttemptCorruptionError(
+      attempt.sessionId,
+      'Agent attempt cannot retain recovery messages in this state.',
+    );
+  }
+}
 
+
+async function quarantineAgentAttemptRecovery(
+  attempt: AgentAttemptRow,
+  now: number,
+): Promise<void> {
+  const artifactCoverage = await Dexie.waitFor(Promise.all(
+    attempt.artifactCoverage.map((coverage) => settleAgentArtifactCoverageIncomplete(
+      coverage,
+      'attempt_state_lost',
+    )),
+  ));
+  await deleteAgentAttemptRecoveriesForAttempt(attempt, now, true);
+  await putAgentAttempt(attempt, {
+    ...attempt,
+    state: 'state_uncertain',
+    terminalReason: 'attempt_state_lost',
+    retryKind: null,
+    writeSettlement: 'unsafe',
+    artifactCoverage,
+    artifactContinuationControl: null,
+    lease: null,
+    updatedAt: Math.max(now, attempt.updatedAt),
+  }, now);
+}
 function isAttemptActive(attempt: AgentAttemptRow): boolean {
   return attempt.state === 'running'
     || attempt.state === 'stop_pending'
@@ -193,7 +276,7 @@ function validateAgentAttemptRow(
   if (!hasExactKeys(attempt as unknown as Record<string, unknown>, [
     'admittedLaunch',
     'admittedLaunchDigest',
-    'artifactContinuation',
+    'artifactContinuationControl',
     'artifactCoverage',
     'id',
     'lease',
@@ -224,18 +307,22 @@ function validateAgentAttemptRow(
     'terminal_non_retryable',
   ].includes(attempt.state)) throw new TypeError('Agent attempt state is invalid.');
   validateAgentArtifactCoverageRecords(attempt.artifactCoverage);
-  if (attempt.artifactContinuation !== null) {
-    validateAgentArtifactContinuationCheckpoint(attempt.artifactContinuation);
+  if (attempt.artifactContinuationControl !== null) {
+    validateAgentArtifactContinuationControl(attempt.artifactContinuationControl);
   }
   const coverageDirectives = agentArtifactCoverageDirectives(attempt.artifactCoverage);
   if (coverageDirectives.length > 0) {
     if (
-      attempt.artifactContinuation === null
-      || canonicalJson(attempt.artifactContinuation.directives) !== canonicalJson(coverageDirectives)
-    ) throw new TypeError('Pending artifact coverage lacks its exact continuation checkpoint.');
-  } else if (attempt.artifactContinuation !== null) {
-    throw new TypeError('Agent artifact continuation exists without pending coverage.');
+      attempt.artifactContinuationControl === null
+      || canonicalJson(attempt.artifactContinuationControl.directives) !== canonicalJson(coverageDirectives)
+    ) throw new TypeError('Pending artifact coverage lacks its exact continuation control.');
+  } else if (attempt.artifactContinuationControl !== null) {
+    throw new TypeError('Agent artifact continuation control exists without pending coverage.');
   }
+  if (
+    attempt.artifactContinuationControl !== null
+    && attempt.state !== 'running'
+  ) throw new TypeError('Settled Agent attempts cannot retain continuation control.');
   validateLaunchDigest(attempt.admittedLaunchDigest);
   if (
     attempt.recoveryClass !== 'statically_read_only'
@@ -344,7 +431,81 @@ async function putAgentAttempt(
   await db.agentAttempts.put(next);
 }
 
-/** Caller owns a transaction including agentAttempts and agentStorageUsage. */
+async function putAgentAttemptRecovery(
+  attempt: AgentAttemptRow,
+  previous: AgentAttemptRecoveryRow | undefined,
+  next: AgentAttemptRecoveryRow,
+  now: number,
+): Promise<void> {
+  validateAgentAttemptRecoveryRecord(next);
+  if (
+    next.id !== attempt.id
+    || next.sessionId !== attempt.sessionId
+    || next.turnAttemptId !== attempt.turnAttemptId
+  ) throw new TypeError('Agent attempt recovery identity does not match its parent attempt.');
+  if (previous) {
+    validateAgentAttemptRecoveryRecord(previous);
+    if (
+      previous.id !== next.id
+      || previous.sessionId !== attempt.sessionId
+      || previous.turnAttemptId !== attempt.turnAttemptId
+    ) throw new TypeError('Agent attempt recovery identity does not match its parent attempt.');
+    await accountAgentAttemptRecoveryUpdated(previous, next, now);
+  } else {
+    await accountAgentAttemptRecoveryCreated(next, now);
+  }
+  await db.agentAttemptRecoveries.put(next);
+}
+
+async function deleteAgentAttemptRecovery(
+  recovery: AgentAttemptRecoveryRow,
+  now: number,
+  allowCorrupt = false,
+): Promise<void> {
+  if (!allowCorrupt) validateAgentAttemptRecoveryRecord(recovery);
+  await accountAgentAttemptRecoveryDeleted(recovery, now);
+  await db.agentAttemptRecoveries.delete(recovery.id);
+}
+
+async function deleteAgentAttemptRecoveriesForAttempt(
+  attempt: AgentAttemptRow,
+  now: number,
+  allowCorrupt = false,
+): Promise<void> {
+  const [exactRecoveries, recoveryById] = await Promise.all([
+    db.agentAttemptRecoveries
+      .where('[sessionId+turnAttemptId]')
+      .equals([attempt.sessionId, attempt.turnAttemptId])
+      .toArray(),
+    db.agentAttemptRecoveries.get(attempt.id),
+  ]);
+  const recoveries = new Map<string, AgentAttemptRecoveryRow>();
+  for (const recovery of exactRecoveries) recoveries.set(recovery.id, recovery);
+  if (recoveryById) recoveries.set(recoveryById.id, recoveryById);
+  for (const recovery of recoveries.values()) {
+    await deleteAgentAttemptRecovery(recovery, now, allowCorrupt);
+  }
+}
+
+async function discardAgentAttemptRecoveriesForAttempt(
+  attempt: AgentAttemptRow,
+): Promise<void> {
+  const [exactRecoveries, recoveryById] = await Promise.all([
+    db.agentAttemptRecoveries
+      .where('[sessionId+turnAttemptId]')
+      .equals([attempt.sessionId, attempt.turnAttemptId])
+      .toArray(),
+    db.agentAttemptRecoveries.get(attempt.id),
+  ]);
+  const recoveryIds = new Set<string>();
+  for (const recovery of exactRecoveries) recoveryIds.add(recovery.id);
+  if (recoveryById) recoveryIds.add(recoveryById.id);
+  for (const recoveryId of recoveryIds) {
+    await db.agentAttemptRecoveries.delete(recoveryId);
+  }
+}
+
+/** Caller owns a transaction including agentAttempts, agentAttemptRecoveries, and agentStorageUsage. */
 async function pruneSettledAgentAttempts(
   sessionId: string,
   now: number,
@@ -369,6 +530,8 @@ async function pruneSettledAgentAttempts(
     || right.updatedAt - left.updatedAt
   ));
   for (const attempt of settled.slice(AGENT_SESSION_RECENT_ATTEMPT_LIMIT)) {
+    await assertNoAgentAttemptRecovery(attempt);
+    await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
     await accountAgentAttemptDeleted(attempt, now);
     await db.agentAttempts.delete(attempt.id);
   }
@@ -581,14 +744,26 @@ export async function loadAgentSession(sessionId: string): Promise<LoadedAgentSe
 }
 
 /** Full canonical history is available only to the background turn runtime. */
-export async function loadCanonicalAgentSession(sessionId: string): Promise<BgsmAgentSession> {
+export async function loadCanonicalAgentSession(
+  sessionId: string,
+  cache?: AgentCanonicalSessionCache,
+): Promise<BgsmAgentSession> {
   assertAgentTurnTransportIdentifier(sessionId, 'Agent session ID');
-  return db.transaction('r', db.agentSessions, db.agentMessages, async () => {
+  const loaded = await db.transaction('r', db.agentSessions, db.agentMessages, async () => {
     const record = await db.agentSessions.get(sessionId);
     if (!record) throw new AgentSessionNotFoundError(sessionId);
+    // The header is the cross-worker revision fence. Never trust memory before
+    // validating the authoritative row that names the cached revision.
+    validateTransportSessionRecord(record);
+    const cached = cache?.get(sessionId, record.revision);
+    if (cached) return { session: cached, cacheCandidate: false };
     const rows = await db.agentMessages.where('sessionId').equals(sessionId).sortBy('sequence');
-    return cloneSession(reconstructCanonicalSession(record, rows).session);
+    const reconstructed = reconstructCanonicalSession(record, rows).session;
+    return { session: reconstructed, cacheCandidate: true };
   });
+  const callerSnapshot = cloneSession(loaded.session);
+  if (loaded.cacheCandidate) cache?.put(loaded.session);
+  return callerSnapshot;
 }
 
 export async function loadAgentSessionTranscriptPage(
@@ -628,10 +803,12 @@ export async function inspectDurableAgentSessionTurn(
   assertAgentTurnTransportIdentifier(sessionId, 'Agent session ID');
   assertAgentTurnTransportIdentifier(executionEpochId, 'Agent worker execution epoch');
   await ensureAgentStorageUsage();
-  return db.transaction('rw', [
+  let recoveryError: AgentAttemptCorruptionError | null = null;
+  const inspection = await db.transaction('rw', [
     db.agentSessions,
     db.agentAttempts,
     db.agentArtifacts,
+    db.agentAttemptRecoveries,
     db.agentArtifactChunks,
     db.agentStorageUsage,
   ], async () => {
@@ -650,6 +827,14 @@ export async function inspectDurableAgentSessionTurn(
     if (!attempt) return null;
     const now = Date.now();
     if (attempt.state === 'running' && attempt.recoveryClass === 'statically_read_only') {
+      let recoveredContinuation: AgentArtifactContinuationCheckpoint | null;
+      try {
+        recoveredContinuation = await loadAgentAttemptContinuation(attempt);
+      } catch (error) {
+        recoveryError = new AgentAttemptCorruptionError(sessionId, errorMessage(error), { cause: error });
+        await quarantineAgentAttemptRecovery(attempt, now);
+        return null;
+      }
       const baseRevision = attempt.lease?.baseRevision ?? attempt.admittedLaunch.baseRevision;
       await putAgentAttempt(attempt, {
         ...attempt,
@@ -666,8 +851,8 @@ export async function inspectDurableAgentSessionTurn(
         executionEpochId,
         launch: cloneValue(attempt.admittedLaunch),
         artifactCoverage: attempt.artifactCoverage.map((coverage) => cloneValue(coverage)),
-        artifactContinuation: attempt.artifactContinuation
-          ? cloneValue(attempt.artifactContinuation)
+        artifactContinuation: recoveredContinuation
+          ? cloneValue(recoveredContinuation)
           : null,
       };
     }
@@ -682,6 +867,7 @@ export async function inspectDurableAgentSessionTurn(
       sessionId,
       turnAttemptId: attempt.turnAttemptId,
     }, now);
+    await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
     await putAgentAttempt(attempt, {
       ...attempt,
       state: 'state_uncertain',
@@ -689,29 +875,34 @@ export async function inspectDurableAgentSessionTurn(
       retryKind: null,
       writeSettlement: 'unsafe',
       artifactCoverage,
-      artifactContinuation: null,
+      artifactContinuationControl: null,
       lease: null,
       updatedAt: Math.max(now, attempt.updatedAt),
     }, now);
     return null;
   });
+  if (recoveryError) throw recoveryError;
+  return inspection;
 }
 
 export async function readAgentSessionRetryDraftCandidate(
   sessionId: string,
 ): Promise<AgentSessionRetryDraft | null> {
   assertAgentTurnTransportIdentifier(sessionId, 'Agent session ID');
-  return db.transaction('r', [db.agentSessions, db.agentAttempts], async () => {
+  return db.transaction('r', [db.agentSessions, db.agentAttempts, db.agentAttemptRecoveries], async () => {
     const record = await db.agentSessions.get(sessionId);
     if (!record) return null;
     validateAgentSessionRecord(record);
     const attempts = await readAgentAttemptRows(sessionId);
     await validateSessionAttemptRows(sessionId, attempts);
-    return attempts
-      .flatMap((attempt) => {
-        const draft = retryDraftFromAttemptRow(attempt);
-        return draft ? [{ draft }] : [];
-      })
+    const drafts: Array<{ draft: AgentSessionRetryDraft }> = [];
+    for (const attempt of attempts) {
+      const draft = retryDraftFromAttemptRow(attempt);
+      if (!draft) continue;
+      await assertNoAgentAttemptRecovery(attempt);
+      drafts.push({ draft });
+    }
+    return drafts
       .sort((left, right) => right.draft.updatedAt - left.draft.updatedAt)[0]?.draft ?? null;
   });
 }
@@ -747,11 +938,32 @@ export async function admitAgentSessionTurn(input: Readonly<{
   await ensureAgentStorageUsage();
   return db.transaction(
     'rw',
-    [db.agentSessions, db.agentAttempts, db.agentMessages, db.agentStorageUsage],
+    [db.agentSessions, db.agentAttempts, db.agentAttemptRecoveries, db.agentMessages, db.agentStorageUsage],
     async () => {
       const record = await db.agentSessions.get(input.sessionId);
       if (!record) throw new AgentSessionNotFoundError(input.sessionId);
       validateAgentSessionRecord(record);
+      const exactExisting = await readAgentAttempt(input.sessionId, input.turnAttemptId);
+      if (exactExisting) {
+        await validateSessionAttemptRows(input.sessionId, [exactExisting]);
+        if (
+          exactExisting.admittedLaunchDigest !== input.launchDigest
+          || canonicalJson(exactExisting.admittedLaunch) !== canonicalJson(input.launch)
+        ) throw new AgentSessionAttemptConflictError(record.id, input.turnAttemptId);
+        if (exactExisting.receipt) {
+          const presentationRows = await readTurnPresentationRows(record, input.turnAttemptId);
+          return {
+            kind: 'replay',
+            commit: await commitResultFromReceipt(
+              record,
+              presentationRows,
+              toSummary(record),
+              exactExisting.receipt,
+              true,
+            ),
+          };
+        }
+      }
       const attempts = await readAgentAttemptRows(input.sessionId);
       await validateSessionAttemptRows(input.sessionId, attempts);
       const existing = attempts.find((attempt) => attempt.turnAttemptId === input.turnAttemptId);
@@ -761,11 +973,16 @@ export async function admitAgentSessionTurn(input: Readonly<{
           || canonicalJson(existing.admittedLaunch) !== canonicalJson(input.launch)
         ) throw new AgentSessionAttemptConflictError(record.id, input.turnAttemptId);
         if (existing.receipt) {
-          const rows = await db.agentMessages.where('sessionId').equals(record.id).sortBy('sequence');
-          const loaded = reconstructCanonicalSession(record, rows);
+          const presentationRows = await readTurnPresentationRows(record, input.turnAttemptId);
           return {
             kind: 'replay',
-            commit: await commitResultFromReceipt(record, rows, loaded.summary, existing.receipt, true),
+            commit: await commitResultFromReceipt(
+              record,
+              presentationRows,
+              toSummary(record),
+              existing.receipt,
+              true,
+            ),
           };
         }
         if (existing.state !== 'running') {
@@ -809,22 +1026,28 @@ export async function admitAgentSessionTurn(input: Readonly<{
           || sourceDraft.baseRevision !== input.baseRevision
           || competingSource
         ) throw new AgentSessionAttemptConflictError(record.id, input.turnAttemptId);
+        await assertNoAgentAttemptRecovery(source);
+        await deleteAgentAttemptRecoveriesForAttempt(source, acquiredAt);
         await putAgentAttempt(source, {
           ...source,
           state: 'terminal_non_retryable',
           terminalReason: 'retried',
           retryKind: null,
+          artifactContinuationControl: null,
           lease: null,
           updatedAt: Math.max(acquiredAt, source.updatedAt),
         }, acquiredAt);
       } else {
         for (const attempt of attempts) {
           if (attempt.state !== 'retryable') continue;
+          await assertNoAgentAttemptRecovery(attempt);
+          await deleteAgentAttemptRecoveriesForAttempt(attempt, acquiredAt);
           await putAgentAttempt(attempt, {
             ...attempt,
             state: 'terminal_non_retryable',
             terminalReason: 'superseded',
             retryKind: null,
+            artifactContinuationControl: null,
             lease: null,
             updatedAt: Math.max(acquiredAt, attempt.updatedAt),
           }, acquiredAt);
@@ -843,7 +1066,7 @@ export async function admitAgentSessionTurn(input: Readonly<{
         writeSettlement: null,
         receipt: null,
         artifactCoverage: [],
-        artifactContinuation: null,
+        artifactContinuationControl: null,
         lease: {
           executionEpochId: input.executionEpochId,
           turnAttemptId: input.turnAttemptId,
@@ -899,6 +1122,7 @@ export async function checkpointAgentSessionArtifactEnvelope(
     [
       db.agentSessions,
       db.agentAttempts,
+      db.agentAttemptRecoveries,
       db.agentArtifacts,
       db.agentArtifactChunks,
       db.agentStorageUsage,
@@ -920,15 +1144,17 @@ export async function checkpointAgentSessionArtifactEnvelope(
         || attempt.lease.baseRevision !== session.revision
         || attempt.lease.launchDigest !== input.launchDigest
       ) throw new AgentSessionTurnLeaseMismatchError(input.sessionId, input.turnAttemptId);
+      await loadAgentAttemptContinuation(attempt);
+      const previousRecovery = await db.agentAttemptRecoveries.get(attempt.id);
       if (input.expectedNonProgressRepromptUsed !== undefined) {
         if (
-          !attempt.artifactContinuation
-          || attempt.artifactContinuation.nonProgressRepromptUsed
+          !attempt.artifactContinuationControl
+          || attempt.artifactContinuationControl.nonProgressRepromptUsed
             !== input.expectedNonProgressRepromptUsed
         ) throw new AgentArtifactCoverageError('Agent artifact continuation re-prompt state changed.');
       }
       if (
-        attempt.artifactContinuation?.nonProgressRepromptUsed
+        attempt.artifactContinuationControl?.nonProgressRepromptUsed
         && input.continuation !== null
         && !input.continuation.nonProgressRepromptUsed
       ) throw new AgentArtifactCoverageError('Agent artifact continuation re-prompt use cannot be reset.');
@@ -1006,18 +1232,30 @@ export async function checkpointAgentSessionArtifactEnvelope(
       } else if (input.continuation !== null) {
         throw new AgentArtifactCoverageError('Completed artifact coverage cannot retain a continuation checkpoint.');
       }
+      const split = input.continuation
+        ? splitAgentArtifactContinuation(input.continuation, {
+            id: attempt.id,
+            sessionId: attempt.sessionId,
+            turnAttemptId: attempt.turnAttemptId,
+          })
+        : null;
 
       const next: AgentAttemptRow = {
         ...attempt,
         artifactCoverage: coverage.map((record) => cloneValue(record)),
-        artifactContinuation: input.continuation ? cloneValue(input.continuation) : null,
+        artifactContinuationControl: split?.control ?? null,
         updatedAt: Math.max(now, attempt.updatedAt),
       };
       await putAgentAttempt(attempt, next, now);
+      if (split) {
+        await putAgentAttemptRecovery(attempt, previousRecovery, split.recovery, now);
+      } else {
+        await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
+      }
       return {
         artifactCoverage: next.artifactCoverage.map((record) => cloneValue(record)),
-        artifactContinuation: next.artifactContinuation
-          ? cloneValue(next.artifactContinuation)
+        artifactContinuation: input.continuation
+          ? cloneValue(input.continuation)
           : null,
       };
     },
@@ -1064,9 +1302,14 @@ export async function loadCommittedAgentSessionTurn(input: Readonly<{
     await validateSessionAttemptRows(input.sessionId, [attempt]);
     if (!attempt.receipt) return null;
     assertMatchingLaunchDigest(record.id, attempt.receipt, input.launchDigest);
-    const rows = await db.agentMessages.where('sessionId').equals(record.id).sortBy('sequence');
-    const loaded = reconstructCanonicalSession(record, rows);
-    return commitResultFromReceipt(record, rows, loaded.summary, attempt.receipt, true);
+    const presentationRows = await readTurnPresentationRows(record, input.turnAttemptId);
+    return commitResultFromReceipt(
+      record,
+      presentationRows,
+      toSummary(record),
+      attempt.receipt,
+      true,
+    );
   });
 }
 
@@ -1086,7 +1329,7 @@ export async function acquireAgentSessionTurnLease(input: Readonly<{
   const acquiredAt = (input.now ?? Date.now)();
   assertTimestamp(acquiredAt, 'Agent turn lease acquisition time');
   await ensureAgentStorageUsage();
-  await db.transaction('rw', [db.agentSessions, db.agentAttempts, db.agentStorageUsage], async () => {
+  await db.transaction('rw', [db.agentSessions, db.agentAttempts, db.agentAttemptRecoveries, db.agentStorageUsage], async () => {
     const record = await db.agentSessions.get(input.sessionId);
     if (!record) throw new AgentSessionNotFoundError(input.sessionId);
     validateAgentSessionRecord(record);
@@ -1132,7 +1375,7 @@ export async function releaseAgentSessionTurnLease(input: Readonly<{
   assertAgentTurnTransportIdentifier(input.turnAttemptId, 'Agent turn attempt ID');
   assertAgentTurnTransportIdentifier(input.executionEpochId, 'Agent worker execution epoch');
   await ensureAgentStorageUsage();
-  return db.transaction('rw', [db.agentSessions, db.agentAttempts, db.agentStorageUsage], async () => {
+  return db.transaction('rw', [db.agentSessions, db.agentAttempts, db.agentAttemptRecoveries, db.agentStorageUsage], async () => {
     const record = await db.agentSessions.get(input.sessionId);
     if (!record) return false;
     validateAgentSessionRecord(record);
@@ -1186,6 +1429,7 @@ export async function settleAgentSessionAttemptWithoutTransition(
   await db.transaction('rw', [
     db.agentSessions,
     db.agentAttempts,
+    db.agentAttemptRecoveries,
     db.agentArtifacts,
     db.agentArtifactChunks,
     db.agentStorageUsage,
@@ -1200,6 +1444,13 @@ export async function settleAgentSessionAttemptWithoutTransition(
       throw new AgentSessionAttemptConflictError(input.sessionId, input.turnAttemptId);
     }
     if (attempt.receipt || attempt.state === 'retryable' || attempt.state === 'terminal_non_retryable') {
+      await assertNoAgentAttemptRecovery(attempt);
+      await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
+      return;
+    }
+    if (attempt.state === 'state_uncertain') {
+      await assertNoAgentAttemptRecovery(attempt);
+      await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
       return;
     }
     if (
@@ -1222,6 +1473,7 @@ export async function settleAgentSessionAttemptWithoutTransition(
       sessionId: input.sessionId,
       turnAttemptId: input.turnAttemptId,
     }, now);
+    await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
     await putAgentAttempt(attempt, {
       ...attempt,
       state: retryable ? 'retryable' : 'terminal_non_retryable',
@@ -1229,7 +1481,7 @@ export async function settleAgentSessionAttemptWithoutTransition(
       retryKind: retryable ? retryKindForOutcome(input.outcome) : null,
       writeSettlement: input.outcome.writeSettlement,
       artifactCoverage,
-      artifactContinuation: null,
+      artifactContinuationControl: null,
       lease: null,
       updatedAt: Math.max(now, attempt.updatedAt),
     }, now);
@@ -1255,6 +1507,7 @@ export async function markAgentSessionAttemptStateUncertain(input: Readonly<{
   return db.transaction('rw', [
     db.agentSessions,
     db.agentAttempts,
+    db.agentAttemptRecoveries,
     db.agentArtifacts,
     db.agentArtifactChunks,
     db.agentStorageUsage,
@@ -1271,7 +1524,10 @@ export async function markAgentSessionAttemptStateUncertain(input: Readonly<{
       && attempt.lease !== null
       && attempt.lease.executionEpochId !== input.executionEpochId
     ) return false;
-    if (attempt.state === 'state_uncertain') return true;
+    if (attempt.state === 'state_uncertain') {
+      await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
+      return true;
+    }
     if (attempt.state !== 'running' && attempt.state !== 'stop_pending') return false;
     const artifactCoverage = await Dexie.waitFor(Promise.all(
       attempt.artifactCoverage.map((coverage) => settleAgentArtifactCoverageIncomplete(
@@ -1284,6 +1540,7 @@ export async function markAgentSessionAttemptStateUncertain(input: Readonly<{
       sessionId: input.sessionId,
       turnAttemptId: input.turnAttemptId,
     }, now);
+    await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
     await putAgentAttempt(attempt, {
       ...attempt,
       state: 'state_uncertain',
@@ -1291,7 +1548,7 @@ export async function markAgentSessionAttemptStateUncertain(input: Readonly<{
       retryKind: null,
       writeSettlement: 'unsafe',
       artifactCoverage,
-      artifactContinuation: null,
+      artifactContinuationControl: null,
       lease: null,
       updatedAt: Math.max(now, attempt.updatedAt),
     }, now);
@@ -1310,7 +1567,7 @@ export async function dismissAgentSessionAttemptRetry(input: Readonly<{
   const now = (input.now ?? Date.now)();
   assertTimestamp(now, 'Agent retry dismissal time');
   await ensureAgentStorageUsage();
-  return db.transaction('rw', [db.agentSessions, db.agentAttempts, db.agentStorageUsage], async () => {
+  return db.transaction('rw', [db.agentSessions, db.agentAttempts, db.agentAttemptRecoveries, db.agentStorageUsage], async () => {
     const record = await db.agentSessions.get(input.sessionId);
     if (!record) return false;
     validateAgentSessionRecord(record);
@@ -1318,12 +1575,15 @@ export async function dismissAgentSessionAttemptRetry(input: Readonly<{
     await validateSessionAttemptRows(input.sessionId, attempts);
     const attempt = attempts.find((candidate) => candidate.turnAttemptId === input.turnAttemptId);
     if (!attempt || attempt.state !== 'retryable') return false;
+    await assertNoAgentAttemptRecovery(attempt);
+    await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
     await putAgentAttempt(attempt, {
       ...attempt,
       state: 'terminal_non_retryable',
       terminalReason: 'dismissed',
       retryKind: null,
       lease: null,
+      artifactContinuationControl: null,
       updatedAt: Math.max(now, attempt.updatedAt),
     }, now);
     await pruneSettledAgentAttempts(input.sessionId, now, [input.turnAttemptId]);
@@ -1347,6 +1607,7 @@ export async function discardDamagedAgentSessionRecovery(
     [
       db.agentSessions,
       db.agentAttempts,
+      db.agentAttemptRecoveries,
       db.agentMessages,
       db.agentArtifacts,
       db.agentArtifactChunks,
@@ -1356,6 +1617,7 @@ export async function discardDamagedAgentSessionRecovery(
       if (!await db.agentSessions.get(sessionId)) return 0;
       let removed = 0;
       for (const attempt of await readAgentAttemptRows(sessionId)) {
+        await discardAgentAttemptRecoveriesForAttempt(attempt);
         let valid = true;
         try {
           await validateAgentAttemptRowIdentity(attempt);
@@ -1375,6 +1637,7 @@ export async function discardDamagedAgentSessionRecovery(
             terminalReason: 'abandoned',
             retryKind: null,
             lease: null,
+            artifactContinuationControl: null,
             updatedAt: Math.max(now, attempt.updatedAt),
           });
         } else {
@@ -1382,7 +1645,7 @@ export async function discardDamagedAgentSessionRecovery(
         }
         removed += 1;
       }
-      if (removed > 0) await reconcileAgentStorageUsageInCurrentTransaction(now);
+      await reconcileAgentStorageUsageInCurrentTransaction(now);
       return removed;
     },
   );
@@ -1398,21 +1661,24 @@ export type AgentSessionTransitionCommitInput = Readonly<{
 
 export async function commitAgentSessionTransition(
   input: AgentSessionTransitionCommitInput,
+  cache?: AgentCanonicalSessionCache,
 ): Promise<AgentSessionCommitResult> {
-  return commitAgentSessionTransitionInternal(input);
+  return commitAgentSessionTransitionInternal(input, undefined, cache);
 }
 
 /** Commits only while the exact worker epoch still owns the admitted turn. */
 export async function commitLeasedAgentSessionTurn(
   input: AgentSessionTransitionCommitInput & Readonly<{ executionEpochId: string }>,
+  cache?: AgentCanonicalSessionCache,
 ): Promise<AgentSessionCommitResult> {
   assertAgentTurnTransportIdentifier(input.executionEpochId, 'Agent worker execution epoch');
-  return commitAgentSessionTransitionInternal(input, input.executionEpochId);
+  return commitAgentSessionTransitionInternal(input, input.executionEpochId, cache);
 }
 
 async function commitAgentSessionTransitionInternal(
   input: AgentSessionTransitionCommitInput,
   requiredExecutionEpochId?: string,
+  cache?: AgentCanonicalSessionCache,
 ): Promise<AgentSessionCommitResult> {
   assertAgentTurnTransportIdentifier(input.turnAttemptId, 'Agent turn attempt ID');
   validateLaunchDigest(input.launchDigest);
@@ -1432,6 +1698,7 @@ async function commitAgentSessionTransitionInternal(
     [
       db.agentSessions,
       db.agentAttempts,
+      db.agentAttemptRecoveries,
       db.agentMessages,
       db.agentArtifacts,
       db.agentArtifactChunks,
@@ -1441,26 +1708,37 @@ async function commitAgentSessionTransitionInternal(
       const record = await db.agentSessions.get(transition.sessionId);
       if (!record) throw new AgentSessionNotFoundError(transition.sessionId);
       validateAgentSessionRecord(record);
+      const exactAttempt = await readAgentAttempt(record.id, input.turnAttemptId);
+      if (exactAttempt) {
+        await validateSessionAttemptRows(record.id, [exactAttempt]);
+        if (exactAttempt.admittedLaunchDigest !== input.launchDigest) {
+          throw new AgentSessionAttemptConflictError(record.id, input.turnAttemptId);
+        }
+        if (exactAttempt.receipt) {
+          assertMatchingReceipt(
+            record.id,
+            exactAttempt.receipt,
+            { ...input, transition },
+            transitionDigest,
+          );
+          const presentationRows = await readTurnPresentationRows(record, input.turnAttemptId);
+          return {
+            result: await commitResultFromReceipt(
+              record,
+              presentationRows,
+              toSummary(record),
+              exactAttempt.receipt,
+              true,
+            ),
+            cacheCandidate: null,
+          };
+        }
+      }
       const attempts = await readAgentAttemptRows(record.id);
       await validateSessionAttemptRows(record.id, attempts);
       const attempt = attempts.find((candidate) => candidate.turnAttemptId === input.turnAttemptId);
       if (!attempt || attempt.admittedLaunchDigest !== input.launchDigest) {
         throw new AgentSessionAttemptConflictError(record.id, input.turnAttemptId);
-      }
-      const rows = await db.agentMessages
-        .where('sessionId')
-        .equals(transition.sessionId)
-        .sortBy('sequence');
-      const loaded = reconstructCanonicalSession(record, rows);
-
-      if (attempt?.receipt) {
-        assertMatchingReceipt(
-          record.id,
-          attempt.receipt,
-          { ...input, transition },
-          transitionDigest,
-        );
-        return commitResultFromReceipt(record, rows, loaded.summary, attempt.receipt, true);
       }
       if (record.revision !== transition.baseRevision) {
         throw new AgentSessionRevisionConflictError(
@@ -1469,9 +1747,14 @@ async function commitAgentSessionTransitionInternal(
           record.revision,
         );
       }
+      const cachedSession = cache?.peek(record.id, record.revision);
+      const validatedPrefix = cachedSession ?? reconstructCanonicalSession(
+        record,
+        await db.agentMessages.where('sessionId').equals(transition.sessionId).sortBy('sequence'),
+      ).session;
       if (requiredExecutionEpochId !== undefined) {
         if (
-          !attempt?.lease
+          !attempt.lease
           || attempt.lease.executionEpochId !== requiredExecutionEpochId
           || attempt.lease.turnAttemptId !== input.turnAttemptId
           || attempt.lease.baseRevision !== transition.baseRevision
@@ -1494,11 +1777,15 @@ async function commitAgentSessionTransitionInternal(
           turnAttemptId: input.turnAttemptId,
         });
       }
-      if (attempt.artifactContinuation !== null) {
+      await assertNoAgentAttemptRecovery(attempt);
+      if (attempt.artifactContinuationControl !== null) {
         throw new AgentArtifactCoverageError('Final commit cannot retain artifact continuation state.');
       }
 
-      const applied = applyBgsmAgentSessionTransition(loaded.session, transition);
+      const applied = applyBgsmAgentSessionTransitionToValidatedPrefix(
+        validatedPrefix,
+        transition,
+      );
       if (!applied.applied) {
         throw new AgentSessionRevisionConflictError(
           record.id,
@@ -1580,11 +1867,10 @@ async function commitAgentSessionTransitionInternal(
         retryKind: canRetry ? retryKind : null,
         writeSettlement: input.outcome.writeSettlement,
         receipt: nextReceipt,
-        artifactContinuation: null,
+        artifactContinuationControl: null,
         lease: null,
         updatedAt: Math.max(now, attempt.updatedAt),
       };
-      const verified = reconstructCanonicalSession(nextRecord, [...rows, ...messageRows]);
 
       if (artifactIdsToDiscard.length > 0) {
         await discardUnboundAgentArtifactsInCurrentTransaction({
@@ -1609,17 +1895,29 @@ async function commitAgentSessionTransitionInternal(
       );
       if (messageRows.length > 0) await db.agentMessages.bulkAdd(messageRows);
       await db.agentSessions.put(nextRecord);
-      return commitResultFromReceipt(
-        nextRecord,
-        [...rows, ...messageRows],
-        verified.summary,
-        nextReceipt,
-        false,
-      );
+      return {
+        result: await commitResultFromReceipt(
+          nextRecord,
+          messageRows,
+          toSummary(nextRecord),
+          nextReceipt,
+          false,
+        ),
+        cacheCandidate: applied.session,
+      };
     },
   );
+  const commitAndPublish = async (
+    transition: BgsmAgentSessionTransition,
+    transitionDigest: AgentSessionAttemptDigest,
+    artifactIdsToDiscard: readonly string[] = [],
+  ): Promise<AgentSessionCommitResult> => {
+    const committed = await commitOnce(transition, transitionDigest, artifactIdsToDiscard);
+    if (committed.cacheCandidate) cache?.put(committed.cacheCandidate);
+    return committed.result;
+  };
   try {
-    return await commitOnce(input.transition, digest);
+    return await commitAndPublish(input.transition, digest);
   } catch (error) {
     if (!isRecoverableStorageError(error)) throw error;
     let storageError = error;
@@ -1631,7 +1929,7 @@ async function commitAgentSessionTransitionInternal(
     });
     if (cleanup.freedBytes > 0) {
       try {
-        return await commitOnce(input.transition, digest);
+        return await commitAndPublish(input.transition, digest);
       } catch (retryError) {
         if (!isRecoverableStorageError(retryError)) throw retryError;
         storageError = retryError;
@@ -1642,7 +1940,7 @@ async function commitAgentSessionTransitionInternal(
     if (degraded.artifactIds.length === 0) throw storageError;
     validatePersistableTransition(degraded.transition);
     const degradedDigest = await digestAgentSessionTransition(degraded.transition);
-    return commitOnce(degraded.transition, degradedDigest, degraded.artifactIds);
+    return commitAndPublish(degraded.transition, degradedDigest, degraded.artifactIds);
   }
 }
 
@@ -1676,6 +1974,35 @@ function collectTransitionArtifactIds(
   return [...new Set(transition.messageDelta.flatMap((message) => (
     message.role === 'tool' ? message.opaqueReferences ?? [] : []
   )))];
+}
+async function readTurnPresentationRows(
+  record: AgentSessionRecord,
+  turnAttemptId: string,
+): Promise<AgentSessionMessageRecord[]> {
+  try {
+    const rows = await db.agentMessages
+      .where('[sessionId+turnAttemptId]')
+      .equals([record.id, turnAttemptId])
+      .sortBy('sequence');
+    const seenIds = new Set<string>();
+    const seenSequences = new Set<number>();
+    for (const row of rows) {
+      assertPositiveSafeInteger(row.sequence, 'Canonical message sequence');
+      if (row.sequence > record.lastSequence) {
+        throw new TypeError('Canonical message sequence exceeds the durable cursor.');
+      }
+      validateAgentSessionMessageRecord(row, record.id, row.sequence);
+      if (seenIds.has(row.id) || seenSequences.has(row.sequence)) {
+        throw new TypeError('Canonical message IDs and sequences must be unique.');
+      }
+      seenIds.add(row.id);
+      seenSequences.add(row.sequence);
+    }
+    return rows;
+  } catch (error) {
+    if (error instanceof AgentSessionCorruptionError) throw error;
+    throw new AgentSessionCorruptionError(record.id, errorMessage(error), { cause: error });
+  }
 }
 
 async function commitResultFromReceipt(
@@ -1762,6 +2089,7 @@ export async function deleteAgentSession(
   options: Readonly<{
     now?: () => number;
     executionEpochId?: string;
+    cache?: AgentCanonicalSessionCache;
   }> = {},
 ): Promise<boolean> {
   assertAgentTurnTransportIdentifier(sessionId, 'Agent session ID');
@@ -1771,11 +2099,12 @@ export async function deleteAgentSession(
   const now = (options.now ?? Date.now)();
   assertTimestamp(now, 'Agent session deletion time');
   await ensureAgentStorageUsage();
-  return db.transaction(
+  const deleted = await db.transaction(
     'rw',
     [
       db.agentSessions,
       db.agentAttempts,
+      db.agentAttemptRecoveries,
       db.agentMessages,
       db.agentArtifacts,
       db.agentArtifactChunks,
@@ -1837,6 +2166,7 @@ export async function deleteAgentSession(
       });
       await deleteAgentSessionArtifacts(sessionId, [...referencedArtifactIds]);
       await db.agentMessages.where('sessionId').equals(sessionId).delete();
+      await db.agentAttemptRecoveries.where('sessionId').equals(sessionId).delete();
       await db.agentAttempts.where('sessionId').equals(sessionId).delete();
       await db.agentSessions.delete(sessionId);
       // Rebuilding from the surviving rows keeps deletion available even when
@@ -1845,6 +2175,8 @@ export async function deleteAgentSession(
       return true;
     },
   );
+  if (deleted) options.cache?.delete(sessionId);
+  return deleted;
 }
 
 async function deleteStaleOrganizePreflightArtifacts(jobId: string): Promise<void> {

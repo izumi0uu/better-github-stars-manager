@@ -147,9 +147,31 @@ export function applyBgsmAgentSessionTransition(
   session: BgsmAgentSession,
   transition: BgsmAgentSessionTransition,
 ): BgsmAgentSessionTransitionResult {
+  return applyBgsmAgentSessionTransitionInternal(session, transition, false);
+}
+
+/** Appends to a fully validated exact-revision prefix without revalidating it. */
+export function applyBgsmAgentSessionTransitionToValidatedPrefix(
+  session: BgsmAgentSession,
+  transition: BgsmAgentSessionTransition,
+): BgsmAgentSessionTransitionResult {
   if (
-    transition.sessionId !== session.id ||
-    transition.baseRevision !== session.revision
+    transition.sessionId !== session.id
+    || transition.baseRevision !== session.revision
+  ) {
+    return { applied: false, session };
+  }
+  return applyBgsmAgentSessionTransitionInternal(session, structuredClone(transition), true);
+}
+
+function applyBgsmAgentSessionTransitionInternal(
+  session: BgsmAgentSession,
+  transition: BgsmAgentSessionTransition,
+  prefixIsValidated: boolean,
+): BgsmAgentSessionTransitionResult {
+  if (
+    transition.sessionId !== session.id
+    || transition.baseRevision !== session.revision
   ) {
     return { applied: false, session };
   }
@@ -185,13 +207,13 @@ export function applyBgsmAgentSessionTransition(
     validateBgsmAgentSessionHistory(transition.messageDelta);
   }
   const nextMessages = [...session.messages, ...transition.messageDelta];
-  validateBgsmAgentSessionHistory(nextMessages);
+  if (!prefixIsValidated) validateBgsmAgentSessionHistory(nextMessages);
   if (transition.candidateCheckpoint) {
     verifyBgsmAgentCheckpoint(nextMessages, transition.candidateCheckpoint);
     if (
-      session.compaction &&
-      transition.candidateCheckpoint.summarizedMessageCount <=
-        session.compaction.summarizedMessageCount
+      session.compaction
+      && transition.candidateCheckpoint.summarizedMessageCount
+        <= session.compaction.summarizedMessageCount
     ) {
       throw new Error('Cubby compaction checkpoint must advance.');
     }
@@ -216,25 +238,40 @@ export function applyBgsmAgentSessionTransition(
         transition.candidateActiveProjection,
       ]
     : retainedActiveProjections;
-  const orderedActiveProjections = orderActiveProjections(nextMessages, nextActiveProjections);
-  verifyBgsmAgentActiveProjections(nextMessages, orderedActiveProjections, nextCheckpoint);
+  const cursorChanged = transition.candidateCheckpoint !== undefined
+    || transition.candidateActiveProjection !== undefined;
+  const orderedActiveProjections = prefixIsValidated && !cursorChanged
+    ? nextActiveProjections
+    : orderActiveProjections(nextMessages, nextActiveProjections);
+  if (!prefixIsValidated || cursorChanged) {
+    verifyBgsmAgentActiveProjections(nextMessages, orderedActiveProjections, nextCheckpoint);
+  }
 
+  const nextBinding = transition.binding ?? session.binding;
   return {
     applied: true,
     session: {
       id: session.id,
       revision: session.revision + 1,
       messages: nextMessages,
-      ...(transition.binding || session.binding
-        ? { binding: transition.binding ?? session.binding }
+      ...(nextBinding
+        ? { binding: prefixIsValidated ? structuredClone(nextBinding) : nextBinding }
         : {}),
-      ...(transition.candidateCheckpoint
-        ? { compaction: { ...transition.candidateCheckpoint } }
-        : session.compaction
-          ? { compaction: session.compaction }
-          : {}),
+      ...(nextCheckpoint
+        ? {
+            compaction: prefixIsValidated
+              ? structuredClone(nextCheckpoint)
+              : transition.candidateCheckpoint
+                ? { ...transition.candidateCheckpoint }
+                : nextCheckpoint,
+          }
+        : {}),
       ...(orderedActiveProjections.length > 0
-        ? { activeProjections: orderedActiveProjections.map((projection) => ({ ...projection })) }
+        ? {
+            activeProjections: orderedActiveProjections.map((projection) => (
+              prefixIsValidated ? structuredClone(projection) : { ...projection }
+            )),
+          }
         : {}),
     },
   };

@@ -5,6 +5,7 @@ import type {
   BgsmAgentTurnResult,
 } from '@/bgsm-agent/turn-protocol';
 import type { AgentAttemptCoordinator } from '@/background/agent-attempt-coordinator';
+import type { AgentCanonicalSessionCache } from '@/storage/agent-session-cache';
 import type { BgsmAgentSessionRpcDependencies, BgsmAgentSessionRpcRouter } from '@/background/bgsm-agent-session-rpc';
 import {
   createBgsmAgentRuntime,
@@ -55,10 +56,12 @@ describe('background Agent runtime composition', () => {
     const discardedSessions: string[] = [];
     const turnRuns: BgsmAgentTurnLaunch[] = [];
     const captures: {
+      coordinatorCache: AgentCanonicalSessionCache | null;
       serviceDependencies: BgsmAgentTurnServiceDependencies | null;
       registryDependencies: TurnRegistryDependencies | null;
       sessionDependencies: BgsmAgentSessionRpcDependencies | null;
     } = {
+      coordinatorCache: null,
       serviceDependencies: null,
       registryDependencies: null,
       sessionDependencies: null,
@@ -148,9 +151,10 @@ describe('background Agent runtime composition', () => {
         notifiedSessions.push(sessionId);
       },
       factories: {
-        createAttemptCoordinator(epoch) {
+        createAttemptCoordinator(epoch, sessionCache) {
           order.push('coordinator');
           assert.equal(epoch, executionEpochId);
+          captures.coordinatorCache = sessionCache;
           return coordinator;
         },
         createTurnService(dependencies) {
@@ -187,6 +191,9 @@ describe('background Agent runtime composition', () => {
     assert.equal(runtime.executionEpochId, executionEpochId);
     assert.strictEqual(runtime.attemptCoordinator, coordinator);
     assert.strictEqual(runtime.turnService, turnService);
+    assert.ok(captures.coordinatorCache);
+    assert.strictEqual(serviceDependencies.sessionCache, captures.coordinatorCache);
+    assert.strictEqual(sessionDependencies.sessionCache, captures.coordinatorCache);
     assert.strictEqual(runtime.turnRegistry, turnRegistry);
     assert.strictEqual(runtime.sessionRpc, sessionRpc);
     assert.strictEqual(serviceDependencies.attemptCoordinator, coordinator);

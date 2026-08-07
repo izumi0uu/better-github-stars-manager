@@ -39,11 +39,14 @@ import type {
   BgsmAgentTurnLaunch,
   BgsmAgentTurnResult,
 } from '@/bgsm-agent/turn-protocol';
+import { digestAgentSessionLaunch } from '@/bgsm-agent/session-transport';
 import {
   loadCanonicalAgentSession,
+  loadCommittedAgentSessionTurn,
   type AgentSessionCommitResult,
   type AgentSessionTerminalOutcome,
 } from '@/storage/agent-session-store';
+import type { AgentCanonicalSessionCache } from '@/storage/agent-session-cache';
 import type {
   AgentProviderId,
   OrganizeJobRecord,
@@ -88,6 +91,7 @@ export type BgsmAgentTurnService = Readonly<{
 
 export type BgsmAgentTurnServiceDependencies = Readonly<{
   attemptCoordinator: AgentAttemptCoordinator;
+  sessionCache?: AgentCanonicalSessionCache;
   prepareRuntimeProvider(): Promise<PreparedGatedAgentRuntimeProvider>;
   invalidateProviderCapability(fingerprint: string): Promise<boolean>;
   resolveLiveCandidate: BgsmAgentConversationResolver;
@@ -144,7 +148,14 @@ export function createBgsmAgentTurnService(
     options: BgsmAgentTurnRunOptions,
   ): Promise<BgsmAgentTurnResult> => {
     const { prompt, sessionId, baseRevision, turnAttemptId } = launch;
-    const canonicalSession = await loadCanonicalAgentSession(sessionId);
+    const replayLaunchDigest = await digestAgentSessionLaunch(launch);
+    const committed = await loadCommittedAgentSessionTurn({
+      sessionId,
+      turnAttemptId,
+      launchDigest: replayLaunchDigest,
+    });
+    if (committed) return resultFromCommit(launch, committed);
+    const canonicalSession = await loadCanonicalAgentSession(sessionId, dependencies.sessionCache);
     const recoveryClass = hasSuccessfulRepositoryCodeToolHistory(canonicalSession.messages)
       ? 'statically_read_only'
       : 'write_capable_or_unknown';

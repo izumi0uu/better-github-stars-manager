@@ -22,8 +22,8 @@ import {
   type AgentArtifactEnvelopeCheckpointResult,
   type AgentDurableTurnInspection,
 } from '@/storage/agent-session-store';
+import type { AgentCanonicalSessionCache } from '@/storage/agent-session-cache';
 import type { AgentAttemptRecoveryClass } from '@/storage/agent-attempt-model';
-
 export type AgentAttemptCoordinator = Readonly<{
   admit: (
     launch: BgsmAgentTurnLaunch,
@@ -81,6 +81,7 @@ export type AgentAttemptCoordinator = Readonly<{
  */
 export function createAgentAttemptCoordinator(
   executionEpochId: string,
+  sessionCache?: AgentCanonicalSessionCache,
 ): AgentAttemptCoordinator {
   return {
     async admit(launch, recoveryClass) {
@@ -97,7 +98,7 @@ export function createAgentAttemptCoordinator(
       return { launchDigest, admission };
     },
     commit(input) {
-      return commitLeasedAgentSessionTurn({ ...input, executionEpochId });
+      return commitLeasedAgentSessionTurn({ ...input, executionEpochId }, sessionCache);
     },
     settleWithoutTransition(input) {
       return settleAgentSessionAttemptWithoutTransition({ ...input, executionEpochId });

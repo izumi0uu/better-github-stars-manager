@@ -1,6 +1,10 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it, vi } from 'vitest';
+import {
+  agentArtifactCoverageDirectives,
+  createAgentArtifactCoverage,
+} from '@/bgsm-agent/artifact-coverage';
 import { parseScopeFingerprintV1 } from '@/bgsm-agent/scope';
 import { BGSM_AGENT_SUMMARY_MAX_BYTES } from '@/bgsm-agent/session';
 import type {
@@ -28,22 +32,28 @@ import {
   createAgentSession,
   deleteAgentSession,
   inspectAgentSessionCatalog,
+  discardDamagedAgentSessionRecovery,
+  inspectDurableAgentSessionTurn,
   loadAgentSessionTranscriptPage,
   loadCanonicalAgentSession,
   loadAgentSession,
   loadCommittedAgentSessionTurn,
+  readAgentSessionRetryDraftCandidate,
   releaseAgentSessionTurnLease,
   type AgentSessionTerminalOutcome,
   type AgentSessionTransitionCommitInput,
+  type AgentAttemptRecoveryRecord,
 } from '@/storage/agent-session-store';
 import {
   agentSessionLogicalByteLength,
   agentAttemptLogicalByteLength,
   clearAgentToolCache,
   getAgentStorageUsage,
+  reconcileAgentStorageUsage,
   storeAgentArtifact,
 } from '@/storage/agent-storage-store';
 import { db } from '@/storage/db';
+import { AgentCanonicalSessionCache } from '@/storage/agent-session-cache';
 import type { OrganizeJobRecord } from '@/types';
 
 const messages: BgsmAgentSessionMessage[] = [
@@ -208,6 +218,86 @@ describe('durable Agent session store', () => {
     assert.deepEqual(loaded.session, committed.session);
     assert.deepEqual(loaded.transcript.messages, sequencedMessages);
     assert.equal(loaded.transcript.nextBeforeSequence, null);
+  });
+
+  it('uses exact revision cache hits for loads and warm appends, then evicts after deletion', async () => {
+    const created = await createAgentSession({ idFactory: () => 'session-cache-boundary' });
+    const cache = new AgentCanonicalSessionCache();
+    await commitAgentSessionTransition({
+      turnAttemptId: 'attempt-cache-first',
+      transition: {
+        sessionId: created.session.id,
+        baseRevision: 0,
+        messageDelta: messages.slice(0, 4),
+      },
+    });
+    const loaded = await loadCanonicalAgentSession(created.session.id, cache);
+    const whereSpy = vi.spyOn(db.agentMessages, 'where');
+    assert.deepEqual(await loadCanonicalAgentSession(created.session.id, cache), loaded);
+    assert.equal(
+      whereSpy.mock.calls.filter(([index]) => (
+        typeof index === 'string' && index === 'sessionId'
+      )).length,
+      0,
+    );
+    const secondCommit = await commitAgentSessionTransition({
+      turnAttemptId: 'attempt-cache-second',
+      transition: {
+        sessionId: created.session.id,
+        baseRevision: 1,
+        messageDelta: messages.slice(4),
+      },
+    }, cache);
+    const replay = await loadCommittedAgentSessionTurn({
+      sessionId: created.session.id,
+      turnAttemptId: secondCommit.turnAttemptId,
+      launchDigest: secondCommit.launchDigest,
+    });
+    assert.equal(replay?.idempotent, true);
+    assert.equal(
+      whereSpy.mock.calls.filter(([index]) => (
+        typeof index === 'string' && index === 'sessionId'
+      )).length,
+      0,
+    );
+    whereSpy.mockRestore();
+    assert.equal(cache.get(created.session.id, 2)?.messages.length, messages.length);
+    assert.equal(await deleteAgentSession(created.session.id, { cache }), true);
+    assert.equal(cache.get(created.session.id, 2), null);
+  });
+
+  it('does not publish a cache revision when the canonical transaction fails', async () => {
+    const created = await createAgentSession({ idFactory: () => 'session-cache-failure' });
+    await commitAgentSessionTransition({
+      turnAttemptId: 'attempt-cache-failure-first',
+      transition: {
+        sessionId: created.session.id,
+        baseRevision: 0,
+        messageDelta: messages.slice(0, 4),
+      },
+    });
+    const cache = new AgentCanonicalSessionCache();
+    const loaded = await loadCanonicalAgentSession(created.session.id, cache);
+    const bulkAdd = vi.spyOn(db.agentMessages, 'bulkAdd')
+      .mockRejectedValueOnce(new Error('canonical message write failed'));
+    try {
+      await assert.rejects(
+        () => commitAgentSessionTransition({
+          turnAttemptId: 'attempt-cache-failure-second',
+          transition: {
+            sessionId: created.session.id,
+            baseRevision: 1,
+            messageDelta: messages.slice(4),
+          },
+        }, cache),
+        /canonical message write failed/,
+      );
+    } finally {
+      bulkAdd.mockRestore();
+    }
+    assert.deepEqual(cache.get(created.session.id, 1), loaded);
+    assert.equal(cache.get(created.session.id, 2), null);
+    assert.equal((await db.agentSessions.get(created.session.id))?.revision, 1);
   });
 
   it('replays session creation by caller-provided ID without duplicating durable rows', async () => {
@@ -498,6 +588,7 @@ describe('durable Agent session store', () => {
     assert.deepEqual(afterReplay.appliedTurnReceipts, beforeReplay.appliedTurnReceipts);
     assert.deepEqual(
       afterReplay.transcript.messages,
+
       [...messages, ...followupMessages].map((message, index) => ({
         sequence: index + 1,
         ...message,
@@ -505,7 +596,217 @@ describe('durable Agent session store', () => {
     );
     assert.equal(await db.agentMessages.count(), messages.length + followupMessages.length);
   });
+  it('joins exact read-only recovery rows, fails closed when damaged, and preserves the transcript', async () => {
+    const sessionId = 'session-recovery-join';
+    await createAgentSession({ idFactory: () => sessionId, now: () => 1 });
+    const seedAttempt = async (turnAttemptId: string, suffix: string) => {
+      const launch = {
+        sessionId,
+        turnAttemptId,
+        baseRevision: 0,
+        prompt: 'Resume this read-only request.',
+      };
+      const launchDigest = await digestAgentSessionLaunch(launch);
+      await admitAgentSessionTurn({
+        ...launch,
+        launch,
+        launchDigest,
+        executionEpochId: `worker-recovery-${suffix}`,
+        recoveryClass: 'statically_read_only',
+        now: () => 10,
+      });
+      const attempt = (await db.agentAttempts
+        .where('[sessionId+turnAttemptId]')
+        .equals([sessionId, turnAttemptId])
+        .first())!;
+      const coverage = await createAgentArtifactCoverage({
+        artifactId: `artifact-recovery-${suffix}`,
+        sourceToolCallId: `call-recovery-${suffix}`,
+        expectedBytes: 1,
+        artifactSha256: 'a'.repeat(43),
+        integrityManifestSha256: 'b'.repeat(43),
+      });
+      const control = {
+        schemaVersion: 1 as const,
+        directives: agentArtifactCoverageDirectives([coverage]),
+        nonProgressRepromptUsed: false,
+        updatedAt: 11,
+      };
+      const recoveryMessage: BgsmAgentSessionMessage = {
+        id: `recovery-user-${suffix}`,
+        role: 'user',
+        content: 'Continue the checked-out read.',
+        createdAt: 11,
+      };
+      await db.agentAttempts.put({
+        ...attempt,
+        artifactCoverage: [coverage],
+        artifactContinuationControl: control,
+        updatedAt: 11,
+      });
+      const recovery: AgentAttemptRecoveryRecord = {
+        id: attempt.id,
+        schemaVersion: 1,
+        sessionId,
+        turnAttemptId,
+        projectedMessages: [recoveryMessage],
+        canonicalRawMessages: [recoveryMessage],
+        updatedAt: 11,
+      };
+      await db.agentAttemptRecoveries.put(recovery);
+      return { attempt, control, recovery, recoveryMessage };
+    };
 
+    const missing = await seedAttempt('attempt-recovery-missing', 'missing');
+    await db.agentAttemptRecoveries.delete(missing.attempt.id);
+    await reconcileAgentStorageUsage(() => 12);
+    await assert.rejects(
+      () => inspectDurableAgentSessionTurn(sessionId, 'worker-recovery-missing'),
+      AgentAttemptCorruptionError,
+    );
+    assert.equal((await db.agentAttempts.get(missing.attempt.id))?.state, 'state_uncertain');
+    assert.equal((await loadCanonicalAgentSession(sessionId)).id, sessionId);
+    assert.equal(await discardDamagedAgentSessionRecovery(sessionId, 20), 1);
+
+    const valid = await seedAttempt('attempt-recovery-valid', 'valid');
+    await reconcileAgentStorageUsage(() => 21);
+    const chunkWhere = vi.spyOn(db.agentArtifactChunks, 'where');
+    const recoveryToArray = vi.spyOn(db.agentAttemptRecoveries, 'toArray')
+      .mockRejectedValue(new Error('recovery payload should not be materialized as a collection'));
+    try {
+      const inspected = await inspectDurableAgentSessionTurn(sessionId, 'worker-recovery-valid');
+      assert.deepEqual(inspected?.artifactContinuation, {
+        schemaVersion: 1,
+        projectedMessages: [valid.recoveryMessage],
+        canonicalRawMessages: [valid.recoveryMessage],
+        directives: valid.control.directives,
+        nonProgressRepromptUsed: false,
+        updatedAt: 11,
+      });
+    } finally {
+      recoveryToArray.mockRestore();
+    }
+    assert.equal(chunkWhere.mock.calls.length, 0);
+    chunkWhere.mockRestore();
+
+    await db.agentAttemptRecoveries.update(valid.attempt.id, {
+      projectedMessages: [{ ...valid.recoveryMessage, unexpected: true }] as never,
+    });
+    await assert.rejects(
+      () => inspectDurableAgentSessionTurn(sessionId, 'worker-recovery-damaged'),
+      AgentAttemptCorruptionError,
+    );
+    assert.equal((await loadCanonicalAgentSession(sessionId)).id, sessionId);
+    assert.equal(await discardDamagedAgentSessionRecovery(sessionId, 22), 1);
+    assert.equal(await db.agentAttemptRecoveries.count(), 0);
+    assert.equal(await db.agentAttempts.count(), 0);
+  });
+
+  it('does not refresh cache recency when a commit transaction fails', async () => {
+    const created = await createAgentSession({ idFactory: () => 'session-cache-recency-failure' });
+    await commitAgentSessionTransition({
+      turnAttemptId: 'attempt-cache-recency-first',
+      transition: {
+        sessionId: created.session.id,
+        baseRevision: 0,
+        messageDelta: messages.slice(0, 4),
+      },
+    });
+    const cache = new AgentCanonicalSessionCache();
+    const loaded = await loadCanonicalAgentSession(created.session.id, cache);
+    for (let index = 1; index < 8; index += 1) {
+      cache.put({ ...loaded, id: `session-cache-recency-padding-${index}` });
+    }
+    const bulkAdd = vi.spyOn(db.agentMessages, 'bulkAdd')
+      .mockRejectedValueOnce(new Error('canonical message write failed'));
+    try {
+      await assert.rejects(
+        () => commitAgentSessionTransition({
+          turnAttemptId: 'attempt-cache-recency-second',
+          transition: {
+            sessionId: created.session.id,
+            baseRevision: 1,
+            messageDelta: messages.slice(4),
+          },
+        }, cache),
+        /canonical message write failed/,
+      );
+    } finally {
+      bulkAdd.mockRestore();
+    }
+    assert.deepEqual(cache.peek(created.session.id, 1), loaded);
+    cache.put({ ...loaded, id: 'session-cache-recency-after-failure' });
+    assert.equal(cache.peek(created.session.id, 1), null);
+    assert.ok(cache.peek('session-cache-recency-padding-1', 1));
+  });
+
+  it('blocks retry and fresh start on recovery-only corruption until explicit discard', async () => {
+    const sessionId = 'session-recovery-only-corruption';
+    await createAgentSession({ idFactory: () => sessionId, now: () => 1 });
+    const launch = {
+      sessionId,
+      turnAttemptId: 'attempt-recovery-only-corruption',
+      baseRevision: 0,
+      prompt: 'Retry this request.',
+    };
+    const launchDigest = await digestAgentSessionLaunch(launch);
+    await admitAgentSessionTurn({
+      ...launch,
+      launch,
+      launchDigest,
+      executionEpochId: 'worker-recovery-only-corruption',
+      recoveryClass: 'write_capable_or_unknown',
+      now: () => 10,
+    });
+    const attempt = (await db.agentAttempts
+      .where('[sessionId+turnAttemptId]')
+      .equals([sessionId, launch.turnAttemptId])
+      .first())!;
+    await db.agentAttempts.put({
+      ...attempt,
+      state: 'retryable',
+      retryKind: 'failed',
+      lease: null,
+      updatedAt: 11,
+    });
+    await db.agentAttemptRecoveries.put({
+      id: attempt.id,
+      schemaVersion: 1,
+      sessionId,
+      turnAttemptId: launch.turnAttemptId,
+      projectedMessages: [],
+      canonicalRawMessages: [],
+      updatedAt: 11,
+    });
+
+    const recoveryToArray = vi.spyOn(db.agentAttemptRecoveries, 'toArray')
+      .mockRejectedValue(new Error('recovery payload should not be materialized'));
+    try {
+      await assert.rejects(
+        () => readAgentSessionRetryDraftCandidate(sessionId),
+        AgentAttemptCorruptionError,
+      );
+    } finally {
+      recoveryToArray.mockRestore();
+    }
+    const freshLaunch = { ...launch, turnAttemptId: 'attempt-fresh-after-corruption' };
+    const freshDigest = await digestAgentSessionLaunch(freshLaunch);
+    await assert.rejects(
+      () => admitAgentSessionTurn({
+        ...freshLaunch,
+        launch: freshLaunch,
+        launchDigest: freshDigest,
+        executionEpochId: 'worker-fresh-after-corruption',
+        recoveryClass: 'write_capable_or_unknown',
+        now: () => 12,
+      }),
+      AgentAttemptCorruptionError,
+    );
+    assert.equal((await loadCanonicalAgentSession(sessionId)).id, sessionId);
+    assert.equal(await discardDamagedAgentSessionRecovery(sessionId, 13), 1);
+    assert.equal(await db.agentAttemptRecoveries.count(), 0);
+    assert.equal(await db.agentAttempts.count(), 0);
+  });
   it('admits one active attempt and lets only statically read-only work reacquire after an epoch change', async () => {
     const created = await createAgentSession({ idFactory: () => 'session-turn-lease' });
     const launch = {
@@ -1364,9 +1665,20 @@ describe('durable Agent session store', () => {
       updatedAt: 1,
     });
 
-    const catalog = await inspectAgentSessionCatalog();
-    assert.deepEqual(catalog.summaries.map((summary) => summary.id), ['session-valid']);
-    assert.equal(catalog.corruptions.length, 1);
+    const forbiddenReads = [
+      vi.spyOn(db.agentAttempts, 'toArray').mockRejectedValue(new Error('catalog read attempts')),
+      vi.spyOn(db.agentAttemptRecoveries, 'toArray').mockRejectedValue(new Error('catalog read recoveries')),
+      vi.spyOn(db.agentMessages, 'toArray').mockRejectedValue(new Error('catalog read messages')),
+      vi.spyOn(db.agentArtifacts, 'toArray').mockRejectedValue(new Error('catalog read artifacts')),
+      vi.spyOn(db.agentArtifactChunks, 'toArray').mockRejectedValue(new Error('catalog read chunks')),
+    ];
+    try {
+      const catalog = await inspectAgentSessionCatalog();
+      assert.deepEqual(catalog.summaries.map((summary) => summary.id), ['session-valid']);
+      assert.equal(catalog.corruptions.length, 1);
+    } finally {
+      forbiddenReads.forEach((spy) => spy.mockRestore());
+    }
     await assert.rejects(() => loadAgentSession('session-corrupt'), AgentSessionCorruptionError);
     assert.equal((await loadAgentSession('session-valid')).session.id, 'session-valid');
     assert.equal(await deleteAgentSession('session-corrupt'), true);
@@ -1380,13 +1692,16 @@ describe('durable Agent session store', () => {
       turnAttemptId: 'attempt-delete',
       transition: fullTransition(origin.session.id),
     });
+    const deletionCache = new AgentCanonicalSessionCache();
+    await loadCanonicalAgentSession(origin.session.id, deletionCache);
     const activeJob = organizeJob(origin.session.id, owner.session.id);
     await db.organizeJobs.put(activeJob);
 
     await assert.rejects(
-      () => deleteAgentSession(origin.session.id, { now: () => 100 }),
+      () => deleteAgentSession(origin.session.id, { now: () => 100, cache: deletionCache }),
       AgentSessionDeletionBlockedError,
     );
+    assert.ok(deletionCache.get(origin.session.id, 1));
     await assert.rejects(
       () => deleteAgentSession(owner.session.id, { now: () => 100 }),
       AgentSessionDeletionBlockedError,
@@ -1465,9 +1780,10 @@ describe('durable Agent session store', () => {
     const fullScan = vi.spyOn(db.organizeJobs, 'toArray')
       .mockRejectedValue(new Error('conversation deletion must use organize indexes'));
 
-    assert.equal(await deleteAgentSession(origin.session.id, { now: () => 100 }), true);
+    assert.equal(await deleteAgentSession(origin.session.id, { now: () => 100, cache: deletionCache }), true);
     assert.equal(await db.agentSessions.get(origin.session.id), undefined);
     assert.equal(await db.agentMessages.where('sessionId').equals(origin.session.id).count(), 0);
+    assert.equal(deletionCache.get(origin.session.id, 1), null);
     assert.deepEqual(await Promise.all([
       db.organizeJobs.get(terminalJob.jobId),
       db.organizeItems.where('jobId').equals(terminalJob.jobId).toArray(),
@@ -1662,10 +1978,11 @@ describe('durable Agent session store', () => {
   });
 });
 
-async function commitAgentSessionTransition(input: Omit<
-  AgentSessionTransitionCommitInput,
-  'launchDigest' | 'outcome'
-> & Partial<Pick<AgentSessionTransitionCommitInput, 'launchDigest' | 'outcome'>>) {
+async function commitAgentSessionTransition(
+  input: Omit<AgentSessionTransitionCommitInput, 'launchDigest' | 'outcome'>
+    & Partial<Pick<AgentSessionTransitionCommitInput, 'launchDigest' | 'outcome'>>,
+  cache?: AgentCanonicalSessionCache,
+) {
   const prompt = input.transition.messageDelta.find((message) => message.role === 'user')?.content;
   if (!prompt) throw new TypeError('Test transition requires a user prompt.');
   const launch = {
@@ -1692,7 +2009,7 @@ async function commitAgentSessionTransition(input: Omit<
     ...input,
     launchDigest,
     outcome: input.outcome ?? terminalOutcome,
-  });
+  }, cache);
 }
 
 function fullTransition(sessionId: string): BgsmAgentSessionTransition {

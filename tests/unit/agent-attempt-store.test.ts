@@ -55,6 +55,8 @@ describe('durable Agent attempt authority', () => {
     const stored = await attemptRow(launch.sessionId, launch.turnAttemptId);
     assert.deepEqual(stored?.admittedLaunch, launch);
     assert.equal(stored?.admittedLaunchDigest, launchDigest);
+    assert.equal(stored?.artifactContinuationControl, null);
+    assert.equal(await db.agentAttemptRecoveries.count(), 0);
   });
 
   it('settles a retry source as retried and an unclaimed source as superseded atomically', async () => {
