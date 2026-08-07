@@ -93,6 +93,18 @@ describe('Dexie tag schema upgrades', () => {
         assert.equal(await current.agentArtifactChunks.count(), 0);
         assert.equal(await current.agentStorageUsage.count(), 0);
         assert.equal(
+          current.organizeJobs.schema.indexes.some(
+            (index) => index.name === 'originAgentSessionId',
+          ),
+          true,
+        );
+        assert.equal(
+          current.organizeJobs.schema.indexes.some(
+            (index) => index.name === 'sessionId',
+          ),
+          true,
+        );
+        assert.equal(
           current.agentMessages.schema.indexes.some(
             (index) => index.name === '[sessionId+sequence]' && index.unique,
           ),

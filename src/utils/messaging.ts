@@ -20,7 +20,7 @@ import {
   assertAgentSessionTransportPayloadSize,
   parseAgentTurnErrorCode,
   validateAgentSessionLaunchIdentity,
-  validateAgentTurnArtifactIds,
+  validateAgentTurnOpaqueReferences,
   type AgentActiveTurnTransport,
   type AgentSessionLaunchDigest,
   type AgentSessionLaunchIdentity,
@@ -209,6 +209,13 @@ export type BgsmOrganizeJobControllerIdentity = Readonly<{
   controllerId: ControllerId;
   sessionId: string;
 }>;
+export const BGSM_ORGANIZE_CONTROL_ROLES = Object.freeze([
+  'owner',
+  'observer',
+  'owner_lost',
+] as const);
+export type BgsmOrganizeControlRole = typeof BGSM_ORGANIZE_CONTROL_ROLES[number];
+
 
 export type BgsmOrganizeJobPreflightIdentity = BgsmOrganizeJobControllerIdentity & Readonly<{
   requestId: string;
@@ -216,6 +223,7 @@ export type BgsmOrganizeJobPreflightIdentity = BgsmOrganizeJobControllerIdentity
 
 export type BgsmOrganizeJobPresentation = OrganizeJobRunIdentity & Readonly<{
   jobId: string;
+  originAgentSessionId: string;
   revision: number;
   status: OrganizeJobStatus;
   scopeLabel: string;
@@ -268,6 +276,12 @@ export type BgsmOrganizeJobClientMessage =
     }>)
   | (BgsmOrganizeJobControllerIdentity & Readonly<{ type: 'requestBgsmActiveOrganizeJob' }>)
   | (OrganizeJobRunIdentity & Readonly<{
+      type: 'takeControlBgsmOrganizeJob';
+      requestId: string;
+      jobId: string;
+      expectedRevision: number;
+    }>)
+  | (OrganizeJobRunIdentity & Readonly<{
       type: 'requestBgsmOrganizeReviewPage';
       requestId: string;
       jobId: string;
@@ -302,10 +316,10 @@ export type BgsmOrganizeJobClientMessage =
       jobId: string;
       expectedRevision: number;
     }>)
-  | (OrganizeJobRunIdentity & Readonly<{
-      type: 'dismissBgsmOrganizeReceipt';
+  | (BgsmOrganizeJobControllerIdentity & Readonly<{
+      type: 'dismissBgsmTerminalOrganizeJob';
       jobId: string;
-      applyId: string;
+      expectedRevision: number;
     }>)
   | (OrganizeJobRunIdentity & Readonly<{
       type: 'requestBgsmOrganizeReceiptPage';
@@ -375,8 +389,15 @@ export type BgsmOrganizeJobConnectionReady = BgsmOrganizeJobControllerIdentity &
   type: 'bgsmOrganizeJobRunConnectionReady';
 }>;
 
-export type BgsmOrganizeJobNoActive = BgsmOrganizeJobControllerIdentity & Readonly<{
-  type: 'bgsmOrganizeJobRunNoActive';
+export type BgsmOrganizeJobState = BgsmOrganizeJobControllerIdentity & Readonly<{
+  type: 'bgsmOrganizeJobState';
+  presentation: BgsmOrganizeJobPresentation | null;
+  role: BgsmOrganizeControlRole | null;
+}>;
+
+export type BgsmAgentSessionDeleted = BgsmOrganizeJobControllerIdentity & Readonly<{
+  type: 'bgsmAgentSessionDeleted';
+  deletedSessionId: string;
 }>;
 
 export type BgsmOrganizeJobAnalysisProgress = OrganizeJobRunIdentity & Readonly<{
@@ -387,7 +408,8 @@ export type BgsmOrganizeJobAnalysisProgress = OrganizeJobRunIdentity & Readonly<
 
 export type BgsmOrganizeJobServerMessage =
   | BgsmOrganizeJobConnectionReady
-  | BgsmOrganizeJobNoActive
+  | BgsmOrganizeJobState
+  | BgsmAgentSessionDeleted
   | BgsmOrganizeJobAnalysisProgress
   | BgsmOrganizeJobPreflightResult
   | Readonly<{ type: 'bgsmOrganizeJobRunEvent'; event: OrganizeJobRunEvent }>
@@ -395,10 +417,6 @@ export type BgsmOrganizeJobServerMessage =
   | BgsmOrganizeJobResult
   | BgsmOrganizeJobError
   | BgsmOrganizeJobDisconnected
-  | (OrganizeJobRunIdentity & Readonly<{
-      type: 'bgsmOrganizeJobState';
-      presentation: BgsmOrganizeJobPresentation;
-    }>)
   | (OrganizeJobRunIdentity & Readonly<{
       type: 'bgsmOrganizeReviewPage';
       requestId: string;
@@ -441,6 +459,16 @@ export type BgsmOrganizeJobDomainMessage = BgsmOrganizeJobClientMessage | BgsmOr
 export type BgsmOrganizeJobPortMessage = BgsmOrganizeJobDomainMessage;
 export type BgsmOrganizeJobTransportMessage = BgsmOrganizeJobClientMessage | BgsmOrganizeJobDeliveryEnvelope;
 
+export const BGSM_ORGANIZE_JOB_CONTROL_FAILURE_REASONS = Object.freeze([
+  'not_owner',
+  'owner_connected',
+  'revision_conflict',
+  'already_started',
+  'job_unavailable',
+] as const);
+export type BgsmOrganizeJobControlFailureReason =
+  typeof BGSM_ORGANIZE_JOB_CONTROL_FAILURE_REASONS[number];
+
 export const BGSM_ORGANIZE_JOB_ERROR_REASONS = Object.freeze([
   'invalid_message',
   'preflight_invalid',
@@ -453,7 +481,7 @@ export const BGSM_ORGANIZE_JOB_ERROR_REASONS = Object.freeze([
   'host_permission_denied',
   'credential_ineligible',
   'capability_not_ready',
-  'already_started',
+  ...BGSM_ORGANIZE_JOB_CONTROL_FAILURE_REASONS,
   'budget_exhausted',
   'interrupted',
   'internal_error',
@@ -517,8 +545,11 @@ export function validateBgsmOrganizeJobMessageIdentity(
   if ('event' in message) {
     validateOrganizeJobRunEvent(message.event);
   }
-  if ('jobId' in message && (typeof message.jobId !== 'string' || !message.jobId.trim())) {
-    throw new TypeError('Organize jobId must be nonempty.');
+  if (
+    'jobId' in message
+    && (typeof message.jobId !== 'string' || !message.jobId || message.jobId.trim() !== message.jobId)
+  ) {
+    throw new TypeError('Organize jobId must be trimmed and nonempty.');
   }
   if ('rowOffset' in message) assertNonnegativeCount(message.rowOffset, 'organize rowOffset');
   if ('processed' in message) {
@@ -542,8 +573,11 @@ export function validateBgsmOrganizeJobMessageIdentity(
   ) {
     throw new TypeError('Organize receipt filter is invalid.');
   }
-  if ('applyId' in message && (typeof message.applyId !== 'string' || !message.applyId.trim())) {
-    throw new TypeError('Organize applyId must be nonempty.');
+  if (
+    'applyId' in message
+    && (typeof message.applyId !== 'string' || !message.applyId || message.applyId.trim() !== message.applyId)
+  ) {
+    throw new TypeError('Organize applyId must be trimmed and nonempty.');
   }
   if ('selections' in message) {
     if (!Array.isArray(message.selections) || message.selections.length < 1 || message.selections.length > 100) {
@@ -560,7 +594,17 @@ export function validateBgsmOrganizeJobMessageIdentity(
       positions.add(entry.position as number);
     }
   }
-  if ('presentation' in message) validateOrganizePresentation(message.presentation, message);
+  if ('presentation' in message) validateOrganizeState(message);
+  if (
+    'deletedSessionId' in message
+    && (
+      typeof message.deletedSessionId !== 'string'
+      || !message.deletedSessionId
+      || message.deletedSessionId.trim() !== message.deletedSessionId
+    )
+  ) {
+    throw new TypeError('Deleted Agent sessionId must be trimmed and nonempty.');
+  }
   if (message.type === 'bgsmOrganizeReviewPage') validateOrganizeReviewPageMessage(message);
   if (message.type === 'bgsmOrganizeReceiptPage') validateOrganizeReceiptPageMessage(message);
   if (message.type === 'bgsmOrganizeJobRunPreflightResult') {
@@ -631,13 +675,24 @@ export function validateBgsmOrganizeJobDeliveryEnvelope(
     throw new TypeError('OrganizeJobRun connection handshake must be a live, non-durable delivery.');
   }
   if (
-    candidate.message.type === 'bgsmOrganizeJobRunNoActive'
-    && (
-      candidate.deliveryKind !== 'authoritative_snapshot'
-      || candidate.durableRevision !== null
-    )
+    candidate.message.type === 'bgsmAgentSessionDeleted'
+    && (candidate.deliveryKind !== 'live' || candidate.durableRevision !== null)
   ) {
-    throw new TypeError('OrganizeJobRun no-active state must be an authoritative, non-durable delivery.');
+    throw new TypeError('Agent session deletion invalidation must be a live, non-durable delivery.');
+  }
+  if (candidate.message.type === 'bgsmOrganizeJobState') {
+    if (
+      candidate.message.presentation === null
+      && (candidate.deliveryKind !== 'authoritative_snapshot' || candidate.durableRevision !== null)
+    ) {
+      throw new TypeError('OrganizeJobRun no-job state must be an authoritative, non-durable delivery.');
+    }
+    if (
+      candidate.message.presentation !== null
+      && candidate.durableRevision !== candidate.message.presentation.revision
+    ) {
+      throw new TypeError('OrganizeJobRun state delivery revision must match its presentation.');
+    }
   }
 }
 
@@ -648,10 +703,7 @@ function assertControllerSession(controllerId: unknown, sessionId: unknown): voi
   }
 }
 
-function validateOrganizePresentation(
-  value: BgsmOrganizeJobPresentation,
-  envelope: OrganizeJobRunIdentity,
-): void {
+function validateOrganizePresentation(value: BgsmOrganizeJobPresentation): void {
   assertExactKeys(value as unknown as Record<string, unknown>, [
     'controllerId',
     'sessionId',
@@ -659,6 +711,7 @@ function validateOrganizePresentation(
     'generation',
     'jobId',
     'revision',
+    'originAgentSessionId',
     'status',
     'scopeLabel',
     'scopeCount',
@@ -671,13 +724,17 @@ function validateOrganizePresentation(
   ]);
   validateOrganizeJobRunIdentity(value);
   if (
-    value.controllerId !== envelope.controllerId ||
-    value.sessionId !== envelope.sessionId ||
-    value.runId !== envelope.runId ||
-    value.generation !== envelope.generation
-  ) throw new TypeError('Organize presentation identity must match its envelope.');
-  if (!value.jobId.trim() || !isProposalId(value.proposalId)) {
+    !value.jobId
+    || value.jobId.trim() !== value.jobId
+    || !isProposalId(value.proposalId)
+  ) {
     throw new TypeError('Organize presentation authority is malformed.');
+  }
+  if (
+    !value.originAgentSessionId
+    || value.originAgentSessionId.trim() !== value.originAgentSessionId
+  ) {
+    throw new TypeError('Organize origin Agent sessionId must be trimmed and nonempty.');
   }
   assertNonnegativeCount(value.revision, 'organize revision');
   if (!ORGANIZE_JOB_STATUSES.includes(value.status)) {
@@ -710,6 +767,22 @@ function validateOrganizePresentation(
       value.apply.settled !== value.apply.changed + value.apply.unchanged + value.apply.skipped + value.apply.failed ||
       value.apply.settled > value.apply.total
     ) throw new TypeError('Organize Apply progress counts are inconsistent.');
+  }
+}
+
+function validateOrganizeState(message: BgsmOrganizeJobState): void {
+  const { presentation, role } = message;
+  if (role !== null && !BGSM_ORGANIZE_CONTROL_ROLES.includes(role)) {
+    throw new TypeError('Organize control role is invalid.');
+  }
+  if (presentation === null) {
+    if (role !== null) throw new TypeError('Organize no-job state cannot carry a control role.');
+    return;
+  }
+  validateOrganizePresentation(presentation);
+  const terminal = presentation.status === 'completed' || presentation.status === 'cancelled';
+  if ((terminal && role !== null) || (!terminal && role === null)) {
+    throw new TypeError('Organize presentation status and control role are inconsistent.');
   }
 }
 
@@ -887,6 +960,9 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
     case 'requestBgsmActiveOrganizeJob':
       expected = controller;
       break;
+    case 'takeControlBgsmOrganizeJob':
+      expected = [...run, 'requestId', 'jobId', 'expectedRevision'];
+      break;
     case 'requestBgsmOrganizeReviewPage':
       expected = [...run, 'requestId', 'jobId', 'rowOffset', 'limit'];
       break;
@@ -900,8 +976,8 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
     case 'resumeBgsmOrganizeApply':
       expected = [...run, 'requestId', 'jobId', 'expectedRevision'];
       break;
-    case 'dismissBgsmOrganizeReceipt':
-      expected = [...run, 'jobId', 'applyId'];
+    case 'dismissBgsmTerminalOrganizeJob':
+      expected = [...controller, 'jobId', 'expectedRevision'];
       break;
     case 'requestBgsmOrganizeReceiptPage':
       expected = [...run, 'requestId', 'jobId', 'applyId', 'rowOffset', 'limit', 'filter'];
@@ -913,8 +989,10 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
       expected = controller;
       break;
     case 'bgsmOrganizeJobRunConnectionReady':
-    case 'bgsmOrganizeJobRunNoActive':
       expected = controller;
+      break;
+    case 'bgsmAgentSessionDeleted':
+      expected = [...controller, 'deletedSessionId'];
       break;
     case 'bgsmOrganizeJobAnalysisProgress':
       expected = [...run, 'processed', 'total'];
@@ -943,7 +1021,7 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
       expected = run;
       break;
     case 'bgsmOrganizeJobState':
-      expected = [...run, 'presentation'];
+      expected = [...controller, 'presentation', 'role'];
       break;
     case 'bgsmOrganizeReviewPage':
       expected = [
@@ -1865,11 +1943,13 @@ function validateAgentSessionMessage(value: unknown, mode: 'live' | 'durable'): 
       ...baseKeys,
       'toolCallId',
       'toolName',
-      ...(value.artifactIds === undefined ? [] : ['artifactIds']),
+      ...(value.opaqueReferences === undefined ? [] : ['opaqueReferences']),
     ]);
     assertAgentText(value.toolCallId, 'message.toolCallId', 512, true);
     assertAgentText(value.toolName, 'message.toolName', 256, true);
-    if (value.artifactIds !== undefined) validateAgentTurnArtifactIds(value.artifactIds);
+    if (value.opaqueReferences !== undefined) {
+      validateAgentTurnOpaqueReferences(value.opaqueReferences);
+    }
     return;
   }
   throw new TypeError('Agent session message role is invalid.');

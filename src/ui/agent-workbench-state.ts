@@ -8,8 +8,10 @@ import { isMonotonicRunBudgetUsage } from '@/bgsm-agent/policy';
 import type { PreflightToken } from '@/bgsm-agent/scope';
 import type { RunId } from '@/bgsm-agent/identity';
 import type {
+  BgsmOrganizeControlRole,
   BgsmOrganizeJobPresentation,
   BgsmOrganizeJobPreflightResult,
+  BgsmOrganizeJobErrorReason,
   BgsmOrganizeJobServerMessage,
 } from '@/utils/messaging';
 
@@ -64,16 +66,23 @@ export type WorkbenchConversationAnchor = Readonly<{
 
 export type WorkbenchPendingCommand = Readonly<{
   id: string;
-  kind: 'stop_analysis' | 'pause_apply' | 'apply_selection' | 'resume_apply';
+  kind: 'stop_analysis' | 'pause_apply' | 'apply_selection' | 'resume_apply' | 'take_control';
   runId: RunId;
   generation: number;
   jobId: string | null;
   baselineRevision: number | null;
 }>;
 
+export type WorkbenchTakeControlFailure =
+  | 'owner_connected'
+  | 'revision_conflict'
+  | 'job_unavailable'
+  | 'other';
+
 export type AgentWorkbenchState = Readonly<{
   controllerId: string;
   sessionId: string;
+  role: BgsmOrganizeControlRole | null;
   preflight: WorkbenchPreflight | null;
   snapshot: OrganizeJobRunSnapshot | null;
   proposal: WorkbenchProposalSummary | null;
@@ -88,6 +97,9 @@ export type AgentWorkbenchState = Readonly<{
   usageOffset: WorkbenchUsageOffset;
   continuationPending: boolean;
   pendingCommand: WorkbenchPendingCommand | null;
+  takeControlFailure: WorkbenchTakeControlFailure | null;
+  organizeFailureReason: BgsmOrganizeJobErrorReason | null;
+  deletedSessionIds: ReadonlySet<string>;
   /** A failed-suffix retry rewinds repository progress, unlike a budget continuation. */
   retryingFailedSuffix: boolean;
   conversationAnchor: WorkbenchConversationAnchor | null;
@@ -171,6 +183,7 @@ export function createAgentWorkbenchState(
   return {
     controllerId,
     sessionId,
+    role: null,
     preflight: null,
     snapshot: null,
     proposal: null,
@@ -185,6 +198,9 @@ export function createAgentWorkbenchState(
     usageOffset: emptyUsageOffset(),
     continuationPending: false,
     pendingCommand: null,
+    takeControlFailure: null,
+    organizeFailureReason: null,
+    deletedSessionIds: new Set(),
     retryingFailedSuffix: false,
     conversationAnchor: null,
     analysisProgress: null,
@@ -200,12 +216,13 @@ export function reduceAgentWorkbench(
   action: AgentWorkbenchAction,
 ): AgentWorkbenchState {
   if (action.type === 'session_rebound') {
-    return createAgentWorkbenchState(action.controllerId, action.sessionId);
+    return { ...state, controllerId: action.controllerId, sessionId: action.sessionId };
   }
   if (action.type === 'whole_library_restart_requested') {
     return {
       ...createAgentWorkbenchState(state.controllerId, state.sessionId),
       transport: state.transport,
+      role: 'owner',
       conversationAnchor: action.conversationAnchor,
       preflight: {
         requestId: action.requestId,
@@ -222,6 +239,7 @@ export function reduceAgentWorkbench(
     return {
       ...reset,
       transport: state.transport,
+      role: 'owner',
       conversationAnchor: action.conversationAnchor,
       preflight: {
         requestId: action.requestId,
@@ -247,6 +265,7 @@ export function reduceAgentWorkbench(
       ...state,
       preflight: null,
       conversationAnchor: null,
+      role: state.organizeJob ? state.role : null,
       error: action.message,
     };
   }
@@ -255,6 +274,7 @@ export function reduceAgentWorkbench(
       ...state,
       preflight: null,
       conversationAnchor: null,
+      role: state.organizeJob ? state.role : null,
       timeline: [],
     };
   }
@@ -284,15 +304,19 @@ export function reduceAgentWorkbench(
     return {
       ...state,
       pendingCommand: action.command,
+      takeControlFailure: null,
+      organizeFailureReason: null,
       error: null,
     };
   }
   if (action.type === 'organize_command_send_failed') {
     if (state.pendingCommand?.id !== action.commandId) return state;
+    const takeControlFailed = state.pendingCommand.kind === 'take_control';
     return {
       ...state,
       pendingCommand: null,
-      error: CONNECTION_INTERRUPTED_COPY,
+      takeControlFailure: takeControlFailed ? 'other' : state.takeControlFailure,
+      error: takeControlFailed ? null : CONNECTION_INTERRUPTED_COPY,
     };
   }
   if (action.type === 'organize_review_page_requested') {
@@ -335,6 +359,8 @@ export function reduceAgentWorkbench(
       error: null,
       continuationPending: false,
       pendingCommand: null,
+      takeControlFailure: null,
+      organizeFailureReason: null,
       organizeReviewRequestId: null,
       organizeReceiptRequestId: null,
       timeline: appendTimeline(state.timeline, {
@@ -348,12 +374,19 @@ export function reduceAgentWorkbench(
   const message = action.message;
   if (!matchesController(state, message)) return state;
   if (message.type === 'bgsmOrganizeJobRunConnectionReady') return state;
-  if (message.type === 'bgsmOrganizeJobRunNoActive') {
-    if (action.authoritative !== true || state.transport !== 'disconnected') return state;
+  if (message.type === 'bgsmAgentSessionDeleted') {
+    if (state.deletedSessionIds.has(message.deletedSessionId)) return state;
+    const deletedSessionIds = new Set(state.deletedSessionIds);
+    deletedSessionIds.add(message.deletedSessionId);
+    return { ...state, deletedSessionIds };
+  }
+  if (message.type === 'bgsmOrganizeJobState' && message.presentation === null) {
     const reset = createAgentWorkbenchState(state.controllerId, state.sessionId);
     return {
       ...reset,
+      deletedSessionIds: state.deletedSessionIds,
       preflight: state.preflight,
+      role: state.preflight ? state.role : null,
       conversationAnchor: state.preflight ? state.conversationAnchor : null,
       transport: 'connected',
     };
@@ -397,6 +430,14 @@ export function reduceAgentWorkbench(
     if (!matchesActiveRun(state, message.runId, message.generation)) return state;
     const matchesPendingCommand = !!message.requestId
       && message.requestId === state.pendingCommand?.id;
+    const takeControlFailed = matchesPendingCommand && state.pendingCommand?.kind === 'take_control';
+    const takeControlFailure = takeControlFailed
+      ? message.reason === 'owner_connected'
+        || message.reason === 'revision_conflict'
+        || message.reason === 'job_unavailable'
+        ? message.reason
+        : 'other'
+      : state.takeControlFailure;
     if (message.requestId && message.runId !== null && !matchesPendingCommand) return state;
     if (
       message.reason === 'internal_error'
@@ -410,7 +451,11 @@ export function reduceAgentWorkbench(
       conversationAnchor: message.runId === null ? null : state.conversationAnchor,
       continuationPending: false,
       pendingCommand: matchesPendingCommand ? null : state.pendingCommand,
-      error: message.message,
+      takeControlFailure,
+      organizeFailureReason: takeControlFailed
+        ? state.organizeFailureReason
+        : message.reason,
+      error: takeControlFailed ? null : message.message,
     };
   }
   if (message.type === 'bgsmOrganizeJobRunDisconnected') {
@@ -470,6 +515,7 @@ export function reduceAgentWorkbench(
   }
   if (message.type === 'bgsmOrganizeJobState') {
     const presentation = message.presentation;
+    if (presentation === null) return state;
     const currentJob = state.organizeJob;
     const changedJob = currentJob?.jobId !== presentation.jobId;
     const sameJob = !!currentJob && !changedJob;
@@ -504,6 +550,9 @@ export function reduceAgentWorkbench(
       && state.analysisProgress.generation === presentation.generation;
     return {
       ...state,
+      role: message.role,
+      takeControlFailure: null,
+      organizeFailureReason: null,
       organizeJob: presentation,
       organizeReviewPage: changedJob || leftReview ? null : state.organizeReviewPage,
       organizeReceiptPage: changedJob || leftReceipt ? null : state.organizeReceiptPage,
@@ -749,6 +798,7 @@ function reconcilePendingCommandWithPresentation(
     command.baselineRevision !== null
     && presentation.revision <= command.baselineRevision
   ) return command;
+  if (command.kind === 'take_control') return null;
   if (command.kind === 'apply_selection') {
     return presentation.status === 'review' ? command : null;
   }

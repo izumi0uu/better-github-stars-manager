@@ -37,6 +37,32 @@ const storageListeners: Array<(changes: Record<string, chrome.storage.StorageCha
 const runtimeListeners: Array<(message: { type?: string }) => void> = [];
 const permissionAddedListeners: Array<(permissions: chrome.permissions.Permissions) => void> = [];
 const permissionRemovedListeners: Array<(permissions: chrome.permissions.Permissions) => void> = [];
+const MiB = 1_024 * 1_024;
+
+function agentStorageUsage(cacheBytes = 2 * MiB) {
+  return {
+    canonicalBytes: 1 * MiB,
+    cacheBytes,
+    totalBytes: 1 * MiB + cacheBytes,
+    warningBytes: 256 * MiB,
+    hardLimitBytes: 512 * MiB,
+    isWarning: false,
+    isAtHardLimit: false,
+    sessionCount: 1,
+    messageCount: 4,
+    artifactCount: cacheBytes > 0 ? 2 : 0,
+    canonicalArtifactCount: 0,
+    cacheArtifactCount: cacheBytes > 0 ? 2 : 0,
+    browser: {
+      usageBytes: 5 * MiB,
+      quotaBytes: 2 * 1_024 * MiB,
+    },
+  };
+}
+
+function agentStorageResponse(cacheBytes = 2 * MiB) {
+  return Promise.resolve({ ok: true, data: agentStorageUsage(cacheBytes) });
+}
 
 function config(overrides: Partial<Config> = {}): Config {
   const defaultAgentProvider = {
@@ -157,6 +183,18 @@ describe('Options preferences', () => {
       runtime: {
         sendMessage: vi.fn((message: unknown) => {
           const request = (message ?? {}) as { type?: string; model?: string };
+          if (request.type === 'getAgentStorageUsage') return agentStorageResponse();
+          if (request.type === 'clearAgentToolCache') {
+            return Promise.resolve({
+              ok: true,
+              data: {
+                deletedArtifacts: 2,
+                freedBytes: 2 * MiB,
+                protectedArtifacts: 0,
+                usage: agentStorageUsage(0),
+              },
+            });
+          }
           if (request.type === 'testAgentProviderConnection') {
             return Promise.resolve({
               ok: true,
@@ -246,6 +284,31 @@ describe('Options preferences', () => {
 
     expect(document.querySelector('a[href="https://github.com/idah?tab=stars"]')).toBeNull();
     expect(document.body.textContent).toContain('Cached account @idah');
+  });
+
+  it('loads Agent storage independently and clears only the tool cache', async () => {
+    authMocks.getConfig.mockResolvedValue(config());
+    authMocks.hasToken.mockResolvedValue(true);
+
+    await renderOptions();
+
+    const panel = document.querySelector('[data-testid="agent-storage-panel"]');
+    expect(panel?.textContent).toContain('Conversation data');
+    expect(panel?.textContent).toContain('1 MiB');
+    expect(panel?.textContent).toContain('Tool cache');
+    expect(panel?.textContent).toContain('2 MiB');
+    const clearCache = [...panel!.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Clear tool cache'));
+    expect(clearCache).toBeDefined();
+
+    await click(clearCache!);
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'clearAgentToolCache',
+    });
+    expect(panel?.textContent).toContain('0 B');
+    expect(panel?.textContent).toContain('Cleared 2 cached results and freed 2 MiB.');
+    expect(clearCache?.disabled).toBe(true);
   });
 
   it('normalizes and persists split auto-tag policy inputs independently', async () => {
@@ -370,6 +433,7 @@ describe('Options preferences', () => {
     authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
     vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: unknown) => {
       const request = (message ?? {}) as { type?: string };
+      if (request.type === 'getAgentStorageUsage') return agentStorageResponse();
       if (request.type === 'testAgentProviderConnection') {
         return Promise.resolve({
           ok: false,
@@ -881,6 +945,7 @@ describe('Options preferences', () => {
       .mockImplementation(() => Promise.resolve(false) as never);
     vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: unknown) => {
       const typedMessage = (message ?? {}) as { type?: string };
+      if (typedMessage.type === 'getAgentStorageUsage') return agentStorageResponse();
       if (typedMessage.type === 'testAgentProviderConnection') {
         return Promise.reject(new Error('AGENT_HOST_PERMISSION_DENIED'));
       }
@@ -906,6 +971,7 @@ describe('Options preferences', () => {
         type?: string;
         [key: string]: unknown;
       };
+      if (typedMessage.type === 'getAgentStorageUsage') return agentStorageResponse();
       if (typedMessage.type === 'testAgentProviderConnection') {
         return Promise.resolve({
           ok: true,

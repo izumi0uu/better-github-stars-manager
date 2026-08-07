@@ -80,7 +80,7 @@ export class StarsDB extends Dexie {
       stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
       tags: 'full_name, mtime',
       tagMeta: 'name, dimension, mtime',
-      organizeJobs: 'jobId, &activeSlot, status, updatedAt',
+      organizeJobs: 'jobId, &activeSlot, status, updatedAt, originAgentSessionId, sessionId',
       organizeItems: 'id, [jobId+position], [jobId+analysisState], jobId, position, analysisState, leaseExpiresAt',
       organizeTaxonomies: 'jobId',
       organizeApplies: 'applyId, jobId, status',

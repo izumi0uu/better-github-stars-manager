@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react';
+import { act, useState } from 'react';
 import type { ReactElement } from 'react';
 import { AgentPanel as PresentationalAgentPanel } from '@/ui/components/AgentPanel';
 import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
@@ -166,6 +166,7 @@ function AgentPanel({
   workbenchState,
   onClearTerminal,
   onStop,
+  onTakeControl,
   agentOverrides,
 }: {
   open: boolean;
@@ -179,6 +180,7 @@ function AgentPanel({
   workbenchState?: AgentWorkbenchState;
   onClearTerminal?: () => void;
   onStop?: () => void;
+  onTakeControl?: () => void;
   agentOverrides?: Partial<ReturnType<typeof useBgsmAgent>>;
 }) {
   const agent = useBgsmAgent(onDataChanged, {
@@ -208,6 +210,7 @@ function AgentPanel({
     setAllProposalRowsSelected: vi.fn(),
     applySelected: vi.fn(),
     clearTerminal: onClearTerminal ?? vi.fn(),
+    takeControl: onTakeControl ?? vi.fn(),
     restartWholeLibrary: vi.fn(),
     requestOrganizeReviewPage: vi.fn(),
     requestOrganizeReceiptPage: vi.fn(),
@@ -228,6 +231,79 @@ function AgentPanel({
   );
 }
 
+function ProjectionTransitionHarness() {
+  const [workbenchState, setWorkbenchState] = useState<AgentWorkbenchState>(() => (
+    durableWorkbenchState('review', { role: 'owner' })
+  ));
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="projection-observer"
+        onClick={() => setWorkbenchState((current) => ({ ...current, role: 'observer' }))}
+      />
+      <button
+        type="button"
+        data-testid="projection-owner-lost"
+        onClick={() => setWorkbenchState((current) => ({ ...current, role: 'owner_lost' }))}
+      />
+      <button
+        type="button"
+        data-testid="projection-conflict"
+        onClick={() => setWorkbenchState((current) => ({
+          ...current,
+          error: 'A second Organize run was rejected.',
+          organizeFailureReason: 'already_started',
+        }))}
+      />
+      <button
+        type="button"
+        data-testid="projection-session-deleted"
+        onClick={() => setWorkbenchState((current) => ({
+          ...current,
+          deletedSessionIds: new Set([...current.deletedSessionIds, 'session-lock-test']),
+        }))}
+      />
+      <button
+        type="button"
+        data-testid="projection-terminal"
+        onClick={() => setWorkbenchState(completedWorkbenchState())}
+      />
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        workbenchState={workbenchState}
+        agentOverrides={{
+          activeSessionId: 'session-lock-test',
+          sessionId: 'session-lock-test',
+          sessionReady: true,
+          sessionOperationPending: false,
+        }}
+      />
+    </>
+  );
+}
+
+function TakeoverFocusHarness() {
+  const [workbenchState, setWorkbenchState] = useState<AgentWorkbenchState>(() => (
+    durableWorkbenchState('review', { role: 'owner_lost' })
+  ));
+  return (
+    <AgentPanel
+      open
+      onClose={vi.fn()}
+      workbenchState={workbenchState}
+      onTakeControl={() => setWorkbenchState((current) => ({
+        ...current,
+        role: 'owner',
+        organizeJob: current.organizeJob
+          ? { ...current.organizeJob, revision: current.organizeJob.revision + 1 }
+          : null,
+      }))}
+    />
+  );
+}
+
 async function mountAgentPanel(element: ReactElement) {
   const container = mountReact(element, mountedRoots);
   await act(async () => {
@@ -235,6 +311,12 @@ async function mountAgentPanel(element: ReactElement) {
     await Promise.resolve();
   });
   return container;
+}
+function buttonWithText(container: HTMLElement, text: string): HTMLButtonElement {
+  const button = [...container.querySelectorAll<HTMLButtonElement>('button')]
+    .find((candidate) => candidate.textContent?.trim() === text);
+  if (!button) throw new Error(`Button not found: ${text}`);
+  return button;
 }
 
 afterEach(() => {
@@ -1999,7 +2081,7 @@ describe('AgentPanel', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('locks conversation transitions until the completed workbench receipt is dismissed', async () => {
+  it('keeps terminal chat and conversation controls available before Dismiss', async () => {
     const onClearTerminal = vi.fn();
     const container = await mountAgentPanel(
       <AgentPanel
@@ -2007,6 +2089,12 @@ describe('AgentPanel', () => {
         onClose={vi.fn()}
         workbenchState={completedWorkbenchState()}
         onClearTerminal={onClearTerminal}
+        agentOverrides={{
+          activeSessionId: 'session-lock-test',
+          sessionId: 'session-lock-test',
+          sessionReady: true,
+          sessionOperationPending: false,
+        }}
       />,
     );
 
@@ -2014,16 +2102,232 @@ describe('AgentPanel', () => {
       'button[aria-label="Start new conversation"]',
     );
     const sessionToggle = container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]');
-    expect(newConversation?.disabled).toBe(true);
-    expect(sessionToggle?.disabled).toBe(true);
-    await click(newConversation!);
-    expect(onClearTerminal).not.toHaveBeenCalled();
+    expect(newConversation?.disabled).toBe(false);
+    expect(sessionToggle?.disabled).toBe(false);
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
 
     const dismiss = [...container.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.trim() === 'Dismiss');
-    expect(dismiss).toBeDefined();
+    expect(dismiss?.disabled).toBe(false);
     await click(dismiss!);
     expect(onClearTerminal).toHaveBeenCalledOnce();
+  });
+
+  it('renders Dismiss for a cancelled terminal result without an Apply row', async () => {
+    const onClearTerminal = vi.fn();
+    const state = durableWorkbenchState('cancelled', { role: null });
+    const container = await mountAgentPanel(
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        workbenchState={state}
+        onClearTerminal={onClearTerminal}
+        agentOverrides={{
+          activeSessionId: 'session-lock-test',
+          sessionId: 'session-lock-test',
+          sessionReady: true,
+          sessionOperationPending: false,
+        }}
+      />,
+    );
+
+    expect(container.querySelector('[data-testid="organize-job-stop-card"]')).not.toBeNull();
+    const dismiss = buttonWithText(container, 'Discard');
+    expect(dismiss.disabled).toBe(false);
+    await click(dismiss);
+    expect(onClearTerminal).toHaveBeenCalledOnce();
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')?.disabled)
+      .toBe(false);
+  });
+
+  it('shows observer state as read-only while leaving chat and sessions available', async () => {
+    const state = durableWorkbenchState('review', { role: 'observer' });
+    const container = await mountAgentPanel(
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        workbenchState={state}
+        agentOverrides={{
+          activeSessionId: 'session-lock-test',
+          sessionId: 'session-lock-test',
+          sessionReady: true,
+          sessionOperationPending: false,
+        }}
+      />,
+    );
+
+    expect(container.querySelector('[data-testid="organize-job-control-notice"]')?.textContent)
+      .toContain('controlled from another Cubby page');
+    expect([...container.querySelectorAll('button')].some((button) => button.textContent?.includes('Take control')))
+      .toBe(false);
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')?.disabled)
+      .toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Start new conversation"]')?.disabled)
+      .toBe(false);
+  });
+
+  it('keeps observer review pagination readable while selection and Apply stay disabled', async () => {
+    const base = durableWorkbenchState('review', { role: 'observer' });
+    const proposalId = base.organizeJob!.proposalId;
+    const proposalRowId = `${proposalId}:row:0`;
+    const proposedActions = [{
+      kind: 'add_existing_tag' as const,
+      tag: 'TypeScript',
+      evidence: 'Repository topic',
+    }];
+    const state: AgentWorkbenchState = {
+      ...base,
+      proposal: {
+        proposalId,
+        actionableCount: 2,
+        nonActionableCount: 0,
+        review: {
+          version: 1,
+          proposalId,
+          runId: base.organizeJob!.runId,
+          generation: base.organizeJob!.generation,
+          rows: [{
+            proposalRowId,
+            frozenIndex: 0,
+            repositoryId: 'owner/repo-0',
+            proposedActions,
+            preselected: true,
+          }],
+        },
+      },
+      selectedProposalRowIds: new Set([proposalRowId]),
+      organizeReviewPage: {
+        type: 'bgsmOrganizeReviewPage',
+        controllerId: base.organizeJob!.controllerId,
+        sessionId: base.organizeJob!.sessionId,
+        runId: base.organizeJob!.runId,
+        generation: base.organizeJob!.generation,
+        requestId: 'review-page:observer',
+        jobId: base.organizeJob!.jobId,
+        revision: base.organizeJob!.revision,
+        proposalId,
+        totalRows: 2,
+        selectedRepositories: 1,
+        selectedActions: 1,
+        rowOffset: 0,
+        rows: [{
+          position: 0,
+          proposalRowId,
+          repositoryId: 'owner/repo-0',
+          proposedActions,
+          selected: true,
+        }],
+        nextRowOffset: 1,
+      },
+    };
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={state} />,
+    );
+
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Next page"]')?.disabled)
+      .toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Select owner/repo-0"]')?.disabled)
+      .toBe(true);
+    expect(buttonWithText(container, 'Apply 1 tag to 1 repository').disabled).toBe(true);
+  });
+
+  it('offers exactly one Take control action for owner-lost state', async () => {
+    const onTakeControl = vi.fn();
+    const state = durableWorkbenchState('review', { role: 'owner_lost' });
+    const container = await mountAgentPanel(
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        workbenchState={state}
+        onTakeControl={onTakeControl}
+        agentOverrides={{
+          activeSessionId: 'session-lock-test',
+          sessionId: 'session-lock-test',
+          sessionReady: true,
+          sessionOperationPending: false,
+        }}
+      />,
+    );
+
+    const takeControl = buttonWithText(container, 'Take control');
+    expect(takeControl.disabled).toBe(false);
+    expect(container.querySelectorAll('[data-testid="organize-job-control-notice"]')).toHaveLength(1);
+    await click(takeControl);
+    expect(onTakeControl).toHaveBeenCalledOnce();
+  });
+
+  it('announces takeover success and moves focus into the surviving workbench', async () => {
+    const container = await mountAgentPanel(<TakeoverFocusHarness />);
+    const takeControl = buttonWithText(container, 'Take control');
+    takeControl.focus();
+    await click(takeControl);
+
+    const workbench = container.querySelector<HTMLElement>('[data-testid="organize-job-workbench"]');
+    expect(document.activeElement).toBe(workbench);
+    expect(container.textContent).toContain('You now control this run.');
+    expect(container.querySelector('[data-testid="organize-job-control-notice"]')).toBeNull();
+  });
+
+  it('keeps Take control busy and renders typed failures inline', async () => {
+    const base = durableWorkbenchState('review', { role: 'owner_lost' });
+    const pending: AgentWorkbenchState = {
+      ...base,
+      pendingCommand: {
+        id: 'take-control:pending',
+        kind: 'take_control',
+        runId: base.organizeJob!.runId,
+        generation: base.organizeJob!.generation,
+        jobId: base.organizeJob!.jobId,
+        baselineRevision: base.organizeJob!.revision,
+      },
+    };
+    const pendingContainer = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={pending} />,
+    );
+    const busy = buttonWithText(pendingContainer, 'Taking control…');
+    expect(busy.disabled).toBe(true);
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+
+    const failed: AgentWorkbenchState = {
+      ...base,
+      takeControlFailure: 'revision_conflict',
+    };
+    const failedContainer = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={failed} />,
+    );
+    expect(failedContainer.querySelector('[data-testid="organize-job-take-control-error"]')?.textContent)
+      .toContain('changed while taking control');
+  });
+
+  it('preserves unsent input across role, conflict, deletion, and terminal projections', async () => {
+    const container = await mountAgentPanel(<ProjectionTransitionHarness />);
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    await setTextareaValue(textarea, 'Keep this unsent draft');
+
+    for (const testId of [
+      'projection-observer',
+      'projection-owner-lost',
+      'projection-conflict',
+      'projection-session-deleted',
+      'projection-terminal',
+    ]) {
+      await click(container.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)!);
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Keep this unsent draft');
+    }
+  });
+
+  it('marks terminal provenance when the origin conversation was deleted', async () => {
+    const state = completedWorkbenchState();
+    const deleted: AgentWorkbenchState = {
+      ...state,
+      deletedSessionIds: new Set([state.organizeJob!.originAgentSessionId]),
+    };
+    const container = await mountAgentPanel(
+      <AgentPanel open onClose={vi.fn()} workbenchState={deleted} />,
+    );
+    expect(container.textContent).toContain('Started from a conversation that has been deleted.');
   });
 
   it('offers a working Pause action while tag changes are applying', async () => {
@@ -2054,6 +2358,7 @@ describe('AgentPanel', () => {
   it('presents a temporary transport loss only as reconnecting', async () => {
     const state: AgentWorkbenchState = {
       ...createAgentWorkbenchState('controller:v1:reconnecting-test', 'session-reconnecting-test'),
+      role: 'owner',
       snapshot: workbenchSnapshot('analyzing'),
       transport: 'disconnected',
       conversationAnchor: { messageId: null, createdAt: 1 },
@@ -2074,6 +2379,7 @@ describe('AgentPanel', () => {
     const onClearTerminal = vi.fn();
     const state: AgentWorkbenchState = {
       ...createAgentWorkbenchState('controller:v1:interrupted-test', 'session-interrupted-test'),
+      role: 'owner',
       snapshot: workbenchSnapshot('interrupted'),
       error: WORKER_LOST_COPY,
       conversationAnchor: { messageId: null, createdAt: 1 },
@@ -3478,6 +3784,7 @@ function completedWorkbenchState(): AgentWorkbenchState {
     runId: parseRunId('run:v1:session-lock-test'),
     generation: 1,
     jobId: 'organize-job:v1:session-lock-test',
+    originAgentSessionId: sessionId,
     revision: 1,
     status: 'completed',
     scopeLabel: 'All stars',
@@ -3521,6 +3828,7 @@ function durableWorkbenchState(
   return {
     ...base,
     ...stateOverrides,
+    role: stateOverrides.role ?? (status === 'completed' || status === 'cancelled' ? null : 'owner'),
     organizeJob: {
       ...base.organizeJob!,
       status,

@@ -16,6 +16,7 @@ export const DEV_TRACE_SCENARIO_IDS = [
   'organize-cross-batch-recovery',
   'organize-cancel-during-apply',
   'organize-port-reconnect',
+  'cubby-artifact-continuation-coverage',
 ] as const;
 
 export type DevTraceScenarioId = typeof DEV_TRACE_SCENARIO_IDS[number];

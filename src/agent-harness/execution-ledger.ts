@@ -7,6 +7,8 @@ export type ExecutionLedgerState =
   | 'failed'
   | 'unknown';
 
+export type AgentWriteSettlement = 'none' | 'all_failed' | 'unsafe';
+
 /** A stable, exact identity for one logical side effect. */
 export type CanonicalToolEffect = readonly [string, ...string[]];
 
@@ -164,6 +166,13 @@ export class AgentExecutionLedger {
 
   stateForCall(callId: string): ExecutionLedgerState | undefined {
     return this.calls.get(callId)?.state;
+  }
+
+  writeSettlement(): AgentWriteSettlement {
+    if (this.calls.size === 0) return 'none';
+    return [...this.calls.values()].every((receipt) => receipt.state === 'failed')
+      ? 'all_failed'
+      : 'unsafe';
   }
 
   private requireCall(callId: string): CallReceipt {

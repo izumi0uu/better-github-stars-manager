@@ -17,6 +17,7 @@ import type { BgsmAgentSessionTransition } from './session';
 export const AGENT_SESSION_TURN_TRANSPORT_MAX_BYTES = 8 * 1024 * 1024;
 export const BGSM_AGENT_PROMPT_MAX_BYTES = 512 * 1024;
 export const AGENT_TURN_IDENTIFIER_MAX_BYTES = 512;
+export const AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE = 'agent_artifact_coverage_stalled' as const;
 
 const UTF8_ENCODER = new TextEncoder();
 
@@ -36,6 +37,7 @@ export const AGENT_TURN_ERROR_CODES = Object.freeze([
   'agent_artifact_conflict',
   'agent_artifact_state_conflict',
   'agent_artifact_access_denied',
+  AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE,
   'agent_turn_resume_epoch_changed',
 ] as const);
 
@@ -122,18 +124,16 @@ export function validateAgentSessionLaunchIdentity(
   assertAgentSessionTransportPayloadSize(value, 'Agent session launch');
 }
 
-export function validateAgentTurnArtifactIds(value: unknown): asserts value is string[] {
+export function validateAgentTurnOpaqueReferences(value: unknown): asserts value is string[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > 8) {
-    throw new TypeError('Agent artifact references must contain between 1 and 8 IDs.');
+    throw new TypeError('Agent opaque references must contain between 1 and 8 values.');
   }
   const seen = new Set<string>();
-  for (const artifactId of value) {
-    assertAgentTurnTransportIdentifier(artifactId, 'Agent artifact ID');
-    if (seen.has(artifactId)) throw new TypeError('Agent artifact references must be unique.');
-    seen.add(artifactId);
+  for (const reference of value) {
+    assertAgentTurnTransportIdentifier(reference, 'Agent opaque reference');
+    if (seen.has(reference)) throw new TypeError('Agent opaque references must be unique.');
+    seen.add(reference);
   }
-
-
 }
 export type AgentActiveTurnTransport = Readonly<{
   executionEpochId: string;

@@ -19,6 +19,11 @@ const identity = {
   sessionId: 'organize-connection-session',
 } as const;
 
+const observerIdentity = {
+  controllerId: parseControllerId('controller:v1:organize-observer'),
+  sessionId: 'organize-observer-session',
+} as const;
+
 describe('OrganizeJobRun connection registry', () => {
   it('rejects leading, trailing, and whitespace-only controller or session IDs', () => {
     const registry = createBgsmOrganizeJobConnectionRegistry<FakePort>();
@@ -39,6 +44,21 @@ describe('OrganizeJobRun connection registry', () => {
       );
       assert.equal(registry.forPort(port), null);
     }
+  });
+
+  it('rejects client command fields from the durable page identity', () => {
+    const registry = createBgsmOrganizeJobConnectionRegistry<FakePort>();
+    const port = new FakePort();
+    assert.throws(
+      () => registry.bind(port, {
+        ...identity,
+        type: 'requestBgsmOrganizeJobPreflight',
+        requestId: 'polluted-page-identity',
+        taskInstruction: 'Must not become delivery envelope state.',
+      } as typeof identity),
+      /must contain only controllerId and sessionId/u,
+    );
+    assert.equal(registry.forPort(port), null);
   });
 
   it('binds one immutable identity and emits one monotonic delivery namespace', () => {
@@ -112,10 +132,70 @@ describe('OrganizeJobRun connection registry', () => {
     assert.equal(registry.release(second), true);
   });
 
+  it('enumerates live subscribers and fans out page-addressed invalidations deterministically', () => {
+    let id = 0;
+    const registry = createBgsmOrganizeJobConnectionRegistry<FakePort>({
+      randomId: () => `subscriber-${++id}`,
+    });
+    const ownerPort = new FakePort();
+    const observerPort = new FakePort();
+    const ownerConnection = registry.bind(ownerPort, identity).connection;
+    registry.bind(observerPort, observerIdentity);
+
+    assert.equal(registry.hasLivePort(identity), true);
+    assert.equal(registry.hasLivePort({ ...identity, sessionId: 'other-session' }), false);
+    assert.deepEqual(
+      registry.subscribers().map((connection) => connection.identity),
+      [identity, observerIdentity],
+    );
+
+    const delivered = registry.fanOut((connection) => ({
+      type: 'bgsmAgentSessionDeleted',
+      ...connection.identity,
+      deletedSessionId: 'deleted-session',
+    }));
+
+    assert.equal(delivered.length, 2);
+    assert.deepEqual(ownerPort.posted[0]?.message, {
+      type: 'bgsmAgentSessionDeleted',
+      ...identity,
+      deletedSessionId: 'deleted-session',
+    });
+    assert.deepEqual(observerPort.posted[0]?.message, {
+      type: 'bgsmAgentSessionDeleted',
+      ...observerIdentity,
+      deletedSessionId: 'deleted-session',
+    });
+
+    assert.equal(registry.markDisconnected(ownerPort), ownerConnection);
+    assert.equal(registry.hasLivePort(identity), false);
+    assert.deepEqual(registry.subscribers().map((connection) => connection.identity), [observerIdentity]);
+    assert.equal(registry.release(ownerConnection), true);
+    assert.equal(registry.release(ownerConnection), false);
+  });
+
+  it('validates a complete fan-out before sending to any subscriber', () => {
+    const registry = createBgsmOrganizeJobConnectionRegistry<FakePort>();
+    const ownerPort = new FakePort();
+    const observerPort = new FakePort();
+    registry.bind(ownerPort, identity);
+    registry.bind(observerPort, observerIdentity);
+
+    assert.throws(() => registry.fanOut((connection) => ({
+      type: 'bgsmAgentSessionDeleted',
+      ...connection.identity,
+      deletedSessionId: connection.identity.controllerId === identity.controllerId
+        ? 'deleted-session'
+        : ' invalid ',
+    })), /trimmed and nonempty/u);
+    assert.equal(ownerPort.posted.length, 0);
+    assert.equal(observerPort.posted.length, 0);
+  });
+
   it('does not consume a delivery sequence when postMessage fails', () => {
     const registry = createBgsmOrganizeJobConnectionRegistry<FakePort>({ randomId: () => 'failed-post' });
     const port = new FakePort();
-    registry.bind(port, identity);
+    const connection = registry.bind(port, identity).connection;
     port.fail = true;
     assert.equal(registry.post(port, {
       type: 'bgsmOrganizeJobRunDisconnected',
@@ -125,5 +205,8 @@ describe('OrganizeJobRun connection registry', () => {
     }), null);
     assert.equal(port.posted.length, 0);
     assert.equal(registry.current(identity), null);
+    assert.deepEqual(registry.subscribers(), []);
+    assert.equal(registry.release(connection), true);
+    assert.equal(registry.forPort(port), null);
   });
 });

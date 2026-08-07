@@ -1,21 +1,26 @@
+import type { AgentArtifactContinuationCheckpoint } from '@/bgsm-agent/artifact-coverage';
 import type { BgsmAgentSessionTransition } from '@/bgsm-agent/session';
 import {
   digestAgentSessionLaunch,
-  type AgentActiveTurnTransport,
   type AgentSessionLaunchDigest,
 } from '@/bgsm-agent/session-transport';
 import type { BgsmAgentTurnLaunch } from '@/utils/messaging';
 import {
   admitAgentSessionTurn,
   commitLeasedAgentSessionTurn,
+  checkpointAgentSessionArtifactEnvelope,
   dismissAgentSessionAttemptRetry,
   discardDamagedAgentSessionRecovery,
   inspectDurableAgentSessionTurn,
   markAgentSessionAttemptStateUncertain,
+  markAgentSessionArtifactRepromptUsed,
   releaseAgentSessionTurnLease,
   settleAgentSessionAttemptWithoutTransition,
   type AgentSessionCommitResult,
   type AgentSessionTerminalOutcome,
+  type AgentArtifactCoverageCheckpointProposal,
+  type AgentArtifactEnvelopeCheckpointResult,
+  type AgentDurableTurnInspection,
 } from '@/storage/agent-session-store';
 import type { AgentAttemptRecoveryClass } from '@/storage/agent-attempt-model';
 
@@ -33,13 +38,27 @@ export type AgentAttemptCoordinator = Readonly<{
     launchDigest: AgentSessionLaunchDigest;
     outcome: AgentSessionTerminalOutcome;
   }>) => Promise<AgentSessionCommitResult>;
+  checkpointArtifactEnvelope: (input: Readonly<{
+    sessionId: string;
+    turnAttemptId: string;
+    launchDigest: AgentSessionLaunchDigest;
+    proposals: readonly AgentArtifactCoverageCheckpointProposal[];
+    continuation: AgentArtifactContinuationCheckpoint | null;
+  }>) => Promise<AgentArtifactEnvelopeCheckpointResult>;
+  markArtifactRepromptUsed: (input: Readonly<{
+    sessionId: string;
+    turnAttemptId: string;
+    launchDigest: AgentSessionLaunchDigest;
+    continuation: AgentArtifactContinuationCheckpoint;
+  }>) => Promise<AgentArtifactContinuationCheckpoint>;
   settleWithoutTransition: (input: Readonly<{
     turnAttemptId: string;
     sessionId: string;
     launchDigest: AgentSessionLaunchDigest;
     outcome: AgentSessionTerminalOutcome;
+    coverageFailureCode?: string;
   }>) => Promise<void>;
-  inspectActive: (sessionId: string) => Promise<AgentActiveTurnTransport | null>;
+  inspectActive: (sessionId: string) => Promise<AgentDurableTurnInspection | null>;
   markStateUncertain: (input: Readonly<{
     sessionId: string;
     turnAttemptId: string;
@@ -82,6 +101,12 @@ export function createAgentAttemptCoordinator(
     },
     settleWithoutTransition(input) {
       return settleAgentSessionAttemptWithoutTransition({ ...input, executionEpochId });
+    },
+    checkpointArtifactEnvelope(input) {
+      return checkpointAgentSessionArtifactEnvelope({ ...input, executionEpochId });
+    },
+    markArtifactRepromptUsed(input) {
+      return markAgentSessionArtifactRepromptUsed({ ...input, executionEpochId });
     },
     inspectActive(sessionId) {
       return inspectDurableAgentSessionTurn(sessionId, executionEpochId);

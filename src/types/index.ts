@@ -156,10 +156,13 @@ export interface OrganizeAnalysisRange {
 /** Durable header for a resumable whole-library tag organization job. */
 export interface OrganizeJobRecord {
   jobId: string;
-  /** Present only while active; v1 enforces one job per slot with a unique index. */
+  /** Present only while active; v4 enforces one job per slot with a unique index. */
   activeSlot?: string;
+  /** Current durable control binding; changed only by explicit revision-checked takeover. */
   controllerId: string;
   sessionId: string;
+  /** Immutable Agent session that created this durable workflow; the session may be deleted. */
+  readonly originAgentSessionId: string;
   runId: string;
   generation: number;
   proposalId: string;

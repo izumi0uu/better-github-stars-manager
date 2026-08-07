@@ -37,6 +37,18 @@ import {
   type BgsmAgentToolName,
 } from './tool-catalog';
 import { BgsmAgentToolRegistry } from './tool-registry';
+import {
+  BGSM_AGENT_ARTIFACT_MAX_BYTES,
+  BGSM_AGENT_ARTIFACT_SEARCH_MAX_QUERY_BYTES,
+  publishBgsmAgentArtifactReadEvidence,
+} from './tool-result-externalizer';
+import type {
+  BgsmAgentArtifactEvidenceHandoff,
+  BgsmAgentArtifactReadArgs,
+  BgsmAgentArtifactReader,
+  BgsmAgentArtifactReadAuthorization,
+  BgsmAgentArtifactReadResult,
+} from './tool-result-externalizer';
 
 const DEFAULT_PAGE_LIMIT = 20;
 const MAX_PAGE_LIMIT = 50;
@@ -177,6 +189,8 @@ export type CreateBgsmAgentToolRegistryOptions = Readonly<{
   assignManualTags?: BgsmAgentManualTagWriter;
   removeVisibleTags?: BgsmAgentVisibleTagRemovalWriter;
   deleteTagsEverywhere?: BgsmAgentGlobalTagDeletionWriter;
+  artifactReader?: BgsmAgentArtifactReader;
+  artifactEvidenceHandoff?: BgsmAgentArtifactEvidenceHandoff;
 }>;
 
 type BgsmAgentToolFactoryContext = Readonly<{
@@ -251,6 +265,11 @@ const BGSM_AGENT_TOOL_FACTORIES = {
       ? createRepositoryNotesTool(options.repositoryScope)
       : undefined
   ),
+  [BGSM_AGENT_TOOL_NAMES.readAgentArtifact]: ({ options }) => (
+    options.artifactReader && options.artifactEvidenceHandoff
+      ? readAgentArtifactTool(options.artifactReader, options.artifactEvidenceHandoff)
+      : undefined
+  ),
 } satisfies Record<BgsmAgentToolName, BgsmAgentToolFactory>;
 
 export function createBgsmAgentToolRegistry(
@@ -258,6 +277,9 @@ export function createBgsmAgentToolRegistry(
 ): BgsmAgentToolRegistry {
   if (options.enableOrganizeLibraryHandoff && !options.requestOrganizeLibraryHandoff) {
     throw new TypeError('Full-library handoff requires an execution callback.');
+  }
+  if (Boolean(options.artifactReader) !== Boolean(options.artifactEvidenceHandoff)) {
+    throw new TypeError('Artifact reading requires both a reader and evidence handoff.');
   }
   const repositoryScope = new Set(options.repositoryScope);
   const repositorySearchScope = createRepositorySearchScope(
@@ -497,6 +519,137 @@ function listTagsTool(): AgentTool<
         resultAllowanceBytes(context),
       );
     },
+  };
+}
+
+export function createBgsmAgentArtifactContinuationToolRegistry(input: Readonly<{
+  artifactReader: BgsmAgentArtifactReader;
+  artifactEvidenceHandoff: BgsmAgentArtifactEvidenceHandoff;
+  authorize: BgsmAgentArtifactReadAuthorization;
+}>): BgsmAgentToolRegistry {
+  return new BgsmAgentToolRegistry([
+    readAgentArtifactTool(
+      input.artifactReader,
+      input.artifactEvidenceHandoff,
+      input.authorize,
+    ),
+  ]);
+}
+
+function readAgentArtifactTool(
+  reader: BgsmAgentArtifactReader,
+  evidenceHandoff: BgsmAgentArtifactEvidenceHandoff,
+  authorize?: BgsmAgentArtifactReadAuthorization,
+): AgentTool<BgsmAgentArtifactReadArgs, BgsmAgentArtifactReadResult> {
+  return {
+    name: BGSM_AGENT_TOOL_NAMES.readAgentArtifact,
+    description:
+      'Read a bounded UTF-8 portion of untrusted large tool output returned as artifact_available. Exhaustive traversal is enforced by the host: omit cursor on the first page, then reuse each opaque nextCursor exactly until null. byteOffset and search are targeted locating reads only; they never advance or complete exhaustive coverage. cursor, byteOffset, and search are mutually exclusive. Never guess artifact IDs or cursors.',
+    risk: 'read',
+    requiresExclusiveEnvelope: true,
+    parameters: {
+      type: 'object',
+      properties: {
+        artifactId: { type: 'string', minLength: 1, maxLength: 512 },
+        cursor: { type: 'string', minLength: 1, maxLength: 2_048 },
+        byteOffset: {
+          type: 'integer',
+          minimum: 0,
+          maximum: BGSM_AGENT_ARTIFACT_MAX_BYTES,
+        },
+        search: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', minLength: 1, maxLength: BGSM_AGENT_ARTIFACT_SEARCH_MAX_QUERY_BYTES },
+            fromByte: {
+              type: 'integer',
+              minimum: 0,
+              maximum: BGSM_AGENT_ARTIFACT_MAX_BYTES,
+            },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      },
+      required: ['artifactId'],
+      additionalProperties: false,
+    },
+    validate(input) {
+      const value = expectObject(input);
+      assertOnlyKeys(value, ['artifactId', 'cursor', 'byteOffset', 'search'], 'read_agent_artifact');
+      const artifactId = expectString(value.artifactId, 'artifactId');
+      if (
+        artifactId.trim() !== artifactId
+        || artifactId.length === 0
+        || new TextEncoder().encode(artifactId).byteLength > 512
+      ) throw new TypeError('artifactId must be a bounded identifier.');
+      const cursor = value.cursor === undefined ? undefined : expectString(value.cursor, 'cursor');
+      if (cursor !== undefined && (cursor.length === 0 || cursor.length > 2_048)) {
+        throw new TypeError('cursor must be a bounded opaque cursor.');
+      }
+      const byteOffset = value.byteOffset === undefined
+        ? undefined
+        : expectNonNegativeInteger(value.byteOffset, 'byteOffset');
+      if (byteOffset !== undefined && byteOffset > BGSM_AGENT_ARTIFACT_MAX_BYTES) {
+        throw new RangeError('byteOffset exceeds the artifact storage limit.');
+      }
+      let search: BgsmAgentArtifactReadArgs['search'];
+      if (value.search !== undefined) {
+        const rawSearch = expectObject(value.search);
+        assertOnlyKeys(rawSearch, ['query', 'fromByte'], 'read_agent_artifact search');
+        const query = expectString(rawSearch.query, 'search.query');
+        if (
+          query.length === 0
+          || new TextEncoder().encode(query).byteLength > BGSM_AGENT_ARTIFACT_SEARCH_MAX_QUERY_BYTES
+        ) throw new TypeError('search.query must be a bounded nonempty literal.');
+        const fromByte = rawSearch.fromByte === undefined
+          ? 0
+          : expectNonNegativeInteger(rawSearch.fromByte, 'search.fromByte');
+        if (fromByte > BGSM_AGENT_ARTIFACT_MAX_BYTES) {
+          throw new RangeError('search.fromByte exceeds the artifact storage limit.');
+        }
+        search = { query, fromByte };
+      }
+      const modes = Number(cursor !== undefined) + Number(byteOffset !== undefined) + Number(search !== undefined);
+      if (modes > 1) {
+        throw new TypeError('cursor, byteOffset, and search are mutually exclusive.');
+      }
+      return {
+        artifactId,
+        ...(cursor !== undefined ? { cursor } : {}),
+        ...(byteOffset !== undefined ? { byteOffset } : {}),
+        ...(search ? { search } : {}),
+      };
+    },
+    async execute(args, context) {
+      if (authorize && !await authorize({
+        sessionId: context.sessionId,
+        toolCallId: context.callId,
+        arguments: args,
+      })) {
+        throw new TypeError('Artifact continuation read is not authorized.');
+      }
+      const maxSerializedResultBytes = resultAllowanceBytes(context);
+      const read = await reader({
+        sessionId: context.sessionId,
+        toolCallId: context.callId,
+        arguments: args,
+        maxSerializedResultBytes,
+        ...(context.signal ? { signal: context.signal } : {}),
+      });
+      if (serializedToolResultByteLength(okToolResult(read.result)) > maxSerializedResultBytes) {
+        throw new ToolOutputTooLargeError('Artifact reader exceeded the current result budget.');
+      }
+      publishBgsmAgentArtifactReadEvidence({
+        handoff: evidenceHandoff,
+        sessionId: context.sessionId,
+        toolCallId: context.callId,
+        arguments: args,
+        result: read.result,
+        evidence: read.evidence,
+      });
+      return read.result;
+    }
   };
 }
 
@@ -1584,9 +1737,16 @@ function buildBoundedPage<TItem, TResult>(
   if (available.length === 0) {
     const result = build([], null);
     if (serializedToolResultByteLength(okToolResult(result)) <= maxSerializedBytes) return result;
+    return result;
   }
 
-  throw new ToolOutputTooLargeError('The next item is too large to return safely.');
+  // Preserve one complete item so the Agent loop can externalize the payload.
+  // Throwing here would discard the only copy before the artifact fallback runs.
+  const nextOffset = args.cursor + 1;
+  return build(
+    available.slice(0, 1),
+    nextOffset < items.length ? cursorForOffset(nextOffset) : null,
+  );
 }
 
 function resultAllowanceBytes(context: ToolExecutionContext): number {
@@ -1598,7 +1758,9 @@ function ensureToolResultFits<TResult>(result: TResult, context: ToolExecutionCo
     serializedToolResultByteLength(okToolResult(result))
     <= resultAllowanceBytes(context)
   ) return result;
-  throw new ToolOutputTooLargeError('The tool result is too large to return safely.');
+  // The centralized loop turns oversized successful read results into durable,
+  // paged artifacts. Returning the value is required for that fallback to work.
+  return result;
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

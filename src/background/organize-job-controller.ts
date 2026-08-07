@@ -147,6 +147,8 @@ export interface BgsmAgentController {
     taskInstruction?: string,
   ): OrganizeJobRunSnapshot;
   getSnapshot(identity: OrganizeRunIdentity): OrganizeJobRunSnapshot;
+  /** Maps a durably-authorized command to its existing ephemeral execution record. */
+  findSnapshotByRun(runId: RunId, generation: number): OrganizeJobRunSnapshot | null;
   registerDurableProposal(
     identity: OrganizeRunIdentity,
     proposal: OrganizeProposal,
@@ -579,6 +581,11 @@ export function createBgsmAgentController(
 
     getSnapshot(identity) {
       return snapshot(requireRun(identity));
+    },
+
+    findSnapshotByRun(runId, generation) {
+      const record = runs.get(runId);
+      return record?.identity.generation === generation ? snapshot(record) : null;
     },
 
     registerDurableProposal(identity, proposal, continuationCursor) {

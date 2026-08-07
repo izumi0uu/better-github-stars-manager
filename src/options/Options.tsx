@@ -63,7 +63,15 @@ import type {
   AgentProviderConfig,
   AgentProviderId,
 } from "@/types";
+import type {
+  AgentStorageCleanupResult,
+  AgentStorageUsageSnapshot,
+} from "@/storage/agent-storage-store";
 import { AgentDataDisclosurePanel } from "./AgentDataDisclosurePanel";
+import {
+  AgentStoragePanel,
+  formatStorageBytes,
+} from "./AgentStoragePanel";
 
 const tutorialNewToken = "/tutorial/img_01.png";
 const tutorialRepoAccess = "/tutorial/img_02.png";
@@ -80,7 +88,6 @@ type AgentConnectionResult = {
   latencyMs: number;
   preview: string;
 };
-
 function StatusNotice({
   message,
   className,
@@ -137,11 +144,33 @@ export function Options() {
   const [tokenBusy, setTokenBusy] = useState(false);
   const [agentSaveBusy, setAgentSaveBusy] = useState(false);
   const [agentTestBusy, setAgentTestBusy] = useState(false);
+  const [agentStorageUsage, setAgentStorageUsage] =
+    useState<AgentStorageUsageSnapshot | null>(null);
+  const [agentStorageLoading, setAgentStorageLoading] = useState(true);
+  const [agentStorageClearBusy, setAgentStorageClearBusy] = useState(false);
+  const [agentStorageError, setAgentStorageError] = useState<string | null>(null);
+  const [agentStorageNotice, setAgentStorageNotice] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [msg, setMsg] = useState<OptionsMessage | null>(null);
   const [agentMsg, setAgentMsg] = useState<OptionsMessage | null>(null);
   const { locale, setLocale, m } = useI18n();
   const tokenInput = useImeBufferedInput("");
+
+  const loadAgentStorageUsage = async () => {
+    setAgentStorageLoading(true);
+    setAgentStorageError(null);
+    try {
+      const usage = await bgCall<AgentStorageUsageSnapshot>("getAgentStorageUsage");
+      setAgentStorageUsage(usage);
+    } catch (error) {
+      const message = error instanceof BackgroundCallError
+        ? error.message
+        : translateError(error, m);
+      setAgentStorageError(m.options.agentStorageUnavailable(message));
+    } finally {
+      setAgentStorageLoading(false);
+    }
+  };
 
   const refresh = async () => {
     const [c, hasToken, status] = await Promise.all([
@@ -189,6 +218,10 @@ export function Options() {
     });
     return off;
   }, [hasUsableToken]);
+
+  useEffect(() => {
+    void loadAgentStorageUsage();
+  }, []);
 
   const saveToken = async () => {
     setTokenBusy(true);
@@ -286,6 +319,28 @@ export function Options() {
       setAgentMsg({ kind: "ok", text: m.options.agentKeyRemoved });
     } catch (e) {
       setAgentMsg({ kind: "err", text: translateError(e, m) });
+    }
+  };
+
+  const clearAgentToolCache = async () => {
+    setAgentStorageClearBusy(true);
+    setAgentStorageError(null);
+    setAgentStorageNotice(null);
+    try {
+      const result = await bgCall<AgentStorageCleanupResult>("clearAgentToolCache");
+      setAgentStorageUsage(result.usage);
+      setAgentStorageNotice(m.options.agentStorageCacheCleared(
+        result.deletedArtifacts,
+        formatStorageBytes(result.freedBytes, locale),
+        result.protectedArtifacts,
+      ));
+    } catch (error) {
+      const message = error instanceof BackgroundCallError
+        ? error.message
+        : translateError(error, m);
+      setAgentStorageError(m.options.agentStorageClearFailed(message));
+    } finally {
+      setAgentStorageClearBusy(false);
     }
   };
 
@@ -963,6 +1018,15 @@ export function Options() {
             <StatusNotice message={agentMsg} testId="agent-connection-status" />
           )}
         </div>
+        <AgentStoragePanel
+          usage={agentStorageUsage}
+          loading={agentStorageLoading}
+          clearBusy={agentStorageClearBusy}
+          error={agentStorageError}
+          notice={agentStorageNotice}
+          onRefresh={loadAgentStorageUsage}
+          onClearToolCache={clearAgentToolCache}
+        />
       </section>
 
       <Separator className="my-6" />

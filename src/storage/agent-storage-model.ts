@@ -1,3 +1,5 @@
+import type { AgentArtifactCoverageEvidence } from '@/bgsm-agent/artifact-coverage';
+
 export const AGENT_STORAGE_SCHEMA_VERSION = 2 as const;
 export const AGENT_STORAGE_USAGE_ID = 'agent' as const;
 export const AGENT_STORAGE_WARNING_BYTES = 256 * 1024 * 1024;
@@ -110,6 +112,7 @@ export type AgentArtifactSlice = Readonly<{
   byteLength: number;
   totalBytes: number;
   nextCursor: string | null;
+  evidence: AgentArtifactCoverageEvidence;
 }>;
 
 export type AgentArtifactMessageBinding = Readonly<{

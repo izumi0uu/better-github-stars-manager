@@ -59,7 +59,7 @@ function commitForMessaging(
     toolCallId?: string;
     toolName?: string;
     toolCalls?: readonly { id: string; name: string; arguments: unknown }[];
-    artifactIds?: string[];
+    opaqueReferences?: string[];
   }[],
   options: Readonly<{
     handoff?: 'request_confirmation' | 'start_analysis';
@@ -495,7 +495,7 @@ describe('Cubby messaging', () => {
         createdAt: 10,
         toolCallId: 'call-live-artifact',
         toolName: 'search_repositories',
-        artifactIds: ['artifact:v1:live-result'],
+        opaqueReferences: ['artifact:v1:live-result'],
       },
     };
     const result: BgsmAgentTurnResult = {
@@ -624,7 +624,7 @@ describe('Cubby messaging', () => {
           createdAt: 2,
           toolCallId: 'call-1',
           toolName: 'list_tags',
-          artifactIds: ['artifact:v1:committed-result'],
+          opaqueReferences: ['artifact:v1:committed-result'],
         },
       ],
     };
@@ -678,7 +678,7 @@ describe('Cubby messaging', () => {
       result.organizeLibraryHandoff,
     );
     expect(onResult.mock.calls[0]?.[0].commit.transcript.messages[1].toolCallId).toBe('call-1');
-    expect(onResult.mock.calls[0]?.[0].commit.transcript.messages[1].artifactIds)
+    expect(onResult.mock.calls[0]?.[0].commit.transcript.messages[1].opaqueReferences)
       .toEqual(['artifact:v1:committed-result']);
     control.acknowledge({ disposition: 'applied', appliedRevision: 8 });
     expect(postMessage).toHaveBeenCalledWith({

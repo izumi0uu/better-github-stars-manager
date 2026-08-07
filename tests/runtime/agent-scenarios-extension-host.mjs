@@ -15,6 +15,7 @@ const SCENARIOS = [
   'organize-cross-batch-recovery',
   'organize-cancel-during-apply',
   'organize-port-reconnect',
+  'cubby-artifact-continuation-coverage',
 ];
 const SCENARIO_EXPECTATIONS = {
   'small-window-multiple-tools': { terminalState: 'completed', eventKinds: ['tool_completed', 'continuation_finished'] },
@@ -25,6 +26,18 @@ const SCENARIO_EXPECTATIONS = {
   'organize-cross-batch-recovery': { terminalState: 'completed', eventKinds: ['organize_batch_state', 'organize_durable_state'] },
   'organize-cancel-during-apply': { terminalState: 'cancelled', eventKinds: ['organize_apply_chunk', 'root_cancelled'] },
   'organize-port-reconnect': { terminalState: 'completed', eventKinds: ['organize_durable_state', 'organize_review_state'] },
+  'cubby-artifact-continuation-coverage': {
+    terminalState: 'completed',
+    eventKinds: [
+      'provider_request_prepared',
+      'provider_finished',
+      'tool_completed',
+      'continuation_started',
+      'continuation_finished',
+      'context_reduction_finished',
+    ],
+    minProviderRequests: 12,
+  },
 };
 const DIAGNOSTICS_PATH = '/src/dev-agent/index.html';
 const TIMEOUT_MS = 30_000;
@@ -103,6 +116,13 @@ try {
       });
     }
   }
+  if (requested.includes('cubby-artifact-continuation-coverage')) {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+    await page.waitForSelector('[data-testid="agent-diagnostics-page"]', { timeout: TIMEOUT_MS });
+    await selectTab(page, 'Traces');
+    await waitForScenarioCompletion(page, requested.length);
+  }
+
 
   const artifact = await exportArtifact(page);
   assert.equal(artifact.schemaVersion, 1);
@@ -118,6 +138,14 @@ try {
       .map((event) => event.kind));
     for (const eventKind of expected.eventKinds) {
       assert.equal(eventKinds.has(eventKind), true, `${scenarioId} is missing ${eventKind}`);
+    }
+    if (scenarioId === 'cubby-artifact-continuation-coverage') {
+      const providerRequests = artifact.events.filter((event) => (
+        event.rootOperationId === rootEntry.rootOperationId
+        && event.kind === 'provider_request_prepared'
+      ));
+      assert.equal(providerRequests.length >= expected.minProviderRequests, true,
+        'artifact coverage scenario must cross more than eight controlled Provider requests');
     }
     if (scenarioId === 'organize-cancel-during-apply') {
       const applyStates = artifact.events
@@ -313,11 +341,23 @@ async function exportArtifact(page) {
   return page.evaluate(() => new Promise((resolve, reject) => {
     const requestId = `runtime-export-${crypto.randomUUID()}`;
     const chunks = [];
+    const scope = { kind: 'all_retained', id: null };
+    const maxBytes = 256 * 1024;
+    let snapshotId = null;
+    let nextChunkIndex = 0;
     const port = chrome.runtime.connect({ name: 'bgsm-agent-dev-evidence-v1' });
     const timer = setTimeout(() => {
       port.disconnect();
       reject(new Error('Timed out exporting Scenario Lab trace artifact.'));
     }, 30_000);
+    const requestChunk = (cursor) => port.postMessage({
+      version: 1,
+      requestId,
+      type: 'export',
+      scope,
+      cursor,
+      maxBytes,
+    });
     port.onDisconnect.addListener(() => {
       if (chrome.runtime.lastError) {
         clearTimeout(timer);
@@ -326,14 +366,7 @@ async function exportArtifact(page) {
     });
     port.onMessage.addListener((message) => {
       if (message?.type === 'ready') {
-        port.postMessage({
-          version: 1,
-          requestId,
-          type: 'export',
-          scope: { kind: 'all_retained', id: null },
-          cursor: null,
-          maxBytes: 256 * 1024,
-        });
+        requestChunk(null);
         return;
       }
       if (message?.requestId !== requestId) return;
@@ -344,8 +377,25 @@ async function exportArtifact(page) {
         return;
       }
       if (message.type !== 'export_chunk') return;
-      chunks[message.chunkIndex] = message.jsonChunk;
-      if (!message.done) return;
+      const actualBytes = new TextEncoder().encode(message.jsonChunk).byteLength;
+      if (
+        message.chunkIndex !== nextChunkIndex
+        || message.byteLength !== actualBytes
+        || message.done !== (message.cursor === null)
+        || (snapshotId !== null && message.snapshotId !== snapshotId)
+      ) {
+        clearTimeout(timer);
+        port.disconnect();
+        reject(new Error('Scenario Lab export returned an invalid chunk sequence.'));
+        return;
+      }
+      snapshotId ??= message.snapshotId;
+      chunks.push(message.jsonChunk);
+      nextChunkIndex += 1;
+      if (!message.done) {
+        requestChunk(message.cursor);
+        return;
+      }
       clearTimeout(timer);
       port.disconnect();
       try {

@@ -165,10 +165,18 @@ export interface MessageCatalog {
     agentChanged: (count: number) => string;
     turnFailed: string;
     attemptStateLost: string;
+    attemptResumeStateUnknown: string;
     providerErrorTitle: string;
     providerErrorSubtitle: string;
     providerErrorBody: string;
     retry: string;
+    retryDraftStoppedTitle: string;
+    retryDraftFailedTitle: string;
+    retryDraftContextTitle: string;
+    retryDraftSubtitle: string;
+    retryDraftBody: string;
+    retryDraftPendingSubtitle: string;
+    retryDraftPendingBody: string;
     contextSettingsTitle: string;
     contextSettingsMessage: string;
     contextPromptTooLargeTitle: string;
@@ -183,11 +191,22 @@ export interface MessageCatalog {
     startNewConversation: string;
     sessionsLabel: string;
     sessionUntitled: string;
+    sessionUnavailable: string;
     sessionDelete: string;
     sessionDeleteTitle: string;
     sessionDeleteMessage: (title: string) => string;
     sessionDeleteConfirm: string;
     sessionDeleteCancel: string;
+    sessionDeleteBlocked: string;
+    sessionDeleteFailed: string;
+    sessionOperationFailed: string;
+    sessionLoadFailed: string;
+    sessionLoadTitle: string;
+    sessionLoadSubtitle: string;
+    sessionLoadBody: string;
+    sessionLoadRetry: string;
+    loadEarlierMessages: string;
+    loadingEarlierMessages: string;
     hideWhileRunning: string;
     runContinuesWhileHidden: string;
     confirmScopeHeader: string;
@@ -326,6 +345,18 @@ export interface MessageCatalog {
     handoffAutoTagsUpdated: string;
     agentActivityLabel: string;
     workbench: {
+      controlledElsewhere: string;
+      ownerDisconnected: string;
+      takeControl: string;
+      takingControl: string;
+      takeControlFailedOwnerConnected: string;
+      takeControlFailedConflict: string;
+      takeControlFailedUnavailable: string;
+      takeControlFailed: string;
+      takeControlSucceeded: string;
+      organizeAlreadyRunning: string;
+      organizeCommandFailed: string;
+      receiptOriginDeleted: string;
       resolvingSubtitle: string;
       resolvingBody: string;
       resolvingHint: string;
@@ -611,11 +642,36 @@ export interface MessageCatalog {
     agentDisclosureNotSentHeading: string;
     agentDisclosureNotSentSecrets: string;
     agentDisclosureKeyException: string;
+    agentDisclosureLocalHistory: string;
     agentDisclosureBuiltInAccess: string;
     agentDisclosureCustomAccess: string;
     agentGrantAccess: string;
     agentAccessGranted: string;
     agentHostAccessRequired: string;
+    agentStorageHeading: string;
+    agentStorageIntro: string;
+    agentStorageOrganizeRetention: string;
+    agentStorageRefresh: string;
+    agentStorageLoading: string;
+    agentStorageConversationData: string;
+    agentStorageConversationCount: (sessions: number, messages: number) => string;
+    agentStorageToolCache: string;
+    agentStorageArtifactCount: (artifacts: number) => string;
+    agentStorageTotal: string;
+    agentStorageLogicalLimit: (limit: string) => string;
+    agentStorageUsageLabel: string;
+    agentStorageThresholds: (warning: string, limit: string) => string;
+    agentStorageBrowserUsage: (usage: string, quota: string) => string;
+    agentStorageBrowserUnavailable: string;
+    agentStorageWarning: string;
+    agentStorageLimitReached: string;
+    agentStorageClearHint: string;
+    agentStorageClearCache: string;
+    agentStorageClearingCache: string;
+    agentStorageCacheCleared: (artifacts: number, bytes: string, protectedArtifacts: number) => string;
+    agentStorageUnavailable: (error: string) => string;
+    agentStorageClearFailed: (error: string) => string;
+    agentStorageRetry: string;
     behaviorHeading: string;
     maxTagsPerRepoLabel: string;
     maxTagsPerRepoHint: string;
@@ -732,6 +788,7 @@ export interface MessageCatalog {
     agentDataDisclosureRequired: string;
     agentContextCapabilityRequired: string;
     agentContextCapabilityInfeasible: string;
+    agentArtifactCoverageStalled: string;
     unknown: (raw: string) => string;
   };
   /** First-run onboarding card (ManagerPanel). Context-aware: shows until the
@@ -970,10 +1027,18 @@ const messages: Record<Locale, MessageCatalog> = {
       agentChanged: (count) => `${count} tag update${count === 1 ? '' : 's'} applied`,
       turnFailed: "Cubby couldn't complete this request",
       attemptStateLost: "The extension restarted, so Cubby couldn't recover this request. Check any completed changes before retrying.",
+      attemptResumeStateUnknown: "Cubby couldn't confirm this resumed request's final state. Direct retry is disabled to avoid repeating a completed change. Review the result, then edit and send again.",
       providerErrorTitle: "AI service error",
       providerErrorSubtitle: "No local data was modified",
       providerErrorBody: "Your message and scope are saved. Retry, or start a new conversation.",
       retry: "Retry",
+      retryDraftStoppedTitle: "Stopped request restored",
+      retryDraftFailedTitle: "Failed request restored",
+      retryDraftContextTitle: "Context-limited request restored",
+      retryDraftSubtitle: "Ready to retry",
+      retryDraftBody: "The prompt is restored in the composer. Retry it as-is or edit it first.",
+      retryDraftPendingSubtitle: "Retry needs confirmation",
+      retryDraftPendingBody: "The prompt is restored, but Cubby could not confirm that no change was applied. Review or edit it before sending a new request.",
       contextSettingsTitle: "AI service settings need attention",
       contextSettingsMessage: "Adjust this service's context settings before continuing. Your draft is preserved.",
       contextPromptTooLargeTitle: "This request is too large",
@@ -988,11 +1053,22 @@ const messages: Record<Locale, MessageCatalog> = {
       startNewConversation: "Start new conversation",
       sessionsLabel: "Conversations",
       sessionUntitled: "New conversation",
+      sessionUnavailable: "Unavailable conversation",
       sessionDelete: "Delete conversation",
       sessionDeleteTitle: "Delete this conversation?",
-      sessionDeleteMessage: (title) => `Delete “${title}”? Its local transcript will be removed from this panel.`,
+      sessionDeleteMessage: (title) => `Delete “${title}”? Its conversation history, recovery state, and saved tool data will be deleted. The latest completed or cancelled Organize result is kept until you dismiss it or a new run replaces it.`,
       sessionDeleteConfirm: "Delete",
       sessionDeleteCancel: "Cancel",
+      sessionDeleteBlocked: "Finish, stop, or discard the active work linked to this conversation before deleting it.",
+      sessionDeleteFailed: "This conversation could not be deleted. Try again.",
+      sessionOperationFailed: "The conversation could not be loaded. Try again.",
+      sessionLoadFailed: "Local conversation history is temporarily unavailable.",
+      sessionLoadTitle: "Couldn't load conversations",
+      sessionLoadSubtitle: "Cubby is waiting for local history.",
+      sessionLoadBody: "Try again. Your saved conversations have not been changed.",
+      sessionLoadRetry: "Try again",
+      loadEarlierMessages: "Load earlier messages",
+      loadingEarlierMessages: "Loading earlier messages…",
       hideWhileRunning: "Hide Cubby",
       runContinuesWhileHidden: "You can hide this panel; the turn continues.",
       confirmScopeHeader: "Confirm scope",
@@ -1193,6 +1269,18 @@ const messages: Record<Locale, MessageCatalog> = {
       handoffAutoTagsUpdated: "Auto Tags already updated topic-based auto tags.",
       agentActivityLabel: "Cubby activity",
       workbench: {
+        controlledElsewhere: "This run is controlled from another Cubby page. This page is read-only.",
+        ownerDisconnected: "The page controlling this run disconnected. Take control here to keep managing it.",
+        takeControl: "Take control",
+        takingControl: "Taking control…",
+        takeControlFailedOwnerConnected: "The controlling page reconnected, so this page stays read-only.",
+        takeControlFailedConflict: "This run changed while taking control. Try again.",
+        takeControlFailedUnavailable: "This run is no longer available.",
+        takeControlFailed: "Could not take control. Try again.",
+        takeControlSucceeded: "You now control this run.",
+        organizeAlreadyRunning: "An Organize run is already in progress. Wait for it to finish, or dismiss its result before starting another.",
+        organizeCommandFailed: "Cubby couldn't update this Organize run. Refresh its latest state and try again.",
+        receiptOriginDeleted: "Started from a conversation that has been deleted.",
         resolvingSubtitle: "Preparing your starred library",
         resolvingBody: "This analysis includes every currently starred repository. Filters and the selected row won't narrow the scope.",
         resolvingHint: "No tags change during this step",
@@ -1246,7 +1334,7 @@ const messages: Record<Locale, MessageCatalog> = {
         selectedRowsLocked: (count) => `${count} selected · selection locked`,
         applying: "Applying…",
         applySelected: (count) => `Apply ${count} selected`,
-        applyTagImpact: (tags, repositories) => `Apply ${tags} tags to ${repositories} repositories`,
+        applyTagImpact: (tags, repositories) => `Apply ${tags} ${tags === 1 ? 'tag' : 'tags'} to ${repositories} ${repositories === 1 ? 'repository' : 'repositories'}`,
         selectAll: "Select all",
         clear: "Clear",
         previousPage: "Previous page",
@@ -1506,6 +1594,8 @@ const messages: Record<Locale, MessageCatalog> = {
       agentDisclosureNotSentSecrets: "GitHub token, API keys, other credentials, or repositories outside the active scope",
       agentDisclosureKeyException:
         "The AI service API key is sent only to the exact address above as an Authorization header. It is never included in prompts or logs.",
+      agentDisclosureLocalHistory:
+        "Committed conversation history, an in-flight or retryable prompt, and paged tool artifacts may be stored unencrypted in this browser's extension storage. They are not synced, exported, or included in release diagnostics. Deleting a conversation removes its transcript, pending prompt, and artifacts; re-fetchable tool cache can also be cleared separately. Unpacked development builds disclose raw capture separately before it can be enabled.",
       agentDisclosureBuiltInAccess:
         "This service is covered by the extension's built-in Chrome access.",
       agentDisclosureCustomAccess:
@@ -1513,6 +1603,40 @@ const messages: Record<Locale, MessageCatalog> = {
       agentGrantAccess: "Allow access",
       agentAccessGranted: "Access allowed",
       agentHostAccessRequired: "Allow Chrome access to test or use this custom service.",
+      agentStorageHeading: "Local Agent storage",
+      agentStorageIntro:
+        "Conversation history, recovery prompts, and re-fetchable tool output stored by Cubby on this device.",
+      agentStorageOrganizeRetention:
+        "Deleting a conversation removes its history and saved Agent data. The latest completed or cancelled Organize result is stored separately and kept until you dismiss it in the Agent panel or a new run replaces it.",
+      agentStorageRefresh: "Refresh storage usage",
+      agentStorageLoading: "Checking Agent storage…",
+      agentStorageConversationData: "Conversation data",
+      agentStorageConversationCount: (sessions, messages) =>
+        `${sessions} conversation${sessions === 1 ? "" : "s"} · ${messages} message${messages === 1 ? "" : "s"}`,
+      agentStorageToolCache: "Tool cache",
+      agentStorageArtifactCount: (artifacts) =>
+        `${artifacts} stored tool result${artifacts === 1 ? "" : "s"}`,
+      agentStorageTotal: "Total",
+      agentStorageLogicalLimit: (limit) => `${limit} local limit`,
+      agentStorageUsageLabel: "Agent storage used",
+      agentStorageThresholds: (warning, limit) =>
+        `Warning at ${warning} · storage stops at ${limit}`,
+      agentStorageBrowserUsage: (usage, quota) =>
+        `Extension browser storage estimate: ${usage} of ${quota}`,
+      agentStorageBrowserUnavailable: "Extension browser storage estimate unavailable",
+      agentStorageWarning:
+        "Agent storage is above the warning level. Clear the tool cache before storage-heavy work.",
+      agentStorageLimitReached:
+        "Agent storage reached its local limit. New Agent data cannot be saved until space is available.",
+      agentStorageClearHint:
+        "Clears cached tool output only. Conversation history and repository data are kept.",
+      agentStorageClearCache: "Clear tool cache",
+      agentStorageClearingCache: "Clearing cache…",
+      agentStorageCacheCleared: (artifacts, bytes, protectedArtifacts) =>
+        `Cleared ${artifacts} cached result${artifacts === 1 ? "" : "s"} and freed ${bytes}.${protectedArtifacts > 0 ? ` Kept ${protectedArtifacts} active or referenced result${protectedArtifacts === 1 ? "" : "s"}.` : ""}`,
+      agentStorageUnavailable: (error) => `Agent storage usage is unavailable: ${error}`,
+      agentStorageClearFailed: (error) => `Tool cache could not be cleared: ${error}`,
+      agentStorageRetry: "Try again",
       behaviorHeading: "4. Preference",
       maxTagsPerRepoLabel: "Max Auto Tags per repo",
       maxTagsPerRepoHint:
@@ -1667,6 +1791,8 @@ const messages: Record<Locale, MessageCatalog> = {
         "Check the context window, then test the connection before using Cubby.",
       agentContextCapabilityInfeasible:
         "Increase the working context window in Advanced settings before using Cubby.",
+      agentArtifactCoverageStalled:
+        "Cubby couldn't finish verifying the complete stored result. Retry the request.",
       unknown: (raw) => `Something went wrong: ${raw}`,
     },
     onboarding: {
@@ -1902,10 +2028,18 @@ const messages: Record<Locale, MessageCatalog> = {
       agentChanged: (count) => `已应用 ${count} 次标签更新`,
       turnFailed: "Cubby 未能完成这次请求",
       attemptStateLost: "扩展已重启，Cubby 无法恢复这次请求。重试前请检查已完成的变更。",
+      attemptResumeStateUnknown: "Cubby 无法确认这次恢复请求的最终状态。为避免重复执行已完成的变更，直接重试已禁用；请检查结果后编辑并重新发送。",
       providerErrorTitle: "AI 服务错误",
       providerErrorSubtitle: "本地数据未被修改",
       providerErrorBody: "你的消息和范围已保存。可以重试，或开始新对话。",
       retry: "重试",
+      retryDraftStoppedTitle: "已恢复停止的请求",
+      retryDraftFailedTitle: "已恢复失败的请求",
+      retryDraftContextTitle: "已恢复受上下文限制的请求",
+      retryDraftSubtitle: "可以重新尝试",
+      retryDraftBody: "提示词已恢复到输入框。你可以直接重试，也可以先编辑。",
+      retryDraftPendingSubtitle: "重试仍需确认",
+      retryDraftPendingBody: "提示词已恢复，但 Cubby 尚无法确认是否已有变更生效。请检查或编辑后，再作为新请求发送。",
       contextSettingsTitle: "AI 服务设置需要调整",
       contextSettingsMessage: "请先调整此服务的上下文设置。你的草稿已保留。",
       contextPromptTooLargeTitle: "本次请求内容过多",
@@ -1920,11 +2054,22 @@ const messages: Record<Locale, MessageCatalog> = {
       startNewConversation: "开始新对话",
       sessionsLabel: "对话列表",
       sessionUntitled: "新对话",
+      sessionUnavailable: "不可用的对话",
       sessionDelete: "删除对话",
       sessionDeleteTitle: "删除这个对话？",
-      sessionDeleteMessage: (title) => `确定删除「${title}」吗？它在本面板中的本地记录会被移除。`,
+      sessionDeleteMessage: (title) => `确定删除「${title}」吗？其对话历史、恢复状态和已保存的工具数据都会被删除。最近一次已完成或已取消的整理结果会保留，直到你关闭它或被新的运行替换。`,
       sessionDeleteConfirm: "删除",
       sessionDeleteCancel: "取消",
+      sessionDeleteBlocked: "请先完成、停止或丢弃与这个对话关联的任务，再删除对话。",
+      sessionDeleteFailed: "无法删除这个对话，请重试。",
+      sessionOperationFailed: "无法加载这个对话，请重试。",
+      sessionLoadFailed: "本地对话历史暂时不可用。",
+      sessionLoadTitle: "无法加载对话",
+      sessionLoadSubtitle: "Cubby 正在等待本地历史恢复。",
+      sessionLoadBody: "请重试；你已保存的对话不会受到影响。",
+      sessionLoadRetry: "重试",
+      loadEarlierMessages: "加载更早的消息",
+      loadingEarlierMessages: "正在加载更早的消息…",
       hideWhileRunning: "隐藏 Cubby",
       runContinuesWhileHidden: "可以隐藏面板；本轮会继续。",
       confirmScopeHeader: "确认范围",
@@ -2125,6 +2270,18 @@ const messages: Record<Locale, MessageCatalog> = {
       handoffAutoTagsUpdated: "自动标签已更新基于主题的标签。",
       agentActivityLabel: "Cubby 活动",
       workbench: {
+        controlledElsewhere: "本次任务正由另一个 Cubby 页面控制，本页面为只读。",
+        ownerDisconnected: "控制本次任务的页面已断开连接。可在本页面接管并继续管理。",
+        takeControl: "接管控制",
+        takingControl: "正在接管…",
+        takeControlFailedOwnerConnected: "原控制页面已重新连接，本页面保持只读。",
+        takeControlFailedConflict: "接管期间任务状态已变化，请重试。",
+        takeControlFailedUnavailable: "该任务已不可用。",
+        takeControlFailed: "暂时无法接管，请重试。",
+        takeControlSucceeded: "你已接管本次任务。",
+        organizeAlreadyRunning: "已有整理任务正在进行。请等待其完成，或先关闭其结果，再开始新的整理。",
+        organizeCommandFailed: "Cubby 无法更新本次整理任务。请刷新最新状态后重试。",
+        receiptOriginDeleted: "该结果来自一个已删除的对话。",
         resolvingSubtitle: "正在准备你的星标资料库",
         resolvingBody: "本次分析会包含全部仍在星标的仓库。筛选条件和当前选中行都不会缩小范围。",
         resolvingHint: "此步骤不会修改标签",
@@ -2437,6 +2594,8 @@ const messages: Record<Locale, MessageCatalog> = {
       agentDisclosureNotSentSecrets: "GitHub token、API 密钥、其他凭据，或当前范围外的仓库",
       agentDisclosureKeyException:
         "AI 服务 API 密钥只会通过 Authorization 请求头发送到上方准确地址，绝不会写入提示词或日志。",
+      agentDisclosureLocalHistory:
+        "已提交的对话历史、正在处理或可重试的提示词，以及分页工具结果，可能会以明文保存在本机浏览器的扩展存储中，不会同步、导出或进入发布版诊断。删除对话会移除对应历史、待处理提示词和工具结果；可重新获取的工具缓存也可单独清理。解压加载的开发版会在启用原始捕获前另行披露风险。",
       agentDisclosureBuiltInAccess:
         "此服务已包含在扩展内置的 Chrome 访问范围中。",
       agentDisclosureCustomAccess:
@@ -2444,6 +2603,35 @@ const messages: Record<Locale, MessageCatalog> = {
       agentGrantAccess: "允许访问",
       agentAccessGranted: "已允许访问",
       agentHostAccessRequired: "测试或使用此自定义服务前，请先允许 Chrome 访问。",
+      agentStorageHeading: "本机 Agent 存储",
+      agentStorageIntro: "Cubby 在本机保存的对话历史、恢复提示词和可重新获取的工具结果。",
+      agentStorageOrganizeRetention:
+        "删除对话会移除其历史记录和已保存的 Agent 数据。最近一次已完成或已取消的整理结果单独保存，直到你在 Agent 面板中关闭它，或被新的运行替换。",
+      agentStorageRefresh: "刷新存储用量",
+      agentStorageLoading: "正在检查 Agent 存储…",
+      agentStorageConversationData: "对话数据",
+      agentStorageConversationCount: (sessions, messages) =>
+        `${sessions} 个对话 · ${messages} 条消息`,
+      agentStorageToolCache: "工具缓存",
+      agentStorageArtifactCount: (artifacts) => `${artifacts} 个已存工具结果`,
+      agentStorageTotal: "总计",
+      agentStorageLogicalLimit: (limit) => `本机上限 ${limit}`,
+      agentStorageUsageLabel: "Agent 已用存储",
+      agentStorageThresholds: (warning, limit) =>
+        `${warning} 时提醒 · ${limit} 时停止写入`,
+      agentStorageBrowserUsage: (usage, quota) =>
+        `扩展浏览器存储估算：已用 ${usage}，可用额度 ${quota}`,
+      agentStorageBrowserUnavailable: "暂时无法获取扩展浏览器存储估算",
+      agentStorageWarning: "Agent 存储已超过提醒线。进行高存储量任务前，请先清理工具缓存。",
+      agentStorageLimitReached: "Agent 存储已达到本机上限。释放空间前无法保存新的 Agent 数据。",
+      agentStorageClearHint: "只清理工具结果缓存；对话历史和仓库数据会保留。",
+      agentStorageClearCache: "清理工具缓存",
+      agentStorageClearingCache: "正在清理缓存…",
+      agentStorageCacheCleared: (artifacts, bytes, protectedArtifacts) =>
+        `已清理 ${artifacts} 个缓存结果，释放 ${bytes}。${protectedArtifacts > 0 ? `另有 ${protectedArtifacts} 个正在使用或仍被引用的结果已保留。` : ""}`,
+      agentStorageUnavailable: (error) => `无法获取 Agent 存储用量：${error}`,
+      agentStorageClearFailed: (error) => `无法清理工具缓存：${error}`,
+      agentStorageRetry: "重试",
       behaviorHeading: "4. 偏好",
       maxTagsPerRepoLabel: "每个仓库最多自动标签数",
       maxTagsPerRepoHint:
@@ -2588,6 +2776,8 @@ const messages: Record<Locale, MessageCatalog> = {
         "请检查上下文窗口并测试连接后再使用 Cubby。",
       agentContextCapabilityInfeasible:
         "请先在高级设置中增大工作上下文窗口，再使用 Cubby。",
+      agentArtifactCoverageStalled:
+        "Cubby 无法完成对已存结果的完整校验，请重试该请求。",
       unknown: (raw) => `出错了:${raw}`,
     },
     onboarding: {

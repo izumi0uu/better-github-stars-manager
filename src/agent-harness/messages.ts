@@ -1,6 +1,7 @@
 import type { ModelToolCall } from './provider';
 
 export type AgentRole = 'user' | 'agent' | 'tool' | 'system';
+export type AgentOpaqueReference = string;
 
 export type AgentMessage = {
   id: string;
@@ -10,6 +11,8 @@ export type AgentMessage = {
   toolCallId?: string;
   toolName?: string;
   toolCalls?: ModelToolCall[];
+  /** Host-owned opaque metadata that never enters Provider messages. */
+  opaqueReferences?: AgentOpaqueReference[];
 };
 
 export type ModelMessage = {

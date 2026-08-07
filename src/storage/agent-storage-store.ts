@@ -1,5 +1,11 @@
+import Dexie from 'dexie';
 import { canonicalJson, sha256Base64Url } from '@/agent-harness/canonical-json';
 import { assertAgentTurnTransportIdentifier } from '@/bgsm-agent/session-transport';
+import {
+  AGENT_ARTIFACT_COVERAGE_SCHEMA_VERSION,
+  digestAgentArtifactTouchedChunks,
+  type AgentArtifactCoverageEvidence,
+} from '@/bgsm-agent/artifact-coverage';
 import {
   buildArtifactIntegrityManifest,
   requireArtifactIntegrity,
@@ -701,6 +707,7 @@ export async function loadAgentArtifactSliceForSession(input: Readonly<{
   if (input.maxContentBytes > AGENT_ARTIFACT_PAGE_MAX_BYTES) {
     throw new RangeError('Agent artifact page exceeds the storage read limit.');
   }
+  const cursorSupplied = Object.prototype.hasOwnProperty.call(input, 'cursor');
   const hasCursor = input.cursor !== undefined && input.cursor !== null;
   if (hasCursor && input.byteOffset !== undefined) {
     throw new TypeError('Agent artifact cursor and byte offset are mutually exclusive.');
@@ -738,7 +745,7 @@ export async function loadAgentArtifactSliceForSession(input: Readonly<{
             byteLength: 0,
             totalBytes: artifact.byteLength,
             nextCursor: null,
-          } satisfies AgentArtifactSlice,
+          } satisfies Omit<AgentArtifactSlice, 'evidence'>,
         };
       }
 
@@ -804,7 +811,7 @@ export async function loadAgentArtifactSliceForSession(input: Readonly<{
           nextCursor: done
             ? null
             : encodeArtifactCursor(artifact.id, chunkIndex, characterOffset),
-        } satisfies AgentArtifactSlice,
+        } satisfies Omit<AgentArtifactSlice, 'evidence'>,
       };
     },
   );
@@ -812,7 +819,18 @@ export async function loadAgentArtifactSliceForSession(input: Readonly<{
   const now = (input.now ?? Date.now)();
   assertTimestamp(now, 'Agent artifact access time');
   await touchAgentArtifactIfCurrent(input.artifactId, result.artifact, now);
-  return result.page;
+  return {
+    ...result.page,
+    evidence: await createAgentArtifactCoverageEvidence({
+      artifact: result.artifact,
+      readKind: input.byteOffset === undefined ? 'page' : 'offset',
+      cursorSupplied,
+      inputCursor: hasCursor ? input.cursor! : null,
+      pageBytes: result.page.byteLength,
+      nextCursor: result.page.nextCursor,
+      chunks: result.chunks,
+    }),
+  };
 }
 
 export type AgentArtifactSearchResult = Readonly<{
@@ -820,6 +838,7 @@ export type AgentArtifactSearchResult = Readonly<{
   contentType: string;
   totalBytes: number;
   matchByteOffset: number | null;
+  evidence: AgentArtifactCoverageEvidence;
 }>;
 
 /** Finds an exact literal without materializing the complete artifact in memory. */
@@ -855,9 +874,11 @@ export async function findAgentArtifactTextForSession(input: Readonly<{
   let overlapStartByte = position.byteOffset;
   const overlapCharacters = Math.max(0, countCodePoints(input.query) - 1);
   let matchByteOffset: number | null = null;
+  const touchedChunks: AgentArtifactChunkRecord[] = [];
 
   while (chunkIndex < snapshot.chunkCount) {
     const row = await loadCheckedArtifactChunk(snapshot, chunkIndex);
+    touchedChunks.push(row);
     const skipped = row.payload.slice(0, characterOffset);
     const segment = row.payload.slice(characterOffset);
     const skippedBytes = AGENT_ARTIFACT_TEXT_ENCODER.encode(skipped).byteLength;
@@ -894,10 +915,116 @@ export async function findAgentArtifactTextForSession(input: Readonly<{
     contentType: snapshot.contentType,
     totalBytes: snapshot.byteLength,
     matchByteOffset,
+    evidence: await createAgentArtifactCoverageEvidence({
+      artifact: snapshot,
+      readKind: 'search',
+      cursorSupplied: false,
+      inputCursor: null,
+      pageBytes: 0,
+      nextCursor: null,
+      chunks: touchedChunks,
+    }),
   };
 }
 
-/** Promotes cache artifacts referenced by newly committed tool messages. */
+async function createAgentArtifactCoverageEvidence(input: Readonly<{
+  artifact: AgentArtifactRecord;
+  readKind: AgentArtifactCoverageEvidence['readKind'];
+  cursorSupplied: boolean;
+  inputCursor: string | null;
+  pageBytes: number;
+  nextCursor: string | null;
+  chunks: readonly AgentArtifactChunkRecord[];
+}>): Promise<AgentArtifactCoverageEvidence> {
+  const integrity = requireArtifactIntegrity(input.artifact);
+  const touchedChunks = input.chunks.map((chunk) => ({
+    index: chunk.index,
+    byteLength: chunk.byteLength,
+    sha256: chunk.sha256,
+  }));
+  return {
+    schemaVersion: AGENT_ARTIFACT_COVERAGE_SCHEMA_VERSION,
+    artifactId: input.artifact.id,
+    artifactBytes: input.artifact.byteLength,
+    artifactSha256: input.artifact.sha256,
+    integrityManifestSha256: integrity.manifestSha256,
+    readKind: input.readKind,
+    cursorSupplied: input.cursorSupplied,
+    inputCursor: input.inputCursor,
+    pageBytes: input.pageBytes,
+    nextCursor: input.nextCursor,
+    touchedChunks,
+    touchedChunkCount: touchedChunks.length,
+    touchedChunkBytes: sumSafe(
+      touchedChunks.map((chunk) => chunk.byteLength),
+      'Agent artifact touched chunk bytes',
+    ),
+    touchedChunkDigest: await digestAgentArtifactTouchedChunks(touchedChunks),
+    integrityVerified: true,
+  };
+}
+/** Revalidates one coverage start against immutable artifact metadata. */
+export async function validateAgentArtifactCoverageStartInCurrentTransaction(input: Readonly<{
+  record: AgentAttemptRecord['artifactCoverage'][number];
+  sessionId: string;
+  turnAttemptId: string;
+}>): Promise<void> {
+  const artifact = await db.agentArtifacts.get(input.record.artifactId);
+  if (!artifact) throw new AgentArtifactNotFoundError(input.record.artifactId);
+  validateArtifactRecord(artifact);
+  if (artifact.sessionId !== input.sessionId) {
+    throw new AgentArtifactAccessDeniedError(artifact.id, input.sessionId);
+  }
+  if (artifact.state !== 'ready') throw new AgentArtifactStateConflictError(artifact.id, artifact.state);
+  const integrity = requireArtifactIntegrity(artifact);
+  await Dexie.waitFor(verifyArtifactIntegrityManifest(artifact));
+  if (
+    artifact.byteLength !== input.record.expectedBytes
+    || artifact.sha256 !== input.record.artifactSha256
+    || integrity.manifestSha256 !== input.record.integrityManifestSha256
+  ) throw new AgentArtifactConflictError(artifact.id);
+  if (artifact.storageClass === 'cache') {
+    if (
+      artifact.turnAttemptId !== input.turnAttemptId
+      || artifact.toolCallId !== input.record.sourceToolCallId
+      || artifact.ownerMessageId !== null
+    ) throw new AgentArtifactAccessDeniedError(artifact.id, input.sessionId);
+  } else if (artifact.ownerMessageId === null) {
+    throw new AgentArtifactConflictError(artifact.id);
+  }
+}
+
+/**
+ * Revalidates bounded evidence against the current manifest and touched chunk
+ * rows. Payload bytes were already verified by the read and are not rehashed.
+ */
+export async function validateAgentArtifactCoverageEvidenceInCurrentTransaction(input: Readonly<{
+  record: AgentAttemptRecord['artifactCoverage'][number];
+  evidence: AgentArtifactCoverageEvidence;
+  sessionId: string;
+  turnAttemptId: string;
+}>): Promise<void> {
+  await validateAgentArtifactCoverageStartInCurrentTransaction(input);
+  const artifact = await db.agentArtifacts.get(input.record.artifactId);
+  if (!artifact) throw new AgentArtifactNotFoundError(input.record.artifactId);
+  const manifest = requireArtifactIntegrity(artifact);
+  for (const touched of input.evidence.touchedChunks) {
+    const expected = manifest.chunks[touched.index];
+    const row = await db.agentArtifactChunks.get(`${artifact.id}:${touched.index}`);
+    if (
+      !expected
+      || expected.byteLength !== touched.byteLength
+      || expected.sha256 !== touched.sha256
+      || !row
+      || row.artifactId !== artifact.id
+      || row.index !== touched.index
+      || row.byteLength !== touched.byteLength
+      || row.sha256 !== touched.sha256
+    ) throw new AgentArtifactCorruptionError(artifact.id, 'coverage evidence does not match touched chunks');
+  }
+}
+
+/** Promotes newly owned cache artifacts and validates later canonical references. */
 export async function bindAgentArtifactsToMessages(
   bindings: readonly AgentArtifactMessageBinding[],
   now: number,
@@ -921,21 +1048,26 @@ export async function bindAgentArtifactsToMessages(
     const artifact = await db.agentArtifacts.get(binding.artifactId);
     if (!artifact) throw new AgentArtifactNotFoundError(binding.artifactId);
     validateArtifactRecord(artifact);
-    if (
-      artifact.sessionId !== binding.sessionId
-      || artifact.turnAttemptId !== binding.turnAttemptId
-      || artifact.toolCallId !== binding.toolCallId
-    ) throw new AgentArtifactAccessDeniedError(binding.artifactId, binding.sessionId);
+    if (artifact.sessionId !== binding.sessionId) {
+      throw new AgentArtifactAccessDeniedError(binding.artifactId, binding.sessionId);
+    }
     if (artifact.state !== 'ready') {
       throw new AgentArtifactStateConflictError(artifact.id, artifact.state);
     }
-    if (artifact.ownerMessageId !== null && artifact.ownerMessageId !== binding.messageId) {
-      throw new AgentArtifactConflictError(artifact.id);
+    await Dexie.waitFor(verifyArtifactIntegrityManifest(artifact));
+    if (artifact.storageClass === 'canonical') {
+      if (artifact.ownerMessageId === null) throw new AgentArtifactConflictError(artifact.id);
+      // A later canonical source row may reference this immutable artifact, but
+      // ownership stays with the message that originally promoted it.
+      continue;
     }
-    if (artifact.storageClass === 'cache') {
-      promotedBytes += artifact.byteLength;
-      promotedCount += 1;
-    }
+    if (
+      artifact.turnAttemptId !== binding.turnAttemptId
+      || artifact.toolCallId !== binding.toolCallId
+      || artifact.ownerMessageId !== null
+    ) throw new AgentArtifactAccessDeniedError(binding.artifactId, binding.sessionId);
+    promotedBytes += artifact.byteLength;
+    promotedCount += 1;
     await db.agentArtifacts.put({
       ...artifact,
       ownerMessageId: binding.messageId,
@@ -1018,12 +1150,14 @@ export async function discardUnboundAgentArtifactsInCurrentTransaction(
   for (const artifactId of input.artifactIds) {
     const artifact = await db.agentArtifacts.get(artifactId);
     if (!artifact) continue;
-    if (
-      artifact.sessionId !== input.sessionId
-      || artifact.turnAttemptId !== input.turnAttemptId
-    ) throw new AgentArtifactAccessDeniedError(artifactId, input.sessionId);
-    if (artifact.storageClass !== 'cache' || artifact.ownerMessageId !== null) {
-      throw new AgentArtifactConflictError(artifactId);
+    if (artifact.sessionId !== input.sessionId) {
+      throw new AgentArtifactAccessDeniedError(artifactId, input.sessionId);
+    }
+    // Later inspections reference an existing canonical artifact without
+    // taking ownership; failed attempts must leave that source untouched.
+    if (artifact.storageClass === 'canonical' || artifact.ownerMessageId !== null) continue;
+    if (artifact.turnAttemptId !== input.turnAttemptId) {
+      throw new AgentArtifactAccessDeniedError(artifactId, input.sessionId);
     }
     const accounting = repairArtifactAccounting(
       artifact,

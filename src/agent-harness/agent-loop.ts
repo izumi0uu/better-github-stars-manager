@@ -42,6 +42,9 @@ import {
 import { utf8ByteLength } from './results';
 import {
   type AgentExecutableTool,
+  type AgentRequiredBeforeFinalDirective,
+  type AgentToolResultAdmission,
+  type AgentToolResultAdmissionHost,
   type AgentToolSuspendOutcome,
   errorToolResult,
   finalizeToolResult,
@@ -53,6 +56,7 @@ import {
   toToolDefinition,
   ToolOutputTooLargeError,
   ToolResultBudgetError,
+  type FinalizedToolResult,
   type ToolResult,
   type ToolResultAllowance,
   type ToolRisk,
@@ -84,15 +88,37 @@ import {
   type AgentTurnLiveness,
 } from './liveness';
 
-export type AgentLoopResult = {
+export type AgentTerminalLoopResult = {
   sessionId: string;
   messages: AgentMessage[];
   /** Append-only turn transcript; unlike messages, compaction never replaces it. */
   rawMessages?: AgentMessage[];
   reason: AgentStopReason;
+  continuation?: undefined;
   contextFailureReason?: AgentContextFailureReason;
   suspension?: AgentLoopSuspensionCandidate;
 };
+
+export type AgentNonterminalContinuationCause = 'episode_exhausted' | 'no_progress';
+
+export type AgentNonterminalContinuationCandidate = Readonly<{
+  cause: AgentNonterminalContinuationCause;
+  projectedMessages: readonly AgentMessage[];
+  canonicalRawMessages: readonly AgentMessage[];
+  requiredBeforeFinal: readonly AgentRequiredBeforeFinalDirective[];
+}>;
+
+export type AgentNonterminalContinuationResult = {
+  sessionId: string;
+  messages: AgentMessage[];
+  rawMessages?: AgentMessage[];
+  reason: undefined;
+  continuation: AgentNonterminalContinuationCandidate;
+  contextFailureReason?: undefined;
+  suspension?: undefined;
+};
+
+export type AgentLoopResult = AgentTerminalLoopResult | AgentNonterminalContinuationResult;
 
 export type AgentLoopSuspensionCandidate = Readonly<{
   interactionKind: 'scope_selector';
@@ -123,6 +149,8 @@ export type RunAgentLoopInput = {
   trace?: AgentExecutionTraceSink;
   traceProvider?: AgentTraceProviderIdentity;
   contentCapture?: AgentContentCaptureSink;
+  toolResultAdmissionHost?: AgentToolResultAdmissionHost;
+  requiredBeforeFinal?: readonly AgentRequiredBeforeFinalDirective[];
   /** Owns ordinary-turn watchdogs and the Provider request signals they create. */
   liveness?: AgentTurnLiveness;
   signal?: AbortSignal;
@@ -164,7 +192,10 @@ const EXCLUSIVE_TOOL_ENVELOPE_REQUIRED_MESSAGE =
   'This tool must be requested by itself. Retry it without sibling tool calls.';
 const CONTEXT_LIMIT_EXCEEDED_MESSAGE = 'Context limit exceeded.';
 const TOOL_RESULT_MEMORY_LIMIT_MESSAGE =
-  'Cubby could not free enough internal tool-result memory to continue.';
+  'The agent could not free enough internal tool-result memory to continue.';
+const TOOL_RESULT_ADMISSION_FAILED_MESSAGE = 'Tool result admission failed.';
+const MAX_AGENT_OPAQUE_VALUE_BYTES = 512;
+const MAX_AGENT_OPAQUE_VALUES = 128;
 
 export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopResult> {
   const emit = input.emit ?? (() => {});
@@ -186,6 +217,8 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
   let requestByteRecoveryAttempted = false;
   let continuationEpisode = 0;
   const signal = input.liveness?.signal ?? input.signal;
+  let requiredBeforeFinal = normalizeRequiredBeforeFinal(input.requiredBeforeFinal ?? []);
+  let nonterminalContinuationActive = requiredBeforeFinal.length > 0;
 
   const finishAfterAbort = (): AgentLoopResult => {
     const timeoutReason = input.liveness?.timeoutReason;
@@ -199,6 +232,24 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
       category: 'provider',
     });
     return finishWithRaw('provider_error', input.sessionId, messages, emit);
+  };
+  const returnContinuation = (
+    cause: AgentNonterminalContinuationCause,
+  ): AgentNonterminalContinuationResult => {
+    const projectedMessages = [...messages];
+    const canonicalRawMessages = [...(tracksRawMessages ? rawMessages : messages)];
+    return {
+      sessionId: input.sessionId,
+      messages: projectedMessages,
+      ...(tracksRawMessages ? { rawMessages: canonicalRawMessages } : {}),
+      reason: undefined,
+      continuation: {
+        cause,
+        projectedMessages,
+        canonicalRawMessages,
+        requiredBeforeFinal: [...requiredBeforeFinal],
+      },
+    };
   };
 
   const continueAfterSettledToolBoundary = async (
@@ -367,13 +418,17 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
       return finishAfterAbort();
     }
 
+    const continuationAtStepStart = requiredBeforeFinal.length > 0;
+
     emit({ type: 'turn_start', sessionId: input.sessionId, step });
 
     let modelMessages: ReturnType<typeof toModelMessage>[];
     let response: Awaited<ReturnType<ModelProvider['generate']>>;
     let requestAttempt = 0;
     let preflightRecoveryAttempted = false;
+    let bufferedPresentationEvents: AgentEvent[] = [];
     while (true) {
+      bufferedPresentationEvents = [];
       requestAttempt += 1;
       const providerRequestIdentity = {
         requestId: `provider_request:${randomId()}`,
@@ -559,9 +614,13 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
               now,
             );
             if (event.type === 'response_start') {
-              emit({ type: 'assistant_stream_start', sessionId: input.sessionId, step });
+              bufferedPresentationEvents.push({
+                type: 'assistant_stream_start',
+                sessionId: input.sessionId,
+                step,
+              });
             } else if (event.type === 'text_delta') {
-              emit({
+              bufferedPresentationEvents.push({
                 type: 'assistant_text_delta',
                 sessionId: input.sessionId,
                 step,
@@ -896,11 +955,12 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
         requestLiveness?.finish();
       }
     }
-
     const toolCalls = response.toolCalls ?? [];
+    const candidateUsedToolCallIds = new Set(usedToolCallIds);
     try {
-      validateToolCallEnvelope(toolCalls, usedToolCallIds);
+      validateToolCallEnvelope(toolCalls, candidateUsedToolCallIds);
     } catch (error) {
+      if (continuationAtStepStart) return returnContinuation('no_progress');
       const message = error instanceof ProtocolValidationError
         ? error.message
         : 'Provider tool calls failed protocol validation.';
@@ -1005,13 +1065,15 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
       ? {
         id: idFactory(),
         role: 'agent',
-        content: response.content ?? '',
+        content: continuationAtStepStart ? '' : response.content ?? '',
         createdAt: now(),
         ...(toolCalls.length > 0 ? { toolCalls } : {}),
       }
       : undefined;
 
     if (toolCalls.length === 0) {
+      if (continuationAtStepStart) return returnContinuation('no_progress');
+      for (const event of bufferedPresentationEvents) emit(event);
       if (assistantMessage) {
         messages.push(assistantMessage);
         if (tracksRawMessages) rawMessages.push(assistantMessage);
@@ -1030,6 +1092,21 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
     let pendingStopReason: AgentStopReason | undefined;
     const completedPrefix: SuspendedToolResult[] = [];
     const stagedToolMessages: AgentMessage[] = [];
+    let stagedToolResultBytes = 0;
+    const priorRequiredBeforeFinal = requiredBeforeFinal;
+    let nextRequiredBeforeFinal = priorRequiredBeforeFinal;
+    const admissionTokens: unknown[] = [];
+    const disposals: Array<() => Promise<void>> = [];
+    let admissionFailed = false;
+    const stagedAdmissions: Array<Readonly<{
+      toolCall: ModelToolCall;
+      outcome: ExecuteToolCallOutcome;
+      originalResult: ToolResult;
+      finalized: FinalizedToolResult;
+      writeOutcome?: 'committed' | 'failed' | 'unknown';
+      tracedTool?: AgentExecutableTool;
+      transformed: boolean;
+    }>> = [];
     for (const [index, toolCall] of toolCalls.entries()) {
       let resultAllowance: ToolResultAllowance;
       try {
@@ -1044,7 +1121,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
               toolDefinitions,
               maxOutputTokens,
               latestUsage: responseUsage,
-              cumulativeToolResultBytes,
+              cumulativeToolResultBytes: cumulativeToolResultBytes + stagedToolResultBytes,
               provider: input.provider,
               allowMinimumEnvelopeForContinuation: input.onToolEnvelopeSettled !== undefined,
             });
@@ -1058,7 +1135,11 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
           });
         }
       } catch (error) {
-        if (!(error instanceof ToolResultBudgetError)) throw error;
+        if (!(error instanceof ToolResultBudgetError)) {
+          await disposeBestEffort(disposals);
+          throw error;
+        }
+        await disposeBestEffort(disposals);
         const reason = error.limitingFactor === 'provider'
           ? 'provider_request_byte_limit' as const
           : error.limitingFactor === 'context'
@@ -1121,6 +1202,9 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
       }
 
       if (outcome.suspension) {
+        await disposeBestEffort(disposals);
+        if (continuationAtStepStart) return returnContinuation('no_progress');
+        for (const event of bufferedPresentationEvents) emit(event);
         return {
           sessionId: input.sessionId,
           messages,
@@ -1145,77 +1229,77 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
       }
       if (!outcome.result) throw new Error('Tool execution produced no protocol result.');
 
+      const originalResult = outcome.result;
       const writeOutcome = outcome.writeOutcome ?? (
         outcome.executedToolRisk === 'write'
-          ? outcome.result.ok ? 'committed' : 'unknown'
+          ? originalResult.ok ? 'committed' : 'unknown'
           : undefined
       );
-      const finalized = writeOutcome
-        ? finalizeWriteToolResult(outcome.result, resultAllowance, writeOutcome)
-        : finalizeToolResult(outcome.result, resultAllowance);
-      observeAgentContentCapture(input.contentCapture, (capture) => {
-        capture.toolResult({
-          providerStep: step,
-          toolName: toolCall.name,
-          toolCallId: toolCall.id,
-          content: finalized.serialized,
-        });
-      });
-      const tracedTool = toolMap.get(toolCall.name);
-      if (tracedTool && input.trace) {
-        traceExecution(input.trace, {
-          kind: 'tool_result_admitted',
-          providerStep: step,
-          toolName: tracedTool.name,
-          toolCallId: toolCall.id,
-          originalBytes: serializedToolResultByteLength(outcome.result),
-          admittedBytes: finalized.byteLength,
-          reduction: finalized.budgetReduced ? 'error_envelope' : 'none',
-        });
-        if (tracedTool.risk === 'write' && writeOutcome) {
-          traceExecution(input.trace, {
-            kind: 'tool_write_outcome',
-            providerStep: step,
-            toolName: tracedTool.name,
-            toolCallId: toolCall.id,
-            effectCount: outcome.effectCount ?? null,
-            state: writeOutcome,
-          });
-        }
-        traceExecution(input.trace, {
-          kind: 'tool_completed',
-          providerStep: step,
-          toolName: tracedTool.name,
-          toolCallId: toolCall.id,
-          outcome: pendingStopReason === 'aborted' || signal?.aborted
-            ? 'cancelled'
-            : finalized.result.ok ? 'success' : 'error',
-          durationMs: outcome.durationMs ?? null,
-        });
-      }
-      if (input.contextPolicy) {
-        emitContextDiagnostic(emit, input.sessionId, 'tool_allowance', input.contextPolicy, {
-          toolResultBytes: finalized.byteLength,
-          toolResultReduced: finalized.budgetReduced,
-        });
-      }
-      cumulativeToolResultBytes += finalized.byteLength;
+      const finalizeCandidate = (candidate: ToolResult): FinalizedToolResult => (
+        writeOutcome
+          ? finalizeWriteToolResult(candidate, resultAllowance, writeOutcome)
+          : finalizeToolResult(candidate, resultAllowance)
+      );
+      const originalFinalized = finalizeCandidate(originalResult);
       if (outcome.ledgerCallId) {
-        input.executionLedger?.storeResult(outcome.ledgerCallId, finalized.result);
+        input.executionLedger?.storeResult(outcome.ledgerCallId, originalFinalized.result);
       }
 
-      if (outcome.executedToolName && outcome.executedToolRisk) {
-        emit({
-          type: 'tool_execution_end',
-          toolName: outcome.executedToolName,
-          callId: toolCall.id,
-          risk: outcome.executedToolRisk,
-          ok: finalized.result.ok,
-          writeOutcome: outcome.executedToolRisk === 'write'
-            ? writeOutcome ?? 'unknown'
-            : 'not_applicable',
-        });
-        input.liveness?.markAgentProgress();
+      const tracedTool = toolMap.get(toolCall.name);
+      let finalized = originalFinalized;
+      let opaqueReferences: string[] | undefined;
+      let transformed = false;
+      let proposedAdmission: AgentToolResultAdmission | null = null;
+      if (tracedTool && input.toolResultAdmissionHost) {
+        try {
+          proposedAdmission = await input.toolResultAdmissionHost.afterToolResult({
+            sessionId: input.sessionId,
+            assistantMessage,
+            toolCall,
+            result: originalResult,
+            risk: tracedTool.risk,
+            allowance: resultAllowance,
+            requiredBeforeFinal: nextRequiredBeforeFinal,
+          });
+          if (proposedAdmission) {
+            validateAgentToolResultAdmission(proposedAdmission);
+            const admittedReferences = normalizeOpaqueReferences(
+              proposedAdmission.opaqueReferences ?? [],
+            );
+            const admittedDirectives = proposedAdmission.requiredBeforeFinal === undefined
+              ? undefined
+              : normalizeRequiredBeforeFinal(proposedAdmission.requiredBeforeFinal);
+            const proposedFinalized = finalizeCandidate(proposedAdmission.result);
+            if (proposedFinalized.budgetReduced) {
+              await disposeBestEffort(proposedAdmission.dispose ? [proposedAdmission.dispose] : []);
+              proposedAdmission = null;
+              admissionFailed = true;
+              finalized = finalizeToolResult(
+                errorToolResult('tool_result_admission_failed', TOOL_RESULT_ADMISSION_FAILED_MESSAGE),
+                resultAllowance,
+              );
+            } else {
+              finalized = proposedFinalized;
+              transformed = true;
+              opaqueReferences = admittedReferences.length > 0 ? admittedReferences : undefined;
+              if (admittedDirectives !== undefined) {
+                nextRequiredBeforeFinal = admittedDirectives;
+              }
+              if (proposedAdmission.admissionToken !== undefined) {
+                admissionTokens.push(proposedAdmission.admissionToken);
+              }
+              if (proposedAdmission.dispose) disposals.push(proposedAdmission.dispose);
+            }
+          }
+        } catch {
+          await disposeBestEffort(proposedAdmission?.dispose ? [proposedAdmission.dispose] : []);
+          admissionFailed = true;
+          proposedAdmission = null;
+          finalized = finalizeToolResult(
+            errorToolResult('tool_result_admission_failed', TOOL_RESULT_ADMISSION_FAILED_MESSAGE),
+            resultAllowance,
+          );
+        }
       }
 
       const message: AgentMessage = {
@@ -1225,6 +1309,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
         createdAt: now(),
         toolCallId: toolCall.id,
         toolName: toolCall.name,
+        ...(opaqueReferences ? { opaqueReferences } : {}),
       };
       stagedToolMessages.push(message);
       completedPrefix.push({
@@ -1235,17 +1320,165 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
         serializedResult: finalized.serialized,
         createdAt: message.createdAt,
       });
+      stagedToolResultBytes += finalized.byteLength;
+      stagedAdmissions.push({
+        toolCall,
+        outcome,
+        originalResult,
+        finalized,
+        ...(writeOutcome ? { writeOutcome } : {}),
+        ...(tracedTool ? { tracedTool } : {}),
+        transformed,
+      });
     }
+
+    if (
+      signal?.aborted
+      && (continuationAtStepStart || stagedAdmissions.some((admission) => admission.transformed))
+    ) {
+      await disposeBestEffort(disposals);
+      return finishAfterAbort();
+    }
+    if (continuationAtStepStart && admissionFailed) {
+      await disposeBestEffort(disposals);
+      emit({
+        type: 'agent_error',
+        sessionId: input.sessionId,
+        message: TOOL_RESULT_ADMISSION_FAILED_MESSAGE,
+      });
+      return finishWithRaw('provider_error', input.sessionId, messages, emit);
+    }
+    if (
+      continuationAtStepStart
+      && !hasRequiredBeforeFinalProgress(priorRequiredBeforeFinal, nextRequiredBeforeFinal)
+    ) {
+      await disposeBestEffort(disposals);
+      return returnContinuation('no_progress');
+    }
+
     const settledEnvelope = [assistantMessage, ...stagedToolMessages];
+    const projectedMessages = [...messages, ...settledEnvelope];
+    const canonicalRawBase = tracksRawMessages ? rawMessages : messages;
+    const canonicalRawMessages = continuationAtStepStart
+      ? [...canonicalRawBase]
+      : [...canonicalRawBase, ...settledEnvelope];
+    try {
+      if (
+        (continuationAtStepStart || stagedAdmissions.some((admission) => admission.transformed))
+        && !input.toolResultAdmissionHost?.admitEnvelope
+      ) {
+        throw new TypeError('Transformed envelopes require a host checkpoint.');
+      }
+      validateProviderProtocolHistory(projectedMessages.map(toModelMessage));
+      await input.toolResultAdmissionHost?.admitEnvelope?.({
+        admissionTokens,
+        requiredBeforeFinal: nextRequiredBeforeFinal,
+        projectedMessages,
+        canonicalRawMessages,
+        envelopeKind: continuationAtStepStart ? 'internal_continuation' : 'canonical_source',
+      });
+    } catch {
+      await disposeBestEffort(disposals);
+      if (signal?.aborted) return finishAfterAbort();
+      emit({
+        type: 'agent_error',
+        sessionId: input.sessionId,
+        message: TOOL_RESULT_ADMISSION_FAILED_MESSAGE,
+      });
+      return finishWithRaw('provider_error', input.sessionId, messages, emit);
+    }
+    if (continuationAtStepStart || nextRequiredBeforeFinal.length > 0) {
+      nonterminalContinuationActive = true;
+    }
+
+    for (const toolCall of toolCalls) usedToolCallIds.add(toolCall.id);
+    requiredBeforeFinal = nextRequiredBeforeFinal;
     messages.push(...settledEnvelope);
-    if (tracksRawMessages) rawMessages.push(...settledEnvelope);
+    if (tracksRawMessages && !continuationAtStepStart) rawMessages.push(...settledEnvelope);
     latestUsage = responseUsage;
-    for (const message of settledEnvelope) emit({ type: 'message_update', message });
-    if (pendingStopReason) {
+    cumulativeToolResultBytes += stagedAdmissions.reduce(
+      (total, admission) => total + admission.finalized.byteLength,
+      0,
+    );
+
+    for (const admission of stagedAdmissions) {
+      observeAgentContentCapture(input.contentCapture, (capture) => {
+        capture.toolResult({
+          providerStep: step,
+          toolName: admission.toolCall.name,
+          toolCallId: admission.toolCall.id,
+          content: admission.finalized.serialized,
+        });
+      });
+      if (admission.tracedTool && input.trace) {
+        traceExecution(input.trace, {
+          kind: 'tool_result_admitted',
+          providerStep: step,
+          toolName: admission.tracedTool.name,
+          toolCallId: admission.toolCall.id,
+          originalBytes: serializedToolResultByteLength(admission.originalResult),
+          admittedBytes: admission.finalized.byteLength,
+          reduction: admission.transformed
+            ? 'structural'
+            : admission.finalized.budgetReduced ? 'error_envelope' : 'none',
+        });
+        if (admission.tracedTool.risk === 'write' && admission.writeOutcome) {
+          traceExecution(input.trace, {
+            kind: 'tool_write_outcome',
+            providerStep: step,
+            toolName: admission.tracedTool.name,
+            toolCallId: admission.toolCall.id,
+            effectCount: admission.outcome.effectCount ?? null,
+            state: admission.writeOutcome,
+          });
+        }
+        traceExecution(input.trace, {
+          kind: 'tool_completed',
+          providerStep: step,
+          toolName: admission.tracedTool.name,
+          toolCallId: admission.toolCall.id,
+          outcome: pendingStopReason === 'aborted' || signal?.aborted
+            ? 'cancelled'
+            : admission.finalized.result.ok ? 'success' : 'error',
+          durationMs: admission.outcome.durationMs ?? null,
+        });
+      }
+      if (input.contextPolicy) {
+        emitContextDiagnostic(emit, input.sessionId, 'tool_allowance', input.contextPolicy, {
+          toolResultBytes: admission.finalized.byteLength,
+          toolResultReduced: admission.finalized.budgetReduced,
+        });
+      }
+      if (admission.outcome.executedToolName && admission.outcome.executedToolRisk) {
+        emit({
+          type: 'tool_execution_end',
+          toolName: admission.outcome.executedToolName,
+          callId: admission.toolCall.id,
+          risk: admission.outcome.executedToolRisk,
+          ok: admission.finalized.result.ok,
+          writeOutcome: admission.outcome.executedToolRisk === 'write'
+            ? admission.writeOutcome ?? 'unknown'
+            : 'not_applicable',
+        });
+        input.liveness?.markAgentProgress();
+      }
+    }
+    if (!continuationAtStepStart) {
+      for (const event of bufferedPresentationEvents) emit(event);
+      for (const message of settledEnvelope) emit({ type: 'message_update', message });
+    }
+    if (pendingStopReason && (!continuationAtStepStart || pendingStopReason === 'aborted')) {
       return pendingStopReason === 'aborted'
         ? finishAfterAbort()
         : finishWithRaw(pendingStopReason, input.sessionId, messages, emit);
     }
+    if (
+      continuationAtStepStart !== (requiredBeforeFinal.length > 0)
+      || priorRequiredBeforeFinal.length !== requiredBeforeFinal.length
+      || priorRequiredBeforeFinal.some((directive, index) => (
+        directive.reference !== requiredBeforeFinal[index]?.reference
+      ))
+    ) return returnContinuation('episode_exhausted');
     if (input.contextPolicy) {
       const nextModelMessages = messages.map(toModelMessage);
       const nextProjection = preflightContextRequest({
@@ -1306,7 +1539,9 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
     }
   }
 
-  return finishWithRaw('step_budget_reached', input.sessionId, messages, emit);
+  return nonterminalContinuationActive
+    ? returnContinuation('episode_exhausted')
+    : finishWithRaw('step_budget_reached', input.sessionId, messages, emit);
 
   function finishWithRaw(
     reason: AgentStopReason,
@@ -1314,7 +1549,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
     projection: AgentMessage[],
     eventEmitter: (event: AgentEvent) => void,
     contextFailureReason?: AgentContextFailureReason,
-  ): AgentLoopResult {
+  ): AgentTerminalLoopResult {
     return finish(
       reason,
       finishedSessionId,
@@ -1333,7 +1568,7 @@ function finish(
   emit: (event: AgentEvent) => void,
   contextFailureReason?: AgentContextFailureReason,
   rawMessages?: AgentMessage[],
-): AgentLoopResult {
+): AgentTerminalLoopResult {
   emit({
     type: 'agent_done',
     sessionId,
@@ -1347,6 +1582,104 @@ function finish(
     reason,
     ...(contextFailureReason ? { contextFailureReason } : {}),
   };
+}
+
+function validateAgentToolResultAdmission(admission: AgentToolResultAdmission): void {
+  if (!admission || typeof admission !== 'object' || Array.isArray(admission)) {
+    throw new TypeError('Invalid tool-result admission.');
+  }
+  const result = admission.result as ToolResult | undefined;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    throw new TypeError('Invalid admitted tool result.');
+  }
+  if (result.ok === true) {
+    if (!('data' in result)) throw new TypeError('Invalid admitted success result.');
+  } else if (
+    result.ok !== false
+    || !result.error
+    || typeof result.error.code !== 'string'
+    || typeof result.error.message !== 'string'
+  ) {
+    throw new TypeError('Invalid admitted error result.');
+  }
+  if (admission.dispose !== undefined && typeof admission.dispose !== 'function') {
+    throw new TypeError('Invalid admission disposer.');
+  }
+}
+
+function normalizeOpaqueReferences(values: readonly string[]): string[] {
+  if (!Array.isArray(values) || values.length > MAX_AGENT_OPAQUE_VALUES) {
+    throw new TypeError('Invalid opaque references.');
+  }
+  const normalized = values.map((value) => normalizeOpaqueValue(value));
+  normalized.sort();
+  for (let index = 1; index < normalized.length; index++) {
+    if (normalized[index] === normalized[index - 1]) {
+      throw new TypeError('Duplicate opaque reference.');
+    }
+  }
+  return normalized;
+}
+
+function normalizeRequiredBeforeFinal(
+  values: readonly AgentRequiredBeforeFinalDirective[],
+): AgentRequiredBeforeFinalDirective[] {
+  if (!Array.isArray(values) || values.length > MAX_AGENT_OPAQUE_VALUES) {
+    throw new TypeError('Invalid required-before-final directives.');
+  }
+  const normalized = values.map((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new TypeError('Invalid required-before-final directive.');
+    }
+    if (value.requiredBeforeFinal !== true) {
+      throw new TypeError('Invalid required-before-final directive marker.');
+    }
+    return {
+      reference: normalizeOpaqueValue(value.reference),
+      progressToken: normalizeOpaqueValue(value.progressToken),
+      requiredBeforeFinal: true as const,
+    };
+  });
+  normalized.sort((left, right) => (
+    left.reference < right.reference ? -1 : left.reference > right.reference ? 1 : 0
+  ));
+  for (let index = 1; index < normalized.length; index++) {
+    if (normalized[index]?.reference === normalized[index - 1]?.reference) {
+      throw new TypeError('Duplicate required-before-final directive.');
+    }
+  }
+  return normalized;
+}
+
+function normalizeOpaqueValue(value: string): string {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || utf8ByteLength(value) > MAX_AGENT_OPAQUE_VALUE_BYTES
+  ) {
+    throw new TypeError('Invalid opaque admission value.');
+  }
+  return value;
+}
+
+function hasRequiredBeforeFinalProgress(
+  previous: readonly AgentRequiredBeforeFinalDirective[],
+  next: readonly AgentRequiredBeforeFinalDirective[],
+): boolean {
+  const nextByReference = new Map(next.map((directive) => [directive.reference, directive]));
+  return previous.some((directive) => (
+    nextByReference.get(directive.reference)?.progressToken !== directive.progressToken
+  ));
+}
+
+async function disposeBestEffort(disposals: readonly (() => Promise<void>)[]): Promise<void> {
+  for (const dispose of disposals) {
+    try {
+      await dispose();
+    } catch {
+      // The host owns its cleanup backstop; admission must not surface disposal failures.
+    }
+  }
 }
 
 type ExecuteToolCallOutcome = {

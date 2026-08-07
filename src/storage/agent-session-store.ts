@@ -9,6 +9,23 @@ import {
 } from '@/agent-harness';
 import { canonicalJson } from '@/agent-harness/canonical-json';
 import {
+  AgentArtifactCoverageError,
+  agentArtifactCoverageDirectives,
+  applyAgentArtifactCoverageEvidence,
+  createAgentArtifactCoverage,
+  createAgentArtifactCoverageReceipt,
+  settleAgentArtifactCoverageIncomplete,
+  validateAgentArtifactContinuationCheckpoint,
+  validateAgentArtifactCoverageEvidence,
+  validateAgentArtifactCoverageReceipt,
+  validateAgentArtifactCoverageRecords,
+  verifyAgentArtifactCoverageRecord,
+  type AgentArtifactContinuationCheckpoint,
+  type AgentArtifactCoverageEvidence,
+  type AgentArtifactCoverageRecord,
+  type AgentArtifactCoverageReceipt,
+} from '@/bgsm-agent/artifact-coverage';
+import {
   applyBgsmAgentSessionTransition,
   createBgsmAgentSession,
   validateBgsmAgentActiveProjection,
@@ -28,7 +45,6 @@ import {
   validateAgentSessionLaunchIdentity,
   type AgentSessionAttemptDigest,
   type AgentSessionLaunchDigest,
-  type AgentActiveTurnTransport,
   type AgentSessionLaunchIdentity,
 } from '@/bgsm-agent/session-transport';
 import { validateBgsmAgentConversationBinding } from '@/bgsm-agent/conversation-binding';
@@ -47,6 +63,8 @@ import {
   discardUnboundAgentArtifactsInCurrentTransaction,
   ensureAgentStorageUsage,
   reconcileAgentStorageUsageInCurrentTransaction,
+  validateAgentArtifactCoverageEvidenceInCurrentTransaction,
+  validateAgentArtifactCoverageStartInCurrentTransaction,
 } from './agent-storage-store';
 import {
   AGENT_SESSION_SCHEMA_VERSION,
@@ -80,6 +98,7 @@ import {
   type AgentAttemptTerminalReason,
 } from './agent-attempt-model';
 import { db } from './db';
+import { getOrganizeJobsLinkedToAgentSession } from './organize-job-store';
 
 export {
   AGENT_SESSION_SCHEMA_VERSION,
@@ -174,6 +193,8 @@ function validateAgentAttemptRow(
   if (!hasExactKeys(attempt as unknown as Record<string, unknown>, [
     'admittedLaunch',
     'admittedLaunchDigest',
+    'artifactContinuation',
+    'artifactCoverage',
     'id',
     'lease',
     'receipt',
@@ -202,6 +223,19 @@ function validateAgentAttemptRow(
     'state_uncertain',
     'terminal_non_retryable',
   ].includes(attempt.state)) throw new TypeError('Agent attempt state is invalid.');
+  validateAgentArtifactCoverageRecords(attempt.artifactCoverage);
+  if (attempt.artifactContinuation !== null) {
+    validateAgentArtifactContinuationCheckpoint(attempt.artifactContinuation);
+  }
+  const coverageDirectives = agentArtifactCoverageDirectives(attempt.artifactCoverage);
+  if (coverageDirectives.length > 0) {
+    if (
+      attempt.artifactContinuation === null
+      || canonicalJson(attempt.artifactContinuation.directives) !== canonicalJson(coverageDirectives)
+    ) throw new TypeError('Pending artifact coverage lacks its exact continuation checkpoint.');
+  } else if (attempt.artifactContinuation !== null) {
+    throw new TypeError('Agent artifact continuation exists without pending coverage.');
+  }
   validateLaunchDigest(attempt.admittedLaunchDigest);
   if (
     attempt.recoveryClass !== 'statically_read_only'
@@ -273,6 +307,7 @@ async function validateAgentAttemptRowIdentity(attempt: AgentAttemptRow): Promis
   const [launchDigest, storageId] = await Dexie.waitFor(Promise.all([
     digestAgentSessionLaunch(launch),
     agentAttemptStorageId(attempt.sessionId, attempt.turnAttemptId),
+    Promise.all(attempt.artifactCoverage.map(verifyAgentArtifactCoverageRecord)),
   ]));
   if (launchDigest !== attempt.admittedLaunchDigest || storageId !== attempt.id) {
     throw new TypeError('Agent attempt immutable identity is inconsistent.');
@@ -575,6 +610,13 @@ export async function loadAgentSessionTranscriptPage(
   });
 }
 
+export type AgentDurableTurnInspection = Readonly<{
+  executionEpochId: string;
+  launch: AgentSessionLaunchIdentity;
+  artifactCoverage: readonly AgentArtifactCoverageRecord[];
+  artifactContinuation: AgentArtifactContinuationCheckpoint | null;
+}>;
+
 /**
  * A replacement worker resumes only a statically read-only running attempt.
  * Every other interrupted authority becomes state_uncertain before returning.
@@ -582,11 +624,17 @@ export async function loadAgentSessionTranscriptPage(
 export async function inspectDurableAgentSessionTurn(
   sessionId: string,
   executionEpochId: string,
-): Promise<AgentActiveTurnTransport | null> {
+): Promise<AgentDurableTurnInspection | null> {
   assertAgentTurnTransportIdentifier(sessionId, 'Agent session ID');
   assertAgentTurnTransportIdentifier(executionEpochId, 'Agent worker execution epoch');
   await ensureAgentStorageUsage();
-  return db.transaction('rw', [db.agentSessions, db.agentAttempts, db.agentStorageUsage], async () => {
+  return db.transaction('rw', [
+    db.agentSessions,
+    db.agentAttempts,
+    db.agentArtifacts,
+    db.agentArtifactChunks,
+    db.agentStorageUsage,
+  ], async () => {
     const record = await db.agentSessions.get(sessionId);
     if (!record) return null;
     validateAgentSessionRecord(record);
@@ -614,14 +662,34 @@ export async function inspectDurableAgentSessionTurn(
         },
         updatedAt: Math.max(now, attempt.updatedAt),
       }, now);
-      return { executionEpochId, launch: cloneValue(attempt.admittedLaunch) };
+      return {
+        executionEpochId,
+        launch: cloneValue(attempt.admittedLaunch),
+        artifactCoverage: attempt.artifactCoverage.map((coverage) => cloneValue(coverage)),
+        artifactContinuation: attempt.artifactContinuation
+          ? cloneValue(attempt.artifactContinuation)
+          : null,
+      };
     }
+    const artifactCoverage = await Dexie.waitFor(Promise.all(
+      attempt.artifactCoverage.map((coverage) => settleAgentArtifactCoverageIncomplete(
+        coverage,
+        'attempt_state_lost',
+      )),
+    ));
+    await discardUnboundAgentArtifactsInCurrentTransaction({
+      artifactIds: artifactCoverage.map((coverage) => coverage.artifactId),
+      sessionId,
+      turnAttemptId: attempt.turnAttemptId,
+    }, now);
     await putAgentAttempt(attempt, {
       ...attempt,
       state: 'state_uncertain',
       terminalReason: 'attempt_state_lost',
       retryKind: null,
       writeSettlement: 'unsafe',
+      artifactCoverage,
+      artifactContinuation: null,
       lease: null,
       updatedAt: Math.max(now, attempt.updatedAt),
     }, now);
@@ -774,6 +842,8 @@ export async function admitAgentSessionTurn(input: Readonly<{
         retryKind: null,
         writeSettlement: null,
         receipt: null,
+        artifactCoverage: [],
+        artifactContinuation: null,
         lease: {
           executionEpochId: input.executionEpochId,
           turnAttemptId: input.turnAttemptId,
@@ -788,6 +858,193 @@ export async function admitAgentSessionTurn(input: Readonly<{
       return { kind: 'acquired' };
     },
   );
+}
+
+export type AgentArtifactCoverageCheckpointProposal = Readonly<
+  | { kind: 'start'; record: AgentArtifactCoverageRecord }
+  | { kind: 'evidence'; coverageId: string; evidence: AgentArtifactCoverageEvidence }
+>;
+
+export type AgentArtifactEnvelopeCheckpointInput = Readonly<{
+  sessionId: string;
+  turnAttemptId: string;
+  launchDigest: AgentSessionLaunchDigest;
+  executionEpochId: string;
+  proposals: readonly AgentArtifactCoverageCheckpointProposal[];
+  continuation: AgentArtifactContinuationCheckpoint | null;
+  expectedNonProgressRepromptUsed?: boolean;
+  now?: () => number;
+}>;
+
+export type AgentArtifactEnvelopeCheckpointResult = Readonly<{
+  artifactCoverage: readonly AgentArtifactCoverageRecord[];
+  artifactContinuation: AgentArtifactContinuationCheckpoint | null;
+}>;
+
+/** Persists a complete admitted assistant/tool envelope before it can be published. */
+export async function checkpointAgentSessionArtifactEnvelope(
+  input: AgentArtifactEnvelopeCheckpointInput,
+): Promise<AgentArtifactEnvelopeCheckpointResult> {
+  assertAgentTurnTransportIdentifier(input.sessionId, 'Agent session ID');
+  assertAgentTurnTransportIdentifier(input.turnAttemptId, 'Agent turn attempt ID');
+  assertAgentTurnTransportIdentifier(input.executionEpochId, 'Agent worker execution epoch');
+  validateLaunchDigest(input.launchDigest);
+  if (!Array.isArray(input.proposals)) throw new TypeError('Agent artifact coverage proposals must be an array.');
+  if (input.continuation !== null) validateAgentArtifactContinuationCheckpoint(input.continuation);
+  const now = (input.now ?? Date.now)();
+  assertTimestamp(now, 'Agent artifact checkpoint time');
+  await ensureAgentStorageUsage();
+  return db.transaction(
+    'rw',
+    [
+      db.agentSessions,
+      db.agentAttempts,
+      db.agentArtifacts,
+      db.agentArtifactChunks,
+      db.agentStorageUsage,
+    ],
+    async () => {
+      const session = await db.agentSessions.get(input.sessionId);
+      if (!session) throw new AgentSessionNotFoundError(input.sessionId);
+      validateAgentSessionRecord(session);
+      const attempt = await readAgentAttempt(input.sessionId, input.turnAttemptId);
+      if (!attempt || attempt.admittedLaunchDigest !== input.launchDigest) {
+        throw new AgentSessionAttemptConflictError(input.sessionId, input.turnAttemptId);
+      }
+      await validateAgentAttemptRowIdentity(attempt);
+      if (
+        attempt.state !== 'running'
+        || !attempt.lease
+        || attempt.lease.executionEpochId !== input.executionEpochId
+        || attempt.lease.turnAttemptId !== input.turnAttemptId
+        || attempt.lease.baseRevision !== session.revision
+        || attempt.lease.launchDigest !== input.launchDigest
+      ) throw new AgentSessionTurnLeaseMismatchError(input.sessionId, input.turnAttemptId);
+      if (input.expectedNonProgressRepromptUsed !== undefined) {
+        if (
+          !attempt.artifactContinuation
+          || attempt.artifactContinuation.nonProgressRepromptUsed
+            !== input.expectedNonProgressRepromptUsed
+        ) throw new AgentArtifactCoverageError('Agent artifact continuation re-prompt state changed.');
+      }
+      if (
+        attempt.artifactContinuation?.nonProgressRepromptUsed
+        && input.continuation !== null
+        && !input.continuation.nonProgressRepromptUsed
+      ) throw new AgentArtifactCoverageError('Agent artifact continuation re-prompt use cannot be reset.');
+
+      let coverage = [...attempt.artifactCoverage];
+      for (const proposal of input.proposals) {
+        if (!proposal || typeof proposal !== 'object' || Array.isArray(proposal)) {
+          throw new TypeError('Agent artifact coverage proposal is malformed.');
+        }
+        const proposalKeys = proposal.kind === 'start'
+          ? ['kind', 'record']
+          : ['coverageId', 'evidence', 'kind'];
+        if (!hasExactKeys(proposal as unknown as Record<string, unknown>, proposalKeys)) {
+          throw new TypeError('Agent artifact coverage proposal has unexpected fields.');
+        }
+        if (proposal.kind === 'start') {
+          await Dexie.waitFor(verifyAgentArtifactCoverageRecord(proposal.record));
+          const expected = await Dexie.waitFor(createAgentArtifactCoverage({
+            artifactId: proposal.record.artifactId,
+            sourceToolCallId: proposal.record.sourceToolCallId,
+            expectedBytes: proposal.record.expectedBytes,
+            artifactSha256: proposal.record.artifactSha256,
+            integrityManifestSha256: proposal.record.integrityManifestSha256,
+          }));
+          if (canonicalJson(expected) !== canonicalJson(proposal.record)) {
+            throw new AgentArtifactCoverageError('Artifact coverage start is not canonical.');
+          }
+          const existing = coverage.find((record) => record.coverageId === proposal.record.coverageId);
+          if (existing) {
+            if (canonicalJson(existing) !== canonicalJson(proposal.record)) {
+              throw new AgentArtifactCoverageError('Artifact coverage start conflicts with durable state.');
+            }
+            continue;
+          }
+          await validateAgentArtifactCoverageStartInCurrentTransaction({
+            record: proposal.record,
+            sessionId: input.sessionId,
+            turnAttemptId: input.turnAttemptId,
+          });
+          coverage.push(cloneValue(proposal.record));
+          validateAgentArtifactCoverageRecords(coverage);
+          continue;
+        }
+        if (proposal.kind !== 'evidence') {
+          throw new TypeError('Agent artifact coverage proposal kind is invalid.');
+        }
+        validateAgentArtifactCoverageEvidence(proposal.evidence);
+        const pending = coverage.find((record) => record.state === 'pending');
+        if (!pending || pending.coverageId !== proposal.coverageId) {
+          throw new AgentArtifactCoverageError('Artifact coverage must advance in source-admission order.');
+        }
+        await validateAgentArtifactCoverageEvidenceInCurrentTransaction({
+          record: pending,
+          evidence: proposal.evidence,
+          sessionId: input.sessionId,
+          turnAttemptId: input.turnAttemptId,
+        });
+        const applied = await Dexie.waitFor(applyAgentArtifactCoverageEvidence(
+          pending,
+          proposal.evidence,
+        ));
+        coverage = coverage.map((record) => (
+          record.coverageId === pending.coverageId ? applied.record : record
+        ));
+      }
+
+      const directives = agentArtifactCoverageDirectives(coverage);
+      if (directives.length > 0) {
+        if (!input.continuation) {
+          throw new AgentArtifactCoverageError('Pending artifact coverage requires a continuation checkpoint.');
+        }
+        if (canonicalJson(input.continuation.directives) !== canonicalJson(directives)) {
+          throw new AgentArtifactCoverageError('Continuation directives do not match durable artifact coverage.');
+        }
+      } else if (input.continuation !== null) {
+        throw new AgentArtifactCoverageError('Completed artifact coverage cannot retain a continuation checkpoint.');
+      }
+
+      const next: AgentAttemptRow = {
+        ...attempt,
+        artifactCoverage: coverage.map((record) => cloneValue(record)),
+        artifactContinuation: input.continuation ? cloneValue(input.continuation) : null,
+        updatedAt: Math.max(now, attempt.updatedAt),
+      };
+      await putAgentAttempt(attempt, next, now);
+      return {
+        artifactCoverage: next.artifactCoverage.map((record) => cloneValue(record)),
+        artifactContinuation: next.artifactContinuation
+          ? cloneValue(next.artifactContinuation)
+          : null,
+      };
+    },
+  );
+}
+
+export async function markAgentSessionArtifactRepromptUsed(input: Readonly<{
+  sessionId: string;
+  turnAttemptId: string;
+  launchDigest: AgentSessionLaunchDigest;
+  executionEpochId: string;
+  continuation: AgentArtifactContinuationCheckpoint;
+  now?: () => number;
+}>): Promise<AgentArtifactContinuationCheckpoint> {
+  validateAgentArtifactContinuationCheckpoint(input.continuation);
+  if (!input.continuation.nonProgressRepromptUsed) {
+    throw new AgentArtifactCoverageError('Agent artifact continuation re-prompt checkpoint is not marked used.');
+  }
+  const checkpoint = await checkpointAgentSessionArtifactEnvelope({
+    ...input,
+    proposals: [],
+    expectedNonProgressRepromptUsed: false,
+  });
+  if (!checkpoint.artifactContinuation) {
+    throw new AgentArtifactCoverageError('Agent artifact continuation checkpoint was lost.');
+  }
+  return checkpoint.artifactContinuation;
 }
 
 export async function loadCommittedAgentSessionTurn(input: Readonly<{
@@ -907,6 +1164,7 @@ export type AgentAttemptTerminalSettlementInput = Readonly<{
   turnAttemptId: string;
   launchDigest: AgentSessionLaunchDigest;
   outcome: AgentSessionTerminalOutcome;
+  coverageFailureCode?: string;
   executionEpochId?: string;
   now?: () => number;
 }>;
@@ -925,7 +1183,13 @@ export async function settleAgentSessionAttemptWithoutTransition(
   const now = (input.now ?? Date.now)();
   assertTimestamp(now, 'Agent attempt settlement time');
   await ensureAgentStorageUsage();
-  await db.transaction('rw', [db.agentSessions, db.agentAttempts, db.agentStorageUsage], async () => {
+  await db.transaction('rw', [
+    db.agentSessions,
+    db.agentAttempts,
+    db.agentArtifacts,
+    db.agentArtifactChunks,
+    db.agentStorageUsage,
+  ], async () => {
     const record = await db.agentSessions.get(input.sessionId);
     if (!record) throw new AgentSessionNotFoundError(input.sessionId);
     validateAgentSessionRecord(record);
@@ -947,12 +1211,25 @@ export async function settleAgentSessionAttemptWithoutTransition(
       throw new AgentSessionTurnLeaseMismatchError(input.sessionId, input.turnAttemptId);
     }
     const retryable = canRetryAttemptOutcome(input.outcome);
+    const artifactCoverage = await Dexie.waitFor(Promise.all(
+      attempt.artifactCoverage.map((coverage) => settleAgentArtifactCoverageIncomplete(
+        coverage,
+        input.coverageFailureCode ?? input.outcome.reason,
+      )),
+    ));
+    await discardUnboundAgentArtifactsInCurrentTransaction({
+      artifactIds: artifactCoverage.map((coverage) => coverage.artifactId),
+      sessionId: input.sessionId,
+      turnAttemptId: input.turnAttemptId,
+    }, now);
     await putAgentAttempt(attempt, {
       ...attempt,
       state: retryable ? 'retryable' : 'terminal_non_retryable',
       terminalReason: retryable ? null : input.outcome.reason,
       retryKind: retryable ? retryKindForOutcome(input.outcome) : null,
       writeSettlement: input.outcome.writeSettlement,
+      artifactCoverage,
+      artifactContinuation: null,
       lease: null,
       updatedAt: Math.max(now, attempt.updatedAt),
     }, now);
@@ -975,7 +1252,13 @@ export async function markAgentSessionAttemptStateUncertain(input: Readonly<{
   const now = (input.now ?? Date.now)();
   assertTimestamp(now, 'Agent attempt uncertainty time');
   await ensureAgentStorageUsage();
-  return db.transaction('rw', [db.agentSessions, db.agentAttempts, db.agentStorageUsage], async () => {
+  return db.transaction('rw', [
+    db.agentSessions,
+    db.agentAttempts,
+    db.agentArtifacts,
+    db.agentArtifactChunks,
+    db.agentStorageUsage,
+  ], async () => {
     const record = await db.agentSessions.get(input.sessionId);
     if (!record) return false;
     validateAgentSessionRecord(record);
@@ -990,12 +1273,25 @@ export async function markAgentSessionAttemptStateUncertain(input: Readonly<{
     ) return false;
     if (attempt.state === 'state_uncertain') return true;
     if (attempt.state !== 'running' && attempt.state !== 'stop_pending') return false;
+    const artifactCoverage = await Dexie.waitFor(Promise.all(
+      attempt.artifactCoverage.map((coverage) => settleAgentArtifactCoverageIncomplete(
+        coverage,
+        'attempt_state_lost',
+      )),
+    ));
+    await discardUnboundAgentArtifactsInCurrentTransaction({
+      artifactIds: artifactCoverage.map((coverage) => coverage.artifactId),
+      sessionId: input.sessionId,
+      turnAttemptId: input.turnAttemptId,
+    }, now);
     await putAgentAttempt(attempt, {
       ...attempt,
       state: 'state_uncertain',
       terminalReason: 'attempt_state_lost',
       retryKind: null,
       writeSettlement: 'unsafe',
+      artifactCoverage,
+      artifactContinuation: null,
       lease: null,
       updatedAt: Math.max(now, attempt.updatedAt),
     }, now);
@@ -1187,6 +1483,20 @@ async function commitAgentSessionTransitionInternal(
         ));
         if (active) throw new AgentSessionTurnActiveError(record.id, active.turnAttemptId);
       }
+      for (const coverage of attempt.artifactCoverage) {
+        await Dexie.waitFor(verifyAgentArtifactCoverageRecord(coverage));
+        if (coverage.state !== 'complete') {
+          throw new AgentArtifactCoverageError('Final commit requires complete artifact coverage.');
+        }
+        await validateAgentArtifactCoverageStartInCurrentTransaction({
+          record: coverage,
+          sessionId: record.id,
+          turnAttemptId: input.turnAttemptId,
+        });
+      }
+      if (attempt.artifactContinuation !== null) {
+        throw new AgentArtifactCoverageError('Final commit cannot retain artifact continuation state.');
+      }
 
       const applied = applyBgsmAgentSessionTransition(loaded.session, transition);
       if (!applied.applied) {
@@ -1196,7 +1506,7 @@ async function commitAgentSessionTransitionInternal(
           record.revision,
         );
       }
-      const messageRows = transition.messageDelta.map((message, index) => (
+      let messageRows = transition.messageDelta.map((message, index) => (
         toMessageRecord(
           record.id,
           record.lastSequence + index + 1,
@@ -1205,6 +1515,36 @@ async function commitAgentSessionTransitionInternal(
           now,
         )
       ));
+      const coverageReceipts = attempt.artifactCoverage.map((coverage) => (
+        createAgentArtifactCoverageReceipt(coverage, now)
+      ));
+      const coverageReceiptsByMessage = new Map<string, AgentArtifactCoverageReceipt[]>();
+      for (const receipt of coverageReceipts) {
+        const sources = messageRows.filter((row) => (
+          row.role === 'tool'
+          && row.toolCallId === receipt.sourceToolCallId
+          && row.artifactIds?.includes(receipt.artifactId)
+        ));
+        if (sources.length !== 1) {
+          throw new AgentArtifactCoverageError('Artifact coverage receipt source is not canonical.');
+        }
+        coverageReceiptsByMessage.set(sources[0]!.id, [
+          ...(coverageReceiptsByMessage.get(sources[0]!.id) ?? []),
+          receipt,
+        ]);
+      }
+      messageRows = messageRows.map((row) => {
+        const receipts = coverageReceiptsByMessage.get(row.id);
+        if (!receipts) return row;
+        const withReceipts = {
+          ...row,
+          artifactCoverageReceipts: receipts.map((receipt) => cloneValue(receipt)),
+        };
+        return {
+          ...withReceipts,
+          byteLength: agentMessageLogicalByteLength(withReceipts),
+        };
+      });
       const title = record.title || titleFromCanonicalHistory(applied.session.messages);
       const nextReceipt: AgentSessionAttemptReceipt = {
         turnAttemptId: input.turnAttemptId,
@@ -1240,6 +1580,7 @@ async function commitAgentSessionTransitionInternal(
         retryKind: canRetry ? retryKind : null,
         writeSettlement: input.outcome.writeSettlement,
         receipt: nextReceipt,
+        artifactContinuation: null,
         lease: null,
         updatedAt: Math.max(now, attempt.updatedAt),
       };
@@ -1313,8 +1654,8 @@ function degradeArtifactBackedTransition(
 }> {
   const artifactIds = new Set(collectTransitionArtifactIds(transition));
   const messageDelta = transition.messageDelta.map((message) => {
-    if (message.role !== 'tool' || !message.artifactIds?.length) return message;
-    const { artifactIds: _artifactIds, ...boundedMessage } = message;
+    if (message.role !== 'tool' || !message.opaqueReferences?.length) return message;
+    const { opaqueReferences: _opaqueReferences, ...boundedMessage } = message;
     return {
       ...boundedMessage,
       content: JSON.stringify(errorToolResult(
@@ -1333,7 +1674,7 @@ function collectTransitionArtifactIds(
   transition: BgsmAgentSessionTransition,
 ): string[] {
   return [...new Set(transition.messageDelta.flatMap((message) => (
-    message.role === 'tool' ? message.artifactIds ?? [] : []
+    message.role === 'tool' ? message.opaqueReferences ?? [] : []
   )))];
 }
 
@@ -1413,8 +1754,8 @@ function assertMatchingLaunchDigest(
 
 
 /**
- * Session and messages are deleted together. A linked active Organize job is
- * an independent durable workflow and must be cancelled or discarded first.
+ * Conversation-owned rows are deleted together. Linked nonterminal Organize
+ * authority blocks deletion; terminal Organize evidence remains independent.
  */
 export async function deleteAgentSession(
   sessionId: string,
@@ -1468,28 +1809,24 @@ export async function deleteAgentSession(
         throw new AgentSessionTurnActiveError(sessionId, activeAttempt.turnAttemptId);
       }
       const stalePreflights: string[] = [];
-      const terminalOriginJobs: string[] = [];
-      const linkedJob = (await db.organizeJobs.toArray()).find((job) => {
-        const linked = job.originAgentSessionId === sessionId || job.sessionId === sessionId;
-        if (!linked) return false;
-        if (job.status === 'completed' || job.status === 'cancelled') {
-          if (job.originAgentSessionId === sessionId) terminalOriginJobs.push(job.jobId);
-          return false;
-        }
+      let blockingJobId: string | null = null;
+      for (const job of await getOrganizeJobsLinkedToAgentSession(sessionId)) {
+        if (job.status === 'completed' || job.status === 'cancelled') continue;
         if (job.status === 'preflight_ready' && (
           job.preflight?.state !== 'ready'
           || job.preflight.expiresAt <= now
         )) {
           stalePreflights.push(job.jobId);
-          return false;
+          continue;
         }
-        return true;
-      });
-      if (linkedJob) {
-        throw new AgentSessionDeletionBlockedError(sessionId, linkedJob.jobId);
+        blockingJobId = job.jobId;
+        break;
       }
-      for (const jobId of new Set([...stalePreflights, ...terminalOriginJobs])) {
-        await deleteSessionLinkedOrganizeArtifacts(jobId);
+      if (blockingJobId) {
+        throw new AgentSessionDeletionBlockedError(sessionId, blockingJobId);
+      }
+      for (const jobId of stalePreflights) {
+        await deleteStaleOrganizePreflightArtifacts(jobId);
       }
       const referencedArtifactIds = new Set<string>();
       await db.agentMessages.where('sessionId').equals(sessionId).each((message) => {
@@ -1510,7 +1847,7 @@ export async function deleteAgentSession(
   );
 }
 
-async function deleteSessionLinkedOrganizeArtifacts(jobId: string): Promise<void> {
+async function deleteStaleOrganizePreflightArtifacts(jobId: string): Promise<void> {
   const applies = await db.organizeApplies.where('jobId').equals(jobId).toArray();
   for (const apply of applies) {
     await db.organizeApplyRows.where('applyId').equals(apply.applyId).delete();
@@ -1622,6 +1959,28 @@ function validateAgentSessionMessageRecord(
   expectedSequence: number,
 ): void {
   if (!row || typeof row !== 'object') throw new TypeError('Message row must be an object.');
+  const messageKeys = [
+    'byteLength',
+    'content',
+    'createdAt',
+    'expiresAt',
+    'id',
+    'lastAccessedAt',
+    'role',
+    'schemaVersion',
+    'sequence',
+    'sessionId',
+    'storageClass',
+    'turnAttemptId',
+    ...(row.toolCallId === undefined ? [] : ['toolCallId']),
+    ...(row.toolName === undefined ? [] : ['toolName']),
+    ...(row.toolCalls === undefined ? [] : ['toolCalls']),
+    ...(row.artifactIds === undefined ? [] : ['artifactIds']),
+    ...(row.artifactCoverageReceipts === undefined ? [] : ['artifactCoverageReceipts']),
+  ];
+  if (!hasExactKeys(row as unknown as Record<string, unknown>, messageKeys)) {
+    throw new TypeError('Canonical Agent message has unexpected fields.');
+  }
   if (row.schemaVersion !== AGENT_SESSION_SCHEMA_VERSION) {
     throw new TypeError('Unsupported durable message schema version.');
   }
@@ -1657,6 +2016,7 @@ function validateAgentSessionMessageRecord(
       || row.toolName !== undefined
       || row.toolCalls !== undefined
       || row.artifactIds !== undefined
+      || row.artifactCoverageReceipts !== undefined
     ) {
       throw new TypeError('User messages cannot contain tool metadata.');
     }
@@ -1667,6 +2027,7 @@ function validateAgentSessionMessageRecord(
       row.toolCallId !== undefined
       || row.toolName !== undefined
       || row.artifactIds !== undefined
+      || row.artifactCoverageReceipts !== undefined
     ) {
       throw new TypeError('Assistant messages cannot contain tool-result metadata.');
     }
@@ -1696,6 +2057,23 @@ function validateAgentSessionMessageRecord(
         throw new TypeError('Tool-result artifact references must be unique.');
       }
       artifactIds.add(artifactId);
+    }
+  }
+  if (row.artifactCoverageReceipts !== undefined) {
+    if (
+      !Array.isArray(row.artifactCoverageReceipts)
+      || row.artifactCoverageReceipts.length === 0
+      || row.artifactCoverageReceipts.length > 64
+    ) throw new TypeError('Artifact coverage receipts must contain between 1 and 64 records.');
+    const coverageIds = new Set<string>();
+    for (const receipt of row.artifactCoverageReceipts) {
+      validateAgentArtifactCoverageReceipt(receipt);
+      if (
+        receipt.sourceToolCallId !== row.toolCallId
+        || !row.artifactIds?.includes(receipt.artifactId)
+        || coverageIds.has(receipt.coverageId)
+      ) throw new TypeError('Artifact coverage receipt does not match its canonical source row.');
+      coverageIds.add(receipt.coverageId);
     }
   }
 }
@@ -1775,7 +2153,7 @@ function toMessageRecord(
     ...(message.toolCallId ? { toolCallId: message.toolCallId } : {}),
     ...(message.toolName ? { toolName: message.toolName } : {}),
     ...(message.toolCalls ? { toolCalls: cloneValue(message.toolCalls) } : {}),
-    ...(message.artifactIds ? { artifactIds: [...message.artifactIds] } : {}),
+    ...(message.opaqueReferences ? { artifactIds: [...message.opaqueReferences] } : {}),
   };
   return {
     ...record,
@@ -1792,7 +2170,7 @@ function fromMessageRecord(row: AgentSessionMessageRecord): BgsmAgentSessionMess
     ...(row.toolCallId !== undefined ? { toolCallId: row.toolCallId } : {}),
     ...(row.toolName !== undefined ? { toolName: row.toolName } : {}),
     ...(row.toolCalls !== undefined ? { toolCalls: cloneValue(row.toolCalls) } : {}),
-    ...(row.artifactIds !== undefined ? { artifactIds: [...row.artifactIds] } : {}),
+    ...(row.artifactIds !== undefined ? { opaqueReferences: [...row.artifactIds] } : {}),
   };
 }
 function fromMessageRecordForTransport(

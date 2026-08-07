@@ -106,6 +106,30 @@ describe('Agent UI presentation selectors', () => {
     }
   });
 
+  it('hides preflight cancellation for observer and owner-lost pages', () => {
+    const preflight = {
+      requestId: 'preflight:observer',
+      status: 'requesting' as const,
+      taskInstruction: 'Organize all repositories.',
+      label: '',
+      count: 0,
+      preflightToken: null,
+    };
+    for (const role of ['observer', 'owner_lost'] as const) {
+      const view = selectOrganizeWorkbenchView(stateWith({ role, preflight }));
+      expect(view.capabilities.canCancelPreflight).toBe(false);
+      expect(resolveAgentUiPresentation(IDLE_CHAT, view).stopbar).toBeNull();
+    }
+  });
+
+  it('maps typed admission conflicts without exposing transport text', () => {
+    const view = selectOrganizeWorkbenchView(stateWith({
+      error: 'A second Organize run was rejected.',
+      organizeFailureReason: 'already_started',
+    }));
+    expect(view.error?.kind).toBe('organize_already_running');
+  });
+
   it('separates a failed review-page fetch from invalid analysis coverage', () => {
     const job = presentation('review');
     const view = selectOrganizeWorkbenchView(stateWith({
@@ -139,20 +163,20 @@ describe('Agent UI presentation selectors', () => {
     expect(ui.stopbar).toBeNull();
   });
 
-  it('gives every owned terminal state an explicit release action', () => {
-    for (const runState of ['failed', 'interrupted', 'cancelled'] as const) {
-      const view = selectOrganizeWorkbenchView(stateWith({ snapshot: snapshot(runState) }));
-      expect(view.ownsSession).toBe(true);
-      expect(view.capabilities.canDiscard || view.capabilities.canRestart).toBe(true);
-      expect(resolveAgentUiPresentation(IDLE_CHAT, view).stopbar).toBeNull();
-    }
-
+  it('keeps terminal results dismissible without locking chat or conversations', () => {
     const receipt = selectOrganizeWorkbenchView(stateWith({
+      role: null,
       snapshot: snapshot('completed'),
       organizeJob: { ...presentation('completed'), apply: applyProgress(3, 3) },
     }));
+
     expect(receipt.phase).toBe('receipt');
-    expect(receipt.capabilities.canDiscard).toBe(true);
+    expect(receipt.role).toBeNull();
+    expect(receipt.capabilities.canDismissTerminal).toBe(true);
+    expect(receipt.capabilities.canChat).toBe(true);
+    expect(receipt.capabilities.canCreateSession).toBe(true);
+    expect(receipt.capabilities.canSwitchSession).toBe(true);
+    expect(receipt.capabilities.canDeleteSession).toBe(true);
     expect(resolveAgentUiPresentation(IDLE_CHAT, receipt).stopbar).toBeNull();
   });
 
@@ -176,13 +200,110 @@ describe('Agent UI presentation selectors', () => {
     expect(view.phase).toBe('review_ready');
     expect(ui.dominantPhase).toBe('chat_working');
     expect(ui.mascot).toBe('working');
-    expect(ui.sessionPolicy.ownsWorkbench).toBe(true);
+    expect(view.role).toBe('owner');
     expect(ui.sessionPolicy.canSwitchSession).toBe(false);
+  });
+
+  it('derives owner, observer, and owner-lost capabilities without transport heuristics', () => {
+    const job = presentation('review');
+    const proposal = {
+      proposalId,
+      actionableCount: 0,
+      nonActionableCount: 10,
+      review: { version: 1 as const, proposalId, runId, generation: 1, rows: [] },
+    };
+    const owner = selectOrganizeWorkbenchView(stateWith({
+      role: 'owner',
+      snapshot: snapshot('review'),
+      organizeJob: job,
+      proposal,
+    }));
+    expect(owner.controlNotice).toBeNull();
+    expect(owner.capabilities.canEditReview).toBe(true);
+    expect(owner.capabilities.canApplySelection).toBe(true);
+    expect(owner.capabilities.canTakeControl).toBe(false);
+    expect(owner.capabilities.canSwitchSession).toBe(false);
+    expect(owner.capabilities.canChat).toBe(true);
+
+    const observer = selectOrganizeWorkbenchView(stateWith({
+      role: 'observer',
+      snapshot: snapshot('review'),
+      organizeJob: job,
+      proposal,
+    }));
+    expect(observer.controlNotice).toBe('controlled_elsewhere');
+    expect(observer.capabilities.canReadReview).toBe(true);
+    expect(observer.capabilities.canEditReview).toBe(false);
+    expect(observer.capabilities.canApplySelection).toBe(false);
+    expect(observer.capabilities.canDiscard).toBe(false);
+    expect(observer.capabilities.canTakeControl).toBe(false);
+    expect(observer.capabilities.canSwitchSession).toBe(true);
+    expect(observer.capabilities.canChat).toBe(true);
+
+    const ownerLost = selectOrganizeWorkbenchView(stateWith({
+      role: 'owner_lost',
+      snapshot: snapshot('review'),
+      organizeJob: job,
+      proposal,
+    }));
+    expect(ownerLost.controlNotice).toBe('owner_disconnected');
+    expect(ownerLost.capabilities.canReadReview).toBe(true);
+    expect(ownerLost.capabilities.canEditReview).toBe(false);
+    expect(ownerLost.capabilities.canApplySelection).toBe(false);
+    expect(ownerLost.capabilities.canTakeControl).toBe(true);
+    expect(ownerLost.capabilities.canSwitchSession).toBe(true);
+    expect(ownerLost.capabilities.canChat).toBe(true);
+  });
+
+  it('requires connected owner transport and no pending command for mutations', () => {
+    const disconnected = selectOrganizeWorkbenchView(stateWith({
+      role: 'owner',
+      snapshot: snapshot('analyzing'),
+      transport: 'disconnected',
+    }));
+    expect(disconnected.phase).toBe('reconnecting');
+    expect(disconnected.capabilities.canStop).toBe(false);
+    expect(disconnected.capabilities.canTakeControl).toBe(false);
+
+    const pending = selectOrganizeWorkbenchView(stateWith({
+      role: 'owner',
+      snapshot: snapshot('review'),
+      organizeJob: presentation('review'),
+      proposal: {
+        proposalId,
+        actionableCount: 0,
+        nonActionableCount: 10,
+        review: { version: 1, proposalId, runId, generation: 1, rows: [] },
+      },
+      pendingCommand: {
+        id: 'pending-apply',
+        kind: 'apply_selection',
+        runId,
+        generation: 1,
+        jobId: 'organize-job:v1:presentation-test',
+        baselineRevision: 1,
+      },
+    }));
+    expect(pending.capabilities.canEditReview).toBe(false);
+    expect(pending.capabilities.canApplySelection).toBe(false);
+    expect(pending.capabilities.canDiscard).toBe(false);
+  });
+
+  it('changes revision keys when a server role changes', () => {
+    const owner = selectOrganizeWorkbenchView(stateWith({
+      role: 'owner',
+      snapshot: snapshot('analyzing'),
+    }));
+    const observer = selectOrganizeWorkbenchView(stateWith({
+      role: 'observer',
+      snapshot: snapshot('analyzing'),
+    }));
+    expect(observer.revisionKey).not.toBe(owner.revisionKey);
   });
 });
 
 function stateWith(overrides: Partial<AgentWorkbenchState>): AgentWorkbenchState {
-  return { ...createAgentWorkbenchState(controllerId, sessionId), ...overrides };
+  return { ...createAgentWorkbenchState(controllerId, sessionId), role: 'owner', ...overrides };
 }
 
 function snapshot(state: OrganizeJobRunSnapshot['state']): OrganizeJobRunSnapshot {
@@ -227,6 +348,7 @@ function presentation(status: BgsmOrganizeJobPresentation['status']): BgsmOrgani
     runId,
     generation: 1,
     jobId: 'organize-job:v1:presentation-test',
+    originAgentSessionId: sessionId,
     revision: 1,
     status,
     scopeLabel: 'All stars',

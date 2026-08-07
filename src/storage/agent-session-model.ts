@@ -17,6 +17,7 @@ import type {
 import type { BgsmAgentConversationBinding } from '@/bgsm-agent/conversation-binding';
 import type { BgsmAgentOrganizeLibraryAction } from '@/bgsm-agent/tools';
 import type { AgentStorageClass } from './agent-storage-model';
+import type { AgentArtifactCoverageReceipt } from '@/bgsm-agent/artifact-coverage';
 
 export const AGENT_SESSION_SCHEMA_VERSION = 1 as const;
 export const AGENT_SESSION_TITLE_MAX_LENGTH = 32;
@@ -105,6 +106,7 @@ export type AgentSessionMessageRecord = {
   toolName?: string;
   toolCalls?: ModelToolCall[];
   artifactIds?: string[];
+  artifactCoverageReceipts?: AgentArtifactCoverageReceipt[];
 };
 
 export type BgsmAgentSessionSummary = Readonly<{

@@ -59,6 +59,19 @@ function makeReadTool(): AgentTool<{ query: string }, { count: number }> {
 }
 
 describe('agent harness agent loop', () => {
+  it('omits opaque message references from Provider conversion', () => {
+    assert.deepEqual(toModelMessage({
+      ...baseMessage,
+      opaqueReferences: ['opaque:local-only'],
+    }), {
+      role: 'user',
+      content: baseMessage.content,
+      toolCallId: undefined,
+      toolName: undefined,
+      toolCalls: undefined,
+    });
+  });
+
   it('passes the configured output budget explicitly on every model request', async () => {
     const budgets: number[] = [];
     const result = await runAgentLoop({
@@ -848,6 +861,333 @@ describe('agent harness agent loop', () => {
     assert.equal(parsed.ok, false);
     assert.equal(parsed.error?.code, 'tool_output_too_large');
     assert.ok(encoder.encode(toolMessage.content).byteLength <= MAX_TOOL_RESULT_BYTES);
+  });
+
+  it('admits a transformed result and complete canonical envelope before publication', async () => {
+    const events: AgentEvent[] = [];
+    const order: string[] = [];
+    const result = await runAgentLoop({
+      sessionId: 's-generic-admission',
+      messages: [baseMessage],
+      rawMessages: [baseMessage],
+      provider: {
+        async generate(input) {
+          input.onStreamEvent?.({ type: 'response_start' });
+          input.onStreamEvent?.({ type: 'text_delta', delta: 'Working' });
+          return {
+            content: 'Working',
+            toolCalls: [{ id: 'call-admission', name: 'large_read', arguments: {} }],
+          };
+        },
+      },
+      tools: [{
+        name: 'large_read',
+        description: 'Return a large payload',
+        risk: 'read',
+        async execute() {
+          return { payload: 'x'.repeat(MAX_TOOL_RESULT_BYTES) };
+        },
+      }],
+      maxSteps: 1,
+      toolResultAdmissionHost: {
+        async afterToolResult(input) {
+          assert.equal(input.result.ok, true);
+          assert.equal(input.risk, 'read');
+          assert.deepEqual(input.requiredBeforeFinal, []);
+          return {
+            result: okToolResult({ stored: true }),
+            opaqueReferences: ['opaque:large-read'],
+            requiredBeforeFinal: [{
+              reference: 'coverage:large-read',
+              progressToken: 'issued:0',
+              requiredBeforeFinal: true,
+            }],
+            admissionToken: 'checkpoint:large-read',
+          };
+        },
+        async admitEnvelope(input) {
+          order.push('checkpoint');
+          assert.equal(input.envelopeKind, 'canonical_source');
+          assert.deepEqual(input.admissionTokens, ['checkpoint:large-read']);
+          assert.deepEqual(input.projectedMessages.map((message) => message.role), [
+            'user', 'agent', 'tool',
+          ]);
+          assert.deepEqual(input.canonicalRawMessages, input.projectedMessages);
+        },
+      },
+      emit(event) {
+        events.push(event);
+        if (
+          event.type === 'assistant_stream_start'
+          || event.type === 'assistant_text_delta'
+          || event.type === 'message_update'
+        ) order.push(event.type);
+      },
+    });
+
+    assert.equal(result.reason, undefined);
+    assert.equal(result.continuation?.cause, 'episode_exhausted');
+    assert.deepEqual(result.continuation?.requiredBeforeFinal, [{
+      reference: 'coverage:large-read',
+      progressToken: 'issued:0',
+      requiredBeforeFinal: true,
+    }]);
+    const toolMessage = result.messages.find((message) => message.role === 'tool');
+    assert.deepEqual(toolMessage?.opaqueReferences, ['opaque:large-read']);
+    assert.deepEqual(JSON.parse(toolMessage!.content), { ok: true, data: { stored: true } });
+    assert.equal(order[0], 'checkpoint');
+    assert.deepEqual(order.slice(1), [
+      'assistant_stream_start',
+      'assistant_text_delta',
+      'message_update',
+      'message_update',
+    ]);
+    assert.equal(events.some((event) => event.type === 'agent_done'), false);
+  });
+
+  it('disposes a transformed result that cannot fit and admits a generic error', async () => {
+    let disposeCalls = 0;
+    const result = await runAgentLoop({
+      sessionId: 's-admission-overflow',
+      messages: [baseMessage],
+      provider: new MockProvider([{
+        toolCalls: [{ id: 'call-admission-overflow', name: 'large_read', arguments: {} }],
+      }]),
+      tools: [{
+        name: 'large_read',
+        description: 'Return data',
+        risk: 'read',
+        async execute() {
+          return { value: 1 };
+        },
+      }],
+      contextPolicy: {
+        ...CONTEXT_PROFILE_8192,
+        memoryResultCeilingBytes: MIN_TOOL_RESULT_ENVELOPE_BYTES,
+      },
+      maxSteps: 1,
+      toolResultAdmissionHost: {
+        async afterToolResult() {
+          return {
+            result: okToolResult({ payload: 'x'.repeat(MAX_TOOL_RESULT_BYTES) }),
+            dispose: async () => { disposeCalls += 1; },
+          };
+        },
+      },
+    });
+
+    assert.equal(disposeCalls, 1);
+    const toolMessage = result.messages.find((message) => message.role === 'tool');
+    assert.equal(JSON.parse(toolMessage!.content).error.code, 'tool_result_admission_failed');
+    assert.equal(toolMessage?.opaqueReferences, undefined);
+  });
+
+  it('publishes no envelope content when its host checkpoint fails', async () => {
+    const secret = 'host-checkpoint-secret';
+    const events: AgentEvent[] = [];
+    let disposeCalls = 0;
+    const result = await runAgentLoop({
+      sessionId: 's-admission-checkpoint-failure',
+      messages: [baseMessage],
+      provider: {
+        async generate(input) {
+          input.onStreamEvent?.({ type: 'response_start' });
+          input.onStreamEvent?.({ type: 'text_delta', delta: 'provisional secret page' });
+          return {
+            content: 'provisional secret page',
+            toolCalls: [{ id: 'call-checkpoint-failure', name: 'read_data', arguments: {} }],
+          };
+        },
+      },
+      tools: [{
+        name: 'read_data',
+        description: 'Read data',
+        risk: 'read',
+        async execute() { return { value: 1 }; },
+      }],
+      toolResultAdmissionHost: {
+        async afterToolResult() {
+          return {
+            result: okToolResult({ projected: true }),
+            opaqueReferences: ['opaque:unadmitted'],
+            dispose: async () => { disposeCalls += 1; },
+          };
+        },
+        async admitEnvelope() { throw new Error(secret); },
+      },
+      emit: (event) => events.push(event),
+    });
+
+    assert.equal(result.reason, 'provider_error');
+    assert.deepEqual(result.messages, [baseMessage]);
+    assert.equal(disposeCalls, 1);
+    assert.equal(events.some((event) => event.type === 'message_update'), false);
+    assert.equal(events.some((event) => event.type === 'assistant_stream_start'), false);
+    assert.equal(events.some((event) => event.type === 'assistant_text_delta'), false);
+    assert.equal(JSON.stringify(events).includes(secret), false);
+    assert.equal(JSON.stringify(events).includes('provisional secret page'), false);
+    assert.equal(
+      events.some((event) => event.type === 'agent_error'
+        && event.message === 'Tool result admission failed.'),
+      true,
+    );
+  });
+
+  it('keeps continuation envelopes internal and returns a host-switch boundary after clearing directives', async () => {
+    const events: AgentEvent[] = [];
+    const checkpoints: Array<{ projected: AgentMessage[]; canonical: AgentMessage[] }> = [];
+    let providerCalls = 0;
+    const result = await runAgentLoop({
+      sessionId: 's-continuation-clear',
+      messages: [baseMessage],
+      rawMessages: [baseMessage],
+      requiredBeforeFinal: [{
+        reference: 'required:one',
+        progressToken: 'cursor:one',
+        requiredBeforeFinal: true,
+      }],
+      provider: {
+        async generate(input) {
+          providerCalls += 1;
+          input.onStreamEvent?.({ type: 'response_start' });
+          input.onStreamEvent?.({
+            type: 'text_delta',
+            delta: providerCalls === 1 ? 'discard this prose' : 'Accepted final',
+          });
+          return providerCalls === 1
+            ? {
+                content: 'discard this prose',
+                toolCalls: [{ id: 'call-progress', name: 'continue_read', arguments: {} }],
+              }
+            : { content: 'Accepted final' };
+        },
+      },
+      tools: [{
+        name: 'continue_read',
+        description: 'Continue a host-owned read',
+        risk: 'read',
+        async execute() { return { page: 'bounded' }; },
+      }],
+      maxSteps: 2,
+      toolResultAdmissionHost: {
+        async afterToolResult() {
+          return { result: okToolResult({ page: 'bounded' }), requiredBeforeFinal: [] };
+        },
+        async admitEnvelope(input) {
+          assert.equal(input.envelopeKind, 'internal_continuation');
+          checkpoints.push({
+            projected: [...input.projectedMessages],
+            canonical: [...input.canonicalRawMessages],
+          });
+        },
+      },
+      emit: (event) => events.push(event),
+    });
+
+    assert.equal(result.reason, undefined);
+    assert.equal(result.continuation?.cause, 'episode_exhausted');
+    assert.deepEqual(result.continuation?.requiredBeforeFinal, []);
+    assert.equal(providerCalls, 1);
+    assert.deepEqual(checkpoints[0]?.projected.map((message) => message.role), [
+      'user', 'agent', 'tool',
+    ]);
+    assert.equal(checkpoints[0]?.projected[1]?.content, '');
+    assert.deepEqual(checkpoints[0]?.canonical, [baseMessage]);
+    assert.deepEqual(result.rawMessages?.map((message) => message.content), [
+      baseMessage.content,
+    ]);
+    assert.deepEqual(events.filter((event) => event.type === 'assistant_text_delta'), []);
+    assert.deepEqual(events.filter((event) => event.type === 'message_update'), []);
+  });
+
+  it('returns no progress without checkpointing or admitting unchanged continuation state', async () => {
+    let checkpoints = 0;
+    let disposeCalls = 0;
+    const directive = {
+      reference: 'required:unchanged',
+      progressToken: 'cursor:same',
+      requiredBeforeFinal: true as const,
+    };
+    const result = await runAgentLoop({
+      sessionId: 's-continuation-no-progress',
+      messages: [baseMessage],
+      rawMessages: [baseMessage],
+      requiredBeforeFinal: [directive],
+      provider: new MockProvider([{
+        content: 'premature prose',
+        toolCalls: [{ id: 'call-no-progress', name: 'continue_read', arguments: {} }],
+      }]),
+      tools: [{
+        name: 'continue_read',
+        description: 'Continue a host-owned read',
+        risk: 'read',
+        async execute() { return { page: 'same' }; },
+      }],
+      toolResultAdmissionHost: {
+        async afterToolResult() {
+          return {
+            result: okToolResult({ page: 'same' }),
+            requiredBeforeFinal: [directive],
+            dispose: async () => { disposeCalls += 1; },
+          };
+        },
+        async admitEnvelope() { checkpoints += 1; },
+      },
+    });
+
+    assert.equal(result.reason, undefined);
+    assert.equal(result.continuation?.cause, 'no_progress');
+    assert.deepEqual(result.messages, [baseMessage]);
+    assert.deepEqual(result.rawMessages, [baseMessage]);
+    assert.deepEqual(result.continuation?.requiredBeforeFinal, [directive]);
+    assert.equal(checkpoints, 0);
+    assert.equal(disposeCalls, 1);
+  });
+
+  it('recognizes opaque token advancement before returning a later no-progress candidate', async () => {
+    let providerCalls = 0;
+    const result = await runAgentLoop({
+      sessionId: 's-continuation-token-progress',
+      messages: [baseMessage],
+      rawMessages: [baseMessage],
+      requiredBeforeFinal: [{
+        reference: 'required:token',
+        progressToken: 'cursor:one',
+        requiredBeforeFinal: true,
+      }],
+      provider: new MockProvider([
+        { toolCalls: [{ id: 'call-token-progress', name: 'continue_read', arguments: {} }] },
+        { content: 'still premature' },
+      ]),
+      tools: [{
+        name: 'continue_read',
+        description: 'Continue a host-owned read',
+        risk: 'read',
+        async execute() { return { page: 'next' }; },
+      }],
+      maxSteps: 2,
+      toolResultAdmissionHost: {
+        async afterToolResult() {
+          providerCalls += 1;
+          return {
+            result: okToolResult({ page: 'next' }),
+            requiredBeforeFinal: [{
+              reference: 'required:token',
+              progressToken: 'cursor:two',
+              requiredBeforeFinal: true,
+            }],
+          };
+        },
+        async admitEnvelope() {},
+      },
+    });
+
+    assert.equal(providerCalls, 1);
+    assert.equal(result.reason, undefined);
+    assert.equal(result.continuation?.cause, 'no_progress');
+    assert.equal(result.continuation?.requiredBeforeFinal[0]?.progressToken, 'cursor:two');
+    assert.deepEqual(result.rawMessages, [baseMessage]);
+    assert.deepEqual(result.messages.map((message) => message.role), ['user', 'agent', 'tool']);
   });
 
   it('accepts a serialized tool result exactly at the per-result byte limit', async () => {

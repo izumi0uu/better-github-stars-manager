@@ -822,7 +822,7 @@ describe('durable Agent session store', () => {
         ? {
             ...message,
             content: '{"ok":true,"data":{"status":"artifact_available"}}',
-            artifactIds: ['artifact-quota-degraded'],
+            opaqueReferences: ['artifact-quota-degraded'],
           }
         : message
     ));
@@ -904,7 +904,7 @@ describe('durable Agent session store', () => {
         ? {
             ...message,
             content: '{"ok":true,"data":{"status":"artifact_available"}}',
-            artifactIds: ['artifact-quota-degraded-no-lease'],
+            opaqueReferences: ['artifact-quota-degraded-no-lease'],
           }
         : message
     ));
@@ -949,7 +949,7 @@ describe('durable Agent session store', () => {
         ? {
             ...message,
             content: '{"ok":true,"data":{"status":"artifact_available"}}',
-            artifactIds: ['artifact-quota-degraded-rollback'],
+            opaqueReferences: ['artifact-quota-degraded-rollback'],
           }
         : message
     ));
@@ -1079,7 +1079,7 @@ describe('durable Agent session store', () => {
     const transition = fullTransition(created.session.id);
     transition.messageDelta = transition.messageDelta.map((message) => (
       message.id === 'tool-1'
-        ? { ...message, artifactIds: ['artifact-delete-corrupt-link'] }
+        ? { ...message, opaqueReferences: ['artifact-delete-corrupt-link'] }
         : message
     ));
     await commitAgentSessionTransition({ turnAttemptId, transition });
@@ -1111,7 +1111,7 @@ describe('durable Agent session store', () => {
     const transition = fullTransition(created.session.id);
     transition.messageDelta = transition.messageDelta.map((message) => (
       message.id === 'tool-1'
-        ? { ...message, artifactIds: ['artifact-binding'] }
+        ? { ...message, opaqueReferences: ['artifact-binding'] }
         : message
     ));
 
@@ -1373,15 +1373,15 @@ describe('durable Agent session store', () => {
     assert.equal(await db.agentSessions.get('session-corrupt'), undefined);
   });
 
-  it('cascades canonical messages but refuses to delete an active origin or owner session', async () => {
+  it('retains terminal workflow evidence byte-for-byte after deleting origin and current sessions', async () => {
     const origin = await createAgentSession({ idFactory: () => 'session-origin' });
     const owner = await createAgentSession({ idFactory: () => 'session-owner' });
     await commitAgentSessionTransition({
       turnAttemptId: 'attempt-delete',
       transition: fullTransition(origin.session.id),
     });
-    const job = organizeJob(origin.session.id, owner.session.id);
-    await db.organizeJobs.put(job);
+    const activeJob = organizeJob(origin.session.id, owner.session.id);
+    await db.organizeJobs.put(activeJob);
 
     await assert.rejects(
       () => deleteAgentSession(origin.session.id, { now: () => 100 }),
@@ -1394,15 +1394,41 @@ describe('durable Agent session store', () => {
     assert.equal(await db.agentMessages.where('sessionId').equals(origin.session.id).count(), messages.length);
 
     const applyId = 'organize-apply:v1:session-delete';
-    await db.organizeJobs.put({
-      ...job,
-      status: 'completed',
+    const terminalJob = {
+      ...activeJob,
+      activeSlot: undefined,
+      status: 'completed' as const,
       applyId,
       completedAt: 90,
+    };
+    await db.organizeJobs.put(terminalJob);
+    await db.organizeItems.put({
+      id: `${terminalJob.jobId}:0`,
+      jobId: terminalJob.jobId,
+      position: 0,
+      fullName: 'owner/repo',
+      analysisState: 'unchanged',
+      proposedActions: [],
+      approvedActions: [],
+      proposedAdditions: [],
+      sourceFingerprint: 'source:v1:session-delete',
+      selected: false,
+      retryCount: 0,
+      failure: null,
+      leaseToken: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      analyzedAt: 80,
+    });
+    await db.organizeTaxonomies.put({
+      jobId: terminalJob.jobId,
+      fingerprint: 'taxonomy:v1:session-delete',
+      snapshot: { retained: true },
+      createdAt: 1,
     });
     await db.organizeApplies.put({
       applyId,
-      jobId: job.jobId,
+      jobId: terminalJob.jobId,
       sourceRevision: 1,
       expectedTaxonomyFingerprint: 'taxonomy:v1:session-delete',
       status: 'completed',
@@ -1414,7 +1440,7 @@ describe('durable Agent session store', () => {
     await db.organizeApplyRows.put({
       id: `${applyId}:0`,
       applyId,
-      jobId: job.jobId,
+      jobId: terminalJob.jobId,
       position: 0,
       fullName: 'owner/repo',
       approvedActions: [],
@@ -1429,13 +1455,123 @@ describe('durable Agent session store', () => {
       leaseExpiresAt: null,
       settledAt: 90,
     });
+    const evidence = await Promise.all([
+      db.organizeJobs.get(terminalJob.jobId),
+      db.organizeItems.where('jobId').equals(terminalJob.jobId).toArray(),
+      db.organizeTaxonomies.get(terminalJob.jobId),
+      db.organizeApplies.where('jobId').equals(terminalJob.jobId).toArray(),
+      db.organizeApplyRows.where('applyId').equals(applyId).toArray(),
+    ]);
+    const fullScan = vi.spyOn(db.organizeJobs, 'toArray')
+      .mockRejectedValue(new Error('conversation deletion must use organize indexes'));
+
     assert.equal(await deleteAgentSession(origin.session.id, { now: () => 100 }), true);
     assert.equal(await db.agentSessions.get(origin.session.id), undefined);
     assert.equal(await db.agentMessages.where('sessionId').equals(origin.session.id).count(), 0);
-    assert.equal(await db.organizeJobs.get(job.jobId), undefined);
-    assert.equal(await db.organizeApplies.get(applyId), undefined);
-    assert.equal(await db.organizeApplyRows.where('applyId').equals(applyId).count(), 0);
+    assert.deepEqual(await Promise.all([
+      db.organizeJobs.get(terminalJob.jobId),
+      db.organizeItems.where('jobId').equals(terminalJob.jobId).toArray(),
+      db.organizeTaxonomies.get(terminalJob.jobId),
+      db.organizeApplies.where('jobId').equals(terminalJob.jobId).toArray(),
+      db.organizeApplyRows.where('applyId').equals(applyId).toArray(),
+    ]), evidence);
+
+    assert.equal(await deleteAgentSession(owner.session.id, { now: () => 100 }), true);
+    assert.equal(await db.agentSessions.get(owner.session.id), undefined);
+    assert.deepEqual(await Promise.all([
+      db.organizeJobs.get(terminalJob.jobId),
+      db.organizeItems.where('jobId').equals(terminalJob.jobId).toArray(),
+      db.organizeTaxonomies.get(terminalJob.jobId),
+      db.organizeApplies.where('jobId').equals(terminalJob.jobId).toArray(),
+      db.organizeApplyRows.where('applyId').equals(applyId).toArray(),
+    ]), evidence);
+    fullScan.mockRestore();
   });
+
+  it('retains a cancelled no-Apply result when its linked conversation is deleted', async () => {
+    const created = await createAgentSession({ idFactory: () => 'session-cancelled-result' });
+    const cancelled = {
+      ...organizeJob(created.session.id, created.session.id),
+      activeSlot: undefined,
+      status: 'cancelled' as const,
+      revision: 2,
+      updatedAt: 50,
+      cancelledAt: 50,
+    };
+    await db.organizeJobs.put(cancelled);
+    await db.organizeItems.put({
+      id: `${cancelled.jobId}:0`,
+      jobId: cancelled.jobId,
+      position: 0,
+      fullName: 'owner/repo',
+      analysisState: 'pending',
+      proposedActions: [],
+      approvedActions: [],
+      proposedAdditions: [],
+      sourceFingerprint: null,
+      selected: false,
+      retryCount: 0,
+      failure: null,
+      leaseToken: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      analyzedAt: null,
+    });
+    await db.organizeTaxonomies.put({
+      jobId: cancelled.jobId,
+      fingerprint: 'taxonomy:v1:cancelled-session-delete',
+      snapshot: { retained: true },
+      createdAt: 1,
+    });
+    const evidence = await Promise.all([
+      db.organizeJobs.get(cancelled.jobId),
+      db.organizeItems.where('jobId').equals(cancelled.jobId).toArray(),
+      db.organizeTaxonomies.get(cancelled.jobId),
+    ]);
+
+    assert.equal(await deleteAgentSession(created.session.id, { now: () => 100 }), true);
+    assert.equal(await db.agentSessions.get(created.session.id), undefined);
+    assert.deepEqual(await Promise.all([
+      db.organizeJobs.get(cancelled.jobId),
+      db.organizeItems.where('jobId').equals(cancelled.jobId).toArray(),
+      db.organizeTaxonomies.get(cancelled.jobId),
+    ]), evidence);
+    assert.equal(await db.organizeApplies.where('jobId').equals(cancelled.jobId).count(), 0);
+  });
+
+  for (const status of [
+    'preflight_ready',
+    'analysis_blocked',
+    'paused',
+    'review',
+    'apply_sealed',
+    'applying',
+  ] as const) {
+    it(`blocks deletion for linked ${status} workflow authority`, async () => {
+      const created = await createAgentSession({ idFactory: () => `session-delete-${status}` });
+      const job = {
+        ...organizeJob(created.session.id, created.session.id),
+        status,
+        ...(status === 'preflight_ready' ? {
+          preflight: {
+            token: `preflight:v1:delete-${status}`,
+            requestId: `request:delete-${status}`,
+            state: 'ready' as const,
+            expiresAt: 200,
+            consumedAt: null,
+          },
+        } : {}),
+      };
+      await db.organizeJobs.put(job);
+
+      await assert.rejects(
+        () => deleteAgentSession(created.session.id, { now: () => 100 }),
+        AgentSessionDeletionBlockedError,
+      );
+      assert.ok(await db.agentSessions.get(created.session.id));
+      assert.deepEqual(await db.organizeJobs.get(job.jobId), job);
+    });
+  }
 
   it('blocks deletion for the current worker turn but ignores a prior worker epoch', async () => {
     const blocked = await createAgentSession({ idFactory: () => 'session-delete-active-turn' });
@@ -1480,6 +1616,19 @@ describe('durable Agent session store', () => {
       },
     };
     await db.organizeJobs.put(job);
+    const staleJob = {
+      ...job,
+      jobId: 'organize-job:v1:stale-session-delete',
+      activeSlot: undefined,
+      preflight: {
+        token: 'preflight:v1:stale-session-delete',
+        requestId: 'request:stale-session-delete',
+        state: 'consumed' as const,
+        expiresAt: 200,
+        consumedAt: 75,
+      },
+    };
+    await db.organizeJobs.put(staleJob);
     await db.organizeItems.put({
       id: `${job.jobId}:0`,
       jobId: job.jobId,
@@ -1507,6 +1656,7 @@ describe('durable Agent session store', () => {
 
     assert.equal(await deleteAgentSession(created.session.id, { now: () => 100 }), true);
     assert.equal(await db.organizeJobs.get(job.jobId), undefined);
+    assert.equal(await db.organizeJobs.get(staleJob.jobId), undefined);
     assert.equal(await db.organizeItems.where('jobId').equals(job.jobId).count(), 0);
     assert.equal(await db.organizeTaxonomies.get(job.jobId), undefined);
   });

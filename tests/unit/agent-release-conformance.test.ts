@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -177,8 +177,35 @@ describe('Agent Phase 4 release conformance', () => {
     // be exposed as a UI-callable RPC that could carry a large transition.
     expect(background).not.toContain("'commitAgentSessionTransition'");
   });
+  it('keeps product artifact policy outside the generic Agent harness', () => {
+    const source = readSourceTree('src/agent-harness');
+    for (const forbidden of [
+      'read_agent_artifact',
+      'artifact_available',
+      '@/bgsm-agent',
+      '@/storage',
+      'AgentToolResultArtifactWriter',
+      'AgentToolResultArtifactDisposer',
+      'AgentToolResultArtifactPointer',
+      'artifactIds',
+    ]) {
+      expect(source, `src/agent-harness contains forbidden boundary ${forbidden}`)
+        .not.toContain(forbidden);
+    }
+  });
+
 });
 
 function read(relativePath: string): string {
   return readFileSync(path.join(root, relativePath), 'utf8');
+}
+
+function readSourceTree(relativeDirectory: string): string {
+  const directory = path.join(root, relativeDirectory);
+  return readdirSync(directory, { withFileTypes: true })
+    .flatMap((entry) => {
+      const relativePath = path.join(relativeDirectory, entry.name);
+      return entry.isDirectory() ? readSourceTree(relativePath) : [read(relativePath)];
+    })
+    .join('\n');
 }

@@ -1,6 +1,6 @@
 import type { ToolRisk } from '@/agent-harness';
 
-export const BGSM_AGENT_TOOL_REGISTRY_VERSION = 1;
+export const BGSM_AGENT_TOOL_REGISTRY_VERSION = 4;
 
 export const BGSM_AGENT_TOOL_NAMES = Object.freeze({
   requestFullLibraryOrganization: 'request_full_library_organization',
@@ -17,6 +17,7 @@ export const BGSM_AGENT_TOOL_NAMES = Object.freeze({
   searchRepositoryCode: 'search_repository_code',
   readRepositoryFile: 'read_repository_file',
   readRepositoryNotes: 'read_repository_notes',
+  readAgentArtifact: 'read_agent_artifact',
 } as const);
 
 export type BgsmAgentToolName = (
@@ -28,7 +29,8 @@ export type BgsmAgentToolCapability =
   | 'tag_writes'
   | 'library_organization'
   | 'repository_code'
-  | 'repository_notes';
+  | 'repository_notes'
+  | 'agent_artifacts';
 
 export type BgsmAgentToolPresentation =
   | 'repository_data'
@@ -200,6 +202,16 @@ const definitions = [
     evidenceSource: 'none',
     writePolicy: 'none',
     exclusiveEnvelope: false,
+  }),
+  define({
+    name: BGSM_AGENT_TOOL_NAMES.readAgentArtifact,
+    risk: 'read',
+    capability: 'agent_artifacts',
+    visibility: 'base',
+    presentation: 'repository_data',
+    evidenceSource: 'none',
+    writePolicy: 'none',
+    exclusiveEnvelope: true,
   }),
 ] as const satisfies readonly BgsmAgentToolDefinition[];
 

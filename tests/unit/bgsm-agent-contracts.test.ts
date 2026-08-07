@@ -67,6 +67,7 @@ import {
   type ProposalReviewProjection,
 } from '@/bgsm-agent';
 import {
+  BGSM_ORGANIZE_JOB_CONTROL_FAILURE_REASONS,
   validateBgsmOrganizeJobDeliveryEnvelope,
   validateBgsmOrganizeJobMessageIdentity,
   type BgsmOrganizeJobPortMessage,
@@ -730,21 +731,23 @@ describe('first-use disclosure and messaging identities', () => {
     }), /inconsistent/u);
   });
 
-  it('distinguishes a live connection handshake from authoritative no-active state', () => {
+  it('distinguishes live handshakes, no-job projections, and deletion invalidations', () => {
     const connectionReady = {
       type: 'bgsmOrganizeJobRunConnectionReady' as const,
       controllerId,
       sessionId: 'session-1',
     };
-    const noActive = {
-      type: 'bgsmOrganizeJobRunNoActive' as const,
+    const noJob = {
+      type: 'bgsmOrganizeJobState' as const,
       controllerId,
       sessionId: 'session-1',
+      presentation: null,
+      role: null,
     };
     validateBgsmOrganizeJobMessageIdentity(connectionReady);
-    validateBgsmOrganizeJobMessageIdentity(noActive);
+    validateBgsmOrganizeJobMessageIdentity(noJob);
     assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
-      ...noActive,
+      ...noJob,
       active: false,
     } as unknown as BgsmOrganizeJobPortMessage), /Unexpected BGSM OrganizeJobRun message keys/u);
 
@@ -754,17 +757,13 @@ describe('first-use disclosure and messaging identities', () => {
       deliverySequence: 0,
       deliveryKind: 'authoritative_snapshot' as const,
       durableRevision: null,
-      message: noActive,
+      message: noJob,
     };
     validateBgsmOrganizeJobDeliveryEnvelope(envelope);
     assert.throws(() => validateBgsmOrganizeJobDeliveryEnvelope({
       ...envelope,
       deliveryKind: 'live',
     }), /must be an authoritative/u);
-    assert.throws(() => validateBgsmOrganizeJobDeliveryEnvelope({
-      ...envelope,
-      durableRevision: 1,
-    }), /non-durable/u);
     validateBgsmOrganizeJobDeliveryEnvelope({
       ...envelope,
       deliveryKind: 'live',
@@ -774,6 +773,101 @@ describe('first-use disclosure and messaging identities', () => {
       ...envelope,
       message: connectionReady,
     }), /must be a live/u);
+
+    const deleted = {
+      type: 'bgsmAgentSessionDeleted' as const,
+      controllerId,
+      sessionId: 'session-1',
+      deletedSessionId: 'deleted-session',
+    };
+    validateBgsmOrganizeJobMessageIdentity(deleted);
+    validateBgsmOrganizeJobDeliveryEnvelope({
+      ...envelope,
+      deliveryKind: 'live',
+      message: deleted,
+    });
+    assert.throws(() => validateBgsmOrganizeJobDeliveryEnvelope({
+      ...envelope,
+      message: deleted,
+    }), /deletion invalidation must be a live/u);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...deleted,
+      deletedSessionId: ' deleted-session ',
+    }), /trimmed and nonempty/u);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...deleted,
+      revision: 1,
+    } as unknown as BgsmOrganizeJobPortMessage), /Unexpected BGSM OrganizeJobRun message keys/u);
+  });
+
+  it('validates one explicit takeover and terminal job dismissal contract', () => {
+    const takeControl = {
+      type: 'takeControlBgsmOrganizeJob' as const,
+      controllerId,
+      sessionId: 'session-1',
+      runId,
+      generation: 2,
+      requestId: 'take-control-1',
+      jobId: 'organize-job:v1:contracts',
+      expectedRevision: 4,
+    };
+    validateBgsmOrganizeJobMessageIdentity(takeControl);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...takeControl,
+      expectedRevision: -1,
+    }), /nonnegative safe integer/u);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...takeControl,
+      jobId: ' organize-job:v1:contracts ',
+    }), /trimmed and nonempty/u);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...takeControl,
+      ownerSessionId: 'legacy-owner',
+    } as unknown as BgsmOrganizeJobPortMessage), /Unexpected BGSM OrganizeJobRun message keys/u);
+
+    const dismiss = {
+      type: 'dismissBgsmTerminalOrganizeJob' as const,
+      controllerId,
+      sessionId: 'session-1',
+      jobId: 'organize-job:v1:contracts',
+      expectedRevision: 5,
+    };
+    validateBgsmOrganizeJobMessageIdentity(dismiss);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...dismiss,
+      applyId: 'organize-apply:v1:legacy',
+    } as unknown as BgsmOrganizeJobPortMessage), /Unexpected BGSM OrganizeJobRun message keys/u);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...dismiss,
+      runId,
+      generation: 2,
+    } as unknown as BgsmOrganizeJobPortMessage), /Unexpected BGSM OrganizeJobRun message keys/u);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...dismiss,
+      type: 'dismissBgsmOrganizeReceipt',
+    } as unknown as BgsmOrganizeJobPortMessage), /Unsupported BGSM OrganizeJobRun Port message type/u);
+
+    for (const reason of BGSM_ORGANIZE_JOB_CONTROL_FAILURE_REASONS) {
+      validateBgsmOrganizeJobMessageIdentity({
+        type: 'bgsmOrganizeJobRunError',
+        controllerId,
+        sessionId: 'session-1',
+        runId,
+        generation: 2,
+        requestId: 'control-failure-1',
+        reason,
+        message: 'The Organize control command was rejected.',
+      });
+    }
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      type: 'bgsmOrganizeJobRunError',
+      controllerId,
+      sessionId: 'session-1',
+      runId,
+      generation: 2,
+      reason: 'owner_gone',
+      message: 'Unknown conflict.',
+    } as unknown as BgsmOrganizeJobPortMessage), /error reason is invalid/u);
   });
 
   it('binds proposal-summary events to the durable paged-review identity and count', () => {
@@ -953,6 +1047,7 @@ describe('first-use disclosure and messaging identities', () => {
       runId,
       generation: 2,
       jobId: 'organize-job:v1:contracts',
+      originAgentSessionId: 'origin-session-1',
       revision: 4,
       status: 'review' as const,
       scopeLabel: 'All stars',
@@ -975,12 +1070,65 @@ describe('first-use disclosure and messaging identities', () => {
     };
     validateBgsmOrganizeJobMessageIdentity({
       type: 'bgsmOrganizeJobState',
+      controllerId: parseControllerId('controller:v1:observer-page'),
+      sessionId: 'observer-session',
+      presentation,
+      role: 'observer',
+    });
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      type: 'bgsmOrganizeJobState',
       controllerId,
       sessionId: 'session-1',
-      runId,
-      generation: 2,
-      presentation,
+      presentation: { ...presentation, originAgentSessionId: ' origin-session-1 ' },
+      role: 'owner',
+    }), /origin Agent sessionId must be trimmed and nonempty/u);
+    const terminalState = {
+      type: 'bgsmOrganizeJobState' as const,
+      controllerId: parseControllerId('controller:v1:terminal-page'),
+      sessionId: 'terminal-page-session',
+      presentation: { ...presentation, status: 'cancelled' as const },
+      role: null,
+    };
+    validateBgsmOrganizeJobMessageIdentity(terminalState);
+    validateBgsmOrganizeJobDeliveryEnvelope({
+      type: 'bgsmOrganizeJobRunDelivery',
+      connectionEpochId: 'organize-connection:v1:terminal',
+      deliverySequence: 0,
+      deliveryKind: 'live',
+      durableRevision: presentation.revision,
+      message: terminalState,
     });
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...terminalState,
+      role: 'owner',
+    }), /status and control role are inconsistent/u);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...terminalState,
+      presentation,
+      role: null,
+    }), /status and control role are inconsistent/u);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...terminalState,
+      presentation: null,
+      role: 'owner_lost',
+    }), /no-job state cannot carry/u);
+    assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
+      ...terminalState,
+      presentation,
+      role: 'controller',
+    } as unknown as BgsmOrganizeJobPortMessage), /control role is invalid/u);
+    assert.throws(() => validateBgsmOrganizeJobDeliveryEnvelope({
+      type: 'bgsmOrganizeJobRunDelivery',
+      connectionEpochId: 'organize-connection:v1:stale',
+      deliverySequence: 0,
+      deliveryKind: 'live',
+      durableRevision: presentation.revision - 1,
+      message: {
+        ...terminalState,
+        presentation,
+        role: 'observer',
+      },
+    }), /revision must match/u);
     const page: BgsmOrganizeJobPortMessage = {
       type: 'bgsmOrganizeReviewPage',
       controllerId,
@@ -1050,9 +1198,8 @@ describe('first-use disclosure and messaging identities', () => {
       type: 'bgsmOrganizeJobState',
       controllerId,
       sessionId: 'session-1',
-      runId,
-      generation: 2,
       presentation: { ...presentation, status: 'unknown' },
+      role: 'owner',
     } as unknown as BgsmOrganizeJobPortMessage), /presentation status is invalid/u);
     assert.throws(() => validateBgsmOrganizeJobMessageIdentity({
       ...page,

@@ -159,6 +159,7 @@ export async function createOrganizeJob(
     activeSlot,
     controllerId: input.controllerId,
     sessionId: input.sessionId,
+    originAgentSessionId: input.sessionId,
     runId: input.runId,
     generation: input.generation,
     proposalId: input.proposalId ?? `proposal:v1:${jobId}`,
@@ -206,12 +207,16 @@ export async function createOrganizeJob(
 
   await db.transaction(
     'rw',
-    db.organizeJobs,
-    db.organizeItems,
-    db.organizeTaxonomies,
-    db.organizeApplies,
-    db.organizeApplyRows,
+    [
+      db.organizeJobs,
+      db.organizeItems,
+      db.organizeTaxonomies,
+      db.organizeApplies,
+      db.organizeApplyRows,
+      db.agentSessions,
+    ],
     async () => {
+      await assertAgentSessionExists(input.sessionId);
       const active = await findActiveJob(activeSlot);
       if (active) throw new TypeError(`Organize slot already has active job ${active.jobId}.`);
       await pruneTerminalOrganizeArtifacts();
@@ -245,6 +250,7 @@ export async function createOrganizePreflight(
     jobId,
     controllerId: input.controllerId,
     sessionId: input.sessionId,
+    originAgentSessionId: input.sessionId,
     runId: input.runId,
     generation: input.generation,
     proposalId: input.proposalId ?? `proposal:v1:${jobId}`,
@@ -282,10 +288,16 @@ export async function createOrganizePreflight(
 
   await db.transaction(
     'rw',
-    db.organizeJobs,
-    db.organizeItems,
-    db.organizeTaxonomies,
+    [
+      db.organizeJobs,
+      db.organizeItems,
+      db.organizeTaxonomies,
+      db.organizeApplies,
+      db.organizeApplyRows,
+      db.agentSessions,
+    ],
     async () => {
+      await assertAgentSessionExists(input.sessionId);
       const obsoletePreflights = (await db.organizeJobs.toArray()).filter((candidate) => (
         candidate.status === 'preflight_ready'
         && candidate.preflight?.state === 'ready'
@@ -302,6 +314,7 @@ export async function createOrganizePreflight(
         await db.organizeTaxonomies.delete(previous.jobId);
         await db.organizeJobs.delete(previous.jobId);
       }
+      await pruneTerminalOrganizeArtifacts();
       if (await db.organizeJobs.get(jobId)) {
         throw new TypeError(`Organize job ${jobId} already exists.`);
       }
@@ -377,9 +390,13 @@ export async function activateOrganizePreflight(input: Readonly<{
   const now = input.now ?? Date.now();
   const outcome = await db.transaction(
     'rw',
-    db.organizeJobs,
-    db.organizeItems,
-    db.organizeTaxonomies,
+    [
+      db.organizeJobs,
+      db.organizeItems,
+      db.organizeTaxonomies,
+      db.organizeApplies,
+      db.organizeApplyRows,
+    ],
     async () => {
       const job = (await db.organizeJobs.toArray()).find((candidate) => (
         candidate.preflight?.token === input.preflightToken
@@ -402,6 +419,7 @@ export async function activateOrganizePreflight(input: Readonly<{
         await deleteOrganizePreflightArtifacts(job.jobId);
         return { kind: 'expired' as const };
       }
+      await pruneTerminalOrganizeArtifacts();
       const active = await findActiveJob(ORGANIZE_ACTIVE_SLOT);
       if (active && active.jobId !== job.jobId) return { kind: 'active_conflict' as const };
       const started: OrganizeJobRecord = {
@@ -489,43 +507,55 @@ export async function getLatestOrganizeJob(): Promise<OrganizeJobRecord | undefi
   return (await db.organizeJobs.orderBy('updatedAt').reverse().toArray())[0];
 }
 
+export async function getOrganizeJobsLinkedToAgentSession(
+  sessionId: string,
+): Promise<OrganizeJobRecord[]> {
+  if (!sessionId.trim()) throw new TypeError('Agent session ID must be nonempty.');
+  const [originJobs, controlledJobs] = await Promise.all([
+    db.organizeJobs.where('originAgentSessionId').equals(sessionId).toArray(),
+    db.organizeJobs.where('sessionId').equals(sessionId).toArray(),
+  ]);
+  return [...new Map(
+    [...originJobs, ...controlledJobs].map((job) => [job.jobId, job] as const),
+  ).values()];
+}
+
 export async function getOrganizeTaxonomy(
   jobId: string,
 ): Promise<OrganizeTaxonomyRecord | undefined> {
   return db.organizeTaxonomies.get(jobId);
 }
 
-export async function attachOrganizeJob(input: Readonly<{
+export async function takeControlOrganizeJob(input: Readonly<{
   jobId: string;
   controllerId: string;
   sessionId: string;
-  expectedRevision?: number;
+  expectedRevision: number;
   now?: number;
 }>): Promise<OrganizeJobRecord> {
   if (!input.controllerId.trim() || !input.sessionId.trim()) {
-    throw new TypeError('Attach controllerId and sessionId must be nonempty.');
+    throw new TypeError('Take control controllerId and sessionId must be nonempty.');
   }
   const now = input.now ?? Date.now();
-  return db.transaction('rw', db.organizeJobs, async () => {
+  return db.transaction('rw', db.organizeJobs, db.agentSessions, async () => {
     const job = await requireJob(input.jobId);
-    if (input.expectedRevision !== undefined) {
-      requireJobRevision(job, input.expectedRevision);
+    requireJobRevision(job, input.expectedRevision);
+    if (job.status === 'completed' || job.status === 'cancelled') {
+      throw new TypeError('Cannot take control of a terminal organize job.');
     }
-    if (job.status === 'cancelled') {
-      throw new TypeError('Cannot attach to a cancelled organize job.');
-    }
+    await assertAgentSessionExists(input.sessionId);
     if (job.controllerId === input.controllerId && job.sessionId === input.sessionId) {
       return job;
     }
-    const attached = {
+    const controlled: OrganizeJobRecord = {
       ...job,
       controllerId: input.controllerId,
       sessionId: input.sessionId,
       revision: job.revision + 1,
       updatedAt: now,
     };
-    await db.organizeJobs.put(attached);
-    return attached;
+    await db.organizeJobs.put(controlled);
+    return controlled;
   });
 }
 
@@ -716,6 +746,7 @@ export async function releaseOrganizeAnalysisPage(input: Readonly<{
   const now = input.now ?? Date.now();
   return db.transaction('rw', db.organizeJobs, db.organizeItems, async () => {
     const job = await requireJob(input.jobId);
+    if (job.status !== 'analyzing') return false;
     const claimed = await claimedAnalysisRows(input.jobId, input.leaseToken);
     if (claimed.length === 0) return false;
     await db.organizeItems.bulkPut(claimed.map((row) => ({
@@ -885,13 +916,12 @@ export async function bindOrganizeJobProvider(input: Readonly<{
     };
     await db.organizeJobs.put(next);
     return next;
-  });
+    },
+  );
 }
 
 export async function advanceOrganizeJobRun(input: Readonly<{
   jobId: string;
-  controllerId: string;
-  sessionId: string;
   runId: RunId;
   generation: number;
   expectedParent?: Readonly<{ runId: RunId; generation: number }>;
@@ -963,8 +993,8 @@ export async function advanceOrganizeJobRun(input: Readonly<{
     }
     const next: OrganizeJobRecord = {
       ...job,
-      controllerId: input.controllerId,
-      sessionId: input.sessionId,
+      // A scheduler continuation advances execution identity only. Durable
+      // control authority may have changed through an explicit takeover.
       runId: input.runId,
       generation: input.generation,
       proposalId: input.proposalId,
@@ -1211,9 +1241,7 @@ export async function completeOrganizeJobWithoutApply(
       updatedAt: now,
       completedAt: now,
     };
-    await db.organizeItems.where('jobId').equals(jobId).delete();
-    await db.organizeTaxonomies.delete(jobId);
-    await db.organizeJobs.delete(jobId);
+    await db.organizeJobs.put(completed);
     return completed;
   });
 }
@@ -1655,21 +1683,30 @@ export async function getOrganizeReceiptPageAtOffset(
   });
 }
 
-export async function cancelOrganizeJob(jobId: string, _now = Date.now()): Promise<boolean> {
-  return db.transaction('rw', db.organizeJobs, db.organizeItems, db.organizeTaxonomies, db.organizeApplies, db.organizeApplyRows, async () => {
+export async function cancelOrganizeJob(jobId: string, now = Date.now()): Promise<boolean> {
+  return db.transaction('rw', db.organizeJobs, async () => {
     const job = await db.organizeJobs.get(jobId);
     if (!job || job.status === 'completed' || job.status === 'cancelled') return false;
     if (job.applyId || ['apply_sealed', 'applying', 'paused'].includes(job.status)) {
       throw new TypeError('A sealed organize Apply can only be paused or resumed.');
     }
-    await db.organizeItems.where('jobId').equals(jobId).delete();
-    await db.organizeTaxonomies.delete(jobId);
-    await db.organizeJobs.delete(jobId);
+    await db.organizeJobs.put({
+      ...job,
+      activeSlot: undefined,
+      status: 'cancelled',
+      revision: job.revision + 1,
+      updatedAt: now,
+      cancelledAt: now,
+    });
     return true;
   });
 }
 
-export async function cleanupCompletedOrganizeJob(jobId: string): Promise<boolean> {
+/** Explicit Dismiss atomically removes one exact terminal job and all of its durable artifacts. */
+export async function dismissTerminalOrganizeJob(input: Readonly<{
+  jobId: string;
+  expectedRevision: number;
+}>): Promise<boolean> {
   return db.transaction(
     'rw',
     db.organizeJobs,
@@ -1678,63 +1715,13 @@ export async function cleanupCompletedOrganizeJob(jobId: string): Promise<boolea
     db.organizeApplies,
     db.organizeApplyRows,
     async () => {
-      const job = await db.organizeJobs.get(jobId);
+      const job = await db.organizeJobs.get(input.jobId);
       if (!job) return false;
+      requireJobRevision(job, input.expectedRevision);
       if (job.status !== 'completed' && job.status !== 'cancelled') {
-        throw new TypeError('Only terminal organize jobs can be cleaned up.');
+        throw new TypeError('Only terminal organize jobs can be dismissed.');
       }
-      await db.organizeItems.where('jobId').equals(jobId).delete();
-      await db.organizeTaxonomies.delete(jobId);
-      if (job.applyId) {
-        const olderReceipts = (await db.organizeApplies.toArray()).filter((apply) => (
-          apply.applyId !== job.applyId
-          && (apply.status === 'completed' || apply.status === 'cancelled')
-        ));
-        for (const apply of olderReceipts) {
-          await db.organizeApplyRows.where('applyId').equals(apply.applyId).delete();
-          await db.organizeApplies.delete(apply.applyId);
-        }
-      }
-      await db.organizeJobs.delete(jobId);
-      return true;
-    },
-  );
-}
-
-/** Explicit receipt dismissal atomically removes its terminal job and durable artifacts. */
-export async function dismissOrganizeReceipt(applyId: string): Promise<boolean> {
-  return db.transaction(
-    'rw',
-    db.organizeJobs,
-    db.organizeItems,
-    db.organizeTaxonomies,
-    db.organizeApplies,
-    db.organizeApplyRows,
-    async () => {
-      const apply = await db.organizeApplies.get(applyId);
-      if (!apply) return false;
-      if (apply.status !== 'completed' && apply.status !== 'cancelled') {
-        throw new TypeError('Only terminal organize receipts can be dismissed.');
-      }
-      const job = await db.organizeJobs.get(apply.jobId);
-      if (job) {
-        if (job.applyId !== applyId || (job.status !== 'completed' && job.status !== 'cancelled')) {
-          throw new TypeError('Only the terminal organize job that owns this receipt can be dismissed.');
-        }
-        await db.organizeItems.where('jobId').equals(job.jobId).delete();
-        await db.organizeTaxonomies.delete(job.jobId);
-        await db.organizeJobs.delete(job.jobId);
-      }
-      const olderReceipts = (await db.organizeApplies.toArray()).filter((record) => (
-        record.applyId !== applyId &&
-        (record.status === 'completed' || record.status === 'cancelled')
-      ));
-      for (const older of olderReceipts) {
-        await db.organizeApplyRows.where('applyId').equals(older.applyId).delete();
-        await db.organizeApplies.delete(older.applyId);
-      }
-      await db.organizeApplyRows.where('applyId').equals(applyId).delete();
-      await db.organizeApplies.delete(applyId);
+      await deleteTerminalOrganizeJobArtifacts(job);
       return true;
     },
   );
@@ -1750,17 +1737,23 @@ export async function recoverExpiredOrganizeLeases(now = Date.now()): Promise<Re
       .belowOrEqual(now)
       .filter((row) => row.analysisState === 'leased')
       .toArray();
-    if (expiredAnalysis.length > 0) {
-      await db.organizeItems.bulkPut(expiredAnalysis.map((row) => ({
+    const recoverableAnalysis: OrganizeItemRecord[] = [];
+    const analysisJobs = new Map<string, OrganizeJobRecord>();
+    for (const jobId of new Set(expiredAnalysis.map((row) => row.jobId))) {
+      const job = await requireJob(jobId);
+      if (job.status !== 'analyzing') continue;
+      analysisJobs.set(jobId, job);
+      recoverableAnalysis.push(...expiredAnalysis.filter((row) => row.jobId === jobId));
+    }
+    if (recoverableAnalysis.length > 0) {
+      await db.organizeItems.bulkPut(recoverableAnalysis.map((row) => ({
         ...clearAnalysisLease(row),
         retryCount: row.retryCount + 1,
         failure: 'lease_expired',
       })));
-      for (const jobId of new Set(expiredAnalysis.map((row) => row.jobId))) {
-        const job = await requireJob(jobId);
+      for (const job of analysisJobs.values()) {
         await db.organizeJobs.put({
           ...job,
-          status: 'analyzing',
           revision: job.revision + 1,
           updatedAt: now,
         });
@@ -1771,28 +1764,39 @@ export async function recoverExpiredOrganizeLeases(now = Date.now()): Promise<Re
       .belowOrEqual(now)
       .filter((row) => row.state === 'leased')
       .toArray();
-    if (expiredApply.length > 0) {
-      await db.organizeApplyRows.bulkPut(expiredApply.map((row) => ({
+    const recoverableApply: OrganizeApplyRowRecord[] = [];
+    const applyRecords = new Map<string, OrganizeApplyRecord>();
+    const applyJobs = new Map<string, OrganizeJobRecord>();
+    for (const applyId of new Set(expiredApply.map((row) => row.applyId))) {
+      const apply = await db.organizeApplies.get(applyId);
+      if (!apply) continue;
+      const job = await requireJob(apply.jobId);
+      if (!['apply_sealed', 'applying', 'paused'].includes(job.status)) continue;
+      applyRecords.set(applyId, apply);
+      applyJobs.set(job.jobId, job);
+      recoverableApply.push(...expiredApply.filter((row) => row.applyId === applyId));
+    }
+    if (recoverableApply.length > 0) {
+      await db.organizeApplyRows.bulkPut(recoverableApply.map((row) => ({
         ...row,
         state: 'pending' as const,
         leaseToken: null,
         leaseOwner: null,
         leaseExpiresAt: null,
       })));
-      for (const applyId of new Set(expiredApply.map((row) => row.applyId))) {
-        const apply = await db.organizeApplies.get(applyId);
-        if (!apply) continue;
+      for (const apply of applyRecords.values()) {
         await db.organizeApplies.put({ ...apply, status: 'sealed', updatedAt: now });
-        const job = await requireJob(apply.jobId);
+      }
+      for (const job of applyJobs.values()) {
         await db.organizeJobs.put({
           ...job,
-          status: 'apply_sealed',
+          status: job.pauseRequested ? 'paused' : 'apply_sealed',
           revision: job.revision + 1,
           updatedAt: now,
         });
       }
     }
-    return Object.freeze({ analysis: expiredAnalysis.length, apply: expiredApply.length });
+    return Object.freeze({ analysis: recoverableAnalysis.length, apply: recoverableApply.length });
   });
 }
 
@@ -1809,11 +1813,16 @@ export async function releaseOrganizeJobLeases(
     db.organizeApplyRows,
     async () => {
       const job = await requireJob(jobId);
-      const analysisRows = await db.organizeItems
-        .where('jobId')
-        .equals(jobId)
-        .filter((row) => row.analysisState === 'leased')
-        .toArray();
+      if (job.status === 'completed' || job.status === 'cancelled') {
+        return Object.freeze({ analysis: 0, apply: 0 });
+      }
+      const analysisRows = ['analyzing', 'analysis_blocked'].includes(job.status)
+        ? await db.organizeItems
+            .where('jobId')
+            .equals(jobId)
+            .filter((row) => row.analysisState === 'leased')
+            .toArray()
+        : [];
       if (analysisRows.length > 0) {
         await db.organizeItems.bulkPut(analysisRows.map((row) => ({
           ...clearAnalysisLease(row),
@@ -1822,7 +1831,7 @@ export async function releaseOrganizeJobLeases(
         })));
       }
       let applyRows: OrganizeApplyRowRecord[] = [];
-      if (job.applyId) {
+      if (job.applyId && ['apply_sealed', 'applying', 'paused'].includes(job.status)) {
         applyRows = await db.organizeApplyRows
           .where('applyId')
           .equals(job.applyId)
@@ -1893,6 +1902,12 @@ async function deleteOrganizePreflightArtifacts(jobId: string): Promise<void> {
   await db.organizeJobs.delete(jobId);
 }
 
+async function assertAgentSessionExists(sessionId: string): Promise<void> {
+  if (!await db.agentSessions.get(sessionId)) {
+    throw new TypeError(`Agent session ${sessionId} does not exist.`);
+  }
+}
+
 async function requireJob(jobId: string): Promise<OrganizeJobRecord> {
   const job = await db.organizeJobs.get(jobId);
   if (!job) throw new TypeError(`Unknown organize job ${jobId}.`);
@@ -1905,21 +1920,24 @@ async function requireApply(applyId: string): Promise<OrganizeApplyRecord> {
   return apply;
 }
 
-async function pruneTerminalOrganizeArtifacts(): Promise<void> {
-  const terminalJobs = (await db.organizeJobs.toArray()).filter((job) => (
-    job.status === 'completed' || job.status === 'cancelled'
-  ));
-  for (const job of terminalJobs) {
-    await db.organizeItems.where('jobId').equals(job.jobId).delete();
-    await db.organizeTaxonomies.delete(job.jobId);
-    await db.organizeJobs.delete(job.jobId);
-  }
-  const terminalApplies = (await db.organizeApplies.toArray()).filter((apply) => (
-    apply.status === 'completed' || apply.status === 'cancelled'
-  ));
-  for (const apply of terminalApplies) {
+async function deleteTerminalOrganizeJobArtifacts(job: OrganizeJobRecord): Promise<void> {
+  const applies = await db.organizeApplies.where('jobId').equals(job.jobId).toArray();
+  for (const apply of applies) {
     await db.organizeApplyRows.where('applyId').equals(apply.applyId).delete();
     await db.organizeApplies.delete(apply.applyId);
+  }
+  await db.organizeItems.where('jobId').equals(job.jobId).delete();
+  await db.organizeTaxonomies.delete(job.jobId);
+  await db.organizeJobs.delete(job.jobId);
+}
+
+async function pruneTerminalOrganizeArtifacts(): Promise<void> {
+  const terminalJobs = await db.organizeJobs
+    .where('status')
+    .anyOf('completed', 'cancelled')
+    .toArray();
+  for (const job of terminalJobs) {
+    await deleteTerminalOrganizeJobArtifacts(job);
   }
 }
 

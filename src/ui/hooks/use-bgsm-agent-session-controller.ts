@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -113,6 +114,7 @@ export type BgsmAgentSessionController = Readonly<{
   createSession: () => Promise<string | null>;
   switchSession: (nextSessionId: string) => Promise<boolean>;
   deleteSession: (sessionIdToDelete: string) => Promise<boolean>;
+  invalidateDeletedSessions: (deletedSessionIds: ReadonlySet<string>) => void;
   loadEarlierMessages: () => Promise<boolean>;
   retrySessionHydration: () => boolean;
   failSessionPersistence: () => void;
@@ -168,6 +170,8 @@ export function useBgsmAgentSessionController(
     clearSessionUi,
   } = options.presentation;
   const { setActive: setActiveRetryDraft } = options.retry;
+  const deletedSessionIdsRef = useRef(new Set<string>());
+  const sessionInvalidationTailRef = useRef(Promise.resolve());
 
   const publishSessionList = useCallback(() => {
     const store = sessionStoreRef.current;
@@ -701,7 +705,11 @@ export function useBgsmAgentSessionController(
     await hydrationGateRef.current!.promise;
     if (!sessionReady || pendingTurnRef.current || sessionOperationRef.current) return false;
     const store = sessionStoreRef.current;
-    if (!store || store.activeSessionId === nextSessionId) return false;
+    if (
+      !store
+      || store.activeSessionId === nextSessionId
+      || deletedSessionIdsRef.current.has(nextSessionId)
+    ) return false;
     const target = store.records.get(nextSessionId);
     if (!target || target.summary.corrupt) return false;
     sessionOperationRef.current = true;
@@ -719,6 +727,11 @@ export function useBgsmAgentSessionController(
         if (store.persistence === 'durable') {
           const activeTurn = await inspectActiveBgsmAgentSessionTurn(nextSessionId);
           retryResolution = await resolveHydratedRetryState(loaded, activeTurn);
+        }
+        if (deletedSessionIdsRef.current.has(nextSessionId)) {
+          store.records.delete(nextSessionId);
+          publishSessionList();
+          return false;
         }
         loadedTarget = cacheRecordFromLoaded(loaded);
         store.records.set(nextSessionId, loadedTarget);
@@ -857,10 +870,90 @@ export function useBgsmAgentSessionController(
     syncActiveSessionRecord,
   ]);
 
+  const invalidateDeletedSessions = useCallback((deletedSessionIds: ReadonlySet<string>) => {
+    for (const sessionId of deletedSessionIds) deletedSessionIdsRef.current.add(sessionId);
+
+    const reconcile = async (): Promise<void> => {
+      await hydrationGateRef.current!.promise;
+      const store = sessionStoreRef.current;
+      if (!store) return;
+      const deletingActive = deletedSessionIdsRef.current.has(store.activeSessionId);
+      for (const sessionId of deletedSessionIdsRef.current) store.records.delete(sessionId);
+      if (retryDraftRef.current && deletedSessionIdsRef.current.has(retryDraftRef.current.sessionId)) {
+        setActiveRetryDraft(null);
+      }
+      if (!deletingActive) {
+        publishSessionList();
+        return;
+      }
+
+      let nextRecord: AgentSessionCacheRecord | null = null;
+      let retryResolution: HydratedRetryResolution = { draft: null, activeTurn: null };
+      const candidates = [...store.records.values()]
+        .filter((record) => !record.summary.corrupt)
+        .sort((left, right) => compareAgentSessionSummaries(left.summary, right.summary));
+      for (const candidate of candidates) {
+        if (deletedSessionIdsRef.current.has(candidate.summary.id)) continue;
+        if (store.persistence !== 'durable' && candidate.session && candidate.messages) {
+          nextRecord = candidate;
+          break;
+        }
+        try {
+          const loaded = await loadDurableBgsmAgentSession(candidate.summary.id);
+          if (deletedSessionIdsRef.current.has(loaded.session.id)) continue;
+          const activeTurn = await inspectActiveBgsmAgentSessionTurn(loaded.session.id);
+          retryResolution = await resolveHydratedRetryState(loaded, activeTurn);
+          nextRecord = cacheRecordFromLoaded(loaded);
+          break;
+        } catch (error) {
+          const failure = classifySessionLoadFailure(error);
+          if (failure === 'corrupt') {
+            candidate.summary = { ...candidate.summary, corrupt: true };
+            candidate.session = null;
+            candidate.messages = null;
+          } else if (failure === 'not_found') {
+            store.records.delete(candidate.summary.id);
+          }
+        }
+      }
+
+      if (!nextRecord) {
+        nextRecord = store.persistence === 'durable'
+          ? cacheRecordFromLoaded(await createDurableBgsmAgentSession())
+          : createMemorySessionRecord();
+        retryResolution = { draft: null, activeTurn: null };
+      }
+      store.records.set(nextRecord.summary.id, nextRecord);
+      activateSessionRecord(nextRecord);
+      setActiveRetryDraft(retryResolution.draft);
+      setHydratedActiveTurn(retryResolution.activeTurn);
+      publishSessionList();
+      await writeActiveAgentSessionId(nextRecord.summary.id);
+    };
+
+    sessionInvalidationTailRef.current = sessionInvalidationTailRef.current
+      .then(reconcile, reconcile)
+      .catch(() => {
+        setSessionReady(false);
+        setSessionInitializationFailed(true);
+      });
+  }, [
+    activateSessionRecord,
+    hydrationGateRef,
+    publishSessionList,
+    retryDraftRef,
+    sessionStoreRef,
+    setActiveRetryDraft,
+    setHydratedActiveTurn,
+    setSessionInitializationFailed,
+    setSessionReady,
+  ]);
+
   return {
     createSession,
     switchSession,
     deleteSession,
+    invalidateDeletedSessions,
     loadEarlierMessages,
     retrySessionHydration,
     failSessionPersistence,

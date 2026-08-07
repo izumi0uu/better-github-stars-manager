@@ -9,6 +9,7 @@ import {
   createBgsmAgentTurnRegistry,
 } from '@/background/bgsm-agent-turn-port';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent';
+import type { BgsmAgentTurnLaunch } from '@/utils/messaging';
 
 const databases: DevTraceDB[] = [];
 
@@ -62,7 +63,7 @@ describe('Cubby turn trace boundary', () => {
           reason: 'provider_error',
           changed: false,
           changedCount: 0,
-          newMessages: [],
+          commit: null,
         };
       },
     });
@@ -141,7 +142,7 @@ describe('Cubby turn trace boundary', () => {
           reason: 'final_answer',
           changed: false,
           changedCount: 0,
-          newMessages: [],
+          commit: null,
         };
       },
     });
@@ -539,7 +540,11 @@ function fakePort(options: Readonly<{ failDeliverySequence?: number }> = {}) {
       for (const listener of messageListeners) listener({
         type: 'startBgsmAgentTurn',
         executionEpochId: executionEpochId ?? hello.executionEpochId,
-        ...input,
+        turnAttemptId: input.turnAttemptId,
+        sessionId: input.sessionId,
+        baseRevision: input.baseRevision,
+        prompt: input.prompt,
+        ...(input.candidateContract ? { candidateContract: input.candidateContract } : {}),
       });
     },
   };
@@ -560,7 +565,7 @@ function turnInput(overrides: Partial<BgsmAgentTurnInput> = {}): BgsmAgentTurnIn
   };
 }
 
-function resultFor(input: BgsmAgentTurnInput) {
+function resultFor(input: BgsmAgentTurnLaunch) {
   return {
     turnAttemptId: input.turnAttemptId,
     sessionId: input.sessionId,
@@ -568,7 +573,7 @@ function resultFor(input: BgsmAgentTurnInput) {
     reason: 'final_answer' as const,
     changed: false,
     changedCount: 0,
-    newMessages: [],
+    commit: null,
   };
 }
 

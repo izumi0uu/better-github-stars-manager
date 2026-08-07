@@ -42,7 +42,12 @@ export function AgentHost({
 }) {
   const { m } = useI18n();
   const agent = useBgsmAgent(onDataChanged, chatCandidate);
-  const workbench = useBgsmAgentWorkbench(onDataChanged, agent.sessionId);
+  const workbench = useBgsmAgentWorkbench(onDataChanged, agent.sessionId, agent.sessionReady);
+  useEffect(() => {
+    if (workbench.state.deletedSessionIds.size > 0) {
+      agent.invalidateDeletedSessions(workbench.state.deletedSessionIds);
+    }
+  }, [agent.invalidateDeletedSessions, workbench.state.deletedSessionIds]);
   const presentation = useMemo<AgentHostPresentation>(() => {
     const organizeView = selectOrganizeWorkbenchView(
       workbench.state,

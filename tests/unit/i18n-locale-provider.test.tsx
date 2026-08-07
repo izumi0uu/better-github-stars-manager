@@ -134,6 +134,26 @@ describe('i18n catalog and locale propagation invariants', () => {
     assert.equal(chinese.workbench.repositoriesFrozen(290), '将分析 290 个仓库。');
   });
 
+  it('localizes ownership conflicts and bounded Organize retention', () => {
+    const english = getMessages('en');
+    const chinese = getMessages('zh-CN');
+
+    assert.equal(english.agentPanel.workbench.takeControl, 'Take control');
+    assert.equal(chinese.agentPanel.workbench.takeControl, '接管控制');
+    assert.equal(
+      english.agentPanel.workbench.takeControlFailedOwnerConnected,
+      'The controlling page reconnected, so this page stays read-only.',
+    );
+    assert.equal(
+      chinese.agentPanel.workbench.receiptOriginDeleted,
+      '该结果来自一个已删除的对话。',
+    );
+    assert.match(english.options.agentStorageOrganizeRetention, /stored separately/u);
+    assert.match(chinese.options.agentStorageOrganizeRetention, /单独保存/u);
+    assert.match(english.agentPanel.sessionDeleteMessage('Draft'), /completed or cancelled/u);
+    assert.match(chinese.agentPanel.sessionDeleteMessage('草稿'), /已完成或已取消/u);
+  });
+
   it('uses Cubby consistently across both product locales', () => {
     const english = getMessages('en');
     const chinese = getMessages('zh-CN');
@@ -156,6 +176,29 @@ describe('i18n catalog and locale propagation invariants', () => {
       ],
       ['Cubby', 'Cubby', 'Cubby 设置', '2. Cubby'],
     );
+  });
+
+  it('keeps Agent storage limits and cache cleanup clear in both locales', () => {
+    const english = getMessages('en').options;
+    const chinese = getMessages('zh-CN').options;
+
+    assert.equal(english.agentStorageConversationData, 'Conversation data');
+    assert.equal(english.agentStorageToolCache, 'Tool cache');
+    assert.equal(
+      english.agentStorageThresholds('256 MiB', '512 MiB'),
+      'Warning at 256 MiB · storage stops at 512 MiB',
+    );
+    assert.match(
+      english.agentStorageCacheCleared(2, '4 MiB', 1),
+      /Kept 1 active or referenced result/u,
+    );
+    assert.equal(chinese.agentStorageConversationData, '对话数据');
+    assert.equal(chinese.agentStorageToolCache, '工具缓存');
+    assert.equal(
+      chinese.agentStorageThresholds('256 MiB', '512 MiB'),
+      '256 MiB 时提醒 · 512 MiB 时停止写入',
+    );
+    assert.match(chinese.agentStorageClearHint, /对话历史和仓库数据会保留/u);
   });
 
   it('localizes the development Cubby diagnostics surface while preserving raw evidence identifiers', () => {

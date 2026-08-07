@@ -3,7 +3,6 @@ import {
   MAX_TOOL_RESULT_BYTES,
   okToolResult,
   serializedToolResultByteLength,
-  ToolOutputTooLargeError,
 } from '@/agent-harness';
 import { db } from '@/storage/db';
 import { BGSM_AGENT_TOOL_NAMES } from './tool-catalog';
@@ -114,7 +113,9 @@ function buildBoundedNotesResult(
 
   const minimum = build(0);
   if (!fits(minimum)) {
-    throw new ToolOutputTooLargeError('Repository note metadata is too large to return safely.');
+    // Keep the existing per-note privacy bound, then let the Agent loop move
+    // this successful read behind an artifact handle when metadata cannot fit.
+    return preferred;
   }
 
   let lower = 0;

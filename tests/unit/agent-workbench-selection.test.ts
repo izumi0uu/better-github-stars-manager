@@ -14,7 +14,7 @@ describe('Agent workbench ownership and repository selection', () => {
     expect(manager).toContain('selectedRepositoryIdHint: selected');
     expect(manager).toContain('chatCandidate={agentCandidate}');
     expect(host).toContain('const agent = useBgsmAgent(onDataChanged, chatCandidate);');
-    expect(host).toContain('const workbench = useBgsmAgentWorkbench(onDataChanged, agent.sessionId);');
+    expect(host).toContain('const workbench = useBgsmAgentWorkbench(onDataChanged, agent.sessionId, agent.sessionReady);');
     expect(panel).not.toContain('useBgsmAgent(');
     expect(panel).not.toContain('useBgsmAgentWorkbench(');
   });

@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { act, createElement } from 'react';
+import { act, createElement, useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseScopeFingerprintV1 } from '@/bgsm-agent/scope';
 import type {
@@ -1201,6 +1201,67 @@ describe('useBgsmAgent durable sessions', () => {
     expect(agent!.error).toBeNull();
     expect(agent!.sessionReady).toBe(true);
   });
+  it('recovers the active page after a post-commit session deletion invalidation', async () => {
+    const deleted = loadedSession(
+      'session-deleted-in-another-page',
+      3,
+      'Unsent composer text stays outside session state',
+      'Old answer',
+    );
+    const replacement = loadedSession(
+      'session-after-deletion-invalidation',
+      2,
+      'Replacement conversation',
+      'Ready',
+    );
+    storageValues.gsm_agent_active_session_id = deleted.session.id;
+    mocks.inspect.mockResolvedValue({
+      summaries: [deleted.summary, replacement.summary],
+      corruptions: [],
+    });
+    mocks.load.mockImplementation(async (sessionId: string) => (
+      sessionId === deleted.session.id ? deleted : replacement
+    ));
+    let agent: ReturnType<typeof useBgsmAgent> | null = null;
+
+    function Harness() {
+      agent = useBgsmAgent(undefined, selectedRepositoryCandidate());
+      const workbench = useBgsmAgentWorkbench(undefined, agent.sessionId, agent.sessionReady);
+      useEffect(() => {
+        agent!.invalidateDeletedSessions(workbench.state.deletedSessionIds);
+      }, [workbench.state.deletedSessionIds]);
+      return null;
+    }
+
+    mountReact(createElement(Harness), mountedRoots);
+    await flushAsyncWork();
+    const activeRequest = organizePort.postMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.type === 'requestBgsmActiveOrganizeJob');
+    expect(activeRequest).toBeDefined();
+
+    await act(async () => {
+      organizePort.emit({
+        type: 'bgsmAgentSessionDeleted',
+        controllerId: activeRequest.controllerId,
+        sessionId: activeRequest.sessionId,
+        deletedSessionId: deleted.session.id,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(agent!.activeSessionId).toBe(replacement.session.id);
+    expect(agent!.sessions.some(({ id }) => id === deleted.session.id)).toBe(false);
+    expect(agent!.messages.map(({ content }) => content)).toEqual([
+      'Replacement conversation',
+      'Ready',
+    ]);
+    expect(storageValues.gsm_agent_active_session_id).toBe(replacement.session.id);
+  });
+
 });
 
 function selectedRepositoryCandidate() {
@@ -1354,6 +1415,18 @@ function createOrganizePort() {
   const messageListeners = new Set<(message: unknown) => void>();
   const disconnectListeners = new Set<() => void>();
   const postMessage = vi.fn();
+  const emit = (message: unknown) => {
+    for (const listener of messageListeners) {
+      listener({
+        type: 'bgsmOrganizeJobRunDelivery',
+        connectionEpochId: 'connection-epoch-session-deletion',
+        deliverySequence: 0,
+        deliveryKind: 'live',
+        durableRevision: null,
+        message,
+      });
+    }
+  };
   const disconnect = vi.fn();
   const port = {
     name: 'bgsm-agent-organize-job',
@@ -1368,5 +1441,5 @@ function createOrganizePort() {
       removeListener: (listener: () => void) => disconnectListeners.delete(listener),
     },
   } as unknown as chrome.runtime.Port;
-  return { port, postMessage, disconnect };
+  return { port, postMessage, disconnect, emit };
 }

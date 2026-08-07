@@ -9,6 +9,8 @@ export * from './authorization';
 export * from './tools';
 export * from './tool-registry';
 export * from './tool-catalog';
+export * from './tool-result-externalizer';
+export * from './artifact-coverage';
 export * from './repository-code-search-tool';
 export * from './repository-notes-tool';
 export * from './identity';

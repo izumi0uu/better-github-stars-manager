@@ -232,12 +232,20 @@ describe('Agent storage governance', () => {
       const page = await loadAgentArtifactSliceForSession({
         sessionId: 'session-slice-owner',
         artifactId: 'artifact-slices',
-        cursor,
+        ...(pages.length === 0 ? {} : { cursor }),
         maxContentBytes: 37,
         now: () => 20,
       });
       assert.ok(page.byteLength > 0);
       assert.ok(page.byteLength <= 37);
+      assert.equal(page.evidence.readKind, 'page');
+      assert.equal(page.evidence.cursorSupplied, pages.length > 0);
+      assert.equal(page.evidence.artifactId, page.artifactId);
+      assert.equal(page.evidence.artifactBytes, page.totalBytes);
+      assert.equal(page.evidence.pageBytes, page.byteLength);
+      assert.equal(page.evidence.nextCursor, page.nextCursor);
+      assert.equal(page.evidence.integrityVerified, true);
+      assert.equal(page.evidence.touchedChunks.length, page.evidence.touchedChunkCount);
       pages.push(page.content);
       cursor = page.nextCursor;
     } while (cursor !== null);
@@ -279,6 +287,9 @@ describe('Agent storage governance', () => {
       query: target,
     });
     assert.equal(searched.matchByteOffset, targetByteOffset);
+    assert.equal(searched.evidence.readKind, 'search');
+    assert.equal(searched.evidence.pageBytes, 0);
+    assert.equal(searched.evidence.nextCursor, null);
     const randomPage = await loadAgentArtifactSliceForSession({
       sessionId: 'session-random-owner',
       artifactId: 'artifact-random',
@@ -286,6 +297,8 @@ describe('Agent storage governance', () => {
       maxContentBytes: 64,
     });
     assert.equal(randomPage.content.startsWith(target), true);
+    assert.equal(randomPage.evidence.readKind, 'offset');
+    assert.equal(randomPage.evidence.cursorSupplied, false);
     const insideMultibyte = await loadAgentArtifactSliceForSession({
       sessionId: 'session-random-owner',
       artifactId: 'artifact-random',
