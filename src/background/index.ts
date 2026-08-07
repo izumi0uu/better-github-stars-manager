@@ -53,44 +53,13 @@ import {
 import { createOrganizeApplyRecovery } from './organize-apply-recovery';
 import { createOrganizeAnalysisRecovery } from './organize-analysis-recovery';
 import {
-  BGSM_AGENT_MAX_OUTPUT_TOKENS,
   assertBgsmAgentContextCapabilityFeasible,
-  buildBgsmAgentSystemPrompt,
-  buildBgsmAgentTerminalPayload,
-  compactBgsmAgentCompletedToolEnvelope,
-  createBgsmAgentArtifactContinuationToolRegistry,
-  createBgsmAgentArtifactEvidenceHandoff,
-  createBgsmAgentPromptScope,
-  createRepositoryCodeRefAuthority,
-  createBgsmAgentToolRegistry,
-  createBgsmAgentToolResultExternalizer,
-  createBgsmTurnAuthorization,
-  hasSuccessfulRepositoryCodeToolHistory,
-  prepareBgsmAgentTurn,
-  type AgentSessionLaunchDigest,
   type OrganizeJobRunSnapshot,
-  type BgsmAgentActiveProjection,
-  type BgsmAgentConversationBinding,
-  type BgsmAgentOrganizeLibraryAction,
-  type BgsmAgentOrganizeLibraryHandoff,
-  type BgsmAgentSessionTransition,
-  type BgsmAgentTurnInput,
-  type RepositoryCodeRefAuthority,
 } from "@/bgsm-agent";
 import {
-  AgentExecutionLedger,
-  createAgentTurnLiveness,
   createRegisteredAgentProvider,
   describeAgentProviderConnectionFailure,
-  emitAgentExecutionTrace,
-  publicAgentLivenessTimeoutMessage,
-  resolveContextBudgetPolicy,
   testRegisteredAgentProviderConnection,
-  type AgentContentCaptureSink,
-  type AgentEvent,
-  type AgentExecutionTraceSink,
-  type AgentMessage,
-  type AgentTool,
   type AgentTraceProviderIdentity,
 } from "@/agent-harness";
 import { hasAgentProviderHostPermission } from "@/agent-harness/provider-access";
@@ -206,31 +175,6 @@ import {
 } from "@/storage/organize-job-store";
 import type { SemanticTaxonomyDto } from "@/bgsm-agent/semantic-dto";
 import {
-  createAgentSession,
-  deleteAgentSession,
-  inspectAgentSessionCatalog,
-  loadCommittedAgentSessionTurn,
-  loadAgentSessionTranscriptPage,
-  loadCanonicalAgentSession,
-  loadAgentSession,
-  readAgentSessionRetryDraftCandidate,
-  type AgentSessionCommitResult,
-  type AgentSessionTerminalOutcome,
-} from "@/storage/agent-session-store";
-import { createAgentAttemptCoordinator } from './agent-attempt-coordinator';
-import { createBgsmAgentArtifactStorageAdapter } from './agent-artifact-service';
-import {
-  BgsmAgentArtifactCoverageStalledError,
-  buildBgsmAgentArtifactContinuationMessages,
-  createBgsmAgentArtifactAdmissionRuntime,
-  runBgsmAgentEpisodes,
-  type BgsmAgentArtifactAdmissionRuntime,
-} from './bgsm-agent-episode-driver';
-import {
-  clearAgentToolCache,
-  getAgentStorageUsage,
-} from "@/storage/agent-storage-store";
-import {
   canReplaceBlockedDurableRun,
   resolveBgsmOrganizeControlRole,
   resolveBgsmOrganizeJobReconnect,
@@ -239,10 +183,12 @@ import {
   createBgsmOrganizeJobScheduler,
   type BgsmOrganizeJobScheduler,
 } from "./organize-analysis-runner";
+import { attachBgsmAgentTurnPort } from "./bgsm-agent-turn-port";
 import {
-  attachBgsmAgentTurnPort,
-  createBgsmAgentTurnRegistry,
-} from "./bgsm-agent-turn-port";
+  isBgsmAgentSessionRequest,
+  type BgsmAgentSessionRequest,
+} from './bgsm-agent-session-rpc';
+import { createBgsmAgentRuntime } from './bgsm-agent-runtime';
 import {
   createBgsmOrganizeJobTraceCoordinator,
 } from "./organize-job-trace";
@@ -250,7 +196,6 @@ import {
   createBgsmOrganizeJobConnectionRegistry,
   type BgsmOrganizeJobConnection,
 } from "./organize-job-port";
-import { resolveBgsmAgentConversation } from "./bgsm-agent-conversation";
 import {
   validateBgsmOrganizeJobMessageIdentity,
   type BgsmOrganizeJobPresentation,
@@ -261,11 +206,6 @@ import {
   type BgsmOrganizeJobErrorReason,
   type BgsmOrganizeJobServerMessage,
 } from "@/utils/messaging";
-import {
-  AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE,
-  type BgsmAgentTurnLaunch,
-  type BgsmAgentTurnResult,
-} from '@/bgsm-agent/turn-protocol';
 
 /**
  * Background SW — sync orchestrator and sole owner of the extension-origin
@@ -273,7 +213,7 @@ import {
  * IDB directly (content scripts would hit the page's origin DB instead).
  */
 
-type Req =
+type Req = BgsmAgentSessionRequest
   | { type: "syncIncremental" }
   | { type: "syncFull" }
   | { type: "syncRescan" }
@@ -316,23 +256,6 @@ type Req =
     }
   | { type: "openOptions" }
   | { type: "devClearLocalData" }
-  | { type: "inspectAgentSessionCatalog" }
-  | { type: "inspectActiveAgentSessionTurn"; sessionId: string }
-  | { type: "createAgentSession"; sessionId?: string }
-  | { type: "loadAgentSession"; sessionId: string }
-  | {
-      type: "loadCommittedAgentSessionTurn";
-      sessionId: string;
-      turnAttemptId: string;
-      launchDigest: AgentSessionLaunchDigest;
-    }
-  | { type: "readAgentRetryDraftCandidate"; sessionId: string }
-  | { type: "dismissAgentSessionRetry"; sessionId: string; turnAttemptId: string }
-  | { type: "discardDamagedAgentSessionRecovery"; sessionId: string }
-  | { type: "loadAgentSessionTranscriptPage"; sessionId: string; beforeSequence: number }
-  | { type: "deleteAgentSession"; sessionId: string }
-  | { type: "getAgentStorageUsage" }
-  | { type: "clearAgentToolCache" }
   | { type: "runBackfill"; id: string }
   | { type: "deferBackfill"; id: string };
 
@@ -454,11 +377,6 @@ if (DEV) {
 const organizeJobRunConnections = createBgsmOrganizeJobConnectionRegistry<chrome.runtime.Port>();
 let organizeJobRunMutationTail: Promise<void> = Promise.resolve();
 let pendingDurableOrganizeJobId: OrganizeJobId | null = null;
-const MAX_REPOSITORY_CODE_REF_AUTHORITIES = 64;
-const repositoryCodeRefAuthorities = new Map<string, {
-  scopeFingerprint: string;
-  authority: RepositoryCodeRefAuthority;
-}>();
 const organizeJobRunCursorAuthKey = `organize-cursor-auth:${crypto.randomUUID()}`;
 const organizeJobRunExecutionEpochId = `organize-job-epoch:v1:${crypto.randomUUID()}`;
 const devRawCaptureCoordinator = DEV
@@ -1206,522 +1124,6 @@ async function autoTagAll(
   return { tagged, remainingUntagged };
 }
 
-async function runBgsmAgentTurn(
-  launch: BgsmAgentTurnLaunch,
-  options: {
-    emit?: (event: AgentEvent) => void;
-    signal?: AbortSignal;
-    bind?: (binding: BgsmAgentConversationBinding) => void;
-    trace?: AgentExecutionTraceSink;
-    contentCapture?: AgentContentCaptureSink;
-    executionEpochId: string;
-  },
-): Promise<BgsmAgentTurnResult> {
-  const { prompt, sessionId, baseRevision, turnAttemptId } = launch;
-  const canonicalSession = await loadCanonicalAgentSession(sessionId);
-  const recoveryClass = hasSuccessfulRepositoryCodeToolHistory(canonicalSession.messages)
-    ? 'statically_read_only'
-    : 'write_capable_or_unknown';
-  const { launchDigest, admission } = await bgsmAgentAttemptCoordinator.admit(
-    launch,
-    recoveryClass,
-  );
-  if (admission.kind === 'replay') return resultFromCommit(launch, admission.commit);
-  let changed = false;
-  let changedCount = 0;
-  let executionLedger: AgentExecutionLedger | null = null;
-  let attemptSettled = false;
-  let artifactAdmissionRuntime: BgsmAgentArtifactAdmissionRuntime | null = null;
-  const controller = new AbortController();
-  const liveness = createAgentTurnLiveness({
-    signal: controller.signal,
-    onTimeout: (reason) => controller.abort(reason),
-    onWatchdogState: (event) => emitAgentExecutionTrace(options.trace, {
-      kind: 'watchdog_state',
-      ...event,
-    }),
-  });
-  const abortFromOptions = () => controller.abort(options.signal?.reason);
-  if (options.signal?.aborted) {
-    abortFromOptions();
-  } else {
-    options.signal?.addEventListener("abort", abortFromOptions, { once: true });
-  }
-  try {
-    const settleWithoutTransition = async (
-      result: BgsmAgentTurnResult,
-      coverageFailureCode?: string,
-    ): Promise<BgsmAgentTurnResult> => {
-      if (!attemptSettled) {
-        await bgsmAgentAttemptCoordinator.settleWithoutTransition({
-          turnAttemptId,
-          sessionId,
-          launchDigest,
-          outcome: {
-            reason: result.reason,
-            changed,
-            changedCount,
-            writeSettlement: changed
-              ? 'unsafe'
-              : executionLedger?.writeSettlement() ?? 'none',
-            ...(result.contextFailureReason
-              ? { contextFailureReason: result.contextFailureReason }
-              : {}),
-          },
-          ...(coverageFailureCode ? { coverageFailureCode } : {}),
-        });
-        attemptSettled = true;
-      }
-      return result;
-    };
-    const terminalAfterAbort = (): BgsmAgentTurnResult => {
-      const timeoutReason = liveness.timeoutReason;
-      if (timeoutReason) {
-        options.emit?.({
-          type: 'agent_error',
-          sessionId,
-          message: publicAgentLivenessTimeoutMessage(timeoutReason),
-          category: 'provider',
-        });
-      }
-      return {
-        turnAttemptId,
-        sessionId,
-        baseRevision,
-        reason: timeoutReason ? 'provider_error' : 'aborted',
-        changed: false,
-        changedCount: 0,
-        commit: null,
-      };
-    };
-    if (canonicalSession.revision !== baseRevision) {
-      throw new TypeError('Cubby durable session changed after turn admission.');
-    }
-    if (!canonicalSession.binding && !launch.candidateContract) {
-      throw new TypeError('A new Cubby conversation requires a scope candidate.');
-    }
-    const input: BgsmAgentTurnInput = {
-      turnAttemptId,
-      sessionId,
-      baseRevision,
-      prompt,
-      history: canonicalSession.messages,
-      ...(canonicalSession.compaction
-        ? { checkpoint: canonicalSession.compaction }
-        : {}),
-      ...(canonicalSession.activeProjections?.length
-        ? { activeProjections: canonicalSession.activeProjections }
-        : {}),
-      ...(canonicalSession.binding
-        ? { binding: canonicalSession.binding }
-        : { candidateContract: launch.candidateContract! }),
-    };
-    const preparedRuntimeProvider = await agentProviderGate.prepareRuntimeProvider();
-    if (liveness.signal.aborted) return settleWithoutTransition(terminalAfterAbort());
-    const conversation = await resolveBgsmAgentConversation(input, {
-      providerFingerprint: preparedRuntimeProvider.fingerprint,
-      resolveCandidate: (candidate) => resolveLiveLaunchCandidate(candidate),
-    });
-    if (liveness.signal.aborted) return settleWithoutTransition(terminalAfterAbort());
-    const repositoryCodeReadOnly = recoveryClass === 'statically_read_only';
-    options.bind?.(conversation.binding);
-    const runtimeProvider = preparedRuntimeProvider.create();
-    const authorization = createBgsmTurnAuthorization({ repositoryCodeReadOnly });
-    const repositoryScope = conversation.repositoryIds;
-    const scopeLabel = conversation.binding.label;
-    const scopeFingerprint = conversation.binding.scopeFingerprint;
-    const conversationScope = createBgsmAgentPromptScope({
-      kind: conversation.binding.candidateContract.kind,
-      label: scopeLabel,
-      repositoryIds: repositoryScope,
-    });
-    const ledger = new AgentExecutionLedger();
-    executionLedger = ledger;
-    let organizeLibraryHandoffRequested: BgsmAgentOrganizeLibraryAction | null = null;
-    const repositoryCodeRefAuthority = repositoryCodeRefAuthorityFor(
-      sessionId,
-      scopeFingerprint,
-    );
-    const activeOrganizeJob = await getActiveOrganizeJob();
-    const organizeApplyActive = organizeApplyBlocksAgentWrites(activeOrganizeJob);
-    if (liveness.signal.aborted) return settleWithoutTransition(terminalAfterAbort());
-    const durableAttempt = recoveryClass === 'statically_read_only'
-      ? await bgsmAgentAttemptCoordinator.inspectActive(sessionId)
-      : null;
-    if (
-      recoveryClass === 'statically_read_only'
-      && (!durableAttempt || canonicalJson(durableAttempt.launch) !== canonicalJson(launch))
-    ) throw new TypeError('Cubby durable read-only attempt does not match its admitted launch.');
-    const artifactStorage = createBgsmAgentArtifactStorageAdapter();
-    const artifactEvidenceHandoff = createBgsmAgentArtifactEvidenceHandoff();
-    artifactAdmissionRuntime = await createBgsmAgentArtifactAdmissionRuntime({
-      sessionId,
-      turnAttemptId,
-      launchDigest,
-      coordinator: bgsmAgentAttemptCoordinator,
-      initialCoverage: durableAttempt?.artifactCoverage ?? [],
-      initialContinuation: durableAttempt?.artifactContinuation ?? null,
-    });
-    const toolRegistry = createBgsmAgentToolRegistry({
-      repositoryScope,
-      scopeFingerprint,
-      scopeLabel,
-      enableRepositoryCodeSearch: true,
-      repositoryCodeRefAuthority,
-      enableRepositoryNotes: true,
-      enableOrganizeLibraryHandoff: !repositoryCodeReadOnly,
-      enableTagWrites: !repositoryCodeReadOnly && !organizeApplyActive,
-      requestOrganizeLibraryHandoff: async (action) => {
-        const currentOrganizeJob = await getActiveOrganizeJob();
-        if (currentOrganizeJob) {
-          return {
-            status: 'blocked_by_existing_job',
-            activeJobStatus: currentOrganizeJob.status,
-          };
-        }
-        organizeLibraryHandoffRequested ??= action;
-        return { status: 'accepted' };
-      },
-      assignManualTags: agentManualTagWriter,
-      removeVisibleTags: agentVisibleTagRemovalWriter,
-      deleteTagsEverywhere: agentGlobalTagDeletionWriter,
-      artifactReader: artifactStorage.artifactReader,
-      artifactEvidenceHandoff,
-    });
-    const ordinaryTools = authorization.wrapTools([...toolRegistry.getActiveTools()]).map((tool) =>
-      wrapWriteTrackingTool(tool, (count) => {
-        changed = true;
-        changedCount += count;
-      }),
-    );
-    const continuationRegistry = createBgsmAgentArtifactContinuationToolRegistry({
-      artifactReader: artifactStorage.artifactReader,
-      artifactEvidenceHandoff,
-      authorize: artifactAdmissionRuntime.authorizeContinuationRead,
-    });
-    const continuationTools = authorization.wrapTools([
-      ...continuationRegistry.getActiveTools(),
-    ]);
-    const toolResultAdmissionHost = createBgsmAgentToolResultExternalizer({
-      turnAttemptId,
-      artifactStore: artifactStorage.artifactStore,
-      artifactDisposer: artifactStorage.artifactDisposer,
-      evidenceHandoff: artifactEvidenceHandoff,
-      admissionAuthority: artifactAdmissionRuntime.authority,
-    });
-
-    const systemPrompt = buildBgsmAgentSystemPrompt({
-      conversationScope,
-      repositoryCodeReadOnly,
-      activeToolNames: toolRegistry.getActiveToolNames(),
-    });
-    const provider = runtimeProvider.provider;
-    const profile = resolveContextBudgetPolicy({
-      capability: runtimeProvider.contextCapability,
-      configuredWorkingWindow: runtimeProvider.workingContextWindow,
-      requestedOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
-    });
-    const traceProvider = agentTraceProviderIdentity(runtimeProvider, profile.capabilityRevision);
-    const recoveredContinuation = artifactAdmissionRuntime.snapshot().artifactContinuation;
-    const prepared = recoveredContinuation
-      ? {
-          kind: 'ready' as const,
-          messages: [...recoveredContinuation.projectedMessages],
-          candidateCheckpoint: undefined,
-          activeProjection: undefined,
-        }
-      : await prepareBgsmAgentTurn({
-          turn: input,
-          systemPrompt,
-          provider,
-          tools: ordinaryTools,
-          profile,
-          maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
-          liveness,
-          signal: liveness.signal,
-          emit: options.emit,
-          trace: options.trace,
-          traceProvider,
-          contentCapture: options.contentCapture,
-        });
-    if (prepared.kind === "context_limit") {
-      return settleWithoutTransition({
-        turnAttemptId,
-        sessionId,
-        baseRevision,
-        reason: "context_limit",
-        changed: false,
-        changedCount: 0,
-        commit: null,
-        contextFailureReason: prepared.reason,
-      });
-    }
-    if (prepared.kind === "aborted") {
-      return settleWithoutTransition(terminalAfterAbort());
-    }
-    let activeCheckpoint = prepared.candidateCheckpoint ?? input.checkpoint;
-    let checkpointToCommit = prepared.candidateCheckpoint;
-    // A projection inherited from the previous session turn is already present
-    // in `prepared.messages`; only a split in this raw turn may be fed back to
-    // the active-turn compactor.
-    let activeTurnProjection: BgsmAgentActiveProjection | undefined;
-    let candidateActiveProjection: BgsmAgentActiveProjection | null | undefined =
-      prepared.candidateCheckpoint ? null : undefined;
-    const initialRawMessages = recoveredContinuation
-      ? [...recoveredContinuation.canonicalRawMessages]
-      : [prepared.messages.at(-1)!];
-    if (
-      initialRawMessages[0]?.role !== 'user'
-      || initialRawMessages[0].content !== input.prompt
-    ) {
-      throw new TypeError('Cubby Provider projection must retain the original user prompt.');
-    }
-    const createContinueAfterContextPressure = (
-      episodeTools: readonly AgentTool[],
-    ) => async (
-      continuation: Readonly<{
-        messages: readonly AgentMessage[];
-        rawMessages?: readonly AgentMessage[];
-        trigger:
-          | 'completed_tool_envelope'
-          | 'tool_result_memory_pressure'
-          | 'context_preflight'
-          | 'provider_context_overflow'
-          | 'provider_request_byte_limit';
-        step: number;
-      }>,
-    ) => {
-      if (!continuation.rawMessages) {
-        throw new TypeError('Cubby continuation requires an append-only raw turn transcript.');
-      }
-      const artifactProjectionOnly = artifactAdmissionRuntime?.nextPendingCoverage() !== null;
-      let compactionRawMessages = continuation.rawMessages;
-      if (artifactProjectionOnly) {
-        const currentUser = continuation.rawMessages[0];
-        const currentUserIndex = currentUser
-          ? continuation.messages.findIndex((message) => message.id === currentUser.id)
-          : -1;
-        if (currentUser?.role !== 'user' || currentUserIndex < 0) {
-          throw new TypeError('Artifact continuation projection lost its canonical user boundary.');
-        }
-        compactionRawMessages = continuation.messages.slice(currentUserIndex);
-      }
-      const compacted = await compactBgsmAgentCompletedToolEnvelope({
-        turn: input,
-        systemPrompt,
-        provider,
-        tools: [...episodeTools],
-        profile,
-        maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
-        currentProjectedMessages: [...continuation.messages],
-        currentCheckpoint: activeCheckpoint,
-        ...(artifactProjectionOnly ? {} : { currentActiveProjection: activeTurnProjection }),
-        rawMessages: compactionRawMessages,
-        force: true,
-        trigger: continuation.trigger,
-        liveness,
-        signal: liveness.signal,
-        emit: options.emit,
-        trace: options.trace,
-        traceProvider,
-        contentCapture: options.contentCapture,
-        providerStep: continuation.step,
-      });
-      if (compacted.kind === 'ready') {
-        if (
-          compacted.candidateCheckpoint &&
-          compacted.candidateCheckpoint.summarizedMessageCount
-            > (activeCheckpoint?.summarizedMessageCount ?? 0)
-        ) {
-          activeCheckpoint = compacted.candidateCheckpoint;
-          checkpointToCommit = compacted.candidateCheckpoint;
-        }
-        if (compacted.activeProjection && !artifactProjectionOnly) {
-          activeTurnProjection = compacted.activeProjection;
-          candidateActiveProjection = compacted.activeProjection;
-        }
-        const pendingCoverage = artifactAdmissionRuntime?.nextPendingCoverage();
-        const messages = artifactProjectionOnly && pendingCoverage
-          ? buildBgsmAgentArtifactContinuationMessages(
-              compacted.messages,
-              systemPrompt,
-              pendingCoverage,
-              artifactAdmissionRuntime?.repromptWasUsed() ?? false,
-            )
-          : compacted.messages;
-        return { kind: 'ready' as const, messages };
-      }
-      return compacted;
-    };
-    const result = await runBgsmAgentEpisodes({
-      sessionId,
-      systemPrompt,
-      provider,
-      ordinaryTools,
-      continuationTools,
-      admissionHost: toolResultAdmissionHost,
-      admissionRuntime: artifactAdmissionRuntime,
-      createContextContinuation: createContinueAfterContextPressure,
-      messages: prepared.messages,
-      rawMessages: initialRawMessages,
-      emit: options.emit,
-      liveness,
-      signal: liveness.signal,
-      permissions: authorization.permissions,
-      maxOutputTokens: BGSM_AGENT_MAX_OUTPUT_TOKENS,
-      contextPolicy: profile,
-      executionLedger: ledger,
-      trace: options.trace,
-      traceProvider,
-      contentCapture: options.contentCapture,
-    });
-
-    if (changed) broadcastDataChanged();
-    if (artifactAdmissionRuntime.snapshot().artifactCoverage.some((record) => record.state !== 'complete')) {
-      return settleWithoutTransition({
-        turnAttemptId,
-        sessionId,
-        baseRevision,
-        reason: result.reason,
-        changed,
-        changedCount,
-        commit: null,
-        ...(result.contextFailureReason
-          ? { contextFailureReason: result.contextFailureReason }
-          : {}),
-      }, result.reason);
-    }
-
-    const organizeLibraryHandoff = organizeLibraryHandoffRequested && result.reason !== 'aborted'
-      ? Object.freeze({
-          type: 'organize_whole_library' as const,
-          action: organizeLibraryHandoffRequested,
-          instruction: prompt,
-        })
-      : undefined;
-    const effectiveReason = organizeLibraryHandoff ? 'final_answer' : result.reason;
-    const contextFailureReason = organizeLibraryHandoff
-      ? undefined
-      : result.contextFailureReason;
-    if (
-      contextFailureReason === 'provider_context_overflow'
-      || contextFailureReason === 'provider_context_overflow_repeated'
-    ) {
-      await authStore.invalidateAgentProviderCapability(preparedRuntimeProvider.fingerprint);
-    }
-    const effectiveInput = activeCheckpoint
-      ? { ...input, checkpoint: activeCheckpoint }
-      : input;
-    const terminalPayload = buildBgsmAgentTerminalPayload(
-      { ...result, reason: effectiveReason },
-      effectiveInput,
-      checkpointToCommit,
-      candidateActiveProjection,
-    );
-    const transition: BgsmAgentSessionTransition = {
-      sessionId,
-      baseRevision,
-      messageDelta: terminalPayload.newMessages,
-      ...(checkpointToCommit ? { candidateCheckpoint: checkpointToCommit } : {}),
-      ...(candidateActiveProjection === undefined
-        ? {}
-        : { candidateActiveProjection }),
-      binding: conversation.binding,
-    };
-    const handoffAnchor = organizeLibraryHandoff
-      ? selectHandoffAnchor(terminalPayload.newMessages)
-      : undefined;
-    const outcome: AgentSessionTerminalOutcome = {
-      reason: effectiveReason,
-      changed,
-      changedCount,
-      writeSettlement: changed ? 'unsafe' : ledger.writeSettlement(),
-      ...(contextFailureReason ? { contextFailureReason } : {}),
-      ...(organizeLibraryHandoff
-        ? {
-            organizeLibraryAction: organizeLibraryHandoff.action,
-            handoffAnchor,
-          }
-        : {}),
-    };
-    const commit = await bgsmAgentAttemptCoordinator.commit({
-      turnAttemptId,
-      transition,
-      launchDigest,
-      outcome,
-    });
-    attemptSettled = true;
-    return resultFromCommit(
-      launch,
-      commit,
-      organizeLibraryHandoff,
-    );
-  } catch (error) {
-    if (!attemptSettled) {
-      await bgsmAgentAttemptCoordinator.settleWithoutTransition({
-        turnAttemptId,
-        sessionId,
-        launchDigest,
-        outcome: {
-          reason: 'provider_error',
-          changed,
-          changedCount,
-          writeSettlement: changed
-            ? 'unsafe'
-            : executionLedger?.writeSettlement() ?? 'none',
-        },
-        ...(error instanceof BgsmAgentArtifactCoverageStalledError
-          ? { coverageFailureCode: error.code }
-          : {}),
-      });
-      attemptSettled = true;
-    }
-    throw error;
-  } finally {
-    options.signal?.removeEventListener("abort", abortFromOptions);
-    liveness.dispose();
-  }
-}
-
-function resultFromCommit(
-  launch: BgsmAgentTurnLaunch,
-  commit: AgentSessionCommitResult,
-  handoff?: BgsmAgentOrganizeLibraryHandoff,
-): BgsmAgentTurnResult {
-  const outcome = commit.outcome;
-  const organizeLibraryHandoff = outcome.organizeLibraryAction
-    ? handoff ?? {
-        type: 'organize_whole_library' as const,
-        action: outcome.organizeLibraryAction,
-        instruction: launch.prompt,
-      }
-    : undefined;
-  return {
-    turnAttemptId: launch.turnAttemptId,
-    sessionId: launch.sessionId,
-    baseRevision: launch.baseRevision,
-    reason: outcome.reason,
-    changed: outcome.changed,
-    changedCount: outcome.changedCount,
-    commit,
-    ...(outcome.contextFailureReason
-      ? { contextFailureReason: outcome.contextFailureReason }
-      : {}),
-    ...(organizeLibraryHandoff ? { organizeLibraryHandoff } : {}),
-  };
-}
-
-function selectHandoffAnchor(
-  messages: readonly import('@/bgsm-agent').BgsmAgentSessionMessage[],
-): AgentSessionTerminalOutcome['handoffAnchor'] {
-  const assistant = [...messages]
-    .reverse()
-    .find((message) => message.role === 'agent' && message.content.trim().length > 0);
-  return {
-    messageId: assistant?.id ?? null,
-    createdAt: assistant?.createdAt ?? Date.now(),
-  };
-}
 
 function agentTraceProviderIdentity(
   provider: Readonly<{
@@ -1760,63 +1162,6 @@ async function organizeAnalysisProviderBinding(provider: Readonly<{
   });
 }
 
-function repositoryCodeRefAuthorityFor(
-  sessionId: string,
-  scopeFingerprint: string,
-): RepositoryCodeRefAuthority {
-  const existing = repositoryCodeRefAuthorities.get(sessionId);
-  if (existing?.scopeFingerprint === scopeFingerprint) {
-    repositoryCodeRefAuthorities.delete(sessionId);
-    repositoryCodeRefAuthorities.set(sessionId, existing);
-    return existing.authority;
-  }
-
-  const authority = createRepositoryCodeRefAuthority();
-  repositoryCodeRefAuthorities.set(sessionId, { scopeFingerprint, authority });
-  while (repositoryCodeRefAuthorities.size > MAX_REPOSITORY_CODE_REF_AUTHORITIES) {
-    const oldestSessionId = repositoryCodeRefAuthorities.keys().next().value as string | undefined;
-    if (oldestSessionId === undefined) break;
-    repositoryCodeRefAuthorities.delete(oldestSessionId);
-  }
-  return authority;
-}
-
-function wrapWriteTrackingTool(
-  tool: AgentTool,
-  markChanged: (count: number) => void,
-): AgentTool {
-  if (tool.risk !== "write") return tool;
-  return {
-    ...tool,
-    async execute(args, context) {
-      const result = await tool.execute(args, context);
-      const changedCount = toolResultChangedCount(result);
-      if (changedCount > 0) markChanged(changedCount);
-      return result;
-    },
-  };
-}
-
-function toolResultChangedCount(result: unknown): number {
-  if (!result || typeof result !== "object") return 1;
-  const value = result as {
-    changed?: unknown;
-    removed?: unknown;
-    assignmentsRemoved?: unknown;
-    requestedTags?: unknown;
-  };
-  if (typeof value.changed === "number") return Math.max(0, value.changed);
-  if (typeof value.assignmentsRemoved === "number") {
-    const requestedTags = typeof value.requestedTags === "number"
-      ? value.requestedTags
-      : 0;
-    return Math.max(0, value.assignmentsRemoved, requestedTags);
-  }
-  if (typeof value.changed === "boolean") return value.changed ? 1 : 0;
-  if (typeof value.removed === "boolean") return value.removed ? 1 : 0;
-  if (typeof value.removed === "number") return Math.max(0, value.removed);
-  return 1;
-}
 
 function organizeApplyBlocksAgentWrites(job: OrganizeJobRecord | undefined): boolean {
   return !!job && ['apply_sealed', 'applying', 'paused'].includes(job.status);
@@ -1985,6 +1330,9 @@ async function describeSafeAgentProviderConnectionFailure(error: unknown) {
 
 async function handle(req: Req): Promise<Res> {
   try {
+    if (isBgsmAgentSessionRequest(req)) {
+      return { ok: true, data: await bgsmAgentRuntime.sessionRpc.handle(req) };
+    }
     switch (req.type) {
       case "syncIncremental": {
         const m = await getLocaleMessages();
@@ -2306,62 +1654,6 @@ async function handle(req: Req): Promise<Res> {
         await chrome.runtime.openOptionsPage();
         return { ok: true };
       }
-      case "inspectAgentSessionCatalog":
-        return { ok: true, data: await inspectAgentSessionCatalog() };
-      case "inspectActiveAgentSessionTurn": {
-        const active = bgsmAgentTurnRegistry.inspectActiveTurn(req.sessionId)
-          ?? await bgsmAgentAttemptCoordinator.inspectActive(req.sessionId);
-        return { ok: true, data: active };
-      }
-      case "createAgentSession":
-        return {
-          ok: true,
-          data: await createAgentSession(
-            req.sessionId ? { idFactory: () => req.sessionId! } : undefined,
-          ),
-        };
-      case "loadAgentSession":
-        return { ok: true, data: await loadAgentSession(req.sessionId) };
-      case "loadCommittedAgentSessionTurn":
-        return {
-          ok: true,
-          data: await loadCommittedAgentSessionTurn({
-            sessionId: req.sessionId,
-            turnAttemptId: req.turnAttemptId,
-            launchDigest: req.launchDigest,
-          }),
-        };
-      case "readAgentRetryDraftCandidate":
-        return {
-          ok: true,
-          data: await readAgentSessionRetryDraftCandidate(req.sessionId),
-        };
-      case "dismissAgentSessionRetry":
-        return {
-          ok: true,
-          data: await bgsmAgentAttemptCoordinator.dismissRetry(req),
-        };
-      case "discardDamagedAgentSessionRecovery":
-        return {
-          ok: true,
-          data: await bgsmAgentAttemptCoordinator.discardDamagedRecovery(req.sessionId),
-        };
-      case "loadAgentSessionTranscriptPage":
-        return {
-          ok: true,
-          data: await loadAgentSessionTranscriptPage(req.sessionId, req.beforeSequence),
-        };
-      case 'deleteAgentSession': {
-        const deleted = await deleteAgentSession(req.sessionId, {
-          executionEpochId: bgsmAgentTurnExecutionEpochId,
-        });
-        if (deleted) publishAgentSessionDeleted(req.sessionId);
-        return { ok: true, data: { deleted } };
-      }
-      case "getAgentStorageUsage":
-        return { ok: true, data: await getAgentStorageUsage() };
-      case "clearAgentToolCache":
-        return { ok: true, data: await clearAgentToolCache() };
       case "devClearLocalData": {
         const result = await run(clearLocalDataForDev);
         return { ok: true, data: result };
@@ -2413,8 +1705,8 @@ async function handle(req: Req): Promise<Res> {
     return { ok: false, error: 'Unsupported background request.' };
   } catch (e) {
     const msg = translateError(e, await getLocaleMessages());
-    const agentSessionFailure = describeAgentSessionFailure(e);
-    if (!isAgentSessionRequest(req)) {
+    const agentSessionFailure = bgsmAgentRuntime.sessionRpc.describeFailure(e);
+    if (!isBgsmAgentSessionRequest(req)) {
       setProgress({ phase: "idle", done: 0, total: null, message: `${msg}` });
     }
     return {
@@ -2425,81 +1717,8 @@ async function handle(req: Req): Promise<Res> {
   }
 }
 
-function isAgentSessionRequest(req: Req): boolean {
-  return [
-    'inspectAgentSessionCatalog',
-    'inspectActiveAgentSessionTurn',
-    'createAgentSession',
-    'loadAgentSession',
-    'loadCommittedAgentSessionTurn',
-    'readAgentRetryDraftCandidate',
-    'dismissAgentSessionRetry',
-    'discardDamagedAgentSessionRecovery',
-    'loadAgentSessionTranscriptPage',
-    'deleteAgentSession',
-    'getAgentStorageUsage',
-    'clearAgentToolCache',
-  ].includes(req.type);
-}
-
-function describeAgentSessionFailure(error: unknown): Readonly<{
-  code: string;
-  details?: Record<string, string | number>;
-}> | null {
-  if (error && typeof error === 'object') {
-    const value = error as Record<string, unknown>;
-    if (value.name === 'QuotaExceededError') {
-      return { code: 'agent_session_quota_exceeded' };
-    }
-    if (typeof value.code === 'string' && [
-      'agent_session_not_found',
-      'agent_session_revision_conflict',
-      'agent_session_attempt_conflict',
-      'agent_session_corrupt',
-      'agent_session_deletion_blocked',
-      'agent_session_turn_active',
-      'agent_session_turn_lease_mismatch',
-      'agent_storage_capacity_exceeded',
-      'agent_artifact_not_found',
-      'agent_artifact_not_ready',
-      'agent_artifact_corrupt',
-      'agent_artifact_conflict',
-      'agent_artifact_state_conflict',
-      'agent_artifact_access_denied',
-      AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE,
-    ].includes(value.code)) {
-      const details = Object.fromEntries(
-        [
-          'sessionId',
-          'jobId',
-          'turnAttemptId',
-          'artifactId',
-          'expectedRevision',
-          'actualRevision',
-          'requiredBytes',
-          'availableBytes',
-          'hardLimitBytes',
-        ]
-          .flatMap((key) => (
-            typeof value[key] === 'string' || typeof value[key] === 'number'
-              ? [[key, value[key] as string | number] as const]
-              : []
-          )),
-      );
-      return {
-        code: value.code,
-        ...(Object.keys(details).length > 0 ? { details } : {}),
-      };
-    }
-  }
-  return null;
-}
 
 
-chrome.runtime.onMessage.addListener((req: Req, _sender, sendResponse) => {
-  handle(req).then(sendResponse);
-  return true; // async response
-});
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "bgsm-agent-organize-job") return;
@@ -3032,17 +2251,17 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-const bgsmAgentTurnExecutionEpochId = `bgsm_worker_${crypto.randomUUID()}`;
-const bgsmAgentAttemptCoordinator = createAgentAttemptCoordinator(
-  bgsmAgentTurnExecutionEpochId,
-);
-const bgsmAgentTurnRegistry = createBgsmAgentTurnRegistry({
-  executionEpochId: bgsmAgentTurnExecutionEpochId,
-  runTurn: (input, options) => runBgsmAgentTurn(input, {
-    ...options,
-    executionEpochId: bgsmAgentTurnExecutionEpochId,
-  }),
-  releaseTurnLease: (input) => bgsmAgentAttemptCoordinator.release(input),
+const bgsmAgentRuntime = createBgsmAgentRuntime({
+  prepareRuntimeProvider: () => agentProviderGate.prepareRuntimeProvider(),
+  invalidateProviderCapability: (fingerprint) => authStore.invalidateAgentProviderCapability(fingerprint),
+  resolveLiveCandidate: resolveLiveLaunchCandidate,
+  getActiveOrganizeJob,
+  isOrganizeApplyBlockingWrites: organizeApplyBlocksAgentWrites,
+  assignManualTags: agentManualTagWriter,
+  removeVisibleTags: agentVisibleTagRemovalWriter,
+  deleteTagsEverywhere: agentGlobalTagDeletionWriter,
+  broadcastDataChanged,
+  providerTraceIdentity: agentTraceProviderIdentity,
   translateError: async (error) => translateError(error, await getLocaleMessages()),
   traceFactory: DEV ? createDevAgentTurnTraceFactory({
     observeExecutionEvent: ({ rootOperationId, event }) => {
@@ -3052,11 +2271,17 @@ const bgsmAgentTurnRegistry = createBgsmAgentTurnRegistry({
   contentCaptureFactory: DEV && devRawCaptureCoordinator
     ? (input) => devRawCaptureCoordinator.beginRoot(input)
     : undefined,
+  notifySessionDeleted: publishAgentSessionDeleted,
 });
+chrome.runtime.onMessage.addListener((req: Req, _sender, sendResponse) => {
+  handle(req).then(sendResponse);
+  return true; // async response
+});
+
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "bgsm-agent") return;
-  attachBgsmAgentTurnPort(port, bgsmAgentTurnRegistry);
+  attachBgsmAgentTurnPort(port, bgsmAgentRuntime.turnRegistry);
 });
 
 chrome.runtime.onConnect.addListener((port) => {

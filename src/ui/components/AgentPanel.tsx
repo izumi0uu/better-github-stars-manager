@@ -39,7 +39,8 @@ import {
   AgentRunStepper,
   type AgentRunMode,
 } from '@/ui/components/AgentOrganizeReview';
-import type { BgsmAgentChatMessage, useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
+import type { BgsmAgentHookState } from '@/ui/hooks/use-bgsm-agent';
+import type { BgsmAgentChatMessage } from '@/ui/bgsm-agent-session-projection';
 import type { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
 import {
   resolveAgentUiPresentation,
@@ -50,7 +51,7 @@ import {
 } from '@/ui/agent-ui-presentation';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
-type ChatController = ReturnType<typeof useBgsmAgent>;
+type ChatController = BgsmAgentHookState;
 type WorkbenchController = ReturnType<typeof useBgsmAgentWorkbench>;
 
 export function AgentPanel({

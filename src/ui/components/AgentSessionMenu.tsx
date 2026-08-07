@@ -4,7 +4,7 @@ import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/shadcn/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
-import type { BgsmAgentSessionSummary } from '@/ui/hooks/use-bgsm-agent';
+import type { BgsmAgentSessionSummary } from '@/storage/agent-session-store';
 
 export function AgentSessionMenu({
   sessions,

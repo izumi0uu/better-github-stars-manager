@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -159,23 +159,47 @@ describe('Agent Phase 4 release conformance', () => {
     expect(plan).not.toContain('MVP does not need full chat memory compaction yet');
   });
 
-  it('keeps Agent session RPC failures isolated from global sync progress', () => {
+  it('delegates Agent background authority through the worker runtime graph', () => {
     const background = read('src/background/index.ts');
-    expect(background).toContain('if (!isAgentSessionRequest(req))');
-    for (const request of [
-      'inspectAgentSessionCatalog',
-      'createAgentSession',
-      'loadAgentSession',
-      'loadAgentSessionTranscriptPage',
-      'deleteAgentSession',
-      'getAgentStorageUsage',
-      'clearAgentToolCache',
-    ]) {
-      expect(background).toContain(`'${request}'`);
+    const runtime = read('src/background/bgsm-agent-runtime.ts');
+    const sessionRpc = read('src/background/bgsm-agent-session-rpc.ts');
+    const turnService = read('src/background/bgsm-agent-turn-service.ts');
+
+    expect(background).toContain("from './bgsm-agent-runtime'");
+    expect(background).toContain('bgsmAgentRuntime.sessionRpc.handle(req)');
+    expect(background).toContain('bgsmAgentRuntime.sessionRpc.describeFailure(e)');
+    expect(background).toContain('attachBgsmAgentTurnPort(port, bgsmAgentRuntime.turnRegistry)');
+    expect(background).toContain('if (!isBgsmAgentSessionRequest(req))');
+    expect(background).toContain('chrome.runtime.onMessage.addListener');
+    expect(background).toContain('chrome.runtime.onConnect.addListener');
+
+    expect(runtime).toContain('export function createBgsmAgentRuntime');
+    expect(sessionRpc).toContain('export type BgsmAgentSessionRequest');
+    expect(sessionRpc).toContain('export function createBgsmAgentSessionRpcRouter');
+    expect(turnService).toContain('export function createBgsmAgentTurnService');
+    expect(sessionRpc).not.toContain('commitAgentSessionTransition');
+    for (const extractedOwner of [runtime, sessionRpc, turnService]) {
+      expect(extractedOwner).not.toContain('chrome.runtime');
+      expect(extractedOwner).not.toContain("from './index'");
+      expect(extractedOwner).not.toContain("from '@/background/index'");
     }
-    // Turn commits are owned by the admitted background lease. They must not
-    // be exposed as a UI-callable RPC that could carry a large transition.
-    expect(background).not.toContain("'commitAgentSessionTransition'");
+  });
+
+  it('keeps per-page Agent client authority behind the external controller', () => {
+    const hook = read('src/ui/hooks/use-bgsm-agent.ts');
+    const controller = read('src/ui/agent-client-controller.ts');
+    const sessionController = read('src/ui/agent-client-session-controller.ts');
+    const turnController = read('src/ui/agent-client-turn-controller.ts');
+
+    expect(hook).toContain("from '@/ui/agent-client-controller'");
+    expect(hook).toContain('createBgsmAgentClientController');
+    expect(hook).toContain('controller.updateOptions(options)');
+    expect(hook).toContain('useSyncExternalStore');
+    expect(controller).toContain('export function createBgsmAgentClientController');
+    expect(sessionController).toContain('export function createBgsmAgentClientSessionController');
+    expect(turnController).toContain('export function createBgsmAgentClientTurnController');
+    expect(existsSync(path.join(root, 'src/ui/hooks/use-bgsm-agent-session-controller.ts'))).toBe(false);
+    expect(existsSync(path.join(root, 'src/ui/hooks/use-bgsm-agent-turn-controller.ts'))).toBe(false);
   });
   it('keeps Agent turn wire ownership in the shared protocol', () => {
     const protocol = read('src/bgsm-agent/turn-protocol.ts');
