@@ -41,6 +41,7 @@
     "test:runtime": "node tests/runtime/puppeteer-runtime.test.mjs",
     "test:runtime:agent-diagnostics": "node tests/runtime/agent-diagnostics-release-isolation.mjs",
     "test:runtime:agent-scenarios": "node tests/runtime/agent-scenarios-extension-host.mjs",
+    "test:runtime:agent-session": "node tests/runtime/agent-session-extension-host.mjs",
     "test:runtime:organize-job-host": "node tests/runtime/organize-job-extension-host.mjs",
     "test:runtime:organize-job-recovery": "GSM_RUNTIME_WORKER_RECOVERY=1 node tests/runtime/organize-job-extension-host.mjs",
     "test:smoke": "node tests/runtime/extension-browser-smoke.mjs",
