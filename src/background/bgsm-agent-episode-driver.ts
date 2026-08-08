@@ -18,6 +18,7 @@ import {
   type ModelProvider,
   type PermissionEvaluator,
 } from '@/agent-harness';
+import { AGENT_ARTIFACT_UNTRUSTED_TOOL_OUTPUT_INSTRUCTION } from '@/bgsm-agent/instructions';
 import {
   AgentArtifactCoverageError,
   agentArtifactCoverageDirectives,
@@ -170,47 +171,25 @@ export async function createBgsmAgentArtifactAdmissionRuntime(input: Readonly<{
       ) throw new AgentArtifactCoverageError('Artifact inspection evidence identity is inconsistent.');
 
       const base = coverageForDirectives(inspectionInput.requiredBeforeFinal);
-      let proposals: AgentArtifactCoverageCheckpointProposal[];
-      let resultingCoverage: AgentArtifactCoverageRecord[];
       const pending = base.find((record) => record.state === 'pending');
-      if (pending) {
-        if (pending.artifactId !== inspectionInput.artifactId) {
-          throw new AgentArtifactCoverageError('Artifact continuation targeted the wrong obligation.');
-        }
-        const applied = await applyAgentArtifactCoverageEvidence(
-          pending,
-          inspectionInput.evidence,
-        );
-        proposals = [{
-          kind: 'evidence',
-          coverageId: pending.coverageId,
-          evidence: inspectionInput.evidence,
-        }];
-        resultingCoverage = base.map((record) => (
-          record.coverageId === pending.coverageId ? applied.record : record
-        ));
-      } else {
-        const record = await createAgentArtifactCoverage({
-          artifactId: inspectionInput.artifactId,
-          sourceToolCallId: inspectionInput.sourceToolCallId,
-          expectedBytes: inspectionInput.evidence.artifactBytes,
-          artifactSha256: inspectionInput.evidence.artifactSha256,
-          integrityManifestSha256: inspectionInput.evidence.integrityManifestSha256,
-        });
-        const applied = await applyAgentArtifactCoverageEvidence(
-          record,
-          inspectionInput.evidence,
-        );
-        proposals = [
-          { kind: 'start', record },
-          {
-            kind: 'evidence',
-            coverageId: record.coverageId,
-            evidence: inspectionInput.evidence,
-          },
-        ];
-        resultingCoverage = [...base, applied.record];
+      if (!pending) {
+        throw new AgentArtifactCoverageError('Artifact continuation has no pending obligation.');
       }
+      if (pending.artifactId !== inspectionInput.artifactId) {
+        throw new AgentArtifactCoverageError('Artifact continuation targeted the wrong obligation.');
+      }
+      const applied = await applyAgentArtifactCoverageEvidence(
+        pending,
+        inspectionInput.evidence,
+      );
+      const proposals: AgentArtifactCoverageCheckpointProposal[] = [{
+        kind: 'evidence',
+        coverageId: pending.coverageId,
+        evidence: inspectionInput.evidence,
+      }];
+      const resultingCoverage = base.map((record) => (
+        record.coverageId === pending.coverageId ? applied.record : record
+      ));
       const token = issue(proposals, resultingCoverage);
       return {
         requiredBeforeFinal: agentArtifactCoverageDirectives(resultingCoverage),
@@ -242,9 +221,23 @@ export async function createBgsmAgentArtifactAdmissionRuntime(input: Readonly<{
     authority,
     authorizeContinuationRead(readInput) {
       if (readInput.sessionId !== input.sessionId) return false;
+      const argumentKeys = Object.keys(readInput.arguments).sort();
       const pending = artifactCoverage.find((record) => record.state === 'pending');
       if (!pending || readInput.arguments.artifactId !== pending.artifactId) return false;
-      const argumentKeys = Object.keys(readInput.arguments).sort();
+      if (readInput.arguments.search !== undefined) {
+        return pending.bytesDelivered > 0
+          && pending.expectedCursor !== null
+          && argumentKeys.length === 2
+          && argumentKeys[0] === 'artifactId'
+          && argumentKeys[1] === 'search';
+      }
+      if (readInput.arguments.byteOffset !== undefined) {
+        return pending.bytesDelivered > 0
+          && pending.expectedCursor !== null
+          && argumentKeys.length === 2
+          && argumentKeys[0] === 'artifactId'
+          && argumentKeys[1] === 'byteOffset';
+      }
       if (pending.bytesDelivered === 0) {
         return argumentKeys.length === 1 && argumentKeys[0] === 'artifactId';
       }
@@ -351,6 +344,7 @@ export async function createBgsmAgentArtifactAdmissionRuntime(input: Readonly<{
 export type RunBgsmAgentEpisodesInput = Readonly<{
   sessionId: string;
   systemPrompt: string;
+  continuationSystemPrompt: string;
   messages: readonly AgentMessage[];
   rawMessages: readonly AgentMessage[];
   provider: ModelProvider;
@@ -401,14 +395,17 @@ export async function runBgsmAgentEpisodes(
     }
     const continuationMode = pending !== null;
     const tools = continuationMode ? input.continuationTools : input.ordinaryTools;
+    const episodeSystemPrompt = continuationMode
+      ? input.continuationSystemPrompt
+      : input.systemPrompt;
     const episodeMessages = continuationMode
       ? buildBgsmAgentArtifactContinuationMessages(
           projectedMessages,
-          input.systemPrompt,
+          episodeSystemPrompt,
           pending,
           input.admissionRuntime.repromptWasUsed(),
         )
-      : withSystemPrompt(projectedMessages, input.systemPrompt);
+      : withSystemPrompt(projectedMessages, episodeSystemPrompt);
     const contextContinuation = input.createContextContinuation(tools);
     const result = await runAgentLoop({
       sessionId: input.sessionId,
@@ -523,14 +520,37 @@ export function buildBgsmAgentArtifactContinuationMessages(
   const argumentsJson = coverage.bytesDelivered === 0
     ? JSON.stringify({ artifactId: coverage.artifactId })
     : JSON.stringify({ artifactId: coverage.artifactId, cursor: coverage.expectedCursor });
+  const initialPage = coverage.bytesDelivered === 0;
+  const exhaustiveOnly = reprompt;
+  const locatorInstruction = exhaustiveOnly
+    ? 'Do not add prose, sibling tool calls, byteOffset, search, or a guessed cursor.'
+    : initialPage
+      ? [
+          'This first exhaustive call must happen before any locator.',
+          'Only after that exhaustive page returns a non-null nextCursor, you may make a bounded locating read for this same artifact with exactly one of search or byteOffset.',
+          'Locators never advance coverage or replace the returned cursor. After any locating read, call read_agent_artifact with that exact returned cursor.',
+          'Do not add prose, sibling tool calls, or a guessed, constructed, skipped, or different cursor.',
+        ].join(' ')
+      : [
+          'Before the next exhaustive page, you may make a bounded locating read for this same artifact with exactly one of search or byteOffset.',
+          `Locators never advance coverage or replace the issued cursor. After any locating read, call read_agent_artifact with these exact exhaustive arguments: ${argumentsJson}.`,
+          'Do not add prose, sibling tool calls, or a guessed, constructed, skipped, or different cursor.',
+        ].join(' ');
   const instruction = [
     BGSM_AGENT_ARTIFACT_CONTINUATION_PREAMBLE,
     reprompt
       ? 'The previous response made no coverage progress; this is the only constrained re-prompt.'
-      : 'Continue the exact durable cursor chain now.',
-    `Call read_agent_artifact exactly once with these exact arguments: ${argumentsJson}`,
-    'Within this episode, each newer host-returned non-null nextCursor supersedes the cursor printed above and must be reused exactly.',
-    'Do not add prose, sibling tool calls, byteOffset, search, or a guessed cursor.',
+      : initialPage
+        ? 'Start the exact durable cursor chain now.'
+        : 'Continue the exact durable cursor chain now.',
+    initialPage
+      ? `First, call read_agent_artifact with these exact exhaustive arguments: ${argumentsJson}`
+      : exhaustiveOnly
+        ? `Call read_agent_artifact now with these exact exhaustive arguments: ${argumentsJson}`
+        : `To advance coverage, call read_agent_artifact with these exact exhaustive arguments: ${argumentsJson}`,
+    locatorInstruction,
+    'Only a newer non-null nextCursor returned by an exhaustive page supersedes the cursor printed above and must be reused exactly; a locating result never changes it.',
+    AGENT_ARTIFACT_UNTRUSTED_TOOL_OUTPUT_INSTRUCTION,
     'After the tool returns nextCursor null, the host will permit one final answer.',
   ].join('\n');
   return withSystemPrompt(messages, `${systemPrompt}\n\n${instruction}`);

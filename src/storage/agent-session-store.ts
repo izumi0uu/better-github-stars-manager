@@ -1202,22 +1202,26 @@ export async function checkpointAgentSessionArtifactEnvelope(
           throw new TypeError('Agent artifact coverage proposal kind is invalid.');
         }
         validateAgentArtifactCoverageEvidence(proposal.evidence);
-        const pending = coverage.find((record) => record.state === 'pending');
-        if (!pending || pending.coverageId !== proposal.coverageId) {
-          throw new AgentArtifactCoverageError('Artifact coverage must advance in source-admission order.');
+        const record = coverage.find((candidate) => candidate.coverageId === proposal.coverageId);
+        if (!record) {
+          throw new AgentArtifactCoverageError('Artifact coverage evidence references an unknown obligation.');
+        }
+        const pending = coverage.find((candidate) => candidate.state === 'pending');
+        if (!pending || pending.coverageId !== record.coverageId) {
+          throw new AgentArtifactCoverageError('Artifact coverage evidence must follow source-admission order.');
         }
         await validateAgentArtifactCoverageEvidenceInCurrentTransaction({
-          record: pending,
+          record,
           evidence: proposal.evidence,
           sessionId: input.sessionId,
           turnAttemptId: input.turnAttemptId,
         });
         const applied = await Dexie.waitFor(applyAgentArtifactCoverageEvidence(
-          pending,
+          record,
           proposal.evidence,
         ));
-        coverage = coverage.map((record) => (
-          record.coverageId === pending.coverageId ? applied.record : record
+        coverage = coverage.map((candidate) => (
+          candidate.coverageId === record.coverageId ? applied.record : candidate
         ));
       }
 

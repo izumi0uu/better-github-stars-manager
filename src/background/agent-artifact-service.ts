@@ -9,6 +9,11 @@ import type {
   BgsmAgentToolResultArtifactStore,
 } from '@/bgsm-agent/tool-result-externalizer';
 import {
+  digestAgentArtifactTouchedChunks,
+  type AgentArtifactCoverageEvidence,
+  type AgentArtifactTouchedChunk,
+} from '@/bgsm-agent/artifact-coverage';
+import {
   AGENT_ARTIFACT_PAGE_MAX_BYTES,
   AgentStorageCapacityError,
   cleanupAgentToolCache,
@@ -68,8 +73,10 @@ export function createBgsmAgentArtifactStorageAdapter(
             query: input.arguments.search.query,
             fromByte: input.arguments.search.fromByte,
             now,
+            signal: input.signal,
           })
         : null;
+      input.signal?.throwIfAborted();
       if (search?.matchByteOffset === null) {
         const result = {
           artifactId: search.artifactId,
@@ -110,6 +117,7 @@ export function createBgsmAgentArtifactStorageAdapter(
           maxContentBytes: contentBudget,
           now,
         });
+        input.signal?.throwIfAborted();
         const { evidence: pageEvidence, ...modelPage } = page;
         const result = {
           ...modelPage,
@@ -119,10 +127,11 @@ export function createBgsmAgentArtifactStorageAdapter(
           serializedToolResultByteLength(okToolResult(result))
           <= input.maxSerializedResultBytes
         ) {
-          return {
-            result,
-            evidence: search?.evidence ?? pageEvidence,
-          };
+          const evidence = search
+            ? await mergeSearchAndSliceEvidence(search.evidence, pageEvidence)
+            : pageEvidence;
+          input.signal?.throwIfAborted();
+          return { result, evidence };
         }
         contentBudget = Math.floor(contentBudget / 2);
         if (contentBudget < 4) break;
@@ -138,6 +147,42 @@ function assertReaderResultFits(result: unknown, maxSerializedResultBytes: numbe
   if (serializedToolResultByteLength(okToolResult(result)) > maxSerializedResultBytes) {
     throw new ToolOutputTooLargeError('Artifact metadata cannot fit the current result budget.');
   }
+}
+
+async function mergeSearchAndSliceEvidence(
+  searchEvidence: AgentArtifactCoverageEvidence,
+  sliceEvidence: AgentArtifactCoverageEvidence,
+): Promise<AgentArtifactCoverageEvidence> {
+  if (
+    searchEvidence.artifactId !== sliceEvidence.artifactId
+    || searchEvidence.artifactBytes !== sliceEvidence.artifactBytes
+    || searchEvidence.artifactSha256 !== sliceEvidence.artifactSha256
+    || searchEvidence.integrityManifestSha256 !== sliceEvidence.integrityManifestSha256
+  ) {
+    throw new TypeError('Artifact search and slice evidence do not identify the same artifact.');
+  }
+
+  const chunksByIndex = new Map<number, AgentArtifactTouchedChunk>();
+  for (const chunks of [searchEvidence.touchedChunks, sliceEvidence.touchedChunks]) {
+    for (const chunk of chunks) {
+      const existing = chunksByIndex.get(chunk.index);
+      if (
+        existing
+        && (existing.byteLength !== chunk.byteLength || existing.sha256 !== chunk.sha256)
+      ) {
+        throw new TypeError('Artifact search and slice evidence disagree on a touched chunk.');
+      }
+      chunksByIndex.set(chunk.index, chunk);
+    }
+  }
+  const touchedChunks = [...chunksByIndex.values()].sort((left, right) => left.index - right.index);
+  return {
+    ...searchEvidence,
+    touchedChunks,
+    touchedChunkCount: touchedChunks.length,
+    touchedChunkBytes: touchedChunks.reduce((total, chunk) => total + chunk.byteLength, 0),
+    touchedChunkDigest: await digestAgentArtifactTouchedChunks(touchedChunks),
+  };
 }
 
 function isRecoverableArtifactWriteError(error: unknown): boolean {

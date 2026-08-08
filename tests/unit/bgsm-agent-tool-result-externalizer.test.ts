@@ -216,6 +216,7 @@ describe('Cubby tool-result externalizer', () => {
     assert.ok(admitted);
     assert.deepEqual(admitted.result, modelResult);
     assert.deepEqual(admitted.opaqueReferences, ['artifact-reader']);
+    assert.equal(admitted.retainOnNoProgress, undefined);
     assert.equal(currentEvidence()?.artifactId, 'artifact-reader');
     assert.doesNotMatch(JSON.stringify(admitted.result), new RegExp('a'.repeat(43), 'u'));
     await assert.rejects(
@@ -284,14 +285,22 @@ describe('Cubby tool-result externalizer', () => {
     }), null);
   });
 
-  it('preserves targeted reads as non-progress admissions with an opaque reference', async () => {
+  it.each([
+    ['page', undefined],
+    ['search', true],
+    ['offset', true],
+  ] as const)('marks only token-backed %s reader evidence for no-progress retention', async (
+    accessKind,
+    expectedRetainOnNoProgress,
+  ) => {
     const fixture = externalizer();
+    const callId = `call:${accessKind}`;
     fixture.evidenceHandoff.publish({
       sessionId: 'session:externalizer',
-      toolCallId: 'call:targeted',
+      toolCallId: callId,
       artifactId: 'artifact-reader',
-      accessKind: 'search',
-      evidence: coverageEvidence('search'),
+      accessKind,
+      evidence: coverageEvidence(accessKind),
     });
     const result = okToolResult({
       artifactId: 'artifact-reader',
@@ -300,11 +309,11 @@ describe('Cubby tool-result externalizer', () => {
       byteLength: 4,
       totalBytes: 4,
       nextCursor: null,
-      matchByteOffset: 0,
+      ...(accessKind === 'search' ? { matchByteOffset: 0 } : {}),
     });
 
     const admitted = await fixture.host.afterToolResult(admissionInput({
-      callId: 'call:targeted',
+      callId,
       toolName: 'read_agent_artifact',
       result,
       requiredBeforeFinal: [directive],
@@ -313,6 +322,42 @@ describe('Cubby tool-result externalizer', () => {
     assert.ok(admitted);
     assert.deepEqual(admitted.requiredBeforeFinal, [directive]);
     assert.deepEqual(admitted.opaqueReferences, ['artifact-reader']);
+    assert.equal(admitted.admissionToken, 'read-token');
+    assert.equal(admitted.retainOnNoProgress, expectedRetainOnNoProgress);
+  });
+
+  it('does not request locator retention without an admission token', async () => {
+    const fixture = externalizer({
+      admissionAuthority: authority({
+        async admitInspection(input) {
+          return { requiredBeforeFinal: input.requiredBeforeFinal };
+        },
+      }),
+    });
+    fixture.evidenceHandoff.publish({
+      sessionId: 'session:externalizer',
+      toolCallId: 'call:no-token',
+      artifactId: 'artifact-reader',
+      accessKind: 'search',
+      evidence: coverageEvidence('search'),
+    });
+    const admitted = await fixture.host.afterToolResult(admissionInput({
+      callId: 'call:no-token',
+      toolName: 'read_agent_artifact',
+      result: okToolResult({
+        artifactId: 'artifact-reader',
+        content: 'data',
+        contentType: 'application/json',
+        byteLength: 4,
+        totalBytes: 4,
+        nextCursor: null,
+        matchByteOffset: 0,
+      }),
+      requiredBeforeFinal: [directive],
+    }));
+    assert.ok(admitted);
+    assert.equal(admitted.admissionToken, undefined);
+    assert.equal(admitted.retainOnNoProgress, undefined);
   });
 
   it('delegates complete envelope checkpointing without owning durable mutation', async () => {

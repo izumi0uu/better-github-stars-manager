@@ -207,7 +207,7 @@ export async function applyAgentArtifactCoverageEvidence(
   validateAgentArtifactCoverageRecord(current);
   validateAgentArtifactCoverageEvidence(evidence);
   if (current.state !== 'pending') {
-    throw new AgentArtifactCoverageError('Only pending artifact coverage can advance.');
+    throw new AgentArtifactCoverageError('Only pending artifact coverage can accept evidence.');
   }
   assertStableArtifactEvidence(current, evidence);
   const touchedChunkBytes = evidence.touchedChunks.reduce(
@@ -219,7 +219,12 @@ export async function applyAgentArtifactCoverageEvidence(
     || touchedChunkBytes !== evidence.touchedChunkBytes
     || await digestAgentArtifactTouchedChunks(evidence.touchedChunks) !== evidence.touchedChunkDigest
   ) throw new AgentArtifactCoverageError('Touched chunk evidence is inconsistent.');
-  if (evidence.readKind !== 'page') return { record: current, advanced: false };
+  if (evidence.readKind !== 'page') {
+    if (current.bytesDelivered === 0 || current.expectedCursor === null) {
+      throw new AgentArtifactCoverageError('Locating reads require an issued pending artifact cursor.');
+    }
+    return { record: current, advanced: false };
+  }
 
   const firstPage = current.bytesDelivered === 0;
   if (firstPage) {

@@ -83,20 +83,68 @@ describe('Agent artifact exact coverage', () => {
     assert.equal(createAgentArtifactCoverageReceipt(second.record, 100).byteLength, 10);
   });
 
-  it('does not advance offset or search evidence', async () => {
+  it('admits locators only between pending pages without changing coverage', async () => {
     const initial = await coverage();
-    const base = await pageEvidence({ pageBytes: 4, nextCursor: 'targeted-cursor' });
-    for (const readKind of ['offset', 'search'] as const) {
-      const evidence: AgentArtifactCoverageEvidence = {
-        ...base,
-        readKind,
+    const firstPage = await pageEvidence({ pageBytes: 4, nextCursor: 'targeted-cursor' });
+    const locators: readonly AgentArtifactCoverageEvidence[] = [
+      {
+        ...firstPage,
+        readKind: 'offset',
         cursorSupplied: false,
         inputCursor: null,
-        ...(readKind === 'search' ? { pageBytes: 0, nextCursor: null } : {}),
-      };
-      const result = await applyAgentArtifactCoverageEvidence(initial, evidence);
+      },
+      {
+        ...firstPage,
+        readKind: 'search',
+        cursorSupplied: false,
+        inputCursor: null,
+        pageBytes: 0,
+        nextCursor: null,
+        touchedChunks: [],
+        touchedChunkCount: 0,
+        touchedChunkBytes: 0,
+        touchedChunkDigest: await digestAgentArtifactTouchedChunks([]),
+      },
+    ];
+    for (const locator of locators) {
+      await assert.rejects(
+        () => applyAgentArtifactCoverageEvidence(initial, locator),
+        /issued pending artifact cursor/u,
+      );
+    }
+
+    const pending = (await applyAgentArtifactCoverageEvidence(initial, firstPage)).record;
+    const snapshot = {
+      bytesDelivered: pending.bytesDelivered,
+      cursorChainDigest: pending.cursorChainDigest,
+      expectedCursor: pending.expectedCursor,
+      progressToken: pending.progressToken,
+      state: pending.state,
+    };
+    for (const locator of locators) {
+      const result = await applyAgentArtifactCoverageEvidence(pending, locator);
       assert.equal(result.advanced, false);
-      assert.deepEqual(result.record, initial);
+      assert.deepEqual({
+        bytesDelivered: result.record.bytesDelivered,
+        cursorChainDigest: result.record.cursorChainDigest,
+        expectedCursor: result.record.expectedCursor,
+        progressToken: result.record.progressToken,
+        state: result.record.state,
+      }, snapshot);
+    }
+
+    const complete = (await applyAgentArtifactCoverageEvidence(pending, await pageEvidence({
+      cursorSupplied: true,
+      inputCursor: 'targeted-cursor',
+      pageBytes: 6,
+      nextCursor: null,
+      chunkIndex: 1,
+    }))).record;
+    for (const locator of locators) {
+      await assert.rejects(
+        () => applyAgentArtifactCoverageEvidence(complete, locator),
+        /Only pending artifact coverage/u,
+      );
     }
   });
 

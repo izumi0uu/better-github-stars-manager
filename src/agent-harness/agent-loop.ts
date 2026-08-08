@@ -219,6 +219,8 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
   const signal = input.liveness?.signal ?? input.signal;
   let requiredBeforeFinal = normalizeRequiredBeforeFinal(input.requiredBeforeFinal ?? []);
   let nonterminalContinuationActive = requiredBeforeFinal.length > 0;
+  const episodeStartedWithRequiredDirectives = requiredBeforeFinal.length > 0;
+  let requiredDirectiveProgressOccurred = false;
 
   const finishAfterAbort = (): AgentLoopResult => {
     const timeoutReason = input.liveness?.timeoutReason;
@@ -1106,6 +1108,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
       writeOutcome?: 'committed' | 'failed' | 'unknown';
       tracedTool?: AgentExecutableTool;
       transformed: boolean;
+      retainOnNoProgress: boolean;
     }>> = [];
     for (const [index, toolCall] of toolCalls.entries()) {
       let resultAllowance: ToolResultAllowance;
@@ -1249,6 +1252,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
       let finalized = originalFinalized;
       let opaqueReferences: string[] | undefined;
       let transformed = false;
+      let retainOnNoProgress = false;
       let proposedAdmission: AgentToolResultAdmission | null = null;
       if (tracedTool && input.toolResultAdmissionHost) {
         try {
@@ -1283,12 +1287,22 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
               transformed = true;
               opaqueReferences = admittedReferences.length > 0 ? admittedReferences : undefined;
               if (admittedDirectives !== undefined) {
+                if (
+                  continuationAtStepStart
+                  && hasRequiredBeforeFinalProgress(nextRequiredBeforeFinal, admittedDirectives)
+                ) {
+                  requiredDirectiveProgressOccurred = true;
+                }
                 nextRequiredBeforeFinal = admittedDirectives;
               }
               if (proposedAdmission.admissionToken !== undefined) {
                 admissionTokens.push(proposedAdmission.admissionToken);
               }
               if (proposedAdmission.dispose) disposals.push(proposedAdmission.dispose);
+              retainOnNoProgress = proposedAdmission.retainOnNoProgress === true
+                && proposedFinalized.result.ok
+                && proposedAdmission.admissionToken !== undefined
+                && typeof input.toolResultAdmissionHost?.admitEnvelope === 'function';
             }
           }
         } catch {
@@ -1329,6 +1343,7 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
         ...(writeOutcome ? { writeOutcome } : {}),
         ...(tracedTool ? { tracedTool } : {}),
         transformed,
+        retainOnNoProgress,
       });
     }
 
@@ -1348,9 +1363,12 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
       });
       return finishWithRaw('provider_error', input.sessionId, messages, emit);
     }
+    const retainsNoProgressEnvelope = stagedAdmissions.length > 0
+      && stagedAdmissions.every((admission) => admission.retainOnNoProgress);
     if (
       continuationAtStepStart
       && !hasRequiredBeforeFinalProgress(priorRequiredBeforeFinal, nextRequiredBeforeFinal)
+      && !retainsNoProgressEnvelope
     ) {
       await disposeBestEffort(disposals);
       return returnContinuation('no_progress');
@@ -1539,9 +1557,12 @@ export async function runAgentLoop(input: RunAgentLoopInput): Promise<AgentLoopR
     }
   }
 
-  return nonterminalContinuationActive
-    ? returnContinuation('episode_exhausted')
-    : finishWithRaw('step_budget_reached', input.sessionId, messages, emit);
+  if (nonterminalContinuationActive) {
+    return episodeStartedWithRequiredDirectives && !requiredDirectiveProgressOccurred
+      ? returnContinuation('no_progress')
+      : returnContinuation('episode_exhausted');
+  }
+  return finishWithRaw('step_budget_reached', input.sessionId, messages, emit);
 
   function finishWithRaw(
     reason: AgentStopReason,
@@ -1604,6 +1625,9 @@ function validateAgentToolResultAdmission(admission: AgentToolResultAdmission): 
   }
   if (admission.dispose !== undefined && typeof admission.dispose !== 'function') {
     throw new TypeError('Invalid admission disposer.');
+  }
+  if (admission.retainOnNoProgress !== undefined && typeof admission.retainOnNoProgress !== 'boolean') {
+    throw new TypeError('Invalid no-progress admission marker.');
   }
 }
 

@@ -23,6 +23,7 @@ import {
   agentMessageLogicalByteLength,
   agentSessionLogicalByteLength,
   beginAgentArtifactWrite,
+  bindAgentArtifactsToMessages,
   cleanupAgentToolCache,
   clearAgentToolCache,
   finalizeAgentArtifact,
@@ -79,6 +80,78 @@ describe('Agent storage governance', () => {
       agentAttemptRecoveryLogicalByteLength({ b: 2, a: 1 }),
       agentAttemptRecoveryLogicalByteLength({ a: 1, b: 2 }),
     );
+  });
+
+  it('rejects duplicate commit bindings while preserving immutable same-session reuse', async () => {
+    const sessionId = 'session-shared-artifact-binding';
+    const artifactId = 'artifact-shared-binding';
+    const sourceAttemptId = 'attempt-shared-binding';
+    const laterAttemptId = 'attempt-later-binding';
+    await createAgentSession({ idFactory: () => sessionId, now: () => 1 });
+    const owner = messageRow('message-shared-owner', sessionId, 1);
+    const reference = messageRow('message-shared-reference', sessionId, 2);
+    const conflictingOwner = messageRow('message-shared-conflict', sessionId, 3);
+    await db.agentMessages.bulkPut([owner, reference, conflictingOwner]);
+    await storeAgentArtifact({
+      artifactId,
+      sessionId,
+      turnAttemptId: sourceAttemptId,
+      ownerMessageId: null,
+      toolCallId: 'source-call',
+      toolName: 'list_stars',
+      storageClass: 'cache',
+      content: '{"ok":true}',
+      expiresAt: 100,
+      now: () => 2,
+    });
+
+    await assert.rejects(
+      () => db.transaction('rw', [db.agentArtifacts, db.agentStorageUsage], () => (
+        bindAgentArtifactsToMessages([
+          { artifactId, sessionId, turnAttemptId: sourceAttemptId, messageId: owner.id, toolCallId: 'source-call' },
+          { artifactId, sessionId, turnAttemptId: sourceAttemptId, messageId: reference.id, toolCallId: 'reader-call' },
+        ], 3)
+      )),
+      AgentArtifactConflictError,
+    );
+    const unpromoted = await db.agentArtifacts.get(artifactId);
+    assert.equal(unpromoted?.storageClass, 'cache');
+    assert.equal(unpromoted?.ownerMessageId, null);
+
+    await assert.rejects(
+      () => bindAgentArtifactsToMessages([
+        { artifactId, sessionId, turnAttemptId: laterAttemptId, messageId: owner.id, toolCallId: 'source-call' },
+      ], 4),
+      AgentArtifactAccessDeniedError,
+    );
+    await bindAgentArtifactsToMessages([
+      { artifactId, sessionId, turnAttemptId: sourceAttemptId, messageId: owner.id, toolCallId: 'source-call' },
+    ], 5);
+    await bindAgentArtifactsToMessages([
+      { artifactId, sessionId, turnAttemptId: sourceAttemptId, messageId: reference.id, toolCallId: 'reader-call' },
+    ], 6);
+    await bindAgentArtifactsToMessages([
+      { artifactId, sessionId, turnAttemptId: laterAttemptId, messageId: reference.id, toolCallId: 'later-reader-call' },
+    ], 7);
+
+    const artifact = await db.agentArtifacts.get(artifactId);
+    assert.equal(artifact?.storageClass, 'canonical');
+    assert.equal(artifact?.ownerMessageId, owner.id);
+    assert.equal(artifact?.toolCallId, 'source-call');
+    assert.equal(artifact?.turnAttemptId, sourceAttemptId);
+    await assert.rejects(
+      () => bindAgentArtifactsToMessages([
+        {
+          artifactId,
+          sessionId,
+          turnAttemptId: laterAttemptId,
+          messageId: conflictingOwner.id,
+          toolCallId: 'source-call',
+        },
+      ], 8),
+      AgentArtifactConflictError,
+    );
+    assert.equal((await db.agentArtifacts.get(artifactId))?.ownerMessageId, owner.id);
   });
 
   it('reconciles the singleton ledger from message byte metadata and repairs a missing row', async () => {
@@ -443,6 +516,197 @@ describe('Agent storage governance', () => {
       }),
       AgentArtifactAccessDeniedError,
     );
+  });
+
+  it('does not start artifact search when its signal is already aborted', async () => {
+    const sessionId = 'session-search-pre-abort';
+    const artifactId = 'artifact-search-pre-abort';
+    await createAgentSession({ idFactory: () => sessionId });
+    await storeAgentArtifact({
+      ...artifactMetadata(artifactId, sessionId, 10),
+      content: 'pre-abort-content',
+    });
+
+    const controller = new AbortController();
+    controller.abort();
+    const artifactReads = vi.spyOn(db.agentArtifacts, 'get');
+    const chunkReads = vi.spyOn(db.agentArtifactChunks, 'get');
+    let returnedEvidence: unknown = null;
+    try {
+      await assert.rejects(
+        async () => {
+          const result = await findAgentArtifactTextForSession({
+            sessionId,
+            artifactId,
+            query: 'missing',
+            signal: controller.signal,
+          });
+          returnedEvidence = result.evidence;
+        },
+        (error: unknown) => (
+          !!error
+          && typeof error === 'object'
+          && 'name' in error
+          && error.name === 'AbortError'
+        ),
+      );
+      assert.equal(artifactReads.mock.calls.length, 0);
+      assert.equal(chunkReads.mock.calls.length, 0);
+      assert.equal(returnedEvidence, null);
+    } finally {
+      artifactReads.mockRestore();
+      chunkReads.mockRestore();
+    }
+  });
+
+  it('stops a multi-chunk no-match search at its first checked chunk boundary after abort', async () => {
+    const sessionId = 'session-search-abort';
+    const artifactId = 'artifact-search-abort';
+    await createAgentSession({ idFactory: () => sessionId });
+    const artifact = await storeAgentArtifact({
+      ...artifactMetadata(artifactId, sessionId, 10),
+      content: 'a'.repeat(AGENT_ARTIFACT_CHUNK_MAX_BYTES * 3),
+    });
+    assert.ok(artifact.chunkCount > 1);
+
+    const controller = new AbortController();
+    const chunkReads = vi.spyOn(db.agentArtifactChunks, 'get');
+    const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+    const digestSpy = vi.spyOn(crypto.subtle, 'digest');
+    let digestCount = 0;
+    let returnedEvidence: unknown = null;
+    try {
+      digestSpy.mockImplementation(async (algorithm, data) => {
+        const digest = await originalDigest(algorithm, data);
+        digestCount += 1;
+        if (digestCount === 2) controller.abort();
+        return digest;
+      });
+
+      await assert.rejects(
+        async () => {
+          const result = await findAgentArtifactTextForSession({
+            sessionId,
+            artifactId,
+            query: 'not-present',
+            now: () => 1_000_000,
+            signal: controller.signal,
+          });
+          returnedEvidence = result.evidence;
+        },
+        (error: unknown) => (
+          !!error
+          && typeof error === 'object'
+          && 'name' in error
+          && error.name === 'AbortError'
+        ),
+      );
+      assert.equal(chunkReads.mock.calls.length, 1);
+      assert.ok(chunkReads.mock.calls.length < artifact.chunkCount);
+      assert.equal((await db.agentArtifacts.get(artifactId))?.lastAccessedAt, artifact.lastAccessedAt);
+      assert.equal(returnedEvidence, null);
+    } finally {
+      digestSpy.mockRestore();
+      chunkReads.mockRestore();
+    }
+  });
+
+  it('does not touch an artifact when search aborts during evidence construction', async () => {
+    const sessionId = 'session-search-evidence-abort';
+    const artifactId = 'artifact-search-evidence-abort';
+    await createAgentSession({ idFactory: () => sessionId });
+    const artifact = await storeAgentArtifact({
+      ...artifactMetadata(artifactId, sessionId, 10),
+      content: 'evidence-abort-content',
+    });
+
+    const controller = new AbortController();
+    const artifactUpdates = vi.spyOn(db.agentArtifacts, 'update');
+    const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+    const digestSpy = vi.spyOn(crypto.subtle, 'digest');
+    let digestCount = 0;
+    let returnedEvidence: unknown = null;
+    try {
+      digestSpy.mockImplementation(async (algorithm, data) => {
+        const digest = await originalDigest(algorithm, data);
+        digestCount += 1;
+        if (digestCount === 3) controller.abort();
+        return digest;
+      });
+
+      await assert.rejects(
+        async () => {
+          const result = await findAgentArtifactTextForSession({
+            sessionId,
+            artifactId,
+            query: 'not-present',
+            now: () => 1_000_000,
+            signal: controller.signal,
+          });
+          returnedEvidence = result.evidence;
+        },
+        (error: unknown) => (
+          !!error
+          && typeof error === 'object'
+          && 'name' in error
+          && error.name === 'AbortError'
+        ),
+      );
+      assert.equal(digestCount, 3);
+      assert.equal(artifactUpdates.mock.calls.length, 0);
+      assert.equal((await db.agentArtifacts.get(artifactId))?.lastAccessedAt, artifact.lastAccessedAt);
+      assert.equal(returnedEvidence, null);
+    } finally {
+      digestSpy.mockRestore();
+      artifactUpdates.mockRestore();
+    }
+  });
+
+  it('rolls back an artifact touch when search aborts during its transaction', async () => {
+    const sessionId = 'session-search-touch-abort';
+    const artifactId = 'artifact-search-touch-abort';
+    await createAgentSession({ idFactory: () => sessionId });
+    const artifact = await storeAgentArtifact({
+      ...artifactMetadata(artifactId, sessionId, 10),
+      content: 'touch-abort-content',
+    });
+
+    const controller = new AbortController();
+    const originalUpdate = db.agentArtifacts.update.bind(db.agentArtifacts);
+    const updateSpy = vi.spyOn(db.agentArtifacts, 'update');
+    let returnedEvidence: unknown = null;
+    try {
+      updateSpy.mockImplementation((...args) => (
+        originalUpdate(...args).then((updated) => {
+          controller.abort();
+          return updated;
+        })
+      ));
+
+      await assert.rejects(
+        async () => {
+          const result = await findAgentArtifactTextForSession({
+            sessionId,
+            artifactId,
+            query: 'not-present',
+            now: () => 1_000_000,
+            signal: controller.signal,
+          });
+          returnedEvidence = result.evidence;
+        },
+        (error: unknown) => (
+          !!error
+          && typeof error === 'object'
+          && 'name' in error
+          && error.name === 'AbortError'
+        ),
+      );
+      assert.equal(updateSpy.mock.calls.length, 1);
+      assert.equal((await db.agentArtifacts.get(artifactId))?.lastAccessedAt, artifact.lastAccessedAt);
+      assert.equal(returnedEvidence, null);
+    } finally {
+      updateSpy.mockRestore();
+    }
   });
 
   it('rejects equal-byte payload and row-digest corruption on both artifact read paths', async () => {

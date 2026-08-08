@@ -49,6 +49,8 @@ export type AgentToolResultAdmission = Readonly<{
   requiredBeforeFinal?: readonly AgentRequiredBeforeFinalDirective[];
   admissionToken?: unknown;
   dispose?: () => Promise<void>;
+  /** Requests retention of a no-progress internal envelope; honored only for a successful, token-backed whole envelope checkpointed by the admission host. */
+  retainOnNoProgress?: boolean;
 }>;
 
 export type AgentToolResultEnvelopeKind = 'canonical_source' | 'internal_continuation';

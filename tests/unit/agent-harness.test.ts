@@ -809,6 +809,31 @@ describe('agent harness agent loop', () => {
     );
   });
 
+  it('emits translated provider errors without raw provider details', async () => {
+    const credential = 'RAW_PROVIDER_CREDENTIAL_CANARY';
+    const events: AgentEvent[] = [];
+    const result = await runAgentLoop({
+      sessionId: 's-provider-error-redaction',
+      messages: [baseMessage],
+      provider: {
+        async generate() {
+          throw new AgentProviderError('network_error', `Provider rejected request: ${credential}`);
+        },
+      },
+      tools: [],
+      emit: (event) => events.push(event),
+    });
+
+    assert.equal(result.reason, 'provider_error');
+    assert.deepEqual(events.filter((event) => event.type === 'agent_error'), [{
+      type: 'agent_error',
+      sessionId: 's-provider-error-redaction',
+      message: 'AI provider network request failed.',
+      category: 'provider',
+    }]);
+    assert.equal(JSON.stringify(events).includes(credential), false);
+  });
+
   it('stops at the configured step budget', async () => {
     const result = await runAgentLoop({
       sessionId: 's4',
@@ -1143,7 +1168,207 @@ describe('agent harness agent loop', () => {
     assert.equal(checkpoints, 0);
     assert.equal(disposeCalls, 1);
   });
+  it('retains token-backed checkpointed non-progress envelopes through one bounded episode', async () => {
+    const directive = {
+      reference: 'required:targeted',
+      progressToken: 'cursor:same',
+      requiredBeforeFinal: true as const,
+    };
+    const checkpoints: AgentMessage[][] = [];
+    const result = await runAgentLoop({
+      sessionId: 's-continuation-targeted',
+      messages: [baseMessage],
+      rawMessages: [baseMessage],
+      requiredBeforeFinal: [directive],
+      provider: new MockProvider([
+        { toolCalls: [{ id: 'call-search', name: 'targeted_read', arguments: { mode: 'search' } }] },
+        { toolCalls: [{ id: 'call-offset', name: 'targeted_read', arguments: { mode: 'offset' } }] },
+      ]),
+      tools: [{
+        name: 'targeted_read',
+        description: 'Read a targeted location.',
+        risk: 'read',
+        async execute() { return { ok: true }; },
+      }],
+      maxSteps: 2,
+      toolResultAdmissionHost: {
+        async afterToolResult(input) {
+          return {
+            result: okToolResult({ mode: input.toolCall.name }),
+            requiredBeforeFinal: [directive],
+            admissionToken: input.toolCall.id,
+            retainOnNoProgress: true,
+          };
+        },
+        async admitEnvelope(input) {
+          checkpoints.push([...input.projectedMessages]);
+        },
+      },
+    });
 
+    assert.equal(result.continuation?.cause, 'no_progress');
+    assert.equal(checkpoints.length, 2);
+    assert.deepEqual(result.messages.map((message) => message.role), ['user', 'agent', 'tool', 'agent', 'tool']);
+    assert.deepEqual(result.rawMessages, [baseMessage]);
+  });
+
+  it('ignores no-progress markers without a successful token-backed checkpointed admission', async () => {
+    const directive = {
+      reference: 'required:retention-validation',
+      progressToken: 'cursor:same',
+      requiredBeforeFinal: true as const,
+    };
+    for (const scenario of [
+      {
+        name: 'error result',
+        admittedResult: errorToolResult('bounded_error', 'Bounded error.'),
+        admissionToken: 'token',
+        checkpoint: true,
+      },
+      {
+        name: 'missing token',
+        admittedResult: okToolResult({ located: true }),
+        admissionToken: undefined,
+        checkpoint: true,
+      },
+      {
+        name: 'missing checkpoint',
+        admittedResult: okToolResult({ located: true }),
+        admissionToken: 'token',
+        checkpoint: false,
+      },
+    ] as const) {
+      let checkpoints = 0;
+      const result = await runAgentLoop({
+        sessionId: `s-retention-${scenario.name.replace(/ /gu, '-')}`,
+        messages: [baseMessage],
+        rawMessages: [baseMessage],
+        requiredBeforeFinal: [directive],
+        provider: new MockProvider([{
+          toolCalls: [{ id: 'call-retention-validation', name: 'targeted_read', arguments: {} }],
+        }]),
+        tools: [{
+          name: 'targeted_read',
+          description: 'Read a targeted location.',
+          risk: 'read',
+          async execute() { return { located: true }; },
+        }],
+        maxSteps: 1,
+        toolResultAdmissionHost: {
+          async afterToolResult() {
+            return {
+              result: scenario.admittedResult,
+              requiredBeforeFinal: [directive],
+              ...(scenario.admissionToken === undefined
+                ? {}
+                : { admissionToken: scenario.admissionToken }),
+              retainOnNoProgress: true,
+            };
+          },
+          ...(scenario.checkpoint ? {
+            async admitEnvelope() { checkpoints += 1; },
+          } : {}),
+        },
+      });
+      assert.equal(result.continuation?.cause, 'no_progress', scenario.name);
+      assert.deepEqual(result.messages, [baseMessage], scenario.name);
+      assert.equal(checkpoints, 0, scenario.name);
+    }
+  });
+
+  it('does not let one retained sibling keep an unmarked no-progress envelope', async () => {
+    const directive = {
+      reference: 'required:all-envelopes',
+      progressToken: 'cursor:same',
+      requiredBeforeFinal: true as const,
+    };
+    let checkpoints = 0;
+    const result = await runAgentLoop({
+      sessionId: 's-retention-mixed-siblings',
+      messages: [baseMessage],
+      rawMessages: [baseMessage],
+      requiredBeforeFinal: [directive],
+      provider: new MockProvider([{
+        toolCalls: [
+          { id: 'call-retained', name: 'retained_read', arguments: {} },
+          { id: 'call-unmarked', name: 'ordinary_read', arguments: {} },
+        ],
+      }]),
+      tools: [
+        {
+          name: 'retained_read',
+          description: 'Read a targeted location.',
+          risk: 'read',
+          async execute() { return { located: true }; },
+        },
+        {
+          name: 'ordinary_read',
+          description: 'Read ordinary data.',
+          risk: 'read',
+          async execute() { return { ordinary: true }; },
+        },
+      ],
+      toolResultAdmissionHost: {
+        async afterToolResult(input) {
+          return {
+            result: okToolResult({ call: input.toolCall.id }),
+            requiredBeforeFinal: [directive],
+            admissionToken: input.toolCall.id,
+            ...(input.toolCall.name === 'retained_read' ? { retainOnNoProgress: true } : {}),
+          };
+        },
+        async admitEnvelope() { checkpoints += 1; },
+      },
+    });
+    assert.equal(result.continuation?.cause, 'no_progress');
+    assert.deepEqual(result.messages, [baseMessage]);
+    assert.equal(checkpoints, 0);
+  });
+
+  it('preserves ordinary exhaustion after required progress within an episode', async () => {
+    const progressTokens = ['cursor:two', 'cursor:three'];
+    let calls = 0;
+    let checkpoints = 0;
+    const result = await runAgentLoop({
+      sessionId: 's-retention-progress',
+      messages: [baseMessage],
+      rawMessages: [baseMessage],
+      requiredBeforeFinal: [{
+        reference: 'required:progress',
+        progressToken: 'cursor:one',
+        requiredBeforeFinal: true,
+      }],
+      provider: new MockProvider([
+        { toolCalls: [{ id: 'call-progress-one', name: 'continue_read', arguments: {} }] },
+        { toolCalls: [{ id: 'call-progress-two', name: 'continue_read', arguments: {} }] },
+      ]),
+      tools: [{
+        name: 'continue_read',
+        description: 'Continue a host-owned read.',
+        risk: 'read',
+        async execute() { return { page: 'next' }; },
+      }],
+      maxSteps: 2,
+      toolResultAdmissionHost: {
+        async afterToolResult() {
+          const progressToken = progressTokens[calls++];
+          if (!progressToken) throw new Error('unexpected extra progress call');
+          return {
+            result: okToolResult({ page: progressToken }),
+            requiredBeforeFinal: [{
+              reference: 'required:progress',
+              progressToken,
+              requiredBeforeFinal: true,
+            }],
+          };
+        },
+        async admitEnvelope() { checkpoints += 1; },
+      },
+    });
+    assert.equal(result.continuation?.cause, 'episode_exhausted');
+    assert.equal(result.continuation?.requiredBeforeFinal[0]?.progressToken, 'cursor:three');
+    assert.equal(checkpoints, 2);
+  });
   it('recognizes opaque token advancement before returning a later no-progress candidate', async () => {
     let providerCalls = 0;
     const result = await runAgentLoop({

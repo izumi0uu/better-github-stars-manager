@@ -322,8 +322,6 @@ export function createBgsmAgentTurnService(
         assignManualTags: dependencies.assignManualTags,
         removeVisibleTags: dependencies.removeVisibleTags,
         deleteTagsEverywhere: dependencies.deleteTagsEverywhere,
-        artifactReader: artifactStorage.artifactReader,
-        artifactEvidenceHandoff,
       });
       const ordinaryTools = authorization.wrapTools([...toolRegistry.getActiveTools()]).map((tool) =>
         wrapWriteTrackingTool(tool, (count) => {
@@ -351,6 +349,11 @@ export function createBgsmAgentTurnService(
         conversationScope,
         repositoryCodeReadOnly,
         activeToolNames: toolRegistry.getActiveToolNames(),
+      });
+      const continuationSystemPrompt = buildBgsmAgentSystemPrompt({
+        conversationScope,
+        repositoryCodeReadOnly,
+        activeToolNames: continuationRegistry.getActiveToolNames(),
       });
       const provider = runtimeProvider.provider;
       const profile = resolveContextBudgetPolicy({
@@ -448,7 +451,7 @@ export function createBgsmAgentTurnService(
         }
         const compacted = await compactBgsmAgentCompletedToolEnvelope({
           turn: input,
-          systemPrompt,
+          systemPrompt: artifactProjectionOnly ? continuationSystemPrompt : systemPrompt,
           provider,
           tools: [...episodeTools],
           profile,
@@ -484,7 +487,7 @@ export function createBgsmAgentTurnService(
           const messages = artifactProjectionOnly && pendingCoverage
             ? buildBgsmAgentArtifactContinuationMessages(
                 compacted.messages,
-                systemPrompt,
+                continuationSystemPrompt,
                 pendingCoverage,
                 artifactAdmissionRuntime?.repromptWasUsed() ?? false,
               )
@@ -496,6 +499,7 @@ export function createBgsmAgentTurnService(
       const result = await runBgsmAgentEpisodes({
         sessionId,
         systemPrompt,
+        continuationSystemPrompt,
         provider,
         ordinaryTools,
         continuationTools,

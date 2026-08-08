@@ -5,6 +5,7 @@ import {
   AGENT_ARTIFACT_COVERAGE_SCHEMA_VERSION,
   digestAgentArtifactTouchedChunks,
   type AgentArtifactCoverageEvidence,
+  type AgentArtifactTouchedChunk,
 } from '@/bgsm-agent/artifact-coverage';
 import {
   buildArtifactIntegrityManifest,
@@ -909,6 +910,7 @@ export async function findAgentArtifactTextForSession(input: Readonly<{
   query: string;
   fromByte?: number;
   now?: () => number;
+  signal?: AbortSignal;
 }>): Promise<AgentArtifactSearchResult> {
   assertAgentTurnTransportIdentifier(input.sessionId, 'Agent artifact session ID');
   assertIdentifier(input.artifactId, 'Agent artifact ID');
@@ -921,11 +923,13 @@ export async function findAgentArtifactTextForSession(input: Readonly<{
   }
   const fromByte = input.fromByte ?? 0;
   assertNonnegativeSafeInteger(fromByte, 'Agent artifact search offset');
+  input.signal?.throwIfAborted();
   const snapshot = await loadVerifiedReadyArtifact(input.artifactId, input.sessionId);
   if (fromByte > snapshot.byteLength) {
     throw new RangeError('Agent artifact search offset is outside the payload.');
   }
   const position = await resolveArtifactBytePosition(snapshot, fromByte);
+  input.signal?.throwIfAborted();
   let chunkIndex = position.chunkIndex;
   let characterOffset = position.characterOffset;
   let chunkStartByte = position.chunkStartByte;
@@ -935,11 +939,17 @@ export async function findAgentArtifactTextForSession(input: Readonly<{
   let overlapStartByte = position.byteOffset;
   const overlapCharacters = Math.max(0, countCodePoints(input.query) - 1);
   let matchByteOffset: number | null = null;
-  const touchedChunks: AgentArtifactChunkRecord[] = [];
+  const touchedChunks: AgentArtifactTouchedChunk[] = [];
 
   while (chunkIndex < snapshot.chunkCount) {
+    input.signal?.throwIfAborted();
     const row = await loadCheckedArtifactChunk(snapshot, chunkIndex);
-    touchedChunks.push(row);
+    input.signal?.throwIfAborted();
+    touchedChunks.push({
+      index: row.index,
+      byteLength: row.byteLength,
+      sha256: row.sha256,
+    });
     const skipped = row.payload.slice(0, characterOffset);
     const segment = row.payload.slice(characterOffset);
     const skippedBytes = AGENT_ARTIFACT_TEXT_ENCODER.encode(skipped).byteLength;
@@ -968,23 +978,27 @@ export async function findAgentArtifactTextForSession(input: Readonly<{
     characterOffset = 0;
   }
 
+  input.signal?.throwIfAborted();
   const now = (input.now ?? Date.now)();
   assertTimestamp(now, 'Agent artifact access time');
-  await touchAgentArtifactIfCurrent(input.artifactId, snapshot, now);
+  input.signal?.throwIfAborted();
+  const evidence = await createAgentArtifactCoverageEvidence({
+    artifact: snapshot,
+    readKind: 'search',
+    cursorSupplied: false,
+    inputCursor: null,
+    pageBytes: 0,
+    nextCursor: null,
+    chunks: touchedChunks,
+  });
+  input.signal?.throwIfAborted();
+  await touchAgentArtifactIfCurrent(input.artifactId, snapshot, now, input.signal);
   return {
     artifactId: snapshot.id,
     contentType: snapshot.contentType,
     totalBytes: snapshot.byteLength,
     matchByteOffset,
-    evidence: await createAgentArtifactCoverageEvidence({
-      artifact: snapshot,
-      readKind: 'search',
-      cursorSupplied: false,
-      inputCursor: null,
-      pageBytes: 0,
-      nextCursor: null,
-      chunks: touchedChunks,
-    }),
+    evidence,
   };
 }
 
@@ -995,7 +1009,7 @@ async function createAgentArtifactCoverageEvidence(input: Readonly<{
   inputCursor: string | null;
   pageBytes: number;
   nextCursor: string | null;
-  chunks: readonly AgentArtifactChunkRecord[];
+  chunks: readonly AgentArtifactTouchedChunk[];
 }>): Promise<AgentArtifactCoverageEvidence> {
   const integrity = requireArtifactIntegrity(input.artifact);
   const touchedChunks = input.chunks.map((chunk) => ({
@@ -1092,20 +1106,20 @@ export async function bindAgentArtifactsToMessages(
 ): Promise<void> {
   if (bindings.length === 0) return;
   assertTimestamp(now, 'Agent artifact binding time');
-  const seen = new Set<string>();
   const usage = await requireUsageRecord();
   let promotedBytes = 0;
   let promotedCount = 0;
+  const seenArtifactIds = new Set<string>();
   for (const binding of bindings) {
     assertIdentifier(binding.artifactId, 'Agent artifact ID');
     assertAgentTurnTransportIdentifier(binding.sessionId, 'Agent artifact session ID');
     assertAgentTurnTransportIdentifier(binding.turnAttemptId, 'Agent artifact turn attempt ID');
     assertIdentifier(binding.messageId, 'Agent artifact owner message');
     assertIdentifier(binding.toolCallId, 'Agent artifact tool call');
-    if (seen.has(binding.artifactId)) {
+    if (seenArtifactIds.has(binding.artifactId)) {
       throw new AgentArtifactConflictError(binding.artifactId);
     }
-    seen.add(binding.artifactId);
+    seenArtifactIds.add(binding.artifactId);
     const artifact = await db.agentArtifacts.get(binding.artifactId);
     if (!artifact) throw new AgentArtifactNotFoundError(binding.artifactId);
     validateArtifactRecord(artifact);
@@ -1117,9 +1131,12 @@ export async function bindAgentArtifactsToMessages(
     }
     await Dexie.waitFor(verifyArtifactIntegrityManifest(artifact));
     if (artifact.storageClass === 'canonical') {
-      if (artifact.ownerMessageId === null) throw new AgentArtifactConflictError(artifact.id);
-      // A later canonical source row may reference this immutable artifact, but
-      // ownership stays with the message that originally promoted it.
+      if (
+        artifact.ownerMessageId === null
+        || (artifact.toolCallId === binding.toolCallId && artifact.ownerMessageId !== binding.messageId)
+      ) throw new AgentArtifactConflictError(artifact.id);
+      // Later same-session canonical references preserve the immutable source owner.
+      // Reusing the original source call cannot assign a different canonical owner.
       continue;
     }
     if (
@@ -1698,10 +1715,14 @@ async function touchAgentArtifactIfCurrent(
   artifactId: string,
   snapshot: AgentArtifactRecord,
   now: number,
+  signal?: AbortSignal,
 ): Promise<void> {
   assertTimestamp(now, 'Agent artifact access time');
+  signal?.throwIfAborted();
   await db.transaction('rw', db.agentArtifacts, async () => {
+    signal?.throwIfAborted();
     const current = await db.agentArtifacts.get(artifactId);
+    signal?.throwIfAborted();
     if (!current) return;
     try {
       assertSameReadyArtifactSnapshot(current, snapshot);
@@ -1710,9 +1731,11 @@ async function touchAgentArtifactIfCurrent(
       return;
     }
     if (now - current.lastAccessedAt < AGENT_ARTIFACT_ACCESS_WRITE_INTERVAL_MS) return;
+    signal?.throwIfAborted();
     await db.agentArtifacts.update(artifactId, {
       lastAccessedAt: Math.max(current.lastAccessedAt, now),
     });
+    signal?.throwIfAborted();
   });
 }
 

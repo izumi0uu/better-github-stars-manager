@@ -16,6 +16,7 @@ import type {
 } from '@/bgsm-agent/session';
 import { loadAgentSession } from '@/storage/agent-session-store';
 import {
+  findAgentArtifactTextForSession,
   loadAgentArtifactSliceForSession,
   storeAgentArtifact,
 } from '@/storage/agent-storage-store';
@@ -159,6 +160,26 @@ describe('background Agent artifact coverage coordinator', () => {
       proposals: [{ kind: 'start', record: coverage }],
       continuation: continuation([coverage], firstMessages.slice(0, 3), 11),
     });
+    const preFirstOffset = await loadAgentArtifactSliceForSession({
+      sessionId,
+      artifactId,
+      byteOffset: 2,
+      maxContentBytes: 2,
+      now: () => 12,
+    });
+    await assert.rejects(
+      () => applyAgentArtifactCoverageEvidence(coverage, preFirstOffset.evidence),
+      /issued pending artifact cursor/u,
+    );
+
+    const coverageSnapshot = (record: AgentArtifactCoverageRecord) => ({
+      state: record.state,
+      bytesDelivered: record.bytesDelivered,
+      expectedCursor: record.expectedCursor,
+      progressToken: record.progressToken,
+      cursorChainDigest: record.cursorChainDigest,
+    });
+    let targetedEvidence = preFirstOffset.evidence;
 
     await assert.rejects(() => coordinator.commit({
       turnAttemptId: firstLaunch.turnAttemptId,
@@ -199,8 +220,95 @@ describe('background Agent artifact coverage coordinator', () => {
         }],
         continuation: continuation(predictedRecords, firstMessages.slice(0, 3), 13),
       });
+      if (currentCoverage.bytesDelivered === 0) {
+        const pendingCoverage = checkpoint.artifactCoverage.find((record) => (
+          record.coverageId === coverage.coverageId
+        ));
+        if (!pendingCoverage || page.nextCursor === null) {
+          throw new Error('first page did not create pending coverage');
+        }
+        const pendingSnapshot = coverageSnapshot(pendingCoverage);
+        const searched = await findAgentArtifactTextForSession({
+          sessionId,
+          artifactId,
+          query: 'cde',
+          now: () => 13,
+        });
+        const searchedTransition = await applyAgentArtifactCoverageEvidence(
+          pendingCoverage,
+          searched.evidence,
+        );
+        assert.equal(searchedTransition.advanced, false);
+        const searchedRecords = checkpoint.artifactCoverage.map((record) => (
+          record.coverageId === coverage.coverageId ? searchedTransition.record : record
+        ));
+        checkpoint = await coordinator.checkpointArtifactEnvelope({
+          sessionId,
+          turnAttemptId: firstLaunch.turnAttemptId,
+          launchDigest: firstAdmission.launchDigest,
+          proposals: [{
+            kind: 'evidence',
+            coverageId: coverage.coverageId,
+            evidence: searched.evidence,
+          }],
+          continuation: continuation(searchedRecords, firstMessages.slice(0, 3), 13),
+        });
+        assert.deepEqual(coverageSnapshot(checkpoint.artifactCoverage[0]!), pendingSnapshot);
+
+        const offset = await loadAgentArtifactSliceForSession({
+          sessionId,
+          artifactId,
+          byteOffset: 2,
+          maxContentBytes: 2,
+          now: () => 14,
+        });
+        const offsetTransition = await applyAgentArtifactCoverageEvidence(
+          checkpoint.artifactCoverage[0]!,
+          offset.evidence,
+        );
+        assert.equal(offsetTransition.advanced, false);
+        const offsetRecords = checkpoint.artifactCoverage.map((record) => (
+          record.coverageId === coverage.coverageId ? offsetTransition.record : record
+        ));
+        checkpoint = await coordinator.checkpointArtifactEnvelope({
+          sessionId,
+          turnAttemptId: firstLaunch.turnAttemptId,
+          launchDigest: firstAdmission.launchDigest,
+          proposals: [{
+            kind: 'evidence',
+            coverageId: coverage.coverageId,
+            evidence: offset.evidence,
+          }],
+          continuation: continuation(offsetRecords, firstMessages.slice(0, 3), 14),
+        });
+        assert.deepEqual(coverageSnapshot(checkpoint.artifactCoverage[0]!), pendingSnapshot);
+        targetedEvidence = offset.evidence;
+      }
       cursor = page.nextCursor;
     } while (cursor !== null);
+
+    const completedCoverage = checkpoint.artifactCoverage.find((record) => (
+      record.coverageId === coverage.coverageId
+    ));
+    if (!completedCoverage) throw new Error('completed coverage record missing');
+    await assert.rejects(
+      () => applyAgentArtifactCoverageEvidence(completedCoverage, targetedEvidence),
+      /Only pending artifact coverage/u,
+    );
+    await assert.rejects(
+      () => coordinator.checkpointArtifactEnvelope({
+        sessionId,
+        turnAttemptId: firstLaunch.turnAttemptId,
+        launchDigest: firstAdmission.launchDigest,
+        proposals: [{
+          kind: 'evidence',
+          coverageId: completedCoverage.coverageId,
+          evidence: targetedEvidence,
+        }],
+        continuation: null,
+      }),
+      /evidence must follow source-admission order/u,
+    );
 
     const committed = await coordinator.commit({
       turnAttemptId: firstLaunch.turnAttemptId,

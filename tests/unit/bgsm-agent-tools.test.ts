@@ -11,11 +11,15 @@ import {
   createBgsmAgentTools,
   createBgsmAgentArtifactEvidenceHandoff,
   loadLiveBgsmAgentRepositoryScope,
+  validateAgentArtifactCoverageEvidence,
 } from '@/bgsm-agent';
 import { createBgsmAgentArtifactStorageAdapter } from '@/background/agent-artifact-service';
 import { db } from '@/storage/db';
 import { createAgentSession } from '@/storage/agent-session-store';
-import { storeAgentArtifact } from '@/storage/agent-storage-store';
+import {
+  AGENT_ARTIFACT_CHUNK_MAX_BYTES,
+  storeAgentArtifact,
+} from '@/storage/agent-storage-store';
 import { resetDirtyForDev, snapshotDirty } from '@/storage/idb-tag-store';
 import { visibleTagNames } from '@/tags/tag-model';
 import type { Star } from '@/types';
@@ -241,6 +245,59 @@ describe('Cubby tools', () => {
       }),
       /not available to session/u,
     );
+  });
+
+  it('merges literal search and returned slice chunks into search evidence', async () => {
+    const sessionId = 'artifact-search-evidence-owner';
+    const artifactId = 'artifact-search-evidence';
+    const target = 'TARGET-CROSS-CHUNK';
+    const trailingChunkZeroBytes = 8;
+    const content = `${'x'.repeat(
+      AGENT_ARTIFACT_CHUNK_MAX_BYTES - target.length - trailingChunkZeroBytes,
+    )}${target}${'y'.repeat(trailingChunkZeroBytes + 1_000)}`;
+    await createAgentSession({ idFactory: () => sessionId });
+    await storeAgentArtifact({
+      artifactId,
+      sessionId,
+      turnAttemptId: 'artifact-search-evidence-attempt',
+      toolCallId: 'artifact-search-evidence-source',
+      toolName: 'read_repository_file',
+      storageClass: 'canonical',
+      content,
+    });
+
+    const handoff = createBgsmAgentArtifactEvidenceHandoff();
+    const storage = createBgsmAgentArtifactStorageAdapter();
+    const tool = createBgsmAgentTools({
+      repositoryScope: [star.full_name],
+      scopeFingerprint: 'scope:test',
+      artifactReader: storage.artifactReader,
+      artifactEvidenceHandoff: handoff,
+    }).find((candidate) => candidate.name === 'read_agent_artifact');
+    assert.ok(tool);
+
+    const toolCallId = 'artifact-search-evidence-call';
+    const result = await tool.execute(tool.validate?.({
+      artifactId,
+      search: { query: target },
+    }), {
+      sessionId,
+      callId: toolCallId,
+      resultAllowance: resultAllowance(700),
+    }) as { content: string; matchByteOffset: number | null };
+    assert.equal(result.content.startsWith(target), true);
+    assert.ok(result.content.length > target.length + trailingChunkZeroBytes);
+
+    const handoffEntry = handoff.consume({ sessionId, toolCallId });
+    assert.ok(handoffEntry);
+    assert.equal(handoffEntry.accessKind, 'search');
+    assert.equal(handoffEntry.evidence.readKind, 'search');
+    assert.equal(handoffEntry.evidence.pageBytes, 0);
+    assert.equal(handoffEntry.evidence.nextCursor, null);
+    assert.deepEqual(handoffEntry.evidence.touchedChunks.map((chunk) => chunk.index), [0, 1]);
+    assert.equal(handoffEntry.evidence.touchedChunkCount, 2);
+    assert.equal(handoffEntry.evidence.touchedChunkBytes, encoder.encode(content).byteLength);
+    validateAgentArtifactCoverageEvidence(handoffEntry.evidence);
   });
 
   it('exposes all local tag mutation tools on regular turns without intent gating', () => {

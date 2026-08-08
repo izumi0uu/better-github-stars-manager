@@ -251,6 +251,9 @@ export function createBgsmAgentToolResultExternalizer(input: Readonly<{
           ...(decision.admissionToken === undefined
             ? {}
             : { admissionToken: decision.admissionToken }),
+          ...(evidence.accessKind === 'page' || decision.admissionToken === undefined
+            ? {}
+            : { retainOnNoProgress: true }),
         };
       }
 
