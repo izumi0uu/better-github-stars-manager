@@ -655,6 +655,10 @@ describe('Cubby compaction execution', () => {
     assert.equal(result.activeProjection?.currentUserMessageId, completed.suffix[0]?.id);
     assert.equal(result.activeProjection?.summarizedThroughMessageId, completed.suffix[2]?.id);
     assert.equal(result.messages.some((message) => message.content === input.prompt), true);
+    assert.equal(
+      result.messages.find((message) => message.role === 'user' && message.content === input.prompt)?.id,
+      completed.suffix[0]?.id,
+    );
     assert.equal(result.messages.some((message) => message.content.includes('Active-turn progress summary')), true);
     assert.equal(result.messages.some((message) => message.id === completed.suffix[1]?.id), false);
     assert.doesNotThrow(() => validateProviderProtocolHistory(result.messages.map(toModelMessage)));

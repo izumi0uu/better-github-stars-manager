@@ -331,7 +331,6 @@ async function runArtifactContinuationCoverageAdmission(
   }>> = [];
   const artifactReads: ScenarioArtifactRead[] = [];
   let coverage: AgentArtifactCoverageRecord | null = null;
-  let initialCoverage: AgentArtifactCoverageRecord | null = null;
   let receipt: AgentArtifactCoverageReceipt | null = null;
   let disposedArtifacts = 0;
   let repromptUsed = false;
@@ -389,7 +388,6 @@ async function runArtifactContinuationCoverageAdmission(
           integrityManifestSha256: input.artifact.integrityManifestSha256,
         });
         coverage = started;
-        initialCoverage = cloneScenarioValue(started);
         return {
           requiredBeforeFinal: agentArtifactCoverageDirectives([started]),
           admissionToken: { kind: 'coverage_started', coverageId: started.coverageId },
@@ -543,9 +541,12 @@ async function runArtifactContinuationCoverageAdmission(
     }));
     return Object.freeze({ result, evidence });
   };
-  const exerciseTargetedReads = async (): Promise<void> => {
-    const initial = initialCoverage;
-    if (!initial) throw new TypeError('Scenario lost the initial coverage checkpoint.');
+  const exerciseTargetedReads = async (pending: AgentArtifactCoverageRecord): Promise<void> => {
+    if (
+      pending.state !== 'pending'
+      || pending.bytesDelivered === 0
+      || pending.expectedCursor === null
+    ) throw new TypeError('Scenario targeted reads require an issued pending coverage cursor.');
     const storedArtifact = artifacts.values().next().value;
     if (!storedArtifact) throw new TypeError('Scenario lost its stored artifact.');
     for (const [toolCallId, args] of [
@@ -564,12 +565,12 @@ async function runArtifactContinuationCoverageAdmission(
         arguments: args,
         maxSerializedResultBytes: 8 * 1024,
       });
-      const transition = await applyAgentArtifactCoverageEvidence(initial, targeted.evidence);
+      const transition = await applyAgentArtifactCoverageEvidence(pending, targeted.evidence);
       if (
         transition.advanced
-        || transition.record.progressToken !== initial.progressToken
-        || transition.record.expectedCursor !== initial.expectedCursor
-        || transition.record.bytesDelivered !== initial.bytesDelivered
+        || transition.record.progressToken !== pending.progressToken
+        || transition.record.expectedCursor !== pending.expectedCursor
+        || transition.record.bytesDelivered !== pending.bytesDelivered
       ) throw new TypeError('Scenario targeted read advanced sequential coverage.');
     }
     targetedReadsExercised = true;
@@ -579,8 +580,14 @@ async function runArtifactContinuationCoverageAdmission(
     artifactReader,
     artifactEvidenceHandoff: evidenceHandoff,
     authorize: ({ arguments: args }) => {
-      if (!coverage || args.artifactId !== coverage.artifactId) return false;
-      if (args.byteOffset !== undefined || args.search) return true;
+      if (
+        !coverage
+        || coverage.state !== 'pending'
+        || args.artifactId !== coverage.artifactId
+      ) return false;
+      if (args.byteOffset !== undefined || args.search !== undefined) {
+        return coverage.bytesDelivered > 0 && coverage.expectedCursor !== null;
+      }
       return coverage.bytesDelivered === 0
         ? args.cursor === undefined
         : args.cursor === coverage.expectedCursor;
@@ -764,8 +771,12 @@ async function runArtifactContinuationCoverageAdmission(
       throw new TypeError('Scenario continuation restored non-pending artifact coverage.');
     }
     resumeExpectedCursor = persisted.expectedCursor;
-    if (!targetedReadsExercised && persisted.bytesDelivered === 0) {
-      await exerciseTargetedReads();
+    if (
+      !targetedReadsExercised
+      && persisted.bytesDelivered > 0
+      && persisted.expectedCursor !== null
+    ) {
+      await exerciseTargetedReads(persisted);
     }
     const projectedContinuation = projectContinuationInstruction(projectedMessages, persisted);
     projectedMessages = projectedContinuation.messages;
