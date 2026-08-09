@@ -3,7 +3,7 @@ import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync,
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'vitest';
-import { RUNTIME_EVIDENCE_CONTRACTS } from '../../scripts/agent-runtime-release-evidence.mjs';
+import { RELEASE_MANUAL_EXCLUSIONS, RUNTIME_EVIDENCE_CONTRACTS } from '../../scripts/agent-runtime-release-evidence.mjs';
 import {
   cleanupOwnedPublicationTemps,
   finalizeAgentRelease,
@@ -239,6 +239,7 @@ test('finalizer validates before mutation, preserves provisional bytes, and chec
           assert.equal(Object.hasOwn(input.runtimeEvidenceRaw, 'runtimeComposition'), true);
           assert.equal(Object.hasOwn(input.runtimeEvidenceRaw, 'composition'), false);
           assert.equal(input.publicationTimestamp, runtimeGeneratedAt);
+          assert.deepEqual(input.manualExclusions, RELEASE_MANUAL_EXCLUSIONS);
           return {};
         },
         planPublication: () => {

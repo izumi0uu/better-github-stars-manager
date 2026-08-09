@@ -13,6 +13,7 @@ import {
   planEvidencePublication,
   prepareReleaseFinalization,
   ReleaseEvidenceError,
+  RELEASE_MANUAL_EXCLUSIONS,
   RUNTIME_EVIDENCE_CONTRACTS,
   validateProvisionalReleaseEvidence,
   validatePublishedReleaseGate,
@@ -237,7 +238,7 @@ function finalizationFixture() {
     publicationTimestamp: GENERATED,
     finalRelativePath: 'release-evidence-1.0.9.json',
     gateRelativePath: 'agent-release-gate-evidence.json',
-    manualExclusions: ['chrome_web_store_publication', 'chrome_web_store_review', 'chrome_web_store_upload', 'live_provider_credential_check'],
+    manualExclusions: [...RELEASE_MANUAL_EXCLUSIONS],
     expectedScenarioIds: SCENARIO_IDS,
   } };
 }

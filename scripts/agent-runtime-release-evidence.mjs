@@ -30,7 +30,8 @@ const MAX_VALIDATION_DEPTH = 20;
 const MAX_VALIDATION_NODES = 4_096;
 const MAX_COLLECTION_ITEMS = 256;
 const MAX_STRING_BYTES = 1_024;
-const REQUIRED_MANUAL_EXCLUSIONS = deepFreeze([
+export const RELEASE_MANUAL_EXCLUSIONS = deepFreeze([
+  'chrome_web_store_dashboard',
   'chrome_web_store_publication',
   'chrome_web_store_review',
   'chrome_web_store_upload',
@@ -561,7 +562,7 @@ export function prepareReleaseFinalization(input) {
   const manualExclusions = Array.isArray(input.manualExclusions)
     ? [...input.manualExclusions].sort(bytewiseCompare)
     : null;
-  if (!manualExclusions || !deepEqual(manualExclusions, REQUIRED_MANUAL_EXCLUSIONS)) {
+  if (!manualExclusions || !deepEqual(manualExclusions, RELEASE_MANUAL_EXCLUSIONS)) {
     throw new ReleaseEvidenceError('manual_exclusions_invalid', '$.manualExclusions');
   }
   if (!version()(input.packagedManifestVersion)) {
@@ -844,7 +845,7 @@ export function validatePublishedReleaseGate(input) {
   if (gateValue.claims?.packageReleaseReady !== true || gateValue.claims?.dashboardSubmissionClaimed !== false) {
     throw new ReleaseEvidenceError('release_gate_claim_invalid', '$.gateRaw.claims');
   }
-  if (!deepEqual(gateValue.manualExclusions, REQUIRED_MANUAL_EXCLUSIONS)) {
+  if (!deepEqual(gateValue.manualExclusions, RELEASE_MANUAL_EXCLUSIONS)) {
     throw new ReleaseEvidenceError('manual_exclusions_invalid', '$.gateRaw.manualExclusions');
   }
   assertEvidenceRedacted({ finalValue, gateValue }, {

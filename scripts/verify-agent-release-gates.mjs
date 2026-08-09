@@ -18,6 +18,7 @@ import pkg from '../package.json' with { type: 'json' };
 import {
   planEvidencePublication,
   prepareReleaseFinalization,
+  RELEASE_MANUAL_EXCLUSIONS,
   RUNTIME_EVIDENCE_CONTRACTS,
   validatePublishedReleaseGate,
   validateReleaseVersionApproval,
@@ -29,13 +30,7 @@ import {
   validateManifestResourceClosure,
 } from './package-manifest-closure.mjs';
 
-const MANUAL_EXCLUSIONS = Object.freeze([
-  'chrome_web_store_dashboard',
-  'chrome_web_store_publication',
-  'chrome_web_store_review',
-  'chrome_web_store_upload',
-  'live_provider_credential_check',
-]);
+const MANUAL_EXCLUSIONS = RELEASE_MANUAL_EXCLUSIONS;
 const EXPECTED_SCENARIO_IDS = Object.freeze([
   'small-window-multiple-tools',
   'overflow-then-success',
