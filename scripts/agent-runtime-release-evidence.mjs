@@ -23,6 +23,8 @@ const VITE_ADVICE = [
   /^- Use build\.rollupOptions\.output\.manualChunks to improve chunking: https:\/\/rollupjs\.org\/configuration-options\/#output-manualchunks$/u,
   /^- Adjust chunk size limit for this warning via build\.chunkSizeWarningLimit\.$/u,
 ];
+const BUILD_ADVISORY_PATH = /^\$\.build\.advisories\[\d+\]$/u;
+const FINAL_BUILD_ADVISORY_PATH = /^\$\.finalValue\.build\.advisories\[\d+\]$/u;
 const DEFAULT_ADVISORY_LIMITS = Object.freeze({ maxBlocks: 16, maxBlockBytes: 16 * 1024, maxTotalBytes: 64 * 1024 });
 const MAX_VALIDATION_DEPTH = 20;
 const MAX_VALIDATION_NODES = 4_096;
@@ -336,7 +338,12 @@ export function assertReleaseVersionIdentity({
   return true;
 }
 
-export function assertEvidenceRedacted(value, { forbiddenValues = [], allowedUrlPaths = [], allowedUrls = [] } = {}) {
+export function assertEvidenceRedacted(value, { forbiddenValues = [], allowedUrlPaths = [], allowedUrls = [], allowedStringLimits = [] } = {}) {
+  for (const limit of allowedStringLimits) {
+    if (!isPlainObject(limit) || !(limit.path instanceof RegExp) || !Number.isSafeInteger(limit.maxBytes) || limit.maxBytes < MAX_STRING_BYTES) {
+      throw new ReleaseEvidenceError('evidence_unbounded');
+    }
+  }
   const privateValues = forbiddenValues.filter((entry) => typeof entry === 'string' && entry.length > 0);
   const urlPathAllowed = (jsonPath) => allowedUrlPaths.some((entry) => entry instanceof RegExp ? entry.test(jsonPath) : entry === jsonPath);
   const urlValueAllowed = (jsonPath, candidate) => {
@@ -355,7 +362,8 @@ export function assertEvidenceRedacted(value, { forbiddenValues = [], allowedUrl
     }
     if (typeof candidate === 'boolean' || candidate === null) return;
     if (typeof candidate === 'string') {
-      if (Buffer.byteLength(candidate) > MAX_STRING_BYTES) throw new ReleaseEvidenceError('evidence_unbounded', jsonPath);
+      const stringLimit = allowedStringLimits.find(({ path: allowedPath }) => allowedPath.test(jsonPath))?.maxBytes ?? MAX_STRING_BYTES;
+      if (Buffer.byteLength(candidate) > stringLimit) throw new ReleaseEvidenceError('evidence_unbounded', jsonPath);
       if (
         (/\b(?:https?|chrome-extension|data):\/\//iu.test(candidate) && !urlPathAllowed(jsonPath) && !urlValueAllowed(jsonPath, candidate))
         || /\b(?:authorization|bearer|basic)\b|(?:github_pat_|gh[opurs]_|sk-[A-Za-z0-9])|api[-_ ]?key/iu.test(candidate)
@@ -461,8 +469,9 @@ export function validateRuntimeVerificationEvidence(value, context = {}) {
   validateShape(value, shape, '$');
   assertEvidenceRedacted(value, {
     forbiddenValues: context.forbiddenValues,
+    allowedStringLimits: [{ path: BUILD_ADVISORY_PATH, maxBytes: DEFAULT_ADVISORY_LIMITS.maxBlockBytes }],
     allowedUrls: [{
-      path: /^\$\.build\.advisories\[\d+\]$/u,
+      path: BUILD_ADVISORY_PATH,
       value: /^https:\/\/rollupjs\.org\/configuration-options\/#output-manualchunks$/u,
     }],
   });
@@ -516,8 +525,9 @@ export function validateProvisionalReleaseEvidence(value, context = {}) {
   assertEvidenceRedacted(value, {
     forbiddenValues: context.forbiddenValues,
     allowedUrlPaths: [/^\$\.packagedPermissions\.(?:hostPermissions|optionalHostPermissions)\[\d+\]$/u],
+    allowedStringLimits: [{ path: BUILD_ADVISORY_PATH, maxBytes: DEFAULT_ADVISORY_LIMITS.maxBlockBytes }],
     allowedUrls: [{
-      path: /^\$\.build\.advisories\[\d+\]$/u,
+      path: BUILD_ADVISORY_PATH,
       value: /^https:\/\/rollupjs\.org\/configuration-options\/#output-manualchunks$/u,
     }],
   });
@@ -840,8 +850,9 @@ export function validatePublishedReleaseGate(input) {
   assertEvidenceRedacted({ finalValue, gateValue }, {
     forbiddenValues: input.forbiddenValues,
     allowedUrlPaths: [/^\$\.finalValue\.packagedPermissions\.(?:hostPermissions|optionalHostPermissions)\[\d+\]$/u],
+    allowedStringLimits: [{ path: FINAL_BUILD_ADVISORY_PATH, maxBytes: DEFAULT_ADVISORY_LIMITS.maxBlockBytes }],
     allowedUrls: [{
-      path: /^\$\.finalValue\.build\.advisories\[\d+\]$/u,
+      path: FINAL_BUILD_ADVISORY_PATH,
       value: /^https:\/\/rollupjs\.org\/configuration-options\/#output-manualchunks$/u,
     }],
   });

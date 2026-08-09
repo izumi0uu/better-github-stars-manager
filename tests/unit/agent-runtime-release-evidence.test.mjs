@@ -346,6 +346,17 @@ test('requires exact clean source, version, package fingerprint, and complete pa
   const withAdvisory = clone(fixture.verification);
   withAdvisory.build.advisories = [advisoryBlock('worker')];
   assert.equal(validateRuntimeVerificationEvidence(withAdvisory).build.advisories.length, 1);
+  const longAdvisory = [
+    ...Array.from({ length: 20 }, (_, index) => `dist/assets/chunk-${index}.js  530.00 kB │ gzip: 100.00 kB`),
+    '(!) Some chunks are larger than 500 kB after minification. Consider:',
+    '- Using dynamic import() to code-split the application',
+    '- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks',
+    '- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.',
+  ].join('\n');
+  assert.ok(Buffer.byteLength(longAdvisory) > 1024);
+  const longEvidence = clone(fixture.verification);
+  longEvidence.build.advisories = [longAdvisory];
+  assert.equal(validateRuntimeVerificationEvidence(longEvidence).build.advisories[0], longAdvisory);
   const maliciousAdvisory = clone(fixture.verification);
   maliciousAdvisory.build.advisories = [advisoryBlock('worker').replace('https://rollupjs.org/configuration-options/#output-manualchunks', 'https://evil.example/payload')];
   expectCode(() => validateRuntimeVerificationEvidence(maliciousAdvisory), 'private_evidence_rejected');
