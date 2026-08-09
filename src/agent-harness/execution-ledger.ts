@@ -47,8 +47,8 @@ type EffectReceipt = {
 };
 
 /**
- * In-process facts for one background turn attempt. This deliberately does not
- * use IndexedDB or the transcript: a service-worker restart must lose it and
+ * In-process facts for one background turn attempt. This deliberately avoids
+ * durable state and the transcript: a service-worker restart must lose it and
  * report attempt_state_lost instead of replaying an uncertain write.
  */
 export class AgentExecutionLedger {

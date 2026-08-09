@@ -256,6 +256,7 @@ describe('Agent release conformance', () => {
       'read_agent_artifact',
       'artifact_available',
       '@/bgsm-agent',
+      'IndexedDB',
       '@/storage',
       'AgentToolResultArtifactWriter',
       'AgentToolResultArtifactDisposer',
