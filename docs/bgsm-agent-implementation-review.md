@@ -3,25 +3,40 @@
 ## Document status
 
 - **Review verdict:** `REMEDIATED` for the code-level findings tracked in the 2026-07-14 repair pass
-- **Launch status:** the Phase 3 harness-extension seam is implemented and independently child-verified; parent Phases 4–8, clean-tree Release Candidate packaging, and credential-dependent manual Chrome checks remain pending
+- **Launch status:** parent Phases 1–6 and standalone Phase 7A–7D proofs are settled; Phase 8 clean-candidate verification and packaging, credential-dependent Chrome checks, and Web Store submission remain open
 - **Reviewed branch:** `feat/agent-tag-assistant`
 - **Original review date:** 2026-07-10
 - **Remediation date:** 2026-07-14
 - **Context v2 integration date:** 2026-07-17
 - **Conversation/workflow ownership verification date:** 2026-08-06
 - **Harness-extension-seam full-child verification date:** 2026-08-07
+- **Shared turn-protocol verification date:** 2026-08-07
+- **Application-controller verification date:** 2026-08-07
+- **History/runtime-cache verification date:** 2026-08-07
+- **Standalone Phase 7A artifact-proof date:** 2026-08-08
+- **Phase 7B worker-replacement proof date:** 2026-08-08
+- **Phase 7D composed runtime proof date:** 2026-08-09
 - **Audience:** maintainers implementing, reviewing, and testing Cubby
 - **Scope:** the Cubby runtime, provider adapters, background orchestration, Port protocols, release evidence, and packaged-extension runtime
 
 This document preserves the original findings and remediation plan as review history. The 2026-07-14 closure record does not by itself prove context v2 release readiness; executable source, current tests, and the fresh verification matrix remain the enforced runtime contract.
 
-The earlier [MVP Agent Harness Blueprint](./bgsm-agent-tag-assistant-plan.md) remains useful as design history, but its proposal-only implementation checkpoint does not describe the current branch. Where the two documents conflict, this review describes the current code and the required merge gates; a later accepted product decision should replace both with one canonical specification.
+The earlier [MVP Agent Harness Blueprint](./bgsm-agent-tag-assistant-plan.md) remains useful as design history, but its proposal-only implementation checkpoint does not describe the current branch. Where records conflict, executable source, the current release boundary above, and dated accepted product decisions control; the numbered audit and recommendations below remain historical.
 
 The conversation/workflow ownership product contract is captured in `.trellis/tasks/08-06-conversation-workflow-ownership/`, with executable long-term boundaries in `.trellis/spec/extension/runtime-boundaries.md`. This document owns implementation and safety findings; executable source and regression tests own the enforced runtime behavior.
 
+## Current Phase 8 release boundary — 2026-08-09
+
+- **Local data:** IndexedDB keeps the conversation/recovery/artifact ledger in tables separate from Organize jobs, frozen scopes, proposals, Apply rows, and receipts. The ledger warns at 256 MiB and stops new writes at 512 MiB; that accounting is not Chrome's whole-extension storage estimate and does not include the separately bounded Organize tables.
+- **Retention and deletion:** Cubby normally keeps up to 128 valid settled attempt rows per conversation, while current and damaged recovery evidence may remain until explicit deletion. Deleting a settled conversation removes its transcript, attempt/recovery rows, and conversation artifacts. It does not remove the latest completed or cancelled Organize result, which remains until Dismiss, replacement, or uninstall.
+- **Transport:** GitHub identity, star, public-code-search, and Gist requests go directly to GitHub. Cubby task data goes directly to the selected Provider and exact bound origin. Provider credentials travel only in the Provider-required authentication header; the GitHub token is never sent to a Provider, and no developer-operated proxy receives either traffic flow.
+- **Release evidence:** controlled packaged Provider fixtures and strict adapter contracts can prove local protocol behavior, not live credentials. The repository and generated manifest now use the approved `1.0.9` candidate. Two deterministic production builds resolved `assets/index.ts-Did2g2v5.js` at exactly 645,779 bytes with SHA-256 `b9b60e7b4a162dae39730224a46069393cb1f6ba4dd15f6dc6ca2b351c04f67b`; the release scripts require that exact path, byte count, and digest. No clean `1.0.9` package pass is claimed before the final Phase 8 gate.
+- **Phase 7B worker-replacement evidence:** Phase 7B worker-replacement proofs are implemented and verified. Their build-specific worker measurement remains historical and does not replace the exact Phase 8 baseline above.
+- **Web Store:** the tag-triggered workflow has a separately gated upload-and-publish step, but local source does not prove that its gate or credentials are configured or that it ran. Dashboard values, upload, review, approval, publication, public listing state, and installed-store behavior require direct evidence and remain unclaimed.
+
 ## Phase 3 harness-extension seam — 2026-08-07
 
-The Phase 3 child in `.trellis/tasks/08-07-harness-extension-seam/` is implemented and independently child-verified. This is not a release-ready declaration: parent Phases 4–8 and clean-tree release gates remain pending or out of scope for this child.
+The Phase 3 child in `.trellis/tasks/08-07-harness-extension-seam/` is implemented and independently child-verified. This section records its evidence only. Subsequent child records complete Phases 4–6 and standalone Phase 7A; the Phase 7B, 7C, and 7D matrices are also settled, while Phase 8 remains open. None of these records declares release readiness.
 
 ### Current implementation and source-of-truth boundaries
 
@@ -58,7 +73,12 @@ Observed verification evidence:
 - `pnpm build`: passed after transforming 2,397 modules and emitted identity `09216717-9281f5-05d392`; the existing large-chunk advisories remained visible.
 - `pnpm test:runtime:agent-scenarios`: all 9 packaged Scenario Lab fixtures passed with 9 retained roots, 413 events, and zero network requests; its internal build emitted identity `09216717-9281f5-a63f50`.
 
-Still pending in this record: parent Phases 4–8, clean-tree release packaging, and manual credential-dependent checks. None is implied green by the completed Phase 3 child gate.
+### Phase 7B worker-replacement evidence — 2026-08-08
+
+- Release build `04068891-5ab2a4-e16e66` passed the standalone Phase 7A host and the Phase 7B host against the same `dist/`. Phase 7B passed all three scenarios with 40 Provider requests and two interruptions: `committed_replay` recorded 2/0, `statically_read_only_resume` 34/1, and `state_uncertain_abandonment` 2/1.
+- The three `stopped_target_preinstalled` lifecycle records used `(stopCommand, stopped, install, start, running)` ordinals `(1,3,3,3,7)`, `(7,9,9,9,13)`, and `(13,15,15,15,19)`. Chrome 149 reused the same version, target, and attachment/session identity while product execution epochs advanced distinctly.
+- Each live runtime-diagnostic sample recorded count 0 and overflow `false`. The final matrix recorded no unexpected network request or recovery residue. Production also gates `selfCheck()` behind compile-time `DEV`, with no development-only self-check traffic in the packaged run.
+- That Phase 7B build measured a 642,979-byte worker against its then-frozen 529,049-byte ceiling, an overage of 113,930 bytes. It is build-specific historical evidence, not the Phase 8 baseline. Phase 7C and the behavior-named Phase 7D composition are settled separately; Phase 8 release gates, clean-candidate packaging, and credential-dependent manual checks remain open. An earlier setup-only transient remains unclassified and is not presented as a fixed product bug.
 
 ## Product autonomy decision — 2026-08-03
 
@@ -98,11 +118,13 @@ Verification evidence from the repair pass:
 - `pnpm test:runtime:organize-job-recovery`: passed the sixth packaged-extension scenario for alarm-driven recovery after MV3 worker termination.
 - `pnpm build`: passed; the existing Mermaid chunk-size warning remains non-blocking.
 - `pnpm package:extension`: passed and recorded the current dirty worktree as not release-ready.
-- `pnpm verify:agent-phase5`: intentionally refused this uncommitted worktree at its clean-source precondition. Run it after commit to generate final release-ready evidence.
+- The current Phase 8 commands are `pnpm verify:agent-runtime` followed by `pnpm verify:agent-release-gates`. Their presence does not establish a pass; the earlier Phase 5 verifier refused this uncommitted worktree at its clean-source precondition, so that repair pass generated no final runtime or release-ready evidence.
 
-## 1. Executive summary
+Sections 1–18 preserve the original audit and recommendation history. They do not describe current implementation or release status unless a paragraph is explicitly marked remediated or current.
 
-The branch contains a useful Agent prototype:
+## 1. Original 2026-07 audit summary
+
+At the time of the original audit, the branch contained a useful Agent prototype:
 
 - a small provider-neutral loop under `src/agent-harness`;
 - BGSM-specific instructions and typed tools under `src/bgsm-agent`;
@@ -111,7 +133,7 @@ The branch contains a useful Agent prototype:
 - provider settings for OpenAI, OpenRouter, and a custom OpenAI-compatible endpoint;
 - an in-product Agent panel built on the existing ShadowRoot and design system.
 
-The implementation is not merge-ready as a write-capable feature. The primary problem is not that the UI uses chat or that the branch removed the old proposal store. The problem is that the current control plane grants model-facing write tools unconditional permission and then relies on prompt text to keep destructive actions safe. Several additional defects make the behavior unreliable:
+At that time, the implementation was not merge-ready as a write-capable feature. The primary problem was not that the UI used chat or that the branch removed the old proposal store. The control plane granted model-facing write tools unconditional permission and relied on prompt text to keep destructive actions safe. Several additional defects made the behavior unreliable:
 
 1. one saved API key can be silently reused with a different provider or custom origin;
 2. `assign_repo_tags` can promote existing auto tags into the manual layer;
@@ -178,7 +200,7 @@ Application code must:
 
 The main model selects optional read tools from conversation context instead of a current-prompt regular expression. Tool selection does not grant write authority: repository scope, current-turn local evidence, write budgets, and repository-code read-only mode remain host-enforced.
 
-## 3. Current implementation map
+## 3. Implementation map at the original audit
 
 ```text
 Toolbar Auto Tags / free-form prompt
@@ -1357,7 +1379,9 @@ Reason: bounded additive writes can be safe with runtime policy and receipts. Pr
 
 Reason: BGSM needs a narrow browser-extension control plane, not a coding-agent runtime.
 
-## 19. Open product decisions with recommended defaults
+## 19. Historical product-decision recommendations
+
+These defaults record earlier recommendations. Current autonomy is stated in **Product autonomy decision — 2026-08-03**, and current permissions are derived from `manifest.config.ts` and the final package.
 
 | Decision | Recommended default | Reason |
 | --- | --- | --- |
@@ -1421,7 +1445,7 @@ Agent turn protocol Phase 4 evidence from 2026-08-07:
 - `pnpm build` passed after transforming 2,398 modules with build identity `6ecba87f-25456a-abd36e`; the existing large-chunk advisory remains unsuppressed;
 - the packaged Scenario Lab passed all 9 fixtures with 9 trace roots, 413 events, and zero network requests, proving the shared protocol in the MV3 extension rather than only in source-level tests.
 
-This is not yet clean-tree Release Candidate evidence. The remaining release-only gaps are a clean commit/package identity run and credential-dependent unpacked-Chrome checks against a live native Provider and the intended Custom service. The controlled packaged-host Provider proves protocol/runtime behavior without sending live traffic; it must not be described as a live Provider credential test.
+This is not clean-candidate Release Candidate evidence. Phase 7D composition is settled, while the full Phase 8 clean-source verification, package-identity, and finalization gates remain open, as do credential-dependent Chrome checks against a live native Provider and the intended Custom service. Controlled packaged-host fixtures prove protocol/runtime behavior without live traffic and must not be described as live Provider credential tests.
 
 No real API credential was used during the original audit. Provider conclusions are based on current source, mock tests, protocol behavior, official model/schema evidence, and the local Pi comparison. Line numbers are review anchors for this branch and may move; symbol names and stated invariants are authoritative.
 

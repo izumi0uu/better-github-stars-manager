@@ -9,7 +9,10 @@ import {
   createBgsmAgentTurnRegistry,
 } from '@/background/bgsm-agent-turn-port';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent';
-import type { BgsmAgentTurnLaunch } from '@/bgsm-agent/turn-protocol';
+import {
+  parseBgsmAgentTurnServerMessage,
+  type BgsmAgentTurnLaunch,
+} from '@/bgsm-agent/turn-protocol';
 
 const databases: DevTraceDB[] = [];
 
@@ -167,8 +170,18 @@ describe('Cubby turn trace boundary', () => {
     const sessionConflict = fakePort();
     registry.attach(sessionConflict.port);
     sessionConflict.start({ ...turn, turnAttemptId: 'attempt-trace-failure-other' });
-    expect((messagesOfType(sessionConflict.posted, 'bgsmAgentTurnResult')[0]?.result as { reason?: string }).reason)
-      .toBe('attempt_state_lost');
+    const sessionConflictMessage = messagesOfType(
+      sessionConflict.posted,
+      'bgsmAgentTurnError',
+    )[0];
+    expect(sessionConflictMessage).toBeDefined();
+    if (!sessionConflictMessage) throw new TypeError('Expected an active-turn conflict delivery.');
+    const sessionConflictDelivery = parseBgsmAgentTurnServerMessage(sessionConflictMessage);
+    expect(sessionConflictDelivery.type).toBe('bgsmAgentTurnError');
+    if (sessionConflictDelivery.type !== 'bgsmAgentTurnError') {
+      throw new TypeError('Expected a typed Agent turn error delivery.');
+    }
+    expect(sessionConflictDelivery.error.code).toBe('agent_session_turn_active');
     await waitUntil(() => messagesOfType(transport.posted, 'bgsmAgentTurnResult').length === 1);
     const result = messagesOfType(transport.posted, 'bgsmAgentTurnResult')[0]?.result;
     expect((result as { reason?: string }).reason).toBe('final_answer');
@@ -360,7 +373,7 @@ describe('Cubby turn trace boundary', () => {
     expect(conflictEvents.find((event) => event.kind === 'attempt_rejected')?.data)
       .toEqual({ reason: 'active_session_conflict' });
     expect((await db.roots.get('agent_turn:attempt-session-conflict'))?.terminalState)
-      .toBe('attempt_state_lost');
+      .toBe('failed');
   });
 
   it('records a failed live delivery and keeps the terminal result replayable', async () => {

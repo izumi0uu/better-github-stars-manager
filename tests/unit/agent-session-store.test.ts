@@ -32,6 +32,7 @@ import {
   createAgentSession,
   deleteAgentSession,
   inspectAgentSessionCatalog,
+  getOrCreateInitialAgentSession,
   discardDamagedAgentSessionRecovery,
   inspectDurableAgentSessionTurn,
   loadAgentSessionTranscriptPage,
@@ -313,6 +314,27 @@ describe('durable Agent session store', () => {
     assert.deepEqual(replay, first);
     assert.equal(await db.agentSessions.count(), 1);
     assert.equal(await db.agentMessages.count(), 0);
+  });
+
+  it('converges concurrent empty-catalog activation on one durable initial session', async () => {
+    const [pageA, pageB] = await Promise.all([
+      getOrCreateInitialAgentSession({
+        idFactory: () => 'session-initial-page-a',
+        now: () => 10,
+      }),
+      getOrCreateInitialAgentSession({
+        idFactory: () => 'session-initial-page-b',
+        now: () => 20,
+      }),
+    ]);
+
+    assert.equal(pageA.session.id, pageB.session.id);
+    assert.equal(await db.agentSessions.count(), 1);
+    assert.equal(await db.agentMessages.count(), 0);
+    assert.deepEqual(
+      (await inspectAgentSessionCatalog()).summaries.map(({ id }) => id),
+      [pageA.session.id],
+    );
   });
 
   it('keeps full canonical history in IndexedDB and returns bounded recent transcript pages', async () => {

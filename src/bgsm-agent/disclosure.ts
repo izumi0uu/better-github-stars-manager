@@ -17,8 +17,8 @@ export const AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES = Object.freeze([
   'unrelated_or_out_of_scope_stars',
 ] as const);
 
-export const AGENT_PROVIDER_KEY_AUTHORIZATION_EXCEPTION = Object.freeze({
-  category: 'selected_provider_api_key_authorization_header' as const,
+export const AGENT_PROVIDER_KEY_AUTHENTICATION_EXCEPTION = Object.freeze({
+  category: 'selected_provider_api_key_authentication_header' as const,
   destination: 'bound_provider_origin_only' as const,
   modelVisible: false as const,
   logged: false as const,

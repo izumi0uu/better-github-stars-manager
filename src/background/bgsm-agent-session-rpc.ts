@@ -1,9 +1,14 @@
 import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/turn-protocol';
-import type { AgentSessionLaunchDigest } from '@/bgsm-agent/session-transport';
+import {
+  assertAgentTurnTransportIdentifier,
+  validateAgentSessionLaunchDigest,
+  type AgentSessionLaunchDigest,
+} from '@/bgsm-agent/session-transport';
 import {
   createAgentSession,
   deleteAgentSession,
   inspectAgentSessionCatalog,
+  getOrCreateInitialAgentSession,
   loadAgentSession,
   loadAgentSessionTranscriptPage,
   loadCommittedAgentSessionTurn,
@@ -17,6 +22,7 @@ import {
 
 export type BgsmAgentSessionRequest =
   | Readonly<{ type: 'inspectAgentSessionCatalog' }>
+  | Readonly<{ type: 'getOrCreateInitialAgentSession' }>
   | Readonly<{ type: 'inspectActiveAgentSessionTurn'; sessionId: string }>
   | Readonly<{ type: 'createAgentSession'; sessionId?: string }>
   | Readonly<{ type: 'loadAgentSession'; sessionId: string }>
@@ -28,6 +34,7 @@ export type BgsmAgentSessionRequest =
     }>
   | Readonly<{ type: 'readAgentRetryDraftCandidate'; sessionId: string }>
   | Readonly<{ type: 'dismissAgentSessionRetry'; sessionId: string; turnAttemptId: string }>
+  | Readonly<{ type: 'abandonAgentSessionUncertainAttempt'; sessionId: string; turnAttemptId: string }>
   | Readonly<{ type: 'discardDamagedAgentSessionRecovery'; sessionId: string }>
   | Readonly<{
       type: 'loadAgentSessionTranscriptPage';
@@ -40,12 +47,14 @@ export type BgsmAgentSessionRequest =
 
 const BGSM_AGENT_SESSION_REQUEST_TYPES: Readonly<Record<BgsmAgentSessionRequest['type'], true>> = {
   inspectAgentSessionCatalog: true,
+  getOrCreateInitialAgentSession: true,
   inspectActiveAgentSessionTurn: true,
   createAgentSession: true,
   loadAgentSession: true,
   loadCommittedAgentSessionTurn: true,
   readAgentRetryDraftCandidate: true,
   dismissAgentSessionRetry: true,
+  abandonAgentSessionUncertainAttempt: true,
   discardDamagedAgentSessionRecovery: true,
   loadAgentSessionTranscriptPage: true,
   deleteAgentSession: true,
@@ -88,12 +97,89 @@ export type BgsmAgentSessionFailure = Readonly<{
   details?: Readonly<Record<string, string | number>>;
 }>;
 
-export function isBgsmAgentSessionRequest(
-  value: Readonly<{ type: string }>,
-): value is BgsmAgentSessionRequest {
-  return BGSM_AGENT_SESSION_REQUEST_TYPES[
-    value.type as BgsmAgentSessionRequest['type']
-  ] === true;
+export function parseBgsmAgentSessionRequest(value: unknown): BgsmAgentSessionRequest | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const request = value as Record<string, unknown>;
+  const type = request.type;
+  if (
+    typeof type !== 'string'
+    || BGSM_AGENT_SESSION_REQUEST_TYPES[type as BgsmAgentSessionRequest['type']] !== true
+  ) return null;
+
+  const requestType = type as BgsmAgentSessionRequest['type'];
+  try {
+    switch (requestType) {
+      case 'inspectAgentSessionCatalog':
+      case 'getOrCreateInitialAgentSession':
+      case 'getAgentStorageUsage':
+      case 'clearAgentToolCache':
+        assertExactRequestKeys(request, ['type']);
+        return { type: requestType } as BgsmAgentSessionRequest;
+      case 'createAgentSession': {
+        const expectedKeys = request.sessionId === undefined ? ['type'] : ['type', 'sessionId'];
+        assertExactRequestKeys(request, expectedKeys);
+        if (request.sessionId === undefined) return { type: requestType };
+        assertAgentTurnTransportIdentifier(request.sessionId, 'Agent session ID');
+        return { type: requestType, sessionId: request.sessionId };
+      }
+      case 'inspectActiveAgentSessionTurn':
+      case 'loadAgentSession':
+      case 'readAgentRetryDraftCandidate':
+      case 'discardDamagedAgentSessionRecovery':
+      case 'deleteAgentSession':
+        assertExactRequestKeys(request, ['type', 'sessionId']);
+        assertAgentTurnTransportIdentifier(request.sessionId, 'Agent session ID');
+        return { type: requestType, sessionId: request.sessionId };
+      case 'dismissAgentSessionRetry':
+      case 'abandonAgentSessionUncertainAttempt':
+        assertExactRequestKeys(request, ['type', 'sessionId', 'turnAttemptId']);
+        assertAgentTurnTransportIdentifier(request.sessionId, 'Agent session ID');
+        assertAgentTurnTransportIdentifier(request.turnAttemptId, 'Agent turn attempt ID');
+        return {
+          type: requestType,
+          sessionId: request.sessionId,
+          turnAttemptId: request.turnAttemptId,
+        };
+      case 'loadCommittedAgentSessionTurn':
+        assertExactRequestKeys(request, ['type', 'sessionId', 'turnAttemptId', 'launchDigest']);
+        assertAgentTurnTransportIdentifier(request.sessionId, 'Agent session ID');
+        assertAgentTurnTransportIdentifier(request.turnAttemptId, 'Agent turn attempt ID');
+        validateAgentSessionLaunchDigest(request.launchDigest);
+        return {
+          type: requestType,
+          sessionId: request.sessionId,
+          turnAttemptId: request.turnAttemptId,
+          launchDigest: request.launchDigest,
+        };
+      case 'loadAgentSessionTranscriptPage':
+        assertExactRequestKeys(request, ['type', 'sessionId', 'beforeSequence']);
+        assertAgentTurnTransportIdentifier(request.sessionId, 'Agent session ID');
+        if (!Number.isSafeInteger(request.beforeSequence) || Number(request.beforeSequence) <= 0) {
+          throw new TypeError('Agent transcript cursor must be a positive safe integer.');
+        }
+        return {
+          type: requestType,
+          sessionId: request.sessionId,
+          beforeSequence: Number(request.beforeSequence),
+        };
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function assertExactRequestKeys(
+  request: Readonly<Record<string, unknown>>,
+  expected: readonly string[],
+): void {
+  const actual = Object.keys(request).sort();
+  const sortedExpected = [...expected].sort();
+  if (
+    actual.length !== sortedExpected.length
+    || actual.some((key, index) => key !== sortedExpected[index])
+  ) throw new TypeError('Agent session request keys are invalid.');
 }
 
 /**
@@ -130,6 +216,7 @@ export function describeBgsmAgentSessionFailure(error: unknown): BgsmAgentSessio
 
 export type BgsmAgentSessionRpcOperations = Readonly<{
   inspectCatalog(): Promise<unknown>;
+  getOrCreateInitialSession(): Promise<unknown>;
   createSession(sessionId?: string): Promise<unknown>;
   loadSession(sessionId: string): Promise<unknown>;
   loadCommittedTurn(input: Readonly<{
@@ -156,18 +243,23 @@ export type BgsmAgentSessionRpcDependencies = Readonly<{
     sessionId: string;
     turnAttemptId: string;
   }>): Promise<boolean>;
+  abandonUncertainAttempt(input: Readonly<{
+    sessionId: string;
+    turnAttemptId: string;
+  }>): Promise<boolean>;
   discardDamagedRecovery(sessionId: string): Promise<number>;
   notifySessionDeleted(sessionId: string): void;
   operations?: Partial<BgsmAgentSessionRpcOperations>;
 }>;
 
 export type BgsmAgentSessionRpcRouter = Readonly<{
-  handle(request: BgsmAgentSessionRequest): Promise<unknown>;
+  handle(request: unknown): Promise<unknown>;
   describeFailure(error: unknown): BgsmAgentSessionFailure | null;
 }>;
 
 const productionOperations: Omit<BgsmAgentSessionRpcOperations, 'deleteSession'> = Object.freeze({
   inspectCatalog: inspectAgentSessionCatalog,
+  getOrCreateInitialSession: getOrCreateInitialAgentSession,
   createSession: (sessionId) => createAgentSession(
     sessionId ? { idFactory: () => sessionId } : undefined,
   ),
@@ -188,6 +280,8 @@ export function createBgsmAgentSessionRpcRouter(
 ): BgsmAgentSessionRpcRouter {
   const operations: BgsmAgentSessionRpcOperations = {
     inspectCatalog: dependencies.operations?.inspectCatalog ?? productionOperations.inspectCatalog,
+    getOrCreateInitialSession: dependencies.operations?.getOrCreateInitialSession
+      ?? productionOperations.getOrCreateInitialSession,
     createSession: dependencies.operations?.createSession ?? productionOperations.createSession,
     loadSession: dependencies.operations?.loadSession ?? productionOperations.loadSession,
     loadCommittedTurn: dependencies.operations?.loadCommittedTurn
@@ -204,10 +298,14 @@ export function createBgsmAgentSessionRpcRouter(
     clearToolCache: dependencies.operations?.clearToolCache ?? productionOperations.clearToolCache,
   };
 
-  const handle = async (request: BgsmAgentSessionRequest): Promise<unknown> => {
+  const handle = async (requestValue: unknown): Promise<unknown> => {
+    const request = parseBgsmAgentSessionRequest(requestValue);
+    if (!request) throw new TypeError('Agent session request is invalid.');
     switch (request.type) {
       case 'inspectAgentSessionCatalog':
         return operations.inspectCatalog();
+      case 'getOrCreateInitialAgentSession':
+        return operations.getOrCreateInitialSession();
       case 'inspectActiveAgentSessionTurn':
         return dependencies.inspectActiveTurn(request.sessionId)
           ?? dependencies.inspectDurableTurn(request.sessionId);
@@ -221,6 +319,8 @@ export function createBgsmAgentSessionRpcRouter(
         return operations.readRetryDraft(request.sessionId);
       case 'dismissAgentSessionRetry':
         return dependencies.dismissRetry(request);
+      case 'abandonAgentSessionUncertainAttempt':
+        return dependencies.abandonUncertainAttempt(request);
       case 'discardDamagedAgentSessionRecovery':
         return dependencies.discardDamagedRecovery(request.sessionId);
       case 'loadAgentSessionTranscriptPage':

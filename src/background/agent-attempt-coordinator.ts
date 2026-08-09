@@ -6,6 +6,7 @@ import {
 } from '@/bgsm-agent/session-transport';
 import type { BgsmAgentTurnLaunch } from '@/bgsm-agent/turn-protocol';
 import {
+  abandonAgentSessionUncertainAttempt,
   admitAgentSessionTurn,
   commitLeasedAgentSessionTurn,
   checkpointAgentSessionArtifactEnvelope,
@@ -15,6 +16,7 @@ import {
   markAgentSessionAttemptStateUncertain,
   markAgentSessionArtifactRepromptUsed,
   releaseAgentSessionTurnLease,
+  rollbackClaimedAgentSessionTurnRecovery,
   settleAgentSessionAttemptWithoutTransition,
   type AgentSessionCommitResult,
   type AgentSessionTerminalOutcome,
@@ -59,7 +61,12 @@ export type AgentAttemptCoordinator = Readonly<{
     coverageFailureCode?: string;
   }>) => Promise<void>;
   inspectActive: (sessionId: string) => Promise<AgentDurableTurnInspection | null>;
+  rollbackRecoveryClaim: (launch: BgsmAgentTurnLaunch) => Promise<boolean>;
   markStateUncertain: (input: Readonly<{
+    sessionId: string;
+    turnAttemptId: string;
+  }>) => Promise<boolean>;
+  abandonUncertainAttempt: (input: Readonly<{
     sessionId: string;
     turnAttemptId: string;
   }>) => Promise<boolean>;
@@ -112,8 +119,20 @@ export function createAgentAttemptCoordinator(
     inspectActive(sessionId) {
       return inspectDurableAgentSessionTurn(sessionId, executionEpochId);
     },
+    async rollbackRecoveryClaim(launch) {
+      const launchDigest = await digestAgentSessionLaunch(launch);
+      return rollbackClaimedAgentSessionTurnRecovery({
+        sessionId: launch.sessionId,
+        turnAttemptId: launch.turnAttemptId,
+        executionEpochId,
+        launchDigest,
+      });
+    },
     markStateUncertain(input) {
       return markAgentSessionAttemptStateUncertain({ ...input, executionEpochId });
+    },
+    abandonUncertainAttempt(input) {
+      return abandonAgentSessionUncertainAttempt(input);
     },
     dismissRetry(input) {
       return dismissAgentSessionAttemptRetry(input);

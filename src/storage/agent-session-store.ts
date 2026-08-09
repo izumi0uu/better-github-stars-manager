@@ -43,6 +43,7 @@ import {
   digestAgentSessionTransition,
   serializedJsonUtf8Bytes,
   validateAgentSessionLaunchIdentity,
+  validateAgentSessionLaunchDigest as validateLaunchDigest,
   type AgentSessionAttemptDigest,
   type AgentSessionLaunchDigest,
   type AgentSessionLaunchIdentity,
@@ -226,6 +227,11 @@ async function quarantineAgentAttemptRecovery(
       'attempt_state_lost',
     )),
   ));
+  await discardUnboundAgentArtifactsInCurrentTransaction({
+    artifactIds: artifactCoverage.map((coverage) => coverage.artifactId),
+    sessionId: attempt.sessionId,
+    turnAttemptId: attempt.turnAttemptId,
+  }, now);
   await deleteAgentAttemptRecoveriesForAttempt(attempt, now, true);
   await putAgentAttempt(attempt, {
     ...attempt,
@@ -377,11 +383,24 @@ function validateAgentAttemptRow(
     throw new TypeError('Committed Agent attempt lacks a receipt.');
   }
   if (attempt.state === 'state_uncertain') {
-    if (attempt.terminalReason !== 'attempt_state_lost' || attempt.lease) {
-      throw new TypeError('Uncertain Agent attempt must be non-resumable.');
-    }
+    if (
+      attempt.terminalReason !== 'attempt_state_lost'
+      || attempt.writeSettlement !== 'unsafe'
+      || attempt.receipt !== null
+      || attempt.retryKind !== null
+      || attempt.lease !== null
+      || attempt.artifactContinuationControl !== null
+    ) throw new TypeError('Uncertain Agent attempt must retain only unsafe non-resumable evidence.');
   }
-  if (attempt.state === 'terminal_non_retryable' && attempt.lease) {
+  if (attempt.state === 'terminal_non_retryable' && attempt.terminalReason === 'abandoned') {
+    if (
+      attempt.writeSettlement !== 'unsafe'
+      || attempt.receipt !== null
+      || attempt.retryKind !== null
+      || attempt.lease !== null
+      || attempt.artifactContinuationControl !== null
+    ) throw new TypeError('Abandoned Agent attempt must retain only unsafe uncertainty evidence.');
+  } else if (attempt.state === 'terminal_non_retryable' && attempt.lease) {
     throw new TypeError('Terminal Agent attempt cannot retain a lease.');
   }
   assertTimestamp(attempt.updatedAt, 'Agent attempt update time');
@@ -409,6 +428,10 @@ async function validateSessionAttemptRows(
     for (const attempt of attempts) {
       validateAgentAttemptRow(attempt, sessionId);
       await validateAgentAttemptRowIdentity(attempt);
+      if (
+        attempt.state === 'state_uncertain'
+        || (attempt.state === 'terminal_non_retryable' && attempt.terminalReason === 'abandoned')
+      ) await assertNoAgentAttemptRecovery(attempt);
     }
   } catch (error) {
     if (error instanceof AgentAttemptCorruptionError) throw error;
@@ -648,10 +671,76 @@ export class AgentSessionTurnLeaseMismatchError extends Error {
   }
 }
 
-export async function createAgentSession(options: Readonly<{
+type AgentSessionCreationOptions = Readonly<{
   idFactory?: () => string;
   now?: () => number;
-}> = {}): Promise<LoadedAgentSession> {
+}>;
+
+export async function createAgentSession(
+  options: AgentSessionCreationOptions = {},
+): Promise<LoadedAgentSession> {
+  const { record, now } = createAgentSessionRecord(options);
+  return runAgentSessionCreationWithCleanup(() => db.transaction(
+    'rw',
+    [db.agentSessions, db.agentAttempts, db.agentMessages, db.agentStorageUsage],
+    async () => {
+      const existing = await db.agentSessions.get(record.id);
+      if (existing) {
+        validateTransportSessionRecord(existing);
+        return transportLoadedFromRecord(existing, await readTranscriptPage(existing));
+      }
+      await db.agentSessions.add(record);
+      await accountAgentSessionCreated(record, now);
+      return transportLoadedFromRecord(record, emptyTranscriptPage(record.id));
+    },
+  ));
+}
+
+/**
+ * Atomically returns the newest readable session or creates the first one.
+ * This is the empty-catalog activation authority shared by every Agent page;
+ * chrome.storage remains only a page bootstrap hint.
+ */
+export async function getOrCreateInitialAgentSession(
+  options: AgentSessionCreationOptions = {},
+): Promise<LoadedAgentSession> {
+  const { record: candidate, now } = createAgentSessionRecord(options);
+  return runAgentSessionCreationWithCleanup(() => db.transaction(
+    'rw',
+    [db.agentSessions, db.agentAttempts, db.agentMessages, db.agentStorageUsage],
+    async () => {
+      const readableRecords: AgentSessionRecord[] = [];
+      for (const existing of await db.agentSessions.toArray()) {
+        try {
+          validateTransportSessionRecord(existing);
+          readableRecords.push(existing);
+        } catch (error) {
+          if (!(error instanceof AgentSessionCorruptionError)) throw error;
+        }
+      }
+      readableRecords.sort((left, right) => (
+        right.updatedAt - left.updatedAt
+        || right.createdAt - left.createdAt
+        || left.id.localeCompare(right.id)
+      ));
+      for (const existing of readableRecords) {
+        try {
+          return await transportLoadedFromRecord(existing, await readTranscriptPage(existing));
+        } catch (error) {
+          if (!(error instanceof AgentSessionCorruptionError)) throw error;
+        }
+      }
+
+      await db.agentSessions.add(candidate);
+      await accountAgentSessionCreated(candidate, now);
+      return transportLoadedFromRecord(candidate, emptyTranscriptPage(candidate.id));
+    },
+  ));
+}
+
+function createAgentSessionRecord(
+  options: AgentSessionCreationOptions,
+): Readonly<{ record: AgentSessionRecord; now: number }> {
   const now = (options.now ?? Date.now)();
   assertTimestamp(now, 'Agent session creation time');
   const requestedId = options.idFactory?.();
@@ -662,36 +751,27 @@ export async function createAgentSession(options: Readonly<{
     requestedId === undefined ? undefined : () => requestedId,
   );
   assertAgentTurnTransportIdentifier(session.id, 'Agent session ID');
-  const record: AgentSessionRecord = {
-    id: session.id,
-    schemaVersion: AGENT_SESSION_SCHEMA_VERSION,
-    title: '',
-    revision: session.revision,
-    lastSequence: 0,
-    binding: null,
-    compactionCheckpoint: null,
-    activeProjections: [],
-    createdAt: now,
-    updatedAt: now,
-  };
-  await ensureAgentStorageUsage();
-  const createOnce = () => db.transaction(
-    'rw',
-    [db.agentSessions, db.agentAttempts, db.agentMessages, db.agentStorageUsage],
-    async () => {
-      const existing = await db.agentSessions.get(session.id);
-      if (existing) {
-        validateTransportSessionRecord(existing);
-        return transportLoadedFromRecord(
-          existing,
-          await readTranscriptPage(existing),
-        );
-      }
-      await db.agentSessions.add(record);
-      await accountAgentSessionCreated(record, now);
-      return transportLoadedFromRecord(record, emptyTranscriptPage(record.id));
+  return {
+    now,
+    record: {
+      id: session.id,
+      schemaVersion: AGENT_SESSION_SCHEMA_VERSION,
+      title: '',
+      revision: session.revision,
+      lastSequence: 0,
+      binding: null,
+      compactionCheckpoint: null,
+      activeProjections: [],
+      createdAt: now,
+      updatedAt: now,
     },
-  );
+  };
+}
+
+async function runAgentSessionCreationWithCleanup(
+  createOnce: () => Promise<LoadedAgentSession>,
+): Promise<LoadedAgentSession> {
+  await ensureAgentStorageUsage();
   try {
     return await createOnce();
   } catch (error) {
@@ -1297,24 +1377,28 @@ export async function loadCommittedAgentSessionTurn(input: Readonly<{
   assertAgentTurnTransportIdentifier(input.sessionId, 'Agent session ID');
   assertAgentTurnTransportIdentifier(input.turnAttemptId, 'Agent turn attempt ID');
   validateLaunchDigest(input.launchDigest);
-  return db.transaction('r', [db.agentSessions, db.agentAttempts, db.agentMessages], async () => {
-    const record = await db.agentSessions.get(input.sessionId);
-    if (!record) throw new AgentSessionNotFoundError(input.sessionId);
-    validateTransportSessionRecord(record);
-    const attempt = await readAgentAttempt(input.sessionId, input.turnAttemptId);
-    if (!attempt) return null;
-    await validateSessionAttemptRows(input.sessionId, [attempt]);
-    if (!attempt.receipt) return null;
-    assertMatchingLaunchDigest(record.id, attempt.receipt, input.launchDigest);
-    const presentationRows = await readTurnPresentationRows(record, input.turnAttemptId);
-    return commitResultFromReceipt(
-      record,
-      presentationRows,
-      toSummary(record),
-      attempt.receipt,
-      true,
-    );
-  });
+  return db.transaction(
+    'r',
+    [db.agentSessions, db.agentAttempts, db.agentAttemptRecoveries, db.agentMessages],
+    async () => {
+      const record = await db.agentSessions.get(input.sessionId);
+      if (!record) throw new AgentSessionNotFoundError(input.sessionId);
+      validateTransportSessionRecord(record);
+      const attempt = await readAgentAttempt(input.sessionId, input.turnAttemptId);
+      if (!attempt) return null;
+      await validateSessionAttemptRows(input.sessionId, [attempt]);
+      if (!attempt.receipt) return null;
+      assertMatchingLaunchDigest(record.id, attempt.receipt, input.launchDigest);
+      const presentationRows = await readTurnPresentationRows(record, input.turnAttemptId);
+      return commitResultFromReceipt(
+        record,
+        presentationRows,
+        toSummary(record),
+        attempt.receipt,
+        true,
+      );
+    },
+  );
 }
 
 export async function acquireAgentSessionTurnLease(input: Readonly<{
@@ -1390,6 +1474,77 @@ export async function releaseAgentSessionTurnLease(input: Readonly<{
     // Port acknowledgement controls delivery retention only. A terminal runner
     // must settle its own attempt before the transport drops its in-memory copy.
     return false;
+  });
+}
+
+/**
+ * Fences rollback to the exact read-only lease claimed by this worker epoch.
+ * A failed in-memory restore cannot leave that durable attempt runnable.
+ */
+export async function rollbackClaimedAgentSessionTurnRecovery(input: Readonly<{
+  sessionId: string;
+  turnAttemptId: string;
+  executionEpochId: string;
+  launchDigest: AgentSessionLaunchDigest;
+  now?: () => number;
+}>): Promise<boolean> {
+  assertAgentTurnTransportIdentifier(input.sessionId, 'Agent session ID');
+  assertAgentTurnTransportIdentifier(input.turnAttemptId, 'Agent turn attempt ID');
+  assertAgentTurnTransportIdentifier(input.executionEpochId, 'Agent worker execution epoch');
+  validateLaunchDigest(input.launchDigest);
+  const now = (input.now ?? Date.now)();
+  assertTimestamp(now, 'Agent recovery rollback time');
+  await ensureAgentStorageUsage();
+  return db.transaction('rw', [
+    db.agentSessions,
+    db.agentAttempts,
+    db.agentAttemptRecoveries,
+    db.agentArtifacts,
+    db.agentArtifactChunks,
+    db.agentStorageUsage,
+  ], async () => {
+    const record = await db.agentSessions.get(input.sessionId);
+    if (!record) return false;
+    validateAgentSessionRecord(record);
+    const attempts = await readAgentAttemptRows(input.sessionId);
+    await validateSessionAttemptRows(input.sessionId, attempts);
+    const attempt = attempts.find((candidate) => candidate.turnAttemptId === input.turnAttemptId);
+    if (
+      !attempt
+      || attempt.receipt
+      || attempt.state !== 'running'
+      || attempt.recoveryClass !== 'statically_read_only'
+      || attempt.admittedLaunchDigest !== input.launchDigest
+      || !attempt.lease
+      || attempt.lease.executionEpochId !== input.executionEpochId
+      || attempt.lease.turnAttemptId !== input.turnAttemptId
+      || attempt.lease.baseRevision !== attempt.admittedLaunch.baseRevision
+      || attempt.lease.launchDigest !== input.launchDigest
+    ) return false;
+    const artifactCoverage = await Dexie.waitFor(Promise.all(
+      attempt.artifactCoverage.map((coverage) => settleAgentArtifactCoverageIncomplete(
+        coverage,
+        'attempt_state_lost',
+      )),
+    ));
+    await discardUnboundAgentArtifactsInCurrentTransaction({
+      artifactIds: artifactCoverage.map((coverage) => coverage.artifactId),
+      sessionId: input.sessionId,
+      turnAttemptId: input.turnAttemptId,
+    }, now);
+    await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
+    await putAgentAttempt(attempt, {
+      ...attempt,
+      state: 'state_uncertain',
+      terminalReason: 'attempt_state_lost',
+      retryKind: null,
+      writeSettlement: 'unsafe',
+      artifactCoverage,
+      artifactContinuationControl: null,
+      lease: null,
+      updatedAt: Math.max(now, attempt.updatedAt),
+    }, now);
+    return true;
   });
 }
 
@@ -1596,6 +1751,59 @@ export async function dismissAgentSessionAttemptRetry(input: Readonly<{
 }
 
 /**
+ * Explicitly abandons one state-uncertain attempt without rewriting its launch
+ * identity or making any claim about whether an interrupted write succeeded.
+ */
+export async function abandonAgentSessionUncertainAttempt(input: Readonly<{
+  sessionId: string;
+  turnAttemptId: string;
+  now?: () => number;
+}>): Promise<boolean> {
+  assertAgentTurnTransportIdentifier(input.sessionId, 'Agent session ID');
+  assertAgentTurnTransportIdentifier(input.turnAttemptId, 'Agent turn attempt ID');
+  const now = (input.now ?? Date.now)();
+  assertTimestamp(now, 'Agent uncertain attempt abandonment time');
+  await ensureAgentStorageUsage();
+  return db.transaction(
+    'rw',
+    [
+      db.agentSessions,
+      db.agentAttempts,
+      db.agentAttemptRecoveries,
+      db.agentArtifacts,
+      db.agentArtifactChunks,
+      db.agentStorageUsage,
+    ],
+    async () => {
+      const record = await db.agentSessions.get(input.sessionId);
+      if (!record) return false;
+      validateAgentSessionRecord(record);
+      const attempts = await readAgentAttemptRows(input.sessionId);
+      await validateSessionAttemptRows(input.sessionId, attempts);
+      const attempt = attempts.find((candidate) => candidate.turnAttemptId === input.turnAttemptId);
+      if (!attempt || attempt.state !== 'state_uncertain') return false;
+      await discardUnboundAgentArtifactsInCurrentTransaction({
+        artifactIds: attempt.artifactCoverage.map((coverage) => coverage.artifactId),
+        sessionId: attempt.sessionId,
+        turnAttemptId: attempt.turnAttemptId,
+      }, now);
+      await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
+      await putAgentAttempt(attempt, {
+        ...attempt,
+        state: 'terminal_non_retryable',
+        terminalReason: 'abandoned',
+        retryKind: null,
+        artifactContinuationControl: null,
+        lease: null,
+        updatedAt: Math.max(now, attempt.updatedAt),
+      }, now);
+      await pruneSettledAgentAttempts(input.sessionId, now, [input.turnAttemptId]);
+      return true;
+    },
+  );
+}
+
+/**
  * Explicitly removes damaged recovery authority without changing transcript
  * rows or valid terminal receipts. This is the only automatic-repair boundary.
  */
@@ -1638,7 +1846,7 @@ export async function discardDamagedAgentSessionRecovery(
           await db.agentAttempts.put({
             ...attempt,
             state: 'terminal_non_retryable',
-            terminalReason: 'abandoned',
+            terminalReason: attempt.receipt.outcome.reason,
             retryKind: null,
             lease: null,
             artifactContinuationControl: null,
@@ -2742,11 +2950,6 @@ function validateTurnAdmissionInput(input: Readonly<{
   ) throw new TypeError('Agent turn launch identity does not match admission.');
 }
 
-function validateLaunchDigest(value: unknown): asserts value is AgentSessionLaunchDigest {
-  if (typeof value !== 'string' || !/^asl:v1:[A-Za-z0-9_-]{43}$/u.test(value)) {
-    throw new TypeError('Agent turn launch digest is malformed.');
-  }
-}
 
 function validateTerminalOutcome(value: unknown): asserts value is AgentSessionTerminalOutcome {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

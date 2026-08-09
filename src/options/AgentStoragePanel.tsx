@@ -47,6 +47,7 @@ export function AgentStoragePanel({
     <section
       className="mt-4"
       aria-labelledby="agent-storage-heading"
+      aria-describedby="agent-storage-intro agent-storage-organize-retention"
       data-testid="agent-storage-panel"
     >
       <div className="flex items-start justify-between gap-3">
@@ -55,8 +56,12 @@ export function AgentStoragePanel({
             <Database className="size-4" aria-hidden="true" />
             {m.options.agentStorageHeading}
           </h3>
-          <p className="gsm-body-note mt-1">{m.options.agentStorageIntro}</p>
-          <p className="gsm-body-note mt-1">{m.options.agentStorageOrganizeRetention}</p>
+          <p id="agent-storage-intro" className="gsm-body-note mt-1">
+            {m.options.agentStorageIntro}
+          </p>
+          <p id="agent-storage-organize-retention" className="gsm-body-note mt-1">
+            {m.options.agentStorageOrganizeRetention}
+          </p>
         </div>
         <Button
           type="button"
@@ -86,7 +91,7 @@ export function AgentStoragePanel({
           <>
             <dl className="grid gap-4 sm:grid-cols-3">
               <StorageMetric
-                label={m.options.agentStorageConversationData}
+                label={m.options.agentStorageDurableData}
                 value={formatStorageBytes(usage.canonicalBytes, locale)}
                 detail={m.options.agentStorageConversationCount(
                   usage.sessionCount,
@@ -99,7 +104,7 @@ export function AgentStoragePanel({
                 detail={m.options.agentStorageArtifactCount(usage.cacheArtifactCount)}
               />
               <StorageMetric
-                label={m.options.agentStorageTotal}
+                label={m.options.agentStorageLedgerTotal}
                 value={formatStorageBytes(usage.totalBytes, locale)}
                 detail={m.options.agentStorageLogicalLimit(
                   formatStorageBytes(usage.hardLimitBytes, locale),
@@ -110,7 +115,8 @@ export function AgentStoragePanel({
             <div className="mt-4">
               <Progress
                 value={hardLimitPercent}
-                aria-label={m.options.agentStorageUsageLabel}
+                aria-label={m.options.agentStorageLedgerUsageLabel}
+                aria-describedby="agent-storage-thresholds agent-storage-browser-estimate"
                 aria-valuemin={0}
                 aria-valuemax={usage.hardLimitBytes}
                 aria-valuenow={Math.min(usage.totalBytes, usage.hardLimitBytes)}
@@ -119,13 +125,13 @@ export function AgentStoragePanel({
                   "[&>div]:bg-destructive": usage.isAtHardLimit,
                 })}
               />
-              <p className="gsm-body-note mt-1.5">
+              <p id="agent-storage-thresholds" className="gsm-body-note mt-1.5">
                 {m.options.agentStorageThresholds(
                   formatStorageBytes(usage.warningBytes, locale),
                   formatStorageBytes(usage.hardLimitBytes, locale),
                 )}
               </p>
-              <p className="gsm-body-note mt-1">
+              <p id="agent-storage-browser-estimate" className="gsm-body-note mt-1">
                 {formatBrowserEstimate(
                   usage,
                   locale,
@@ -156,11 +162,14 @@ export function AgentStoragePanel({
             )}
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-              <p className="gsm-body-note max-w-md">{m.options.agentStorageClearHint}</p>
+              <p id="agent-storage-clear-hint" className="gsm-body-note max-w-md">
+                {m.options.agentStorageClearHint}
+              </p>
               <Button
                 type="button"
                 variant="outline"
                 disabled={clearBusy || loading || usage.cacheBytes === 0}
+                aria-describedby="agent-storage-clear-hint"
                 onClick={() => void clearToolCache()}
               >
                 {clearBusy ? <Spinner data-icon="inline-start" /> : <Trash2 data-icon="inline-start" />}

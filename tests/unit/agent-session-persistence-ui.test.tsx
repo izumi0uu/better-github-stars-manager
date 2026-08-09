@@ -4,6 +4,7 @@
 import { act, createElement, useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseScopeFingerprintV1 } from '@/bgsm-agent/scope';
+import type { BgsmAgentActiveTurn, BgsmAgentTurnError } from '@/bgsm-agent/turn-protocol';
 import type {
   AgentRetryDraft,
   AgentSessionCommitResult,
@@ -13,7 +14,7 @@ import {
   BackgroundCallError,
   type BgsmAgentTurnHandlers,
 } from '@/utils/messaging';
-import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
+import { useBgsmAgent, type BgsmAgentHookState } from '@/ui/hooks/use-bgsm-agent';
 import { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
 import { cleanupMountedRootsAndBody, mountReact, type MountedRoot } from './test-utils';
 
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   startTurn: vi.fn(),
   inspectActive: vi.fn(),
   inspect: vi.fn(),
+  initial: vi.fn(),
   create: vi.fn(),
   load: vi.fn(),
   loadCommitted: vi.fn(),
@@ -36,6 +38,7 @@ vi.mock('@/utils/messaging', async (importOriginal) => {
     startBgsmAgentTurn: mocks.startTurn,
     inspectActiveBgsmAgentSessionTurn: mocks.inspectActive,
     inspectBgsmAgentSessionCatalog: mocks.inspect,
+    getOrCreateInitialDurableBgsmAgentSession: mocks.initial,
     createDurableBgsmAgentSession: mocks.create,
     loadDurableBgsmAgentSession: mocks.load,
     loadDurableBgsmAgentSessionCommittedTurn: mocks.loadCommitted,
@@ -90,6 +93,7 @@ beforeEach(() => {
   mocks.inspectActive.mockReset();
   mocks.inspectActive.mockResolvedValue(null);
   mocks.inspect.mockReset();
+  mocks.initial.mockReset();
   mocks.create.mockReset();
   mocks.load.mockReset();
   mocks.loadCommitted.mockReset();
@@ -111,7 +115,7 @@ describe('useBgsmAgent durable sessions', () => {
     mocks.inspect
       .mockRejectedValueOnce(new Error('service worker unavailable'))
       .mockResolvedValueOnce({ summaries: [], corruptions: [] });
-    mocks.create.mockResolvedValue(empty);
+    mocks.initial.mockResolvedValue(empty);
     let agent: ReturnType<typeof useBgsmAgent> | null = null;
 
     function Harness() {
@@ -137,6 +141,38 @@ describe('useBgsmAgent durable sessions', () => {
     expect(agent!.sessionReady).toBe(true);
     expect(agent!.sessionInitializationError).toBeNull();
     expect(agent!.activeSessionId).toBe(empty.session.id);
+  });
+
+  it('converges concurrent empty-catalog pages while later explicit selection stays page-local', async () => {
+    const initial = loadedEmptySession('session-shared-initial');
+    mocks.inspect.mockResolvedValue({ summaries: [], corruptions: [] });
+    mocks.initial.mockResolvedValue(initial);
+    mocks.create.mockImplementation(async (sessionId: string) => loadedEmptySession(sessionId));
+    let pageA: BgsmAgentHookState | null = null;
+    let pageB: BgsmAgentHookState | null = null;
+
+    function Harness() {
+      pageA = useBgsmAgent(undefined, selectedRepositoryCandidate());
+      pageB = useBgsmAgent(undefined, selectedRepositoryCandidate());
+      return null;
+    }
+
+    mountReact(createElement(Harness), mountedRoots);
+    await flushAsyncWork();
+
+    expect(mocks.initial).toHaveBeenCalledTimes(2);
+    expect(pageA!.activeSessionId).toBe(initial.session.id);
+    expect(pageB!.activeSessionId).toBe(initial.session.id);
+
+    let selectedByPageA: string | null = null;
+    await act(async () => {
+      selectedByPageA = await pageA!.createSession();
+    });
+
+    expect(selectedByPageA).not.toBeNull();
+    expect(selectedByPageA).not.toBe(initial.session.id);
+    expect(pageA!.activeSessionId).toBe(selectedByPageA);
+    expect(pageB!.activeSessionId).toBe(initial.session.id);
   });
 
   it('fails hydration closed when the background retry projection cannot be read', async () => {
@@ -278,6 +314,263 @@ describe('useBgsmAgent durable sessions', () => {
 
     expect(detach).toHaveBeenCalledOnce();
     expect(stop).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['after durable inspection', false],
+    ['during the resumed Port connection', true],
+  ] as const)('reconciles a worker epoch flip %s against current durable authority', async (_label, emitLiveEvent) => {
+    const current = loadedEmptySession(`session-epoch-reconcile-${emitLiveEvent ? 'reconnect' : 'inspect'}`);
+    const prompt = 'Keep the inspected durable request attached.';
+    const originalTurn = activeTurn(current.session.id, prompt, 'worker-epoch-original');
+    const replacementTurn = activeTurn(current.session.id, prompt, 'worker-epoch-replacement');
+    storageValues.gsm_agent_active_session_id = current.session.id;
+    mocks.inspect.mockResolvedValue({ summaries: [current.summary], corruptions: [] });
+    mocks.load.mockResolvedValue(current);
+    mocks.inspectActive
+      .mockResolvedValueOnce(originalTurn)
+      .mockResolvedValueOnce(replacementTurn);
+    const handlers: BgsmAgentTurnHandlers[] = [];
+    mocks.startTurn.mockImplementation((_input, nextHandlers) => {
+      handlers.push(nextHandlers);
+      return { stop: vi.fn(), detach: vi.fn(), acknowledge: vi.fn() };
+    });
+    let agent: BgsmAgentHookState | null = null;
+
+    function Harness() {
+      agent = useBgsmAgent(undefined, selectedRepositoryCandidate());
+      return null;
+    }
+
+    mountReact(createElement(Harness), mountedRoots);
+    await flushAsyncWork();
+    expect(mocks.startTurn).toHaveBeenCalledTimes(1);
+    if (emitLiveEvent) {
+      await act(async () => {
+        handlers[0]!.onEvent?.({
+          type: 'agent_queued',
+          ...originalTurn.launch,
+        });
+      });
+    }
+
+    await act(async () => {
+      handlers[0]!.onError?.(epochChangedError(originalTurn));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.inspectActive).toHaveBeenCalledTimes(2);
+    expect(mocks.startTurn).toHaveBeenCalledTimes(2);
+    expect(mocks.startTurn).toHaveBeenNthCalledWith(
+      2,
+      replacementTurn.launch,
+      expect.anything(),
+      { expectedExecutionEpochId: replacementTurn.executionEpochId, resumeOnly: true },
+    );
+    expect(mocks.startTurn.mock.calls.map(([launch]) => launch.turnAttemptId))
+      .toEqual([originalTurn.launch.turnAttemptId, originalTurn.launch.turnAttemptId]);
+    expect(agent!.messages.filter(({ content }) => content === prompt)).toHaveLength(1);
+    expect(agent!.running).toBe(true);
+    expect(agent!.sessionReady).toBe(false);
+  });
+
+  it('does not resume after deactivation wins an in-flight epoch reinspection', async () => {
+    const current = loadedEmptySession('session-epoch-reconcile-deactivated');
+    const prompt = 'Detach while current authority is being inspected.';
+    const originalTurn = activeTurn(current.session.id, prompt, 'worker-epoch-before-deactivate');
+    const replacementTurn = activeTurn(current.session.id, prompt, 'worker-epoch-after-deactivate');
+    let resolveInspection!: (turn: BgsmAgentActiveTurn) => void;
+    const currentInspection = new Promise<BgsmAgentActiveTurn>((resolve) => {
+      resolveInspection = resolve;
+    });
+    storageValues.gsm_agent_active_session_id = current.session.id;
+    mocks.inspect.mockResolvedValue({ summaries: [current.summary], corruptions: [] });
+    mocks.load.mockResolvedValue(current);
+    mocks.inspectActive
+      .mockResolvedValueOnce(originalTurn)
+      .mockReturnValueOnce(currentInspection);
+    const detach = vi.fn();
+    const handlers: BgsmAgentTurnHandlers[] = [];
+    mocks.startTurn.mockImplementation((_input, nextHandlers) => {
+      handlers.push(nextHandlers);
+      return { stop: vi.fn(), detach, acknowledge: vi.fn() };
+    });
+
+    function Harness() {
+      useBgsmAgent(undefined, selectedRepositoryCandidate());
+      return null;
+    }
+
+    mountReact(createElement(Harness), mountedRoots);
+    await flushAsyncWork();
+    await act(async () => {
+      handlers[0]!.onError?.(epochChangedError(originalTurn));
+      await Promise.resolve();
+    });
+    cleanupMountedRootsAndBody(mountedRoots);
+    await act(async () => {
+      resolveInspection(replacementTurn);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(detach).toHaveBeenCalledOnce();
+    expect(mocks.startTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('projects state-uncertain when current durable inspection returns no resumable turn', async () => {
+    const current = loadedEmptySession('session-epoch-state-uncertain');
+    const prompt = 'Do not silently discard uncertain durable work.';
+    const originalTurn = activeTurn(current.session.id, prompt, 'worker-epoch-before-uncertain');
+    storageValues.gsm_agent_active_session_id = current.session.id;
+    mocks.inspect.mockResolvedValue({ summaries: [current.summary], corruptions: [] });
+    mocks.load.mockResolvedValue(current);
+    mocks.inspectActive
+      .mockResolvedValueOnce(originalTurn)
+      .mockResolvedValueOnce(null);
+    const handlers: BgsmAgentTurnHandlers[] = [];
+    mocks.startTurn.mockImplementation((_input, nextHandlers) => {
+      handlers.push(nextHandlers);
+      return { stop: vi.fn(), detach: vi.fn(), acknowledge: vi.fn() };
+    });
+    let agent: BgsmAgentHookState | null = null;
+
+    function Harness() {
+      agent = useBgsmAgent(undefined, selectedRepositoryCandidate());
+      return null;
+    }
+
+    mountReact(createElement(Harness), mountedRoots);
+    await flushAsyncWork();
+    await act(async () => {
+      handlers[0]!.onError?.(epochChangedError(originalTurn));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.inspectActive).toHaveBeenCalledTimes(2);
+    expect(mocks.startTurn).toHaveBeenCalledTimes(1);
+    expect(agent!.running).toBe(false);
+    expect(agent!.sessionReady).toBe(true);
+    expect(agent!.error).toMatch(/couldn't confirm this resumed request/i);
+    expect(agent!.draftRecovery).toBe(prompt);
+    expect(agent!.canRetryLastTurn).toBe(false);
+  });
+
+  it('projects a durable terminal commit found after epoch reconciliation returns null', async () => {
+    const current = loadedEmptySession('session-epoch-terminal');
+    const prompt = 'Recover the committed answer without another Provider call.';
+    const originalTurn = activeTurn(current.session.id, prompt, 'worker-epoch-before-terminal');
+    const commit = committedSession(originalTurn.launch);
+    const terminal = {
+      session: commit.session,
+      transcript: commit.transcript,
+      summary: commit.summary,
+      lastAppliedTurnAttemptId: commit.turnAttemptId,
+      appliedTurnReceipts: [{
+        turnAttemptId: commit.turnAttemptId,
+        appliedRevision: commit.appliedRevision,
+        digest: commit.digest,
+        launchDigest: commit.launchDigest,
+        outcome: commit.outcome,
+      }],
+    };
+    storageValues.gsm_agent_active_session_id = current.session.id;
+    mocks.inspect.mockResolvedValue({ summaries: [current.summary], corruptions: [] });
+    mocks.load
+      .mockResolvedValueOnce(current)
+      .mockResolvedValueOnce(terminal);
+    mocks.loadCommitted.mockResolvedValue(commit);
+    mocks.inspectActive
+      .mockResolvedValueOnce(originalTurn)
+      .mockResolvedValueOnce(null);
+    const acknowledge = vi.fn();
+    const handlers: BgsmAgentTurnHandlers[] = [];
+    mocks.startTurn.mockImplementation((_input, nextHandlers) => {
+      handlers.push(nextHandlers);
+      return { stop: vi.fn(), detach: vi.fn(), acknowledge };
+    });
+    let agent: BgsmAgentHookState | null = null;
+
+    function Harness() {
+      agent = useBgsmAgent(undefined, selectedRepositoryCandidate());
+      return null;
+    }
+
+    mountReact(createElement(Harness), mountedRoots);
+    await flushAsyncWork();
+    await act(async () => {
+      handlers[0]!.onError?.(epochChangedError(originalTurn));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.startTurn).toHaveBeenCalledTimes(1);
+    expect(mocks.loadCommitted).toHaveBeenCalledOnce();
+    expect(acknowledge).toHaveBeenCalledWith({
+      disposition: 'applied',
+      appliedRevision: commit.appliedRevision,
+    });
+    expect(agent!.lastTurnResult?.reason).toBe('final_answer');
+    expect(agent!.messages.map(({ content }) => content)).toEqual([prompt, 'Persisted answer']);
+    expect(agent!.error).toBeNull();
+  });
+
+  it('bounds epoch reconciliation to one replacement resume', async () => {
+    const current = loadedEmptySession('session-epoch-reconcile-bounded');
+    const prompt = 'Bound replacement reconciliation.';
+    const originalTurn = activeTurn(current.session.id, prompt, 'worker-epoch-bounded-original');
+    const replacementTurn = activeTurn(current.session.id, prompt, 'worker-epoch-bounded-replacement');
+    storageValues.gsm_agent_active_session_id = current.session.id;
+    mocks.inspect.mockResolvedValue({ summaries: [current.summary], corruptions: [] });
+    mocks.load.mockResolvedValue(current);
+    mocks.inspectActive
+      .mockResolvedValueOnce(originalTurn)
+      .mockResolvedValueOnce(replacementTurn);
+    const handlers: BgsmAgentTurnHandlers[] = [];
+    mocks.startTurn.mockImplementation((_input, nextHandlers) => {
+      handlers.push(nextHandlers);
+      return { stop: vi.fn(), detach: vi.fn(), acknowledge: vi.fn() };
+    });
+    let agent: BgsmAgentHookState | null = null;
+
+    function Harness() {
+      agent = useBgsmAgent(undefined, selectedRepositoryCandidate());
+      return null;
+    }
+
+    mountReact(createElement(Harness), mountedRoots);
+    await flushAsyncWork();
+    await act(async () => {
+      handlers[0]!.onError?.(epochChangedError(originalTurn));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.startTurn).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      handlers[1]!.onError?.(epochChangedError(replacementTurn));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.inspectActive).toHaveBeenCalledTimes(2);
+    expect(mocks.startTurn).toHaveBeenCalledTimes(2);
+    expect(agent!.running).toBe(false);
+    expect(agent!.sessionReady).toBe(false);
+    expect(agent!.sessionInitializationError).toMatch(/history/i);
+    expect(agent!.draftRecovery).toBe(prompt);
+    await act(async () => {
+      expect(agent!.retrySessionHydration()).toBe(true);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(agent!.sessionReady).toBe(true);
   });
 
   it('hydrates only the preferred transcript and lazily loads another session on switch', async () => {
@@ -548,7 +841,7 @@ describe('useBgsmAgent durable sessions', () => {
   it('adopts a background-owned commit and acknowledges it without a UI commit RPC', async () => {
     const empty = loadedEmptySession('session-direct-commit');
     mocks.inspect.mockResolvedValue({ summaries: [], corruptions: [] });
-    mocks.create.mockResolvedValue(empty);
+    mocks.initial.mockResolvedValue(empty);
     let handlers: BgsmAgentTurnHandlers | null = null;
     const acknowledge = vi.fn();
     mocks.startTurn.mockImplementation((_input, nextHandlers) => {
@@ -608,7 +901,7 @@ describe('useBgsmAgent durable sessions', () => {
   it('uses presentation messages when raw transcript paging omits the current prompt and answer', async () => {
     const empty = loadedEmptySession('session-bounded-presentation');
     mocks.inspect.mockResolvedValue({ summaries: [], corruptions: [] });
-    mocks.create.mockResolvedValue(empty);
+    mocks.initial.mockResolvedValue(empty);
     let handlers: BgsmAgentTurnHandlers | null = null;
     const acknowledge = vi.fn();
     mocks.startTurn.mockImplementation((_input, nextHandlers) => {
@@ -1068,6 +1361,7 @@ describe('useBgsmAgent durable sessions', () => {
       corruptions: [],
     });
     mocks.load.mockImplementation(async (sessionId: string) => {
+
       if (sessionId === active.session.id) return active;
       if (sessionId === cached.session.id) {
         if (cachedDeletedRemotely) {
@@ -1268,6 +1562,34 @@ function selectedRepositoryCandidate() {
   return {
     kind: 'selected_repository' as const,
     selectedRepositoryIdHint: 'owner/repo',
+  };
+}
+
+function activeTurn(
+  sessionId: string,
+  prompt: string,
+  executionEpochId: string,
+): BgsmAgentActiveTurn {
+  return {
+    executionEpochId,
+    launch: {
+      turnAttemptId: `${sessionId}:attempt:hydrated`,
+      sessionId,
+      baseRevision: 0,
+      prompt,
+      candidateContract: selectedRepositoryCandidate(),
+    },
+  };
+}
+
+function epochChangedError(turn: BgsmAgentActiveTurn): BgsmAgentTurnError {
+  return {
+    turnAttemptId: turn.launch.turnAttemptId,
+    sessionId: turn.launch.sessionId,
+    baseRevision: turn.launch.baseRevision,
+    message: 'The active request belongs to a previous worker.',
+    category: 'other',
+    code: 'agent_turn_resume_epoch_changed',
   };
 }
 

@@ -112,7 +112,8 @@ async function loadContentScript({
     default: ':host { all: initial; }',
   }));
 
-  await import('@/content/stars-page/index');
+  const contentScript = await import('@/content/stars-page/index');
+  contentScript.onExecute();
   const panelToggle = await import('@/content/stars-page/panel-toggle');
   await flush();
 
@@ -124,6 +125,7 @@ async function loadContentScript({
     fireDocumentEvent(type: string) {
       for (const listener of documentListeners.get(type) ?? []) listener(new Event(type));
     },
+    ...contentScript,
     ...panelToggle,
   };
 }
@@ -177,6 +179,43 @@ describe('stars-page mount and toggle invariants', () => {
     resetPanelToggle();
     assert.equal(isPanelEnabled(false), false);
     assert.equal(dispatches, 2);
+  });
+
+  it('mounts and toggles two independent page runtimes without sharing DOM state', async () => {
+    const loaded = await loadContentScript();
+    const firstFrame = document.createElement('iframe');
+    const secondFrame = document.createElement('iframe');
+    // jsdom gives unsourced iframes an about:blank URL that cannot be rewritten with history.replaceState.
+    firstFrame.src = 'javascript:void 0';
+    secondFrame.src = 'javascript:void 0';
+    document.body.append(firstFrame, secondFrame);
+    const firstWindow = firstFrame.contentWindow;
+    const secondWindow = secondFrame.contentWindow;
+    assert.ok(firstWindow);
+    assert.ok(secondWindow);
+
+    for (const target of [firstWindow, secondWindow]) {
+      target.history.replaceState(null, '', '/idah?tab=stars');
+      target.document.body.innerHTML = '<main data-pjax-container><h1>Stars</h1></main>';
+      loaded.installStarsPageRuntime(target);
+    }
+
+    await waitFor(() => [firstWindow, secondWindow].every((target) => (
+      target.document.getElementById('gsm-manager-host') !== null
+    )));
+    assert.equal(firstWindow.document.getElementById('gsm-fab'), null);
+    assert.equal(secondWindow.document.getElementById('gsm-fab'), null);
+
+    loaded.hidePanel(firstWindow);
+    await waitFor(() => firstWindow.document.getElementById('gsm-fab') !== null);
+    assert.equal(firstWindow.document.getElementById('gsm-manager-host'), null);
+    assert.notEqual(secondWindow.document.getElementById('gsm-manager-host'), null);
+    assert.equal(secondWindow.document.getElementById('gsm-fab'), null);
+
+    loaded.showPanel(firstWindow);
+    await waitFor(() => firstWindow.document.getElementById('gsm-manager-host') !== null);
+    assert.equal(firstWindow.document.getElementById('gsm-fab'), null);
+    assert.notEqual(secondWindow.document.getElementById('gsm-manager-host'), null);
   });
 
   it('ignores stale async sync results before they can mutate panel/fab DOM', async () => {

@@ -1478,7 +1478,7 @@ describe('Agent organize-job workbench UI', () => {
     const resumedTurn = restartedPort?.posted.find((message) => message.type === 'startBgsmAgentTurn');
     if (!restartedPort || !resumedTurn) throw new Error('Agent turn did not reconnect.');
     expect(resumedTurn).toEqual(expect.objectContaining({
-      executionEpochId: 'worker-epoch-ui-original',
+      executionEpochId: 'worker-epoch-ui-restarted',
       turnAttemptId: firstTurn.turnAttemptId,
       prompt,
     }));

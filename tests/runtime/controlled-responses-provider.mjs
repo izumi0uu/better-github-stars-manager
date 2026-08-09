@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 const DEFAULT_PROVIDER_ORIGIN = 'https://api.openai.com';
 const DEFAULT_HEALTH_TIMEOUT_MS = 10_000;
 const MAX_CAPTURE_RECORDS = 128;
-const MAX_INPUT_ITEMS = 64;
+const MAX_INPUT_ITEMS = 128;
 const MAX_TOOL_NAMES = 32;
 const MAX_LABEL_LENGTH = 160;
 const MAX_HELD_RESPONSES = 2;
 const MAX_OPAQUE_LENGTH = 2_048;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9._:/-]+$/;
 const CONTROL_CAPTURES = new WeakMap();
+const CONTROLLED_PROVIDER_CLIENTS = new WeakMap();
 
 /**
  * Installs one fail-closed CDP Fetch gate for the representative Responses API.
@@ -28,18 +29,21 @@ export function createControlledResponsesProvider({
 
   const captureRecords = [];
   const httpFixtureRecords = [];
+  const interruptionRecords = [];
   const control = {
     providerOrigin: normalizeProviderOrigin(providerOrigin),
     requestHandler: handler,
     httpFixtureHandler: typeof httpFixtureHandler === 'function' ? httpFixtureHandler : null,
     capture: appendOnlyView(captureRecords),
     httpFixtureCapture: appendOnlyView(httpFixtureRecords),
+    interruptions: appendOnlyView(interruptionRecords),
     failures: [],
     unexpectedRequests: [],
     overflow: {
       capture: false,
       httpFixture: false,
       unexpected: false,
+      interruptions: false,
       failures: false,
       offeredTools: false,
       priorTools: false,
@@ -49,33 +53,74 @@ export function createControlledResponsesProvider({
     pendingInterceptions: new Set(),
     liveInterceptions: new Set(),
     heldInterceptions: new Map(),
-    client: null,
-    fetchRequestPausedListener: null,
-    fetchEnabled: false,
-    networkEnabled: false,
+    clientStates: new Set(),
     closed: false,
+    closing: false,
   };
 
-  CONTROL_CAPTURES.set(control, { captureRecords, httpFixtureRecords });
+  CONTROL_CAPTURES.set(control, { captureRecords, httpFixtureRecords, interruptionRecords });
   control.hasHeldResponse = (label) => control.heldInterceptions.has(normalizeHoldLabel(label));
   control.releaseHeldResponse = (label) => releaseHeldResponse(control, label);
   return control;
 }
 
-/** Install the one initial service-worker CDP Fetch gate. */
+/** Install the initial service-worker CDP Fetch gate. */
 export async function installControlledProvider(target, control) {
   if (!target || typeof target.createCDPSession !== 'function') {
     throw new TypeError('Controlled provider target must create a CDP session.');
   }
+  return installControlledProviderClient(await target.createCDPSession(), control);
+}
+
+/** Install an additional fail-closed gate before a replacement worker runs. */
+export async function installControlledProviderClient(client, control) {
+  if (
+    !client
+    || typeof client.send !== 'function'
+    || typeof client.on !== 'function'
+    || typeof client.detach !== 'function'
+  ) {
+    throw new TypeError('Controlled provider client must be a CDP session.');
+  }
   if (!control || typeof control !== 'object' || typeof control.requestHandler !== 'function') {
     throw new TypeError('Controlled provider control is invalid.');
   }
-  if (control.client) throw new Error('Controlled provider already has an initial CDP session.');
+  if (control.closed || control.closing) throw new Error('Controlled provider is already closing or closed.');
+  const handle = Object.freeze({});
+  const clientState = {
+    client,
+    onRequestPaused: null,
+    fetchEnabled: false,
+    networkEnabled: false,
+    detached: false,
+    retired: false,
+  };
+  CONTROLLED_PROVIDER_CLIENTS.set(handle, clientState);
+  control.clientStates.add(clientState);
 
-  const client = await target.createCDPSession();
-  control.client = client;
-  await client.send('Network.enable');
-  control.networkEnabled = true;
+  let setupStep = 'Network.enable';
+  try {
+    await client.send('Network.enable');
+    clientState.networkEnabled = true;
+    installRequestPausedListener(clientState, control);
+    setupStep = 'Fetch.enable';
+    await client.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });
+    clientState.fetchEnabled = true;
+    return handle;
+  } catch (error) {
+    const rollbackFailures = await cleanupControlledProviderClient(clientState);
+    if (rollbackFailures.length === 0) {
+      clientState.retired = true;
+      throw error;
+    }
+    throw new Error(
+      `Controlled provider setup failed during ${setupStep}; rollback failed: ${rollbackFailures.slice(0, 8).join(',')}.`,
+      { cause: error },
+    );
+  }
+}
+function installRequestPausedListener(clientState, control) {
+  const { client } = clientState;
   const onRequestPaused = (event) => {
     const rawUrl = typeof event.request?.url === 'string' ? event.request.url : '';
     if (!isHttpUrl(rawUrl)) {
@@ -99,6 +144,7 @@ export async function installControlledProvider(target, control) {
       method,
       kind: 'pending',
       state: 'paused',
+      clientState,
     };
     const resourceType = normalizeResourceType(event.resourceType);
     const authorizationPresent = hasAuthorization(event.request?.headers);
@@ -106,16 +152,141 @@ export async function installControlledProvider(target, control) {
     control.liveInterceptions.add(record);
     trackInterception(
       control,
+      client,
       record,
       () => handlePausedRequest(control, client, requestId, rawUrl, method, postData, authorizationPresent, resourceType, record),
     );
   };
-  control.fetchRequestPausedListener = onRequestPaused;
+  clientState.onRequestPaused = onRequestPaused;
   client.on('Fetch.requestPaused', onRequestPaused);
-  await client.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });
-  control.fetchEnabled = true;
+}
 
-  return control;
+/** Retire only the stopped client's unresolved work without replaying it. */
+export async function retireControlledProviderClient(control, handle) {
+  const clientState = CONTROLLED_PROVIDER_CLIENTS.get(handle);
+  if (!clientState || !control?.clientStates?.has(clientState) || clientState.retired) return false;
+  interruptControlledProviderClient(control, clientState);
+  const cleanupFailures = await cleanupControlledProviderClient(clientState);
+  if (cleanupFailures.length > 0) {
+    throw new Error(`Controlled provider client retirement failed: ${cleanupFailures.slice(0, 8).join(',')}.`);
+  }
+  clientState.retired = true;
+  return true;
+}
+/** Enable Runtime while the initial worker is running, before any stopped-target handoff. */
+export async function enableControlledProviderRuntime(control, handle) {
+  const clientState = CONTROLLED_PROVIDER_CLIENTS.get(handle);
+  if (!clientState || !control?.clientStates?.has(clientState) || clientState.retired) {
+    throw new Error('Controlled provider client is unavailable for Runtime instrumentation.');
+  }
+  await clientState.client.send('Runtime.enable');
+}
+
+/** Transfer an already-armed gate to a new handle without issuing CDP commands. */
+export function handoffStoppedControlledProviderClient(control, handle) {
+  const clientState = CONTROLLED_PROVIDER_CLIENTS.get(handle);
+  if (!clientState || !control?.clientStates?.has(clientState) || clientState.retired) {
+    throw new Error('Controlled provider stopped client is unavailable for handoff.');
+  }
+  interruptControlledProviderClient(control, clientState);
+  const listenerFailures = [];
+  removeClientStateListener(clientState, 'Fetch.requestPaused', 'onRequestPaused', listenerFailures);
+  if (listenerFailures.length > 0) {
+    throw new Error(`Controlled provider stopped client handoff failed: ${listenerFailures.join(',')}.`);
+  }
+  const replacementState = {
+    client: clientState.client,
+    onRequestPaused: null,
+    fetchEnabled: clientState.fetchEnabled,
+    networkEnabled: clientState.networkEnabled,
+    detached: false,
+    retired: false,
+  };
+  clientState.fetchEnabled = false;
+  clientState.networkEnabled = false;
+  clientState.detached = true;
+  clientState.retired = true;
+  const installedClient = Object.freeze({});
+  CONTROLLED_PROVIDER_CLIENTS.set(installedClient, replacementState);
+  control.clientStates.add(replacementState);
+  installRequestPausedListener(replacementState, control);
+  return Object.freeze({
+    client: replacementState.client,
+    installedClient,
+    attachmentId: boundedIdentifier(replacementState.client.id?.()) ?? 'retained-cdp-session',
+  });
+}
+
+function interruptControlledProviderClient(control, clientState) {
+  for (const [label, held] of control.heldInterceptions) {
+    if (held.record.clientState !== clientState) continue;
+    control.heldInterceptions.delete(label);
+    interruptInterception(control, held.record);
+  }
+  for (const record of [...control.liveInterceptions]) {
+    if (record.clientState === clientState) interruptInterception(control, record);
+  }
+}
+
+async function cleanupControlledProviderClient(clientState, { detach = true } = {}) {
+  const outcomes = [];
+  const attempt = async (step, operation, settle) => {
+    try {
+      await operation();
+      settle();
+    } catch (error) {
+      outcomes.push({ step, error, settle });
+    }
+  };
+
+  if (clientState.fetchEnabled) {
+    await attempt('fetch-disable', () => clientState.client.send('Fetch.disable'), () => {
+      clientState.fetchEnabled = false;
+    });
+  }
+  if (clientState.networkEnabled) {
+    await attempt('network-disable', () => clientState.client.send('Network.disable'), () => {
+      clientState.networkEnabled = false;
+    });
+  }
+  if (detach && !clientState.detached) {
+    await attempt('detach', () => clientState.client.detach(), () => {
+      clientState.detached = true;
+    });
+  }
+
+  const detachedEvidence = clientState.client.detached === true;
+  const failures = [];
+  for (const outcome of outcomes) {
+    if (detachedEvidence && isAlreadyDetachedOutcome(outcome.error)) {
+      outcome.settle();
+    } else {
+      failures.push(outcome.step);
+    }
+  }
+
+  if (clientState.detached || detachedEvidence || !clientState.fetchEnabled) {
+    removeClientStateListener(clientState, 'Fetch.requestPaused', 'onRequestPaused', failures);
+  }
+  return [...new Set(failures)];
+}
+
+function removeClientStateListener(clientState, event, field, failures) {
+  const listener = clientState[field];
+  if (!listener) return;
+  try {
+    if (typeof clientState.client.off === 'function') clientState.client.off(event, listener);
+    else if (typeof clientState.client.removeListener === 'function') clientState.client.removeListener(event, listener);
+    else throw new Error('CDP client cannot remove listeners.');
+    clientState[field] = null;
+  } catch {
+    failures.push('remove-request-listener');
+  }
+}
+
+function isAlreadyDetachedOutcome(error) {
+  if (!(error instanceof Error)) return false;
+  return /(?:^|: )(?:Session closed\. Most likely the [A-Za-z0-9_-]+ has been closed\.|Session already detached\. Most likely the [A-Za-z0-9_-]+ has been closed\.|Target closed\.?|Session with given id not found\.)$/.test(error.message);
 }
 
 async function handlePausedRequest(
@@ -181,13 +352,14 @@ async function handleHttpFixtureRequest(control, client, requestId, resourceType
   await fulfillInterceptedRequest(control, client, requestId, record, response);
 }
 
-function trackInterception(control, record, operation) {
+function trackInterception(control, client, record, operation) {
   let tracked;
   tracked = Promise.resolve()
     .then(operation)
     .catch(async () => {
+      if (record.state === 'interrupted') return;
       appendFailure(control, 'interception-handler-failed');
-      await failClosed(control, control.client, record.requestId, record, 'interception-handler-failed');
+      await failClosed(control, client, record.requestId, record, 'interception-handler-failed');
     })
     .finally(() => control.pendingInterceptions.delete(tracked));
   control.pendingInterceptions.add(tracked);
@@ -268,7 +440,7 @@ function holdResponse(control, record, label, fulfill) {
     released = true;
     control.heldInterceptions.delete(label);
     record.state = 'paused';
-    return trackInterception(control, record, fulfill);
+    return trackInterception(control, record.clientState.client, record, fulfill);
   };
   control.heldInterceptions.set(label, { release, record });
 }
@@ -284,6 +456,19 @@ function settleInterception(control, record, state) {
   record.state = state;
   control.liveInterceptions.delete(record);
 }
+function interruptInterception(control, record) {
+  if (record.state === 'interrupted' || record.state === 'fulfilled' || record.state === 'failed-closed') return;
+  record.state = 'interrupted';
+  control.liveInterceptions.delete(record);
+  const captures = CONTROL_CAPTURES.get(control);
+  appendBoundedRecord(
+    captures?.interruptionRecords,
+    Object.freeze({ route: record.route, method: record.method, kind: record.kind }),
+    control,
+    'interruptions',
+  );
+}
+
 
 /** Assert that every intercepted request was settled and none escaped the local gate. */
 export async function assertControlledProviderHealthy(control, { timeoutMs = DEFAULT_HEALTH_TIMEOUT_MS } = {}) {
@@ -296,10 +481,12 @@ export async function assertControlledProviderHealthy(control, { timeoutMs = DEF
   if (hasCaptureOverflow(control)) throw new Error('Controlled provider capture exceeded bounded limits.');
 }
 
-/** Fail retained work and detach the sole CDP gate before browser shutdown. */
+/** Fail retained work and detach every active CDP gate before browser shutdown. */
 export async function closeControlledResponsesProvider(control, { timeoutMs = DEFAULT_HEALTH_TIMEOUT_MS } = {}) {
   if (!control || control.closed) return;
+  if (control.closing) throw new Error('Controlled provider close is already in progress.');
   assertTimeout(timeoutMs, 'timeoutMs');
+  control.closing = true;
   const baseline = snapshotControlHealth(control);
   const closeFailures = [];
   const attempt = async (step, operation) => {
@@ -309,35 +496,41 @@ export async function closeControlledResponsesProvider(control, { timeoutMs = DE
       closeFailures.push(step);
     }
   };
-  await attempt('drain-pending', () => waitForPendingInterceptions(control, timeoutMs));
-  await attempt('fail-live', () => failLiveInterceptions(control));
-  await attempt('final-drain', () => waitForPendingInterceptions(control, timeoutMs));
-  if (control.liveInterceptions.size > 0 || control.heldInterceptions.size > 0 || control.pendingInterceptions.size > 0) {
-    closeFailures.push('unresolved-work');
-  }
 
-  const client = control.client;
-  if (client && control.fetchRequestPausedListener) {
-    try {
-      if (typeof client.off === 'function') client.off('Fetch.requestPaused', control.fetchRequestPausedListener);
-      else client.removeListener?.('Fetch.requestPaused', control.fetchRequestPausedListener);
-    } catch {
-      closeFailures.push('remove-listener');
+  try {
+    await attempt('drain-pending', () => waitForPendingInterceptions(control, timeoutMs));
+    await attempt('fail-live', () => failLiveInterceptions(control));
+    await attempt('final-drain', () => waitForPendingInterceptions(control, timeoutMs));
+
+    let clientIndex = 0;
+    for (const clientState of control.clientStates) {
+      const currentIndex = clientIndex;
+      clientIndex += 1;
+      if (clientState.retired) continue;
+      const cleanupFailures = await cleanupControlledProviderClient(clientState);
+      if (cleanupFailures.length === 0) {
+        clientState.retired = true;
+      } else {
+        for (const failure of cleanupFailures) closeFailures.push(`client-${currentIndex}-${failure}`);
+      }
     }
-    control.fetchRequestPausedListener = null;
+
+    await attempt('post-cleanup-fail-live', () => failLiveInterceptions(control));
+    await attempt('post-cleanup-drain', () => waitForPendingInterceptions(control, timeoutMs));
+    if (control.liveInterceptions.size > 0 || control.heldInterceptions.size > 0 || control.pendingInterceptions.size > 0) {
+      closeFailures.push('unresolved-work');
+    }
+    if ([...control.clientStates].some((clientState) => !clientState.retired)) {
+      closeFailures.push('unretired-client');
+    }
+    if (controlHealthChanged(control, baseline)) closeFailures.push('control-health-changed');
+    if (closeFailures.length > 0) {
+      throw new Error(`Controlled provider close did not settle the CDP gates: ${closeFailures.slice(0, 8).join(',')}.`);
+    }
+    control.closed = true;
+  } finally {
+    control.closing = false;
   }
-  if (client && control.fetchEnabled) {
-    await attempt('fetch-disable', () => client.send('Fetch.disable'));
-    control.fetchEnabled = false;
-  }
-  if (client && control.networkEnabled) {
-    await attempt('network-disable', () => client.send('Network.disable'));
-    control.networkEnabled = false;
-  }
-  if (client) await attempt('detach', () => client.detach());
-  if (controlHealthChanged(control, baseline)) closeFailures.push('control-health-changed');
-  control.closed = true;
-  if (closeFailures.length > 0) throw new Error('Controlled provider close did not settle the CDP gate.');
 }
 
 function snapshotControlHealth(control) {
@@ -359,14 +552,19 @@ function hasCaptureOverflow(control) {
 }
 
 async function failLiveInterceptions(control) {
-  const client = control.client;
   for (const [label, held] of control.heldInterceptions) {
     control.heldInterceptions.delete(label);
     held.record.state = 'paused';
   }
   await Promise.all([...control.liveInterceptions].map(async (record) => {
     if (record.state === 'paused') {
-      await failClosed(control, client, record.requestId, record, 'teardown-live-request');
+      await failClosed(
+        control,
+        record.clientState.client,
+        record.requestId,
+        record,
+        'teardown-live-request',
+      );
     }
   }));
 }
@@ -515,6 +713,15 @@ function appendHttpFixtureCapture(control, request, status, kind) {
     resourceType: request.resourceType,
   }));
 }
+function appendBoundedRecord(records, record, control, overflowKey) {
+  if (!records) return;
+  if (records.length >= MAX_CAPTURE_RECORDS) {
+    control.overflow[overflowKey] = true;
+    return;
+  }
+  records.push(record);
+}
+
 
 function semanticToolResult(result) {
   if (!result) return null;
@@ -676,6 +883,7 @@ function hasAuthorization(headers = {}) {
   return Object.keys(headers).some((name) => name.toLowerCase() === 'authorization');
 }
 
+
 function boundedIdentifier(value) {
   if (value === null || value === undefined) return null;
   const text = String(value);
@@ -699,6 +907,10 @@ function classifyHttpRoute(control, value) {
     const url = new URL(String(value));
     if (url.origin !== 'https://api.github.com') return 'unknown-http-route';
     if (url.pathname === '/user') return 'github-user';
+    if (/^\/repos\/[^/]+\/[^/]+$/u.test(url.pathname)) return 'github-repository';
+    if (/^\/repos\/[^/]+\/[^/]+\/git\/ref\/heads\/.+$/u.test(url.pathname)) return 'github-branch-ref';
+    if (/^\/repos\/[^/]+\/[^/]+\/contents$/u.test(url.pathname)) return 'github-contents';
+    if (/^\/repos\/[^/]+\/[^/]+\/contents\/.+$/u.test(url.pathname)) return 'github-contents-file';
     if (url.pathname === '/user/starred') return 'github-starred';
     if (url.pathname === '/gists') return 'github-gists';
     if (url.pathname === '/gists/runtime-probe-gist') return 'github-probe-gist';

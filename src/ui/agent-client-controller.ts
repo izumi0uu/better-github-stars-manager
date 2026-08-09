@@ -78,6 +78,7 @@ export type BgsmAgentClientController = Readonly<{
   startTurn(prompt: string, options?: BgsmAgentTurnStartOptions): Promise<BgsmAgentTurnResult | null>;
   stopTurn(): void;
   editContextLimitedPrompt(): void;
+  clearTransientSafeResend(): void;
   createSession(): Promise<string | null>;
   switchSession(sessionId: string): Promise<boolean>;
   deleteSession(sessionId: string): Promise<boolean>;
@@ -86,6 +87,7 @@ export type BgsmAgentClientController = Readonly<{
   resetConversation(): Promise<boolean>;
   retrySessionHydration(): boolean;
   getCanRetryLastTurn(): boolean;
+  getTransientSafeResendPrompt(): string | null;
 }>;
 
 /** Private mutable cells shared only by the three controller owners. */
@@ -258,6 +260,7 @@ export function createBgsmAgentClientController(
     startTurn: (prompt, startOptions) => turnController!.startTurn(prompt, startOptions),
     stopTurn: () => turnController!.stopTurn(),
     editContextLimitedPrompt: () => turnController!.editContextLimitedPrompt(),
+    clearTransientSafeResend: () => turnController!.clearTransientSafeResend(),
     createSession: () => sessionController.createSession(),
     switchSession: (sessionId) => sessionController.switchSession(sessionId),
     deleteSession: (sessionId) => sessionController.deleteSession(sessionId),
@@ -272,6 +275,7 @@ export function createBgsmAgentClientController(
       state.sessionStore.persistence === 'memory'
       || state.durableRetryDraft?.settlement === 'retryable'
     ),
+    getTransientSafeResendPrompt: () => state.turnState.transientSafeResendPrompt,
   });
 }
 

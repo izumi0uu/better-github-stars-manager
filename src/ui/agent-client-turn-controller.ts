@@ -7,6 +7,7 @@ import {
 } from '@/bgsm-agent/session';
 import { getBgsmAgentToolDefinition } from '@/bgsm-agent/tool-catalog';
 import type {
+  BgsmAgentActiveTurn,
   BgsmAgentTurnAck,
   BgsmAgentTurnEvent,
   BgsmAgentTurnResult,
@@ -35,6 +36,7 @@ import {
   type BgsmAgentToolActivity,
 } from '@/ui/agent-turn-state';
 import {
+  inspectActiveBgsmAgentSessionTurn,
   loadDurableBgsmAgentSession,
   readDurableAgentRetryDraftCandidate,
   startBgsmAgentTurn,
@@ -63,6 +65,7 @@ export type PendingTurn = {
   streamFlushScheduled: boolean;
   streamFrame: number | null;
   writeOutcomes: Map<string, PendingWriteOutcome>;
+  admissionObserved: boolean;
   stopRequested: boolean;
   stopFallbackTimer: ReturnType<typeof setTimeout> | null;
   stop: () => void;
@@ -87,6 +90,7 @@ export type BgsmAgentClientTurnController = Readonly<{
   deactivate(): void;
   resumeHydratedTurn(turn: HydratedActiveTurn | null): void;
   editContextLimitedPrompt(): void;
+  clearTransientSafeResend(): void;
 }>;
 
 const STOP_SETTLE_TIMEOUT_MS = 3_000;
@@ -357,6 +361,7 @@ export function createBgsmAgentClientTurnController(
     category: AgentErrorCategory,
     result: BgsmAgentTurnResult | null = null,
     canRetry = canSafelyRetryPendingTurn(pending),
+    transientSafeResend = false,
   ) => {
     if (state.activeSession.id !== pending.sessionId) return;
     rollbackPendingMessages(pending);
@@ -369,6 +374,7 @@ export function createBgsmAgentClientTurnController(
       status: { kind: 'error', text: message },
       prompt: pending.prompt,
       canRetry,
+      ...(transientSafeResend ? { transientSafeResend: true } : {}),
     });
     setRetryDraft(pending, 'failed', canRetry);
     appendAssistantError(message, pending);
@@ -415,7 +421,10 @@ export function createBgsmAgentClientTurnController(
   const handleEvent = (event: BgsmAgentTurnEvent, pending: PendingTurn) => {
     if (!isCurrentDelivery(pending, event)) return;
     const labels = access.getOptions().labels;
-    if (event.type === 'agent_start') markRetryAttemptAccepted(pending);
+    if (event.type === 'agent_start') {
+      pending.admissionObserved = true;
+      markRetryAttemptAccepted(pending);
+    }
     const writeOutcomeChanged = trackPendingWriteOutcome(pending, event);
     if (pending.stopRequested && event.type !== 'agent_done') {
       if (writeOutcomeChanged) {
@@ -605,8 +614,10 @@ export function createBgsmAgentClientTurnController(
     }
     const optimisticMessageId = `${token}:user`;
     const startedAt = Date.now();
-    state.turnState = reduceAgentTurn(state.turnState, {
-      type: 'turn_started',
+    dispatchTurn({
+      type: resumedTurn && state.turnState.error && state.turnState.draftRecovery
+        ? 'turn_subscribed'
+        : 'turn_started',
       status: { kind: 'queued', text: access.getOptions().labels.agentQueued },
     });
     if (!state.messages.some((message) => message.id === optimisticMessageId)) {
@@ -636,6 +647,7 @@ export function createBgsmAgentClientTurnController(
         streamFlushScheduled: false,
         streamFrame: null,
         writeOutcomes: new Map(),
+        admissionObserved: false,
         stopRequested: false,
         stopFallbackTimer: null,
         compactionUi: null,
@@ -669,6 +681,7 @@ export function createBgsmAgentClientTurnController(
               () => token,
             )
       );
+      let epochReconciliationAttempted = false;
       const processResult = async (deliveredResult: BgsmAgentTurnResult): Promise<void> => {
         if (!isCurrentDelivery(pending, deliveredResult)) return;
         let result = deliveredResult;
@@ -754,8 +767,58 @@ export function createBgsmAgentClientTurnController(
         onResult: processResult,
         onError: async (delivery) => {
           if (!isCurrentDelivery(pending, delivery)) return;
+          let epochStateReconciled = false;
+          let forceSessionRehydration = false;
+          // Inspection claims read-only recovery into the current worker. Rebind once;
+          // another epoch flip falls back to authoritative session hydration.
+          if (
+            delivery.code === 'agent_turn_resume_epoch_changed'
+            && resumedTurn
+            && !epochReconciliationAttempted
+          ) {
+            epochReconciliationAttempted = true;
+            try {
+              const currentTurn = await inspectActiveBgsmAgentSessionTurn(pending.sessionId);
+              if (state.pendingTurn !== pending) return;
+              epochStateReconciled = true;
+              if (currentTurn && sameActiveTurnAttempt(resumedTurn.turn, currentTurn)) {
+                const control = startBgsmAgentTurn(currentTurn.launch, handlers, {
+                  expectedExecutionEpochId: currentTurn.executionEpochId,
+                  resumeOnly: true,
+                });
+                if (state.pendingTurn === pending) {
+                  pending.stop = control.stop;
+                  pending.detach = typeof control.detach === 'function' ? control.detach : () => {};
+                  pending.acknowledge = control.acknowledge;
+                  if (pending.stopRequested) pending.stop();
+                } else if (typeof control.detach === 'function') {
+                  control.detach();
+                }
+                return;
+              }
+            } catch {
+              if (state.pendingTurn !== pending) return;
+              forceSessionRehydration = true;
+            }
+          } else if (
+            delivery.code === 'agent_turn_resume_epoch_changed'
+            && resumedTurn
+          ) {
+            forceSessionRehydration = true;
+          }
+          let expectedRecoverySessionId = pending.sessionId;
+          const isCurrentPendingRecovery = () => (
+            access.isActiveGeneration(generation)
+            && gate === state.hydrationGate
+            && state.pendingTurn === pending
+          );
+          const isCurrentRecovery = () => (
+            isCurrentPendingRecovery()
+            && state.sessionStore.activeSessionId === expectedRecoverySessionId
+          );
           let recoveredHydratedTurn: HydratedActiveTurn | null | undefined;
           const finishAfterRecovery = () => {
+            if (!isCurrentRecovery()) return;
             if (finishTurn(pending, null) && recoveredHydratedTurn !== undefined) {
               state.hydratedActiveTurn = recoveredHydratedTurn;
               access.publish();
@@ -774,23 +837,84 @@ export function createBgsmAgentClientTurnController(
               sessionController.failSessionPersistence();
             }
           }
+          if (forceSessionRehydration) sessionController.failSessionPersistence();
+          const activeTurnConflict = delivery.code === 'agent_session_turn_active'
+            || delivery.code === 'agent_session_attempt_conflict';
+          if (activeTurnConflict) {
+            try {
+              const loaded = await loadDurableBgsmAgentSession(pending.sessionId);
+              if (!isCurrentRecovery()) return;
+              sessionController.reconcileCanonical(loaded);
+              const activeTurn = await inspectActiveBgsmAgentSessionTurn(pending.sessionId);
+              if (!isCurrentRecovery()) return;
+              const loadedRevision = loaded.session.revision;
+              if (
+                activeTurn?.launch.sessionId === pending.sessionId
+                && activeTurn.launch.baseRevision === loadedRevision
+                && state.activeSession.revision === loadedRevision
+              ) {
+                recoveredHydratedTurn = hydratedConflictWinner(activeTurn);
+              } else {
+                // Inspection may observe either no runner after commit or a
+                // newer runner based on the just-committed revision. Reload,
+                // fence, and pair the inspected turn only with that exact load.
+                const finalLoaded = await loadDurableBgsmAgentSession(pending.sessionId);
+                if (!isCurrentRecovery()) return;
+                sessionController.reconcileCanonical(finalLoaded);
+                if (!isCurrentRecovery()) return;
+                const finalLoadedRevision = finalLoaded.session.revision;
+                if (
+                  activeTurn?.launch.sessionId === pending.sessionId
+                  && activeTurn.launch.baseRevision === finalLoadedRevision
+                  && state.activeSession.revision === finalLoadedRevision
+                ) {
+                  recoveredHydratedTurn = hydratedConflictWinner(activeTurn);
+                }
+              }
+            } catch (error) {
+              if (!isCurrentRecovery()) return;
+              if (['not_found', 'corrupt'].includes(classifySessionLoadFailure(error))) {
+                try {
+                  const recovered = await sessionController.recoverUnavailable(pending.sessionId);
+                  if (!isCurrentPendingRecovery()) return;
+                  expectedRecoverySessionId = state.sessionStore.activeSessionId;
+                  recoveredHydratedTurn = recovered;
+                } catch {
+                  if (!isCurrentRecovery()) return;
+                  sessionController.failSessionPersistence();
+                }
+              } else {
+                sessionController.failSessionPersistence();
+              }
+            }
+          }
           pending.acknowledge({ disposition: 'no_transition', appliedRevision: null });
           refreshDurableRetryDraft(pending.sessionId);
           if (
-            delivery.code === 'agent_session_not_found'
-            || delivery.code === 'agent_session_revision_conflict'
-            || delivery.code === 'agent_session_corrupt'
-          ) {
+            !activeTurnConflict
+            && (
+              delivery.code === 'agent_session_not_found'
+              || delivery.code === 'agent_session_revision_conflict'
+              || delivery.code === 'agent_session_corrupt'
+            )) {
             try {
               if (delivery.code === 'agent_session_not_found' || delivery.code === 'agent_session_corrupt') {
-                recoveredHydratedTurn = await sessionController.recoverUnavailable(pending.sessionId);
+                const recovered = await sessionController.recoverUnavailable(pending.sessionId);
+                if (!isCurrentPendingRecovery()) return;
+                expectedRecoverySessionId = state.sessionStore.activeSessionId;
+                recoveredHydratedTurn = recovered;
               } else {
-                sessionController.reconcileCanonical(await loadDurableBgsmAgentSession(pending.sessionId));
+                const loaded = await loadDurableBgsmAgentSession(pending.sessionId);
+                if (!isCurrentRecovery()) return;
+                sessionController.reconcileCanonical(loaded);
               }
             } catch (error) {
               if (['not_found', 'corrupt'].includes(classifySessionLoadFailure(error))) {
                 try {
-                  recoveredHydratedTurn = await sessionController.recoverUnavailable(pending.sessionId);
+                  const recovered = await sessionController.recoverUnavailable(pending.sessionId);
+                  if (!isCurrentPendingRecovery()) return;
+                  expectedRecoverySessionId = state.sessionStore.activeSessionId;
+                  recoveredHydratedTurn = recovered;
                 } catch {
                   sessionController.failSessionPersistence();
                 }
@@ -799,19 +923,42 @@ export function createBgsmAgentClientTurnController(
               }
             }
           }
-          if (state.pendingTurn !== pending) return;
+          if (!isCurrentRecovery()) return;
           if (pending.stopRequested) {
             finishAfterRecovery();
             return;
           }
-          const message = delivery.message || access.getOptions().labels.turnFailed;
-          failPendingTurn(
-            pending,
-            message,
-            delivery.category ?? 'other',
-            null,
-            canSafelyRetryPendingTurn(pending),
-          );
+          const message = epochStateReconciled
+            ? access.getOptions().labels.attemptResumeStateUnknown
+            : delivery.message || access.getOptions().labels.turnFailed;
+          const transientSafeResend = activeTurnConflict
+            && pending.retryAuthority === 'fresh'
+            && pending.sourceRetryDraft === null
+            && !pending.admissionObserved
+            && pending.writeOutcomes.size === 0;
+          const preservesRejectedConflict = resumedTurn !== undefined
+            && pending.retryAuthority === 'unknown_resume'
+            && pending.sourceRetryDraft === null
+            && state.turnState.transientSafeResendPrompt !== null
+            && state.turnState.transientSafeResendPrompt === state.turnState.draftRecovery;
+          if (preservesRejectedConflict) {
+            rollbackPendingMessages(pending);
+            restoreCommittedBinding();
+            dispatchTurn({
+              type: 'subscribed_turn_failed',
+              status: { kind: 'error', text: message },
+            });
+            appendAssistantError(message, pending);
+          } else {
+            failPendingTurn(
+              pending,
+              message,
+              delivery.category ?? 'other',
+              null,
+              canSafelyRetryPendingTurn(pending),
+              transientSafeResend,
+            );
+          }
           finishAfterRecovery();
         },
       };
@@ -882,9 +1029,12 @@ export function createBgsmAgentClientTurnController(
   const deactivate = () => {
     resumeSequence += 1;
     resumingTurn = null;
+    clearTransientSafeResend();
     const pending = state.pendingTurn;
     state.pendingTurn = null;
     if (!pending) return;
+    rollbackPendingMessages(pending);
+    restoreCommittedBinding();
     clearCompactionUi(pending);
     clearStreamFlush(pending);
     if (pending.stopFallbackTimer !== null) clearTimeout(pending.stopFallbackTimer);
@@ -918,16 +1068,38 @@ export function createBgsmAgentClientTurnController(
     });
   };
 
+  const clearTransientSafeResend = () => {
+    dispatchTurn({ type: 'transient_safe_resend_cleared' });
+  };
   return {
     startTurn,
     stopTurn,
     stopAndDetachPendingTurn,
     deactivate,
     resumeHydratedTurn,
+    clearTransientSafeResend,
     editContextLimitedPrompt() {
       dispatchTurn({ type: 'context_recovery_dismissed' });
     },
   };
+}
+
+function hydratedConflictWinner(activeTurn: BgsmAgentActiveTurn): HydratedActiveTurn {
+  return {
+    turn: activeTurn,
+    retryAuthority: 'unknown_resume',
+    sourceRetryDraft: null,
+  };
+}
+
+function sameActiveTurnAttempt(
+  expected: BgsmAgentActiveTurn,
+  current: BgsmAgentActiveTurn,
+): boolean {
+  return current.launch.turnAttemptId === expected.launch.turnAttemptId
+    && current.launch.sessionId === expected.launch.sessionId
+    && current.launch.baseRevision === expected.launch.baseRevision
+    && current.launch.prompt === expected.launch.prompt;
 }
 
 function isActionableContextFailure(

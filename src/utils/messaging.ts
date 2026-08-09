@@ -1,5 +1,6 @@
 /** Typed message bridge between UI surfaces and the background SW; bgCall
  * unwraps the { ok, data | error } envelope. */
+import { canonicalJson, sha256Base64Url } from '@/agent-harness/canonical-json';
 import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
@@ -953,6 +954,42 @@ function assertExactKeys(value: Record<string, unknown>, expected: readonly stri
 
 
 const BGSM_AGENT_TURN_RECONNECT_LIMIT = 2;
+type BgsmAgentTurnTerminalMessage = Extract<
+  BgsmAgentTurnServerMessage,
+  { type: 'bgsmAgentTurnResult' | 'bgsmAgentTurnError' }
+>;
+
+type BgsmAgentTurnReplayFingerprint = Promise<string | null>;
+
+function fingerprintBgsmAgentTerminalReplay(
+  message: BgsmAgentTurnTerminalMessage,
+): BgsmAgentTurnReplayFingerprint {
+  const semanticPayload = message.type === 'bgsmAgentTurnResult' && message.result.commit
+    ? {
+        type: message.type,
+        result: {
+          ...message.result,
+          commit: {
+            ...message.result.commit,
+            // A durable replay changes only this delivery marker; it does not change the commit.
+            idempotent: undefined,
+          },
+        },
+      }
+    : message.type === 'bgsmAgentTurnResult'
+      ? { type: message.type, result: message.result }
+      : { type: message.type, error: message.error };
+  return sha256Base64Url(canonicalJson(semanticPayload))
+    .then((digest) => `atrf:v1:${digest}`)
+    .catch(() => null);
+}
+
+function snapshotBgsmAgentAcknowledgement(ack: BgsmAgentTurnAck): BgsmAgentTurnAck {
+  return ack.disposition === 'applied'
+    ? Object.freeze({ disposition: 'applied', appliedRevision: ack.appliedRevision })
+    : Object.freeze({ disposition: ack.disposition, appliedRevision: null });
+}
+
 
 function toBgsmAgentTurnLaunch(
   input: BgsmAgentTurnInput | BgsmAgentTurnLaunch,
@@ -994,12 +1031,26 @@ export function startBgsmAgentTurn(
   let reconnectAttempts = 0;
   let expectedSequence = 0;
   let sawAgentDone = false;
-  let terminalDeliveryReceived = false;
+  let terminalPresented = false;
+  let connectionTerminalReceived = false;
+  let presentedTerminalFingerprint: BgsmAgentTurnReplayFingerprint | null = null;
 
   const finishWithError = (error: BgsmAgentTurnError) => {
     if (finished) return;
     finished = true;
     handlers.onError?.(error);
+  };
+
+  const finishWithReplayMismatch = (port: chrome.runtime.Port) => {
+    finishWithError({
+      turnAttemptId: input.turnAttemptId,
+      sessionId: input.sessionId,
+      baseRevision: input.baseRevision,
+      message: "Cubby's recovered result did not match the result already shown. Try again.",
+      category: 'other',
+      code: 'agent_session_corrupt',
+    });
+    disconnect(port);
   };
 
   const disconnect = (port: chrome.runtime.Port) => {
@@ -1030,7 +1081,7 @@ export function startBgsmAgentTurn(
     if (
       !pendingAcknowledgement
       || acknowledgementSent
-      || !terminalDeliveryReceived
+      || !connectionTerminalReceived
       || !activeExecutionEpochId
       || !activePort
       || !activePortReady
@@ -1086,7 +1137,7 @@ export function startBgsmAgentTurn(
     activePortReady = false;
     let helloReceived = false;
 
-    port.onMessage.addListener((rawMessage: unknown) => {
+    port.onMessage.addListener(async (rawMessage: unknown) => {
       if (finished || activePort !== port) return;
       let message: BgsmAgentTurnServerMessage;
       try {
@@ -1131,12 +1182,11 @@ export function startBgsmAgentTurn(
           disconnect(port);
           return;
         }
-        if (executionEpochId === null) {
-          executionEpochId = message.executionEpochId;
-        } else if (executionEpochId !== message.executionEpochId) {
+        if (executionEpochId !== null && executionEpochId !== message.executionEpochId) {
           expectedSequence = 0;
           sawAgentDone = false;
         }
+        executionEpochId = message.executionEpochId;
         activePortReady = true;
         const startMessage: BgsmAgentTurnClientMessage = {
           type: 'startBgsmAgentTurn',
@@ -1173,7 +1223,7 @@ export function startBgsmAgentTurn(
       }
       if (message.type === 'bgsmAgentTurnAck') {
         if (
-          !terminalDeliveryReceived
+          !connectionTerminalReceived
           || !pendingAcknowledgement
           || message.turnAttemptId !== input.turnAttemptId
           || message.sessionId !== input.sessionId
@@ -1185,7 +1235,24 @@ export function startBgsmAgentTurn(
         disconnect(port);
         return;
       }
-      if (terminalDeliveryReceived) return;
+      const acceptTerminalReplay = async (message: BgsmAgentTurnTerminalMessage) => {
+        const expectedFingerprint = presentedTerminalFingerprint;
+        if (!expectedFingerprint) {
+          finishWithReplayMismatch(port);
+          return;
+        }
+        const [expected, actual] = await Promise.all([
+          expectedFingerprint,
+          fingerprintBgsmAgentTerminalReplay(message),
+        ]);
+        if (finished || activePort !== port) return;
+        if (!expected || !actual || expected !== actual) {
+          finishWithReplayMismatch(port);
+          return;
+        }
+        connectionTerminalReceived = true;
+        postAcknowledgement();
+      };
       const delivery = message.type === 'bgsmAgentTurnEvent'
         ? message.event
         : message.type === 'bgsmAgentTurnResult'
@@ -1196,6 +1263,10 @@ export function startBgsmAgentTurn(
         || delivery.baseRevision !== input.baseRevision
         || delivery.turnAttemptId !== input.turnAttemptId
       ) return;
+      if (terminalPresented && message.sequence < expectedSequence) {
+        if (message.type !== 'bgsmAgentTurnEvent') await acceptTerminalReplay(message);
+        return;
+      }
       if (message.sequence < expectedSequence) return;
       if (message.sequence > expectedSequence) {
         finishWithError({
@@ -1209,6 +1280,10 @@ export function startBgsmAgentTurn(
         return;
       }
       expectedSequence += 1;
+      if (terminalPresented) {
+        if (message.type !== 'bgsmAgentTurnEvent') await acceptTerminalReplay(message);
+        return;
+      }
       if (sawAgentDone && message.type !== 'bgsmAgentTurnResult') {
         finishWithError({
           turnAttemptId: input.turnAttemptId,
@@ -1226,7 +1301,9 @@ export function startBgsmAgentTurn(
         handlers.onEvent?.(message.event);
         return;
       }
-      terminalDeliveryReceived = true;
+      terminalPresented = true;
+      presentedTerminalFingerprint = fingerprintBgsmAgentTerminalReplay(message);
+      connectionTerminalReceived = true;
       if (message.type === 'bgsmAgentTurnResult') {
         handlers.onResult?.(message.result);
         if (!handlers.onResult) {
@@ -1248,6 +1325,7 @@ export function startBgsmAgentTurn(
       activePortReady = false;
       activeExecutionEpochId = null;
       acknowledgementSent = false;
+      connectionTerminalReceived = false;
       if (reconnectAttempts < BGSM_AGENT_TURN_RECONNECT_LIMIT) {
         reconnectAttempts += 1;
         connect();
@@ -1287,9 +1365,9 @@ export function startBgsmAgentTurn(
         finished
         || acknowledgementSent
         || pendingAcknowledgement
-        || !terminalDeliveryReceived
+        || !terminalPresented
       ) return;
-      pendingAcknowledgement = ack;
+      pendingAcknowledgement = snapshotBgsmAgentAcknowledgement(ack);
       postAcknowledgement();
     },
   };
@@ -1405,6 +1483,10 @@ export async function bgCall<T = unknown>(type: string, extra?: Record<string, u
 export function inspectBgsmAgentSessionCatalog(): Promise<AgentSessionCatalogInspection> {
   return bgCall('inspectAgentSessionCatalog');
 }
+export function getOrCreateInitialDurableBgsmAgentSession(): Promise<LoadedAgentSession> {
+  return bgCall('getOrCreateInitialAgentSession');
+}
+
 
 export function inspectActiveBgsmAgentSessionTurn(
   sessionId: string,
@@ -1444,6 +1526,13 @@ export function dismissDurableAgentSessionRetry(input: Readonly<{
 }>): Promise<boolean> {
   return bgCall('dismissAgentSessionRetry', input);
 }
+export function abandonDurableAgentSessionUncertainAttempt(input: Readonly<{
+  sessionId: string;
+  turnAttemptId: string;
+}>): Promise<boolean> {
+  return bgCall('abandonAgentSessionUncertainAttempt', input);
+}
+
 
 export function discardDurableAgentSessionRecovery(sessionId: string): Promise<number> {
   return bgCall('discardDamagedAgentSessionRecovery', { sessionId });

@@ -11,6 +11,7 @@ import {
 } from '@/bgsm-agent/turn-protocol';
 import type { AgentRetryDraft, AgentSessionCommitResult } from '@/storage/agent-session-store';
 import {
+  abandonDurableAgentSessionUncertainAttempt,
   BackgroundCallError,
   bgCall,
   discardDurableAgentSessionRecovery,
@@ -20,7 +21,7 @@ import {
   startBgsmAgentTurn,
 } from '@/utils/messaging';
 
-type Listener<T> = (value: T) => void;
+type Listener<T> = (value: T) => void | Promise<void>;
 
 function createRuntimePort() {
   const messageListeners: Array<Listener<unknown>> = [];
@@ -41,8 +42,8 @@ function createRuntimePort() {
   };
   return {
     port,
-    deliver(message: unknown) {
-      messageListeners.forEach((listener) => listener(message));
+    async deliver(message: unknown) {
+      await Promise.all(messageListeners.map((listener) => listener(message)));
     },
     disconnect() {
       disconnectListeners.forEach((listener) => listener());
@@ -155,6 +156,7 @@ describe('Cubby messaging', () => {
     const sendMessage = vi.fn(async (message: { type: string }) => {
       if (message.type === 'readAgentRetryDraftCandidate') return { ok: true, data: current };
       if (message.type === 'dismissAgentSessionRetry') return { ok: true, data: true };
+      if (message.type === 'abandonAgentSessionUncertainAttempt') return { ok: true, data: true };
       if (message.type === 'discardDamagedAgentSessionRecovery') return { ok: true, data: 2 };
       return { ok: false, error: 'Unexpected request.' };
     });
@@ -165,12 +167,21 @@ describe('Cubby messaging', () => {
       sessionId: current.sessionId,
       turnAttemptId: current.turnAttemptId,
     })).resolves.toBe(true);
+    await expect(abandonDurableAgentSessionUncertainAttempt({
+      sessionId: current.sessionId,
+      turnAttemptId: current.turnAttemptId,
+    })).resolves.toBe(true);
     await expect(discardDurableAgentSessionRecovery(current.sessionId)).resolves.toBe(2);
 
     expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
       { type: 'readAgentRetryDraftCandidate', sessionId: current.sessionId },
       {
         type: 'dismissAgentSessionRetry',
+        sessionId: current.sessionId,
+        turnAttemptId: current.turnAttemptId,
+      },
+      {
+        type: 'abandonAgentSessionUncertainAttempt',
         sessionId: current.sessionId,
         turnAttemptId: current.turnAttemptId,
       },
@@ -919,7 +930,7 @@ describe('Cubby messaging', () => {
     expect(replay.port.disconnect).toHaveBeenCalledOnce();
   });
 
-  it('uses the original epoch after worker restart and accepts attempt_state_lost at sequence zero', () => {
+  it('uses the replacement hello epoch and accepts attempt_state_lost at sequence zero', () => {
     const first = createRuntimePort();
     const restarted = createRuntimePort();
     const connect = vi.fn()
@@ -951,7 +962,7 @@ describe('Cubby messaging', () => {
     restarted.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-2' });
     expect(restarted.port.postMessage).toHaveBeenCalledWith({
       type: 'startBgsmAgentTurn',
-      executionEpochId: 'worker-epoch-1',
+      executionEpochId: 'worker-epoch-2',
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
       baseRevision: input.baseRevision,
@@ -1024,7 +1035,7 @@ describe('Cubby messaging', () => {
     expect(changed.port.disconnect).toHaveBeenCalledOnce();
   });
 
-  it('resends an unconfirmed acknowledgement after reconnect', () => {
+  it('resends the prior acknowledgement only after an exact semantic terminal replay', async () => {
     const first = createRuntimePort();
     const retry = createRuntimePort();
     const connect = vi.fn()
@@ -1038,9 +1049,78 @@ describe('Cubby messaging', () => {
       prompt: 'Finish safely',
       history: [],
     };
-    const control = startBgsmAgentTurn(input, { onResult: vi.fn() });
-    first.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    first.deliver({
+    const commit = commitForMessaging(input, [
+      { id: 'message-user', role: 'user', content: input.prompt, createdAt: 1 },
+      { id: 'message-agent', role: 'agent', content: 'Finished.', createdAt: 2 },
+    ]);
+    const result: BgsmAgentTurnResult = {
+      turnAttemptId: input.turnAttemptId,
+      sessionId: input.sessionId,
+      baseRevision: input.baseRevision,
+      reason: 'final_answer',
+      changed: false,
+      changedCount: 0,
+      commit,
+    };
+    const onResult = vi.fn();
+    const onError = vi.fn();
+    const control = startBgsmAgentTurn(input, { onResult, onError });
+    await first.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await first.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
+    control.acknowledge({ disposition: 'applied', appliedRevision: commit.appliedRevision });
+    first.disconnect();
+
+    await retry.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-2' });
+    expect(retry.port.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'ackBgsmAgentTurnResult',
+    }));
+    await retry.deliver({
+      type: 'bgsmAgentTurnResult',
+      sequence: 0,
+      result: { ...result, commit: { ...commit, idempotent: true } },
+    });
+
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+    expect(retry.port.postMessage).toHaveBeenCalledWith({
+      type: 'ackBgsmAgentTurnResult',
+      executionEpochId: 'worker-epoch-2',
+      turnAttemptId: input.turnAttemptId,
+      sessionId: input.sessionId,
+      baseRevision: input.baseRevision,
+      disposition: 'applied',
+      appliedRevision: commit.appliedRevision,
+    });
+    await retry.deliver({
+      type: 'bgsmAgentTurnAck',
+      turnAttemptId: input.turnAttemptId,
+      sessionId: input.sessionId,
+      baseRevision: input.baseRevision,
+      disposition: 'applied',
+      appliedRevision: commit.appliedRevision,
+    });
+    expect(retry.port.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a replacement result with a different terminal outcome without resending acknowledgement', async () => {
+    const first = createRuntimePort();
+    const retry = createRuntimePort();
+    const connect = vi.fn()
+      .mockReturnValueOnce(first.port)
+      .mockReturnValueOnce(retry.port);
+    vi.stubGlobal('chrome', { runtime: { connect, lastError: undefined } });
+    const input: BgsmAgentTurnInput = {
+      turnAttemptId: 'turn-attempt-result-mismatch',
+      sessionId: 'session-result-mismatch',
+      baseRevision: 1,
+      prompt: 'Finish safely',
+      history: [],
+    };
+    const onResult = vi.fn();
+    const onError = vi.fn();
+    const control = startBgsmAgentTurn(input, { onResult, onError });
+    await first.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await first.deliver({
       type: 'bgsmAgentTurnResult',
       sequence: 0,
       result: {
@@ -1053,27 +1133,136 @@ describe('Cubby messaging', () => {
         commit: null,
       },
     });
-    control.acknowledge({ disposition: 'applied', appliedRevision: 2 });
+    control.acknowledge({ disposition: 'no_transition', appliedRevision: null });
     first.disconnect();
+    await retry.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-2' });
+    await retry.deliver({
+      type: 'bgsmAgentTurnResult',
+      sequence: 0,
+      result: {
+        turnAttemptId: input.turnAttemptId,
+        sessionId: input.sessionId,
+        baseRevision: input.baseRevision,
+        reason: 'aborted',
+        changed: false,
+        changedCount: 0,
+        commit: null,
+      },
+    });
 
-    retry.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    expect(retry.port.postMessage).toHaveBeenCalledWith({
+    expect(onResult).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'agent_session_corrupt',
+    }));
+    expect(retry.port.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
       type: 'ackBgsmAgentTurnResult',
-      executionEpochId: 'worker-epoch-1',
+    }));
+    expect(retry.port.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an error-to-result terminal replay without resending acknowledgement', async () => {
+    const first = createRuntimePort();
+    const retry = createRuntimePort();
+    const connect = vi.fn()
+      .mockReturnValueOnce(first.port)
+      .mockReturnValueOnce(retry.port);
+    vi.stubGlobal('chrome', { runtime: { connect, lastError: undefined } });
+    const input: BgsmAgentTurnInput = {
+      turnAttemptId: 'turn-attempt-terminal-type-mismatch',
+      sessionId: 'session-terminal-type-mismatch',
+      baseRevision: 2,
+      prompt: 'Finish safely',
+      history: [],
+    };
+    const firstError: BgsmAgentTurnError = {
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
       baseRevision: input.baseRevision,
-      disposition: 'applied',
-      appliedRevision: 2,
+      message: 'Provider failed.',
+      category: 'provider',
+    };
+    const onError = vi.fn();
+    const control = startBgsmAgentTurn(input, { onError });
+    await first.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await first.deliver({ type: 'bgsmAgentTurnError', sequence: 0, error: firstError });
+    control.acknowledge({ disposition: 'no_transition', appliedRevision: null });
+    first.disconnect();
+    await retry.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-2' });
+    await retry.deliver({
+      type: 'bgsmAgentTurnResult',
+      sequence: 0,
+      result: {
+        turnAttemptId: input.turnAttemptId,
+        sessionId: input.sessionId,
+        baseRevision: input.baseRevision,
+        reason: 'provider_error',
+        changed: false,
+        changedCount: 0,
+        commit: null,
+      },
     });
-    retry.deliver({
-      type: 'bgsmAgentTurnAck',
+
+    expect(onError).toHaveBeenNthCalledWith(1, firstError);
+    expect(onError).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      code: 'agent_session_corrupt',
+    }));
+    expect(retry.port.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'ackBgsmAgentTurnResult',
+    }));
+    expect(retry.port.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a replacement result with a different commit digest without resending acknowledgement', async () => {
+    const first = createRuntimePort();
+    const retry = createRuntimePort();
+    const connect = vi.fn()
+      .mockReturnValueOnce(first.port)
+      .mockReturnValueOnce(retry.port);
+    vi.stubGlobal('chrome', { runtime: { connect, lastError: undefined } });
+    const input: BgsmAgentTurnInput = {
+      turnAttemptId: 'turn-attempt-commit-mismatch',
+      sessionId: 'session-commit-mismatch',
+      baseRevision: 3,
+      prompt: 'Finish safely',
+      history: [],
+    };
+    const commit = commitForMessaging(input, [
+      { id: 'commit-user', role: 'user', content: input.prompt, createdAt: 1 },
+      { id: 'commit-agent', role: 'agent', content: 'Finished.', createdAt: 2 },
+    ]);
+    const result: BgsmAgentTurnResult = {
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
       baseRevision: input.baseRevision,
-      disposition: 'applied',
-      appliedRevision: 2,
+      reason: 'final_answer',
+      changed: false,
+      changedCount: 0,
+      commit,
+    };
+    const onResult = vi.fn();
+    const onError = vi.fn();
+    const control = startBgsmAgentTurn(input, { onResult, onError });
+    await first.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await first.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
+    control.acknowledge({ disposition: 'applied', appliedRevision: commit.appliedRevision });
+    first.disconnect();
+    await retry.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-2' });
+    await retry.deliver({
+      type: 'bgsmAgentTurnResult',
+      sequence: 0,
+      result: {
+        ...result,
+        commit: { ...commit, idempotent: true, digest: `asd:v1:${'c'.repeat(43)}` },
+      },
     });
+
+    expect(onResult).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'agent_session_corrupt',
+    }));
+    expect(retry.port.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'ackBgsmAgentTurnResult',
+    }));
     expect(retry.port.disconnect).toHaveBeenCalledOnce();
   });
 

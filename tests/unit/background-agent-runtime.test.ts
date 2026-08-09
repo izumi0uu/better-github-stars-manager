@@ -54,7 +54,17 @@ describe('background Agent runtime composition', () => {
     const notifiedSessions: string[] = [];
     const retryInputs: Array<{ sessionId: string; turnAttemptId: string }> = [];
     const discardedSessions: string[] = [];
+    const abandonedAttempts: Array<{ sessionId: string; turnAttemptId: string }> = [];
+    const restoredTurns: BgsmAgentTurnLaunch[] = [];
+    const rolledBackRecoveries: BgsmAgentTurnLaunch[] = [];
+    const reservedSessions: string[] = [];
+    const releasedReservations: string[] = [];
+    let releaseConcurrentInspection!: () => void;
+    const concurrentInspectionGate = new Promise<void>((resolve) => {
+      releaseConcurrentInspection = resolve;
+    });
     const turnRuns: BgsmAgentTurnLaunch[] = [];
+    let durableAdmissionObserved = false;
     const captures: {
       coordinatorCache: AgentCanonicalSessionCache | null;
       serviceDependencies: BgsmAgentTurnServiceDependencies | null;
@@ -75,9 +85,28 @@ describe('background Agent runtime composition', () => {
       async settleWithoutTransition() { throw new Error('not called by runtime construction'); },
       async inspectActive(sessionId) {
         inspectedSessions.push(sessionId);
-        return null;
+        if (sessionId === 'session-concurrent') await concurrentInspectionGate;
+        if (sessionId === 'session-restore-failure') {
+          return {
+            executionEpochId,
+            launch: { ...launch, sessionId },
+            artifactCoverage: [],
+            artifactContinuation: null,
+          };
+        }
+        return sessionId === 'session-durable' || sessionId === 'session-concurrent'
+          ? { executionEpochId, launch, artifactCoverage: [], artifactContinuation: null }
+          : null;
+      },
+      async rollbackRecoveryClaim(recoveredLaunch) {
+        rolledBackRecoveries.push(structuredClone(recoveredLaunch));
+        return true;
       },
       async markStateUncertain() { return false; },
+      async abandonUncertainAttempt(input) {
+        abandonedAttempts.push({ ...input });
+        return true;
+      },
       async dismissRetry(input) {
         retryInputs.push({ ...input });
         return true;
@@ -92,16 +121,37 @@ describe('background Agent runtime composition', () => {
       },
     };
     const turnService: BgsmAgentTurnService = {
-      async run(input) {
+      async run(input, options) {
         turnRuns.push(input);
+        options.onDurableLeaseAcquired();
         return terminalResult(input);
       },
     };
     const activeTurn = { executionEpochId, launch };
+    const reservations = new Map<string, symbol>();
     const turnRegistry: BgsmAgentTurnRegistry = {
       executionEpochId,
       inspectActiveTurn(sessionId) {
         return sessionId === launch.sessionId ? activeTurn : null;
+      },
+      reserveRecovery(sessionId) {
+        const token = Symbol(sessionId);
+        reservations.set(sessionId, token);
+        reservedSessions.push(sessionId);
+        return { sessionId, token };
+      },
+      restoreApprovedTurn(restoredLaunch, reservation) {
+        assert.equal(reservations.get(reservation.sessionId), reservation.token);
+        if (restoredLaunch.sessionId === 'session-restore-failure') {
+          throw new Error('restore rejected');
+        }
+        restoredTurns.push(restoredLaunch);
+        return { executionEpochId, launch: restoredLaunch };
+      },
+      releaseRecovery(reservation) {
+        assert.equal(reservations.get(reservation.sessionId), reservation.token);
+        reservations.delete(reservation.sessionId);
+        releasedReservations.push(reservation.sessionId);
       },
       attach() {},
     };
@@ -199,16 +249,53 @@ describe('background Agent runtime composition', () => {
     assert.strictEqual(serviceDependencies.attemptCoordinator, coordinator);
     assert.equal(registryDependencies.executionEpochId, executionEpochId);
     assert.strictEqual(sessionDependencies.inspectActiveTurn(launch.sessionId), activeTurn);
-    assert.equal(await sessionDependencies.inspectDurableTurn('session-durable'), null);
-    assert.deepEqual(inspectedSessions, ['session-durable']);
+    assert.deepEqual(await sessionDependencies.inspectDurableTurn('session-durable'), {
+      executionEpochId,
+      launch,
+      artifactCoverage: [],
+      artifactContinuation: null,
+    });
+    assert.equal(await sessionDependencies.inspectDurableTurn('session-uncertain'), null);
+    const firstConcurrentInspection = sessionDependencies.inspectDurableTurn('session-concurrent');
+    const secondConcurrentInspection = sessionDependencies.inspectDurableTurn('session-concurrent');
+    assert.strictEqual(firstConcurrentInspection, secondConcurrentInspection);
+    releaseConcurrentInspection();
+    await Promise.all([firstConcurrentInspection, secondConcurrentInspection]);
+    await assert.rejects(
+      () => sessionDependencies.inspectDurableTurn('session-restore-failure'),
+      /restore rejected/,
+    );
+    assert.deepEqual(inspectedSessions, [
+      'session-durable',
+      'session-uncertain',
+      'session-concurrent',
+      'session-restore-failure',
+    ]);
+    assert.deepEqual(restoredTurns, [launch, launch]);
+    assert.deepEqual(rolledBackRecoveries, [{ ...launch, sessionId: 'session-restore-failure' }]);
+    assert.deepEqual(reservedSessions, [
+      'session-durable',
+      'session-uncertain',
+      'session-concurrent',
+      'session-restore-failure',
+    ]);
+    assert.deepEqual(releasedReservations, reservedSessions);
     assert.equal(await sessionDependencies.dismissRetry({
       sessionId: 'session-retry',
       turnAttemptId: 'turn-retry',
+    }), true);
+    assert.equal(await sessionDependencies.abandonUncertainAttempt({
+      sessionId: 'session-uncertain',
+      turnAttemptId: 'turn-uncertain',
     }), true);
     assert.equal(await sessionDependencies.discardDamagedRecovery('session-damaged'), 3);
     assert.deepEqual(retryInputs, [{
       sessionId: 'session-retry',
       turnAttemptId: 'turn-retry',
+    }]);
+    assert.deepEqual(abandonedAttempts, [{
+      sessionId: 'session-uncertain',
+      turnAttemptId: 'turn-uncertain',
     }]);
     assert.deepEqual(discardedSessions, ['session-damaged']);
     sessionDependencies.notifySessionDeleted('session-deleted');
@@ -216,11 +303,15 @@ describe('background Agent runtime composition', () => {
 
     const result = await registryDependencies.runTurn(launch, {
       signal: new AbortController().signal,
+      onDurableLeaseAcquired() {
+        durableAdmissionObserved = true;
+      },
       emit() {},
       bind() {},
     });
     assert.deepEqual(result, terminalResult(launch));
     assert.deepEqual(turnRuns, [launch]);
+    assert.equal(durableAdmissionObserved, true);
     const releaseTurnLease = registryDependencies.releaseTurnLease;
     assert.ok(releaseTurnLease, 'runtime must wire the coordinator lease release');
     await releaseTurnLease({
@@ -233,6 +324,10 @@ describe('background Agent runtime composition', () => {
       turnAttemptId: launch.turnAttemptId,
       executionEpochId,
     }]);
+    const fenceRestoredTurnFailure = registryDependencies.fenceRestoredTurnFailure;
+    assert.ok(fenceRestoredTurnFailure, 'runtime must wire restored-runner rollback');
+    await fenceRestoredTurnFailure(launch);
+    assert.deepEqual(rolledBackRecoveries.at(-1), launch);
   });
 });
 

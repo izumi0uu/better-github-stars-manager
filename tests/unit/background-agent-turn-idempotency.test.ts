@@ -72,6 +72,7 @@ function deferredRunner() {
   const completion = new Promise<BgsmAgentTurnResult>((next) => { resolve = next; });
   const runner: BgsmAgentTurnRunner = async (_input, options) => {
     runCount += 1;
+    options.onDurableLeaseAcquired();
     signal = options.signal;
     return completion;
   };
@@ -218,8 +219,9 @@ describe('Cubby turn single-flight registry', () => {
     let runCount = 0;
     const releasedLeases: unknown[] = [];
     const registry = createBgsmAgentTurnRegistry({
-      runTurn: async (turn) => {
+      runTurn: async (turn, options) => {
         runCount += 1;
+        options.onDurableLeaseAcquired();
         return {
           turnAttemptId: turn.turnAttemptId,
           sessionId: turn.sessionId,
@@ -270,8 +272,9 @@ describe('Cubby turn single-flight registry', () => {
       finishRelease = resolve;
     });
     const registry = createBgsmAgentTurnRegistry({
-      runTurn: async (turn) => {
+      runTurn: async (turn, options) => {
         runCount += 1;
+        options.onDurableLeaseAcquired();
         return {
           turnAttemptId: turn.turnAttemptId,
           sessionId: turn.sessionId,
@@ -320,8 +323,9 @@ describe('Cubby turn single-flight registry', () => {
       finishRelease = resolve;
     });
     const registry = createBgsmAgentTurnRegistry({
-      runTurn: async (turn) => {
+      runTurn: async (turn, options) => {
         runCount += 1;
+        options.onDurableLeaseAcquired();
         return {
           turnAttemptId: turn.turnAttemptId,
           sessionId: turn.sessionId,
@@ -351,15 +355,22 @@ describe('Cubby turn single-flight registry', () => {
     finishRelease();
 
     await waitUntil(() => (
-      messagesOfType(left.posted, 'bgsmAgentTurnResult').length === 1
-      && messagesOfType(right.posted, 'bgsmAgentTurnResult').length === 1
+      messagesOfType(left.posted, 'bgsmAgentTurnResult').length
+      + messagesOfType(left.posted, 'bgsmAgentTurnError').length === 1
+      && messagesOfType(right.posted, 'bgsmAgentTurnResult').length
+      + messagesOfType(right.posted, 'bgsmAgentTurnError').length === 1
     ));
     assert.equal(runCount, 2);
-    const reasons = [left, right].map((port) => (
-      messagesOfType(port.posted, 'bgsmAgentTurnResult')[0]?.result.reason
+    const results = [left, right].flatMap((port) => (
+      messagesOfType(port.posted, 'bgsmAgentTurnResult')
     ));
-    assert.equal(reasons.filter((reason) => reason === 'final_answer').length, 1);
-    assert.equal(reasons.filter((reason) => reason === 'attempt_state_lost').length, 1);
+    const errors = [left, right].flatMap((port) => (
+      messagesOfType(port.posted, 'bgsmAgentTurnError')
+    ));
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.result.reason, 'final_answer');
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0]?.error.code, 'agent_session_turn_active');
   });
 
   it('accepts only the first start message while one port awaits terminal cleanup', async () => {
@@ -369,8 +380,9 @@ describe('Cubby turn single-flight registry', () => {
       finishRelease = resolve;
     });
     const registry = createBgsmAgentTurnRegistry({
-      runTurn: async (turn) => {
+      runTurn: async (turn, options) => {
         runCount += 1;
+        options.onDurableLeaseAcquired();
         return {
           turnAttemptId: turn.turnAttemptId,
           sessionId: turn.sessionId,
@@ -409,8 +421,9 @@ describe('Cubby turn single-flight registry', () => {
     let runCount = 0;
     let releaseCount = 0;
     const registry = createBgsmAgentTurnRegistry({
-      runTurn: async (turn) => {
+      runTurn: async (turn, options) => {
         runCount += 1;
+        options.onDurableLeaseAcquired();
         return {
           turnAttemptId: turn.turnAttemptId,
           sessionId: turn.sessionId,
@@ -509,9 +522,10 @@ describe('Cubby turn single-flight registry', () => {
     concurrent.deliver(startMessage(input({ turnAttemptId: 'turn-attempt-2' })));
     assert.equal(run.runCount, 1);
     assert.equal(
-      messagesOfType(concurrent.posted, 'bgsmAgentTurnResult')[0]?.result.reason,
-      'attempt_state_lost',
+      messagesOfType(concurrent.posted, 'bgsmAgentTurnError')[0]?.error.code,
+      'agent_session_turn_active',
     );
+    assert.equal(messagesOfType(concurrent.posted, 'bgsmAgentTurnResult').length, 0);
 
     const stillAttached = fakePort();
     registry.attach(stillAttached.port);

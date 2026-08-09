@@ -69,9 +69,61 @@ describe('Agent turn reducer', () => {
       contextLimitRecovery: null,
       draftRecovery: null,
       canRetryLastTurn: true,
+      transientSafeResendPrompt: null,
       toolActivities: [],
       preCompactionStatus: null,
     });
+  });
+
+  it('preserves only explicit transient resend authority through winner subscription and settlement', () => {
+    const prompt = 'Keep this rejected prompt.';
+    const failed = reduceAgentTurn(createAgentTurnState(), {
+      type: 'turn_failed',
+      result: null,
+      message: 'Another turn is active.',
+      category: 'other',
+      status: { kind: 'error', text: 'Another turn is active.' },
+      prompt,
+      canRetry: true,
+      transientSafeResend: true,
+    });
+    const subscribed = reduceAgentTurn(failed, {
+      type: 'turn_subscribed',
+      status: { kind: 'queued', text: 'Queued' },
+    });
+    const winnerFailed = reduceAgentTurn(subscribed, {
+      type: 'subscribed_turn_failed',
+      status: { kind: 'error', text: 'Winner provider failed.' },
+    });
+    expect(winnerFailed).toMatchObject({
+      phase: 'failed',
+      running: false,
+      status: { kind: 'error', text: 'Winner provider failed.' },
+      error: 'Another turn is active.',
+      draftRecovery: prompt,
+      transientSafeResendPrompt: prompt,
+      canRetryLastTurn: true,
+    });
+    const settled = reduceAgentTurn(subscribed, finishAction('final_answer'));
+
+    expect(settled).toMatchObject({
+      running: false,
+      error: 'Another turn is active.',
+      draftRecovery: prompt,
+      transientSafeResendPrompt: prompt,
+      canRetryLastTurn: true,
+    });
+    expect(reduceAgentTurn(settled, {
+      type: 'transient_safe_resend_cleared',
+    })).toMatchObject({
+      draftRecovery: prompt,
+      transientSafeResendPrompt: null,
+      canRetryLastTurn: true,
+    });
+    expect(reduceAgentTurn(settled, {
+      type: 'turn_started',
+      status: { kind: 'queued', text: 'Queued' },
+    }).transientSafeResendPrompt).toBeNull();
   });
 
   it.each([

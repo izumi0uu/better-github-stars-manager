@@ -60,22 +60,47 @@ afterEach(() => {
 });
 
 describe("AgentStoragePanel", () => {
-  it("shows bounded Agent usage separately from the extension browser estimate", () => {
+  it("names the bounded ledger separately from Organize and browser storage with accessible relationships", () => {
     const { container } = renderPanel();
 
-    expect(container.textContent).toContain("Conversation data");
-    expect(container.textContent).toContain(
-      "The latest completed or cancelled Organize result is stored separately",
-    );
+    const panel = container.querySelector("section");
+    expect(panel?.getAttribute("aria-labelledby")).toBe("agent-storage-heading");
+    expect(panel?.getAttribute("aria-describedby"))
+      .toBe("agent-storage-intro agent-storage-organize-retention");
+    expect(container.querySelector("#agent-storage-heading")?.textContent)
+      .toContain("Local Cubby conversation, recovery & artifact ledger");
+    expect(container.querySelector("#agent-storage-intro")?.textContent)
+      .toContain("does not represent all Cubby or extension storage");
+    const organize = container.querySelector("#agent-storage-organize-retention")?.textContent;
+    expect(organize).toContain("active or preflight task instructions and frozen scope");
+    expect(organize).toContain("proposal, Apply, and receipt records");
+    expect(organize).toContain("one latest completed or cancelled result");
+    expect(organize).toContain("None is counted in this ledger");
+    expect(organize).toContain("Deleting the origin conversation keeps that latest result");
     expect(container.textContent).toContain("12 MiB");
     expect(container.textContent).toContain("2 conversations · 18 messages");
-    expect(container.textContent).toContain("Tool cache");
+    expect(container.textContent).toContain("Re-fetchable tool cache");
     expect(container.textContent).toContain("4 MiB");
-    expect(container.textContent).toContain("3 stored tool results");
-    expect(container.textContent).toContain("512 MiB local limit");
-    expect(container.textContent).toContain("Extension browser storage estimate: 20 MiB of 2 GiB");
-    expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuemax"))
-      .toBe(String(512 * MiB));
+    expect(container.textContent).toContain("3 cached tool artifacts");
+    expect(container.textContent).toContain("Conversation, recovery & artifact ledger total");
+    expect(container.textContent).toContain("512 MiB ledger limit");
+    expect(container.textContent).toContain(
+      "This ledger only: warning at 256 MiB · new ledger writes refused at 512 MiB",
+    );
+    expect(container.textContent).toContain(
+      "Whole-extension browser storage estimate: 20 MiB of 2 GiB",
+    );
+    const progress = container.querySelector('[role="progressbar"]');
+    expect(progress?.getAttribute("aria-label"))
+      .toBe("Conversation, recovery, and artifact ledger used");
+    expect(progress?.getAttribute("aria-describedby"))
+      .toBe("agent-storage-thresholds agent-storage-browser-estimate");
+    expect(progress?.getAttribute("aria-valuemax")).toBe(String(512 * MiB));
+    const clearButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Clear tool cache"));
+    expect(clearButton?.getAttribute("aria-describedby")).toBe("agent-storage-clear-hint");
+    expect(container.querySelector("#agent-storage-clear-hint")?.textContent)
+      .toContain("Final answers and conversation transcripts");
   });
 
   it("renders loading and unavailable-estimate states without inventing browser usage", () => {
@@ -87,13 +112,13 @@ describe("AgentStoragePanel", () => {
       usage: usage({ browser: { usageBytes: null, quotaBytes: null } }),
     });
     expect(unavailable.container.textContent)
-      .toContain("Extension browser storage estimate unavailable");
+      .toContain("Whole-extension browser storage estimate unavailable");
     expect(unavailable.container.textContent).not.toContain("--");
   });
 
   it.each([
-    [256, true, false, "above the warning level"],
-    [512, true, true, "reached its local limit"],
+    [256, true, false, "above its warning level"],
+    [512, true, true, "New ledger data is refused"],
   ] as const)(
     "shows the expected capacity state at %i MiB",
     (totalMiB, isWarning, isAtHardLimit, expected) => {
@@ -109,7 +134,7 @@ describe("AgentStoragePanel", () => {
     },
   );
 
-  it("clears cache once, reports parent status, and disables cleanup when no cache remains", async () => {
+  it("clears the tool cache once, reports parent status, and disables cleanup when no cache remains", async () => {
     let resolveClear: (() => void) | undefined;
     const onClearToolCache = vi.fn(() => new Promise<void>((resolve) => {
       resolveClear = resolve;
@@ -132,7 +157,7 @@ describe("AgentStoragePanel", () => {
     cleanupMountedRootsAndBody(mountedRoots);
     const cleared = renderPanel({
       usage: usage({ cacheBytes: 0, artifactCount: 0, cacheArtifactCount: 0 }),
-      notice: "Cleared 3 cached results and freed 4 MiB.",
+      notice: "Cleared 3 cached tool artifacts and freed 4 MiB.",
     });
     const disabledClear = [...cleared.container.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent?.includes("Clear tool cache"));

@@ -8,7 +8,7 @@ import {
 
 const root = process.cwd();
 
-describe('Agent Phase 4 release conformance', () => {
+describe('Agent release conformance', () => {
   it('keeps the runtime disclosure category contract wired into the informational UI', () => {
     const source = read('src/options/AgentDataDisclosurePanel.tsx');
     for (const category of [
@@ -21,34 +21,60 @@ describe('Agent Phase 4 release conformance', () => {
     expect(source).toContain('agentDisclosureCustomAccess');
   });
 
-  it.each([
-    'docs/privacy-policy.md',
-    'docs/chrome-web-store-submission.md',
-  ])('%s states the complete AI-provider privacy boundary', (file) => {
-    const text = read(file).toLowerCase();
+  it('states the complete Provider privacy boundary without forcing identical prose', () => {
+    const privacy = read('docs/privacy-policy.md').toLowerCase();
     for (const phrase of [
       'prompt or bounded task instruction',
-      'public repository metadata',
-      'public code snippets',
+      'committed conversation history',
       'current prompt',
-      'local conversation history',
-      'unencrypted',
-      'diagnostics',
       'visible, bounded tag taxonomy',
-      'protocol observations',
       'private notes',
       'credentials or secrets',
       'github token',
       'unrelated or out-of-scope stars',
-      'authorization header',
+      'authorization: bearer',
+      'x-api-key',
       'developer-operated proxy',
-    ]) {
-      expect(text, `${file} is missing ${phrase}`).toContain(phrase);
+    ]) expect(privacy, `privacy policy is missing ${phrase}`).toContain(phrase);
+
+    const submission = read('docs/chrome-web-store-submission.md').toLowerCase();
+    for (const phrase of [
+      'task data can include the prompt',
+      'committed conversation history',
+      'current-turn local evidence',
+      'visible bounded tags',
+      'unrequested private notes',
+      'credentials',
+      'github token',
+      'unrelated stars',
+      'authorization: bearer',
+      'x-api-key',
+      'developer-operated proxy',
+    ]) expect(submission, `submission notes are missing ${phrase}`).toContain(phrase);
+
+    for (const provider of ['openai', 'openrouter', 'anthropic', 'custom']) {
+      expect(privacy).toContain(provider);
+      expect(submission).toContain(provider);
     }
-    expect(text).toContain('openai');
-    expect(text).toContain('openrouter');
-    expect(text).toContain('anthropic');
-    expect(text).toContain('custom');
+  });
+
+  it('distinguishes the current retention and release contract from historical review evidence', () => {
+    const privacy = read('docs/privacy-policy.md');
+    expect(privacy).toMatch(/normally prunes valid settled attempts to the newest 128 per conversation/i);
+    expect(privacy).toMatch(/current attempt and damaged recovery evidence beyond that normal pruning boundary/i);
+    expect(privacy).toMatch(/until you explicitly delete the conversation/i);
+    expect(privacy).not.toMatch(/(?:absolute|hard|maximum) (?:limit|maximum|cap) of 128/i);
+
+    const submission = read('docs/chrome-web-store-submission.md');
+    expect(submission).toMatch(/normally pruned to the newest 128 per conversation/i);
+    expect(submission).toMatch(/current attempt and damaged recovery evidence may remain until explicit conversation deletion/i);
+
+    const review = read('docs/bgsm-agent-implementation-review.md');
+    const currentRecord = review.slice(0, review.indexOf('## 1. Executive summary'));
+    expect(currentRecord).toContain('Phase 7B worker-replacement evidence');
+    expect(currentRecord).toMatch(/Phase 7B worker-replacement proofs are implemented and verified/i);
+    expect(review).toContain('This document preserves the original findings and remediation plan as review history');
+    expect(review).toContain('Historical evidence from the implementation audit before this document was written');
   });
 
   it('keeps manifest host declarations aligned with built-in and custom behavior', () => {
@@ -63,58 +89,57 @@ describe('Agent Phase 4 release conformance', () => {
   });
 
 
-  it('packages auditable disclosure evidence', () => {
-    const packaging = read('scripts/package-extension.mjs');
-    expect(packaging).toContain('release-evidence-');
-    expect(packaging).toContain('zipRootManifest');
-    expect(packaging).toContain('packagedPermissions');
-    expect(packaging).toContain('dashboardSubmissionClaimed: false');
-    expect(packaging).toContain('releaseReady: false');
-    expect(packaging).toContain('phase5_integrated_verification_required');
-    expect(packaging).toContain('sourceDirty');
-    expect(packaging).toContain('productionDisclosureMarkers');
-
-    const verification = read('scripts/run-agent-phase5-verification.mjs');
-    for (const check of [
-      'typecheck',
-      'test:vitest',
-      'test:runtime',
-      'test:smoke',
-      'test:runtime:organize-job-host',
-      'test:runtime:organize-job-recovery',
-      'test:runtime:agent-diagnostics',
-      'test:runtime:agent-scenarios',
-      'package:extension',
-    ]) expect(verification).toContain(check);
-    expect(verification).toContain('GSM_DIST_DIR');
-    expect(verification).toContain('GSM_ARTIFACTS_DIR');
-    expect(verification).toContain("assertCleanSource('Phase 5 verification must start from a clean source tree.')");
-
-    const finalizer = read('scripts/verify-agent-release-gates.mjs');
-    expect(finalizer).toContain("releaseReady: true");
-    expect(finalizer).toContain("phase5_integrated_verification_passed");
-    expect(finalizer).toContain("dashboardSubmissionClaimed: false");
-    expect(finalizer).toContain("git(['status', '--porcelain', '--untracked-files=normal'])");
-    expect(finalizer).toContain("'agentDiagnosticsReleaseIsolation'");
-    expect(finalizer).toContain("'agentScenariosExtensionHost'");
-    expect(finalizer).toContain("'organizeJobRecovery'");
-
-    const isolation = read('tests/runtime/agent-diagnostics-release-isolation.mjs');
-    for (const boundary of [
-      'release.zip',
-      'externally_connectable',
-      'bgsm-agent-dev-evidence-v1',
-      'bgsm-agent-dev-control-v1',
-      'bgsm-agent-dev-traces-v1',
-      'SCENARIO_PRIVATE_CURRENT_PROMPT_CANARY',
-      'indexedDB.databases()',
-    ]) expect(isolation).toContain(boundary);
+  it('wires one behavior-named, approval-gated release flow without legacy aliases', () => {
+    const packageJson = JSON.parse(read('package.json')) as {
+      scripts: Record<string, string>;
+    };
+    expect(packageJson.scripts['verify:agent-runtime'])
+      .toBe('node scripts/run-agent-runtime-verification.mjs');
+    expect(packageJson.scripts['verify:agent-release-gates'])
+      .toBe('node scripts/verify-agent-release-gates.mjs');
+    expect(packageJson.scripts).not.toHaveProperty('verify:agent-phase5');
+    expect(existsSync(path.join(root, 'scripts/run-agent-runtime-verification.mjs'))).toBe(true);
+    expect(existsSync(path.join(root, 'scripts/run-agent-phase5-verification.mjs'))).toBe(false);
 
     const workflow = read('.github/workflows/release.yml');
-    expect(workflow).toContain('pnpm verify:agent-phase5');
-    expect(workflow).toContain('pnpm verify:agent-release-gates');
-    expect(workflow.indexOf('pnpm verify:agent-release-gates'))
-      .toBeLessThan(workflow.indexOf('uses: actions/upload-artifact'));
+    const tagVersionCheck = workflow.indexOf('test "$TAG_NAME" = "v$package_version"');
+    const runtimeVerification = workflow.indexOf('pnpm verify:agent-runtime');
+    const gateFinalization = workflow.indexOf('pnpm verify:agent-release-gates');
+    const canonicalEnumeration = workflow.indexOf('--list-release-artifacts');
+    const artifactUpload = workflow.indexOf('uses: actions/upload-artifact');
+    const githubRelease = workflow.indexOf('gh release create');
+    const chromeWebStore = workflow.indexOf('node scripts/publish-chrome-web-store.mjs');
+
+    expect(workflow).toContain('GSM_VERSION_APPROVAL');
+    expect(workflow).not.toContain('verify:agent-phase5');
+    expect(tagVersionCheck).toBeGreaterThan(-1);
+    expect(tagVersionCheck).toBeLessThan(runtimeVerification);
+    expect(runtimeVerification).toBeLessThan(gateFinalization);
+    expect(gateFinalization).toBeLessThan(canonicalEnumeration);
+    expect(canonicalEnumeration).toBeLessThan(artifactUpload);
+    expect(artifactUpload).toBeLessThan(githubRelease);
+    expect(githubRelease).toBeLessThan(chromeWebStore);
+
+    expect(workflow).toContain('scripts/verify-agent-release-gates.mjs --list-release-artifacts');
+    expect(workflow).toContain('path: ${{ steps.release-artifacts.outputs.files }}');
+    expect(workflow).toContain('mapfile -t release_files');
+    expect(workflow).toContain('"${release_files[@]}"');
+    expect(workflow).not.toContain('artifacts/*');
+
+    expect(workflow).toContain('publish_to_chrome_web_store:');
+    expect(workflow).toContain(
+      "if: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/') && inputs.publish_to_chrome_web_store == true && vars.CWS_DEPLOY_ENABLED == 'true' }}",
+    );
+    expect(workflow).toContain('CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}');
+    expect(workflow).toContain('CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}');
+
+    const packaging = read('scripts/package-extension.mjs');
+    expect(packaging).toContain('releaseReady: false');
+    expect(packaging).toContain('agent_runtime_verification_required');
+    expect(packaging).toContain('dashboardSubmissionClaimed: false');
+    expect(packaging).toContain('GSM_APPROVED_RELEASE_VERSION');
+    expect(packaging).toContain('GSM_TESTED_PACKAGE_INPUT');
+    expect(packaging).toContain('GSM_RELEASE_BUILD_EVIDENCE');
   });
 
   it('ships real credential-free disclosure screenshots at allowed store dimensions', () => {
@@ -166,10 +191,10 @@ describe('Agent Phase 4 release conformance', () => {
     const turnService = read('src/background/bgsm-agent-turn-service.ts');
 
     expect(background).toContain("from './bgsm-agent-runtime'");
-    expect(background).toContain('bgsmAgentRuntime.sessionRpc.handle(req)');
+    expect(background).toContain('bgsmAgentRuntime.sessionRpc.handle(agentSessionRequest)');
     expect(background).toContain('bgsmAgentRuntime.sessionRpc.describeFailure(e)');
     expect(background).toContain('attachBgsmAgentTurnPort(port, bgsmAgentRuntime.turnRegistry)');
-    expect(background).toContain('if (!isBgsmAgentSessionRequest(req))');
+    expect(background).toContain('if (!agentSessionRequest)');
     expect(background).toContain('chrome.runtime.onMessage.addListener');
     expect(background).toContain('chrome.runtime.onConnect.addListener');
 

@@ -7,7 +7,7 @@ import {
   APPLY_CHUNK_ROW_LIMIT,
   AGENT_DATA_DISCLOSURE_VERSION,
   AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES,
-  AGENT_PROVIDER_KEY_AUTHORIZATION_EXCEPTION,
+  AGENT_PROVIDER_KEY_AUTHENTICATION_EXCEPTION,
   AGENT_SENT_TASK_DATA_CATEGORIES,
   ANALYZER_OUTPUT_TOKENS_DEFAULT,
   ANALYZER_OUTPUT_TOKENS_HARD_LIMIT,
@@ -611,8 +611,8 @@ describe('first-use disclosure and messaging identities', () => {
     assert.equal(AGENT_DATA_DISCLOSURE_VERSION, 2);
     assert.equal(AGENT_SENT_TASK_DATA_CATEGORIES.length, 6);
     assert.equal(AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES.length, 3);
-    assert.deepEqual(AGENT_PROVIDER_KEY_AUTHORIZATION_EXCEPTION, {
-      category: 'selected_provider_api_key_authorization_header',
+    assert.deepEqual(AGENT_PROVIDER_KEY_AUTHENTICATION_EXCEPTION, {
+      category: 'selected_provider_api_key_authentication_header',
       destination: 'bound_provider_origin_only',
       modelVisible: false,
       logged: false,

@@ -40,7 +40,9 @@ describe('Agent data disclosure', () => {
     expect(details?.open).toBe(true);
     expect(container.textContent).toContain('Code snippets or private notes only when you ask Cubby');
     expect(container.textContent).toContain('GitHub token, API keys, other credentials');
-    expect(container.textContent).toContain('exact address above as an Authorization header');
+    expect(container.textContent).toContain('provider-required authentication header');
+    expect(container.textContent).toContain("Anthropic's x-api-key");
+    expect(container.textContent).not.toContain('as an Authorization header');
   });
 
   it('shows custom host access as the only required action', async () => {

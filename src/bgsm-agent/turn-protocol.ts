@@ -14,6 +14,7 @@ import {
   assertAgentSessionTransportPayloadSize,
   assertAgentTurnTransportIdentifier,
   validateAgentSessionLaunchIdentity,
+  validateAgentSessionLaunchDigest,
   validateAgentTurnOpaqueReferences,
   type AgentActiveTurnTransport,
   type AgentSessionLaunchIdentity,
@@ -631,9 +632,7 @@ function validateAgentSessionCommitResult(
   if (!/^asd:v1:[A-Za-z0-9_-]{43}$/u.test(String(value.digest))) {
     throw new TypeError('Agent commit transition digest is invalid.');
   }
-  if (!/^asl:v1:[A-Za-z0-9_-]{43}$/u.test(String(value.launchDigest))) {
-    throw new TypeError('Agent commit launch digest is invalid.');
-  }
+  validateAgentSessionLaunchDigest(value.launchDigest);
   validateAgentSessionMetadata(value.session, result, Number(value.appliedRevision));
   validateAgentSessionSummary(value.summary, result);
   validateAgentSessionTranscript(value.transcript, result);

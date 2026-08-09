@@ -1,9 +1,61 @@
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_POLL_MS = 100;
 const MAX_DIAGNOSTIC_ITEMS = 24;
 const MAX_LABEL_LENGTH = 160;
+export function resolvePackagedServiceWorker(dist) {
+  const requestedRoot = path.resolve(dist);
+  if (!existsSync(requestedRoot) || !statSync(requestedRoot).isDirectory()) {
+    throw new Error('Packaged extension directory is unavailable.');
+  }
+  const distRoot = realpathSync(requestedRoot);
+  const manifestPath = path.join(distRoot, 'manifest.json');
+  if (!existsSync(manifestPath) || !statSync(manifestPath).isFile()) {
+    throw new Error('Packaged extension manifest is unavailable.');
+  }
+  const manifestBytes = readFileSync(manifestPath);
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestBytes.toString('utf8'));
+  } catch {
+    throw new Error('Packaged extension manifest is invalid.');
+  }
+  const workerRelativePath = manifest?.background?.service_worker;
+  if (typeof workerRelativePath !== 'string' || workerRelativePath.length === 0) {
+    throw new Error('Packaged extension manifest has no service worker.');
+  }
+  const requestedWorkerPath = path.resolve(distRoot, workerRelativePath);
+  const requestedRelativePath = path.relative(distRoot, requestedWorkerPath);
+  if (
+    requestedRelativePath === ''
+    || requestedRelativePath.startsWith(`..${path.sep}`)
+    || requestedRelativePath === '..'
+    || path.isAbsolute(requestedRelativePath)
+  ) {
+    throw new Error('Packaged service worker escapes the extension directory.');
+  }
+  if (!existsSync(requestedWorkerPath) || !statSync(requestedWorkerPath).isFile()) {
+    throw new Error('Packaged service worker is unavailable.');
+  }
+  const workerPath = realpathSync(requestedWorkerPath);
+  const containedRelativePath = path.relative(distRoot, workerPath);
+  if (
+    containedRelativePath.startsWith(`..${path.sep}`)
+    || containedRelativePath === '..'
+    || path.isAbsolute(containedRelativePath)
+  ) {
+    throw new Error('Packaged service worker resolves outside the extension directory.');
+  }
+  return Object.freeze({
+    distRoot,
+    manifestBytes,
+    manifestPath,
+    workerPath,
+    workerRelativePath: containedRelativePath.split(path.sep).join('/'),
+  });
+}
 
 export async function discoverExtension(browser, {
   dist,
@@ -44,6 +96,7 @@ export async function openExtensionPage(browser, extensionId, pagePath = '/src/o
   readyTimeoutMs = 10_000,
   rootSelector = '#root',
   failClosedHttp = null,
+  beforeNavigation = null,
 } = {}) {
   if (!browser || typeof browser.newPage !== 'function') {
     throw new TypeError('browser must create Puppeteer pages.');
@@ -52,12 +105,16 @@ export async function openExtensionPage(browser, extensionId, pagePath = '/src/o
   const safeLabel = boundedLabel(label, 'extension-page');
   assertPositiveTimeout(timeoutMs, 'timeoutMs');
   assertPositiveTimeout(readyTimeoutMs, 'readyTimeoutMs');
+  if (beforeNavigation !== null && typeof beforeNavigation !== 'function') {
+    throw new TypeError('beforeNavigation must be a function when provided.');
+  }
 
   const page = await browser.newPage();
   let pageHttpPolicy = null;
   const expectedUrl = `${extensionPrefix(extensionId).slice(0, -1)}${normalizedPath}`;
   try {
     pageHttpPolicy = await installFailClosedPageHttpPolicy(page, failClosedHttp);
+    await beforeNavigation?.(page);
     await page.goto(expectedUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     await page.waitForFunction(
       (expected, selector) => (
@@ -77,6 +134,44 @@ export async function openExtensionPage(browser, extensionId, pagePath = '/src/o
   }
 }
 
+export async function openHttpFixturePage(browser, url, label = 'http-fixture-page', {
+  timeoutMs = 30_000,
+  readyTimeoutMs = 10_000,
+  rootSelector = 'main',
+  failClosedHttp,
+} = {}) {
+  if (!browser || typeof browser.newPage !== 'function') {
+    throw new TypeError('browser must create Puppeteer pages.');
+  }
+  const expectedUrl = String(url);
+  if (!isHttpUrl(expectedUrl)) throw new TypeError('HTTP fixture page URL must use HTTP(S).');
+  const safeLabel = boundedLabel(label, 'http-fixture-page');
+  assertPositiveTimeout(timeoutMs, 'timeoutMs');
+  assertPositiveTimeout(readyTimeoutMs, 'readyTimeoutMs');
+
+  const page = await browser.newPage();
+  let pageHttpPolicy = null;
+  try {
+    pageHttpPolicy = await installFailClosedPageHttpPolicy(page, failClosedHttp, { expectedDocumentUrl: expectedUrl });
+    await page.goto(expectedUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    await page.waitForFunction(
+      (expected, selector) => (
+        location.href === expected
+        && document.readyState !== 'loading'
+        && (!selector || document.querySelector(selector) !== null)
+      ),
+      { polling: DEFAULT_POLL_MS, timeout: readyTimeoutMs },
+      expectedUrl,
+      rootSelector,
+    );
+    return page;
+  } catch {
+    await pageHttpPolicy?.close();
+    await page.close().catch(() => {});
+    throw new Error(`Packaged HTTP fixture page ${safeLabel} did not become ready before its timeout.`);
+  }
+}
+
 /** Collect bounded semantic page failures without retaining page error text. */
 export function hookPageDiagnostics(page, label = 'extension-page', { issues = [] } = {}) {
   if (!page || typeof page.on !== 'function') throw new TypeError('page must expose event listeners.');
@@ -93,10 +188,21 @@ export function hookPageDiagnostics(page, label = 'extension-page', { issues = [
     if (message.type?.() === 'error') record('console-error');
   };
   const onPageError = () => record('page-error');
-  const onRequestFailed = (request) => record(
-    'request-failed',
-    `${normalizeMethod(request.method?.())} ${classifySafeHttpRoute(request.url?.())}`,
-  );
+  const onRequestFailed = (request) => {
+    const rawUrl = request.url?.() ?? '';
+    const method = normalizeMethod(request.method?.());
+    const failure = request.failure?.()?.errorText ?? '';
+    if (request.isNavigationRequest?.() === true && /ERR_ABORTED/u.test(failure)) return;
+    if (/^(?:data|blob|about):/iu.test(rawUrl)) return;
+    if (/^chrome-extension:\/\//iu.test(rawUrl)) {
+      record('request-failed', `${method} extension-resource`);
+      return;
+    }
+    record(
+      'request-failed',
+      `${method} ${isHttpUrl(rawUrl) ? classifySafeHttpRoute(rawUrl) : 'non-http-resource'}`,
+    );
+  };
   page.on('console', onConsole);
   page.on('pageerror', onPageError);
   page.on('requestfailed', onRequestFailed);
@@ -115,7 +221,7 @@ export function hookPageDiagnostics(page, label = 'extension-page', { issues = [
   });
 }
 
-async function installFailClosedPageHttpPolicy(page, input) {
+async function installFailClosedPageHttpPolicy(page, input, { expectedDocumentUrl = null } = {}) {
   if (input === null || input === undefined) return null;
   if (!input || typeof input !== 'object' || !Array.isArray(input.unexpectedRequests)) {
     throw new TypeError('failClosedHttp must provide an unexpectedRequests array.');
@@ -126,6 +232,7 @@ async function installFailClosedPageHttpPolicy(page, input) {
   input.expectedRequests ??= [];
   input.overflow = input.overflow === true;
   input.interceptionFailure = input.interceptionFailure === true;
+  input.closed = false;
   const fixtureHandler = typeof input.handler === 'function' ? input.handler : null;
   const pending = new Set();
   let active = true;
@@ -152,9 +259,12 @@ async function installFailClosedPageHttpPolicy(page, input) {
       route: classifySafeHttpRoute(rawUrl),
       resourceType: normalizePageResourceType(request.resourceType?.()),
     });
+    const unexpectedDocument = descriptor.resourceType === 'document'
+      && expectedDocumentUrl !== null
+      && rawUrl !== expectedDocumentUrl;
     track(async () => {
       try {
-        const outcome = fixtureHandler ? await fixtureHandler(descriptor) : null;
+        const outcome = unexpectedDocument ? null : fixtureHandler ? await fixtureHandler(descriptor) : null;
         if (!outcome) {
           appendRecord(input.unexpectedRequests, descriptor);
           await request.abort('failed');
@@ -177,7 +287,12 @@ async function installFailClosedPageHttpPolicy(page, input) {
     if (typeof page.off === 'function') page.off('request', onRequest);
     else page.removeListener?.('request', onRequest);
     await Promise.allSettled([...pending]);
-    await page.setRequestInterception(false);
+    if (!page.isClosed?.()) {
+      await page.setRequestInterception(false).catch((error) => {
+        if (!page.isClosed?.()) throw error;
+      });
+    }
+    input.closed = true;
   };
   return input;
 }

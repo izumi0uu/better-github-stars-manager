@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
 import {
@@ -9,12 +10,18 @@ import {
   attachBgsmAgentTurnPort,
   createBgsmAgentTurnRegistry,
 } from '@/background/bgsm-agent-turn-port';
+import { createAgentAttemptCoordinator } from '@/background/agent-attempt-coordinator';
 import type {
   BgsmAgentTurnAckDisposition,
   BgsmAgentTurnLaunch,
   BgsmAgentTurnResult,
 } from '@/bgsm-agent/turn-protocol';
 import { AGENT_CONTEXT_CAPABILITY_REQUIRED } from '@/api/errors';
+import {
+  createAgentSession,
+  releaseAgentSessionTurnLease,
+} from '@/storage/agent-session-store';
+import { db } from '@/storage/db';
 
 type Listener<T> = (value: T) => void;
 
@@ -107,6 +114,350 @@ function fakePort() {
 }
 
 describe('Cubby turn Port ownership', () => {
+  it('restores one coordinator-approved runner across concurrent inspection subscribers', () => {
+    let runCount = 0;
+    const registry = createBgsmAgentTurnRegistry({
+      executionEpochId: 'worker-restored',
+      translateError: async () => 'failed',
+      runTurn: async () => {
+        runCount += 1;
+        return new Promise<BgsmAgentTurnResult>(() => {});
+      },
+    });
+    const launch: BgsmAgentTurnLaunch = {
+      turnAttemptId: 'turn-attempt-restored',
+      sessionId: 'session-restored',
+      baseRevision: 3,
+      prompt: 'Continue the approved read-only attempt.',
+      candidateContract: {
+        kind: 'selected_repository',
+        selectedRepositoryIdHint: 'owner/repo',
+      },
+    };
+
+    const reservation = registry.reserveRecovery(launch.sessionId);
+    const firstRestore = registry.restoreApprovedTurn(launch, reservation);
+    const secondRestore = registry.restoreApprovedTurn(structuredClone(launch), reservation);
+    registry.releaseRecovery(reservation);
+    const firstSubscriber = fakePort();
+    const secondSubscriber = fakePort();
+    registry.attach(firstSubscriber.port);
+    registry.attach(secondSubscriber.port);
+    firstSubscriber.start(firstRestore.launch, { resumeOnly: true });
+    secondSubscriber.start(secondRestore.launch, { resumeOnly: true });
+
+    assert.equal(firstRestore.executionEpochId, 'worker-restored');
+    assert.equal(runCount, 1);
+    assert.deepEqual(firstRestore, secondRestore);
+    assert.deepEqual(
+      messagesOfType(firstSubscriber.posted, 'bgsmAgentTurnEvent').map((message) => message.event.type),
+      ['agent_queued'],
+    );
+    assert.deepEqual(
+      messagesOfType(secondSubscriber.posted, 'bgsmAgentTurnEvent').map((message) => message.event.type),
+      ['agent_queued'],
+    );
+  });
+
+  it('fences an asynchronously rejected restored runner before admitting fresh authority', async () => {
+    const restoredLaunch: BgsmAgentTurnLaunch = {
+      turnAttemptId: 'turn-restored-async-failure',
+      sessionId: 'session-restored-async-failure',
+      baseRevision: 2,
+      prompt: 'Resume the claimed read-only turn.',
+    };
+    let durableState: 'running' | 'state_uncertain' = 'running';
+    let restoredRunCount = 0;
+    let freshRunCount = 0;
+    let providerCallCount = 0;
+    let fenceCount = 0;
+    const registry = createBgsmAgentTurnRegistry({
+      executionEpochId: 'worker-restored-async-failure',
+      translateError: async () => 'The previous turn could not be resumed safely.',
+      async fenceRestoredTurnFailure(input) {
+        assert.deepEqual(input, restoredLaunch);
+        assert.equal(durableState, 'running');
+        fenceCount += 1;
+        await Promise.resolve();
+        durableState = 'state_uncertain';
+        return true;
+      },
+      releaseTurnLease() {
+        return durableState !== 'running';
+      },
+      async runTurn(input) {
+        if (input.turnAttemptId === restoredLaunch.turnAttemptId) {
+          restoredRunCount += 1;
+          await Promise.resolve();
+          throw new Error('Injected pre-admission recovery failure.');
+        }
+        freshRunCount += 1;
+        if (durableState === 'state_uncertain') {
+          throw Object.assign(new Error('The durable turn is still active.'), {
+            code: 'agent_session_turn_active',
+          });
+        }
+        providerCallCount += 1;
+        return {
+          turnAttemptId: input.turnAttemptId,
+          sessionId: input.sessionId,
+          baseRevision: input.baseRevision,
+          reason: 'final_answer',
+          changed: false,
+          changedCount: 0,
+          commit: null,
+        };
+      },
+    });
+
+    const reservation = registry.reserveRecovery(restoredLaunch.sessionId);
+    registry.restoreApprovedTurn(restoredLaunch, reservation);
+    registry.releaseRecovery(reservation);
+    const restored = fakePort();
+    registry.attach(restored.port);
+    restored.start(restoredLaunch, { resumeOnly: true });
+    await waitUntil(() => messagesOfType(restored.posted, 'bgsmAgentTurnError').length === 1);
+
+    assert.equal(fenceCount, 1);
+    assert.equal(restoredRunCount, 1);
+    assert.equal(providerCallCount, 0);
+    assert.equal(durableState, 'state_uncertain');
+    assert.equal(
+      messagesOfType(restored.posted, 'bgsmAgentTurnError')[0]!.error.code,
+      'agent_attempt_state_lost',
+    );
+    restored.acknowledge({ ...restoredLaunch, history: [] });
+    await waitUntil(() => registry.inspectActiveTurn(restoredLaunch.sessionId) === null);
+
+    const fresh = fakePort();
+    registry.attach(fresh.port);
+    fresh.start({
+      ...restoredLaunch,
+      turnAttemptId: 'turn-fresh-after-async-failure',
+      prompt: 'Do not bypass uncertain authority.',
+    });
+    await waitUntil(() => messagesOfType(fresh.posted, 'bgsmAgentTurnError').length === 1);
+
+    assert.equal(freshRunCount, 1);
+    assert.equal(restoredRunCount, 1);
+    assert.equal(providerCallCount, 0);
+    assert.equal(fenceCount, 1);
+    assert.equal(
+      messagesOfType(fresh.posted, 'bgsmAgentTurnError')[0]!.error.code,
+      'agent_session_turn_active',
+    );
+  });
+
+  it('blocks competing starts during recovery and rejects conflicting or tombstoned restores', async () => {
+    let runCount = 0;
+    const registry = createBgsmAgentTurnRegistry({
+      executionEpochId: 'worker-recovery-guard',
+      translateError: async () => 'failed',
+      runTurn: async (input) => {
+        runCount += 1;
+        return {
+          turnAttemptId: input.turnAttemptId,
+          sessionId: input.sessionId,
+          baseRevision: input.baseRevision,
+          reason: 'final_answer',
+          changed: false,
+          changedCount: 0,
+          commit: null,
+        };
+      },
+    });
+    const launch: BgsmAgentTurnLaunch = {
+      turnAttemptId: 'turn-recovery-guard',
+      sessionId: 'session-recovery-guard',
+      baseRevision: 0,
+      prompt: 'Restore only approved work.',
+    };
+    const reservation = registry.reserveRecovery(launch.sessionId);
+    const competitor = fakePort();
+    registry.attach(competitor.port);
+    competitor.start({ ...launch, turnAttemptId: 'turn-competing' });
+    assert.equal(runCount, 0);
+    assert.equal(
+      messagesOfType(competitor.posted, 'bgsmAgentTurnError')[0]?.error.code,
+      'agent_session_turn_active',
+    );
+
+    registry.restoreApprovedTurn(launch, reservation);
+    assert.throws(
+      () => registry.restoreApprovedTurn({ ...launch, turnAttemptId: 'turn-conflicting' }, reservation),
+      /different Agent turn/i,
+    );
+    registry.releaseRecovery(reservation);
+    const subscriber = fakePort();
+    registry.attach(subscriber.port);
+    subscriber.start(launch, { resumeOnly: true });
+    await waitUntil(() => messagesOfType(subscriber.posted, 'bgsmAgentTurnResult').length === 1);
+    subscriber.acknowledge({ ...launch, history: [] });
+    await waitUntil(() => registry.inspectActiveTurn(launch.sessionId) === null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const tombstoneReservation = registry.reserveRecovery(launch.sessionId);
+    assert.throws(
+      () => registry.restoreApprovedTurn(launch, tombstoneReservation),
+      /already finalized/i,
+    );
+    registry.releaseRecovery(tombstoneReservation);
+    assert.equal(runCount, 1);
+  });
+
+  it('rejects a different launch against one active session with the typed conflict', () => {
+    let runCount = 0;
+    const registry = createBgsmAgentTurnRegistry({
+      executionEpochId: 'worker-active-conflict',
+      translateError: async () => 'failed',
+      async runTurn() {
+        runCount += 1;
+        return new Promise<BgsmAgentTurnResult>(() => {});
+      },
+    });
+    const active: BgsmAgentTurnLaunch = {
+      turnAttemptId: 'turn-active-conflict',
+      sessionId: 'session-active-conflict',
+      baseRevision: 0,
+      prompt: 'Keep this launch active.',
+    };
+    const owner = fakePort();
+    registry.attach(owner.port);
+    owner.start(active);
+    const competitor = fakePort();
+    registry.attach(competitor.port);
+    competitor.start({
+      ...active,
+      turnAttemptId: 'turn-active-conflict-competitor',
+      prompt: 'Do not replace the active launch.',
+    });
+
+    assert.equal(runCount, 1);
+    assert.equal(
+      messagesOfType(competitor.posted, 'bgsmAgentTurnError')[0]?.error.code,
+      'agent_session_turn_active',
+    );
+    assert.equal(messagesOfType(competitor.posted, 'bgsmAgentTurnResult').length, 0);
+  });
+
+  it('rejects a different launch immediately while the admitted winner Provider is held', async () => {
+    await db.delete();
+    await db.open();
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    try {
+      const created = await createAgentSession({ idFactory: () => 'session-admitted-held-winner' });
+      const executionEpochId = 'worker-admitted-held-winner';
+      const coordinator = createAgentAttemptCoordinator(executionEpochId);
+      let runnerCount = 0;
+      let providerCallCount = 0;
+      const registry = createBgsmAgentTurnRegistry({
+        executionEpochId,
+        translateError: async (error) => error instanceof Error ? error.message : 'failed',
+        releaseTurnLease: (input) => coordinator.release(input),
+        async runTurn(input, options) {
+          runnerCount += 1;
+          const { admission, launchDigest } = await coordinator.admit(
+            input,
+            'write_capable_or_unknown',
+          );
+          assert.equal(admission.kind, 'acquired');
+          options.onDurableLeaseAcquired();
+          providerCallCount += 1;
+          await providerGate;
+          await coordinator.settleWithoutTransition({
+            turnAttemptId: input.turnAttemptId,
+            sessionId: input.sessionId,
+            launchDigest,
+            outcome: {
+              reason: 'aborted',
+              changed: false,
+              changedCount: 0,
+              writeSettlement: 'none',
+            },
+          });
+          return {
+            turnAttemptId: input.turnAttemptId,
+            sessionId: input.sessionId,
+            baseRevision: input.baseRevision,
+            reason: 'aborted',
+            changed: false,
+            changedCount: 0,
+            commit: null,
+          };
+        },
+      });
+      const winner: BgsmAgentTurnLaunch = {
+        turnAttemptId: 'turn-admitted-held-winner',
+        sessionId: created.session.id,
+        baseRevision: created.session.revision,
+        prompt: 'Hold the admitted winner at the Provider boundary.',
+        candidateContract: {
+          kind: 'selected_repository',
+          selectedRepositoryIdHint: 'owner/repo',
+        },
+      };
+      const owner = fakePort();
+      registry.attach(owner.port);
+      owner.start(winner);
+      await waitUntil(() => (
+        providerCallCount === 1
+        || messagesOfType(owner.posted, 'bgsmAgentTurnError').length === 1
+      ));
+      assert.deepEqual(messagesOfType(owner.posted, 'bgsmAgentTurnError'), []);
+      const durableWinner = await db.agentAttempts
+        .where('[sessionId+turnAttemptId]')
+        .equals([winner.sessionId, winner.turnAttemptId])
+        .first();
+      assert.equal(durableWinner?.state, 'running');
+
+      const competitor = fakePort();
+      registry.attach(competitor.port);
+      competitor.start({
+        ...winner,
+        turnAttemptId: 'turn-admitted-held-competitor',
+        prompt: 'Reject this distinct launch without waiting for the winner.',
+      });
+
+      const conflict = messagesOfType(competitor.posted, 'bgsmAgentTurnError');
+      assert.equal(conflict.length, 1);
+      assert.deepEqual(conflict[0]!.error, {
+        turnAttemptId: 'turn-admitted-held-competitor',
+        sessionId: winner.sessionId,
+        baseRevision: winner.baseRevision,
+        message: 'Another Cubby turn is already active for this conversation.',
+        category: 'other',
+        code: 'agent_session_turn_active',
+      });
+      assert.equal(runnerCount, 1);
+      assert.equal(providerCallCount, 1);
+      assert.equal(await db.agentAttempts.count(), 1);
+      assert.equal(messagesOfType(owner.posted, 'bgsmAgentTurnError').length, 0);
+
+      const subscriber = fakePort();
+      registry.attach(subscriber.port);
+      subscriber.start(winner, { resumeOnly: true });
+      assert.deepEqual(
+        messagesOfType(subscriber.posted, 'bgsmAgentTurnEvent').map((message) => message.event.type),
+        ['agent_queued'],
+      );
+      assert.equal(runnerCount, 1);
+      assert.equal(providerCallCount, 1);
+
+      releaseProvider();
+      await waitUntil(() => messagesOfType(owner.posted, 'bgsmAgentTurnResult').length === 1);
+      owner.acknowledge({ ...winner, history: [] });
+      owner.port.disconnect();
+      subscriber.port.disconnect();
+      competitor.port.disconnect();
+    } finally {
+      releaseProvider();
+      await db.delete();
+    }
+  });
+
   it('reattaches a resume-only launch without starting a second runner', () => {
     let runCount = 0;
     const registry = createBgsmAgentTurnRegistry({
@@ -151,8 +502,8 @@ describe('Cubby turn Port ownership', () => {
 
     assert.equal(runCount, 1);
     assert.equal(
-      messagesOfType(stale.posted, 'bgsmAgentTurnResult')[0]?.result.reason,
-      'attempt_state_lost',
+      messagesOfType(stale.posted, 'bgsmAgentTurnError')[0]?.error.code,
+      'agent_session_turn_active',
     );
   });
 
@@ -202,8 +553,8 @@ describe('Cubby turn Port ownership', () => {
 
     assert.equal(runCount, 1);
     assert.equal(
-      messagesOfType(resumed.posted, 'bgsmAgentTurnResult')[0]?.result.reason,
-      'attempt_state_lost',
+      messagesOfType(resumed.posted, 'bgsmAgentTurnError')[0]?.error.code,
+      'agent_session_turn_active',
     );
   });
 
@@ -223,7 +574,8 @@ describe('Cubby turn Port ownership', () => {
         releaseCount += 1;
         return input.turnAttemptId === oldAttemptId ? oldLease : undefined;
       },
-      async runTurn(input) {
+      async runTurn(input, options) {
+        options.onDurableLeaseAcquired();
         if (input.turnAttemptId === oldAttemptId) {
           return {
             turnAttemptId: input.turnAttemptId,
@@ -287,6 +639,78 @@ describe('Cubby turn Port ownership', () => {
     assert.equal(messagesOfType(second.posted, 'bgsmAgentTurnError').length, 0);
   });
 
+  it('rejects admission when recovery reserves the session during awaited lease cleanup', async () => {
+    let releaseOldLease!: () => void;
+    const oldLease = new Promise<void>((resolve) => {
+      releaseOldLease = resolve;
+    });
+    let releaseCount = 0;
+    let newRunCount = 0;
+    const oldAttemptId = 'turn-attempt-recovery-fence-old';
+    const registry = createBgsmAgentTurnRegistry({
+      executionEpochId: 'worker-recovery-fence',
+      terminalAttemptAckGraceMs: 60_000,
+      translateError: async () => 'failed',
+      releaseTurnLease(input) {
+        releaseCount += 1;
+        return input.turnAttemptId === oldAttemptId ? oldLease : undefined;
+      },
+      async runTurn(input, options) {
+        options.onDurableLeaseAcquired();
+        if (input.turnAttemptId === oldAttemptId) {
+          return {
+            turnAttemptId: input.turnAttemptId,
+            sessionId: input.sessionId,
+            baseRevision: input.baseRevision,
+            reason: 'final_answer',
+            changed: false,
+            changedCount: 0,
+            commit: null,
+          };
+        }
+        newRunCount += 1;
+        return new Promise<BgsmAgentTurnResult>(() => {});
+      },
+    });
+    const oldInput: BgsmAgentTurnInput = {
+      turnAttemptId: oldAttemptId,
+      sessionId: 'session-recovery-fence',
+      baseRevision: 0,
+      prompt: 'Finish before recovery begins',
+      history: [],
+    };
+    const oldTransport = fakePort();
+    registry.attach(oldTransport.port);
+    oldTransport.start(oldInput);
+    await waitUntil(() => messagesOfType(oldTransport.posted, 'bgsmAgentTurnResult').length === 1);
+    oldTransport.port.disconnect();
+
+    const nextInput: BgsmAgentTurnInput = {
+      turnAttemptId: 'turn-attempt-recovery-fence-next',
+      sessionId: oldInput.sessionId,
+      baseRevision: 1,
+      prompt: 'Must not race the replacement recovery',
+      history: [],
+    };
+    const next = fakePort();
+    registry.attach(next.port);
+    next.start(nextInput);
+    await waitUntil(() => releaseCount === 1);
+    assert.equal(newRunCount, 0);
+
+    const reservation = registry.reserveRecovery(nextInput.sessionId);
+    releaseOldLease();
+    await waitUntil(() => messagesOfType(next.posted, 'bgsmAgentTurnError').length === 1);
+
+    assert.equal(newRunCount, 0);
+    assert.equal(
+      messagesOfType(next.posted, 'bgsmAgentTurnError')[0]!.error.code,
+      'agent_session_turn_active',
+    );
+    assert.equal(registry.inspectActiveTurn(nextInput.sessionId), null);
+    registry.releaseRecovery(reservation);
+  });
+
   it('aborts a pending admission without starting its runner while terminal lease cleanup is blocked', async () => {
     let releaseOldLease!: () => void;
     const oldLease = new Promise<void>((resolve) => {
@@ -303,7 +727,8 @@ describe('Cubby turn Port ownership', () => {
         releaseCount += 1;
         return input.turnAttemptId === oldAttemptId ? oldLease : undefined;
       },
-      async runTurn(input) {
+      async runTurn(input, options) {
+        options.onDurableLeaseAcquired();
         if (input.turnAttemptId === oldAttemptId) {
           return {
             turnAttemptId: input.turnAttemptId,
@@ -382,6 +807,110 @@ describe('Cubby turn Port ownership', () => {
     assert.equal(registry.inspectActiveTurn(nextInput.sessionId), null);
   });
 
+  it('drops a stopped pre-admission attempt without weakening production lease release', async () => {
+    await db.delete();
+    await db.open();
+    try {
+      const created = await createAgentSession({ idFactory: () => 'session-stop-before-admission' });
+      const oldAttemptId = 'turn-stop-before-admission-old';
+      const stoppedAttemptId = 'turn-stop-before-admission-stopped';
+      let finishOldRelease!: () => void;
+      const oldReleaseGate = new Promise<void>((resolve) => {
+        finishOldRelease = resolve;
+      });
+      let oldReleaseCount = 0;
+      const productionReleaseCalls: string[] = [];
+      let runCount = 0;
+      const registry = createBgsmAgentTurnRegistry({
+        executionEpochId: 'worker-stop-before-admission',
+        terminalAttemptAckGraceMs: 60_000,
+        translateError: async () => 'failed',
+        releaseTurnLease(input) {
+          if (input.turnAttemptId === oldAttemptId) {
+            oldReleaseCount += 1;
+            return oldReleaseGate;
+          }
+          productionReleaseCalls.push(input.turnAttemptId);
+          return releaseAgentSessionTurnLease(input);
+        },
+        async runTurn(input, options) {
+          runCount += 1;
+          if (input.turnAttemptId === oldAttemptId) {
+            options.onDurableLeaseAcquired();
+          }
+          return {
+            turnAttemptId: input.turnAttemptId,
+            sessionId: input.sessionId,
+            baseRevision: input.baseRevision,
+            reason: 'final_answer',
+            changed: false,
+            changedCount: 0,
+            commit: null,
+          };
+        },
+      });
+      const oldInput: BgsmAgentTurnInput = {
+        turnAttemptId: oldAttemptId,
+        sessionId: created.session.id,
+        baseRevision: 0,
+        prompt: 'Finish the old delivery before admitting another turn.',
+        history: [],
+      };
+      const old = fakePort();
+      registry.attach(old.port);
+      old.start(oldInput);
+      await waitUntil(() => messagesOfType(old.posted, 'bgsmAgentTurnResult').length === 1);
+      old.port.disconnect();
+
+      const stoppedInput: BgsmAgentTurnInput = {
+        turnAttemptId: stoppedAttemptId,
+        sessionId: created.session.id,
+        baseRevision: 0,
+        prompt: 'Stop before durable admission.',
+        history: [],
+      };
+      const stopped = fakePort();
+      registry.attach(stopped.port);
+      stopped.start(stoppedInput);
+      await waitUntil(() => oldReleaseCount === 1);
+      stopped.deliver({
+        type: 'stopBgsmAgentTurn',
+        executionEpochId: registry.executionEpochId,
+        turnAttemptId: stoppedInput.turnAttemptId,
+        sessionId: stoppedInput.sessionId,
+        baseRevision: stoppedInput.baseRevision,
+      });
+      assert.equal(runCount, 1);
+
+      finishOldRelease();
+      await waitUntil(() => messagesOfType(stopped.posted, 'bgsmAgentTurnResult').length === 1);
+      assert.equal(messagesOfType(stopped.posted, 'bgsmAgentTurnResult')[0]!.result.reason, 'aborted');
+      assert.equal(await db.agentAttempts.count(), 0);
+      assert.equal(await releaseAgentSessionTurnLease({
+        sessionId: stoppedInput.sessionId,
+        turnAttemptId: stoppedInput.turnAttemptId,
+        executionEpochId: registry.executionEpochId,
+      }), false);
+
+      stopped.acknowledge(stoppedInput);
+      await waitUntil(() => registry.inspectActiveTurn(stoppedInput.sessionId) === null);
+
+      const fresh = fakePort();
+      registry.attach(fresh.port);
+      fresh.start({
+        ...stoppedInput,
+        turnAttemptId: 'turn-stop-before-admission-fresh',
+        prompt: 'Start after the synthetic stop is finalized.',
+      });
+      await waitUntil(() => messagesOfType(fresh.posted, 'bgsmAgentTurnResult').length === 1);
+      assert.equal(runCount, 2);
+      assert.equal(messagesOfType(fresh.posted, 'bgsmAgentTurnError').length, 0);
+      assert.deepEqual(productionReleaseCalls, []);
+    } finally {
+      await db.delete();
+    }
+  });
+
   it('rejects the conflicting concurrent attempt-ID peer after terminal lease cleanup', async () => {
     let releaseOldLease!: () => void;
     const oldLease = new Promise<void>((resolve) => {
@@ -398,7 +927,8 @@ describe('Cubby turn Port ownership', () => {
         releaseCount += 1;
         return input.turnAttemptId === oldAttemptId ? oldLease : undefined;
       },
-      async runTurn(input) {
+      async runTurn(input, options) {
+        options.onDurableLeaseAcquired();
         if (input.turnAttemptId === oldAttemptId) {
           return {
             turnAttemptId: input.turnAttemptId,
@@ -463,6 +993,10 @@ describe('Cubby turn Port ownership', () => {
       messagesOfType(conflicting.posted, 'bgsmAgentTurnError')[0]!.error.message,
       /reused with conflicting launch data/,
     );
+    assert.equal(
+      messagesOfType(conflicting.posted, 'bgsmAgentTurnError')[0]!.error.code,
+      'agent_session_attempt_conflict',
+    );
     assert.equal(messagesOfType(conflicting.posted, 'bgsmAgentTurnEvent').length, 0);
   });
 
@@ -471,7 +1005,8 @@ describe('Cubby turn Port ownership', () => {
       executionEpochId: 'worker-inspection',
       translateError: async () => 'failed',
       releaseTurnLease: () => new Promise(() => {}),
-      async runTurn(input) {
+      async runTurn(input, options) {
+        options.onDurableLeaseAcquired();
         return {
           turnAttemptId: input.turnAttemptId,
           sessionId: input.sessionId,
@@ -531,7 +1066,8 @@ describe('Cubby turn Port ownership', () => {
         if (releaseCount === 1) throw new Error('lease release failed');
         return new Promise(() => {});
       },
-      async runTurn(input) {
+      async runTurn(input, options) {
+        options.onDurableLeaseAcquired();
         return {
           turnAttemptId: input.turnAttemptId,
           sessionId: input.sessionId,
@@ -560,6 +1096,62 @@ describe('Cubby turn Port ownership', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(registry.inspectActiveTurn(input.sessionId), null);
+  });
+
+  it('retains acquired terminal authority when durable release reports a live lease', async () => {
+    let runCount = 0;
+    let releaseCount = 0;
+    const registry = createBgsmAgentTurnRegistry({
+      executionEpochId: 'worker-live-lease-release',
+      terminalAttemptAckGraceMs: 60_000,
+      translateError: async () => 'failed',
+      releaseTurnLease() {
+        releaseCount += 1;
+        return false;
+      },
+      async runTurn(input, options) {
+        runCount += 1;
+        options.onDurableLeaseAcquired();
+        return {
+          turnAttemptId: input.turnAttemptId,
+          sessionId: input.sessionId,
+          baseRevision: input.baseRevision,
+          reason: 'final_answer',
+          changed: false,
+          changedCount: 0,
+          commit: null,
+        };
+      },
+    });
+    const input: BgsmAgentTurnInput = {
+      turnAttemptId: 'turn-live-lease-release',
+      sessionId: 'session-live-lease-release',
+      baseRevision: 0,
+      prompt: 'Do not drop unsettled durable authority.',
+      history: [],
+    };
+    const transport = fakePort();
+    registry.attach(transport.port);
+    transport.start(input);
+    await waitUntil(() => messagesOfType(transport.posted, 'bgsmAgentTurnResult').length === 1);
+    transport.acknowledge(input);
+    await waitUntil(() => releaseCount === 1);
+
+    const competitor = fakePort();
+    registry.attach(competitor.port);
+    competitor.start({
+      ...input,
+      turnAttemptId: 'turn-live-lease-release-competitor',
+      prompt: 'This launch must remain blocked.',
+    });
+    await waitUntil(() => messagesOfType(competitor.posted, 'bgsmAgentTurnError').length === 1);
+
+    assert.equal(runCount, 1);
+    assert.equal(releaseCount >= 2, true);
+    assert.equal(
+      messagesOfType(competitor.posted, 'bgsmAgentTurnError')[0]!.error.code,
+      'agent_session_turn_active',
+    );
   });
 
   it('rejects malformed start envelopes instead of repairing them', () => {

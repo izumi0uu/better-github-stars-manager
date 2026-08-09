@@ -185,7 +185,7 @@ import {
 } from "./organize-analysis-runner";
 import { attachBgsmAgentTurnPort } from "./bgsm-agent-turn-port";
 import {
-  isBgsmAgentSessionRequest,
+  parseBgsmAgentSessionRequest,
   type BgsmAgentSessionRequest,
 } from './bgsm-agent-session-rpc';
 import { createBgsmAgentRuntime } from './bgsm-agent-runtime';
@@ -1329,9 +1329,10 @@ async function describeSafeAgentProviderConnectionFailure(error: unknown) {
 }
 
 async function handle(req: Req): Promise<Res> {
+  const agentSessionRequest = parseBgsmAgentSessionRequest(req);
   try {
-    if (isBgsmAgentSessionRequest(req)) {
-      return { ok: true, data: await bgsmAgentRuntime.sessionRpc.handle(req) };
+    if (agentSessionRequest) {
+      return { ok: true, data: await bgsmAgentRuntime.sessionRpc.handle(agentSessionRequest) };
     }
     switch (req.type) {
       case "syncIncremental": {
@@ -1706,7 +1707,7 @@ async function handle(req: Req): Promise<Res> {
   } catch (e) {
     const msg = translateError(e, await getLocaleMessages());
     const agentSessionFailure = bgsmAgentRuntime.sessionRpc.describeFailure(e);
-    if (!isBgsmAgentSessionRequest(req)) {
+    if (!agentSessionRequest) {
       setProgress({ phase: "idle", done: 0, total: null, message: `${msg}` });
     }
     return {
@@ -3172,7 +3173,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 /**
- * Connection self-check on SW wake (30s throttle to avoid wake-spam).
+ * Development-only connection self-check (30s throttle to avoid wake-spam).
  */
 let lastSelfCheck = 0;
 async function selfCheck() {
@@ -3201,13 +3202,8 @@ async function selfCheck() {
         cache: "no-store",
       },
     );
-    const body = res.status === 200 ? await res.json() : null;
-    const sample =
-      Array.isArray(body) && body[0]?.repo?.full_name
-        ? body[0].repo.full_name
-        : null;
     console.log(
-      `[GSM] connection: HTTP ${res.status} | rate ${res.headers.get("x-ratelimit-remaining")}/${res.headers.get("x-ratelimit-limit")} | DB stars: ${starCount} | sample: ${sample ?? "—"}`,
+      `[GSM] connection: HTTP ${res.status} | rate ${res.headers.get("x-ratelimit-remaining")}/${res.headers.get("x-ratelimit-limit")} | DB stars: ${starCount}`,
     );
   } catch (e) {
     console.log(
@@ -3218,7 +3214,9 @@ async function selfCheck() {
     );
   }
 }
-selfCheck();
+if (DEV) {
+  void selfCheck();
+}
 void backfillConfig.reconcileStoredBackfills().catch(() => {});
 void run(migrateLanguageTags);
 void authStore

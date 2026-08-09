@@ -7,6 +7,7 @@ import {
   type AgentEvent,
 } from '@/agent-harness';
 import {
+  AGENT_ATTEMPT_STATE_LOST_ERROR_CODE,
   normalizeAgentTurnErrorCode,
   parseBgsmAgentTurnClientMessage,
   parseBgsmAgentTurnServerMessage,
@@ -60,6 +61,8 @@ type AgentTurnAttempt = {
   cleanupTimer: ReturnType<typeof setTimeout> | null;
   finalization: Promise<boolean> | null;
   acknowledgementRecorded: boolean;
+  resumeExisting: boolean;
+  durableLeaseAuthorityAcquired: boolean;
   trace?: AgentTurnTrace;
   contentCapture?: AgentContentCaptureSink;
 };
@@ -76,9 +79,20 @@ type AgentTurnPortTraceState = {
   disconnected: boolean;
 };
 
+export type BgsmAgentRecoveryReservation = Readonly<{
+  sessionId: string;
+  token: symbol;
+}>;
+
 export type BgsmAgentTurnRegistry = Readonly<{
   executionEpochId: string;
   inspectActiveTurn(sessionId: string): BgsmAgentActiveTurn | null;
+  reserveRecovery(sessionId: string): BgsmAgentRecoveryReservation;
+  restoreApprovedTurn(
+    launch: BgsmAgentTurnLaunch,
+    reservation: BgsmAgentRecoveryReservation,
+  ): BgsmAgentActiveTurn;
+  releaseRecovery(reservation: BgsmAgentRecoveryReservation): void;
   attach(port: AgentTurnPort): void;
 }>;
 
@@ -87,6 +101,7 @@ export type BgsmAgentTurnRunner = (
   options: Readonly<{
     signal: AbortSignal;
     emit(event: AgentEvent): void;
+    onDurableLeaseAcquired(): void;
     bind(binding: BgsmAgentConversationBinding): void;
     trace?: AgentExecutionTraceSink;
     contentCapture?: AgentContentCaptureSink;
@@ -107,7 +122,8 @@ export function createBgsmAgentTurnRegistry(
       sessionId: string;
       turnAttemptId: string;
       executionEpochId: string;
-    }>) => Promise<unknown> | unknown;
+    }>) => Promise<boolean | void> | boolean | void;
+    fenceRestoredTurnFailure?: (input: BgsmAgentTurnLaunch) => Promise<boolean>;
     contentCaptureFactory?: (input: Readonly<{
       rootOperationId: string;
       sessionId: string;
@@ -124,6 +140,7 @@ export function createBgsmAgentTurnRegistry(
     ?? `bgsm_worker_${createId()}`;
   const attempts = new Map<string, AgentTurnAttempt>();
   const activeAttemptBySession = new Map<string, string>();
+  const recoveryReservations = new Map<string, symbol>();
   const tombstones = new Map<string, true>();
   const acknowledgedTraceByAttempt = new Map<string, AgentTurnTrace>();
   const highestCompletedBaseRevision = new Map<string, number>();
@@ -149,13 +166,18 @@ export function createBgsmAgentTurnRegistry(
       clearTimeout(attempt.cleanupTimer);
       attempt.cleanupTimer = null;
     }
+    // Stop can settle a waiter before runTurn reaches durable admission. Only
+    // acquired authority may consult the fail-closed durable release contract.
     const finalization = Promise.resolve()
-      .then(() => dependencies.releaseTurnLease?.({
-        sessionId: attempt.input.sessionId,
-        turnAttemptId: attempt.input.turnAttemptId,
-        executionEpochId,
-      }))
-      .then(() => {
+      .then(() => attempt.durableLeaseAuthorityAcquired
+        ? dependencies.releaseTurnLease?.({
+            sessionId: attempt.input.sessionId,
+            turnAttemptId: attempt.input.turnAttemptId,
+            executionEpochId,
+          })
+        : true)
+      .then((released) => {
+        if (released === false) return false;
         if (attempts.get(attempt.input.turnAttemptId) === attempt) {
           attempts.delete(attempt.input.turnAttemptId);
         }
@@ -345,8 +367,11 @@ export function createBgsmAgentTurnRegistry(
     return trace;
   };
 
-  const createAttempt = (input: BgsmAgentTurnLaunch): AgentTurnAttempt => {
-    const trace = createTrace(input, false);
+  const createAttempt = (
+    input: BgsmAgentTurnLaunch,
+    resumeExisting = false,
+  ): AgentTurnAttempt => {
+    const trace = createTrace(input, resumeExisting);
     const rootOperationId = `agent_turn:${input.turnAttemptId}`;
     let contentCapture: AgentContentCaptureSink | undefined;
     try {
@@ -369,6 +394,8 @@ export function createBgsmAgentTurnRegistry(
       cleanupTimer: null,
       finalization: null,
       acknowledgementRecorded: false,
+      resumeExisting,
+      durableLeaseAuthorityAcquired: resumeExisting,
       ...(trace ? { trace } : {}),
       ...(contentCapture ? { contentCapture } : {}),
     };
@@ -377,14 +404,20 @@ export function createBgsmAgentTurnRegistry(
     return attempt;
   };
 
-  const start = (input: BgsmAgentTurnLaunch): AgentTurnAttempt => {
-    const attempt = createAttempt(input);
+  const start = (
+    input: BgsmAgentTurnLaunch,
+    resumeExisting = false,
+  ): AgentTurnAttempt => {
+    const attempt = createAttempt(input, resumeExisting);
     publish(attempt, prepareDelivery(attempt, {
       type: 'bgsmAgentTurnEvent',
       event: deliveryEvent(input, { type: 'agent_queued' }),
     }));
     void dependencies.runTurn(input, {
       signal: attempt.controller.signal,
+      onDurableLeaseAcquired: () => {
+        attempt.durableLeaseAuthorityAcquired = true;
+      },
       trace: attempt.trace
         ? {
             emit: (event) => observeTrace(() => attempt.trace?.execution.emit(event)),
@@ -411,7 +444,7 @@ export function createBgsmAgentTurnRegistry(
     }).then(
       (result) => finishAttempt(attempt, result),
       (error) => {
-        if (isContextCapabilityFailure(error)) {
+        if (!attempt.resumeExisting && isContextCapabilityFailure(error)) {
           finishAttempt(attempt, {
             turnAttemptId: input.turnAttemptId,
             sessionId: input.sessionId,
@@ -424,7 +457,20 @@ export function createBgsmAgentTurnRegistry(
           });
           return;
         }
-        void failAttempt(attempt, error);
+        const settleFailure = async () => {
+          let terminalError = error;
+          if (attempt.resumeExisting && dependencies.fenceRestoredTurnFailure) {
+            try {
+              if (await dependencies.fenceRestoredTurnFailure(input)) {
+                terminalError = createAttemptStateLostError(error);
+              }
+            } catch (fenceError) {
+              terminalError = createAttemptStateLostError(fenceError);
+            }
+          }
+          await failAttempt(attempt, terminalError);
+        };
+        void settleFailure();
       },
     );
     return attempt;
@@ -450,7 +496,12 @@ export function createBgsmAgentTurnRegistry(
       connectionState.trace = trace;
     }
     observeTrace(() => trace?.recordAttemptRejected(reason));
-    const delivery: BgsmAgentTurnSequencedServerMessage = options.identityConflict
+    const typedConflictCode = options.identityConflict
+      ? 'agent_session_attempt_conflict' as const
+      : reason === 'active_session_conflict'
+        ? 'agent_session_turn_active' as const
+        : null;
+    const delivery: BgsmAgentTurnSequencedServerMessage = typedConflictCode
       ? {
           type: 'bgsmAgentTurnError',
           sequence: 0,
@@ -458,26 +509,31 @@ export function createBgsmAgentTurnRegistry(
             turnAttemptId: input.turnAttemptId,
             sessionId: input.sessionId,
             baseRevision: input.baseRevision,
-            message: 'Cubby turnAttemptId was reused with conflicting launch data.',
+            message: options.identityConflict
+              ? 'Cubby turnAttemptId was reused with conflicting launch data.'
+              : 'Another Cubby turn is already active for this conversation.',
             category: 'other',
+            code: typedConflictCode,
           },
         }
       : {
-      type: 'bgsmAgentTurnResult',
-      sequence: 0,
-      result: {
-        turnAttemptId: input.turnAttemptId,
-        sessionId: input.sessionId,
-        baseRevision: input.baseRevision,
-        reason: 'attempt_state_lost',
-        changed: false,
-        changedCount: 0,
-        commit: null,
-      },
+          type: 'bgsmAgentTurnResult',
+          sequence: 0,
+          result: {
+            turnAttemptId: input.turnAttemptId,
+            sessionId: input.sessionId,
+            baseRevision: input.baseRevision,
+            reason: 'attempt_state_lost',
+            changed: false,
+            changedCount: 0,
+            commit: null,
+          },
         };
     parseBgsmAgentTurnServerMessage(delivery);
     postSequenced(port, delivery, trace, 'live');
-    if (!options.identityConflict && options.terminateTrace !== false) {
+    if (typedConflictCode && !options.identityConflict) {
+      observeTrace(() => trace?.finish('failed', typedConflictCode));
+    } else if (!typedConflictCode && options.terminateTrace !== false) {
       observeTrace(() => trace?.finish('attempt_state_lost', 'attempt_state_lost'));
     }
     return trace;
@@ -543,6 +599,42 @@ export function createBgsmAgentTurnRegistry(
         executionEpochId,
         launch: structuredClone(attempt.input),
       };
+    },
+    reserveRecovery(sessionId) {
+      if (recoveryReservations.has(sessionId)) {
+        throw new Error('Agent session recovery is already reserved.');
+      }
+      const token = Symbol(sessionId);
+      recoveryReservations.set(sessionId, token);
+      return Object.freeze({ sessionId, token });
+    },
+    restoreApprovedTurn(launch, reservation) {
+      if (
+        reservation.sessionId !== launch.sessionId
+        || recoveryReservations.get(launch.sessionId) !== reservation.token
+      ) throw new Error('Agent turn restore requires the active recovery reservation.');
+      const fingerprint = turnLaunchFingerprint(launch);
+      const activeAttemptId = activeAttemptBySession.get(launch.sessionId);
+      if (activeAttemptId && activeAttemptId !== launch.turnAttemptId) {
+        throw new Error('A different Agent turn is already active for this session.');
+      }
+      const existing = attempts.get(launch.turnAttemptId);
+      if (existing) {
+        if (existing.fingerprint !== fingerprint || existing.input.sessionId !== launch.sessionId) {
+          throw new Error('The approved Agent turn restore identity conflicts with the active runner.');
+        }
+        return { executionEpochId, launch: structuredClone(existing.input) };
+      }
+      if (tombstones.has(launch.turnAttemptId)) {
+        throw new Error('The approved Agent turn restore was already finalized.');
+      }
+      const attempt = start(structuredClone(launch), true);
+      return { executionEpochId, launch: structuredClone(attempt.input) };
+    },
+    releaseRecovery(reservation) {
+      if (recoveryReservations.get(reservation.sessionId) === reservation.token) {
+        recoveryReservations.delete(reservation.sessionId);
+      }
     },
     attach(port) {
       const connectionEpochId = dependencies.traceFactory
@@ -629,6 +721,12 @@ export function createBgsmAgentTurnRegistry(
           connectionState.attachedAttemptId = parsed.turnAttemptId;
           connectionState.attachmentMode = 'rejected';
           connectionState.trace = rejectAttempt(port, parsed, 'execution_epoch_mismatch');
+          return;
+        }
+        if (recoveryReservations.has(parsed.sessionId)) {
+          connectionState.attachedAttemptId = parsed.turnAttemptId;
+          connectionState.attachmentMode = 'rejected';
+          connectionState.trace = rejectAttempt(port, parsed, 'active_session_conflict');
           return;
         }
         if (message.resumeOnly === true) {
@@ -730,6 +828,12 @@ export function createBgsmAgentTurnRegistry(
               trace: attempt.trace,
               identityConflict: true,
             });
+            return;
+          }
+          if (recoveryReservations.has(parsed.sessionId)) {
+            connectionState.attachedAttemptId = parsed.turnAttemptId;
+            connectionState.attachmentMode = 'rejected';
+            connectionState.trace = rejectAttempt(port, parsed, 'active_session_conflict');
             return;
           }
           if (!attempt && connectionState.stopRequested) {
@@ -917,6 +1021,13 @@ function isContextCapabilityFailure(error: unknown): boolean {
   const code = error instanceof Error ? error.message : String(error);
   return code === AGENT_CONTEXT_CAPABILITY_REQUIRED ||
     code === AGENT_CONTEXT_CAPABILITY_INFEASIBLE;
+}
+
+function createAttemptStateLostError(cause: unknown) {
+  return Object.assign(
+    new Error('Cubby could not safely resume the previous turn.', { cause }),
+    { code: AGENT_ATTEMPT_STATE_LOST_ERROR_CODE },
+  );
 }
 
 

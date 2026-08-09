@@ -18,6 +18,7 @@ import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';
 import type {
   AgentRetryDraft,
   AgentSessionCommitResult,
+  LoadedAgentSession,
 } from '@/storage/agent-session-store';
 import {
   createFrozenScope,
@@ -31,6 +32,12 @@ import type { OrganizeJobRunSnapshot } from '@/bgsm-agent/events';
 import { WORKER_LOST_COPY } from '@/ui/agent-workbench-state';
 
 const messagingMocks = vi.hoisted(() => ({
+  getOrCreate: vi.fn(),
+  createSession: vi.fn(),
+  inspectCatalog: vi.fn(),
+  inspectActive: vi.fn(),
+  loadSession: vi.fn(),
+  retryDraft: vi.fn(),
   startBgsmAgentTurn: vi.fn(),
   requestPreflight: vi.fn(),
 }));
@@ -40,6 +47,12 @@ vi.mock('@/utils/messaging', async (importOriginal) => {
   return {
     ...actual,
     startBgsmAgentTurn: messagingMocks.startBgsmAgentTurn,
+    getOrCreateInitialDurableBgsmAgentSession: messagingMocks.getOrCreate,
+    createDurableBgsmAgentSession: messagingMocks.createSession,
+    inspectBgsmAgentSessionCatalog: messagingMocks.inspectCatalog,
+    inspectActiveBgsmAgentSessionTurn: messagingMocks.inspectActive,
+    loadDurableBgsmAgentSession: messagingMocks.loadSession,
+    readDurableAgentRetryDraftCandidate: messagingMocks.retryDraft,
   };
 });
 
@@ -125,6 +138,16 @@ function commitForMessages(
   } as AgentSessionCommitResult;
 }
 
+
+function durableEmptySession(id: string): LoadedAgentSession {
+  return {
+    session: { id, revision: 0 },
+    transcript: { sessionId: id, messages: [], nextBeforeSequence: null },
+    summary: { id, title: '', createdAt: 1, updatedAt: 1 },
+    lastAppliedTurnAttemptId: null,
+    appliedTurnReceipts: [],
+  };
+}
 function selectedRepositoryBinding(): Record<string, unknown> {
   return {
     version: 1,
@@ -141,6 +164,15 @@ function selectedRepositoryBinding(): Record<string, unknown> {
 
 beforeEach(() => {
   messagingMocks.startBgsmAgentTurn.mockReset();
+  messagingMocks.getOrCreate.mockReset();
+  messagingMocks.createSession.mockReset();
+  messagingMocks.inspectCatalog.mockReset();
+  messagingMocks.inspectActive.mockReset();
+  messagingMocks.loadSession.mockReset();
+  messagingMocks.retryDraft.mockReset();
+  messagingMocks.inspectCatalog.mockResolvedValue({ summaries: [], corruptions: [] });
+  messagingMocks.inspectActive.mockResolvedValue(null);
+  messagingMocks.retryDraft.mockResolvedValue(null);
   messagingMocks.startBgsmAgentTurn.mockReturnValue({
     stop: vi.fn(),
     detach: vi.fn(),
@@ -1249,6 +1281,239 @@ describe('AgentPanel', () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(container.querySelector<HTMLTextAreaElement>('textarea'));
     });
+  });
+
+  it('keeps the real durable conflict draft sendable after winner convergence', async () => {
+    const session = durableEmptySession('panel-durable-conflict');
+    const rejectedPrompt = '  Keep this prompt exactly.\nSecond line.  ';
+    const conflictMessage = 'Another Cubby turn is already active for this conversation.';
+    const winner = {
+      executionEpochId: 'panel-worker-winner',
+      launch: {
+        turnAttemptId: 'panel-winner-attempt',
+        sessionId: session.session.id,
+        baseRevision: session.session.revision,
+        prompt: 'Winning prompt',
+      },
+    } as const;
+    const turns: Array<{
+      input: BgsmAgentTurnInput;
+      handlers: BgsmAgentTurnHandlers;
+      options: unknown;
+    }> = [];
+    messagingMocks.getOrCreate.mockResolvedValue(session);
+    messagingMocks.loadSession.mockResolvedValue(session);
+    messagingMocks.inspectActive
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(winner);
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers, options) => {
+      turns.push({ input, handlers, options });
+      return { stop: vi.fn(), detach: vi.fn(), acknowledge: vi.fn() };
+    });
+    vi.stubGlobal('chrome', {
+      runtime: { sendMessage: vi.fn() },
+      storage: {
+        local: {
+          get: vi.fn(async () => ({})),
+          set: vi.fn(async () => undefined),
+        },
+      },
+    });
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    await waitFor(() => expect(textarea.disabled).toBe(false));
+
+    await setTextareaValue(textarea, rejectedPrompt);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    await waitFor(() => expect(turns).toHaveLength(1));
+    await act(async () => {
+      await turns[0]!.handlers.onError?.({
+        ...deliveryIdentity(turns[0]!.input),
+        message: conflictMessage,
+        category: 'other',
+        code: 'agent_session_turn_active',
+      });
+    });
+    await waitFor(() => expect(turns).toHaveLength(2));
+    expect(turns[1]).toMatchObject({
+      input: winner.launch,
+      options: {
+        expectedExecutionEpochId: winner.executionEpochId,
+        resumeOnly: true,
+      },
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
+      expect(textarea.value).toBe(rejectedPrompt);
+    });
+    expect(container.textContent).toContain(conflictMessage);
+    expect(container.querySelector('[data-testid="agent-durable-retry-card"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-durable-retry-button"]')).toBeNull();
+    expect('retrySourceAttemptId' in turns[1]!.input).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled)
+      .toBe(true);
+
+    await act(async () => {
+      await turns[1]!.handlers.onResult?.({
+        turnAttemptId: winner.launch.turnAttemptId,
+        sessionId: winner.launch.sessionId,
+        baseRevision: winner.launch.baseRevision,
+        reason: 'final_answer',
+        changed: false,
+        changedCount: 0,
+        commit: commitForMessages(winner.launch, [
+          { id: 'winner-user', role: 'user', content: winner.launch.prompt, createdAt: 1 },
+          { id: 'winner-agent', role: 'agent', content: 'Winning answer', createdAt: 2 },
+        ]),
+      });
+    });
+
+    await waitFor(() => expect(textarea.value).toBe(rejectedPrompt));
+    expect(container.textContent).toContain('Winning answer');
+    expect(container.querySelector('[data-testid="agent-provider-error-card"]')).toBeTruthy();
+    expect(container.textContent).toContain(conflictMessage);
+    expect(container.querySelector('[data-testid="agent-durable-retry-card"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled)
+      .toBe(false);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    await waitFor(() => expect(turns).toHaveLength(3));
+    expect(turns[2]!.input).toMatchObject({
+      sessionId: session.session.id,
+      baseRevision: 1,
+      prompt: rejectedPrompt.trim(),
+    });
+    expect('retrySourceAttemptId' in turns[2]!.input).toBe(false);
+    expect(messagingMocks.getOrCreate).toHaveBeenCalledTimes(1);
+    expect(messagingMocks.createSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps the rejected fresh draft when the subscribed winner fails at the provider', async () => {
+    const session = durableEmptySession('panel-durable-conflict-winner-failed');
+    const rejectedPrompt = '  Keep B exact after A fails.\nSecond line.  ';
+    const winnerPrompt = 'Winning A prompt';
+    const conflictMessage = 'Another Cubby turn is already active for this conversation.';
+    const winnerFailure = 'Provider returned 503 while finishing the winning turn.';
+    const winner = {
+      executionEpochId: 'panel-worker-winner-failed',
+      launch: {
+        turnAttemptId: 'panel-winner-failed-attempt',
+        sessionId: session.session.id,
+        baseRevision: session.session.revision,
+        prompt: winnerPrompt,
+      },
+    } as const;
+    const turns: Array<{
+      input: BgsmAgentTurnInput;
+      handlers: BgsmAgentTurnHandlers;
+      options: unknown;
+    }> = [];
+    messagingMocks.getOrCreate.mockResolvedValue(session);
+    messagingMocks.loadSession.mockResolvedValue(session);
+    messagingMocks.inspectActive
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(winner);
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers, options) => {
+      turns.push({ input, handlers, options });
+      return { stop: vi.fn(), detach: vi.fn(), acknowledge: vi.fn() };
+    });
+    vi.stubGlobal('chrome', {
+      runtime: { sendMessage: vi.fn() },
+      storage: {
+        local: {
+          get: vi.fn(async () => ({})),
+          set: vi.fn(async () => undefined),
+        },
+      },
+    });
+    const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    await waitFor(() => expect(textarea.disabled).toBe(false));
+
+    await setTextareaValue(textarea, rejectedPrompt);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    await waitFor(() => expect(turns).toHaveLength(1));
+    await act(async () => {
+      await turns[0]!.handlers.onError?.({
+        ...deliveryIdentity(turns[0]!.input),
+        message: conflictMessage,
+        category: 'other',
+        code: 'agent_session_attempt_conflict',
+      });
+    });
+    await waitFor(() => expect(turns).toHaveLength(2));
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled)
+      .toBe(true);
+
+    await act(async () => {
+      await turns[1]!.handlers.onError?.({
+        ...deliveryIdentity(turns[1]!.input),
+        message: winnerFailure,
+        category: 'provider',
+      });
+    });
+
+    await waitFor(() => {
+      expect(textarea.value).toBe(rejectedPrompt);
+      expect(container.textContent).toContain(winnerFailure);
+    });
+    const conflictCard = container.querySelector<HTMLElement>('[data-testid="agent-provider-error-card"]')!;
+    expect(conflictCard.textContent).toContain(conflictMessage);
+    expect(conflictCard.textContent).not.toContain(winnerFailure);
+    expect(textarea.value).not.toBe(winnerPrompt);
+    expect(container.querySelector('[data-testid="agent-durable-retry-card"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-durable-retry-button"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled)
+      .toBe(false);
+
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    await waitFor(() => expect(turns).toHaveLength(3));
+    expect(turns[2]!.input).toMatchObject({
+      sessionId: session.session.id,
+      baseRevision: session.session.revision,
+      prompt: rejectedPrompt.trim(),
+    });
+    expect('retrySourceAttemptId' in turns[2]!.input).toBe(false);
+  });
+
+  it('revokes transient fresh-resend authority when the restored draft is edited', async () => {
+    const prompt = '  Preserve this exact conflict draft.  ';
+    const clearTransientSafeResend = vi.fn();
+    const startTurn = vi.fn();
+    function EditedConflictPanel() {
+      const [transientPrompt, setTransientPrompt] = useState<string | null>(prompt);
+      return (
+        <AgentPanel
+          open
+          onClose={vi.fn()}
+          agentOverrides={{
+            phase: 'failed',
+            running: false,
+            error: 'Another Cubby turn is already active for this conversation.',
+            draftRecovery: prompt,
+            durableRetryDraft: null,
+            canRetryLastTurn: false,
+            transientSafeResendPrompt: transientPrompt,
+            clearTransientSafeResend: () => {
+              clearTransientSafeResend();
+              setTransientPrompt(null);
+            },
+            startTurn,
+          }}
+        />
+      );
+    }
+    const container = await mountAgentPanel(<EditedConflictPanel />);
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    const send = container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!;
+    await waitFor(() => expect(textarea.value).toBe(prompt));
+    expect(send.disabled).toBe(false);
+
+    await setTextareaValue(textarea, `${prompt}changed`);
+    expect(clearTransientSafeResend).toHaveBeenCalledTimes(1);
+    await setTextareaValue(textarea, prompt);
+    expect(send.disabled).toBe(true);
+    await click(send);
+    expect(startTurn).not.toHaveBeenCalled();
   });
 
   it('restores a failed prompt, removes partial output, and disables blind retry after a write starts', async () => {

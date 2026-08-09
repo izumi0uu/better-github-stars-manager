@@ -96,11 +96,13 @@ export function AgentPanel({
     draftRecovery,
     durableRetryDraft,
     canRetryLastTurn,
+    transientSafeResendPrompt,
     toolActivities,
     errorCategory,
     startTurn,
     stopTurn,
     editContextLimitedPrompt,
+    clearTransientSafeResend,
     sessionReady: agentSessionReady,
     sessionOperationPending,
     sessionInitializationError,
@@ -154,7 +156,10 @@ export function AgentPanel({
     && messages.length === 0;
   const lastUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content ?? null;
   const retryPrompt = durableRetryDraft?.prompt ?? draftRecovery ?? lastFailedPrompt ?? lastUserPrompt;
+  const transientSafeResendAllowed = transientSafeResendPrompt !== null
+    && input === transientSafeResendPrompt;
   const unsafeReplayBlocked = !canRetryLastTurn
+    && !transientSafeResendAllowed
     && !!retryPrompt
     && input.trim() === retryPrompt.trim();
   const uiPresentation = resolveAgentUiPresentation({
@@ -199,7 +204,9 @@ export function AgentPanel({
   const repositoryCodeReadOnly = toolMessages.some((message) => (
     getBgsmAgentToolDefinition(message.toolName)?.capability === 'repository_code'
   ));
-  const showProviderErrorCard = !running && !!error && !contextLimitRecovery;
+  const showProviderErrorCard = (!running || transientSafeResendPrompt !== null)
+    && !!error
+    && !contextLimitRecovery;
   const isSessionInitializationFailure = sessionInitializationError !== null;
   const showDurableRetryCard = !!durableRetryDraft
     && !running
@@ -359,9 +366,16 @@ export function AgentPanel({
     return result;
   };
 
+  const handleInputChange = (nextInput: string) => {
+    if (transientSafeResendPrompt !== null && nextInput !== transientSafeResendPrompt) {
+      clearTransientSafeResend();
+    }
+    setInput(nextInput);
+  };
+
   const handlePromptSuggestion = (prompt: string) => {
     if (!prompt.trim() || chatDisabled) return;
-    setInput(prompt);
+    handleInputChange(prompt);
     focusComposerAtEnd();
   };
 
@@ -1037,7 +1051,7 @@ export function AgentPanel({
 
             <PromptInput
               value={input}
-              onValueChange={setInput}
+              onValueChange={handleInputChange}
               onSubmit={handleSubmit}
               placeholder={composerPlaceholder}
               disabled={chatDisabled}

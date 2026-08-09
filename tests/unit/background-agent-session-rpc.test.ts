@@ -4,11 +4,11 @@ import type { AgentSessionLaunchDigest } from '@/bgsm-agent/session-transport';
 import {
   createBgsmAgentSessionRpcRouter,
   describeBgsmAgentSessionFailure,
-  isBgsmAgentSessionRequest,
+  parseBgsmAgentSessionRequest,
   type BgsmAgentSessionRequest,
 } from '@/background/bgsm-agent-session-rpc';
 
-const launchDigest: AgentSessionLaunchDigest = 'asl:v1:session-rpc';
+const launchDigest: AgentSessionLaunchDigest = `asl:v1:${'s'.repeat(43)}`;
 
 function createRouterHarness() {
   const calls: string[] = [];
@@ -31,6 +31,10 @@ function createRouterHarness() {
       calls.push(`dismiss:${input.sessionId}:${input.turnAttemptId}`);
       return true;
     },
+    async abandonUncertainAttempt(input) {
+      calls.push(`abandon:${input.sessionId}:${input.turnAttemptId}`);
+      return true;
+    },
     async discardDamagedRecovery(sessionId) {
       calls.push(`discard:${sessionId}`);
       return 2;
@@ -42,6 +46,10 @@ function createRouterHarness() {
       async inspectCatalog() {
         calls.push('catalog');
         return { kind: 'catalog' };
+      },
+      async getOrCreateInitialSession() {
+        calls.push('initial');
+        return { kind: 'initial' };
       },
       async createSession(sessionId) {
         calls.push(`create:${sessionId ?? 'generated'}`);
@@ -95,6 +103,7 @@ describe('background Agent session RPC router', () => {
     const harness = createRouterHarness();
     const requests: readonly BgsmAgentSessionRequest[] = [
       { type: 'inspectAgentSessionCatalog' },
+      { type: 'getOrCreateInitialAgentSession' },
       { type: 'inspectActiveAgentSessionTurn', sessionId: 'session-live' },
       { type: 'inspectActiveAgentSessionTurn', sessionId: 'session-durable' },
       { type: 'createAgentSession', sessionId: 'session-created' },
@@ -110,6 +119,11 @@ describe('background Agent session RPC router', () => {
         type: 'dismissAgentSessionRetry',
         sessionId: 'session-dismiss',
         turnAttemptId: 'turn-dismiss',
+      },
+      {
+        type: 'abandonAgentSessionUncertainAttempt',
+        sessionId: 'session-uncertain',
+        turnAttemptId: 'turn-uncertain',
       },
       { type: 'discardDamagedAgentSessionRecovery', sessionId: 'session-discard' },
       {
@@ -128,6 +142,7 @@ describe('background Agent session RPC router', () => {
 
     assert.deepEqual(results, [
       { kind: 'catalog' },
+      { kind: 'initial' },
       { authority: 'registry' },
       { authority: 'coordinator', sessionId: 'session-durable' },
       { kind: 'created', sessionId: 'session-created' },
@@ -143,6 +158,7 @@ describe('background Agent session RPC router', () => {
       },
       { kind: 'retry', sessionId: 'session-retry' },
       true,
+      true,
       2,
       { kind: 'page', sessionId: 'session-page', beforeSequence: 17 },
       { deleted: true },
@@ -152,6 +168,7 @@ describe('background Agent session RPC router', () => {
     ]);
     assert.deepEqual(harness.calls, [
       'catalog',
+      'initial',
       'active:session-live',
       'active:session-durable',
       'durable:session-durable',
@@ -160,6 +177,7 @@ describe('background Agent session RPC router', () => {
       'committed:session-committed:turn-committed',
       'retry:session-retry',
       'dismiss:session-dismiss:turn-dismiss',
+      'abandon:session-uncertain:turn-uncertain',
       'discard:session-discard',
       'page:session-page:17',
       'delete:session-delete',
@@ -185,6 +203,7 @@ describe('background Agent session RPC router', () => {
       inspectActiveTurn: () => null,
       inspectDurableTurn: async () => null,
       dismissRetry: async () => false,
+      abandonUncertainAttempt: async () => false,
       discardDamagedRecovery: async () => 0,
       notifySessionDeleted: () => {},
       operations: {
@@ -200,9 +219,65 @@ describe('background Agent session RPC router', () => {
     );
   });
 
-  it('recognizes only session commands and bounds serializable failure details', () => {
-    assert.equal(isBgsmAgentSessionRequest({ type: 'loadAgentSession' }), true);
-    assert.equal(isBgsmAgentSessionRequest({ type: 'notAnAgentCommand' }), false);
+  it('parses every exact request and rejects malformed or extra fields before any operation', async () => {
+    const validRequests: readonly BgsmAgentSessionRequest[] = [
+      { type: 'inspectAgentSessionCatalog' },
+      { type: 'getOrCreateInitialAgentSession' },
+      { type: 'inspectActiveAgentSessionTurn', sessionId: 'session-live' },
+      { type: 'createAgentSession' },
+      { type: 'createAgentSession', sessionId: 'session-created' },
+      { type: 'loadAgentSession', sessionId: 'session-load' },
+      {
+        type: 'loadCommittedAgentSessionTurn',
+        sessionId: 'session-committed',
+        turnAttemptId: 'turn-committed',
+        launchDigest,
+      },
+      { type: 'readAgentRetryDraftCandidate', sessionId: 'session-retry' },
+      { type: 'dismissAgentSessionRetry', sessionId: 'session-dismiss', turnAttemptId: 'turn-dismiss' },
+      {
+        type: 'abandonAgentSessionUncertainAttempt',
+        sessionId: 'session-uncertain',
+        turnAttemptId: 'turn-uncertain',
+      },
+      { type: 'discardDamagedAgentSessionRecovery', sessionId: 'session-discard' },
+      { type: 'loadAgentSessionTranscriptPage', sessionId: 'session-page', beforeSequence: 17 },
+      { type: 'deleteAgentSession', sessionId: 'session-delete' },
+      { type: 'getAgentStorageUsage' },
+      { type: 'clearAgentToolCache' },
+    ];
+    for (const request of validRequests) {
+      assert.deepEqual(parseBgsmAgentSessionRequest(request), request);
+    }
+    assert.equal(parseBgsmAgentSessionRequest({ type: 'notAnAgentCommand' }), null);
+
+    const malformedRequests: readonly unknown[] = [
+      ...validRequests.map((request) => ({ ...request, unexpected: true })),
+      { type: 'loadAgentSession' },
+      { type: 'loadAgentSession', sessionId: ' session-load' },
+      { type: 'loadAgentSession', sessionId: 'é'.repeat(257) },
+      {
+        type: 'loadCommittedAgentSessionTurn',
+        sessionId: 'session-committed',
+        turnAttemptId: 'turn-committed',
+        launchDigest: 'asl:v1:invalid',
+      },
+      { type: 'dismissAgentSessionRetry', sessionId: 'session-dismiss', turnAttemptId: '' },
+      { type: 'loadAgentSessionTranscriptPage', sessionId: 'session-page', beforeSequence: 0 },
+      { type: 'loadAgentSessionTranscriptPage', sessionId: 'session-page', beforeSequence: 1.5 },
+    ];
+    const harness = createRouterHarness();
+    for (const request of malformedRequests) {
+      assert.equal(parseBgsmAgentSessionRequest(request), null);
+      await assert.rejects(() => harness.router.handle(request), TypeError);
+    }
+    assert.deepEqual(harness.calls, []);
+    assert.equal(harness.state.durableInspectionCalls, 0);
+    assert.deepEqual(harness.deleteInputs, []);
+    assert.deepEqual(harness.deletedNotifications, []);
+  });
+
+  it('bounds serializable failure details', () => {
     assert.deepEqual(describeBgsmAgentSessionFailure({
       code: 'agent_storage_capacity_exceeded',
       sessionId: 'session-capacity',

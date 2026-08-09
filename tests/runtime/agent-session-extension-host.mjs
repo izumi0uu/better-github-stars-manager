@@ -5,6 +5,12 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  assertRuntimeReleaseDistIdentity,
+  MAX_RUNTIME_EVIDENCE_BYTES,
+  publishRuntimeEvidence,
+  readRuntimeReleaseDistIdentity,
+} from '../../scripts/agent-runtime-evidence-contract.mjs';
+import {
   assertFailClosedNetworkIsolation,
   launchExtensionBrowser,
 } from './puppeteer-runtime.mjs';
@@ -79,6 +85,14 @@ const runtime = {
   containmentStep: 'not-started',
   baseRevision: null,
   networkIsolationVerified: false,
+  finalAuthority: null,
+  cleanup: {
+    networkGatesClosed: false,
+    diagnosticsDetached: false,
+    pagesClosed: false,
+    browserClosed: false,
+    temporaryStateRemoved: false,
+  },
   main: createMainState(),
 };
 
@@ -106,16 +120,44 @@ try {
 if (primaryFailure || teardownFailure) {
   const diagnostic = primaryDiagnostic ?? await buildDiagnostics(teardownFailure);
   console.error(JSON.stringify(safeDiagnosticOrFallback(diagnostic)));
-  throw new Error('Packaged durable Agent session runtime failed. See semantic diagnostic output.');
+  process.exitCode = 1;
+} else {
+  if (process.env.GSM_RUNTIME_EVIDENCE_DIR) {
+    try {
+      publishRuntimeEvidence({
+        directory: process.env.GSM_RUNTIME_EVIDENCE_DIR,
+        filename: 'agent-artifact.schema-v1.json',
+        evidence: buildArtifactEvidence(),
+        validateEvidence: validateArtifactEvidence,
+        privateMarkers: [
+          GITHUB_CREDENTIAL,
+          PROVIDER_CREDENTIAL,
+          PROMPT_CANARY,
+          ARTIFACT_PAYLOAD_CANARY,
+          FINAL_MARKER,
+          PREMATURE_MARKER,
+          SEARCH_MARKER,
+        ],
+      });
+    } catch (error) {
+      console.error(JSON.stringify({
+        status: 'failed',
+        proofScope: 'packaged_durable_artifact',
+        code: runtimeEvidenceFailureCode(error),
+      }));
+      process.exitCode = 1;
+    }
+  }
+  if (process.exitCode !== 1) {
+    console.log(JSON.stringify({
+      status: 'passed',
+      stages: runtime.passedStages,
+      providerRequests: provider?.capture?.length ?? 0,
+      artifactPages: runtime.main.pageCount,
+      ordinaryBoundaries: countOrdinaryProviderRequests(provider),
+    }));
+  }
 }
-
-console.log(JSON.stringify({
-  status: 'passed',
-  stages: runtime.passedStages,
-  providerRequests: provider?.capture?.length ?? 0,
-  artifactPages: runtime.main.pageCount,
-  ordinaryBoundaries: countOrdinaryProviderRequests(provider),
-}));
 
 async function run() {
   if (!existsSync(path.join(DIST, 'manifest.json'))) {
@@ -333,6 +375,11 @@ async function run() {
     assert.equal(stores.messages.hasReaderCallId, false);
     assert.equal(stores.messages.hasPrematureAssistantText, false);
     assert.equal(stores.messages.hasFinalAssistantText, true);
+    assert.equal(stores.attempt.leasePresent, false);
+    assert.equal(stores.messages.readerRowCount, 0);
+    assert.equal(stores.messages.prematureAssistantRowCount, 0);
+    assert.equal(stores.messages.finalAssistantRowCount, 1);
+    runtime.finalAuthority = stores;
   });
 
   await stage('containment-health', async () => {
@@ -900,9 +947,13 @@ async function typeValue(targetPage, selector, value) {
       data: null,
     }));
   }, selector, value);
-  await targetPage.evaluate(() => new Promise((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
-  }));
+  await targetPage.waitForFunction((target, expected) => {
+    const element = document.querySelector(target);
+    return element instanceof HTMLInputElement
+      && !element.disabled
+      && element.getClientRects().length > 0
+      && element.value === expected;
+  }, { polling: 50, timeout: SETUP_TIMEOUT_MS }, selector, value);
   runtime.providerFieldObservation = await observe();
   assert.deepEqual(runtime.providerFieldObservation, {
     field: selector,
@@ -1366,10 +1417,13 @@ async function safeStoreProjection({ sessionId, attemptId, markers }) {
       if (!value || typeof value !== 'object' || depth >= 4) return false;
       return Object.values(value).some((entry) => containsMarker(entry, marker, depth + 1));
     };
-    const hasReaderCallId = scopedMessages.some((row) => (
+    const readerRows = scopedMessages.filter((row) => (
       String(row?.toolCallId ?? '').startsWith(markers.readerPrefix)
       || (Array.isArray(row?.toolCalls) && row.toolCalls.some((call) => String(call?.id ?? '').startsWith(markers.readerPrefix)))
     ));
+    const prematureAssistantRows = scopedMessages.filter((row) => containsMarker(row?.content, markers.prematureMarker));
+    const finalAssistantRows = scopedMessages.filter((row) => containsMarker(row?.content, markers.finalMarker));
+    const hasReaderCallId = readerRows.length > 0;
     const hasDigest = (value) => typeof value === 'string' && value.length >= 16 && value.length <= 256 && /^[A-Za-z0-9._:/-]+$/u.test(value);
     const expectedArtifactId = artifact?.id;
     const storedArtifactChunks = artifact
@@ -1404,6 +1458,7 @@ async function safeStoreProjection({ sessionId, attemptId, markers }) {
         state: scopedAttempts.length === 1 ? scopedAttempts[0]?.state ?? null : null,
         hasContinuation: scopedAttempts.length === 1 && scopedAttempts[0]?.artifactContinuationControl !== null,
         recoveryCount: scopedRecoveries.length,
+        leasePresent: scopedAttempts.length === 1 && scopedAttempts[0]?.lease !== null,
         coverageTotalCount: allCoverage.length,
         coverage: coverage.map((row) => ({
           state: row?.state ?? null,
@@ -1446,6 +1501,9 @@ async function safeStoreProjection({ sessionId, attemptId, markers }) {
         hasReaderCallId,
         hasPrematureAssistantText: scopedMessages.some((row) => containsMarker(row?.content, markers.prematureMarker)),
         hasFinalAssistantText: scopedMessages.some((row) => containsMarker(row?.content, markers.finalMarker)),
+        readerRowCount: readerRows.length,
+        prematureAssistantRowCount: prematureAssistantRows.length,
+        finalAssistantRowCount: finalAssistantRows.length,
       },
     };
   } finally {
@@ -1933,6 +1991,121 @@ function safeCoreStep(value) {
 }
 
 
+function buildArtifactEvidence() {
+  const authority = runtime.finalAuthority;
+  const coverage = authority.attempt.coverage[0];
+  return {
+    schemaVersion: 1,
+    status: 'passed',
+    proofScope: 'packaged_durable_artifact',
+    productionDistExercised: true,
+    releaseDist: readRuntimeReleaseDistIdentity(DIST),
+    artifactFlow: {
+      provider: {
+        requests: provider.capture.length,
+        sourceRequests: runtime.main.sourceRequestCount,
+        locatingReads: runtime.main.locatingReadCount,
+        exhaustivePageReads: runtime.main.pageRequestCount,
+        ordinaryBoundaries: countOrdinaryProviderRequests(provider),
+        provisionalFinals: runtime.main.prematureFinalCount,
+        correctiveReprompts: runtime.main.correctiveRequestCount,
+        finalResponses: runtime.main.finalResponseCount,
+      },
+      coverage: {
+        firstPageOmittedCursor: runtime.main.firstPageOmittedCursor,
+        cursorChainExact: runtime.main.cursorChainExact,
+        pageCount: runtime.main.pageCount,
+        expectedBytes: coverage.expectedBytes,
+        deliveredBytes: coverage.bytesDelivered,
+        nextCursorNull: coverage.expectedCursorNull,
+        artifactDigestPresent: coverage.hasArtifactDigest,
+        manifestDigestPresent: coverage.hasManifestDigest,
+        cursorChainDigestPresent: coverage.hasCursorChainDigest,
+        chunksMatchManifest: authority.artifact.item.chunksMatchManifest,
+      },
+      canonical: {
+        sourceToolRows: authority.messages.sourceToolRowCount,
+        readerRows: authority.messages.readerRowCount,
+        prematureAssistantRows: authority.messages.prematureAssistantRowCount,
+        finalAssistantRows: authority.messages.finalAssistantRowCount,
+        receiptCount: authority.messages.sourceReceiptCount,
+      },
+      settlement: {
+        commitApplied: runtime.main.terminal.commitApplied,
+        revisionDelta: authority.session.revision - runtime.baseRevision,
+        recoveryRows: authority.attempt.recoveryCount,
+        continuationPresent: authority.attempt.hasContinuation,
+        leasePresent: authority.attempt.leasePresent,
+      },
+    },
+    containment: {
+      networkFailClosed: runtime.networkIsolationVerified,
+      unexpectedNetworkRequests: provider.unexpectedRequests.length + pageHttpPolicy.unexpectedRequests.length,
+      rawCredentialOccurrences: 0,
+      privatePayloadOccurrences: 0,
+      overflow: Object.values(provider.overflow).some(Boolean) || pageHttpPolicy.overflow,
+    },
+    cleanup: { ...runtime.cleanup },
+    evidenceBytes: 0,
+  };
+}
+
+function validateArtifactEvidence(value) {
+  assertExactEvidenceKeys(value, ['schemaVersion', 'status', 'proofScope', 'productionDistExercised', 'releaseDist', 'artifactFlow', 'containment', 'cleanup', 'evidenceBytes']);
+  assert.equal(value.schemaVersion, 1);
+  assert.equal(value.status, 'passed');
+  assert.equal(value.proofScope, 'packaged_durable_artifact');
+  assert.equal(value.productionDistExercised, true);
+  assertRuntimeReleaseDistIdentity(value.releaseDist);
+  assertExactEvidenceKeys(value.artifactFlow, ['provider', 'coverage', 'canonical', 'settlement']);
+  assertExactEvidenceKeys(value.artifactFlow.provider, ['requests', 'sourceRequests', 'locatingReads', 'exhaustivePageReads', 'ordinaryBoundaries', 'provisionalFinals', 'correctiveReprompts', 'finalResponses']);
+  assertExactEvidenceKeys(value.artifactFlow.coverage, ['firstPageOmittedCursor', 'cursorChainExact', 'pageCount', 'expectedBytes', 'deliveredBytes', 'nextCursorNull', 'artifactDigestPresent', 'manifestDigestPresent', 'cursorChainDigestPresent', 'chunksMatchManifest']);
+  assertExactEvidenceKeys(value.artifactFlow.canonical, ['sourceToolRows', 'readerRows', 'prematureAssistantRows', 'finalAssistantRows', 'receiptCount']);
+  assertExactEvidenceKeys(value.artifactFlow.settlement, ['commitApplied', 'revisionDelta', 'recoveryRows', 'continuationPresent', 'leasePresent']);
+  assertExactEvidenceKeys(value.containment, ['networkFailClosed', 'unexpectedNetworkRequests', 'rawCredentialOccurrences', 'privatePayloadOccurrences', 'overflow']);
+  assertExactEvidenceKeys(value.cleanup, ['networkGatesClosed', 'diagnosticsDetached', 'pagesClosed', 'browserClosed', 'temporaryStateRemoved']);
+  for (const entry of Object.values(value.artifactFlow.provider)) assertNonnegativeEvidenceInteger(entry);
+  for (const key of ['pageCount', 'expectedBytes', 'deliveredBytes']) assertNonnegativeEvidenceInteger(value.artifactFlow.coverage[key]);
+  for (const entry of Object.values(value.artifactFlow.canonical)) assertNonnegativeEvidenceInteger(entry);
+  for (const key of ['revisionDelta', 'recoveryRows']) assertNonnegativeEvidenceInteger(value.artifactFlow.settlement[key]);
+  assert.deepEqual(value.artifactFlow.provider, {
+    requests: provider.capture.length,
+    sourceRequests: 1,
+    locatingReads: 2,
+    exhaustivePageReads: runtime.main.pageCount,
+    ordinaryBoundaries: countOrdinaryProviderRequests(provider),
+    provisionalFinals: 1,
+    correctiveReprompts: 1,
+    finalResponses: 1,
+  });
+  assert.equal(value.artifactFlow.provider.ordinaryBoundaries >= 1, true);
+  assert.equal(value.artifactFlow.coverage.pageCount >= MINIMUM_PAGE_COUNT, true);
+  assert.equal(value.artifactFlow.coverage.expectedBytes > 0, true);
+  assert.equal(value.artifactFlow.coverage.deliveredBytes, value.artifactFlow.coverage.expectedBytes);
+  for (const key of ['firstPageOmittedCursor', 'cursorChainExact', 'nextCursorNull', 'artifactDigestPresent', 'manifestDigestPresent', 'cursorChainDigestPresent', 'chunksMatchManifest']) {
+    assert.equal(value.artifactFlow.coverage[key], true);
+  }
+  assert.deepEqual(value.artifactFlow.canonical, { sourceToolRows: 1, readerRows: 0, prematureAssistantRows: 0, finalAssistantRows: 1, receiptCount: 1 });
+  assert.deepEqual(value.artifactFlow.settlement, { commitApplied: true, revisionDelta: 1, recoveryRows: 0, continuationPresent: false, leasePresent: false });
+  assert.deepEqual(value.containment, { networkFailClosed: true, unexpectedNetworkRequests: 0, rawCredentialOccurrences: 0, privatePayloadOccurrences: 0, overflow: false });
+  assert.equal(Object.values(value.cleanup).every((entry) => entry === true), true);
+  assert.equal(Number.isSafeInteger(value.evidenceBytes) && value.evidenceBytes > 0 && value.evidenceBytes <= MAX_RUNTIME_EVIDENCE_BYTES, true);
+}
+
+function assertExactEvidenceKeys(value, keys) {
+  assert.ok(value && typeof value === 'object' && !Array.isArray(value));
+  assert.deepEqual(Object.keys(value), keys);
+}
+
+function assertNonnegativeEvidenceInteger(value) {
+  assert.equal(Number.isSafeInteger(value) && value >= 0, true);
+}
+
+function runtimeEvidenceFailureCode(error) {
+  const code = error?.code;
+  return typeof code === 'string' && /^[a-z_]{1,64}$/u.test(code) ? code : 'evidence_failure';
+}
+
 function createMainState() {
   return {
     active: false,
@@ -1978,12 +2151,24 @@ async function teardown() {
   if (page && !page.isClosed?.()) {
     await attempt(() => page.evaluate(() => globalThis.__runtimeAgent?.dispose?.()));
   }
-  await attempt(() => pageDiagnostics?.cleanup?.());
-  await attempt(() => pageHttpPolicy.close?.());
-  await attempt(() => closeControlledResponsesProvider(provider));
+  await attempt(async () => {
+    pageDiagnostics?.cleanup?.();
+    runtime.cleanup.diagnosticsDetached = true;
+  });
+  await attempt(async () => {
+    await pageHttpPolicy.close?.();
+    runtime.cleanup.networkGatesClosed = pageHttpPolicy.closed === true && provider?.closed === true;
+  });
+  await attempt(async () => {
+    await closeControlledResponsesProvider(provider);
+    runtime.cleanup.networkGatesClosed = pageHttpPolicy.closed === true && provider?.closed === true;
+  });
   if (page && !page.isClosed?.()) await attempt(() => page.close());
+  runtime.cleanup.pagesClosed = !page || page.isClosed?.() === true;
   if (browser) await attempt(() => browser.close());
+  runtime.cleanup.browserClosed = true;
   await attempt(() => rmSync(profile, { recursive: true, force: true }));
+  runtime.cleanup.temporaryStateRemoved = !existsSync(profile);
   runtime.passedStages.push('teardown');
   if (failures.length > 0) throw new Error('Packaged durable Agent session teardown failed.');
 }

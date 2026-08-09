@@ -6,6 +6,7 @@ import {
   createDurableBgsmAgentSession,
   deleteDurableBgsmAgentSession,
   inspectActiveBgsmAgentSessionTurn,
+  getOrCreateInitialDurableBgsmAgentSession,
   inspectBgsmAgentSessionCatalog,
   loadDurableBgsmAgentSession,
   loadDurableBgsmAgentSessionCommittedTurn,
@@ -259,7 +260,7 @@ export function createBgsmAgentClientSessionController(
             throw error;
           }
         }
-        loaded ??= await createDurableBgsmAgentSession();
+        loaded ??= await getOrCreateInitialDurableBgsmAgentSession();
         const activeTurn = await inspectActiveBgsmAgentSessionTurn(loaded.session.id);
         const retryResolution = await resolveHydratedRetryState(loaded, activeTurn);
         if (!isCurrentHydration(gate)) return;
@@ -357,6 +358,7 @@ export function createBgsmAgentClientSessionController(
 
   const reconcileCanonical = (loaded: LoadedAgentSession) => {
     if (state.sessionStore.activeSessionId !== loaded.session.id) return;
+    if (loaded.session.revision <= state.activeSession.revision) return;
     adoptActiveSessionRecord(cacheRecordFromLoaded(loaded));
     access.publish();
   };
@@ -459,7 +461,7 @@ export function createBgsmAgentClientSessionController(
         throw error;
       }
     }
-    loaded ??= await createDurableBgsmAgentSession();
+    loaded ??= await getOrCreateInitialDurableBgsmAgentSession();
     const activeTurn = await inspectActiveBgsmAgentSessionTurn(loaded.session.id);
     const retryResolution = await resolveHydratedRetryState(loaded, activeTurn);
     if (!isCurrent(generation)) return null;
@@ -728,7 +730,7 @@ export function createBgsmAgentClientSessionController(
       }
       if (!replacement) {
         replacement = state.sessionStore.persistence === 'durable'
-          ? cacheRecordFromLoaded(await createDurableBgsmAgentSession())
+          ? cacheRecordFromLoaded(await getOrCreateInitialDurableBgsmAgentSession())
           : createMemorySessionRecord();
         retryResolution = { draft: null, activeTurn: null };
       }

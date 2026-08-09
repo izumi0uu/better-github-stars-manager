@@ -1,5 +1,6 @@
 import type { AgentTurnTraceFactory } from '@/agent-observability/agent-turn-types';
 import { AgentCanonicalSessionCache } from '@/storage/agent-session-cache';
+import type { AgentDurableTurnInspection } from '@/storage/agent-session-store';
 import { createAgentAttemptCoordinator, type AgentAttemptCoordinator } from './agent-attempt-coordinator';
 import {
   createBgsmAgentSessionRpcRouter,
@@ -71,6 +72,7 @@ export function createBgsmAgentRuntime(
     executionEpochId,
     runTurn: (launch, options) => turnService.run(launch, options),
     releaseTurnLease: (input) => attemptCoordinator.release(input),
+    fenceRestoredTurnFailure: (launch) => attemptCoordinator.rollbackRecoveryClaim(launch),
     translateError: dependencies.translateError,
     ...(dependencies.traceFactory ? { traceFactory: dependencies.traceFactory } : {}),
     ...(dependencies.contentCaptureFactory
@@ -79,12 +81,50 @@ export function createBgsmAgentRuntime(
   };
   const turnRegistry = factories?.createTurnRegistry?.(turnRegistryDependencies)
     ?? createBgsmAgentTurnRegistry(turnRegistryDependencies);
+  const durableRecoveryBySession = new Map<string, Promise<AgentDurableTurnInspection | null>>();
+  const inspectDurableTurn = (sessionId: string) => {
+    const existing = durableRecoveryBySession.get(sessionId);
+    if (existing) return existing;
+    const reservation = turnRegistry.reserveRecovery(sessionId);
+    const recovery = (async () => {
+      let inspected: AgentDurableTurnInspection | null = null;
+      try {
+        inspected = await attemptCoordinator.inspectActive(sessionId);
+        if (inspected) turnRegistry.restoreApprovedTurn(inspected.launch, reservation);
+        return inspected;
+      } catch (error) {
+        if (inspected) {
+          const rolledBack = await attemptCoordinator.rollbackRecoveryClaim(inspected.launch);
+          if (!rolledBack) {
+            throw new Error(
+              'Agent recovery restore failed and its replacement lease could not be rolled back.',
+              { cause: error },
+            );
+          }
+        }
+        throw error;
+      } finally {
+        turnRegistry.releaseRecovery(reservation);
+      }
+    })();
+    durableRecoveryBySession.set(sessionId, recovery);
+    void recovery.then(
+      () => {
+        if (durableRecoveryBySession.get(sessionId) === recovery) durableRecoveryBySession.delete(sessionId);
+      },
+      () => {
+        if (durableRecoveryBySession.get(sessionId) === recovery) durableRecoveryBySession.delete(sessionId);
+      },
+    );
+    return recovery;
+  };
   const sessionRpcDependencies: BgsmAgentSessionRpcDependencies = {
     executionEpochId,
     sessionCache,
     inspectActiveTurn: (sessionId) => turnRegistry.inspectActiveTurn(sessionId),
-    inspectDurableTurn: (sessionId) => attemptCoordinator.inspectActive(sessionId),
+    inspectDurableTurn,
     dismissRetry: (input) => attemptCoordinator.dismissRetry(input),
+    abandonUncertainAttempt: (input) => attemptCoordinator.abandonUncertainAttempt(input),
     discardDamagedRecovery: (sessionId) => attemptCoordinator.discardDamagedRecovery(sessionId),
     notifySessionDeleted: dependencies.notifySessionDeleted,
   };

@@ -39,11 +39,13 @@ export type BgsmAgentHookState = Readonly<{
   draftRecovery: string | null;
   durableRetryDraft: AgentRetryDraft | null;
   canRetryLastTurn: boolean;
+  transientSafeResendPrompt: string | null;
   toolActivities: readonly BgsmAgentToolActivity[];
   conversationBinding: BgsmAgentConversationBinding | null;
   startTurn: BgsmAgentClientController['startTurn'];
   stopTurn: BgsmAgentClientController['stopTurn'];
   editContextLimitedPrompt: BgsmAgentClientController['editContextLimitedPrompt'];
+  clearTransientSafeResend: BgsmAgentClientController['clearTransientSafeResend'];
   createSession: BgsmAgentClientController['createSession'];
   switchSession: BgsmAgentClientController['switchSession'];
   deleteSession: BgsmAgentClientController['deleteSession'];
@@ -110,11 +112,13 @@ function projectHookState(
     draftRecovery: turnState.draftRecovery,
     durableRetryDraft: snapshot.durableRetryDraft,
     canRetryLastTurn: controller.getCanRetryLastTurn(),
+    transientSafeResendPrompt: controller.getTransientSafeResendPrompt(),
     toolActivities: turnState.toolActivities,
     conversationBinding: snapshot.conversationBinding,
     startTurn: controller.startTurn,
     stopTurn: controller.stopTurn,
     editContextLimitedPrompt: controller.editContextLimitedPrompt,
+    clearTransientSafeResend: controller.clearTransientSafeResend,
     createSession: controller.createSession,
     switchSession: controller.switchSession,
     deleteSession: controller.deleteSession,

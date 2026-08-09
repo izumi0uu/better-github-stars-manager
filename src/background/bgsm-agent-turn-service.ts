@@ -77,6 +77,7 @@ type BgsmAgentConversationResolver = Parameters<
 export type BgsmAgentTurnRunOptions = Readonly<{
   emit?: (event: AgentEvent) => void;
   signal?: AbortSignal;
+  onDurableLeaseAcquired(): void;
   bind?: (binding: BgsmAgentConversationBinding) => void;
   trace?: AgentExecutionTraceSink;
   contentCapture?: AgentContentCaptureSink;
@@ -164,6 +165,7 @@ export function createBgsmAgentTurnService(
       recoveryClass,
     );
     if (admission.kind === 'replay') return resultFromCommit(launch, admission.commit);
+    options.onDurableLeaseAcquired();
     let changed = false;
     let changedCount = 0;
     let executionLedger: AgentExecutionLedger | null = null;

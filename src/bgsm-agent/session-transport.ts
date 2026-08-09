@@ -22,6 +22,13 @@ const UTF8_ENCODER = new TextEncoder();
 
 export type AgentSessionAttemptDigest = `asd:v1:${string}`;
 export type AgentSessionLaunchDigest = `asl:v1:${string}`;
+export function validateAgentSessionLaunchDigest(
+  value: unknown,
+): asserts value is AgentSessionLaunchDigest {
+  if (typeof value !== 'string' || !/^asl:v1:[A-Za-z0-9_-]{43}$/u.test(value)) {
+    throw new TypeError('Agent turn launch digest is malformed.');
+  }
+}
 
 export type AgentSessionLaunchIdentity = Readonly<{
   turnAttemptId: string;

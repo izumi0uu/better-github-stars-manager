@@ -286,20 +286,24 @@ describe('Options preferences', () => {
     expect(document.body.textContent).toContain('Cached account @idah');
   });
 
-  it('loads Agent storage independently and clears only the tool cache', async () => {
+  it('loads Agent storage independently and clears only the re-fetchable tool cache', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
 
     await renderOptions();
 
     const panel = document.querySelector('[data-testid="agent-storage-panel"]');
-    expect(panel?.textContent).toContain('Conversation data');
+    expect(panel?.textContent).toContain('Conversation, recovery & saved artifacts');
+    expect(panel?.textContent).toContain('Conversation, recovery & artifact ledger total');
     expect(panel?.textContent).toContain('1 MiB');
-    expect(panel?.textContent).toContain('Tool cache');
+    expect(panel?.textContent).toContain('Re-fetchable tool cache');
     expect(panel?.textContent).toContain('2 MiB');
+    expect(panel?.textContent).toContain('None is counted in this ledger');
+    expect(panel?.textContent).toContain('Whole-extension browser storage estimate');
     const clearCache = [...panel!.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.includes('Clear tool cache'));
     expect(clearCache).toBeDefined();
+    expect(clearCache?.getAttribute('aria-describedby')).toBe('agent-storage-clear-hint');
 
     await click(clearCache!);
 
@@ -307,7 +311,7 @@ describe('Options preferences', () => {
       type: 'clearAgentToolCache',
     });
     expect(panel?.textContent).toContain('0 B');
-    expect(panel?.textContent).toContain('Cleared 2 cached results and freed 2 MiB.');
+    expect(panel?.textContent).toContain('Cleared 2 cached tool artifacts and freed 2 MiB.');
     expect(clearCache?.disabled).toBe(true);
   });
 

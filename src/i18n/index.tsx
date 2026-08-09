@@ -653,13 +653,13 @@ export interface MessageCatalog {
     agentStorageOrganizeRetention: string;
     agentStorageRefresh: string;
     agentStorageLoading: string;
-    agentStorageConversationData: string;
+    agentStorageDurableData: string;
     agentStorageConversationCount: (sessions: number, messages: number) => string;
     agentStorageToolCache: string;
     agentStorageArtifactCount: (artifacts: number) => string;
-    agentStorageTotal: string;
+    agentStorageLedgerTotal: string;
     agentStorageLogicalLimit: (limit: string) => string;
-    agentStorageUsageLabel: string;
+    agentStorageLedgerUsageLabel: string;
     agentStorageThresholds: (warning: string, limit: string) => string;
     agentStorageBrowserUsage: (usage: string, quota: string) => string;
     agentStorageBrowserUnavailable: string;
@@ -1593,9 +1593,9 @@ const messages: Record<Locale, MessageCatalog> = {
       agentDisclosureNotSentHeading: "Never included as model input",
       agentDisclosureNotSentSecrets: "GitHub token, API keys, other credentials, or repositories outside the active scope",
       agentDisclosureKeyException:
-        "The AI service API key is sent only to the exact address above as an Authorization header. It is never included in prompts or logs.",
+        "The AI service API key is sent only to the exact address above in the provider-required authentication header, including Anthropic's x-api-key. It is never included in prompts or logs.",
       agentDisclosureLocalHistory:
-        "Committed conversation history, an in-flight or retryable prompt, and paged tool artifacts may be stored unencrypted in this browser's extension storage. They are not synced, exported, or included in release diagnostics. Deleting a conversation removes its transcript, pending prompt, and artifacts; re-fetchable tool cache can also be cleared separately. Unpacked development builds disclose raw capture separately before it can be enabled.",
+        "Committed conversation history, recent attempt rows that include the admitted prompt, bounded continuation-recovery projections, and paged artifacts may be stored unencrypted in this browser's extension storage. They are not synced, exported, or included in release diagnostics. Deleting a conversation removes its transcript, attempt and recovery data, and conversation-owned artifacts; re-fetchable tool cache can also be cleared separately. Unpacked development builds disclose raw capture separately before it can be enabled.",
       agentDisclosureBuiltInAccess:
         "This service is covered by the extension's built-in Chrome access.",
       agentDisclosureCustomAccess:
@@ -1603,38 +1603,38 @@ const messages: Record<Locale, MessageCatalog> = {
       agentGrantAccess: "Allow access",
       agentAccessGranted: "Access allowed",
       agentHostAccessRequired: "Allow Chrome access to test or use this custom service.",
-      agentStorageHeading: "Local Agent storage",
+      agentStorageHeading: "Local Cubby conversation, recovery & artifact ledger",
       agentStorageIntro:
-        "Conversation history, recovery prompts, and re-fetchable tool output stored by Cubby on this device.",
+        "This ledger covers conversation transcripts, attempt and recovery state, saved conversation artifacts, and re-fetchable tool cache on this device. It does not represent all Cubby or extension storage.",
       agentStorageOrganizeRetention:
-        "Deleting a conversation removes its history and saved Agent data. The latest completed or cancelled Organize result is stored separately and kept until you dismiss it in the Agent panel or a new run replaces it.",
+        "Organize data is separate and bounded: active or preflight task instructions and frozen scope, proposal, Apply, and receipt records, plus one latest completed or cancelled result. None is counted in this ledger. Deleting the origin conversation keeps that latest result until you dismiss it or a new Organize run replaces it.",
       agentStorageRefresh: "Refresh storage usage",
       agentStorageLoading: "Checking Agent storage…",
-      agentStorageConversationData: "Conversation data",
+      agentStorageDurableData: "Conversation, recovery & saved artifacts",
       agentStorageConversationCount: (sessions, messages) =>
         `${sessions} conversation${sessions === 1 ? "" : "s"} · ${messages} message${messages === 1 ? "" : "s"}`,
-      agentStorageToolCache: "Tool cache",
+      agentStorageToolCache: "Re-fetchable tool cache",
       agentStorageArtifactCount: (artifacts) =>
-        `${artifacts} stored tool result${artifacts === 1 ? "" : "s"}`,
-      agentStorageTotal: "Total",
-      agentStorageLogicalLimit: (limit) => `${limit} local limit`,
-      agentStorageUsageLabel: "Agent storage used",
+        `${artifacts} cached tool artifact${artifacts === 1 ? "" : "s"}`,
+      agentStorageLedgerTotal: "Conversation, recovery & artifact ledger total",
+      agentStorageLogicalLimit: (limit) => `${limit} ledger limit`,
+      agentStorageLedgerUsageLabel: "Conversation, recovery, and artifact ledger used",
       agentStorageThresholds: (warning, limit) =>
-        `Warning at ${warning} · storage stops at ${limit}`,
+        `This ledger only: warning at ${warning} · new ledger writes refused at ${limit}`,
       agentStorageBrowserUsage: (usage, quota) =>
-        `Extension browser storage estimate: ${usage} of ${quota}`,
-      agentStorageBrowserUnavailable: "Extension browser storage estimate unavailable",
+        `Whole-extension browser storage estimate: ${usage} of ${quota}`,
+      agentStorageBrowserUnavailable: "Whole-extension browser storage estimate unavailable",
       agentStorageWarning:
-        "Agent storage is above the warning level. Clear the tool cache before storage-heavy work.",
+        "This ledger is above its warning level; other Cubby and extension storage is outside this threshold. Clear the re-fetchable tool cache before storage-heavy work.",
       agentStorageLimitReached:
-        "Agent storage reached its local limit. New Agent data cannot be saved until space is available.",
+        "This ledger reached its local limit. New ledger data is refused until space is available; other Cubby and extension storage is outside this threshold.",
       agentStorageClearHint:
-        "Clears cached tool output only. Conversation history and repository data are kept.",
+        "Clears only re-fetchable tool cache. Final answers and conversation transcripts, attempt and recovery state, and saved conversation artifacts remain.",
       agentStorageClearCache: "Clear tool cache",
-      agentStorageClearingCache: "Clearing cache…",
+      agentStorageClearingCache: "Clearing tool cache…",
       agentStorageCacheCleared: (artifacts, bytes, protectedArtifacts) =>
-        `Cleared ${artifacts} cached result${artifacts === 1 ? "" : "s"} and freed ${bytes}.${protectedArtifacts > 0 ? ` Kept ${protectedArtifacts} active or referenced result${protectedArtifacts === 1 ? "" : "s"}.` : ""}`,
-      agentStorageUnavailable: (error) => `Agent storage usage is unavailable: ${error}`,
+        `Cleared ${artifacts} cached tool artifact${artifacts === 1 ? "" : "s"} and freed ${bytes}.${protectedArtifacts > 0 ? ` Kept ${protectedArtifacts} active or referenced artifact${protectedArtifacts === 1 ? "" : "s"}.` : ""}`,
+      agentStorageUnavailable: (error) => `Cubby ledger usage is unavailable: ${error}`,
       agentStorageClearFailed: (error) => `Tool cache could not be cleared: ${error}`,
       agentStorageRetry: "Try again",
       behaviorHeading: "4. Preference",
@@ -2593,9 +2593,9 @@ const messages: Record<Locale, MessageCatalog> = {
       agentDisclosureNotSentHeading: "绝不会作为模型输入",
       agentDisclosureNotSentSecrets: "GitHub token、API 密钥、其他凭据，或当前范围外的仓库",
       agentDisclosureKeyException:
-        "AI 服务 API 密钥只会通过 Authorization 请求头发送到上方准确地址，绝不会写入提示词或日志。",
+        "AI 服务 API 密钥只会通过服务商要求的认证请求头发送到上方准确地址（Anthropic 使用 x-api-key），绝不会写入提示词或日志。",
       agentDisclosureLocalHistory:
-        "已提交的对话历史、正在处理或可重试的提示词，以及分页工具结果，可能会以明文保存在本机浏览器的扩展存储中，不会同步、导出或进入发布版诊断。删除对话会移除对应历史、待处理提示词和工具结果；可重新获取的工具缓存也可单独清理。解压加载的开发版会在启用原始捕获前另行披露风险。",
+        "已提交的对话历史、包含已提交提示词的近期尝试记录、有界续接恢复投影，以及分页工件，可能会以明文保存在本机浏览器的扩展存储中，不会同步、导出或进入发布版诊断。删除对话会移除对应对话记录、尝试与恢复数据，以及归该对话所有的工件；可重新获取的工具缓存也可单独清理。解压加载的开发版会在启用原始捕获前另行披露风险。",
       agentDisclosureBuiltInAccess:
         "此服务已包含在扩展内置的 Chrome 访问范围中。",
       agentDisclosureCustomAccess:
@@ -2603,33 +2603,37 @@ const messages: Record<Locale, MessageCatalog> = {
       agentGrantAccess: "允许访问",
       agentAccessGranted: "已允许访问",
       agentHostAccessRequired: "测试或使用此自定义服务前，请先允许 Chrome 访问。",
-      agentStorageHeading: "本机 Agent 存储",
-      agentStorageIntro: "Cubby 在本机保存的对话历史、恢复提示词和可重新获取的工具结果。",
+      agentStorageHeading: "本机 Cubby 对话、恢复与工件账本",
+      agentStorageIntro:
+        "此账本涵盖本机的对话记录、尝试与恢复状态、已保存的对话工件，以及可重新获取的工具缓存；不代表 Cubby 或扩展的全部存储。",
       agentStorageOrganizeRetention:
-        "删除对话会移除其历史记录和已保存的 Agent 数据。最近一次已完成或已取消的整理结果单独保存，直到你在 Agent 面板中关闭它，或被新的运行替换。",
+        "Organize 数据单独有界保存：活动中或预检阶段的任务指令与冻结范围、提案、Apply 与回执记录，以及最近一次已完成或已取消的结果；这些数据均不计入此账本。删除来源对话仍会保留该最近结果，直到你将其关闭或新的 Organize 运行将其替换。",
       agentStorageRefresh: "刷新存储用量",
       agentStorageLoading: "正在检查 Agent 存储…",
-      agentStorageConversationData: "对话数据",
+      agentStorageDurableData: "对话、恢复与已保存工件",
       agentStorageConversationCount: (sessions, messages) =>
         `${sessions} 个对话 · ${messages} 条消息`,
-      agentStorageToolCache: "工具缓存",
-      agentStorageArtifactCount: (artifacts) => `${artifacts} 个已存工具结果`,
-      agentStorageTotal: "总计",
-      agentStorageLogicalLimit: (limit) => `本机上限 ${limit}`,
-      agentStorageUsageLabel: "Agent 已用存储",
+      agentStorageToolCache: "可重新获取的工具缓存",
+      agentStorageArtifactCount: (artifacts) => `${artifacts} 个缓存工具工件`,
+      agentStorageLedgerTotal: "对话、恢复与工件账本总量",
+      agentStorageLogicalLimit: (limit) => `账本上限 ${limit}`,
+      agentStorageLedgerUsageLabel: "对话、恢复与工件账本已用空间",
       agentStorageThresholds: (warning, limit) =>
-        `${warning} 时提醒 · ${limit} 时停止写入`,
+        `仅此账本：${warning} 时提醒 · ${limit} 时拒绝新的账本写入`,
       agentStorageBrowserUsage: (usage, quota) =>
-        `扩展浏览器存储估算：已用 ${usage}，可用额度 ${quota}`,
-      agentStorageBrowserUnavailable: "暂时无法获取扩展浏览器存储估算",
-      agentStorageWarning: "Agent 存储已超过提醒线。进行高存储量任务前，请先清理工具缓存。",
-      agentStorageLimitReached: "Agent 存储已达到本机上限。释放空间前无法保存新的 Agent 数据。",
-      agentStorageClearHint: "只清理工具结果缓存；对话历史和仓库数据会保留。",
+        `整个扩展的浏览器存储估算：已用 ${usage}，可用额度 ${quota}`,
+      agentStorageBrowserUnavailable: "暂时无法获取整个扩展的浏览器存储估算",
+      agentStorageWarning:
+        "此账本已超过提醒线；其他 Cubby 与扩展存储不受此阈值限制。进行高存储量任务前，请先清理可重新获取的工具缓存。",
+      agentStorageLimitReached:
+        "此账本已达到本机上限。释放空间前将拒绝新的账本数据；其他 Cubby 与扩展存储不受此阈值限制。",
+      agentStorageClearHint:
+        "只清理可重新获取的工具缓存；最终回答与对话记录、尝试与恢复状态，以及已保存的对话工件会保留。",
       agentStorageClearCache: "清理工具缓存",
-      agentStorageClearingCache: "正在清理缓存…",
+      agentStorageClearingCache: "正在清理工具缓存…",
       agentStorageCacheCleared: (artifacts, bytes, protectedArtifacts) =>
-        `已清理 ${artifacts} 个缓存结果，释放 ${bytes}。${protectedArtifacts > 0 ? `另有 ${protectedArtifacts} 个正在使用或仍被引用的结果已保留。` : ""}`,
-      agentStorageUnavailable: (error) => `无法获取 Agent 存储用量：${error}`,
+        `已清理 ${artifacts} 个缓存工具工件，释放 ${bytes}。${protectedArtifacts > 0 ? `另有 ${protectedArtifacts} 个正在使用或仍被引用的工件已保留。` : ""}`,
+      agentStorageUnavailable: (error) => `无法获取 Cubby 账本用量：${error}`,
       agentStorageClearFailed: (error) => `无法清理工具缓存：${error}`,
       agentStorageRetry: "重试",
       behaviorHeading: "4. 偏好",
