@@ -5,7 +5,9 @@ import {
   WATCH_TOKEN_ACCOUNT_CHANGED,
   WATCH_TOKEN_ACCOUNT_MISMATCH,
   WATCH_TOKEN_EMPTY,
+  WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE,
   WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN,
+  WATCH_TOKEN_NOTIFICATIONS_NETWORK,
 } from '@/api/errors';
 
 const chromeMock = createChromeMock();
@@ -17,10 +19,18 @@ const {
   GITHUB_CREDENTIALS_STORAGE_KEY,
 } = await import('@/auth/auth-store');
 
-function mainTokenFetch(login: string, probeId: string): typeof fetch {
+type FetchOptions = {
+  notifications?: 'ok' | 'forbidden' | 'network' | 'shape';
+  onRequest?: (url: string, token: string) => void;
+};
+
+function mainTokenFetch(login: string, probeId: string, options: FetchOptions = {}): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
+    const headers = init?.headers as Record<string, string> | undefined;
+    const token = headers?.Authorization?.replace(/^Bearer /u, '') ?? '';
+    options.onRequest?.(url, token);
     if (url.endsWith('/user') && method === 'GET') {
       return response(200, { login, avatar_url: null, name: login }, { 'x-oauth-scopes': '' });
     }
@@ -28,24 +38,34 @@ function mainTokenFetch(login: string, probeId: string): typeof fetch {
     if (url.endsWith('/gists') && method === 'POST') return response(201, { id: probeId });
     if (url.endsWith(`/gists/${probeId}`) && method === 'DELETE') return response(204);
     if (url.includes('/user/subscriptions') && method === 'GET') return response(200, []);
-    throw new Error(`unexpected main-token fetch: ${method} ${url}`);
+    if (url.includes('/notifications?all=true&per_page=1') && method === 'GET') {
+      if (options.notifications === 'forbidden') return response(403, { message: 'denied' });
+      if (options.notifications === 'shape') return response(200, { message: 'not-an-array' });
+      if (options.notifications === 'network') throw new Error('network down');
+      return response(200, []);
+    }
+    throw new Error('unexpected main-token fetch');
   }) as typeof fetch;
 }
 
 function watchTokenFetch(input: {
   login: string;
-  notificationsStatus?: number;
-  onRequest?: (url: string) => void;
+  notifications?: 'ok' | 'forbidden' | 'network' | 'shape';
+  onRequest?: (url: string, token: string) => void;
 }): typeof fetch {
-  return (async (request: string | URL | Request) => {
+  return (async (request: string | URL | Request, init?: RequestInit) => {
     const url = String(request);
-    input.onRequest?.(url);
+    const headers = init?.headers as Record<string, string> | undefined;
+    const token = headers?.Authorization?.replace(/^Bearer /u, '') ?? '';
+    input.onRequest?.(url, token);
     if (url.endsWith('/user')) return response(200, { login: input.login });
     if (url.includes('/notifications?all=true&per_page=1')) {
-      const status = input.notificationsStatus ?? 200;
-      return response(status, status === 200 ? [] : { message: 'denied' });
+      if (input.notifications === 'forbidden') return response(403, { message: 'denied' });
+      if (input.notifications === 'shape') return response(200, { message: 'not-an-array' });
+      if (input.notifications === 'network') throw new Error('network down');
+      return response(200, []);
     }
-    throw new Error(`unexpected Watch-token fetch: ${url}`);
+    throw new Error('unexpected Watch-token fetch');
   }) as typeof fetch;
 }
 
@@ -57,6 +77,41 @@ async function configureMain(login = 'Idah', token = 'github_pat_main'): Promise
 async function configureWatch(login = 'idah', token = 'ghp_watch'): Promise<void> {
   globalThis.fetch = watchTokenFetch({ login });
   await authStore.setWatchNotificationsToken(token);
+}
+
+async function countStorageWrites<T>(callback: () => Promise<T>): Promise<{ result: T; writes: number }> {
+  let writes = 0;
+  const originalSet = chromeMock.api.storage.local.set;
+  chromeMock.api.storage.local.set = (async (...args: Parameters<typeof originalSet>) => {
+    writes++;
+    return originalSet(...args);
+  }) as typeof originalSet;
+  try {
+    return { result: await callback(), writes };
+  } finally {
+    chromeMock.api.storage.local.set = originalSet;
+  }
+}
+
+async function assertRejectedWithoutStorageWrites(
+  callback: () => Promise<unknown>,
+  errorCode: string,
+): Promise<void> {
+  let writes = 0;
+  const originalSet = chromeMock.api.storage.local.set;
+  chromeMock.api.storage.local.set = (async (...args: Parameters<typeof originalSet>) => {
+    writes++;
+    return originalSet(...args);
+  }) as typeof originalSet;
+  try {
+    await assert.rejects(
+      callback,
+      (error: unknown) => error instanceof Error && error.message === errorCode,
+    );
+  } finally {
+    chromeMock.api.storage.local.set = originalSet;
+  }
+  assert.equal(writes, 0);
 }
 
 beforeEach(async () => {
@@ -71,71 +126,205 @@ afterAll(() => {
   globalThis.fetch = originalFetch;
 });
 
-describe('Watch Notifications token lifecycle', () => {
-  it('binds a classic token to the main account case-insensitively', async () => {
-    await configureMain('Idah');
-    await configureWatch('IDAH', 'ghp_notifications');
-
-    const config = await authStore.getConfig();
-    assert.ok(config.watchNotificationsTokenEncrypted);
-    assert.ok(config.watchNotificationsTokenCryptoMeta);
-    assert.equal(await authStore.hasWatchNotificationsToken(), true);
-    assert.equal(await authStore.getWatchNotificationsToken(), 'ghp_notifications');
-  });
-
-  it('stops before Notifications on account mismatch and preserves the existing token', async () => {
-    await configureMain();
-    await configureWatch('idah', 'ghp_existing');
-    const previous = await authStore.getConfig();
+describe('Watch Notifications credential state machine', () => {
+  it('enables Watch with the main credential without creating a second cipher', async () => {
+    await configureMain('Idah', 'main-capable');
     const calls: string[] = [];
-    globalThis.fetch = watchTokenFetch({ login: 'another-user', onRequest: (url) => calls.push(url) });
+    globalThis.fetch = mainTokenFetch('IDAH', 'unused', {
+      onRequest: (url, token) => {
+        calls.push(url);
+        assert.equal(token, 'main-capable');
+      },
+    });
 
-    await assert.rejects(
-      () => authStore.setWatchNotificationsToken('ghp_wrong_account'),
-      (error: unknown) => error instanceof Error && error.message === WATCH_TOKEN_ACCOUNT_MISMATCH,
-    );
-
-    assert.deepEqual(calls, ['https://api.github.com/user']);
-    const current = await authStore.getConfig();
-    assert.equal(current.watchNotificationsTokenEncrypted, previous.watchNotificationsTokenEncrypted);
-    assert.deepEqual(current.watchNotificationsTokenCryptoMeta, previous.watchNotificationsTokenCryptoMeta);
-    assert.equal(await authStore.getWatchNotificationsToken(), 'ghp_existing');
+    const enabled = await countStorageWrites(() => authStore.enableWatchWithMainToken());
+    const config = await authStore.getConfig();
+    const snapshot = await authStore.getGitHubCredentialSnapshot();
+    assert.equal(enabled.result.username, 'IDAH');
+    assert.equal(enabled.writes, 1);
+    assert.equal(config.watchCredentialSource, 'main');
+    assert.equal(config.watchNotificationsTokenEncrypted, null);
+    assert.equal(config.watchNotificationsTokenCryptoMeta, null);
+    assert.equal(await authStore.getWatchNotificationsToken(), 'main-capable');
+    assert.equal(await authStore.hasWatchNotificationsToken(), true);
+    assert.equal(snapshot.watchCredentialSource, 'main');
+    assert.equal(snapshot.mainToken, 'main-capable');
+    assert.equal(snapshot.notificationsToken, 'main-capable');
+    assert.equal(snapshot.notificationsConfigured, true);
+    assert.deepEqual(calls, [
+      'https://api.github.com/user',
+      'https://api.github.com/notifications?all=true&per_page=1',
+    ]);
   });
 
-  it('preserves the existing token on permission or storage failure', async () => {
-    await configureMain();
-    await configureWatch('idah', 'ghp_existing');
-    const previous = await authStore.getConfig();
+  it('replaces dedicated authority with main without copying or retaining its secret', async () => {
+    await configureMain('idah', 'main-reused');
+    await configureWatch('idah', 'dedicated-obsolete');
+    const before = await authStore.getConfig();
+    assert.ok(before.watchNotificationsTokenEncrypted);
+    globalThis.fetch = mainTokenFetch('idah', 'unused');
 
-    globalThis.fetch = watchTokenFetch({ login: 'idah', notificationsStatus: 403 });
+    await authStore.enableWatchWithMainToken();
+    const after = await authStore.getConfig();
+    assert.equal(after.watchCredentialSource, 'main');
+    assert.equal(after.watchNotificationsTokenEncrypted, null);
+    assert.equal(after.watchNotificationsTokenCryptoMeta, null);
+    assert.equal(after.tokenEncrypted, before.tokenEncrypted);
+    assert.deepEqual(after.tokenCryptoMeta, before.tokenCryptoMeta);
+    assert.equal(await authStore.getWatchNotificationsToken(), 'main-reused');
+  });
+
+  it('routes reads and identity through the selected source', async () => {
+    await configureMain('idah', 'main-selected');
+    globalThis.fetch = mainTokenFetch('idah', 'unused');
+    await authStore.enableWatchWithMainToken();
+    const mainSnapshot = await authStore.getGitHubCredentialSnapshot();
+
+    await configureWatch('IDAH', 'dedicated-selected');
+    const dedicatedSnapshot = await authStore.getGitHubCredentialSnapshot();
+    assert.equal(mainSnapshot.watchCredentialSource, 'main');
+    assert.equal(mainSnapshot.notificationsToken, 'main-selected');
+    assert.equal(dedicatedSnapshot.watchCredentialSource, 'dedicated');
+    assert.equal(dedicatedSnapshot.notificationsToken, 'dedicated-selected');
+    assert.equal(dedicatedSnapshot.notificationsConfigured, true);
+    assert.notEqual(dedicatedSnapshot.notificationsIdentity, mainSnapshot.notificationsIdentity);
+
+    await authStore.clearWatchNotificationsToken();
+    const disabledSnapshot = await authStore.getGitHubCredentialSnapshot();
+    assert.equal(disabledSnapshot.watchCredentialSource, null);
+    assert.equal(disabledSnapshot.notificationsToken, null);
+    assert.equal(disabledSnapshot.notificationsConfigured, false);
+    assert.notEqual(disabledSnapshot.notificationsIdentity, dedicatedSnapshot.notificationsIdentity);
+  });
+
+  it('falls back to a dedicated classic token only after main capability is forbidden', async () => {
+    await configureMain('Idah', 'main-no-notifications');
+    const calls: string[] = [];
+    globalThis.fetch = mainTokenFetch('Idah', 'unused', {
+      notifications: 'forbidden',
+      onRequest: (url) => calls.push(url),
+    });
     await assert.rejects(
-      () => authStore.setWatchNotificationsToken('ghp_forbidden'),
+      () => authStore.enableWatchWithMainToken(),
       (error: unknown) => error instanceof Error && error.message === WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN,
     );
+    assert.equal((await authStore.getConfig()).watchCredentialSource, null);
+    assert.equal(await authStore.getWatchNotificationsToken(), null);
+    assert.deepEqual(calls, [
+      'https://api.github.com/user',
+      'https://api.github.com/notifications?all=true&per_page=1',
+    ]);
 
-    globalThis.fetch = watchTokenFetch({ login: 'idah' });
-    chromeMock.rejectNextSet(new Error('storage failed'));
-    await assert.rejects(
-      () => authStore.setWatchNotificationsToken('ghp_write_failure'),
-      /storage failed/,
-    );
-
-    const current = await authStore.getConfig();
-    assert.equal(current.watchNotificationsTokenEncrypted, previous.watchNotificationsTokenEncrypted);
-    assert.deepEqual(current.watchNotificationsTokenCryptoMeta, previous.watchNotificationsTokenCryptoMeta);
-    assert.equal(await authStore.getWatchNotificationsToken(), 'ghp_existing');
+    await configureWatch('idah', 'dedicated-fallback');
+    const config = await authStore.getConfig();
+    assert.equal(config.watchCredentialSource, 'dedicated');
+    assert.equal(await authStore.getWatchNotificationsToken(), 'dedicated-fallback');
+    assert.equal(await authStore.getToken(), 'main-no-notifications');
   });
 
-  it('rejects whitespace without network or storage work', async () => {
+  it('preserves the prior authority for permission, network, shape, and account failures', async () => {
+    const failures: Array<{
+      name: string;
+      options: FetchOptions;
+      expected: string;
+      calls: number;
+    }> = [
+      { name: 'permission', options: { notifications: 'forbidden' }, expected: WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN, calls: 2 },
+      { name: 'network', options: { notifications: 'network' }, expected: WATCH_TOKEN_NOTIFICATIONS_NETWORK, calls: 2 },
+      { name: 'shape', options: { notifications: 'shape' }, expected: WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE, calls: 2 },
+      { name: 'account', options: {}, expected: WATCH_TOKEN_ACCOUNT_MISMATCH, calls: 1 },
+    ];
+    for (const failure of failures) {
+      await chromeMock.api.storage.local.clear();
+      await configureMain('Idah', `main-${failure.name}`);
+      await configureWatch('idah', 'dedicated-existing');
+      const previous = await authStore.getConfig();
+      const calls: string[] = [];
+      globalThis.fetch = mainTokenFetch(
+        failure.name === 'account' ? 'other-account' : 'idah',
+        `unused-${failure.name}`,
+        { ...failure.options, onRequest: (url) => calls.push(url) },
+      );
+      await assertRejectedWithoutStorageWrites(
+        () => authStore.enableWatchWithMainToken(),
+        failure.expected,
+      );
+      const current = await authStore.getConfig();
+      assert.equal(current.watchCredentialSource, previous.watchCredentialSource, failure.name);
+      assert.equal(await authStore.getWatchNotificationsToken(), 'dedicated-existing', failure.name);
+      assert.deepEqual(calls, [
+        'https://api.github.com/user',
+        ...(failure.calls === 2
+          ? ['https://api.github.com/notifications?all=true&per_page=1']
+          : []),
+      ], failure.name);
+    }
+  });
+
+  it('preserves prior authority when main enablement cannot persist', async () => {
+    await configureMain('idah', 'main-storage');
+    await configureWatch('idah', 'dedicated-storage');
+    const previous = await authStore.getConfig();
+    let writes = 0;
+    const originalSet = chromeMock.api.storage.local.set;
+    chromeMock.api.storage.local.set = (async (...args: Parameters<typeof originalSet>) => {
+      writes++;
+      return originalSet(...args);
+    }) as typeof originalSet;
+    chromeMock.rejectNextSet(new Error('storage failed'));
+    try {
+      await assert.rejects(() => authStore.enableWatchWithMainToken(), /storage failed/);
+    } finally {
+      chromeMock.api.storage.local.set = originalSet;
+    }
+    assert.equal(writes, 1);
+    const current = await authStore.getConfig();
+    assert.equal(current.watchCredentialSource, previous.watchCredentialSource);
+    assert.equal(await authStore.getWatchNotificationsToken(), 'dedicated-storage');
+    assert.equal(await authStore.getToken(), 'main-storage');
+  });
+
+  it('rejects a main enable race and leaves the previous dedicated authority intact', async () => {
+    await configureMain('idah', 'main-race');
+    await configureWatch('idah', 'dedicated-race');
+    let resolveNotifications!: (value: Response) => void;
+    let notificationsStarted!: () => void;
+    const started = new Promise<void>((resolve) => { notificationsStarted = resolve; });
+    const pendingNotifications = new Promise<Response>((resolve) => { resolveNotifications = resolve; });
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/user')) return response(200, { login: 'idah' });
+      if (url.includes('/notifications?all=true&per_page=1')) {
+        notificationsStarted();
+        return pendingNotifications;
+      }
+      throw new Error('unexpected race fetch');
+    }) as typeof fetch;
+
+    const pending = authStore.enableWatchWithMainToken();
+    await started;
+    globalThis.fetch = mainTokenFetch('IDAH', 'race-account');
+    await authStore.setToken('main-race-replacement');
+    resolveNotifications(response(200, []));
+    await assert.rejects(
+      () => pending,
+      (error: unknown) => error instanceof Error && error.message === WATCH_TOKEN_ACCOUNT_CHANGED,
+    );
+    assert.equal((await authStore.getConfig()).watchCredentialSource, 'dedicated');
+    assert.equal(await authStore.getWatchNotificationsToken(), 'dedicated-race');
+  });
+
+  it('commits dedicated source only after both checks, with no work for whitespace', async () => {
+    await configureMain('idah', 'main-whitespace');
     let fetchCalls = 0;
-    let setCalls = 0;
+    let storageWrites = 0;
     globalThis.fetch = (async () => {
       fetchCalls++;
       throw new Error('must not fetch');
     }) as typeof fetch;
     const originalSet = chromeMock.api.storage.local.set;
     chromeMock.api.storage.local.set = (async (...args: Parameters<typeof originalSet>) => {
-      setCalls++;
+      storageWrites++;
       return originalSet(...args);
     }) as typeof originalSet;
     try {
@@ -147,136 +336,134 @@ describe('Watch Notifications token lifecycle', () => {
       chromeMock.api.storage.local.set = originalSet;
     }
     assert.equal(fetchCalls, 0);
-    assert.equal(setCalls, 0);
+    assert.equal(storageWrites, 0);
+    assert.equal((await authStore.getConfig()).watchCredentialSource, null);
   });
 
-  it('keeps the token for a same-account main PAT replacement and clears it on account change or logout', async () => {
-    await configureMain('Idah', 'github_pat_first');
-    await configureWatch('idah', 'ghp_existing');
+  it('preserves a dedicated source when replacement proof or persistence fails', async () => {
+    await configureMain('idah', 'main-dedicated-failures');
+    await configureWatch('idah', 'dedicated-existing');
+    const previous = await authStore.getConfig();
+    const failures = [
+      { name: 'account', login: 'other-account', notifications: 'ok' as const, expected: WATCH_TOKEN_ACCOUNT_MISMATCH },
+      { name: 'permission', login: 'idah', notifications: 'forbidden' as const, expected: WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN },
+      { name: 'network', login: 'idah', notifications: 'network' as const, expected: WATCH_TOKEN_NOTIFICATIONS_NETWORK },
+      { name: 'shape', login: 'idah', notifications: 'shape' as const, expected: WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE },
+    ];
+    for (const failure of failures) {
+      const candidate = `dedicated-${failure.name}`;
+      globalThis.fetch = watchTokenFetch({
+        login: failure.login,
+        notifications: failure.notifications,
+        onRequest: (_url, token) => assert.equal(token, candidate),
+      });
+      await assertRejectedWithoutStorageWrites(
+        () => authStore.setWatchNotificationsToken(candidate),
+        failure.expected,
+      );
+      const current = await authStore.getConfig();
+      assert.equal(current.watchCredentialSource, 'dedicated', failure.name);
+      assert.equal(current.watchNotificationsTokenEncrypted, previous.watchNotificationsTokenEncrypted, failure.name);
+      assert.deepEqual(current.watchNotificationsTokenCryptoMeta, previous.watchNotificationsTokenCryptoMeta, failure.name);
+      assert.equal(await authStore.getWatchNotificationsToken(), 'dedicated-existing', failure.name);
+    }
 
-    globalThis.fetch = mainTokenFetch('IDAH', 'probe-same-account');
-    await authStore.setToken('github_pat_second');
-    assert.equal(await authStore.getWatchNotificationsToken(), 'ghp_existing');
-
-    globalThis.fetch = mainTokenFetch('another-user', 'probe-new-account');
-    await authStore.setToken('github_pat_other');
-    assert.equal(await authStore.getWatchNotificationsToken(), null);
-    assert.equal((await authStore.getConfig()).watchNotificationsTokenEncrypted, null);
-
-    await configureWatch('another-user', 'ghp_other');
-    await authStore.clearToken();
-    assert.equal(await authStore.getWatchNotificationsToken(), null);
-    assert.equal((await authStore.getConfig()).watchNotificationsTokenCryptoMeta, null);
+    globalThis.fetch = watchTokenFetch({ login: 'idah' });
+    let writes = 0;
+    const originalSet = chromeMock.api.storage.local.set;
+    chromeMock.api.storage.local.set = (async (...args: Parameters<typeof originalSet>) => {
+      writes++;
+      return originalSet(...args);
+    }) as typeof originalSet;
+    chromeMock.rejectNextSet(new Error('storage failed'));
+    try {
+      await assert.rejects(
+        () => authStore.setWatchNotificationsToken('dedicated-storage-failure'),
+        /storage failed/,
+      );
+    } finally {
+      chromeMock.api.storage.local.set = originalSet;
+    }
+    assert.equal(writes, 1);
+    assert.equal((await authStore.getConfig()).watchCredentialSource, 'dedicated');
+    assert.equal(await authStore.getWatchNotificationsToken(), 'dedicated-existing');
   });
 
-  it('does not let a stale settings write resurrect credentials after logout', async () => {
-    await configureMain();
-    await configureWatch('idah', 'ghp_existing');
-    const before = await chromeMock.api.storage.local.get(CONFIG_STORAGE_KEY);
-    const staleConfig = before[CONFIG_STORAGE_KEY] as Record<string, unknown>;
+  it('preserves a dedicated binding after same-account main rotation but disables main binding', async () => {
+    await configureMain('Idah', 'main-first');
+    globalThis.fetch = mainTokenFetch('Idah', 'unused');
+    await authStore.enableWatchWithMainToken();
+    globalThis.fetch = mainTokenFetch('IDAH', 'main-rotation');
+    await authStore.setToken('main-second');
+    assert.equal((await authStore.getConfig()).watchCredentialSource, null);
+    assert.equal(await authStore.getWatchNotificationsToken(), null);
 
+    await configureWatch('idah', 'dedicated-survives');
+    globalThis.fetch = mainTokenFetch('IDAH', 'main-rotation-2');
+    await authStore.setToken('main-third');
+    assert.equal((await authStore.getConfig()).watchCredentialSource, 'dedicated');
+    assert.equal(await authStore.getWatchNotificationsToken(), 'dedicated-survives');
+  });
+
+  it('clears every Watch authority on account change and logout', async () => {
+    await configureMain('idah', 'main-account-change');
+    await configureWatch('idah', 'dedicated-account-change');
+    globalThis.fetch = mainTokenFetch('other-account', 'account-change');
+    await authStore.setToken('main-other');
+    let config = await authStore.getConfig();
+    assert.equal(config.watchCredentialSource, null);
+    assert.equal(config.watchNotificationsTokenEncrypted, null);
+    assert.equal(await authStore.getWatchNotificationsToken(), null);
+
+    await configureWatch('other-account', 'dedicated-before-clear');
     await authStore.clearToken();
+    config = await authStore.getConfig();
+    assert.equal(config.watchCredentialSource, null);
+    assert.equal(config.tokenEncrypted, null);
+    assert.equal(config.watchNotificationsTokenEncrypted, null);
+    assert.equal(await authStore.getWatchNotificationsToken(), null);
+  });
+
+  it('disconnects Watch without clearing the main credential', async () => {
+    await configureMain('idah', 'main-retained');
+    globalThis.fetch = mainTokenFetch('idah', 'unused');
+    await authStore.enableWatchWithMainToken();
+    const before = await authStore.getConfig();
+    await authStore.clearWatchNotificationsToken();
+    const after = await authStore.getConfig();
+    assert.equal(after.watchCredentialSource, null);
+    assert.equal(after.tokenEncrypted, before.tokenEncrypted);
+    assert.deepEqual(after.tokenCryptoMeta, before.tokenCryptoMeta);
+    assert.equal(await authStore.getToken(), 'main-retained');
+    assert.equal(await authStore.hasToken(), true);
+  });
+
+  it('normalizes a legacy complete dedicated credential and rejects incomplete authority', async () => {
+    await configureMain('idah', 'main-legacy');
+    await configureWatch('idah', 'dedicated-legacy');
+    const stored = await chromeMock.api.storage.local.get([
+      CONFIG_STORAGE_KEY,
+      GITHUB_CREDENTIALS_STORAGE_KEY,
+    ]);
+    const storedConfig = stored[CONFIG_STORAGE_KEY] as Record<string, unknown>;
+    const storedCredentials = stored[GITHUB_CREDENTIALS_STORAGE_KEY] as Record<string, unknown>;
+    const { watchCredentialSource: _configSource, ...legacyConfig } = storedConfig;
+    const { watchCredentialSource: _credentialSource, ...legacyCredentials } = storedCredentials;
     await chromeMock.api.storage.local.set({
-      [CONFIG_STORAGE_KEY]: {
-        ...staleConfig,
-        theme: staleConfig.theme === 'dark' ? 'light' : 'dark',
-      },
+      [CONFIG_STORAGE_KEY]: legacyConfig,
+      [GITHUB_CREDENTIALS_STORAGE_KEY]: legacyCredentials,
     });
+    assert.equal((await authStore.getConfig()).watchCredentialSource, 'dedicated');
 
-    const current = await authStore.getConfig();
-    assert.equal(current.username, null);
-    assert.equal(current.tokenEncrypted, null);
-    assert.equal(current.watchNotificationsTokenEncrypted, null);
-    assert.equal(await authStore.getToken(), null);
-    assert.equal(await authStore.getWatchNotificationsToken(), null);
-  });
-
-  it('normalizes an orphaned classic credential away without a bound main account', async () => {
-    await configureMain();
-    await configureWatch('idah', 'ghp_existing');
-
-    const stored = await chromeMock.api.storage.local.get(GITHUB_CREDENTIALS_STORAGE_KEY);
     await chromeMock.api.storage.local.set({
+      [CONFIG_STORAGE_KEY]: { ...legacyConfig, watchCredentialSource: 'dedicated' },
       [GITHUB_CREDENTIALS_STORAGE_KEY]: {
-        ...(stored[GITHUB_CREDENTIALS_STORAGE_KEY] as object),
-        tokenEncrypted: null,
-        tokenCryptoMeta: null,
-        username: null,
+        ...legacyCredentials,
+        watchNotificationsTokenEncrypted: null,
+        watchNotificationsTokenCryptoMeta: null,
       },
     });
-
-    const normalized = await authStore.getConfig();
-    assert.equal(normalized.watchNotificationsTokenEncrypted, null);
-    assert.equal(normalized.watchNotificationsTokenCryptoMeta, null);
+    assert.equal((await authStore.getConfig()).watchCredentialSource, null);
     assert.equal(await authStore.getWatchNotificationsToken(), null);
-  });
-
-  it('serializes concurrent main and Notifications credential replacements', async () => {
-    await configureMain('idah', 'github_pat_existing');
-    let releaseMainProfile!: () => void;
-    const mainProfileGate = new Promise<void>((resolve) => {
-      releaseMainProfile = resolve;
-    });
-    const mainFetch = mainTokenFetch('idah', 'probe-concurrent-main');
-    const notificationsFetch = watchTokenFetch({ login: 'idah' });
-    globalThis.fetch = (async (request: string | URL | Request, init?: RequestInit) => {
-      const headers = init?.headers as Record<string, string> | undefined;
-      const authorization = headers?.Authorization ?? '';
-      const url = String(request);
-      if (authorization === 'Bearer github_pat_replacement') {
-        if (url.endsWith('/user')) await mainProfileGate;
-        return mainFetch(request, init);
-      }
-      if (authorization === 'Bearer ghp_concurrent') {
-        return notificationsFetch(request, init);
-      }
-      throw new Error(`unexpected concurrent credential fetch: ${authorization} ${url}`);
-    }) as typeof fetch;
-
-    const mainReplacement = authStore.setToken('github_pat_replacement');
-    await Promise.resolve();
-    const notificationsReplacement = authStore.setWatchNotificationsToken('ghp_concurrent');
-    await Promise.resolve();
-
-    releaseMainProfile();
-    await Promise.all([mainReplacement, notificationsReplacement]);
-
-    assert.equal(await authStore.getToken(), 'github_pat_replacement');
-    assert.equal(await authStore.getWatchNotificationsToken(), 'ghp_concurrent');
-    assert.equal((await authStore.getConfig()).username, 'idah');
-  });
-
-  it('cannot publish a probed token after the main credential changes', async () => {
-    await configureMain();
-    let resolveNotifications!: (response: Response) => void;
-    const pendingNotifications = new Promise<Response>((resolve) => {
-      resolveNotifications = resolve;
-    });
-    let markNotificationsStarted!: () => void;
-    const notificationsStarted = new Promise<void>((resolve) => {
-      markNotificationsStarted = resolve;
-    });
-    globalThis.fetch = (async (request: string | URL | Request) => {
-      const url = String(request);
-      if (url.endsWith('/user')) return response(200, { login: 'idah' });
-      if (url.includes('/notifications?all=true&per_page=1')) {
-        markNotificationsStarted();
-        return pendingNotifications;
-      }
-      throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
-
-    const pending = authStore.setWatchNotificationsToken('ghp_racing');
-    const rejected = assert.rejects(
-      () => pending,
-      (error: unknown) => error instanceof Error && error.message === WATCH_TOKEN_ACCOUNT_CHANGED,
-    );
-    await notificationsStarted;
-    globalThis.fetch = mainTokenFetch('another-user', 'probe-racing-account');
-    await authStore.setToken('github_pat_another_account');
-    resolveNotifications(response(200, []));
-
-    await rejected;
-    assert.equal((await authStore.getConfig()).watchNotificationsTokenEncrypted, null);
   });
 });

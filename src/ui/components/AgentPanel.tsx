@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CheckCircle2,
   CircleStop,
+  Eye,
   EyeOff,
   ExternalLink,
   FileCode2,
@@ -17,6 +18,7 @@ import {
   Sparkles,
   Tags,
   TriangleAlert,
+  Unplug,
   Wrench,
   X,
 } from 'lucide-react';
@@ -38,13 +40,9 @@ import {
   AgentRunStepper,
   type AgentRunMode,
 } from '@/ui/components/AgentOrganizeReview';
-import type { BgsmAgentChatMessage, useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
+import type { BgsmAgentHookState } from '@/ui/hooks/use-bgsm-agent';
+import type { BgsmAgentChatMessage } from '@/ui/bgsm-agent-session-projection';
 import type { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
-import {
-  CONNECTION_INTERRUPTED_COPY,
-  PREFLIGHT_INCOMPLETE_COPY,
-  WORKER_LOST_COPY,
-} from '@/ui/agent-workbench-state';
 import {
   resolveAgentUiPresentation,
   selectOrganizeWorkbenchView,
@@ -54,7 +52,7 @@ import {
 } from '@/ui/agent-ui-presentation';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
-type ChatController = ReturnType<typeof useBgsmAgent>;
+type ChatController = BgsmAgentHookState;
 type WorkbenchController = ReturnType<typeof useBgsmAgentWorkbench>;
 
 export function AgentPanel({
@@ -89,30 +87,55 @@ export function AgentPanel({
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const reviewTranscriptMessageIdRef = useRef<string | null>(null);
   const onHideRef = useRef(onHide);
+  const previousDurableRetryDraftRef = useRef(agent.durableRetryDraft);
   onHideRef.current = onHide;
   const {
     messages,
     running,
     status,
-    error,
+    error: turnError,
     lastTurnResult,
     contextLimitRecovery,
     draftRecovery,
+    durableRetryDraft,
     canRetryLastTurn,
+    transientSafeResendPrompt,
     toolActivities,
     errorCategory,
     startTurn,
     stopTurn,
     editContextLimitedPrompt,
+    clearTransientSafeResend,
+    sessionReady: agentSessionReady,
+    sessionOperationPending,
+    sessionInitializationError,
     activeSessionId,
     sessions,
+    hasEarlierMessages,
+    loadingEarlierMessages,
     createSession,
     switchSession,
     deleteSession,
+    loadEarlierMessages,
     resetConversation,
+    retrySessionHydration,
   } = agent;
   const organize = workbench.state;
+  const error = sessionInitializationError ?? turnError;
+  const sessionIdentityReady = agentSessionReady && organize.sessionId === activeSessionId;
+  const sessionReady = sessionIdentityReady && !sessionOperationPending;
   const organizeView = selectOrganizeWorkbenchView(organize, workbench.displayedProcessed);
+  const terminalOrganizeJob = organize.organizeJob
+    && ['completed', 'cancelled'].includes(organize.organizeJob.status)
+    ? organize.organizeJob
+    : null;
+  const organizeOriginSessionDeleted = !!terminalOrganizeJob && (
+    organize.deletedSessionIds.has(terminalOrganizeJob.originAgentSessionId)
+    || (
+      agentSessionReady
+      && !sessions.some((session) => session.id === terminalOrganizeJob.originAgentSessionId)
+    )
+  );
   const receiptCounts = organizeView.receiptCounts;
   const reviewFocused = organizeView.phase === 'review_ready';
   const isReadyIdle = !running
@@ -122,6 +145,7 @@ export function AgentPanel({
     && !error
     && !lastTurnResult
     && !contextLimitRecovery
+    && !durableRetryDraft
     && messages.length === 0;
   const showHandoff = !!handoff
     && handoff.remainingUntagged > 0
@@ -131,10 +155,14 @@ export function AgentPanel({
     && !organizeView.hasReceipt
     && !error
     && !contextLimitRecovery
+    && !durableRetryDraft
     && messages.length === 0;
   const lastUserPrompt = [...messages].reverse().find((message) => message.role === 'user')?.content ?? null;
-  const retryPrompt = draftRecovery ?? lastFailedPrompt ?? lastUserPrompt;
+  const retryPrompt = durableRetryDraft?.prompt ?? draftRecovery ?? lastFailedPrompt ?? lastUserPrompt;
+  const transientSafeResendAllowed = transientSafeResendPrompt !== null
+    && input === transientSafeResendPrompt;
   const unsafeReplayBlocked = !canRetryLastTurn
+    && !transientSafeResendAllowed
     && !!retryPrompt
     && input.trim() === retryPrompt.trim();
   const uiPresentation = resolveAgentUiPresentation({
@@ -151,9 +179,14 @@ export function AgentPanel({
   }, organizeView);
   const active = uiPresentation.active;
   const showStopbar = uiPresentation.stopbar !== null;
-  const sessionTransitionBlocked = !uiPresentation.sessionPolicy.canSwitchSession;
+  const createSessionBlocked = !sessionReady || !uiPresentation.sessionPolicy.canCreateSession;
+  const switchSessionBlocked = !sessionReady || !uiPresentation.sessionPolicy.canSwitchSession;
+  const deleteSessionBlocked = !sessionReady || !uiPresentation.sessionPolicy.canDeleteSession;
+  const sessionMenuDisabled = !sessionIdentityReady;
   const conversationSwitchBlocked = blockedConversationCandidate !== null;
-  const chatDisabled = uiPresentation.composer.disabled || conversationSwitchBlocked;
+  const chatDisabled = !sessionReady
+    || uiPresentation.composer.disabled
+    || conversationSwitchBlocked;
   const mascotState = uiPresentation.mascot;
   const contextFailureReason = contextLimitRecovery?.reason ?? null;
   const contextNeedsProviderSettings = contextFailureReason === 'capability_unresolved'
@@ -177,7 +210,21 @@ export function AgentPanel({
   const repositoryCodeReadOnly = toolMessages.some((message) => (
     getBgsmAgentToolDefinition(message.toolName)?.capability === 'repository_code'
   ));
-  const showProviderErrorCard = !running && !!error && !contextLimitRecovery;
+  const showProviderErrorCard = (!running || transientSafeResendPrompt !== null)
+    && !!error
+    && !contextLimitRecovery;
+  const isSessionInitializationFailure = sessionInitializationError !== null;
+  const showDurableRetryCard = !!durableRetryDraft
+    && !running
+    && !turnError
+    && !contextLimitRecovery
+    && !sessionInitializationError;
+  const durableRetryPending = durableRetryDraft?.settlement === 'stop_pending';
+  const durableRetryTitle = durableRetryDraft?.kind === 'stopped'
+    ? m.agentPanel.retryDraftStoppedTitle
+    : durableRetryDraft?.kind === 'context_limit'
+      ? m.agentPanel.retryDraftContextTitle
+      : m.agentPanel.retryDraftFailedTitle;
   const codeSearchMessages = toolMessages.filter((message) => (
     message.toolName === BGSM_AGENT_TOOL_NAMES.searchRepositoryCode
   ));
@@ -228,6 +275,22 @@ export function AgentPanel({
   useEffect(() => {
     if (draftRecovery) setInput(draftRecovery);
   }, [draftRecovery]);
+
+  useEffect(() => {
+    const previousDraft = previousDurableRetryDraftRef.current;
+    previousDurableRetryDraftRef.current = durableRetryDraft;
+    if (!durableRetryDraft) return;
+    // A retry CAS claim changes the same draft from retryable to stop_pending.
+    // Keep the composer clear while that claimed attempt is running.
+    if (
+      previousDraft?.settlement === 'retryable'
+      && durableRetryDraft.settlement === 'stop_pending'
+      && previousDraft.sessionId === durableRetryDraft.sessionId
+      && previousDraft.baseRevision === durableRetryDraft.baseRevision
+      && previousDraft.prompt === durableRetryDraft.prompt
+    ) return;
+    setInput((current) => current.trim() ? current : durableRetryDraft.prompt);
+  }, [durableRetryDraft]);
 
   useEffect(() => {
     if (error && lastUserPrompt) setLastFailedPrompt(lastUserPrompt);
@@ -289,25 +352,36 @@ export function AgentPanel({
     };
   }, [open]);
 
-  const runAgentPrompt = (prompt: string) => {
+  const runAgentPrompt = async (prompt: string, retrySourceAttemptId?: string) => {
     const handoffAuthority = workbench.captureAgentHandoffAuthority();
-    void startTurn(prompt).then((result) => {
-      if (result?.organizeLibraryHandoff?.type !== 'organize_whole_library') return;
-      const anchorMessage = result.newMessages.at(-1);
+    const result = await startTurn(
+      prompt,
+      retrySourceAttemptId ? { retrySourceAttemptId } : undefined,
+    );
+    if (result?.organizeLibraryHandoff?.type === 'organize_whole_library') {
+      // The terminal handoff anchor is durable commit metadata. It is nested in
+      // the receipt so a replayed result follows the same message boundary as
+      // the original turn, without relying on the transient stream state.
+      const handoffAnchor = result.commit?.outcome.handoffAnchor;
       workbench.applyAgentHandoff(
         result.organizeLibraryHandoff,
         handoffAuthority,
-        {
-          messageId: anchorMessage?.id ?? null,
-          createdAt: anchorMessage?.createdAt ?? Date.now(),
-        },
+        handoffAnchor ?? { messageId: null, createdAt: Date.now() },
       );
-    });
+    }
+    return result;
+  };
+
+  const handleInputChange = (nextInput: string) => {
+    if (transientSafeResendPrompt !== null && nextInput !== transientSafeResendPrompt) {
+      clearTransientSafeResend();
+    }
+    setInput(nextInput);
   };
 
   const handlePromptSuggestion = (prompt: string) => {
     if (!prompt.trim() || chatDisabled) return;
-    setInput(prompt);
+    handleInputChange(prompt);
     focusComposerAtEnd();
   };
 
@@ -315,13 +389,17 @@ export function AgentPanel({
     if (!input.trim() || chatDisabled || unsafeReplayBlocked) return;
     const prompt = input;
     setInput('');
-    runAgentPrompt(prompt);
+    void runAgentPrompt(prompt).then((result) => {
+      if (!result) setInput((current) => current || prompt);
+    });
   };
 
   const handleRetry = () => {
-    if (!retryPrompt || chatDisabled) return;
+    if (!retryPrompt || chatDisabled || active || !canRetryLastTurn) return;
     setInput('');
-    runAgentPrompt(retryPrompt);
+    void runAgentPrompt(retryPrompt, durableRetryDraft?.turnAttemptId).then((result) => {
+      if (!result) setInput((current) => current || retryPrompt);
+    });
   };
 
   const handleEditContextLimitedPrompt = () => {
@@ -335,7 +413,14 @@ export function AgentPanel({
     const prompt = contextLimitRecovery.prompt;
     editContextLimitedPrompt();
     setInput('');
-    runAgentPrompt(prompt);
+    void runAgentPrompt(
+      prompt,
+      durableRetryDraft?.prompt.trim() === prompt.trim()
+        ? durableRetryDraft.turnAttemptId
+        : undefined,
+    ).then((result) => {
+      if (!result) setInput((current) => current || prompt);
+    });
   };
 
   const handleOpenContextSettings = () => {
@@ -343,18 +428,18 @@ export function AgentPanel({
     onOpenOptions?.();
     focusComposerAtEnd();
   };
-
-  const handleResetConversation = () => {
-    if (sessionTransitionBlocked) return;
-    resetConversation();
-    setLastFailedPrompt(null);
-    setInput('');
-    focusComposerAtEnd();
+  const handleResetConversation = async () => {
+    if (createSessionBlocked) return;
+    if (await resetConversation()) {
+      setLastFailedPrompt(null);
+      setInput('');
+      focusComposerAtEnd();
+    }
   };
 
-  const handleCreateSession = (): boolean => {
-    if (sessionTransitionBlocked) return false;
-    if (createSession()) {
+  const handleCreateSession = async (): Promise<boolean> => {
+    if (createSessionBlocked) return false;
+    if (await createSession()) {
       setLastFailedPrompt(null);
       setInput('');
       focusComposerAtEnd();
@@ -363,19 +448,18 @@ export function AgentPanel({
     return false;
   };
 
-  const handleSwitchSession = (nextSessionId: string): boolean => {
-    if (sessionTransitionBlocked || !switchSession(nextSessionId)) return false;
+  const handleSwitchSession = async (nextSessionId: string): Promise<boolean> => {
+    if (switchSessionBlocked || !await switchSession(nextSessionId)) return false;
     setLastFailedPrompt(null);
     setInput('');
     focusComposerAtEnd();
     return true;
   };
 
-  const handleDeleteSession = (sessionIdToDelete: string): boolean => {
-    if (sessionTransitionBlocked) return false;
-    if (deleteSession(sessionIdToDelete)) {
+  const handleDeleteSession = async (sessionIdToDelete: string): Promise<boolean> => {
+    if (deleteSessionBlocked) return false;
+    if (await deleteSession(sessionIdToDelete)) {
       setLastFailedPrompt(null);
-      setInput('');
       focusComposerAtEnd();
       return true;
     }
@@ -386,7 +470,7 @@ export function AgentPanel({
   const selectedCount = organizeView.selectedCount;
   const resolvedScopeCount = resolvedScopeCountValue(scopeCount, defaultCandidate);
   const isProviderSetupError = !!error && !!errorCategory && !['provider', 'other'].includes(errorCategory);
-  const headerStatus = resolveAgentHeaderStatus({
+  const headerStatus = isSessionInitializationFailure ? null : resolveAgentHeaderStatus({
     phase: uiPresentation.header.kind,
     statusText: status?.text ?? null,
     contextRecoveryTitle,
@@ -464,9 +548,8 @@ export function AgentPanel({
           <Button
             variant="outline"
             size="sm"
-            className="mt-2 h-7 px-2 text-xs"
+            disabled={createSessionBlocked}
             onClick={handleResetConversation}
-            disabled={sessionTransitionBlocked}
           >
             <MessageSquarePlus className="size-3.5" data-icon="inline-start" />
             {m.agentPanel.startNewConversation}
@@ -598,7 +681,10 @@ export function AgentPanel({
           <AgentSessionMenu
             sessions={sessions}
             activeSessionId={activeSessionId}
-            disabled={sessionTransitionBlocked || !open}
+            disabled={sessionMenuDisabled || !open}
+            canCreateSession={uiPresentation.sessionPolicy.canCreateSession}
+            canSwitchSession={uiPresentation.sessionPolicy.canSwitchSession}
+            canDeleteSession={uiPresentation.sessionPolicy.canDeleteSession}
             onCreate={handleCreateSession}
             onSwitch={handleSwitchSession}
             onDelete={handleDeleteSession}
@@ -606,9 +692,8 @@ export function AgentPanel({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            disabled={createSessionBlocked}
             onClick={handleResetConversation}
-            disabled={sessionTransitionBlocked}
             aria-label={m.agentPanel.startNewConversation}
             title={m.agentPanel.startNewConversation}
           >
@@ -633,6 +718,29 @@ export function AgentPanel({
               scrollKey={conversationScrollKey}
               resumeLabel={m.agentPanel.resumeConversationFollow}
             >
+              {hasEarlierMessages && (
+                <Message role="system">
+                  <div className="flex w-full justify-center">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground"
+                      data-testid="agent-load-earlier-messages"
+                      aria-busy={loadingEarlierMessages}
+                      disabled={loadingEarlierMessages || running || !agentSessionReady}
+                      onClick={() => {
+                        void loadEarlierMessages();
+                      }}
+                    >
+                      {loadingEarlierMessages && <Spinner />}
+                      {loadingEarlierMessages
+                        ? m.agentPanel.loadingEarlierMessages
+                        : m.agentPanel.loadEarlierMessages}
+                    </Button>
+                  </div>
+                </Message>
+              )}
+
               {isReadyIdle && (
                 <Message role="assistant">
                   <MessageContent>{m.agentPanel.chatIntro}</MessageContent>
@@ -768,10 +876,59 @@ export function AgentPanel({
                 workbench={workbench}
                 view={organizeView}
                 readOnly={repositoryCodeReadOnly}
+                originSessionDeleted={organizeOriginSessionDeleted}
                 onInsertCorrection={handlePromptSuggestion}
               />
 
               {conversationTranscriptAfterWorkbench}
+
+              {showDurableRetryCard && durableRetryDraft && (
+                <Message role="system">
+                  <div
+                    className="w-full overflow-hidden rounded-[8px] border border-border bg-card"
+                    data-testid="agent-durable-retry-card"
+                    role="status"
+                  >
+                    <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
+                      <div className="mt-0.5 grid size-5 place-items-center text-muted-foreground">
+                        <RotateCcw className="size-3.5" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12.5px] font-semibold leading-tight text-foreground">
+                          {durableRetryTitle}
+                        </div>
+                        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                          {durableRetryPending
+                            ? m.agentPanel.retryDraftPendingSubtitle
+                            : m.agentPanel.retryDraftSubtitle}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
+                      <p>
+                        {durableRetryPending
+                          ? m.agentPanel.retryDraftPendingBody
+                          : m.agentPanel.retryDraftBody}
+                      </p>
+                      <p className="max-h-16 overflow-hidden whitespace-pre-wrap break-words font-medium text-foreground">
+                        {durableRetryDraft.prompt}
+                      </p>
+                      {!durableRetryPending && (
+                        <Button
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          data-testid="agent-durable-retry-button"
+                          onClick={handleRetry}
+                          disabled={chatDisabled || active || !canRetryLastTurn}
+                        >
+                          <RotateCcw className="size-3.5" data-icon="inline-start" />
+                          {m.agentPanel.retry}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </Message>
+              )}
 
               {showProviderErrorCard && (
                 <Message role="system">
@@ -786,18 +943,34 @@ export function AgentPanel({
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="text-[12.5px] font-semibold leading-tight text-foreground">
-                          {isProviderSetupError ? m.agentPanel.providerAuthTitle : m.agentPanel.providerErrorTitle}
+                          {isSessionInitializationFailure
+                            ? m.agentPanel.sessionLoadTitle
+                            : isProviderSetupError
+                              ? m.agentPanel.providerAuthTitle
+                              : m.agentPanel.providerErrorTitle}
                         </div>
                         <div className="mt-0.5 text-[11.5px] text-muted-foreground">
-                          {isProviderSetupError ? m.agentPanel.providerAuthSubtitle : m.agentPanel.providerErrorSubtitle}
+                          {isSessionInitializationFailure
+                            ? m.agentPanel.sessionLoadSubtitle
+                            : isProviderSetupError
+                              ? m.agentPanel.providerAuthSubtitle
+                              : m.agentPanel.providerErrorSubtitle}
                         </div>
                       </div>
                     </div>
                     <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
                       <p className="font-medium text-foreground">{error}</p>
-                      <p>{isProviderSetupError ? m.agentPanel.providerAuthBody : m.agentPanel.providerErrorBody}</p>
+                      <p>
+                        {isSessionInitializationFailure
+                          ? m.agentPanel.sessionLoadBody
+                          : isProviderSetupError
+                            ? m.agentPanel.providerAuthBody
+                            : canRetryLastTurn
+                              ? m.agentPanel.providerErrorBody
+                              : m.agentPanel.composerWriteRetryBlocked}
+                      </p>
                       <div className="flex flex-wrap gap-1.5">
-                        {isProviderSetupError && onOpenOptions && (
+                        {!isSessionInitializationFailure && isProviderSetupError && onOpenOptions && (
                           <Button
                             size="sm"
                             className="h-7 px-2 text-xs"
@@ -806,14 +979,24 @@ export function AgentPanel({
                             {m.agentPanel.providerAuthOpenOptions}
                           </Button>
                         )}
-                        <Button
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                          onClick={handleRetry}
-                          disabled={!retryPrompt || active || !canRetryLastTurn || chatDisabled}
-                        >
-                          {isProviderSetupError ? m.agentPanel.providerAuthRetry : m.agentPanel.retry}
-                        </Button>
+                        {(isSessionInitializationFailure || canRetryLastTurn) && (
+                          <Button
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={isSessionInitializationFailure
+                              ? retrySessionHydration
+                              : handleRetry}
+                            disabled={isSessionInitializationFailure
+                              ? sessionOperationPending
+                              : !retryPrompt || chatDisabled || active}
+                          >
+                            {isSessionInitializationFailure
+                              ? m.agentPanel.sessionLoadRetry
+                              : isProviderSetupError
+                                ? m.agentPanel.providerAuthRetry
+                                : m.agentPanel.retry}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -885,7 +1068,7 @@ export function AgentPanel({
 
             <PromptInput
               value={input}
-              onValueChange={setInput}
+              onValueChange={handleInputChange}
               onSubmit={handleSubmit}
               placeholder={composerPlaceholder}
               disabled={chatDisabled}
@@ -1049,11 +1232,13 @@ function OrganizeJobRunWorkbench({
   workbench,
   view,
   readOnly,
+  originSessionDeleted,
   onInsertCorrection,
 }: {
   workbench: WorkbenchController;
   view: OrganizeWorkbenchView;
   readOnly: boolean;
+  originSessionDeleted: boolean;
   onInsertCorrection: (prompt: string) => void;
 }) {
   const { m } = useI18n();
@@ -1074,20 +1259,53 @@ function OrganizeJobRunWorkbench({
     : null;
   const receipt = durableReceipt;
   const [showChangedOrFailed, setShowChangedOrFailed] = useState(false);
+  const workbenchContainerRef = useRef<HTMLDivElement | null>(null);
+  const wasTakingControlRef = useRef(false);
+  const focusAfterTakeoverRef = useRef(false);
+  const previousControlNoticeRef = useRef(view.controlNotice);
+  const [takeControlSucceeded, setTakeControlSucceeded] = useState(false);
+  const takingControl = state.pendingCommand?.kind === 'take_control';
+  const workbenchHadFocus = !!workbenchContainerRef.current?.contains(document.activeElement);
 
   useEffect(() => {
     setShowChangedOrFailed(false);
   }, [receipt?.applyId]);
 
   useEffect(() => {
-    if (!durableReceipt || state.transport !== 'connected') return;
+    if (!durableReceipt || !view.capabilities.canReadReceipt) return;
     workbench.requestOrganizeReceiptPage(0, showChangedOrFailed ? 'changed_or_failed' : 'all');
   }, [
     durableReceipt?.applyId,
     showChangedOrFailed,
-    state.transport,
+    view.capabilities.canReadReceipt,
     workbench.requestOrganizeReceiptPage,
   ]);
+
+  useEffect(() => {
+    if (view.controlNotice !== null || !wasTakingControlRef.current) return;
+    wasTakingControlRef.current = false;
+    setTakeControlSucceeded(true);
+    if (focusAfterTakeoverRef.current) {
+      focusAfterTakeoverRef.current = false;
+      workbenchContainerRef.current?.focus();
+    }
+  }, [view.controlNotice]);
+
+  useEffect(() => {
+    if (takeControlSucceeded) {
+      const timeout = window.setTimeout(() => setTakeControlSucceeded(false), 1200);
+      return () => window.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [takeControlSucceeded]);
+
+  useEffect(() => {
+    const previous = previousControlNoticeRef.current;
+    previousControlNoticeRef.current = view.controlNotice;
+    if (previous === null && view.controlNotice !== null && workbenchHadFocus) {
+      workbenchContainerRef.current?.focus();
+    }
+  }, [view.controlNotice, workbenchHadFocus]);
 
   const phase = view.phase;
   const currentRunState = view.runState;
@@ -1100,12 +1318,6 @@ function OrganizeJobRunWorkbench({
     'failed',
     'interrupted',
   ].includes(phase);
-  const snapshotMatchesDurablePresentation = !!snapshot && (
-    !state.organizeJob || (
-      snapshot.runId === state.organizeJob.runId
-      && snapshot.generation === state.organizeJob.generation
-    )
-  );
   const blockedFailureCount = view.failedCount;
 
   if (phase === 'idle' && !state.error) return null;
@@ -1113,22 +1325,13 @@ function OrganizeJobRunWorkbench({
   const selectedCount = state.organizeJob?.selectedRepositories ?? 0;
   const applyInFlight = phase === 'applying'
     || state.pendingCommand?.kind === 'apply_selection';
-  const reviewEditable = (
-    !!state.proposal
-    && view.coverageComplete
+  const mutationsLocked = readOnly || view.controlNotice !== null;
+  const reviewEditable = !!state.proposal
     && !receipt
     && !applyInFlight
-    && state.pendingCommand === null
-    && state.organizeReviewRequestId === null
-    && !readOnly
-    && state.organizeJob?.status === 'review'
-  );
+    && !mutationsLocked
+    && view.capabilities.canEditReview;
 
-  const stopMidAnalyze = phase === 'cancelled'
-    && snapshotMatchesDurablePresentation
-    && snapshot?.state === 'cancelled'
-    && !receipt
-    && (snapshot.terminalReason === 'user_stopped' || snapshot.terminalReason === 'user_aborted');
   const completedNoChanges = phase === 'completed_no_changes';
   const staleBlockedRows = receipt
     ? receipt.rows.filter((row) => row.reason === 'stale_source')
@@ -1147,9 +1350,77 @@ function OrganizeJobRunWorkbench({
         : snapshot
           ? 'analyze'
           : 'scope';
+  const takeControlError = view.takeControlFailure === 'owner_connected'
+    ? m.agentPanel.workbench.takeControlFailedOwnerConnected
+    : view.takeControlFailure === 'revision_conflict'
+      ? m.agentPanel.workbench.takeControlFailedConflict
+      : view.takeControlFailure === 'job_unavailable'
+        ? m.agentPanel.workbench.takeControlFailedUnavailable
+        : view.takeControlFailure
+          ? m.agentPanel.workbench.takeControlFailed
+          : null;
   return (
-    <div className="space-y-3" data-testid="organize-job-workbench">
+    <div
+      ref={workbenchContainerRef}
+      className="space-y-3"
+      data-testid="organize-job-workbench"
+      tabIndex={-1}
+    >
       <AgentRunStepper mode={runMode} />
+      {view.controlNotice !== null && (
+        <Message role="system">
+          <div className="w-full">
+            <div
+              className="flex w-full items-center gap-2 rounded-[10px] border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+              data-testid="organize-job-control-notice"
+              role="status"
+              aria-atomic="true"
+            >
+              {view.controlNotice === 'controlled_elsewhere'
+                ? <Eye className="size-3.5 shrink-0" aria-hidden="true" />
+                : <Unplug className="size-3.5 shrink-0" aria-hidden="true" />}
+              <span className="min-w-0 flex-1 leading-4">
+                {view.controlNotice === 'controlled_elsewhere'
+                  ? m.agentPanel.workbench.controlledElsewhere
+                  : m.agentPanel.workbench.ownerDisconnected}
+              </span>
+              {view.controlNotice === 'owner_disconnected' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 shrink-0 px-2 text-xs"
+                  disabled={!view.capabilities.canTakeControl || takingControl}
+                  aria-busy={takingControl}
+                  onClick={(event) => {
+                    wasTakingControlRef.current = true;
+                    focusAfterTakeoverRef.current = document.activeElement === event.currentTarget;
+                    workbench.takeControl();
+                  }}
+                >
+                  {takingControl && <Spinner data-icon="inline-start" />}
+                  {takingControl
+                    ? m.agentPanel.workbench.takingControl
+                    : m.agentPanel.workbench.takeControl}
+                </Button>
+              )}
+            </div>
+            {takeControlError && (
+              <p
+                className="mt-1 text-[11px] leading-4 text-destructive"
+                data-testid="organize-job-take-control-error"
+                role="alert"
+              >
+                {takeControlError}
+              </p>
+            )}
+          </div>
+        </Message>
+      )}
+      {takeControlSucceeded && (
+        <div className="sr-only" role="status">
+          {m.agentPanel.workbench.takeControlSucceeded}
+        </div>
+      )}
       {phase === 'scope_requesting' && preflight && (
         <Message role="system">
           <WorkbenchSection title={m.agentPanel.resolvingScopeHeader} icon={<Spinner />} subtitle={m.agentPanel.workbench.resolvingSubtitle}>
@@ -1174,7 +1445,7 @@ function OrganizeJobRunWorkbench({
               <Button
                 size="sm"
                 onClick={workbench.confirmPreflight}
-                disabled={readOnly || preflight.status === 'starting'}
+                disabled={mutationsLocked || !view.capabilities.canConfirmPreflight}
               >
                 {preflight.status === 'starting'
                   ? <Spinner data-icon="inline-start" />
@@ -1187,6 +1458,7 @@ function OrganizeJobRunWorkbench({
                 variant="ghost"
                 size="sm"
                 onClick={workbench.cancelPreflight}
+                disabled={readOnly || !view.capabilities.canCancelPreflight}
               >
                 {m.agentPanel.cancel}
               </Button>
@@ -1201,7 +1473,14 @@ function OrganizeJobRunWorkbench({
             <p className="font-medium text-foreground">{m.agentPanel.emptyScopeCount}</p>
             <p className="mt-1">{m.agentPanel.workbench.nothingToAnalyzeBody}</p>
             <div className="mt-2 flex gap-2">
-              <Button variant="ghost" size="sm" onClick={workbench.cancelPreflight}>{m.agentPanel.workbench.dismiss}</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={workbench.cancelPreflight}
+                disabled={readOnly || !view.capabilities.canCancelPreflight}
+              >
+                {m.agentPanel.workbench.dismiss}
+              </Button>
             </div>
           </WorkbenchSection>
         </Message>
@@ -1272,11 +1551,7 @@ function OrganizeJobRunWorkbench({
                 <Button
                   size="sm"
                   onClick={workbench.continueRemaining}
-                  disabled={
-                    readOnly ||
-                    state.transport !== 'connected' ||
-                    state.continuationPending
-                  }
+                  disabled={mutationsLocked || !view.capabilities.canResumeAnalysis}
                 >
                   {state.continuationPending
                     ? <Spinner data-icon="inline-start" />
@@ -1289,7 +1564,7 @@ function OrganizeJobRunWorkbench({
                   variant={view.capabilities.canResumeAnalysis ? 'outline' : 'default'}
                   size="sm"
                   onClick={() => workbench.restartWholeLibrary(m.agentPanel.autoAssignPrompt)}
-                  disabled={readOnly || state.continuationPending}
+                  disabled={mutationsLocked || !view.capabilities.canRestart}
                 >
                   <RotateCcw className="size-4" data-icon="inline-start" />
                   {m.agentPanel.workbench.restartWholeLibrary}
@@ -1304,7 +1579,7 @@ function OrganizeJobRunWorkbench({
                     : phase === 'analysis_blocked'
                       ? workbench.discardBlockedRun
                       : workbench.clearTerminal}
-                  disabled={readOnly || state.continuationPending}
+                  disabled={mutationsLocked || !view.capabilities.canDiscard}
                 >
                   <X className="size-4" data-icon="inline-start" />
                   {m.agentPanel.workbench.discardAnalysis}
@@ -1330,7 +1605,7 @@ function OrganizeJobRunWorkbench({
                   size="sm"
                   className="mt-2 h-7 px-2 text-xs"
                   onClick={workbench.discardReview}
-                  disabled={readOnly || state.transport !== 'connected'}
+                  disabled={mutationsLocked || !view.capabilities.canDiscard}
                 >
                   <X className="size-4" data-icon="inline-start" />
                   {m.agentPanel.workbench.discardAnalysis}
@@ -1366,7 +1641,7 @@ function OrganizeJobRunWorkbench({
                     variant="ghost"
                     size="sm"
                     onClick={workbench.discardReview}
-                    disabled={readOnly || state.transport !== 'connected'}
+                    disabled={mutationsLocked || !view.capabilities.canDiscard}
                   >
                     <X className="size-4" data-icon="inline-start" />
                     {m.agentPanel.workbench.discardAnalysis}
@@ -1390,6 +1665,7 @@ function OrganizeJobRunWorkbench({
               proposal={state.proposal}
               selectedProposalRowIds={state.selectedProposalRowIds}
               reviewEditable={reviewEditable}
+              reviewPageable={view.capabilities.canReadReview}
               applyInFlight={applyInFlight}
               applySelectedTotal={selectedCount}
               selectedRepositoryCount={state.organizeJob?.selectedRepositories}
@@ -1410,7 +1686,7 @@ function OrganizeJobRunWorkbench({
                 size="sm"
                 className="h-7 px-2 text-xs"
                 onClick={workbench.discardReview}
-                disabled={readOnly || !view.capabilities.canDiscard}
+                disabled={mutationsLocked || !view.capabilities.canDiscard}
               >
                 <X className="size-4" data-icon="inline-start" />
                 {m.agentPanel.workbench.discardAnalysis}
@@ -1471,7 +1747,7 @@ function OrganizeJobRunWorkbench({
               size="sm"
               className="mt-2"
               onClick={workbench.resumeOrganizeApply}
-              disabled={readOnly || !view.capabilities.canResumeApply}
+              disabled={mutationsLocked || !view.capabilities.canResumeApply}
             >
               <Play className="size-4" data-icon="inline-start" />
               {m.agentPanel.workbench.continue}
@@ -1500,6 +1776,11 @@ function OrganizeJobRunWorkbench({
                   <div className="mt-0.5 text-[11.5px] text-muted-foreground">
                     {m.agentPanel.workbench.receiptSubtitle}
                   </div>
+                  {originSessionDeleted && (
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      {m.agentPanel.workbench.receiptOriginDeleted}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
@@ -1584,7 +1865,7 @@ function OrganizeJobRunWorkbench({
                         Math.max(0, state.organizeReceiptPage!.rowOffset - 100),
                         showChangedOrFailed ? 'changed_or_failed' : 'all',
                       )}
-                      disabled={state.organizeReceiptPage.rowOffset === 0}
+                      disabled={!view.capabilities.canReadReceipt || state.organizeReceiptPage.rowOffset === 0}
                       title={m.agentPanel.workbench.previousPage}
                       aria-label={m.agentPanel.workbench.previousPage}
                     >
@@ -1602,7 +1883,7 @@ function OrganizeJobRunWorkbench({
                           showChangedOrFailed ? 'changed_or_failed' : 'all',
                         );
                       }}
-                      disabled={state.organizeReceiptPage.nextRowOffset === null}
+                      disabled={!view.capabilities.canReadReceipt || state.organizeReceiptPage.nextRowOffset === null}
                       title={m.agentPanel.workbench.nextPage}
                       aria-label={m.agentPanel.workbench.nextPage}
                     >
@@ -1629,6 +1910,7 @@ function OrganizeJobRunWorkbench({
                     size="sm"
                     className="h-7 px-2 text-xs"
                     onClick={workbench.clearTerminal}
+                    disabled={!view.capabilities.canDismissTerminal}
                   >
                     {m.agentPanel.workbench.dismiss}
                   </Button>
@@ -1638,7 +1920,7 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {stopMidAnalyze && snapshot && (
+      {phase === 'cancelled' && !receipt && (
         <Message role="system">
           <div className="w-full overflow-hidden rounded-[10px] border border-border bg-card" data-testid="organize-job-stop-card" role="status">
             <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
@@ -1652,12 +1934,17 @@ function OrganizeJobRunWorkbench({
                 <div className="mt-0.5 text-[11.5px] text-muted-foreground">
                   {m.agentPanel.stopMidAnalyzeSubtitle}
                 </div>
+                {originSessionDeleted && (
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    {m.agentPanel.workbench.receiptOriginDeleted}
+                  </div>
+                )}
               </div>
             </div>
             <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
               <p>{m.agentPanel.stopMidAnalyzeBody(processed, remaining)}</p>
               <div className="flex flex-wrap gap-1.5">
-                {snapshot.continuationCursor && (
+                {snapshot?.continuationCursor && (
                   <Button
                     size="sm"
                     className="h-7 px-2 text-xs"
@@ -1673,6 +1960,7 @@ function OrganizeJobRunWorkbench({
                   size="sm"
                   className="h-7 px-2 text-xs"
                   onClick={workbench.clearTerminal}
+                  disabled={!view.capabilities.canDismissTerminal}
                 >
                   {m.agentPanel.stopMidAnalyzeDiscard}
                 </Button>
@@ -1696,6 +1984,11 @@ function OrganizeJobRunWorkbench({
                 <div className="mt-0.5 text-[11.5px] text-muted-foreground">
                   {m.agentPanel.completedNoChangesSubtitle(total)}
                 </div>
+                {originSessionDeleted && (
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    {m.agentPanel.workbench.receiptOriginDeleted}
+                  </div>
+                )}
               </div>
             </div>
             <div className="px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
@@ -1705,6 +1998,7 @@ function OrganizeJobRunWorkbench({
                 size="sm"
                 className="mt-2 h-7 px-2 text-xs"
                 onClick={workbench.clearTerminal}
+                disabled={!view.capabilities.canDismissTerminal}
               >
                 {m.agentPanel.workbench.dismiss}
               </Button>
@@ -1713,18 +2007,20 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {state.error && !analysisBlocked && phase !== 'reconnecting' && (
+      {view.error && !analysisBlocked && phase !== 'reconnecting' && (
         <Message role="system">
           <div className="rounded-[10px] border border-border bg-card p-3 text-xs text-foreground" role="alert" data-testid="organize-job-error-card">
-            {state.error === CONNECTION_INTERRUPTED_COPY
-              ? m.agentPanel.workbench.connectionInterrupted
-              : state.error === WORKER_LOST_COPY
-                ? m.agentPanel.workbench.workerLost
-                : state.error === PREFLIGHT_INCOMPLETE_COPY
-                  ? m.agentPanel.workbench.analysisScopeIncomplete
-                : isStaleOrganizeJobRunError(state.error)
-                  ? m.agentPanel.workbench.runStateRefreshed
-                  : state.error}
+            {view.error.kind === 'organize_already_running'
+              ? m.agentPanel.workbench.organizeAlreadyRunning
+              : view.error.kind === 'connection_interrupted'
+                ? m.agentPanel.workbench.connectionInterrupted
+                : view.error.kind === 'worker_lost'
+                  ? m.agentPanel.workbench.workerLost
+                  : view.error.kind === 'preflight_incomplete'
+                    ? m.agentPanel.workbench.analysisScopeIncomplete
+                    : view.error.kind === 'run_state_refreshed'
+                      ? m.agentPanel.workbench.runStateRefreshed
+                      : m.agentPanel.workbench.organizeCommandFailed}
           </div>
         </Message>
       )}
@@ -1778,9 +2074,6 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function isStaleOrganizeJobRunError(error: string): boolean {
-  return /OrganizeJobRun identity is stale|Continuation authority is stale|does not belong to this controller\/session/iu.test(error);
-}
 
 function AgentChatMessage({
   message,

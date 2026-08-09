@@ -1,126 +1,173 @@
-# Privacy Policy
+# Privacy policy
 
-Effective date: 2026-07-14
+Effective date: 2026-08-09
 
-Better GitHub Stars Manager is a Chrome extension for organizing GitHub starred repositories.
+Better GitHub Stars Manager is a Chrome extension for organizing GitHub starred repositories. This policy describes the data the extension processes, where it goes, how long local records remain, and how you can delete them.
 
 ## Limited Use disclosure
 
-Better GitHub Stars Manager uses Chrome extension access to your GitHub data only to provide user-facing features you explicitly request. When you enable Cubby, the extension's optional AI assistant, the extension also connects directly to the AI service you select for Cubby tasks.
+Better GitHub Stars Manager uses access to GitHub data only for features you request. When you enable Cubby, the optional AI assistant, the extension also connects directly to the AI service you select.
+
+Use of information received from Google APIs complies with the [Chrome Web Store User Data Policy](https://developer.chrome.com/docs/webstore/program-policies/limited-use), including the Limited Use requirements.
 
 The extension does not:
 
 - sell your data
-- transfer data except to GitHub for GitHub/Gist features you invoke and to the AI service you explicitly select for Cubby tasks
-- use your data for advertising
-- use your data for credit or lending decisions
-- operate a developer-controlled proxy for GitHub or AI-provider traffic
+- use your data for advertising, credit, or lending decisions
+- transfer data except to GitHub for requested GitHub or Gist features and to your selected AI service for requested Cubby tasks
+- operate a developer-controlled proxy or backend for GitHub or AI-service traffic
 
-Your data is processed only to:
+The extension processes data only to:
 
-- authenticate your GitHub token
+- authenticate the GitHub token you provide
 - fetch and display your starred repositories
-- store and sync your own tags and notes when you choose to use Gist sync
-- test or run Cubby through the AI service and origin you select
+- store and optionally sync your tags and notes through your own secret GitHub Gist
+- test or run Cubby through the AI service and exact origin you select
+- show the optional Watch Inbox after you request it, using your selected GitHub credential
 
-## What the extension processes
+## Data the extension processes
 
-The extension processes the following categories of data:
+The extension processes these data categories:
 
-- GitHub personal access token that you paste into the Options page
-- GitHub account identity returned by `GET /user`, such as username, display name, and avatar URL
-- GitHub star metadata returned by `GET /user/starred`, such as repository name, URL, description, language, topics, star count, pushed time, and starred time
-- Tags and notes that you create inside the extension
-- Optional sync metadata for the dedicated secret GitHub Gist used by the extension
-- AI service configuration for Cubby, including provider, model, canonical origin, encrypted API-key material, and connection readiness stored locally
+- the main GitHub personal access token you paste into Options and, only when needed for Watch Inbox, an optional dedicated Notifications token
+- GitHub account identity from `GET /user`, such as username, display name, and avatar URL
+- star metadata from `GET /user/starred`, such as repository name, URL, description, language, topics, star count, and dates
+- watched-repository membership from `GET /user/subscriptions`
+- GitHub notification metadata for the optional Watch Inbox, including repository, reason, subject title and type, safe GitHub link, unread state, and update/read dates
+- tags and notes that you create inside the extension
+- metadata for the dedicated secret GitHub Gist used for optional sync
+- Cubby service configuration, including provider, model, canonical origin, encrypted API-key material, and connection readiness
+- committed Cubby conversation history and immutable admitted attempts, including each admitted prompt
+- bounded recovery projections needed to continue an admitted attempt after interruption
+- paged tool artifacts and re-fetchable tool cache used when a result cannot fit an extension message or model result
+- separate Organize data, including its instruction, frozen scope, proposal, Review and Apply state, and one latest completed or cancelled result
 
 ## How the extension uses data
 
-The extension uses this data only to provide its core features:
+The extension uses this data to provide these features:
 
-- fetch and render your GitHub starred repositories
-- let you search, filter, tag, and annotate those repositories
-- optionally sync your tags and notes through a secret GitHub Gist under your own account
-- optionally analyze an explicitly selected or frozen repository scope through your configured AI service
-- optionally search GitHub's index for public, non-archived code in a frozen scope of up to five starred repositories and send bounded matching snippets to your chosen AI service
+- fetch, search, filter, tag, and annotate your starred repositories
+- optionally sync your annotation layer through a secret GitHub Gist under your account
+- optionally show GitHub Notifications for currently starred repositories you watch
+- let Cubby analyze an explicitly selected or frozen repository scope
+- let Cubby perform ordinary bounded tag changes authorized by your current prompt and current-turn local evidence
+- run a separate full-library Organize workflow that freezes its scope, proposes additive tags, and requires your Review selections before Apply
+- search GitHub's index for public, non-archived code in a frozen scope of up to five starred repositories when you request code search
 
-The extension does not run ads, does not sell data, and does not send your data to a custom backend operated by the developer.
+The extension does not run ads, sell data, or send data to a developer-operated server.
 
-## Where data is stored
+## Local and optional Gist storage
 
-- Your GitHub token is stored in `chrome.storage.local` after AES-GCM encryption
-- Star metadata is stored locally in the extension's IndexedDB database for fast querying
-- Lightweight configuration is stored in `chrome.storage.local`
-- AI service API keys are stored in `chrome.storage.local` after AES-GCM encryption and are bound to the selected provider and canonical origin
-- Tags, notes, tag metadata, and the bound Gist ID may be stored in a secret GitHub Gist only when you explicitly use Push or Pull sync
+The extension stores data in the following places:
 
-Depending on the features you choose, the extension communicates directly with:
+- GitHub credentials are stored in `chrome.storage.local` after Advanced Encryption Standard Galois/Counter Mode (AES-GCM) encryption; Watch reuses the main credential after an explicit capability check or stores a separate encrypted Notifications token when required
+- AI-service API keys are stored in `chrome.storage.local` after AES-GCM encryption and are bound to the selected provider and canonical origin
+- Lightweight configuration, including the bound Gist ID, is stored in `chrome.storage.local`
+- Star metadata, tags, and notes are stored locally in IndexedDB for fast querying
+- Watch repository scope, notification-thread snapshots, and refresh state are stored unencrypted in local IndexedDB
+- Committed conversation history, attempt and recovery records, and paged artifacts are stored unencrypted in the extension's local IndexedDB database
+- Tags, notes, and tag metadata are stored in a secret GitHub Gist only when you use **Push** or **Pull**
+
+Watch scope and notification records, Cubby conversation/recovery/artifact records, and Organize records are not synced through Gist.
+
+Each admitted Cubby turn stores an immutable launch, including its prompt, in an attempt row. Pending continuation messages use a separate bounded recovery row. Cubby removes the recovery row when continuation authority ends.
+
+Cubby normally prunes valid settled attempts to the newest 128 per conversation. It may retain the current attempt and damaged recovery evidence beyond that normal pruning boundary until you explicitly delete the conversation.
+
+Large tool results may be split into bounded local pages. Cubby can page them with a conversation-bound opaque cursor, read from a bounded UTF-8 byte offset, or locate an exact bounded literal before reading the matching region. Every read remains scoped to the owning conversation.
+
+Canonical artifacts remain with their conversation. Re-fetchable artifact cache can expire or be cleared without deleting final answers. The conversation, recovery, and artifact ledger warns at 256 MiB and stops new writes at a 512 MiB logical limit. Re-fetchable cache has 2 MiB of headroom below that limit.
+
+The logical ledger includes conversation headers, attempts, recovery rows, messages, canonical artifacts, and re-fetchable cache. It excludes separately bounded Organize tables and differs from Chrome's browser-level estimate for all extension storage.
+
+Cubby keeps at most one latest completed or cancelled Organize workflow in local IndexedDB. This separate record can include its instruction, frozen scope, proposal, Review and Apply state, receipt, and origin provenance. Starting a replacement Organize workflow removes the previous terminal workflow.
+
+Streaming text, progress indicators, Provider authorization headers, API keys, raw Provider requests and responses, and worker-local projections beyond the bounded recovery record are not stored as committed conversation history, recovery state, or tool artifacts.
+
+## Direct service connections
+
+Depending on the features you choose, the extension connects directly to:
 
 - `https://github.com/*`
 - `https://api.github.com/*`
 - `https://api.openai.com/*` when OpenAI is selected
 - `https://openrouter.ai/*` when OpenRouter is selected
 - `https://api.anthropic.com/*` when Anthropic is selected
-- a custom OpenAI-compatible HTTP(S) origin that you enter and explicitly allow
+- a custom OpenAI-compatible HTTPS origin, or HTTP loopback origin, that you enter and explicitly allow
+
+Provider and GitHub requests do not pass through a developer-operated proxy.
 
 ## Cubby data sharing
 
-The Options page shows a collapsed data-use summary naming the selected provider and exact canonical origin. This notice is informational and does not block connection tests or Cubby use.
+Options shows a collapsed informational summary naming the selected provider and exact canonical origin. This notice does not grant Chrome host permission or block built-in Provider use.
 
-When you use Cubby, the extension may send these task-data categories to your selected AI service when needed:
+Cubby may send these task-data categories to your selected AI service when needed:
 
 - your prompt or bounded task instruction
 - public repository metadata for the selected or frozen scope
-- bounded public code snippets and file paths when you request indexed repository code search
-- private notes for repositories in the selected or frozen scope only when your current prompt asks Cubby to read or use them
+- bounded public code snippets and file paths when you request indexed code search
+- private notes for in-scope repositories only when your current prompt asks Cubby to use them
 - the visible, bounded tag taxonomy
-- protocol observations required for the interaction, such as tool definitions, bounded tool results, interaction choices, and app-authored run summaries
+- protocol observations, including tool definitions, bounded tool results, interaction choices, and app-authored summaries
 
-Indexed repository code search is not an exhaustive scan. GitHub searches its default-branch index, which may omit files or return partial results. BGSM revalidates the frozen repositories as public and non-archived, reads a bounded set of matching Git blobs, and marks every snippet as untrusted.
+Indexed code search is not exhaustive. GitHub searches its default-branch index, which may omit files or return partial results. The extension revalidates repositories as public and non-archived, reads bounded matching Git blobs, and treats every snippet as untrusted data.
 
-Private notes are read only through a scoped tool after the current prompt explicitly asks to use them. Notes and code snippets are treated as untrusted data, remain only in the in-memory conversation, and may be sent again or summarized only to the same bound AI provider during follow-up turns. Starting a new conversation clears that conversation context.
+Private notes are read through a scoped tool only after your current prompt asks to use them. Notes and code snippets are treated as untrusted data. A committed tool result may be stored locally and sent again or summarized only to the same bound AI provider during follow-up turns.
 
-When you use Cubby, the extension does not send these as model-visible task data by default:
+Cubby does not send these categories as model-visible task data by default:
 
 - private notes you did not ask Cubby to use
 - credentials or secrets
 - your GitHub token
 - unrelated or out-of-scope stars
 
-Authentication exception: the selected AI provider's own API key is necessarily sent only to its bound provider origin as an authorization header. It is not included in prompts, tool payloads, or logs. The GitHub token is never sent to an AI provider.
+The selected AI-service key must be sent to its bound origin for authentication. OpenAI, OpenRouter, and custom OpenAI-compatible services use an `Authorization: Bearer` header. Anthropic uses an `x-api-key` header. The key is not included in prompts, tool payloads, or logs. The GitHub token is never sent to an AI service.
 
-GitHub services receive only data necessary for the requested GitHub feature:
+GitHub receives only data needed for a requested GitHub feature:
 
-- GitHub REST API for account lookup, star retrieval, and optional indexed public-code search
-- GitHub Gists API for optional cross-device sync
+- the GitHub REST API receives requests for account lookup, star retrieval, optional watched-repository membership and Notifications when Watch Inbox is enabled, optional indexed public-code search, and Gist sync
+- the GitHub Gists API receives annotation data only when you use optional Push or Pull sync
 
-No analytics SDK, ad network, third-party tracking service, developer-operated proxy, or developer-operated server receives your extension data. Data sent directly to an AI provider is governed by the provider account and service terms you chose; BGSM does not add provider-side retention.
+No analytics software development kit, ad network, tracking service, developer proxy, or developer server receives extension data. Provider-side retention and deletion follow the account and service terms you selected.
 
 ## Host permissions
 
-OpenAI, OpenRouter, and Anthropic hosts are declared as required host permissions in the current extension package. Custom compatible services use Chrome optional host permissions. Chrome's host-permission pattern may cover every port for a scheme/hostname, but BGSM separately binds credentials and runtime requests to the exact configured canonical origin, including its port. The informational data-use notice does not grant Chrome host permission.
+The current manifest requires GitHub page and API hosts plus the OpenAI, OpenRouter, and Anthropic hosts. Custom compatible services use Chrome optional host permissions.
+
+Chrome's host pattern may cover every port for a scheme and hostname. The extension separately binds credentials and requests to the exact configured canonical origin, including its port. Learn how Chrome distinguishes required and optional access in [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions).
+
+## Diagnostics boundary
+
+Release diagnostics exclude committed history, attempt and recovery records, raw Provider requests and responses, credentials, and authentication headers. Release evidence stores bounded semantic facts, counts, relative paths, and digests instead of private task content.
+
+An unpacked development build can expose an explicitly enabled one-shot raw capture in page memory. Captured prompts may include committed conversation history. The development build warns you before arming this mode. Raw capture is excluded from release builds and release evidence.
 
 ## Retention and deletion
 
-You can remove data at any time:
+You can remove data in these ways:
 
-- clear the saved token from the Options page
-- remove the saved AI-provider API key or change the provider/origin, which invalidates its prior credential eligibility
-- delete local extension data by removing the extension from Chrome
-- delete the secret GitHub Gist from your GitHub account if you no longer want sync data stored there
+- clear the saved GitHub token in Options
+- turn off Watch Inbox to remove its selected binding, any separate Notifications token, and cached notification threads; same-account watched-repository scope may remain locally until the main GitHub account is cleared or the extension is uninstalled
+- remove the saved AI-service key or change the provider or origin, which invalidates the prior credential binding
+- delete a Cubby conversation after cancelling or completing any linked active Organize workflow
+- dismiss the retained completed or cancelled Organize result from the workbench
+- clear re-fetchable Cubby tool cache in Options without deleting final answers or conversation data
+- uninstall the extension to remove Chrome-local extension storage
+- delete the secret sync Gist from your GitHub account
 
-If you uninstall the extension, Chrome removes the extension's local storage. Any sync Gist created under your GitHub account remains in your account until you delete it.
+Deleting a conversation removes its transcript, attempt and recovery rows, and conversation-owned artifacts. This includes damaged attempt evidence. Deletion is blocked while the worker owns an active attempt or a linked Organize workflow remains nonterminal.
 
-Requests already sent to an AI provider are subject to that provider's retention and deletion controls. BGSM does not keep a durable remote Cubby session or a copy on a developer server.
+Deleting the origin conversation does not delete the latest terminal Organize result. That record keeps immutable origin provenance, but provenance is not authorization. It remains until you dismiss it, start a replacement Organize workflow, or uninstall the extension.
+
+Uninstalling removes the extension's Chrome-local storage. A Gist created under your GitHub account remains until you delete it. Requests already sent to an AI service remain subject to that service's retention and deletion controls.
 
 ## Security notes
 
-The extension encrypts locally stored GitHub and AI-provider credentials before writing them to `chrome.storage.local`. This is defense in depth against plain-text storage exposure, not a replacement for operating-system keychain security.
+The extension encrypts stored GitHub and AI-service credentials before writing them to `chrome.storage.local`. This provides defense in depth against plain-text storage exposure. It is not equivalent to operating-system keychain protection.
+
+The extension transmits data to GitHub and built-in AI services over HTTPS. A custom localhost service may use HTTP only when you configure and allow that exact local origin.
 
 ## Contact
 
-Project homepage: https://github.com/izumi0uu/better-github-stars-manager
-
-For support or privacy questions, use the repository issue tracker:
-
-https://github.com/izumi0uu/better-github-stars-manager/issues
+- [Project homepage](https://github.com/izumi0uu/better-github-stars-manager)
+- [Support and privacy issue tracker](https://github.com/izumi0uu/better-github-stars-manager/issues)

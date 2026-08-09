@@ -3,7 +3,6 @@ import {
   MAX_TOOL_RESULT_BYTES,
   okToolResult,
   serializedToolResultByteLength,
-  ToolOutputTooLargeError,
 } from '@/agent-harness';
 import {
   listRepositoryFiles,
@@ -311,14 +310,12 @@ function fitCodeSearchResult(
     };
     if (serializedToolResultByteLength(okToolResult(reduced)) <= maxSerializedBytes) {
       if (result.matches.length > 0 && matches.length === 0) {
-        throw new ToolOutputTooLargeError(
-          'Code-search allowance cannot fit a single verified match.',
-        );
+        return result;
       }
       return reduced;
     }
   }
-  throw new ToolOutputTooLargeError('Code-search metadata is too large to return safely.');
+  return result;
 }
 
 function fitRepositoryDirectoryResult(
@@ -342,16 +339,18 @@ function fitRepositoryDirectoryResult(
     };
     if (serializedToolResultByteLength(okToolResult(reduced)) <= maxSerializedBytes) {
       if (result.entries.length > 0 && entries.length === 0) {
-        throw new ToolOutputTooLargeError(
-          'Repository-listing allowance cannot fit a single directory entry.',
-        );
+        return {
+          ...reduced,
+          entries: result.entries.slice(0, 1),
+          nextCursor: String(Number(result.cursor) + 1),
+        };
       }
       return reduced;
     }
     if (entries.length === 0) break;
     entries.pop();
   }
-  throw new ToolOutputTooLargeError('Repository-listing metadata is too large to return safely.');
+  return result;
 }
 
 function fitRepositoryFileResult(
@@ -376,9 +375,7 @@ function fitRepositoryFileResult(
       return candidate;
     }
   }
-  throw new ToolOutputTooLargeError(
-    'The first requested line is too large to return without losing continuation data.',
-  );
+  return result;
 }
 
 function buildCanonicalScope(repositoryScope: readonly string[]): ReadonlyMap<string, string> {

@@ -426,6 +426,7 @@ describe('Watch snapshot storage', () => {
         activeSlot: 'active',
         controllerId: 'controller:preserved',
         sessionId: 'session:preserved',
+        originAgentSessionId: 'session:preserved',
         runId: 'run:v1:preserved',
         generation: 1,
         proposalId: 'proposal:v1:preserved',

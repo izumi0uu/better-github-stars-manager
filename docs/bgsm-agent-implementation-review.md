@@ -3,19 +3,82 @@
 ## Document status
 
 - **Review verdict:** `REMEDIATED` for the code-level findings tracked in the 2026-07-14 repair pass
-- **Launch status:** context v2 is integrated; fresh clean-tree Phase 5, packaged runtime, and manual Chrome verification remain pending
+- **Launch status:** parent Phases 1–6 and standalone Phase 7A–7D proofs are settled; Phase 8 clean-candidate verification and packaging, credential-dependent Chrome checks, and Web Store submission remain open
 - **Reviewed branch:** `feat/agent-tag-assistant`
 - **Original review date:** 2026-07-10
 - **Remediation date:** 2026-07-14
 - **Context v2 integration date:** 2026-07-17
+- **Conversation/workflow ownership verification date:** 2026-08-06
+- **Harness-extension-seam full-child verification date:** 2026-08-07
+- **Shared turn-protocol verification date:** 2026-08-07
+- **Application-controller verification date:** 2026-08-07
+- **History/runtime-cache verification date:** 2026-08-07
+- **Standalone Phase 7A artifact-proof date:** 2026-08-08
+- **Phase 7B worker-replacement proof date:** 2026-08-08
+- **Phase 7D composed runtime proof date:** 2026-08-09
 - **Audience:** maintainers implementing, reviewing, and testing Cubby
 - **Scope:** the Cubby runtime, provider adapters, background orchestration, Port protocols, release evidence, and packaged-extension runtime
 
 This document preserves the original findings and remediation plan as review history. The 2026-07-14 closure record does not by itself prove context v2 release readiness; executable source, current tests, and the fresh verification matrix remain the enforced runtime contract.
 
-The earlier [MVP Agent Harness Blueprint](./bgsm-agent-tag-assistant-plan.md) remains useful as design history, but its proposal-only implementation checkpoint does not describe the current branch. Where the two documents conflict, this review describes the current code and the required merge gates; a later accepted product decision should replace both with one canonical specification.
+The earlier [MVP Agent Harness Blueprint](./bgsm-agent-tag-assistant-plan.md) remains useful as design history, but its proposal-only implementation checkpoint does not describe the current branch. Where records conflict, executable source, the current release boundary above, and dated accepted product decisions control; the numbered audit and recommendations below remain historical.
 
-The product and interaction contract was reviewed separately and is intentionally not checked into this branch. This document owns implementation and safety findings; executable source and regression tests own the enforced runtime behavior.
+The conversation/workflow ownership product contract is captured in `.trellis/tasks/08-06-conversation-workflow-ownership/`, with executable long-term boundaries in `.trellis/spec/extension/runtime-boundaries.md`. This document owns implementation and safety findings; executable source and regression tests own the enforced runtime behavior.
+
+## Current Phase 8 release boundary — 2026-08-09
+
+- **Local data:** IndexedDB keeps the conversation/recovery/artifact ledger in tables separate from Organize jobs, frozen scopes, proposals, Apply rows, and receipts. The ledger warns at 256 MiB and stops new writes at 512 MiB; that accounting is not Chrome's whole-extension storage estimate and does not include the separately bounded Organize tables.
+- **Retention and deletion:** Cubby normally keeps up to 128 valid settled attempt rows per conversation, while current and damaged recovery evidence may remain until explicit deletion. Deleting a settled conversation removes its transcript, attempt/recovery rows, and conversation artifacts. It does not remove the latest completed or cancelled Organize result, which remains until Dismiss, replacement, or uninstall.
+- **Transport:** GitHub identity, star, public-code-search, and Gist requests go directly to GitHub. Cubby task data goes directly to the selected Provider and exact bound origin. Provider credentials travel only in the Provider-required authentication header; the GitHub token is never sent to a Provider, and no developer-operated proxy receives either traffic flow.
+- **Release evidence:** controlled packaged Provider fixtures and strict adapter contracts can prove local protocol behavior, not live credentials. The repository and generated manifest now use the approved `1.0.9` candidate. Two deterministic production builds resolved `assets/index.ts-Did2g2v5.js` at exactly 645,779 bytes with SHA-256 `b9b60e7b4a162dae39730224a46069393cb1f6ba4dd15f6dc6ca2b351c04f67b`; the release scripts require that exact path, byte count, and digest. No clean `1.0.9` package pass is claimed before the final Phase 8 gate.
+- **Phase 7B worker-replacement evidence:** Phase 7B worker-replacement proofs are implemented and verified. Their build-specific worker measurement remains historical and does not replace the exact Phase 8 baseline above.
+- **Web Store:** the tag-triggered workflow has a separately gated upload-and-publish step, but local source does not prove that its gate or credentials are configured or that it ran. Dashboard values, upload, review, approval, publication, public listing state, and installed-store behavior require direct evidence and remain unclaimed.
+
+## Phase 3 harness-extension seam — 2026-08-07
+
+The Phase 3 child in `.trellis/tasks/08-07-harness-extension-seam/` is implemented and independently child-verified. This section records its evidence only. Subsequent child records complete Phases 4–6 and standalone Phase 7A; the Phase 7B, 7C, and 7D matrices are also settled, while Phase 8 remains open. None of these records declares release readiness.
+
+### Current implementation and source-of-truth boundaries
+
+```text
+Provider/tool protocol
+  -> generic Agent harness admission host
+  -> BGSM result externalizer + coverage state machine
+  -> full-envelope durable checkpoint through AgentAttemptCoordinator
+  -> canonical source candidate or internal Provider projection
+  -> BGSM episode driver resumes the exact durable cursor
+  -> complete coverage receipt + canonical commit transaction
+```
+
+- **Generic admission host:** `src/agent-harness` owns Provider/tool ordering and a provider-neutral result-admission contract. The host may transform an ordinary `ToolResult`, attach bounded `opaqueReferences`, replace the authoritative `requiredBeforeFinal` set, and checkpoint a complete envelope before publication. The harness does not interpret artifact identity, cursors, storage, cleanup, or BGSM error policy; the independent check found zero harness references to the product artifact literals/imports and obsolete writer/disposer contracts.
+- **BGSM application layer:** the BGSM externalizer alone serializes an oversized successful read, creates the deterministic local cache artifact and bounded pointer result, supplies the artifact-reader instruction, and disposes an unadmitted cache record. Its one-shot evidence handoff keeps verified artifact, manifest, byte, cursor, and touched-chunk evidence out of model-visible results. The pure coverage state machine decides exact-cursor transitions, while the episode driver owns trusted continuation prompts, exclusive reader capability, adaptive projection reduction, and cross-episode continuation.
+- **Storage and transaction authority:** `AgentAttemptCoordinator` and the storage transactions are the only durable coverage authority. A complete assistant/tool envelope, its coverage proposals, directive set, bounded continuation projection, canonical source candidate, and durable re-prompt flag are revalidated against the exact running attempt/lease and committed atomically before any message or presentation event is published. The unreleased Dexie v4 attempt row remains the coverage/checkpoint source of truth.
+- **Canonical transcript versus Provider projection:** the initial source envelope that creates an obligation remains a canonical candidate. Internal artifact-reader envelopes and provisional assistant prose exist only in the bounded Provider projection; they never become canonical raw transcript rows. Once every directive clears, only the accepted final assistant response joins the canonical source envelope at commit.
+- **Exact coverage:** the first exhaustive page omits a cursor; every later page must use the exact durable `expectedCursor`. Offset and literal-search reads remain useful locating operations but record zero advancing bytes and cannot change the progress token or complete coverage. Completion requires the issued chain to reach `nextCursor === null` with the exact byte count and immutable artifact/manifest evidence. Continuation adapts to request, context, memory, page, cancellation, transport, and storage limits without adding a total-page cap beyond the existing logical storage ceiling.
+- **Re-prompt and stall:** premature final prose, unrelated calls, invalid calls, or an unchanged directive set publish no provisional assistant text. The first non-progress response consumes one durably fenced, constrained exact-cursor re-prompt; the next settles typed `agent_artifact_coverage_stalled` and marks pending coverage incomplete.
+- **Receipts, ownership, cleanup, and recovery:** terminal commit rejects pending, incomplete, or tampered coverage; attaches the immutable receipt to the exact canonical source tool-message row; promotes only a newly owned cache artifact; and preserves the existing owner for a later inspection of a canonical artifact. Failure cleanup removes only attempt-owned, unbound cache and never a pre-existing canonical artifact. Committed receipt replay performs no Provider, tool, or coverage work. Worker replacement may resume only a storage-validated `statically_read_only` attempt from its exact durable checkpoint/cursor; write-capable, unknown, or damaged recovery fails closed without execution.
+
+### Independent repair and full child evidence
+
+The independent check repaired the cross-slice TypeScript narrowing/import drift; cumulative sibling tool-result budget accounting; orderly aborted-envelope settlement; Dexie transactions that awaited Web Crypto without `Dexie.waitFor`; final coverage-fence ordering; targeted-search evidence so it reports `pageBytes = 0` and `nextCursor = null`; the packaged fixture so it exceeds the adaptive 64 KiB result-memory ceiling and performs a real bounded projection reduction; the trace exporter so it follows and validates every exact issued cursor through the final `null`; and exact Scenario Lab closure/receipt/coverage checks without casts that hid mismatches.
+
+Observed verification evidence:
+
+- `pnpm typecheck`: passed.
+- Focused Vitest command: 26 files and 464 tests passed.
+- `pnpm test:runtime:agent-scenarios --scenario cubby-artifact-continuation-coverage`: passed with 1 retained root, 284 events after diagnostics reload/export, and zero network requests; its internal build transformed 2,397 modules and emitted identity `09216717-994b12-7d63ad`.
+- `pnpm test:integration`: 1 file and 17 tests passed.
+- `pnpm test:logic`: 137 files and 1,734 tests passed.
+- `pnpm test:regressions`: 15 files and 673 tests passed.
+- `pnpm build`: passed after transforming 2,397 modules and emitted identity `09216717-9281f5-05d392`; the existing large-chunk advisories remained visible.
+- `pnpm test:runtime:agent-scenarios`: all 9 packaged Scenario Lab fixtures passed with 9 retained roots, 413 events, and zero network requests; its internal build emitted identity `09216717-9281f5-a63f50`.
+
+### Phase 7B worker-replacement evidence — 2026-08-08
+
+- Release build `04068891-5ab2a4-e16e66` passed the standalone Phase 7A host and the Phase 7B host against the same `dist/`. Phase 7B passed all three scenarios with 40 Provider requests and two interruptions: `committed_replay` recorded 2/0, `statically_read_only_resume` 34/1, and `state_uncertain_abandonment` 2/1.
+- The three `stopped_target_preinstalled` lifecycle records used `(stopCommand, stopped, install, start, running)` ordinals `(1,3,3,3,7)`, `(7,9,9,9,13)`, and `(13,15,15,15,19)`. Chrome 149 reused the same version, target, and attachment/session identity while product execution epochs advanced distinctly.
+- Each live runtime-diagnostic sample recorded count 0 and overflow `false`. The final matrix recorded no unexpected network request or recovery residue. Production also gates `selfCheck()` behind compile-time `DEV`, with no development-only self-check traffic in the packaged run.
+- That Phase 7B build measured a 642,979-byte worker against its then-frozen 529,049-byte ceiling, an overage of 113,930 bytes. It is build-specific historical evidence, not the Phase 8 baseline. Phase 7C and the behavior-named Phase 7D composition are settled separately; Phase 8 release gates, clean-candidate packaging, and credential-dependent manual checks remain open. An earlier setup-only transient remains unclassified and is not presented as a fixed product bug.
 
 ## Product autonomy decision — 2026-08-03
 
@@ -55,11 +118,13 @@ Verification evidence from the repair pass:
 - `pnpm test:runtime:organize-job-recovery`: passed the sixth packaged-extension scenario for alarm-driven recovery after MV3 worker termination.
 - `pnpm build`: passed; the existing Mermaid chunk-size warning remains non-blocking.
 - `pnpm package:extension`: passed and recorded the current dirty worktree as not release-ready.
-- `pnpm verify:agent-phase5`: intentionally refused this uncommitted worktree at its clean-source precondition. Run it after commit to generate final release-ready evidence.
+- The current Phase 8 commands are `pnpm verify:agent-runtime` followed by `pnpm verify:agent-release-gates`. Their presence does not establish a pass; the earlier Phase 5 verifier refused this uncommitted worktree at its clean-source precondition, so that repair pass generated no final runtime or release-ready evidence.
 
-## 1. Executive summary
+Sections 1–18 preserve the original audit and recommendation history. They do not describe current implementation or release status unless a paragraph is explicitly marked remediated or current.
 
-The branch contains a useful Agent prototype:
+## 1. Original 2026-07 audit summary
+
+At the time of the original audit, the branch contained a useful Agent prototype:
 
 - a small provider-neutral loop under `src/agent-harness`;
 - BGSM-specific instructions and typed tools under `src/bgsm-agent`;
@@ -68,7 +133,7 @@ The branch contains a useful Agent prototype:
 - provider settings for OpenAI, OpenRouter, and a custom OpenAI-compatible endpoint;
 - an in-product Agent panel built on the existing ShadowRoot and design system.
 
-The implementation is not merge-ready as a write-capable feature. The primary problem is not that the UI uses chat or that the branch removed the old proposal store. The problem is that the current control plane grants model-facing write tools unconditional permission and then relies on prompt text to keep destructive actions safe. Several additional defects make the behavior unreliable:
+At that time, the implementation was not merge-ready as a write-capable feature. The primary problem was not that the UI used chat or that the branch removed the old proposal store. The control plane granted model-facing write tools unconditional permission and relied on prompt text to keep destructive actions safe. Several additional defects made the behavior unreliable:
 
 1. one saved API key can be silently reused with a different provider or custom origin;
 2. `assign_repo_tags` can promote existing auto tags into the manual layer;
@@ -135,7 +200,7 @@ Application code must:
 
 The main model selects optional read tools from conversation context instead of a current-prompt regular expression. Tool selection does not grant write authority: repository scope, current-turn local evidence, write budgets, and repository-code read-only mode remain host-enforced.
 
-## 3. Current implementation map
+## 3. Implementation map at the original audit
 
 ```text
 Toolbar Auto Tags / free-form prompt
@@ -156,13 +221,13 @@ Toolbar Auto Tags / free-form prompt
 
 ### 3.1 Runtime facts
 
-- The content-side session owns ephemeral raw history and a revision. Each turn crosses the Agent Port with `sessionId`, `baseRevision`, history, and an optional compaction checkpoint; stale results cannot commit.
+- The content-side Hook owns transient presentation state plus a bounded, paginated transcript view. Canonical raw history, revision, binding, checkpoint, active projections, and the current bounded launch/retry envelope remain in background-owned IndexedDB. Admission stores that envelope atomically before Provider work, so a replacement MV3 worker can recover the exact prompt without relying on page memory or `chrome.storage.local`; commit, terminalization, and conversation deletion remove it transactionally. A turn crosses the Agent Port with only its attempt identity, `sessionId`, `baseRevision`, prompt, and an optional first-turn scope candidate; after acquiring the durable lease, the service worker loads the canonical history internally. A retained completed or cancelled Organize result is separate workflow evidence, not conversation history, and follows the bounded retention rules in section 10.4.
 - The background binds the conversation to Provider fingerprint, repository scope, capability policy, and current authorization before calling the harness.
 - Provider adapters emit incremental text deltas plus strict terminal results. Tool calls become executable only after their complete arguments and protocol envelope validate.
-- The main model selects optional read tools from conversation context instead of a current-prompt regular expression. Historical or compacted text never establishes tag-write authority.
-- Notes and repository-code tools are visible on regular turns so follow-up requests can be resolved from conversation context; their descriptions and system instructions restrict use to the current user request. Repository scope, current-turn local evidence, and mutation budgets remain host-enforced.
-- Automatic compaction projects older committed history into a no-tool checkpoint summary while preserving client-owned raw history and the active user/tool suffix.
-- Sessions remain in memory only. Persistent resume, branching session trees, and autonomous background goals are still deferred.
+- Optional notes and repository-code tools are visible to the main model on regular turns so follow-up requests can be resolved from conversation context. Their descriptions and system instructions restrict use to the current user request.
+- Historical or compacted text never establishes tag-write authority. Repository scope, current-turn local evidence, and mutation budgets remain host-enforced, and a successful repository-code read makes the conversation read-only.
+- Automatic compaction projects older committed history into a no-tool checkpoint summary while preserving durably stored raw history and the active user/tool suffix.
+- Flat conversations survive refresh and can be created, switched, and deleted. Deletion blocks while a linked Organize workflow is nonterminal, removes conversation-owned history/recovery/artifacts after settlement, and does not erase the latest terminal Organize evidence. Branching session trees and autonomous background goals remain deferred.
 
 ### 3.2 Current model-facing tools
 
@@ -176,11 +241,12 @@ Toolbar Auto Tags / free-form prompt
 | `search_repository_code` | Conditional read | Searches the bounded GitHub code index and returns verified, pinned snippets; at most one search runs per turn |
 | `read_repository_file` | Conditional read | Reads at most 200 text lines using a trusted commit ref returned by list/search |
 | `read_repository_notes` | Conditional private read | Returns bounded private notes only when the current prompt explicitly requests them |
+| `read_agent_artifact` | Read | Reads a session-owned oversized tool result through an opaque, bounded cursor |
 | `assign_repo_tags` | Write | Adds manual tags after the main model selects the action and same-turn local repository evidence exists |
 | `remove_repo_tags` | Write | Atomically removes requested visible repository/tag pairs after same-turn assignment evidence |
 | `delete_tags_everywhere` | Write | Atomically removes requested tag names from all repositories and writes exclusion tombstones after same-turn tag evidence |
 
-All three tag mutation tools are present on regular turns. The main model interprets whether the conversation requests a mutation; runtime authorization independently enforces repository scope, same-turn evidence, write budgets, and code-read-only mode. After any repository-code tool runs, that conversation stays read-only; tag changes require a new conversation.
+All three tag mutation tools are present on regular turns. The main model interprets whether the conversation requests a mutation; runtime authorization independently enforces repository scope, same-turn evidence, write budgets, and code-read-only mode. Oversized read results are persisted as a short-lived cache artifact and exposed through `read_agent_artifact`; a successful session commit promotes the referenced artifact to canonical storage. After any repository-code tool runs, that conversation stays read-only; tag changes require a new conversation.
 
 The registry is defined in `src/bgsm-agent/tools.ts` and `src/bgsm-agent/repository-code-search-tool.ts`.
 
@@ -507,11 +573,11 @@ The failing contract imported `src/background/index.ts` with a Chrome mock that 
 
 ### B-01 — Remediated: bounded conversation continuity
 
-The provider now receives bounded client-owned history plus an optional compaction checkpoint. Follow-ups remain session-bound and CAS-protected; reload persistence and session trees are intentionally absent.
+The provider now receives bounded durably stored history plus an optional compaction checkpoint. Follow-ups remain session-bound and CAS-protected; flat sessions rehydrate from background-owned IndexedDB while branching session trees remain intentionally absent.
 
 - Keep correctness grounded in current IndexedDB reads and receipts, not memory.
 - Preserve drafts and offer a new-conversation recovery when the current suffix cannot fit.
-- Do not imply durable resume across reloads.
+- Keep transient streaming, progress, and optimistic drafts out of durable history.
 
 ### B-02 — Remediated: typed Provider streaming
 
@@ -628,7 +694,7 @@ Owns:
 - recovery actions;
 - Port reconnect behavior if persistent runs are later added.
 
-It should live above the presentational panel if Hide must preserve a run. It does not need durable chat history in the first safe release.
+It should live above the presentational panel so Hide preserves a run. Durable chat history is stored separately from run presentation and never owns Organize recovery authority.
 
 ### 8.2 `BgsmContextBuilder`
 
@@ -761,7 +827,7 @@ type MutationReceipt = {
 };
 ```
 
-OrganizeJob receipts are persisted in IndexedDB with the job and exposed through bounded pages. They survive panel closure and MV3 worker restart, and the UI never reconstructs them from transient events or model prose.
+OrganizeJob receipts are persisted in IndexedDB with the job and exposed through bounded pages. They survive panel closure, MV3 worker restart, and deletion of their origin conversation. Cubby retains at most one completed or cancelled Organize result; Dismiss or admission of the next job removes that terminal evidence transactionally. The UI never reconstructs receipts from transient events or model prose.
 
 ## 10. Runtime and concurrency model
 
@@ -809,6 +875,20 @@ Every admitted result must leave a protocol-complete next projection within the 
 - Do not start a new write transaction after abort.
 - A transaction already committing should finish atomically, then return the receipt.
 - Closing, hiding, stopping, and navigating away must have separately documented behavior.
+
+### 10.4 Conversation and workflow ownership
+
+Conversation lifetime, workflow lifetime, and page control are independent:
+
+- `originAgentSessionId` is immutable provenance. It may name a deleted conversation and is never a routing or authorization key.
+- A nonterminal job's durable `controllerId` / `sessionId` plus a matching live Organize Port define the single `owner`. Other pages are `observer`; if the owner disconnects they become `owner_lost`.
+- Port connectivity and per-page role are worker-epoch projections, not persisted facts. Reconnect, restore, snapshot fetch, paging, and conversation switching are read-only with respect to durable control.
+- An `owner_lost` page can become owner only through an explicit revision-checked Take control command. The live-Port check and storage CAS are linearly ordered, and takeover does not restart in-flight Provider work merely to rewrite an ephemeral runner identity.
+- Owner-only mutation and observer-safe reads are separate capabilities. Review/receipt paging, ordinary chat, and page-local conversation selection do not grant workflow mutation authority.
+- Completed/cancelled and no-job projections have no owner role. The latest terminal result is global, does not lock conversation controls, and can be dismissed from any page by exact job/revision identity.
+- Background fan-out occurs only after the durable transaction commits. Dismiss, replacement, takeover, disconnect role changes, and successful conversation deletion converge every subscribed page; a rejected deletion publishes no invalidation.
+
+`deleteAgentSession()` is the application deletion boundary. It uses indexed origin/current-session lookups, rejects every linked nonterminal job, preserves terminal job/Apply/receipt rows and immutable provenance, deletes only conversation-owned Agent rows, then publishes a session-specific invalidation. Pages remove the deleted catalog projection, preserve unsent composer input, and select or create a valid conversation without writing to the deleted session.
 
 ## 11. Target interaction model
 
@@ -1123,9 +1203,9 @@ Deliverables, only after Phase 1 metrics justify them:
 - source snapshots and precondition validation;
 - durable action receipts are already part of OrganizeJob; extend the same authority model to any future destructive capability;
 - most-recent-action undo if product requirements still demand it;
-- persistent resume or branching session trees if reload continuity is later approved; ephemeral bounded multi-turn sessions already exist.
+- flat persistent conversation resume is complete; add branching session trees only if later product evidence justifies them.
 
-If IndexedDB persistence is approved, use the unreleased v4 for actual new stores rather than retaining the current no-op version.
+The unreleased v4 now contains `agentSessions` and `agentMessages`; existing development profiles created with the older v4 layout must reset IndexedDB once.
 
 Acceptance:
 
@@ -1283,9 +1363,9 @@ Why: model prose cannot prove which rows changed. Receipts support honest UI, de
 
 Why: notes are user annotations and are not required for the first useful tagging task. Data minimization is safer than relying on disclosure alone.
 
-### Decision: defer durable sessions
+### Decision: persist only canonical flat conversations
 
-Why: the first safe release can complete one bounded task without pretending to support chat continuity. Persistence should be added only for reload recovery, undo, or demonstrated follow-up usage.
+Why: create, switch, and delete controls are incomplete if refresh discards them. The background service worker now commits canonical messages, bindings, checkpoints, and projections to local IndexedDB, while streaming text, progress, optimistic drafts, credentials, and raw Provider requests remain transient.
 
 ### Rejected: prompt-only safety
 
@@ -1299,7 +1379,9 @@ Reason: bounded additive writes can be safe with runtime policy and receipts. Pr
 
 Reason: BGSM needs a narrow browser-extension control plane, not a coding-agent runtime.
 
-## 19. Open product decisions with recommended defaults
+## 19. Historical product-decision recommendations
+
+These defaults record earlier recommendations. Current autonomy is stated in **Product autonomy decision — 2026-08-03**, and current permissions are derived from `manifest.config.ts` and the final package.
 
 | Decision | Recommended default | Reason |
 | --- | --- | --- |
@@ -1307,8 +1389,8 @@ Reason: BGSM needs a narrow browser-extension control plane, not a coding-agent 
 | Default Organize scope | All current live stars, confirmed before start; filters and selected rows cannot narrow it | Makes “organize my library” complete and auditable |
 | Direct write for additive Auto Tags | Allowed only for explicit task invocation, immutable scope, and hard budgets | Keeps primary task useful without granting broad autonomy |
 | Notes available to model | Scoped tool selected by the main model | Private note contents are read only when the current request asks to use them |
-| Chat continuity | Ephemeral bounded session only | Follow-ups and compaction work in memory; reload persistence remains deferred |
-| Persistent Agent tables | Durable OrganizeJob/Review/Apply/Receipt tables; chat sessions remain ephemeral | MV3 recovery requires durable job authority without broadening chat persistence |
+| Chat continuity | Flat local conversations with lazy transcript hydration | Follow-ups and compaction survive refresh without introducing branching or remote Provider sessions |
+| Persistent Agent tables | Durable OrganizeJob/Review/Apply/Receipt plus `agentSessions` and `agentMessages`; retain at most one terminal Organize result independently of its origin conversation | MV3 recovery, explicit multi-page ownership, auditable receipts, and user-visible conversation controls require distinct local authority and atomic commits |
 | Automatic Gist Push after Agent change | No | Preserves explicit sync ownership |
 | OpenAI/OpenRouter host permissions | Prefer enablement-time optional permissions if UX remains acceptable | Least privilege |
 
@@ -1339,7 +1421,31 @@ Fresh context v2 evidence from 2026-07-17:
 - `pnpm test:smoke`: passed the production extension browser smoke matrix;
 - `git diff --check`: passed.
 
-This is not yet clean-tree Release Candidate evidence. The remaining release-only gaps are a clean commit/package identity run and credential-dependent unpacked-Chrome checks against a live native Provider and the intended Custom service. The controlled packaged-host Provider proves protocol/runtime behavior without sending live traffic; it must not be described as a live Provider credential test.
+Conversation/workflow ownership Phase 2 evidence from 2026-08-06:
+
+- `pnpm typecheck`: passed with 0 errors;
+- focused ownership/storage/protocol/UI regression set: 13 files / 313 tests passed;
+- `pnpm test:integration`: 1 file / 17 tests passed;
+- `pnpm test:logic`: 133 files / 1710 tests passed;
+- `pnpm test:regressions`: 15 files / 673 tests passed;
+- `pnpm build`: passed after transforming 2393 modules (build `09216717-903c01-7109e8`); the existing >500 KiB advisory remains unsuppressed;
+- `pnpm test:runtime:organize-job-host`: 8 packaged MV3 scenarios passed with two real extension pages in the ownership flow, 72 intercepted Responses requests, and zero live traffic;
+- `pnpm test:runtime:organize-job-recovery`: 9 packaged MV3 scenarios passed with real Chrome alarm/service-worker termination recovery, 94 intercepted Responses requests, and zero live traffic;
+- the packaged ownership flow proved observer rejection without mutation, explicit single-winner takeover, former-owner demotion, zero Provider replay on takeover, winning-binding preservation across continuation, terminal retention after origin-conversation deletion, post-commit invalidation, global Dismiss, and cancelled/no-Apply lease fencing.
+- rendered ownership UI QA passed 66/66 checks: the real `AgentPanel`, hooks, reducer, and CSS rendered observer/owner-lost/takeover/terminal/session-menu states at 1280×800 and 640×800 in an out-of-repo fake-Chrome harness, while the real packaged Options page verified the retention note in light and dark themes;
+- the rendered panel harness replaces only Chrome Port/RPC transport. Packaged two-page role arbitration, ShadowRoot/runtime boundaries, service-worker behavior, and durable storage remain covered by the packaged host rather than claimed as visual-harness evidence.
+
+Agent turn protocol Phase 4 evidence from 2026-08-07:
+
+- `src/bgsm-agent/turn-protocol.ts` is now the sole compile-time and runtime owner of Agent turn client/server unions, exact parsers, delivery/event/result/error/acknowledgement types, and bounded error codes; the Chrome and background files retain lifecycle authority without private wire schemas;
+- launch identity now preserves `retrySourceAttemptId` through client production and background conflict fingerprints, while malformed starts still disconnect and malformed or wrong-epoch stop/ack messages remain non-authoritative;
+- the background validates each fully sequenced published delivery once before replay-buffer admission and reuses the typed object for fan-out and replay;
+- the independent check fixed discriminated acknowledgement construction, a client hello-path variable-shadowing defect, and two typed protocol-test fixtures before the final gates;
+- `pnpm typecheck` passed with 0 errors; the focused protocol/adapter set passed 8 files / 190 tests; `pnpm test:logic` passed 138 files / 1,810 tests; and `pnpm test:regressions` passed 15 files / 673 tests;
+- `pnpm build` passed after transforming 2,398 modules with build identity `6ecba87f-25456a-abd36e`; the existing large-chunk advisory remains unsuppressed;
+- the packaged Scenario Lab passed all 9 fixtures with 9 trace roots, 413 events, and zero network requests, proving the shared protocol in the MV3 extension rather than only in source-level tests.
+
+This is not clean-candidate Release Candidate evidence. Phase 7D composition is settled, while the full Phase 8 clean-source verification, package-identity, and finalization gates remain open, as do credential-dependent Chrome checks against a live native Provider and the intended Custom service. Controlled packaged-host fixtures prove protocol/runtime behavior without live traffic and must not be described as live Provider credential tests.
 
 No real API credential was used during the original audit. Provider conclusions are based on current source, mock tests, protocol behavior, official model/schema evidence, and the local Pi comparison. Line numbers are review anchors for this branch and may move; symbol names and stated invariants are authoritative.
 

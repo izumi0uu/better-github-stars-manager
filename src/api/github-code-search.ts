@@ -14,7 +14,6 @@ const MAX_DIRECTORY_CONTENTS_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_FILE_CONTENTS_BODY_BYTES = 512 * 1024;
 const MAX_DECODED_BLOB_BYTES = 256 * 1024;
 const MAX_SNIPPET_BYTES = 512;
-const MAX_SUCCESS_ENVELOPE_BYTES = 8 * 1024;
 const MAX_REPOSITORY_PATH_BYTES = 1_024;
 const MAX_DIRECTORY_ENTRIES = 1_000;
 const DEFAULT_DIRECTORY_PAGE_LIMIT = 50;
@@ -1152,26 +1151,10 @@ export async function searchIndexedRepositoryCode(
       left.lineStart - right.lineStart ||
       left.blobSha.localeCompare(right.blobSha),
     );
-    let result = buildResult(repositories, warnings, matches);
-    while (
-      matches.length > 0
-      && serializedByteLength({ ok: true, data: result }) > MAX_SUCCESS_ENVELOPE_BYTES
-    ) {
-      matches.pop();
-      addWarning(warnings, 'match_limit_reached');
-      result = buildResult(repositories, warnings, matches);
-    }
-    if (serializedByteLength({ ok: true, data: result }) > MAX_SUCCESS_ENVELOPE_BYTES) {
-      throw new GithubCodeSearchError('github_unavailable');
-    }
-    return result;
+    return buildResult(repositories, warnings, matches);
   } finally {
     context.cleanup();
   }
-}
-
-function serializedByteLength(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
 function buildResult(

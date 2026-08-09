@@ -5,7 +5,7 @@ import {
   createBgsmAgentTurnRegistry,
   type BgsmAgentTurnRunner,
 } from '@/background/bgsm-agent-turn-port';
-import type { BgsmAgentTurnResult } from '@/utils/messaging';
+import type { BgsmAgentTurnResult } from '@/bgsm-agent/turn-protocol';
 
 type Listener<T> = (value: T) => void;
 
@@ -48,7 +48,15 @@ function input(overrides: Partial<BgsmAgentTurnInput> = {}): BgsmAgentTurnInput 
 }
 
 function startMessage(turn: BgsmAgentTurnInput, executionEpochId = 'worker-epoch-1') {
-  return { type: 'startBgsmAgentTurn', executionEpochId, ...turn };
+  return {
+    type: 'startBgsmAgentTurn',
+    executionEpochId,
+    turnAttemptId: turn.turnAttemptId,
+    sessionId: turn.sessionId,
+    baseRevision: turn.baseRevision,
+    prompt: turn.prompt,
+    ...(turn.candidateContract ? { candidateContract: turn.candidateContract } : {}),
+  };
 }
 
 function messagesOfType<T extends string>(messages: unknown[], type: T) {
@@ -64,6 +72,7 @@ function deferredRunner() {
   const completion = new Promise<BgsmAgentTurnResult>((next) => { resolve = next; });
   const runner: BgsmAgentTurnRunner = async (_input, options) => {
     runCount += 1;
+    options.onDurableLeaseAcquired();
     signal = options.signal;
     return completion;
   };
@@ -119,7 +128,7 @@ describe('Cubby turn single-flight registry', () => {
       reason: 'final_answer',
       changed: false,
       changedCount: 0,
-      newMessages: [],
+      commit: null,
     });
     await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
     assert.deepEqual(finishReasons, ['final_answer']);
@@ -127,10 +136,14 @@ describe('Cubby turn single-flight registry', () => {
 
   it('keeps one execution across disconnect and replays the unacknowledged result', async () => {
     const run = deferredRunner();
+    const releasedLeases: unknown[] = [];
     const registry = createBgsmAgentTurnRegistry({
       runTurn: run.runner,
       translateError: async (error) => String(error),
       executionEpochId: 'worker-epoch-1',
+      releaseTurnLease: async (lease) => {
+        releasedLeases.push(lease);
+      },
     });
     const turn = input();
     const first = fakePort();
@@ -147,7 +160,7 @@ describe('Cubby turn single-flight registry', () => {
       reason: 'final_answer',
       changed: false,
       changedCount: 0,
-      newMessages: [],
+      commit: null,
     });
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0);
@@ -180,6 +193,13 @@ describe('Cubby turn single-flight registry', () => {
       disposition: 'applied',
       appliedRevision: turn.baseRevision + 1,
     });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(releasedLeases, [{
+      sessionId: turn.sessionId,
+      turnAttemptId: turn.turnAttemptId,
+      executionEpochId: registry.executionEpochId,
+    }]);
     replay.port.disconnect();
     assert.equal(replay.disconnected, true);
 
@@ -192,6 +212,259 @@ describe('Cubby turn single-flight registry', () => {
     assert.equal(
       messagesOfType(stale.posted, 'bgsmAgentTurnResult')[0]?.result.reason,
       'attempt_state_lost',
+    );
+  });
+
+  it('releases a terminal orphan after page refresh and admits the next turn', async () => {
+    let runCount = 0;
+    const releasedLeases: unknown[] = [];
+    const registry = createBgsmAgentTurnRegistry({
+      runTurn: async (turn, options) => {
+        runCount += 1;
+        options.onDurableLeaseAcquired();
+        return {
+          turnAttemptId: turn.turnAttemptId,
+          sessionId: turn.sessionId,
+          baseRevision: turn.baseRevision,
+          reason: 'final_answer',
+          changed: false,
+          changedCount: 0,
+          commit: null,
+        };
+      },
+      translateError: async (error) => String(error),
+      executionEpochId: 'worker-epoch-1',
+      terminalAttemptAckGraceMs: 60_000,
+      releaseTurnLease: async (lease) => {
+        releasedLeases.push(lease);
+      },
+    });
+    const firstTurn = input();
+    const beforeRefresh = fakePort();
+    registry.attach(beforeRefresh.port);
+    beforeRefresh.deliver(startMessage(firstTurn));
+    await waitUntil(() => (
+      messagesOfType(beforeRefresh.posted, 'bgsmAgentTurnResult').length === 1
+    ));
+    beforeRefresh.port.disconnect();
+
+    const afterRefresh = fakePort();
+    registry.attach(afterRefresh.port);
+    afterRefresh.deliver(startMessage(input({ turnAttemptId: 'turn-attempt-after-refresh' })));
+    await waitUntil(() => runCount === 2);
+
+    assert.deepEqual(releasedLeases, [{
+      sessionId: firstTurn.sessionId,
+      turnAttemptId: firstTurn.turnAttemptId,
+      executionEpochId: registry.executionEpochId,
+    }]);
+    assert.equal(messagesOfType(afterRefresh.posted, 'bgsmAgentTurnResult').length, 1);
+    assert.notEqual(
+      messagesOfType(afterRefresh.posted, 'bgsmAgentTurnResult')[0]?.result.reason,
+      'attempt_state_lost',
+    );
+  });
+
+  it('confirms a non-applied ACK immediately but waits for lease release before the next turn', async () => {
+    let runCount = 0;
+    let finishRelease!: () => void;
+    const releaseGate = new Promise<void>((resolve) => {
+      finishRelease = resolve;
+    });
+    const registry = createBgsmAgentTurnRegistry({
+      runTurn: async (turn, options) => {
+        runCount += 1;
+        options.onDurableLeaseAcquired();
+        return {
+          turnAttemptId: turn.turnAttemptId,
+          sessionId: turn.sessionId,
+          baseRevision: turn.baseRevision,
+          reason: 'final_answer',
+          changed: false,
+          changedCount: 0,
+          commit: null,
+        };
+      },
+      translateError: async (error) => String(error),
+      executionEpochId: 'worker-epoch-1',
+      releaseTurnLease: () => releaseGate,
+    });
+    const firstTurn = input();
+    const first = fakePort();
+    registry.attach(first.port);
+    first.deliver(startMessage(firstTurn));
+    await waitUntil(() => messagesOfType(first.posted, 'bgsmAgentTurnResult').length === 1);
+    first.deliver({
+      type: 'ackBgsmAgentTurnResult',
+      executionEpochId: registry.executionEpochId,
+      turnAttemptId: firstTurn.turnAttemptId,
+      sessionId: firstTurn.sessionId,
+      baseRevision: firstTurn.baseRevision,
+      disposition: 'no_transition',
+      appliedRevision: null,
+    });
+
+    const next = fakePort();
+    registry.attach(next.port);
+    next.deliver(startMessage(input({ turnAttemptId: 'turn-attempt-after-release' })));
+    await Promise.resolve();
+    assert.equal(runCount, 1);
+    assert.equal(messagesOfType(first.posted, 'bgsmAgentTurnAck').length, 1);
+
+    finishRelease();
+    await waitUntil(() => runCount === 2);
+    assert.equal(messagesOfType(next.posted, 'bgsmAgentTurnResult').length, 1);
+  });
+
+  it('admits only one waiter after a shared terminal cleanup', async () => {
+    let runCount = 0;
+    let finishRelease!: () => void;
+    const releaseGate = new Promise<void>((resolve) => {
+      finishRelease = resolve;
+    });
+    const registry = createBgsmAgentTurnRegistry({
+      runTurn: async (turn, options) => {
+        runCount += 1;
+        options.onDurableLeaseAcquired();
+        return {
+          turnAttemptId: turn.turnAttemptId,
+          sessionId: turn.sessionId,
+          baseRevision: turn.baseRevision,
+          reason: 'final_answer',
+          changed: false,
+          changedCount: 0,
+          commit: null,
+        };
+      },
+      translateError: async (error) => String(error),
+      executionEpochId: 'worker-epoch-1',
+      releaseTurnLease: () => releaseGate,
+    });
+    const first = fakePort();
+    registry.attach(first.port);
+    first.deliver(startMessage(input()));
+    await waitUntil(() => messagesOfType(first.posted, 'bgsmAgentTurnResult').length === 1);
+    first.port.disconnect();
+
+    const left = fakePort();
+    const right = fakePort();
+    registry.attach(left.port);
+    registry.attach(right.port);
+    left.deliver(startMessage(input({ turnAttemptId: 'turn-attempt-left' })));
+    right.deliver(startMessage(input({ turnAttemptId: 'turn-attempt-right' })));
+    finishRelease();
+
+    await waitUntil(() => (
+      messagesOfType(left.posted, 'bgsmAgentTurnResult').length
+      + messagesOfType(left.posted, 'bgsmAgentTurnError').length === 1
+      && messagesOfType(right.posted, 'bgsmAgentTurnResult').length
+      + messagesOfType(right.posted, 'bgsmAgentTurnError').length === 1
+    ));
+    assert.equal(runCount, 2);
+    const results = [left, right].flatMap((port) => (
+      messagesOfType(port.posted, 'bgsmAgentTurnResult')
+    ));
+    const errors = [left, right].flatMap((port) => (
+      messagesOfType(port.posted, 'bgsmAgentTurnError')
+    ));
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.result.reason, 'final_answer');
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0]?.error.code, 'agent_session_turn_active');
+  });
+
+  it('accepts only the first start message while one port awaits terminal cleanup', async () => {
+    let runCount = 0;
+    let finishRelease!: () => void;
+    const releaseGate = new Promise<void>((resolve) => {
+      finishRelease = resolve;
+    });
+    const registry = createBgsmAgentTurnRegistry({
+      runTurn: async (turn, options) => {
+        runCount += 1;
+        options.onDurableLeaseAcquired();
+        return {
+          turnAttemptId: turn.turnAttemptId,
+          sessionId: turn.sessionId,
+          baseRevision: turn.baseRevision,
+          reason: 'final_answer',
+          changed: false,
+          changedCount: 0,
+          commit: null,
+        };
+      },
+      translateError: async (error) => String(error),
+      executionEpochId: 'worker-epoch-1',
+      releaseTurnLease: () => releaseGate,
+    });
+    const first = fakePort();
+    registry.attach(first.port);
+    first.deliver(startMessage(input()));
+    await waitUntil(() => messagesOfType(first.posted, 'bgsmAgentTurnResult').length === 1);
+    first.port.disconnect();
+
+    const next = fakePort();
+    registry.attach(next.port);
+    next.deliver(startMessage(input({ turnAttemptId: 'turn-attempt-first-start' })));
+    next.deliver(startMessage(input({ turnAttemptId: 'turn-attempt-ignored-start' })));
+    finishRelease();
+
+    await waitUntil(() => messagesOfType(next.posted, 'bgsmAgentTurnResult').length === 1);
+    assert.equal(runCount, 2);
+    assert.equal(
+      messagesOfType(next.posted, 'bgsmAgentTurnResult')[0]?.result.turnAttemptId,
+      'turn-attempt-first-start',
+    );
+  });
+
+  it('retains terminal ownership and retries a transient lease release failure', async () => {
+    let runCount = 0;
+    let releaseCount = 0;
+    const registry = createBgsmAgentTurnRegistry({
+      runTurn: async (turn, options) => {
+        runCount += 1;
+        options.onDurableLeaseAcquired();
+        return {
+          turnAttemptId: turn.turnAttemptId,
+          sessionId: turn.sessionId,
+          baseRevision: turn.baseRevision,
+          reason: 'final_answer',
+          changed: false,
+          changedCount: 0,
+          commit: null,
+        };
+      },
+      translateError: async (error) => String(error),
+      executionEpochId: 'worker-epoch-1',
+      releaseTurnLease: async () => {
+        releaseCount += 1;
+        if (releaseCount === 1) throw new Error('IndexedDB temporarily unavailable');
+      },
+    });
+    const firstTurn = input();
+    const first = fakePort();
+    registry.attach(first.port);
+    first.deliver(startMessage(firstTurn));
+    await waitUntil(() => messagesOfType(first.posted, 'bgsmAgentTurnResult').length === 1);
+    first.deliver({
+      type: 'ackBgsmAgentTurnResult',
+      executionEpochId: registry.executionEpochId,
+      turnAttemptId: firstTurn.turnAttemptId,
+      sessionId: firstTurn.sessionId,
+      baseRevision: firstTurn.baseRevision,
+      disposition: 'no_transition',
+      appliedRevision: null,
+    });
+    await waitUntil(() => releaseCount === 1);
+
+    const next = fakePort();
+    registry.attach(next.port);
+    next.deliver(startMessage(input({ turnAttemptId: 'turn-attempt-after-release-retry' })));
+    await waitUntil(() => runCount === 2);
+    assert.equal(releaseCount, 2);
+    assert.equal(
+      messagesOfType(next.posted, 'bgsmAgentTurnResult')[0]?.result.reason,
+      'final_answer',
     );
   });
 
@@ -221,6 +494,18 @@ describe('Cubby turn single-flight registry', () => {
       messagesOfType(conflicting.posted, 'bgsmAgentTurnError')[0]?.error.message ?? '',
       /conflicting launch data/u,
     );
+
+    const conflictingRetry = fakePort();
+    registry.attach(conflictingRetry.port);
+    conflictingRetry.deliver({
+      ...startMessage(turn),
+      retrySourceAttemptId: 'turn-attempt-prior',
+    });
+    assert.equal(run.runCount, 1);
+    assert.match(
+      messagesOfType(conflictingRetry.posted, 'bgsmAgentTurnError')[0]?.error.message ?? '',
+      /conflicting launch data/u,
+    );
     conflicting.deliver({
       type: 'ackBgsmAgentTurnResult',
       executionEpochId: registry.executionEpochId,
@@ -237,9 +522,10 @@ describe('Cubby turn single-flight registry', () => {
     concurrent.deliver(startMessage(input({ turnAttemptId: 'turn-attempt-2' })));
     assert.equal(run.runCount, 1);
     assert.equal(
-      messagesOfType(concurrent.posted, 'bgsmAgentTurnResult')[0]?.result.reason,
-      'attempt_state_lost',
+      messagesOfType(concurrent.posted, 'bgsmAgentTurnError')[0]?.error.code,
+      'agent_session_turn_active',
     );
+    assert.equal(messagesOfType(concurrent.posted, 'bgsmAgentTurnResult').length, 0);
 
     const stillAttached = fakePort();
     registry.attach(stillAttached.port);
@@ -283,7 +569,7 @@ describe('Cubby turn single-flight registry', () => {
           reason: 'final_answer',
           changed: false,
           changedCount: 0,
-          newMessages: [],
+          commit: null,
         };
       },
       translateError: async (error) => String(error),
@@ -300,3 +586,11 @@ describe('Cubby turn single-flight registry', () => {
     );
   });
 });
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error('Timed out waiting for background turn state.');
+}

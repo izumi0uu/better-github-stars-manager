@@ -291,6 +291,7 @@ describe('Agent observability raw capture', () => {
         },
       },
     });
+    if (result.reason === undefined) throw new TypeError('Expected a terminal Agent result.');
     sink.finish(result.reason);
     drainCallbacks(callbacks);
 

@@ -6,6 +6,7 @@ import {
   publicAgentProviderErrorMessage,
 } from '@/agent-harness/provider';
 import { getMessages } from '@/i18n';
+import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/turn-protocol';
 
 describe('Agent provider error translation', () => {
   it('uses fixed content-free copy for context overflow', () => {
@@ -37,6 +38,18 @@ describe('Agent provider error translation', () => {
       }
     },
   );
+
+  it('maps artifact coverage stalls to bounded localized copy', () => {
+    const secret = 'cursor-and-storage-secret';
+    for (const locale of ['en', 'zh-CN'] as const) {
+      const translated = translateError({
+        code: AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE,
+        message: secret,
+      }, getMessages(locale));
+      expect(translated).not.toContain(secret);
+      expect(translated.length).toBeGreaterThan(0);
+    }
+  });
 
   it.each([
     'Monthly token limit exceeded for this account.',

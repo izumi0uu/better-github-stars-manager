@@ -42,7 +42,12 @@ export function AgentHost({
 }) {
   const { m } = useI18n();
   const agent = useBgsmAgent(onDataChanged, chatCandidate);
-  const workbench = useBgsmAgentWorkbench(onDataChanged, agent.sessionId);
+  const workbench = useBgsmAgentWorkbench(onDataChanged, agent.sessionId, agent.sessionReady);
+  useEffect(() => {
+    if (workbench.state.deletedSessionIds.size > 0) {
+      agent.invalidateDeletedSessions(workbench.state.deletedSessionIds);
+    }
+  }, [agent.invalidateDeletedSessions, workbench.state.deletedSessionIds]);
   const organizeView = useMemo(() => selectOrganizeWorkbenchView(
     workbench.state,
     workbench.displayedProcessed,
@@ -81,7 +86,7 @@ export function AgentHost({
     : null;
   // Organize ownership implies !canSwitchSession; while a candidate is blocked,
   // the effect cannot consume its pending switch before ownership releases and rerenders.
-  const blockedConversationCandidate = organizeView.ownsSession
+  const blockedConversationCandidate = !organizeView.capabilities.canSwitchSession
     && pendingContextKey !== null
     && pendingContextKey !== boundContextKey
     ? chatCandidate
@@ -107,7 +112,12 @@ export function AgentHost({
       return;
     }
     if (!uiPresentation.sessionPolicy.canSwitchSession) return;
-    if (agent.createSession()) pendingCandidateContextKeyRef.current = null;
+    void agent.createSession().then((createdSessionId) => {
+      if (
+        createdSessionId !== null
+        && pendingCandidateContextKeyRef.current === queuedCandidateContextKey
+      ) pendingCandidateContextKeyRef.current = null;
+    });
   }, [
     agent.activeSessionId,
     agent.conversationBinding,

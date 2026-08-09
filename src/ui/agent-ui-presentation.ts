@@ -56,21 +56,37 @@ export type AgentProgress = Readonly<{
 }>;
 
 export type OrganizeWorkbenchCapabilities = Readonly<{
+  canConfirmPreflight: boolean;
   canCancelPreflight: boolean;
   canStop: boolean;
   canPause: boolean;
   canResumeAnalysis: boolean;
   canResumeApply: boolean;
+  canReadReview: boolean;
+  canEditReview: boolean;
+  canApplySelection: boolean;
   canRetryReviewPage: boolean;
+  canReadReceipt: boolean;
   canRetryReceiptPage: boolean;
   canRestart: boolean;
   canDiscard: boolean;
+  canDismissTerminal: boolean;
+  canTakeControl: boolean;
+  canCreateSession: boolean;
   canSwitchSession: boolean;
+  canDeleteSession: boolean;
   canChat: boolean;
 }>;
 
 export type OrganizeWorkbenchError = Readonly<{
-  kind: 'connection_interrupted' | 'worker_lost' | 'preflight_incomplete' | 'other';
+  kind:
+    | 'connection_interrupted'
+    | 'worker_lost'
+    | 'preflight_incomplete'
+    | 'organize_already_running'
+    | 'run_state_refreshed'
+    | 'server_failure'
+    | 'other';
   message: string;
 }>;
 
@@ -93,7 +109,9 @@ export type OrganizeWorkbenchView = Readonly<{
     skipped: number;
     failed: number;
   }> | null;
-  ownsSession: boolean;
+  role: AgentWorkbenchState['role'];
+  controlNotice: 'controlled_elsewhere' | 'owner_disconnected' | null;
+  takeControlFailure: AgentWorkbenchState['takeControlFailure'];
   active: boolean;
   error: OrganizeWorkbenchError | null;
   capabilities: OrganizeWorkbenchCapabilities;
@@ -141,8 +159,9 @@ export type AgentUiPresentation = Readonly<{
   }>;
   stopbar: Readonly<{ action: AgentStopbarAction }> | null;
   sessionPolicy: Readonly<{
-    ownsWorkbench: boolean;
+    canCreateSession: boolean;
     canSwitchSession: boolean;
+    canDeleteSession: boolean;
   }>;
   scrollKey: string;
 }>;
@@ -172,14 +191,6 @@ const ACTIVE_PHASES = new Set<OrganizeWorkbenchPhase>([
   'applying',
 ]);
 
-const CHAT_BLOCKING_PHASES = new Set<OrganizeWorkbenchPhase>([
-  'scope_requesting',
-  'scope_starting',
-  'analyzing',
-  'reconnecting',
-  'review_loading',
-  'applying',
-]);
 
 const ACTIVE_CHAT_PHASES = new Set<AgentTurnPhase>([
   'queued',
@@ -227,8 +238,7 @@ export function selectOrganizeWorkbenchView(
   const runState = currentOrganizeJobState(state.snapshot, state.organizeJob);
   const coverageComplete = hasCompleteAnalysisCoverage(state);
   const hasReceipt = state.organizeJob?.status === 'completed' && state.organizeJob.apply !== null;
-  const ownsSession = hasWorkbenchOwnership(state);
-  const phase = selectOrganizePhase(state, runState, coverageComplete, hasReceipt, ownsSession);
+  const phase = selectOrganizePhase(state, runState, coverageComplete, hasReceipt);
   const analysisTotal = state.organizeJob?.scopeCount
     ?? state.snapshot?.frozenScope.count
     ?? state.preflight?.count
@@ -245,37 +255,55 @@ export function selectOrganizeWorkbenchView(
     : analysisProgress;
   const connected = state.transport === 'connected';
   const commandReady = state.pendingCommand === null;
-  const canResumeAnalysis = connected
+  const connectedOwner = connected && state.role === 'owner';
+  const terminal = state.role === null
+    && state.organizeJob !== null
+    && ['completed', 'cancelled'].includes(state.organizeJob.status);
+  const canResumeAnalysis = connectedOwner
     && commandReady
     && ['analysis_blocked', 'failed'].includes(phase)
     && canContinueOrganizeJobRun(state.snapshot);
   const active = ACTIVE_PHASES.has(phase);
   const capabilities: OrganizeWorkbenchCapabilities = {
-    canCancelPreflight: connected && [
+    canConfirmPreflight: connectedOwner && commandReady && phase === 'scope_ready',
+    canCancelPreflight: connectedOwner && commandReady && [
       'scope_requesting',
       'scope_ready',
       'scope_starting',
       'scope_empty',
     ].includes(phase),
-    canStop: connected && commandReady && phase === 'analyzing',
-    canPause: connected && commandReady && phase === 'applying',
+    canStop: connectedOwner && commandReady && phase === 'analyzing',
+    canPause: connectedOwner && commandReady && phase === 'applying',
     canResumeAnalysis,
-    canResumeApply: connected && commandReady && phase === 'paused' && apply !== null,
+    canResumeApply: connectedOwner && commandReady && phase === 'paused' && apply !== null,
+    canReadReview: connected && ['review_loading', 'review_failed', 'review_ready'].includes(phase),
+    canEditReview: connectedOwner && commandReady && phase === 'review_ready',
+    canApplySelection: connectedOwner && commandReady && phase === 'review_ready',
     canRetryReviewPage: connected && phase === 'review_failed',
+    canReadReceipt: connected && phase === 'receipt',
     canRetryReceiptPage: connected && phase === 'receipt' && state.organizeReceiptError !== null,
-    canRestart: connected && commandReady && [
+    canRestart: connectedOwner && commandReady && [
       'analysis_blocked',
       'review_invalid',
       'failed',
       'interrupted',
-      'cancelled',
     ].includes(phase),
-    canDiscard: commandReady && ownsSession && !active && phase !== 'reconnecting',
-    canSwitchSession: !ownsSession,
-    canChat: !CHAT_BLOCKING_PHASES.has(phase),
+    canDiscard: connectedOwner && commandReady && !active && !terminal && phase !== 'reconnecting',
+    canDismissTerminal: connected && commandReady && terminal,
+    canTakeControl: connected
+      && commandReady
+      && state.role === 'owner_lost'
+      && state.organizeJob !== null
+      && !terminal,
+    canCreateSession: state.role !== 'owner',
+    canSwitchSession: state.role !== 'owner',
+    canDeleteSession: state.role !== 'owner',
+    canChat: true,
   };
   const identity = currentWorkbenchRunIdentity(state);
-  const error = phase === 'reconnecting' ? null : selectWorkbenchError(state.error);
+  const error = phase === 'reconnecting'
+    ? null
+    : selectWorkbenchError(state.error, state.organizeFailureReason);
   const failedCount = state.organizeJob?.coverage.analysisFailed
     ?? state.snapshot?.coverage?.analysisFailed
     ?? 0;
@@ -304,11 +332,22 @@ export function selectOrganizeWorkbenchView(
           failed: state.organizeJob.apply.failed,
         }
       : null,
-    ownsSession,
+    role: state.role,
+    controlNotice: state.role === 'observer'
+      ? 'controlled_elsewhere'
+      : state.role === 'owner_lost'
+        ? 'owner_disconnected'
+        : null,
+    takeControlFailure: state.takeControlFailure,
     active,
     error,
     capabilities,
     revisionKey: [
+      state.role ?? '',
+      state.transport,
+      state.pendingCommand?.id ?? '',
+      state.takeControlFailure ?? '',
+      state.organizeFailureReason ?? '',
       phase,
       identity?.runId ?? '',
       identity?.generation ?? '',
@@ -342,9 +381,7 @@ export function resolveAgentUiPresentation(
           : dominantPhase === 'chat_done'
             ? 'done'
             : ORGANIZE_MASCOT[organize.phase];
-  const composerDisabled = chatActive
-    || chat.hasContextRecovery
-    || !organize.capabilities.canChat;
+  const composerDisabled = chatActive || chat.hasContextRecovery;
 
   return {
     dominantPhase,
@@ -358,8 +395,9 @@ export function resolveAgentUiPresentation(
     },
     stopbar: selectStopbar(chat, organize),
     sessionPolicy: {
-      ownsWorkbench: organize.ownsSession,
+      canCreateSession: !chatActive && organize.capabilities.canCreateSession,
       canSwitchSession: !chatActive && organize.capabilities.canSwitchSession,
+      canDeleteSession: !chatActive && organize.capabilities.canDeleteSession,
     },
     scrollKey: `${dominantPhase}:${organize.revisionKey}:${chat.revisionKey ?? ''}`,
   };
@@ -370,9 +408,8 @@ function selectOrganizePhase(
   runState: CurrentOrganizeJobState | null,
   coverageComplete: boolean,
   hasReceipt: boolean,
-  ownsSession: boolean,
 ): OrganizeWorkbenchPhase {
-  if (state.transport === 'disconnected' && ownsSession) return 'reconnecting';
+  if (state.transport === 'disconnected' && state.role === 'owner') return 'reconnecting';
   if (state.preflight?.status === 'requesting') return 'scope_requesting';
   if (state.preflight?.status === 'ready') return 'scope_ready';
   if (state.preflight?.status === 'starting') return 'scope_starting';
@@ -389,19 +426,21 @@ function selectOrganizePhase(
   return state.error ? 'scope_failed' : 'idle';
 }
 
-function hasWorkbenchOwnership(state: AgentWorkbenchState): boolean {
-  return !!(
-    state.preflight
-    || state.snapshot
-    || state.proposal
-    || state.organizeJob
-    || state.organizeReviewPage
-    || state.organizeReceiptPage
-    || state.conversationAnchor
-  );
-}
 
-function selectWorkbenchError(message: string | null): OrganizeWorkbenchError | null {
+function selectWorkbenchError(
+  message: string | null,
+  reason: AgentWorkbenchState['organizeFailureReason'],
+): OrganizeWorkbenchError | null {
+  if (reason === 'already_started') {
+    return { kind: 'organize_already_running', message: message ?? reason };
+  }
+  if (reason === 'stale_generation' || reason === 'revision_conflict') {
+    return { kind: 'run_state_refreshed', message: message ?? reason };
+  }
+  if (reason === 'preflight_invalid' || reason === 'preflight_stale' || reason === 'preflight_replayed') {
+    return { kind: 'preflight_incomplete', message: message ?? reason };
+  }
+  if (reason !== null) return { kind: 'server_failure', message: message ?? reason };
   if (!message) return null;
   if (message === CONNECTION_INTERRUPTED_COPY) return { kind: 'connection_interrupted', message };
   if (message === WORKER_LOST_COPY) return { kind: 'worker_lost', message };
@@ -495,9 +534,10 @@ function selectStopbar(
   if (STOPPABLE_CHAT_PHASES.has(chat.phase)) {
     return { action: 'stop_chat' };
   }
-  if (organize.phase === 'scope_requesting' || organize.phase === 'scope_starting') {
-    return { action: 'cancel_preflight' };
-  }
+  if (
+    organize.capabilities.canCancelPreflight
+    && (organize.phase === 'scope_requesting' || organize.phase === 'scope_starting')
+  ) return { action: 'cancel_preflight' };
   if (organize.capabilities.canPause) return { action: 'pause_apply' };
   if (organize.capabilities.canStop) return { action: 'stop_analysis' };
   return null;

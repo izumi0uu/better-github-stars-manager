@@ -45,6 +45,7 @@ function queryResponse(totalCount: number): WatchInboxQueryResponse {
     totalCount,
     status: {
       accountLogin: 'idah',
+      credentialSource: 'main',
       hasMainToken: true,
       hasNotificationsToken: true,
       refreshing: false,

@@ -6,6 +6,7 @@ import {
   canReplaceBlockedDurableRun,
   resolveBgsmOrganizeJobReconnect,
   settleBgsmOrganizeJobDisconnect,
+  resolveBgsmOrganizeControlRole,
 } from '@/background/organize-job-port-lifecycle';
 import type { ResolvedLaunchCandidate } from '@/background/query';
 
@@ -53,23 +54,58 @@ describe('OrganizeJobRun Port lifecycle', () => {
     }, identity), false);
   });
 
-  it('aborts scheduling, terminalizes the current run, and releases controller authority', async () => {
+  it('projects owner, observer, owner loss, and terminal/no-job roles without mutating authority', () => {
+    const owner = {
+      controllerId: parseControllerId('controller:v1:role-owner'),
+      sessionId: 'role-owner-session',
+    } as const;
+    const observer = {
+      controllerId: parseControllerId('controller:v1:role-observer'),
+      sessionId: 'role-observer-session',
+    } as const;
+    const active = {
+      status: 'review' as const,
+      controllerId: owner.controllerId,
+      sessionId: owner.sessionId,
+    };
+
+    assert.equal(resolveBgsmOrganizeControlRole({ page: owner, job: active, ownerConnected: true }), 'owner');
+    assert.equal(
+      resolveBgsmOrganizeControlRole({ page: observer, job: active, ownerConnected: true }),
+      'observer',
+    );
+    assert.equal(
+      resolveBgsmOrganizeControlRole({ page: owner, job: active, ownerConnected: false }),
+      'owner_lost',
+    );
+    assert.equal(
+      resolveBgsmOrganizeControlRole({ page: observer, job: active, ownerConnected: false }),
+      'owner_lost',
+    );
+    assert.equal(resolveBgsmOrganizeControlRole({
+      page: observer,
+      job: { ...active, status: 'completed' },
+      ownerConnected: false,
+    }), null);
+    assert.equal(resolveBgsmOrganizeControlRole({
+      page: observer,
+      job: { ...active, status: 'cancelled' },
+      ownerConnected: true,
+    }), null);
+    assert.equal(resolveBgsmOrganizeControlRole({ page: observer, job: null, ownerConnected: false }), null);
+  });
+
+  it('reports disconnect without aborting or releasing execution authority', async () => {
     const run = await frozenController();
     const posted: unknown[] = [];
-    const released: string[][] = [];
-    let aborts = 0;
 
     await settleBgsmOrganizeJobDisconnect({
       identity: run.owner,
       controller: run.controller,
-      abortRun: () => { aborts += 1; },
-      releaseRuns: (runIds) => { released.push([...runIds]); },
       post: (message) => posted.push(message),
     });
 
-    assert.equal(aborts, 1);
-    assert.deepEqual(released, [[run.frozen.runId]]);
-    assert.throws(() => run.controller.getSnapshot(run.frozen), /stale/u);
+    assert.deepEqual(run.controller.getSnapshot(run.frozen), run.frozen);
     assert.deepEqual(posted, [{
       type: 'bgsmOrganizeJobRunDisconnected',
       controllerId: run.owner.controllerId,
@@ -79,92 +115,39 @@ describe('OrganizeJobRun Port lifecycle', () => {
     }]);
   });
 
-  it('releases controller and scheduler state when disconnect settlement fails', async () => {
-    for (const failurePoint of ['abort', 'disconnect', 'post'] as const) {
-      const run = await frozenController();
-      const released: string[][] = [];
-      const calls: string[] = [];
-
-      await assert.rejects(
-        settleBgsmOrganizeJobDisconnect({
-          identity: run.owner,
-          controller: {
-            findLatestSnapshot: (owner) => run.controller.findLatestSnapshot(owner),
-            disconnectController: (owner) => {
-              calls.push('disconnect');
-              if (failurePoint === 'disconnect') throw new Error('disconnect failed');
-              return run.controller.disconnectController(owner);
-            },
-            releaseController: (owner) => {
-              calls.push('release-controller');
-              return run.controller.releaseController(owner);
-            },
-          },
-          abortRun: () => {
-            calls.push('abort');
-            if (failurePoint === 'abort') throw new Error('abort failed');
-          },
-          releaseRuns: (runIds) => {
-            calls.push('release-runs');
-            released.push([...runIds]);
-          },
-          post: () => {
-            calls.push('post');
-            if (failurePoint === 'post') throw new Error('post failed');
-          },
-        }),
-        new RegExp(`${failurePoint} failed`, 'u'),
-      );
-
-      assert.deepEqual(calls.slice(-2), ['release-controller', 'release-runs']);
-      assert.deepEqual(released, [[run.frozen.runId]]);
-      assert.throws(() => run.controller.getSnapshot(run.frozen), /stale/u);
-    }
-  });
-
-  it('releases preflight authority when the no-current disconnect post fails', async () => {
+  it('preserves preflight authority when a page disconnects before start', async () => {
     const controller = createBgsmAgentController({ resolveCandidate: async () => candidate });
     const owner = {
       controllerId: parseControllerId('controller:v1:no-current-disconnect'),
       sessionId: 'no-current-disconnect-session',
     } as const;
     const preflight = await controller.issuePreflight(owner);
-    assert.ok(preflight.preflightToken);
+
+    await settleBgsmOrganizeJobDisconnect({ identity: owner, controller });
+
     assert.ok(controller.findReadyPreflight(owner));
-    const released: string[][] = [];
-
-    await assert.rejects(
-      settleBgsmOrganizeJobDisconnect({
-        identity: owner,
-        controller,
-        abortRun: () => { throw new Error('unexpected abort'); },
-        releaseRuns: (runIds) => { released.push([...runIds]); },
-        post: () => { throw new Error('post failed'); },
-      }),
-      /post failed/u,
-    );
-
-    assert.deepEqual(released, [[]]);
-    assert.equal(controller.findReadyPreflight(owner), null);
-    assert.throws(
-      () => controller.startRun(owner, preflight.preflightToken!),
-      /invalid or stale/u,
-    );
+    assert.ok(preflight.preflightToken);
+    assert.equal(controller.startRun(owner, preflight.preflightToken).state, 'frozen');
   });
 
   it('replays an authoritative in-worker snapshot on reconnect', async () => {
     const run = await frozenController();
     const posted: unknown[] = [];
+    const observer = {
+      controllerId: parseControllerId('controller:v1:reconnect-observer'),
+      sessionId: 'reconnect-observer-session',
+    } as const;
 
     await resolveBgsmOrganizeJobReconnect({
       identity: run.frozen,
+      page: observer,
       controller: run.controller,
       post: (message) => posted.push(message),
     });
 
     assert.deepEqual(posted, [{
       type: 'bgsmOrganizeJobRunSnapshot',
-      snapshot: run.controller.getSnapshot(run.frozen),
+      snapshot: { ...run.controller.getSnapshot(run.frozen), ...observer },
     }]);
   });
 
@@ -177,6 +160,7 @@ describe('OrganizeJobRun Port lifecycle', () => {
 
     await resolveBgsmOrganizeJobReconnect({
       identity: run.frozen,
+      page: run.owner,
       controller: replacement,
       post: (message) => posted.push(message),
     });

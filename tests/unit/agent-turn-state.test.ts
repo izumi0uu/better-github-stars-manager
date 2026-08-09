@@ -10,7 +10,8 @@ import {
 } from '@/ui/agent-turn-state';
 import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
 import type { AgentStopReason } from '@/agent-harness';
-import type { BgsmAgentTurnHandlers, BgsmAgentTurnResult } from '@/utils/messaging';
+import type { BgsmAgentTurnResult } from '@/bgsm-agent/turn-protocol';
+import type { BgsmAgentTurnHandlers } from '@/utils/messaging';
 import { cleanupMountedRootsAndBody, mountReact, type MountedRoot } from './test-utils';
 
 const messagingMocks = vi.hoisted(() => ({
@@ -68,9 +69,61 @@ describe('Agent turn reducer', () => {
       contextLimitRecovery: null,
       draftRecovery: null,
       canRetryLastTurn: true,
+      transientSafeResendPrompt: null,
       toolActivities: [],
       preCompactionStatus: null,
     });
+  });
+
+  it('preserves only explicit transient resend authority through winner subscription and settlement', () => {
+    const prompt = 'Keep this rejected prompt.';
+    const failed = reduceAgentTurn(createAgentTurnState(), {
+      type: 'turn_failed',
+      result: null,
+      message: 'Another turn is active.',
+      category: 'other',
+      status: { kind: 'error', text: 'Another turn is active.' },
+      prompt,
+      canRetry: true,
+      transientSafeResend: true,
+    });
+    const subscribed = reduceAgentTurn(failed, {
+      type: 'turn_subscribed',
+      status: { kind: 'queued', text: 'Queued' },
+    });
+    const winnerFailed = reduceAgentTurn(subscribed, {
+      type: 'subscribed_turn_failed',
+      status: { kind: 'error', text: 'Winner provider failed.' },
+    });
+    expect(winnerFailed).toMatchObject({
+      phase: 'failed',
+      running: false,
+      status: { kind: 'error', text: 'Winner provider failed.' },
+      error: 'Another turn is active.',
+      draftRecovery: prompt,
+      transientSafeResendPrompt: prompt,
+      canRetryLastTurn: true,
+    });
+    const settled = reduceAgentTurn(subscribed, finishAction('final_answer'));
+
+    expect(settled).toMatchObject({
+      running: false,
+      error: 'Another turn is active.',
+      draftRecovery: prompt,
+      transientSafeResendPrompt: prompt,
+      canRetryLastTurn: true,
+    });
+    expect(reduceAgentTurn(settled, {
+      type: 'transient_safe_resend_cleared',
+    })).toMatchObject({
+      draftRecovery: prompt,
+      transientSafeResendPrompt: null,
+      canRetryLastTurn: true,
+    });
+    expect(reduceAgentTurn(settled, {
+      type: 'turn_started',
+      status: { kind: 'queued', text: 'Queued' },
+    }).transientSafeResendPrompt).toBeNull();
   });
 
   it.each([
@@ -287,6 +340,11 @@ describe('useBgsmAgent stop ownership', () => {
     });
 
     expect(stop).toHaveBeenCalledTimes(1);
+    expect(agent!.durableRetryDraft).toMatchObject({
+      prompt: 'Inspect all stars',
+      kind: 'stopped',
+      settlement: 'stop_pending',
+    });
   });
 
   it('ignores late progress and buffered stream flushes after Stop is requested', async () => {
@@ -428,6 +486,6 @@ function result(reason: AgentStopReason): BgsmAgentTurnResult {
     reason,
     changed: false,
     changedCount: 0,
-    newMessages: [],
+    commit: null,
   };
 }

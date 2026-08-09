@@ -78,6 +78,16 @@ function sameReasonSelection(left: readonly string[], right: readonly string[]):
   return left.every((reason) => rightSet.has(normalizedReason(reason)));
 }
 
+/**
+ * Revoked authentication and missing permission both mean the selected
+ * credential can no longer read GitHub. Only Watch pauses in that case; Stars,
+ * tags, Gist, and sync keep working, so these states offer credential recovery
+ * instead of a plain retry.
+ */
+function isWatchCredentialError(code: string | null | undefined): boolean {
+  return code === 'authentication_required' || code === 'permission_denied';
+}
+
 function handleThreadListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
   if (event.altKey || event.ctrlKey || event.metaKey) return;
   if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
@@ -533,6 +543,11 @@ export function WatchInbox({
 
   const scopeNeverLoaded = !state?.scope.lastSuccessfulAt;
   const inboxNeverLoaded = !state?.inbox.lastSuccessfulAt;
+  const scopeCredentialFailure = isWatchCredentialError(state?.scope.errorCode);
+  const inboxCredentialFailure = isWatchCredentialError(state?.inbox.errorCode);
+  const credentialStale =
+    (status.scopeStatus === 'stale' && scopeCredentialFailure) ||
+    (status.inboxStatus === 'stale' && inboxCredentialFailure);
 
   return (
     <section className="min-h-full bg-background" aria-label={m.watch.title}>
@@ -634,10 +649,22 @@ export function WatchInbox({
         <div role="status" className="flex items-start gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <span className="break-words">
-            {status.scopeStatus === 'stale' || status.inboxStatus === 'stale'
-              ? m.watch.staleSnapshot
-              : m.watch.refreshFailed}
+            {credentialStale
+              ? m.watch.credentialStaleSnapshot
+              : status.scopeStatus === 'stale' || status.inboxStatus === 'stale'
+                ? m.watch.staleSnapshot
+                : m.watch.refreshFailed}
           </span>
+          {credentialStale && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto shrink-0"
+              onClick={onOpenOptions}
+            >
+              {m.watch.openOptions}
+            </Button>
+          )}
         </div>
       )}
       {error === 'query' && (
@@ -677,10 +704,10 @@ export function WatchInbox({
       {status.scopeStatus === 'error' ? (
         <EmptyState
           icon={<AlertTriangle className="size-5" />}
-          text={state?.scope.errorCode === 'permission_denied'
+          text={scopeCredentialFailure
             ? m.watch.scopePermissionDenied
             : m.watch.scopeFailed}
-          action={state?.scope.errorCode === 'permission_denied'
+          action={scopeCredentialFailure
             ? <Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>
             : <Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.retry}</Button>}
         />
@@ -707,10 +734,10 @@ export function WatchInbox({
       ) : status.inboxStatus === 'error' ? (
         <EmptyState
           icon={<AlertTriangle className="size-5" />}
-          text={state.inbox.errorCode === 'permission_denied'
+          text={inboxCredentialFailure
             ? m.watch.inboxPermissionDenied
             : m.watch.inboxFailed}
-          action={state.inbox.errorCode === 'permission_denied'
+          action={inboxCredentialFailure
             ? <Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>
             : <Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.retry}</Button>}
         />

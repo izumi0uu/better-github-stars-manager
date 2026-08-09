@@ -51,6 +51,7 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
       accountLogin: 'idah',
       hasMainToken: true,
       hasNotificationsToken: true,
+      credentialSource: 'main',
       refreshing: false,
       scopeStatus: 'fresh',
       inboxStatus: 'fresh',
@@ -145,7 +146,23 @@ describe('WatchInbox', () => {
     expect(container.textContent).not.toContain('Add Watching: read');
   });
 
-  it('renders a specific Watching permission action on a terminal scope failure', () => {
+  it('routes missing main-credential setup to the supplied recovery callback', async () => {
+    const onOpenOptions = vi.fn();
+    const setupResult = result();
+    setupResult.status.hasMainToken = false;
+    setupResult.status.hasNotificationsToken = false;
+    setupResult.status.credentialSource = null;
+
+    const container = renderInbox({ result: setupResult, onOpenOptions });
+    const settings = findButtonByText(container, 'Open options');
+    expect(settings).not.toBeNull();
+
+    await click(settings!);
+    expect(onOpenOptions).toHaveBeenCalledOnce();
+  });
+
+  it('routes a terminal permission failure to the supplied recovery callback', async () => {
+    const onOpenOptions = vi.fn();
     const permissionResult = result();
     permissionResult.groups = [];
     permissionResult.threads = [];
@@ -154,10 +171,42 @@ describe('WatchInbox', () => {
     permissionResult.status.state!.scope.lastSuccessfulAt = null;
     permissionResult.status.state!.scope.errorCode = 'permission_denied';
 
-    const container = renderInbox({ result: permissionResult });
+    const container = renderInbox({ result: permissionResult, onOpenOptions });
+    const settings = findButtonByText(container, 'Open options');
+    expect(settings).not.toBeNull();
 
-    expect(container.textContent).toContain('main token cannot read Watching');
-    expect(container.textContent).toContain('Open options');
+    await click(settings!);
+    expect(onOpenOptions).toHaveBeenCalledOnce();
+  });
+
+  it('keeps Stars, tags, Gist, and sync available during Inbox credential failure', async () => {
+    const onOpenOptions = vi.fn();
+    const permissionResult = result();
+    permissionResult.status.inboxStatus = 'error';
+    permissionResult.status.state!.inbox.errorCode = 'permission_denied';
+
+    const container = renderInbox({ result: permissionResult, onOpenOptions });
+    expect(container.textContent).toContain('Watch is paused');
+    expect(container.textContent).toContain('Stars');
+    expect(container.textContent).toContain('tags');
+    expect(container.textContent).toContain('Gist');
+    expect(container.textContent).toContain('sync');
+
+    await click(findButtonByText(container, 'Open options'));
+    expect(onOpenOptions).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the last successful rows visible while Watch is stale', () => {
+    const staleResult = result();
+    staleResult.status.scopeStatus = 'stale';
+    staleResult.status.inboxStatus = 'stale';
+    staleResult.status.state!.scope.errorCode = 'network';
+    staleResult.status.state!.inbox.errorCode = 'network';
+
+    const container = renderInbox({ result: staleResult });
+
+    expect(container.textContent).toContain('Thread 0');
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
   });
 
   it('renders raw reason metadata, the repository unread count, and a safe GitHub link', () => {

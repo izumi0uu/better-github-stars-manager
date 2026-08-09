@@ -7,6 +7,7 @@ import {
   displayedAnalyzedRepositoryCount,
   isDurableOrganizeJobAuthoritative,
   reduceAgentWorkbench,
+  type AgentWorkbenchState,
   type WorkbenchPendingCommand,
   WORKER_LOST_COPY,
 } from '@/ui/agent-workbench-state';
@@ -27,7 +28,7 @@ import {
   createProductionRunBudget,
 } from '@/bgsm-agent/policy';
 import type { OrganizeJobRunSnapshot } from '@/bgsm-agent/events';
-import type { BgsmOrganizeJobPresentation } from '@/utils/messaging';
+import type { BgsmOrganizeControlRole, BgsmOrganizeJobPresentation } from '@/utils/messaging';
 
 const controllerId = parseControllerId('controller:v1:ui-test');
 const sessionId = 'ui-session';
@@ -147,6 +148,55 @@ describe('Agent workbench durable organize-job reducer', () => {
     expect(resumed.pendingCommand).toBeNull();
   });
 
+  it('keeps Take control pending until a newer owner projection arrives', () => {
+    let state = deliverJob(
+      createAgentWorkbenchState(controllerId, sessionId),
+      { ...presentation(), status: 'review' },
+      'owner_lost',
+    );
+    state = reduceAgentWorkbench(state, {
+      type: 'organize_command_requested',
+      command: pendingCommand('take-control', 'take_control'),
+    });
+
+    const unchanged = deliverJob(state, presentation(), 'owner_lost');
+    expect(unchanged.pendingCommand?.kind).toBe('take_control');
+    expect(unchanged.role).toBe('owner_lost');
+
+    const owned = deliverJob(state, { ...presentation(), revision: 8 }, 'owner');
+    expect(owned.pendingCommand).toBeNull();
+    expect(owned.role).toBe('owner');
+  });
+
+  it('stores closed Take control failure reasons without exposing raw errors', () => {
+    let state = deliverJob(
+      createAgentWorkbenchState(controllerId, sessionId),
+      { ...presentation(), status: 'review' },
+      'owner_lost',
+    );
+    state = reduceAgentWorkbench(state, {
+      type: 'organize_command_requested',
+      command: pendingCommand('take-control-conflict', 'take_control'),
+    });
+    state = reduceAgentWorkbench(state, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobRunError',
+        controllerId,
+        sessionId,
+        runId,
+        generation: 1,
+        requestId: 'take-control-conflict',
+        reason: 'revision_conflict',
+        message: 'Internal storage detail.',
+      },
+    });
+
+    expect(state.pendingCommand).toBeNull();
+    expect(state.takeControlFailure).toBe('revision_conflict');
+    expect(state.error).toBeNull();
+  });
+
   it('keeps Stop pending through active snapshots and clears it on a terminal result', () => {
     let state = withSnapshot(baseSnapshot());
     state = reduceAgentWorkbench(state, {
@@ -252,45 +302,28 @@ describe('Agent workbench durable organize-job reducer', () => {
     expect(restored.transport).toBe('connected');
   });
 
-  it('clears stale organize state when an authoritative reconnect reports no active job', () => {
+  it('clears stale organize state when the server projects no active job', () => {
     const active = deliverJob(withSnapshot(baseSnapshot()), {
       ...presentation(),
       status: 'analyzing',
     });
     const disconnected = reduceAgentWorkbench(active, { type: 'transport_disconnected' });
-    const liveNoActive = reduceAgentWorkbench(disconnected, {
-      type: 'server_message',
-      message: {
-        type: 'bgsmOrganizeJobRunNoActive',
-        controllerId,
-        sessionId,
-      },
-    });
-    expect(liveNoActive).toBe(disconnected);
-
     const noActive = reduceAgentWorkbench(disconnected, {
       type: 'server_message',
-      authoritative: true,
       message: {
-        type: 'bgsmOrganizeJobRunNoActive',
+        type: 'bgsmOrganizeJobState',
         controllerId,
         sessionId,
+        presentation: null,
+        role: null,
       },
     });
 
     expect(noActive.transport).toBe('connected');
     expect(noActive.snapshot).toBeNull();
     expect(noActive.organizeJob).toBeNull();
+    expect(noActive.role).toBeNull();
     expect(noActive.pendingCommand).toBeNull();
-    expect(reduceAgentWorkbench(noActive, {
-      type: 'server_message',
-      authoritative: true,
-      message: {
-        type: 'bgsmOrganizeJobRunNoActive',
-        controllerId,
-        sessionId,
-      },
-    })).toBe(noActive);
   });
 
   it('preserves a ready preflight when reconnect authority reports no active run', () => {
@@ -301,6 +334,7 @@ describe('Agent workbench durable organize-job reducer', () => {
       taskInstruction: 'Organize everything.',
       conversationAnchor: anchor,
     });
+    expect(state.role).toBe('owner');
     state = reduceAgentWorkbench(state, {
       type: 'server_message',
       message: {
@@ -319,15 +353,103 @@ describe('Agent workbench durable organize-job reducer', () => {
       type: 'server_message',
       authoritative: true,
       message: {
-        type: 'bgsmOrganizeJobRunNoActive',
+        type: 'bgsmOrganizeJobState',
         controllerId,
         sessionId,
+        presentation: null,
+        role: null,
       },
     });
 
     expect(restored.transport).toBe('connected');
     expect(restored.preflight?.status).toBe('ready');
     expect(restored.conversationAnchor).toEqual(anchor);
+  });
+
+  it('keeps authoritative role separate from transport and selected conversation', () => {
+    const durableControllerId = parseControllerId('controller:v1:other-page');
+    const observer = deliverJob(
+      createAgentWorkbenchState(controllerId, sessionId),
+      {
+        ...presentation(),
+        controllerId: durableControllerId,
+        sessionId: 'durable-owner-session',
+        status: 'analyzing',
+      },
+      'observer',
+    );
+    expect(observer.role).toBe('observer');
+    expect(observer.transport).toBe('connected');
+    expect(observer.organizeJob?.controllerId).toBe(durableControllerId);
+
+    const disconnected = reduceAgentWorkbench(observer, { type: 'transport_disconnected' });
+    expect(disconnected.role).toBe('observer');
+    expect(disconnected.transport).toBe('disconnected');
+
+    const rebound = reduceAgentWorkbench(disconnected, {
+      type: 'session_rebound',
+      controllerId: parseControllerId('controller:v1:rebound'),
+      sessionId: 'replacement-session',
+    });
+    expect(rebound.role).toBe('observer');
+    expect(rebound.organizeJob?.jobId).toBe(presentation().jobId);
+    expect(rebound.sessionId).toBe('replacement-session');
+  });
+
+  it('retains deleted-session invalidations without changing workflow authority', () => {
+    const terminal = deliverJob(
+      createAgentWorkbenchState(controllerId, sessionId),
+      { ...presentation(), status: 'completed', apply: null },
+      null,
+    );
+    const invalidated = reduceAgentWorkbench(terminal, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmAgentSessionDeleted',
+        controllerId,
+        sessionId,
+        deletedSessionId: terminal.organizeJob!.originAgentSessionId,
+      },
+    });
+    expect(invalidated.role).toBeNull();
+    expect(invalidated.deletedSessionIds.has(sessionId)).toBe(true);
+    expect(reduceAgentWorkbench(invalidated, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmAgentSessionDeleted',
+        controllerId,
+        sessionId,
+        deletedSessionId: sessionId,
+      },
+    })).toBe(invalidated);
+    const noJob = reduceAgentWorkbench(invalidated, {
+      type: 'server_message',
+      message: {
+        type: 'bgsmOrganizeJobState',
+        controllerId,
+        sessionId,
+        presentation: null,
+        role: null,
+      },
+    });
+    expect(noJob.deletedSessionIds.has(sessionId)).toBe(true);
+  });
+
+  it('consumes terminal and owner-lost roles directly from server projections', () => {
+    const ownerLost = deliverJob(
+      createAgentWorkbenchState(controllerId, sessionId),
+      { ...presentation(), status: 'analyzing' },
+      'owner_lost',
+    );
+    expect(ownerLost.role).toBe('owner_lost');
+
+    const terminal = deliverJob(ownerLost, {
+      ...presentation(),
+      revision: 8,
+      status: 'cancelled',
+    }, null);
+    expect(terminal.role).toBeNull();
+    expect(terminal.organizeJob?.status).toBe('cancelled');
   });
 
   it('makes a failed review-page request explicitly retryable without accepting stale failures', () => {
@@ -1347,8 +1469,9 @@ describe('Agent workbench durable organize-job reducer', () => {
 });
 
 function deliverJob(
-  state: ReturnType<typeof createAgentWorkbenchState>,
+  state: AgentWorkbenchState,
   job: BgsmOrganizeJobPresentation,
+  role: BgsmOrganizeControlRole | null = 'owner',
 ) {
   return reduceAgentWorkbench(state, {
     type: 'server_message',
@@ -1356,9 +1479,8 @@ function deliverJob(
       type: 'bgsmOrganizeJobState',
       controllerId,
       sessionId,
-      runId: job.runId,
-      generation: job.generation,
       presentation: job,
+      role,
     },
   });
 }
@@ -1385,6 +1507,7 @@ function presentation(): BgsmOrganizeJobPresentation {
     runId,
     generation: 1,
     jobId: 'organize-job:v1:ui',
+    originAgentSessionId: sessionId,
     revision: 7,
     status: 'review',
     scopeLabel: 'All stars',

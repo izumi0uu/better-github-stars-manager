@@ -24,6 +24,7 @@ function config(): Config {
     tokenCryptoMeta: { iv: 'main-iv', salt: 'main-salt' },
     watchNotificationsTokenEncrypted: 'watch-cipher',
     watchNotificationsTokenCryptoMeta: { iv: 'watch-iv', salt: 'watch-salt' },
+    watchCredentialSource: 'dedicated',
     agentProvider: {
       provider: 'openai',
       protocol: null,
@@ -126,7 +127,7 @@ function deferred<T>() {
 }
 
 function harness(input: {
-  hasNotificationsToken?: boolean;
+  watchCredentialSource?: Config['watchCredentialSource'];
   fetchScope?: WatchRefreshCoordinatorDependencies['fetchScope'];
   fetchNotifications?: WatchRefreshCoordinatorDependencies['fetchNotifications'];
   queryInbox?: typeof watchStore.queryStoredWatchInbox;
@@ -136,23 +137,61 @@ function harness(input: {
   now?: () => number;
   runSerialized?: WatchRefreshCoordinatorDependencies['runSerialized'];
 } = {}) {
-  let currentConfig = config();
+  let currentConfig: Config = {
+    ...config(),
+    watchCredentialSource: input.watchCredentialSource === undefined
+      ? 'dedicated'
+      : input.watchCredentialSource,
+  };
   let mainToken: string | null = 'main-token';
-  let notificationsToken: string | null = input.hasNotificationsToken === false ? null : 'watch-token';
-  if (!notificationsToken) {
+  let dedicatedNotificationsToken: string | null = 'watch-token';
+  if (currentConfig.watchCredentialSource !== 'dedicated') {
+    dedicatedNotificationsToken = null;
     currentConfig = {
       ...currentConfig,
       watchNotificationsTokenEncrypted: null,
       watchNotificationsTokenCryptoMeta: null,
     };
   }
+  const selectedNotificationsConfigured = () => {
+    const source = currentConfig.watchCredentialSource;
+    if (source === 'main') {
+      return !!(
+        currentConfig.username?.trim() &&
+        currentConfig.tokenEncrypted &&
+        currentConfig.tokenCryptoMeta
+      );
+    }
+    return source === 'dedicated' && !!(
+      currentConfig.username?.trim() &&
+      currentConfig.watchNotificationsTokenEncrypted &&
+      currentConfig.watchNotificationsTokenCryptoMeta
+    );
+  };
+  const selectedNotificationsIdentity = () => {
+    const source = currentConfig.watchCredentialSource;
+    return JSON.stringify([
+      source,
+      source === 'main'
+        ? currentConfig.tokenEncrypted
+        : source === 'dedicated'
+          ? currentConfig.watchNotificationsTokenEncrypted
+          : null,
+      source === 'main'
+        ? currentConfig.tokenCryptoMeta
+        : source === 'dedicated'
+          ? currentConfig.watchNotificationsTokenCryptoMeta
+          : null,
+    ]);
+  };
   const fetchScope = input.fetchScope ?? vi.fn(async () => scopeSnapshot());
   const fetchNotifications = input.fetchNotifications ?? vi.fn(async () => inboxSnapshot());
   const broadcastChanged = vi.fn();
   const clearWatchNotificationsToken = vi.fn(async () => {
-    notificationsToken = null;
+    dedicatedNotificationsToken = null;
     currentConfig = {
       ...currentConfig,
+      watchCredentialSource: null,
       watchNotificationsTokenEncrypted: null,
       watchNotificationsTokenCryptoMeta: null,
     };
@@ -163,22 +202,21 @@ function harness(input: {
     runSerialized,
     auth: {
       getGitHubCredentialSnapshot: async () => ({
+        watchCredentialSource: currentConfig.watchCredentialSource,
         accountLogin: currentConfig.username?.trim().toLowerCase() ?? null,
         mainToken,
-        notificationsToken,
-        notificationsConfigured: !!(
-          currentConfig.watchNotificationsTokenEncrypted &&
-          currentConfig.watchNotificationsTokenCryptoMeta
-        ),
+        notificationsToken: currentConfig.watchCredentialSource === 'main'
+          ? mainToken
+          : currentConfig.watchCredentialSource === 'dedicated'
+            ? dedicatedNotificationsToken
+            : null,
+        notificationsConfigured: selectedNotificationsConfigured(),
         mainIdentity: JSON.stringify([
           currentConfig.username?.trim().toLowerCase() ?? null,
           currentConfig.tokenEncrypted,
           currentConfig.tokenCryptoMeta,
         ]),
-        notificationsIdentity: JSON.stringify([
-          currentConfig.watchNotificationsTokenEncrypted,
-          currentConfig.watchNotificationsTokenCryptoMeta,
-        ]),
+        notificationsIdentity: selectedNotificationsIdentity(),
       }),
       clearWatchNotificationsToken,
     },
@@ -209,20 +247,34 @@ function harness(input: {
     broadcastChanged,
     clearWatchNotificationsToken,
     clearWatchToken() {
-      notificationsToken = null;
+      dedicatedNotificationsToken = null;
       currentConfig = {
         ...currentConfig,
+        watchCredentialSource: null,
         watchNotificationsTokenEncrypted: null,
         watchNotificationsTokenCryptoMeta: null,
       };
     },
     setWatchToken(value = 'replacement-watch-token') {
-      notificationsToken = value;
+      dedicatedNotificationsToken = value;
       currentConfig = {
         ...currentConfig,
+        watchCredentialSource: 'dedicated',
         watchNotificationsTokenEncrypted: `${value}:cipher`,
         watchNotificationsTokenCryptoMeta: { iv: `${value}:iv`, salt: `${value}:salt` },
       };
+    },
+    useMainWatchCredential() {
+      dedicatedNotificationsToken = null;
+      currentConfig = {
+        ...currentConfig,
+        watchCredentialSource: 'main',
+        watchNotificationsTokenEncrypted: null,
+        watchNotificationsTokenCryptoMeta: null,
+      };
+    },
+    getNotificationsIdentity() {
+      return selectedNotificationsIdentity();
     },
     logout() {
       currentConfig = { ...currentConfig, username: null };
@@ -308,14 +360,27 @@ describe('Watch background refresh coordinator', () => {
     expect(h.broadcastChanged).not.toHaveBeenCalled();
   });
 
-  it('refreshes native scope without a classic Notifications token', async () => {
-    const h = harness({ hasNotificationsToken: false });
+  it.each([
+    ['main', 'main-token'],
+    ['dedicated', 'watch-token'],
+  ] as const)('fetches Notifications through the selected %s credential', async (source, token) => {
+    const h = harness({ watchCredentialSource: source });
+
+    const result = await h.coordinator.refresh();
+
+    expect(h.fetchNotifications).toHaveBeenCalledWith(expect.objectContaining({ token }));
+    expect(result.status.credentialSource).toBe(source);
+  });
+
+  it('refreshes only native scope when Watch has no selected credential', async () => {
+    const h = harness({ watchCredentialSource: null });
     const result = await h.coordinator.refresh();
 
     expect(h.fetchScope).toHaveBeenCalledTimes(1);
     expect(h.fetchNotifications).not.toHaveBeenCalled();
     expect(result.scopePublished).toBe(true);
     expect(result.status.inboxStatus).toBe('not_configured');
+    expect(result.status.credentialSource).toBeNull();
   });
 
   it('continues Inbox refresh against a stale successful scope', async () => {
@@ -499,7 +564,7 @@ describe('Watch background refresh coordinator', () => {
       fetchScope.mock.calls.length === 1 ? firstScope.promise : scopeSnapshot()
     ));
     const h = harness({
-      hasNotificationsToken: false,
+      watchCredentialSource: null,
       fetchScope,
     });
 
@@ -544,7 +609,7 @@ describe('Watch background refresh coordinator', () => {
     expect(h.fetchNotifications).not.toHaveBeenCalled();
   });
 
-  it('skips a queued refresh whose credential snapshot became stale before it started', async () => {
+  it('keeps a queued scope refresh but skips Inbox when Watch authority is disabled', async () => {
     const pending: Array<() => Promise<void>> = [];
     const runSerialized = ((operation: () => Promise<unknown>) => new Promise<unknown>((resolve, reject) => {
       pending.push(async () => {
@@ -565,9 +630,44 @@ describe('Watch background refresh coordinator', () => {
     await pending.shift()!(); // refresh operation
 
     const result = await refresh;
-    expect(result.scopePublished).toBe(false);
-    expect(h.fetchScope).not.toHaveBeenCalled();
+    expect(result.scopePublished).toBe(true);
+    expect(h.fetchScope).toHaveBeenCalledTimes(1);
     expect(h.fetchNotifications).not.toHaveBeenCalled();
+  });
+
+  it('does not publish Inbox rows when the selected Watch source changes during fetch', async () => {
+    const pendingInbox = deferred<WatchNotificationSnapshot>();
+    const fetchNotifications = vi.fn(async () => pendingInbox.promise);
+    const h = harness({
+      watchCredentialSource: 'dedicated',
+      fetchNotifications,
+    });
+
+    const refresh = h.coordinator.refresh();
+    await vi.waitFor(() => expect(fetchNotifications).toHaveBeenCalledTimes(1));
+    h.useMainWatchCredential();
+    pendingInbox.resolve(inboxSnapshot());
+
+    const result = await refresh;
+    expect(result.inboxPublished).toBe(false);
+    expect(result.status.credentialSource).toBe('main');
+    expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads).toEqual([]);
+  });
+
+  it('does not publish Inbox rows when the selected credential identity changes during fetch', async () => {
+    const pendingInbox = deferred<WatchNotificationSnapshot>();
+    const fetchNotifications = vi.fn(async () => pendingInbox.promise);
+    const h = harness({ fetchNotifications });
+
+    const refresh = h.coordinator.refresh();
+    await vi.waitFor(() => expect(fetchNotifications).toHaveBeenCalledTimes(1));
+    h.setWatchToken('rotated-watch-token');
+    pendingInbox.resolve(inboxSnapshot());
+
+    const result = await refresh;
+    expect(result.inboxPublished).toBe(false);
+    expect(result.status.credentialSource).toBe('dedicated');
+    expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads).toEqual([]);
   });
 
   it('reconciles an interrupted account cleanup without deleting a newer Watch token', async () => {
@@ -577,18 +677,17 @@ describe('Watch background refresh coordinator', () => {
       attemptedAt: new Date(NOW).toISOString(),
     });
     const h = harness();
+    const previousNotificationsIdentity = h.getNotificationsIdentity();
     h.changeAccount('another-user');
     h.setWatchToken();
 
     await h.coordinator.reconcileAccount({
-      invalidateNotificationsIdentity: JSON.stringify([
-        'watch-cipher',
-        { iv: 'watch-iv', salt: 'watch-salt' },
-      ]),
+      invalidateNotificationsIdentity: previousNotificationsIdentity,
     });
 
     expect(await watchStore.getWatchState(ACCOUNT)).toBeNull();
     expect((await h.coordinator.getStatus()).hasNotificationsToken).toBe(true);
+    expect((await h.coordinator.getStatus()).credentialSource).toBe('dedicated');
   });
 
   it('clears the old classic credential only when its persisted identity still matches', async () => {
@@ -598,16 +697,15 @@ describe('Watch background refresh coordinator', () => {
       attemptedAt: new Date(NOW).toISOString(),
     });
     const h = harness();
+    const previousNotificationsIdentity = h.getNotificationsIdentity();
     h.changeAccount('another-user');
 
     await h.coordinator.reconcileAccount({
-      invalidateNotificationsIdentity: JSON.stringify([
-        'watch-cipher',
-        { iv: 'watch-iv', salt: 'watch-salt' },
-      ]),
+      invalidateNotificationsIdentity: previousNotificationsIdentity,
     });
 
     expect((await h.coordinator.getStatus()).hasNotificationsToken).toBe(false);
+    expect((await h.coordinator.getStatus()).credentialSource).toBeNull();
     expect(await watchStore.getWatchState(ACCOUNT)).toBeNull();
   });
 
@@ -623,7 +721,28 @@ describe('Watch background refresh coordinator', () => {
     const status = await h.coordinator.getStatus();
 
     expect(status.hasNotificationsToken).toBe(false);
-    expect(await watchStore.getWatchState(ACCOUNT)).toBeNull();
+    expect(status.credentialSource).toBeNull();
+  });
+
+  it('disconnects Watch while retaining the main credential and native scope', async () => {
+    const h = harness({ watchCredentialSource: 'main' });
+
+    await h.coordinator.refresh();
+    expect(h.fetchScope).toHaveBeenCalledTimes(1);
+    expect(h.fetchNotifications).toHaveBeenCalledTimes(1);
+
+    const status = await h.coordinator.disconnectInbox();
+    expect(status.credentialSource).toBeNull();
+    expect(status.hasMainToken).toBe(true);
+    expect(status.hasNotificationsToken).toBe(false);
+    expect(await watchStore.getWatchRepositories(ACCOUNT)).toEqual([{ full_name: 'owner/repo' }]);
+    expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads).toEqual([]);
+
+    const afterDisconnect = await h.coordinator.refresh();
+    expect(h.fetchScope).toHaveBeenCalledTimes(2);
+    expect(h.fetchNotifications).toHaveBeenCalledTimes(1);
+    expect(afterDisconnect.status.credentialSource).toBeNull();
+    expect(afterDisconnect.status.hasMainToken).toBe(true);
   });
 
   it('broadcasts disconnect invalidation only after cached threads are cleared', async () => {

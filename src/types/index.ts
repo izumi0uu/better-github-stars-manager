@@ -162,10 +162,13 @@ export interface OrganizeTagPolicySnapshot {
 /** Durable header for a resumable whole-library tag organization job. */
 export interface OrganizeJobRecord {
   jobId: string;
-  /** Present only while active; v1 enforces one job per slot with a unique index. */
+  /** Present only while active; v4 enforces one job per slot with a unique index. */
   activeSlot?: string;
+  /** Current durable control binding; changed only by explicit revision-checked takeover. */
   controllerId: string;
   sessionId: string;
+  /** Immutable Agent session that created this durable workflow; the session may be deleted. */
+  readonly originAgentSessionId: string;
   runId: string;
   generation: number;
   proposalId: string;
@@ -318,6 +321,7 @@ export interface AgentProviderConfig {
   credentialRevision: string | null;
   capability: AgentProviderCapabilityRecord | null;
 }
+export type WatchCredentialSource = 'main' | 'dedicated' | null;
 
 /** Light config kept in chrome.storage.local. */
 export interface Config {
@@ -325,6 +329,7 @@ export interface Config {
   tokenCryptoMeta: CryptoMeta | null;
   watchNotificationsTokenEncrypted: string | null;
   watchNotificationsTokenCryptoMeta: CryptoMeta | null;
+  watchCredentialSource: WatchCredentialSource;
   agentProvider: AgentProviderConfig;
   /** Explicit Agent data-sharing acknowledgement for one disclosure/provider/origin tuple. */
   agentDataDisclosureAcceptance: AgentDataDisclosureAcceptance | null;

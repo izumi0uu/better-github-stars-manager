@@ -1,26 +1,34 @@
 /** Typed message bridge between UI surfaces and the background SW; bgCall
  * unwraps the { ok, data | error } envelope. */
+import { canonicalJson, sha256Base64Url } from '@/agent-harness/canonical-json';
 import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
 } from '@/onboarding/state';
 import { normalizeBackfillMap, selectActiveBackfillId } from '@/upgrades/backfill-state';
+import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';
 import type {
-  BgsmAgentActiveProjection,
-  BgsmAgentCompactionCheckpoint,
-  BgsmAgentSessionMessage,
-  BgsmAgentTurnInput,
-} from '@/bgsm-agent/session';
+  AgentRetryDraft,
+  AgentSessionTranscriptPage,
+  AgentSessionCatalogInspection,
+  AgentSessionCommitResult,
+  LoadedAgentSession,
+} from '@/storage/agent-session-store';
 import {
-  validateBgsmAgentConversationBinding,
-  type BgsmAgentConversationBinding,
-} from '@/bgsm-agent/conversation-binding';
+  validateAgentSessionLaunchIdentity,
+  type AgentSessionLaunchDigest,
+} from '@/bgsm-agent/session-transport';
 import {
-  type AgentContextFailureReason,
-  type AgentErrorCategory,
-  type AgentStopReason,
-  type ToolRisk,
-} from '@/agent-harness';
+  parseBgsmAgentTurnServerMessage,
+  type BgsmAgentActiveTurn,
+  type BgsmAgentTurnAck,
+  type BgsmAgentTurnClientMessage,
+  type BgsmAgentTurnError,
+  type BgsmAgentTurnEvent,
+  type BgsmAgentTurnLaunch,
+  type BgsmAgentTurnResult,
+  type BgsmAgentTurnServerMessage,
+} from '@/bgsm-agent/turn-protocol';
 import type {
   OrganizeJobRunEvent,
   OrganizeJobRunCoverageSummary,
@@ -28,7 +36,6 @@ import type {
   OrganizeJobRunSnapshot,
 } from '@/bgsm-agent/events';
 import type { ProposalAction } from '@/bgsm-agent/proposal';
-import type { BgsmAgentOrganizeLibraryHandoff } from '@/bgsm-agent/tools';
 import {
   COMMIT_RECEIPT_OUTCOMES,
   COMMIT_RECEIPT_REASONS,
@@ -78,89 +85,6 @@ export interface SyncStatus {
   inFlight: boolean;
 }
 
-export interface BgsmAgentTurnResult {
-  turnAttemptId: string;
-  sessionId: string;
-  baseRevision: number;
-  reason: AgentStopReason;
-  changed: boolean;
-  changedCount: number;
-  newMessages: BgsmAgentSessionMessage[];
-  candidateCheckpoint?: BgsmAgentCompactionCheckpoint;
-  candidateActiveProjection?: BgsmAgentActiveProjection | null;
-  contextFailureReason?: AgentContextFailureReason;
-  organizeLibraryHandoff?: BgsmAgentOrganizeLibraryHandoff;
-}
-
-type BgsmAgentDeliveryIdentity = {
-  turnAttemptId: string;
-  sessionId: string;
-  baseRevision: number;
-};
-
-type BgsmAgentTurnEventPayload =
-  | { type: 'agent_queued' }
-  | { type: 'conversation_bound'; binding: BgsmAgentConversationBinding }
-  | { type: 'agent_start' }
-  | { type: 'turn_start'; step: number }
-  | { type: 'assistant_stream_start'; step: number }
-  | { type: 'assistant_text_delta'; step: number; delta: string }
-  | { type: 'message_update'; message: BgsmAgentSessionMessage }
-  | { type: 'tool_execution_queued'; toolName: string; callId: string }
-  | { type: 'tool_execution_start'; toolName: string; callId: string; risk: ToolRisk }
-  | {
-      type: 'tool_execution_end';
-      toolName: string;
-      callId: string;
-      risk: ToolRisk;
-      ok: boolean;
-      writeOutcome: 'not_applicable' | 'committed' | 'failed' | 'unknown';
-    }
-  | { type: 'approval_required'; callId: string; summary: string }
-  | { type: 'context_compaction_start' }
-  | {
-      type: 'context_diagnostic';
-      stage: 'preflight' | 'tool_allowance' | 'post_tool' | 'compaction';
-      providerWindow: number;
-      workingWindow: number;
-      softLimit: number;
-      hardLimit: number;
-      capabilitySource: 'builtin-official' | 'provider-verified' | 'user-declared';
-      capabilityRevision: string;
-      policyRevision: string;
-      inputTokens?: number;
-      deterministicInputTokens?: number;
-      usageAdjustmentTokens?: number;
-      observedPrefixTokens?: number | null;
-      contextRemainingTokens?: number;
-      toolAllowanceBytes?: number;
-      toolMemoryRemainingBytes?: number;
-      toolProviderResultCeilingBytes?: number;
-      toolBudgetLimitedBy?: 'context' | 'memory' | 'provider' | 'multiple';
-      toolResultBytes?: number;
-      toolResultReduced?: boolean;
-      action?: 'triggered' | 'summary_retry' | 'fallback' | 'terminal';
-      trigger?: 'pre_turn_soft_limit' | 'pre_turn_byte_limit' | 'completed_tool_envelope_soft_limit' | 'completed_tool_envelope_byte_limit' | 'forced_completed_tool_envelope' | 'tool_result_memory_pressure' | 'context_preflight' | 'provider_context_overflow' | 'provider_request_byte_limit';
-      category?: 'succeeded' | 'current_turn_too_large' | 'no_candidate' | 'summary_provider_failed' | 'summary_invalid' | 'fallback_too_large' | 'final_preflight_failed' | 'tool_result_memory_limit' | 'capability_unresolved' | 'provider_context_overflow' | 'provider_context_overflow_repeated' | 'provider_request_byte_limit' | 'provider_request_byte_limit_repeated';
-    }
-  | {
-      type: 'context_compaction_end';
-      ok: boolean;
-      summarizedMessageCount: number;
-    }
-  | { type: 'agent_error'; message: string; category?: AgentErrorCategory }
-  | {
-      type: 'agent_done';
-      reason: AgentStopReason;
-      contextFailureReason?: AgentContextFailureReason;
-    };
-
-export type BgsmAgentTurnEvent = BgsmAgentTurnEventPayload & BgsmAgentDeliveryIdentity;
-
-export type BgsmAgentTurnError = BgsmAgentDeliveryIdentity & {
-  message: string;
-  category?: AgentErrorCategory;
-};
 
 export type BgsmAgentTurnHandlers = {
   onEvent?: (event: BgsmAgentTurnEvent) => void;
@@ -168,24 +92,23 @@ export type BgsmAgentTurnHandlers = {
   onError?: (error: BgsmAgentTurnError) => void;
 };
 
-export type BgsmAgentTurnAckDisposition =
-  | 'applied'
-  | 'no_transition'
-  | 'transition_rejected'
-  | 'detached';
+export type BgsmAgentTurnStartOptions = Readonly<{
+  expectedExecutionEpochId?: string;
+  resumeOnly?: true;
+}>;
 
-export type BgsmAgentTurnAck = Readonly<
-  | { disposition: 'applied'; appliedRevision: number }
-  | {
-      disposition: Exclude<BgsmAgentTurnAckDisposition, 'applied'>;
-      appliedRevision: null;
-    }
->;
 
 export type BgsmOrganizeJobControllerIdentity = Readonly<{
   controllerId: ControllerId;
   sessionId: string;
 }>;
+export const BGSM_ORGANIZE_CONTROL_ROLES = Object.freeze([
+  'owner',
+  'observer',
+  'owner_lost',
+] as const);
+export type BgsmOrganizeControlRole = typeof BGSM_ORGANIZE_CONTROL_ROLES[number];
+
 
 export type BgsmOrganizeJobPreflightIdentity = BgsmOrganizeJobControllerIdentity & Readonly<{
   requestId: string;
@@ -193,6 +116,7 @@ export type BgsmOrganizeJobPreflightIdentity = BgsmOrganizeJobControllerIdentity
 
 export type BgsmOrganizeJobPresentation = OrganizeJobRunIdentity & Readonly<{
   jobId: string;
+  originAgentSessionId: string;
   revision: number;
   status: OrganizeJobStatus;
   scopeLabel: string;
@@ -245,6 +169,12 @@ export type BgsmOrganizeJobClientMessage =
     }>)
   | (BgsmOrganizeJobControllerIdentity & Readonly<{ type: 'requestBgsmActiveOrganizeJob' }>)
   | (OrganizeJobRunIdentity & Readonly<{
+      type: 'takeControlBgsmOrganizeJob';
+      requestId: string;
+      jobId: string;
+      expectedRevision: number;
+    }>)
+  | (OrganizeJobRunIdentity & Readonly<{
       type: 'requestBgsmOrganizeReviewPage';
       requestId: string;
       jobId: string;
@@ -279,10 +209,10 @@ export type BgsmOrganizeJobClientMessage =
       jobId: string;
       expectedRevision: number;
     }>)
-  | (OrganizeJobRunIdentity & Readonly<{
-      type: 'dismissBgsmOrganizeReceipt';
+  | (BgsmOrganizeJobControllerIdentity & Readonly<{
+      type: 'dismissBgsmTerminalOrganizeJob';
       jobId: string;
-      applyId: string;
+      expectedRevision: number;
     }>)
   | (OrganizeJobRunIdentity & Readonly<{
       type: 'requestBgsmOrganizeReceiptPage';
@@ -352,8 +282,15 @@ export type BgsmOrganizeJobConnectionReady = BgsmOrganizeJobControllerIdentity &
   type: 'bgsmOrganizeJobRunConnectionReady';
 }>;
 
-export type BgsmOrganizeJobNoActive = BgsmOrganizeJobControllerIdentity & Readonly<{
-  type: 'bgsmOrganizeJobRunNoActive';
+export type BgsmOrganizeJobState = BgsmOrganizeJobControllerIdentity & Readonly<{
+  type: 'bgsmOrganizeJobState';
+  presentation: BgsmOrganizeJobPresentation | null;
+  role: BgsmOrganizeControlRole | null;
+}>;
+
+export type BgsmAgentSessionDeleted = BgsmOrganizeJobControllerIdentity & Readonly<{
+  type: 'bgsmAgentSessionDeleted';
+  deletedSessionId: string;
 }>;
 
 export type BgsmOrganizeJobAnalysisProgress = OrganizeJobRunIdentity & Readonly<{
@@ -364,7 +301,8 @@ export type BgsmOrganizeJobAnalysisProgress = OrganizeJobRunIdentity & Readonly<
 
 export type BgsmOrganizeJobServerMessage =
   | BgsmOrganizeJobConnectionReady
-  | BgsmOrganizeJobNoActive
+  | BgsmOrganizeJobState
+  | BgsmAgentSessionDeleted
   | BgsmOrganizeJobAnalysisProgress
   | BgsmOrganizeJobPreflightResult
   | Readonly<{ type: 'bgsmOrganizeJobRunEvent'; event: OrganizeJobRunEvent }>
@@ -372,10 +310,6 @@ export type BgsmOrganizeJobServerMessage =
   | BgsmOrganizeJobResult
   | BgsmOrganizeJobError
   | BgsmOrganizeJobDisconnected
-  | (OrganizeJobRunIdentity & Readonly<{
-      type: 'bgsmOrganizeJobState';
-      presentation: BgsmOrganizeJobPresentation;
-    }>)
   | (OrganizeJobRunIdentity & Readonly<{
       type: 'bgsmOrganizeReviewPage';
       requestId: string;
@@ -418,6 +352,16 @@ export type BgsmOrganizeJobDomainMessage = BgsmOrganizeJobClientMessage | BgsmOr
 export type BgsmOrganizeJobPortMessage = BgsmOrganizeJobDomainMessage;
 export type BgsmOrganizeJobTransportMessage = BgsmOrganizeJobClientMessage | BgsmOrganizeJobDeliveryEnvelope;
 
+export const BGSM_ORGANIZE_JOB_CONTROL_FAILURE_REASONS = Object.freeze([
+  'not_owner',
+  'owner_connected',
+  'revision_conflict',
+  'already_started',
+  'job_unavailable',
+] as const);
+export type BgsmOrganizeJobControlFailureReason =
+  typeof BGSM_ORGANIZE_JOB_CONTROL_FAILURE_REASONS[number];
+
 export const BGSM_ORGANIZE_JOB_ERROR_REASONS = Object.freeze([
   'invalid_message',
   'preflight_invalid',
@@ -430,7 +374,7 @@ export const BGSM_ORGANIZE_JOB_ERROR_REASONS = Object.freeze([
   'host_permission_denied',
   'credential_ineligible',
   'capability_not_ready',
-  'already_started',
+  ...BGSM_ORGANIZE_JOB_CONTROL_FAILURE_REASONS,
   'budget_exhausted',
   'interrupted',
   'internal_error',
@@ -494,8 +438,11 @@ export function validateBgsmOrganizeJobMessageIdentity(
   if ('event' in message) {
     validateOrganizeJobRunEvent(message.event);
   }
-  if ('jobId' in message && (typeof message.jobId !== 'string' || !message.jobId.trim())) {
-    throw new TypeError('Organize jobId must be nonempty.');
+  if (
+    'jobId' in message
+    && (typeof message.jobId !== 'string' || !message.jobId || message.jobId.trim() !== message.jobId)
+  ) {
+    throw new TypeError('Organize jobId must be trimmed and nonempty.');
   }
   if ('rowOffset' in message) assertNonnegativeCount(message.rowOffset, 'organize rowOffset');
   if ('processed' in message) {
@@ -519,8 +466,11 @@ export function validateBgsmOrganizeJobMessageIdentity(
   ) {
     throw new TypeError('Organize receipt filter is invalid.');
   }
-  if ('applyId' in message && (typeof message.applyId !== 'string' || !message.applyId.trim())) {
-    throw new TypeError('Organize applyId must be nonempty.');
+  if (
+    'applyId' in message
+    && (typeof message.applyId !== 'string' || !message.applyId || message.applyId.trim() !== message.applyId)
+  ) {
+    throw new TypeError('Organize applyId must be trimmed and nonempty.');
   }
   if ('selections' in message) {
     if (!Array.isArray(message.selections) || message.selections.length < 1 || message.selections.length > 100) {
@@ -537,7 +487,17 @@ export function validateBgsmOrganizeJobMessageIdentity(
       positions.add(entry.position as number);
     }
   }
-  if ('presentation' in message) validateOrganizePresentation(message.presentation, message);
+  if ('presentation' in message) validateOrganizeState(message);
+  if (
+    'deletedSessionId' in message
+    && (
+      typeof message.deletedSessionId !== 'string'
+      || !message.deletedSessionId
+      || message.deletedSessionId.trim() !== message.deletedSessionId
+    )
+  ) {
+    throw new TypeError('Deleted Agent sessionId must be trimmed and nonempty.');
+  }
   if (message.type === 'bgsmOrganizeReviewPage') validateOrganizeReviewPageMessage(message);
   if (message.type === 'bgsmOrganizeReceiptPage') validateOrganizeReceiptPageMessage(message);
   if (message.type === 'bgsmOrganizeJobRunPreflightResult') {
@@ -608,13 +568,24 @@ export function validateBgsmOrganizeJobDeliveryEnvelope(
     throw new TypeError('OrganizeJobRun connection handshake must be a live, non-durable delivery.');
   }
   if (
-    candidate.message.type === 'bgsmOrganizeJobRunNoActive'
-    && (
-      candidate.deliveryKind !== 'authoritative_snapshot'
-      || candidate.durableRevision !== null
-    )
+    candidate.message.type === 'bgsmAgentSessionDeleted'
+    && (candidate.deliveryKind !== 'live' || candidate.durableRevision !== null)
   ) {
-    throw new TypeError('OrganizeJobRun no-active state must be an authoritative, non-durable delivery.');
+    throw new TypeError('Agent session deletion invalidation must be a live, non-durable delivery.');
+  }
+  if (candidate.message.type === 'bgsmOrganizeJobState') {
+    if (
+      candidate.message.presentation === null
+      && (candidate.deliveryKind !== 'authoritative_snapshot' || candidate.durableRevision !== null)
+    ) {
+      throw new TypeError('OrganizeJobRun no-job state must be an authoritative, non-durable delivery.');
+    }
+    if (
+      candidate.message.presentation !== null
+      && candidate.durableRevision !== candidate.message.presentation.revision
+    ) {
+      throw new TypeError('OrganizeJobRun state delivery revision must match its presentation.');
+    }
   }
 }
 
@@ -625,10 +596,7 @@ function assertControllerSession(controllerId: unknown, sessionId: unknown): voi
   }
 }
 
-function validateOrganizePresentation(
-  value: BgsmOrganizeJobPresentation,
-  envelope: OrganizeJobRunIdentity,
-): void {
+function validateOrganizePresentation(value: BgsmOrganizeJobPresentation): void {
   assertExactKeys(value as unknown as Record<string, unknown>, [
     'controllerId',
     'sessionId',
@@ -636,6 +604,7 @@ function validateOrganizePresentation(
     'generation',
     'jobId',
     'revision',
+    'originAgentSessionId',
     'status',
     'scopeLabel',
     'scopeCount',
@@ -648,13 +617,17 @@ function validateOrganizePresentation(
   ]);
   validateOrganizeJobRunIdentity(value);
   if (
-    value.controllerId !== envelope.controllerId ||
-    value.sessionId !== envelope.sessionId ||
-    value.runId !== envelope.runId ||
-    value.generation !== envelope.generation
-  ) throw new TypeError('Organize presentation identity must match its envelope.');
-  if (!value.jobId.trim() || !isProposalId(value.proposalId)) {
+    !value.jobId
+    || value.jobId.trim() !== value.jobId
+    || !isProposalId(value.proposalId)
+  ) {
     throw new TypeError('Organize presentation authority is malformed.');
+  }
+  if (
+    !value.originAgentSessionId
+    || value.originAgentSessionId.trim() !== value.originAgentSessionId
+  ) {
+    throw new TypeError('Organize origin Agent sessionId must be trimmed and nonempty.');
   }
   assertNonnegativeCount(value.revision, 'organize revision');
   if (!ORGANIZE_JOB_STATUSES.includes(value.status)) {
@@ -687,6 +660,22 @@ function validateOrganizePresentation(
       value.apply.settled !== value.apply.changed + value.apply.unchanged + value.apply.skipped + value.apply.failed ||
       value.apply.settled > value.apply.total
     ) throw new TypeError('Organize Apply progress counts are inconsistent.');
+  }
+}
+
+function validateOrganizeState(message: BgsmOrganizeJobState): void {
+  const { presentation, role } = message;
+  if (role !== null && !BGSM_ORGANIZE_CONTROL_ROLES.includes(role)) {
+    throw new TypeError('Organize control role is invalid.');
+  }
+  if (presentation === null) {
+    if (role !== null) throw new TypeError('Organize no-job state cannot carry a control role.');
+    return;
+  }
+  validateOrganizePresentation(presentation);
+  const terminal = presentation.status === 'completed' || presentation.status === 'cancelled';
+  if ((terminal && role !== null) || (!terminal && role === null)) {
+    throw new TypeError('Organize presentation status and control role are inconsistent.');
   }
 }
 
@@ -864,6 +853,9 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
     case 'requestBgsmActiveOrganizeJob':
       expected = controller;
       break;
+    case 'takeControlBgsmOrganizeJob':
+      expected = [...run, 'requestId', 'jobId', 'expectedRevision'];
+      break;
     case 'requestBgsmOrganizeReviewPage':
       expected = [...run, 'requestId', 'jobId', 'rowOffset', 'limit'];
       break;
@@ -877,8 +869,8 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
     case 'resumeBgsmOrganizeApply':
       expected = [...run, 'requestId', 'jobId', 'expectedRevision'];
       break;
-    case 'dismissBgsmOrganizeReceipt':
-      expected = [...run, 'jobId', 'applyId'];
+    case 'dismissBgsmTerminalOrganizeJob':
+      expected = [...controller, 'jobId', 'expectedRevision'];
       break;
     case 'requestBgsmOrganizeReceiptPage':
       expected = [...run, 'requestId', 'jobId', 'applyId', 'rowOffset', 'limit', 'filter'];
@@ -890,8 +882,10 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
       expected = controller;
       break;
     case 'bgsmOrganizeJobRunConnectionReady':
-    case 'bgsmOrganizeJobRunNoActive':
       expected = controller;
+      break;
+    case 'bgsmAgentSessionDeleted':
+      expected = [...controller, 'deletedSessionId'];
       break;
     case 'bgsmOrganizeJobAnalysisProgress':
       expected = [...run, 'processed', 'total'];
@@ -920,7 +914,7 @@ function assertExactMessageKeys(message: Record<string, unknown>): void {
       expected = run;
       break;
     case 'bgsmOrganizeJobState':
-      expected = [...run, 'presentation'];
+      expected = [...controller, 'presentation', 'role'];
       break;
     case 'bgsmOrganizeReviewPage':
       expected = [
@@ -958,31 +952,75 @@ function assertExactKeys(value: Record<string, unknown>, expected: readonly stri
   }
 }
 
-type BgsmAgentTurnPortMessage =
-  | { type: 'bgsmAgentTurnHello'; executionEpochId: string }
-  | {
-      type: 'bgsmAgentTurnAck';
-      turnAttemptId: string;
-      sessionId: string;
-      baseRevision: number;
-      disposition: BgsmAgentTurnAckDisposition;
-      appliedRevision: number | null;
-    }
-  | { type: 'bgsmAgentTurnEvent'; sequence: number; event: BgsmAgentTurnEvent }
-  | { type: 'bgsmAgentTurnResult'; sequence: number; result: BgsmAgentTurnResult }
-  | { type: 'bgsmAgentTurnError'; sequence: number; error: BgsmAgentTurnError };
 
 const BGSM_AGENT_TURN_RECONNECT_LIMIT = 2;
+type BgsmAgentTurnTerminalMessage = Extract<
+  BgsmAgentTurnServerMessage,
+  { type: 'bgsmAgentTurnResult' | 'bgsmAgentTurnError' }
+>;
+
+type BgsmAgentTurnReplayFingerprint = Promise<string | null>;
+
+function fingerprintBgsmAgentTerminalReplay(
+  message: BgsmAgentTurnTerminalMessage,
+): BgsmAgentTurnReplayFingerprint {
+  const semanticPayload = message.type === 'bgsmAgentTurnResult' && message.result.commit
+    ? {
+        type: message.type,
+        result: {
+          ...message.result,
+          commit: {
+            ...message.result.commit,
+            // A durable replay changes only this delivery marker; it does not change the commit.
+            idempotent: undefined,
+          },
+        },
+      }
+    : message.type === 'bgsmAgentTurnResult'
+      ? { type: message.type, result: message.result }
+      : { type: message.type, error: message.error };
+  return sha256Base64Url(canonicalJson(semanticPayload))
+    .then((digest) => `atrf:v1:${digest}`)
+    .catch(() => null);
+}
+
+function snapshotBgsmAgentAcknowledgement(ack: BgsmAgentTurnAck): BgsmAgentTurnAck {
+  return ack.disposition === 'applied'
+    ? Object.freeze({ disposition: 'applied', appliedRevision: ack.appliedRevision })
+    : Object.freeze({ disposition: ack.disposition, appliedRevision: null });
+}
+
+
+function toBgsmAgentTurnLaunch(
+  input: BgsmAgentTurnInput | BgsmAgentTurnLaunch,
+): BgsmAgentTurnLaunch {
+  const launch: BgsmAgentTurnLaunch = {
+    turnAttemptId: input.turnAttemptId,
+    sessionId: input.sessionId,
+    baseRevision: input.baseRevision,
+    prompt: input.prompt,
+    ...('retrySourceAttemptId' in input && input.retrySourceAttemptId !== undefined
+      ? { retrySourceAttemptId: input.retrySourceAttemptId }
+      : {}),
+    ...(input.candidateContract === undefined
+      ? {}
+      : { candidateContract: structuredClone(input.candidateContract) }),
+  };
+  validateAgentSessionLaunchIdentity(launch);
+  return launch;
+}
 
 export function startBgsmAgentTurn(
-  input: BgsmAgentTurnInput,
+  input: BgsmAgentTurnInput | BgsmAgentTurnLaunch,
   handlers: BgsmAgentTurnHandlers,
+  options: BgsmAgentTurnStartOptions = {},
 ): {
-  stop: (options?: Readonly<{ detach?: boolean }>) => void;
+  stop: () => void;
+  detach: () => void;
   acknowledge: (ack: BgsmAgentTurnAck) => void;
 } {
+  const launch = toBgsmAgentTurnLaunch(input);
   let finished = false;
-  let detached = false;
   let stopRequested = false;
   let acknowledgementSent = false;
   let pendingAcknowledgement: BgsmAgentTurnAck | null = null;
@@ -993,12 +1031,26 @@ export function startBgsmAgentTurn(
   let reconnectAttempts = 0;
   let expectedSequence = 0;
   let sawAgentDone = false;
-  let terminalDeliveryReceived = false;
+  let terminalPresented = false;
+  let connectionTerminalReceived = false;
+  let presentedTerminalFingerprint: BgsmAgentTurnReplayFingerprint | null = null;
 
   const finishWithError = (error: BgsmAgentTurnError) => {
     if (finished) return;
     finished = true;
-    if (!detached) handlers.onError?.(error);
+    handlers.onError?.(error);
+  };
+
+  const finishWithReplayMismatch = (port: chrome.runtime.Port) => {
+    finishWithError({
+      turnAttemptId: input.turnAttemptId,
+      sessionId: input.sessionId,
+      baseRevision: input.baseRevision,
+      message: "Cubby's recovered result did not match the result already shown. Try again.",
+      category: 'other',
+      code: 'agent_session_corrupt',
+    });
+    disconnect(port);
   };
 
   const disconnect = (port: chrome.runtime.Port) => {
@@ -1011,14 +1063,15 @@ export function startBgsmAgentTurn(
 
   const postStop = () => {
     if (!executionEpochId || !activePort || !activePortReady) return;
+    const message: BgsmAgentTurnClientMessage = {
+      type: 'stopBgsmAgentTurn',
+      executionEpochId,
+      turnAttemptId: input.turnAttemptId,
+      sessionId: input.sessionId,
+      baseRevision: input.baseRevision,
+    };
     try {
-      activePort.postMessage({
-        type: 'stopBgsmAgentTurn',
-        executionEpochId,
-        turnAttemptId: input.turnAttemptId,
-        sessionId: input.sessionId,
-        baseRevision: input.baseRevision,
-      });
+      activePort.postMessage(message);
     } catch {
       disconnect(activePort);
     }
@@ -1028,21 +1081,32 @@ export function startBgsmAgentTurn(
     if (
       !pendingAcknowledgement
       || acknowledgementSent
-      || !terminalDeliveryReceived
+      || !connectionTerminalReceived
       || !activeExecutionEpochId
       || !activePort
       || !activePortReady
     ) return;
+    const message: BgsmAgentTurnClientMessage = pendingAcknowledgement.disposition === 'applied'
+      ? {
+          type: 'ackBgsmAgentTurnResult',
+          executionEpochId: activeExecutionEpochId,
+          turnAttemptId: input.turnAttemptId,
+          sessionId: input.sessionId,
+          baseRevision: input.baseRevision,
+          disposition: 'applied',
+          appliedRevision: pendingAcknowledgement.appliedRevision,
+        }
+      : {
+          type: 'ackBgsmAgentTurnResult',
+          executionEpochId: activeExecutionEpochId,
+          turnAttemptId: input.turnAttemptId,
+          sessionId: input.sessionId,
+          baseRevision: input.baseRevision,
+          disposition: pendingAcknowledgement.disposition,
+          appliedRevision: null,
+        };
     try {
-      activePort.postMessage({
-        type: 'ackBgsmAgentTurnResult',
-        executionEpochId: activeExecutionEpochId,
-        turnAttemptId: input.turnAttemptId,
-        sessionId: input.sessionId,
-        baseRevision: input.baseRevision,
-        disposition: pendingAcknowledgement.disposition,
-        appliedRevision: pendingAcknowledgement.appliedRevision,
-      });
+      activePort.postMessage(message);
     } catch {
       disconnect(activePort);
       return;
@@ -1073,11 +1137,11 @@ export function startBgsmAgentTurn(
     activePortReady = false;
     let helloReceived = false;
 
-    port.onMessage.addListener((rawMessage: unknown) => {
+    port.onMessage.addListener(async (rawMessage: unknown) => {
       if (finished || activePort !== port) return;
-      let message: BgsmAgentTurnPortMessage;
+      let message: BgsmAgentTurnServerMessage;
       try {
-        message = parseBgsmAgentTurnPortMessage(rawMessage);
+        message = parseBgsmAgentTurnServerMessage(rawMessage);
       } catch {
         finishWithError({
           turnAttemptId: input.turnAttemptId,
@@ -1103,19 +1167,35 @@ export function startBgsmAgentTurn(
         }
         helloReceived = true;
         activeExecutionEpochId = message.executionEpochId;
-        if (executionEpochId === null) {
-          executionEpochId = message.executionEpochId;
-        } else if (executionEpochId !== message.executionEpochId) {
+        if (
+          options.expectedExecutionEpochId !== undefined
+          && message.executionEpochId !== options.expectedExecutionEpochId
+        ) {
+          finishWithError({
+            turnAttemptId: input.turnAttemptId,
+            sessionId: input.sessionId,
+            baseRevision: input.baseRevision,
+            message: "Cubby's active request belongs to a previous extension worker. Try again.",
+            category: 'other',
+            code: 'agent_turn_resume_epoch_changed',
+          });
+          disconnect(port);
+          return;
+        }
+        if (executionEpochId !== null && executionEpochId !== message.executionEpochId) {
           expectedSequence = 0;
           sawAgentDone = false;
         }
+        executionEpochId = message.executionEpochId;
         activePortReady = true;
+        const startMessage: BgsmAgentTurnClientMessage = {
+          type: 'startBgsmAgentTurn',
+          executionEpochId,
+          ...launch,
+          ...(options.resumeOnly ? { resumeOnly: true } : {}),
+        };
         try {
-          port.postMessage({
-            type: 'startBgsmAgentTurn',
-            executionEpochId,
-            ...input,
-          });
+          port.postMessage(startMessage);
         } catch (error) {
           activePort = null;
           activePortReady = false;
@@ -1143,7 +1223,7 @@ export function startBgsmAgentTurn(
       }
       if (message.type === 'bgsmAgentTurnAck') {
         if (
-          !terminalDeliveryReceived
+          !connectionTerminalReceived
           || !pendingAcknowledgement
           || message.turnAttemptId !== input.turnAttemptId
           || message.sessionId !== input.sessionId
@@ -1155,7 +1235,24 @@ export function startBgsmAgentTurn(
         disconnect(port);
         return;
       }
-      if (terminalDeliveryReceived) return;
+      const acceptTerminalReplay = async (message: BgsmAgentTurnTerminalMessage) => {
+        const expectedFingerprint = presentedTerminalFingerprint;
+        if (!expectedFingerprint) {
+          finishWithReplayMismatch(port);
+          return;
+        }
+        const [expected, actual] = await Promise.all([
+          expectedFingerprint,
+          fingerprintBgsmAgentTerminalReplay(message),
+        ]);
+        if (finished || activePort !== port) return;
+        if (!expected || !actual || expected !== actual) {
+          finishWithReplayMismatch(port);
+          return;
+        }
+        connectionTerminalReceived = true;
+        postAcknowledgement();
+      };
       const delivery = message.type === 'bgsmAgentTurnEvent'
         ? message.event
         : message.type === 'bgsmAgentTurnResult'
@@ -1166,6 +1263,10 @@ export function startBgsmAgentTurn(
         || delivery.baseRevision !== input.baseRevision
         || delivery.turnAttemptId !== input.turnAttemptId
       ) return;
+      if (terminalPresented && message.sequence < expectedSequence) {
+        if (message.type !== 'bgsmAgentTurnEvent') await acceptTerminalReplay(message);
+        return;
+      }
       if (message.sequence < expectedSequence) return;
       if (message.sequence > expectedSequence) {
         finishWithError({
@@ -1179,6 +1280,10 @@ export function startBgsmAgentTurn(
         return;
       }
       expectedSequence += 1;
+      if (terminalPresented) {
+        if (message.type !== 'bgsmAgentTurnEvent') await acceptTerminalReplay(message);
+        return;
+      }
       if (sawAgentDone && message.type !== 'bgsmAgentTurnResult') {
         finishWithError({
           turnAttemptId: input.turnAttemptId,
@@ -1196,20 +1301,20 @@ export function startBgsmAgentTurn(
         handlers.onEvent?.(message.event);
         return;
       }
-      terminalDeliveryReceived = true;
+      terminalPresented = true;
+      presentedTerminalFingerprint = fingerprintBgsmAgentTerminalReplay(message);
+      connectionTerminalReceived = true;
       if (message.type === 'bgsmAgentTurnResult') {
-        if (!detached) handlers.onResult?.(message.result);
-        if (detached || !handlers.onResult) {
-          pendingAcknowledgement = { disposition: 'detached', appliedRevision: null };
+        handlers.onResult?.(message.result);
+        if (!handlers.onResult) {
+          pendingAcknowledgement = { disposition: 'no_transition', appliedRevision: null };
           postAcknowledgement();
         }
         return;
       }
-      if (!detached) handlers.onError?.(message.error);
-      if (detached || !handlers.onError) {
-        pendingAcknowledgement = detached
-          ? { disposition: 'detached', appliedRevision: null }
-          : { disposition: 'no_transition', appliedRevision: null };
+      handlers.onError?.(message.error);
+      if (!handlers.onError) {
+        pendingAcknowledgement = { disposition: 'no_transition', appliedRevision: null };
         postAcknowledgement();
       }
     });
@@ -1220,6 +1325,7 @@ export function startBgsmAgentTurn(
       activePortReady = false;
       activeExecutionEpochId = null;
       acknowledgementSent = false;
+      connectionTerminalReceived = false;
       if (reconnectAttempts < BGSM_AGENT_TURN_RECONNECT_LIMIT) {
         reconnectAttempts += 1;
         connect();
@@ -1237,504 +1343,36 @@ export function startBgsmAgentTurn(
   connect();
 
   return {
-    stop(options) {
+    stop() {
       if (finished) return;
-      if (options?.detach) detached = true;
       if (!stopRequested) {
         stopRequested = true;
         postStop();
       }
+    },
+    detach() {
+      if (finished) return;
+      finished = true;
+      const port = activePort;
+      activePort = null;
+      activePortReady = false;
+      activeExecutionEpochId = null;
+      pendingAcknowledgement = null;
+      if (port) disconnect(port);
     },
     acknowledge(ack) {
       if (
         finished
         || acknowledgementSent
         || pendingAcknowledgement
-        || !terminalDeliveryReceived
+        || !terminalPresented
       ) return;
-      pendingAcknowledgement = ack;
+      pendingAcknowledgement = snapshotBgsmAgentAcknowledgement(ack);
       postAcknowledgement();
     },
   };
 }
 
-function parseBgsmAgentTurnPortMessage(value: unknown): BgsmAgentTurnPortMessage {
-  if (!isAgentRecord(value)) throw new TypeError('Agent Port message must be an object.');
-  if (value.type === 'bgsmAgentTurnHello') {
-    assertAgentExactKeys(value, ['type', 'executionEpochId']);
-    assertAgentText(value.executionEpochId, 'executionEpochId', 512, true);
-    return value as unknown as BgsmAgentTurnPortMessage;
-  }
-  if (value.type === 'bgsmAgentTurnAck') {
-    assertAgentExactKeys(value, [
-      'type',
-      'turnAttemptId',
-      'sessionId',
-      'baseRevision',
-      'disposition',
-      'appliedRevision',
-    ]);
-    validateAgentDeliveryIdentity(value);
-    if (value.disposition !== 'applied') {
-      if (!['no_transition', 'transition_rejected', 'detached'].includes(String(value.disposition))) {
-        throw new TypeError('Agent acknowledgement disposition is invalid.');
-      }
-      if (value.appliedRevision !== null) {
-        throw new TypeError('Agent acknowledgement revision is invalid.');
-      }
-    } else if (
-      value.disposition !== 'applied'
-      || !Number.isSafeInteger(value.appliedRevision)
-      || Number(value.appliedRevision) !== Number(value.baseRevision) + 1
-    ) {
-      throw new TypeError('Agent acknowledgement revision is invalid.');
-    }
-    return value as unknown as BgsmAgentTurnPortMessage;
-  }
-  if (!Number.isSafeInteger(value.sequence) || Number(value.sequence) < 0) {
-    throw new TypeError('Agent Port sequence is invalid.');
-  }
-  if (value.type === 'bgsmAgentTurnEvent') {
-    assertAgentExactKeys(value, ['type', 'sequence', 'event']);
-    validateAgentTurnEvent(value.event);
-    return value as unknown as BgsmAgentTurnPortMessage;
-  }
-  if (value.type === 'bgsmAgentTurnResult') {
-    assertAgentExactKeys(value, ['type', 'sequence', 'result']);
-    validateAgentTurnResult(value.result);
-    return value as unknown as BgsmAgentTurnPortMessage;
-  }
-  if (value.type === 'bgsmAgentTurnError') {
-    assertAgentExactKeys(value, ['type', 'sequence', 'error']);
-    validateAgentTurnError(value.error);
-    return value as unknown as BgsmAgentTurnPortMessage;
-  }
-  throw new TypeError('Unsupported Agent Port message type.');
-}
-
-function validateAgentTurnEvent(value: unknown): asserts value is BgsmAgentTurnEvent {
-  if (!isAgentRecord(value)) throw new TypeError('Agent event must be an object.');
-  validateAgentDeliveryIdentity(value);
-  const base = ['type', 'turnAttemptId', 'sessionId', 'baseRevision'];
-  let keys: string[];
-  switch (value.type) {
-    case 'agent_queued':
-    case 'agent_start':
-      keys = base;
-      break;
-    case 'conversation_bound':
-      keys = [...base, 'binding'];
-      validateBgsmAgentConversationBinding(value.binding);
-      break;
-    case 'turn_start':
-    case 'assistant_stream_start':
-      keys = [...base, 'step'];
-      assertAgentSequenceNumber(value.step, 'step');
-      break;
-    case 'assistant_text_delta':
-      keys = [...base, 'step', 'delta'];
-      assertAgentSequenceNumber(value.step, 'step');
-      assertAgentText(value.delta, 'delta', 256 * 1024, false);
-      break;
-    case 'message_update':
-      keys = [...base, 'message'];
-      validateAgentSessionMessage(value.message);
-      break;
-    case 'tool_execution_queued':
-      keys = [...base, 'toolName', 'callId'];
-      assertAgentText(value.toolName, 'toolName', 256, true);
-      assertAgentText(value.callId, 'callId', 512, true);
-      break;
-    case 'tool_execution_start':
-      keys = [...base, 'toolName', 'callId', 'risk'];
-      assertAgentText(value.toolName, 'toolName', 256, true);
-      assertAgentText(value.callId, 'callId', 512, true);
-      validateToolRisk(value.risk);
-      break;
-    case 'tool_execution_end':
-      keys = [...base, 'toolName', 'callId', 'risk', 'ok', 'writeOutcome'];
-      assertAgentText(value.toolName, 'toolName', 256, true);
-      assertAgentText(value.callId, 'callId', 512, true);
-      validateToolRisk(value.risk);
-      if (typeof value.ok !== 'boolean') throw new TypeError('Agent tool result is invalid.');
-      if (!['not_applicable', 'committed', 'failed', 'unknown'].includes(String(value.writeOutcome))) {
-        throw new TypeError('Agent tool write outcome is invalid.');
-      }
-      if ((value.risk === 'write') === (value.writeOutcome === 'not_applicable')) {
-        throw new TypeError('Agent tool write outcome does not match its risk.');
-      }
-      break;
-    case 'approval_required':
-      keys = [...base, 'callId', 'summary'];
-      assertAgentText(value.callId, 'callId', 512, true);
-      assertAgentText(value.summary, 'summary', 4_096, true);
-      break;
-    case 'context_compaction_start':
-      keys = base;
-      break;
-    case 'context_diagnostic':
-      keys = [
-        ...base,
-        'stage',
-        'providerWindow',
-        'workingWindow',
-        'softLimit',
-        'hardLimit',
-        'capabilitySource',
-        'capabilityRevision',
-        'policyRevision',
-        ...(value.inputTokens === undefined ? [] : ['inputTokens']),
-        ...(value.deterministicInputTokens === undefined ? [] : ['deterministicInputTokens']),
-        ...(value.usageAdjustmentTokens === undefined ? [] : ['usageAdjustmentTokens']),
-        ...(value.observedPrefixTokens === undefined ? [] : ['observedPrefixTokens']),
-        ...(value.contextRemainingTokens === undefined ? [] : ['contextRemainingTokens']),
-        ...(value.toolAllowanceBytes === undefined ? [] : ['toolAllowanceBytes']),
-        ...(value.toolMemoryRemainingBytes === undefined ? [] : ['toolMemoryRemainingBytes']),
-        ...(value.toolProviderResultCeilingBytes === undefined
-          ? []
-          : ['toolProviderResultCeilingBytes']),
-        ...(value.toolBudgetLimitedBy === undefined ? [] : ['toolBudgetLimitedBy']),
-        ...(value.toolResultBytes === undefined ? [] : ['toolResultBytes']),
-        ...(value.toolResultReduced === undefined ? [] : ['toolResultReduced']),
-        ...(value.action === undefined ? [] : ['action']),
-        ...(value.trigger === undefined ? [] : ['trigger']),
-        ...(value.category === undefined ? [] : ['category']),
-      ];
-      if (!['preflight', 'tool_allowance', 'post_tool', 'compaction'].includes(String(value.stage))) {
-        throw new TypeError('Agent context diagnostic stage is invalid.');
-      }
-      for (const field of ['providerWindow', 'workingWindow', 'softLimit', 'hardLimit'] as const) {
-        assertAgentSequenceNumber(value[field], field);
-      }
-      if (!['builtin-official', 'provider-verified', 'user-declared'].includes(String(value.capabilitySource))) {
-        throw new TypeError('Agent context capability source is invalid.');
-      }
-      assertAgentText(value.capabilityRevision, 'capabilityRevision', 512, true);
-      assertAgentText(value.policyRevision, 'policyRevision', 1_024, true);
-      for (const field of [
-        'inputTokens',
-        'deterministicInputTokens',
-        'usageAdjustmentTokens',
-        'contextRemainingTokens',
-        'toolAllowanceBytes',
-        'toolMemoryRemainingBytes',
-        'toolProviderResultCeilingBytes',
-        'toolResultBytes',
-      ] as const) {
-        if (value[field] !== undefined) assertAgentSequenceNumber(value[field], field);
-      }
-      if (value.observedPrefixTokens !== undefined && value.observedPrefixTokens !== null) {
-        assertAgentSequenceNumber(value.observedPrefixTokens, 'observedPrefixTokens');
-      }
-      if (value.toolBudgetLimitedBy !== undefined &&
-        !['context', 'memory', 'provider', 'multiple'].includes(String(value.toolBudgetLimitedBy))) {
-        throw new TypeError('Agent tool budget limiting factor is invalid.');
-      }
-      if (value.toolResultReduced !== undefined && typeof value.toolResultReduced !== 'boolean') {
-        throw new TypeError('Agent tool result reduction flag is invalid.');
-      }
-      if (value.action !== undefined &&
-        !['triggered', 'summary_retry', 'fallback', 'terminal'].includes(String(value.action))) {
-        throw new TypeError('Agent context diagnostic action is invalid.');
-      }
-      if (value.trigger !== undefined && ![
-        'pre_turn_soft_limit',
-        'pre_turn_byte_limit',
-        'completed_tool_envelope_soft_limit',
-        'completed_tool_envelope_byte_limit',
-        'forced_completed_tool_envelope',
-        'tool_result_memory_pressure',
-        'context_preflight',
-        'provider_context_overflow',
-        'provider_request_byte_limit',
-      ].includes(String(value.trigger))) {
-        throw new TypeError('Agent compaction trigger is invalid.');
-      }
-      if (value.category !== undefined && ![
-        'succeeded',
-        'current_turn_too_large',
-        'no_candidate',
-        'summary_provider_failed',
-        'summary_invalid',
-        'fallback_too_large',
-        'final_preflight_failed',
-        'tool_result_memory_limit',
-        'capability_unresolved',
-        'provider_context_overflow',
-        'provider_context_overflow_repeated',
-        'provider_request_byte_limit',
-        'provider_request_byte_limit_repeated',
-      ].includes(String(value.category))) {
-        throw new TypeError('Agent context diagnostic category is invalid.');
-      }
-      break;
-    case 'context_compaction_end':
-      keys = [...base, 'ok', 'summarizedMessageCount'];
-      if (typeof value.ok !== 'boolean') throw new TypeError('Agent compaction result is invalid.');
-      assertAgentSequenceNumber(value.summarizedMessageCount, 'summarizedMessageCount');
-      break;
-    case 'agent_error':
-      keys = [...base, 'message', ...(value.category === undefined ? [] : ['category'])];
-      assertAgentText(value.message, 'message', 4_096, true);
-      validateAgentErrorCategory(value.category);
-      break;
-    case 'agent_done':
-      keys = [
-        ...base,
-        'reason',
-        ...(value.contextFailureReason === undefined ? [] : ['contextFailureReason']),
-      ];
-      validateAgentStopReason(value.reason);
-      if (value.contextFailureReason !== undefined) {
-        validateAgentContextFailureReason(value.contextFailureReason);
-      }
-      break;
-    default:
-      throw new TypeError('Unsupported Agent event type.');
-  }
-  assertAgentExactKeys(value, keys);
-}
-
-function validateAgentTurnResult(value: unknown): asserts value is BgsmAgentTurnResult {
-  if (!isAgentRecord(value)) throw new TypeError('Agent result must be an object.');
-  validateAgentDeliveryIdentity(value);
-  const keys = [
-    'turnAttemptId',
-    'sessionId',
-    'baseRevision',
-    'reason',
-    'changed',
-    'changedCount',
-    'newMessages',
-    ...(value.candidateCheckpoint === undefined ? [] : ['candidateCheckpoint']),
-    ...(value.candidateActiveProjection === undefined ? [] : ['candidateActiveProjection']),
-    ...(value.contextFailureReason === undefined ? [] : ['contextFailureReason']),
-    ...(value.organizeLibraryHandoff === undefined ? [] : ['organizeLibraryHandoff']),
-  ];
-  assertAgentExactKeys(value, keys);
-  validateAgentStopReason(value.reason);
-  if (value.contextFailureReason !== undefined) {
-    validateAgentContextFailureReason(value.contextFailureReason);
-  }
-  if (typeof value.changed !== 'boolean') throw new TypeError('Agent changed flag is invalid.');
-  assertAgentSequenceNumber(value.changedCount, 'changedCount');
-  if ((Number(value.changedCount) > 0) !== value.changed) {
-    throw new TypeError('Agent changed count does not match its changed flag.');
-  }
-  if (!Array.isArray(value.newMessages)) throw new TypeError('Agent result messages are invalid.');
-  value.newMessages.forEach(validateAgentSessionMessage);
-  if (value.candidateCheckpoint !== undefined) {
-    validateAgentCheckpoint(value.candidateCheckpoint);
-  }
-  if (value.candidateActiveProjection !== undefined && value.candidateActiveProjection !== null) {
-    validateAgentActiveProjection(value.candidateActiveProjection);
-  }
-  if (value.organizeLibraryHandoff !== undefined) {
-    if (!isAgentRecord(value.organizeLibraryHandoff)) {
-      throw new TypeError('Agent organize-library handoff is invalid.');
-    }
-    assertAgentExactKeys(value.organizeLibraryHandoff, ['type', 'action', 'instruction']);
-    if (value.organizeLibraryHandoff.type !== 'organize_whole_library') {
-      throw new TypeError('Agent organize-library handoff type is invalid.');
-    }
-    if (
-      value.organizeLibraryHandoff.action !== 'request_confirmation'
-      && value.organizeLibraryHandoff.action !== 'start_analysis'
-    ) {
-      throw new TypeError('Agent organize-library handoff action is invalid.');
-    }
-    assertAgentText(
-      value.organizeLibraryHandoff.instruction,
-      'organizeLibraryHandoff.instruction',
-      256 * 1024,
-      true,
-    );
-  }
-}
-
-function validateAgentTurnError(value: unknown): asserts value is BgsmAgentTurnError {
-  if (!isAgentRecord(value)) throw new TypeError('Agent error must be an object.');
-  validateAgentDeliveryIdentity(value);
-  assertAgentExactKeys(value, [
-    'turnAttemptId',
-    'sessionId',
-    'baseRevision',
-    'message',
-    ...(value.category === undefined ? [] : ['category']),
-  ]);
-  assertAgentText(value.message, 'message', 4_096, true);
-  validateAgentErrorCategory(value.category);
-}
-
-function validateAgentDeliveryIdentity(value: Record<string, unknown>): void {
-  assertAgentText(value.turnAttemptId, 'turnAttemptId', 512, true);
-  assertAgentText(value.sessionId, 'sessionId', 512, true);
-  assertAgentSequenceNumber(value.baseRevision, 'baseRevision');
-}
-
-function validateAgentSessionMessage(value: unknown): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent session message must be an object.');
-  const baseKeys = ['id', 'role', 'content', 'createdAt'];
-  assertAgentText(value.id, 'message.id', 512, true);
-  assertAgentText(value.content, 'message.content', 512 * 1024, false);
-  if (!Number.isSafeInteger(value.createdAt) || Number(value.createdAt) < 0) {
-    throw new TypeError('Agent session message timestamp is invalid.');
-  }
-  if (value.role === 'user') {
-    assertAgentExactKeys(value, baseKeys);
-    return;
-  }
-  if (value.role === 'agent') {
-    const keys = value.toolCalls === undefined ? baseKeys : [...baseKeys, 'toolCalls'];
-    assertAgentExactKeys(value, keys);
-    if (value.toolCalls !== undefined) {
-      if (!Array.isArray(value.toolCalls) || value.toolCalls.length === 0 || value.toolCalls.length > 64) {
-        throw new TypeError('Agent message tool calls are invalid.');
-      }
-      value.toolCalls.forEach(validateAgentToolCall);
-    }
-    return;
-  }
-  if (value.role === 'tool') {
-    assertAgentExactKeys(value, [...baseKeys, 'toolCallId', 'toolName']);
-    assertAgentText(value.toolCallId, 'message.toolCallId', 512, true);
-    assertAgentText(value.toolName, 'message.toolName', 256, true);
-    return;
-  }
-  throw new TypeError('Agent session message role is invalid.');
-}
-
-function validateAgentToolCall(value: unknown): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent tool call must be an object.');
-  assertAgentExactKeys(value, ['id', 'name', 'arguments']);
-  assertAgentText(value.id, 'toolCall.id', 512, true);
-  assertAgentText(value.name, 'toolCall.name', 256, true);
-  let serialized: string | undefined;
-  try {
-    serialized = JSON.stringify(value.arguments);
-  } catch {
-    throw new TypeError('Agent tool call arguments are not serializable.');
-  }
-  if (serialized === undefined || new TextEncoder().encode(serialized).byteLength > 256 * 1024) {
-    throw new RangeError('Agent tool call arguments are too large.');
-  }
-}
-
-function validateAgentCheckpoint(value: unknown): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent checkpoint must be an object.');
-  assertAgentExactKeys(value, [
-    'schemaVersion',
-    'summary',
-    'summarizedMessageCount',
-    'summarizedThroughMessageId',
-  ]);
-  if (value.schemaVersion !== 1) throw new TypeError('Agent checkpoint version is invalid.');
-  assertAgentText(value.summary, 'checkpoint.summary', 64 * 1024, true);
-  if (!Number.isSafeInteger(value.summarizedMessageCount) || Number(value.summarizedMessageCount) <= 0) {
-    throw new TypeError('Agent checkpoint message count is invalid.');
-  }
-  assertAgentText(value.summarizedThroughMessageId, 'checkpoint.cursor', 512, true);
-}
-
-function validateAgentActiveProjection(value: unknown): void {
-  if (!isAgentRecord(value)) throw new TypeError('Agent active projection must be an object.');
-  assertAgentExactKeys(value, [
-    'schemaVersion',
-    'currentUserMessageId',
-    'summarizedThroughMessageId',
-    'retainedSuffixFirstMessageId',
-    'rawMessageCountAtCreation',
-    'rawTailMessageIdAtCreation',
-    'capabilityRevision',
-    'policyRevision',
-    'summary',
-  ]);
-  if (value.schemaVersion !== 1) throw new TypeError('Agent active projection version is invalid.');
-  assertAgentText(value.currentUserMessageId, 'active projection user cursor', 512, true);
-  assertAgentText(value.summarizedThroughMessageId, 'active projection summary cursor', 512, true);
-  if (value.retainedSuffixFirstMessageId !== null) {
-    assertAgentText(value.retainedSuffixFirstMessageId, 'active projection suffix cursor', 512, true);
-  }
-  if (!Number.isSafeInteger(value.rawMessageCountAtCreation) || Number(value.rawMessageCountAtCreation) <= 0) {
-    throw new TypeError('Agent active projection raw message count is invalid.');
-  }
-  assertAgentText(value.rawTailMessageIdAtCreation, 'active projection raw tail cursor', 512, true);
-  assertAgentText(value.capabilityRevision, 'active projection capability revision', 512, true);
-  assertAgentText(value.policyRevision, 'active projection policy revision', 512, true);
-  assertAgentText(value.summary, 'active projection summary', 64 * 1024, true);
-}
-
-function validateAgentErrorCategory(value: unknown): void {
-  if (value === undefined) return;
-  if (!['authentication', 'configuration', 'permission', 'disclosure', 'capability', 'provider', 'other'].includes(String(value))) {
-    throw new TypeError('Agent error category is invalid.');
-  }
-}
-
-function validateToolRisk(value: unknown): asserts value is ToolRisk {
-  if (!['read', 'suggest', 'write'].includes(String(value))) {
-    throw new TypeError('Agent tool risk is invalid.');
-  }
-}
-
-function validateAgentStopReason(value: unknown): void {
-  if (!['final_answer', 'approval_required', 'interaction_required', 'protocol_error', 'step_budget_reached', 'context_limit', 'provider_error', 'attempt_state_lost', 'aborted'].includes(String(value))) {
-    throw new TypeError('Agent stop reason is invalid.');
-  }
-}
-
-function validateAgentContextFailureReason(
-  value: unknown,
-): asserts value is AgentContextFailureReason {
-  if (![
-    'capability_unresolved',
-    'current_turn_too_large',
-    'no_candidate',
-    'summary_provider_failed',
-    'summary_invalid',
-    'fallback_too_large',
-    'final_preflight_failed',
-    'tool_result_memory_limit',
-    'provider_context_overflow',
-    'provider_context_overflow_repeated',
-    'provider_request_byte_limit',
-    'provider_request_byte_limit_repeated',
-  ].includes(String(value))) {
-    throw new TypeError('Agent context failure reason is invalid.');
-  }
-}
-
-function assertAgentText(
-  value: unknown,
-  field: string,
-  maxBytes: number,
-  requireNonempty: boolean,
-): void {
-  if (typeof value !== 'string' || (requireNonempty && value.length === 0)) {
-    throw new TypeError(`Agent ${field} is invalid.`);
-  }
-  if (new TextEncoder().encode(value).byteLength > maxBytes) {
-    throw new RangeError(`Agent ${field} is too large.`);
-  }
-}
-
-function assertAgentSequenceNumber(value: unknown, field: string): void {
-  if (!Number.isSafeInteger(value) || Number(value) < 0) {
-    throw new TypeError(`Agent ${field} is invalid.`);
-  }
-}
-
-function assertAgentExactKeys(value: Record<string, unknown>, expected: string[]): void {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
-    throw new TypeError('Agent Port message has unexpected fields.');
-  }
-}
-
-function isAgentRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
 
 export function mergeProgressStatus(
   current: SyncStatus | null,
@@ -1823,21 +1461,93 @@ export function mergeStatusSnapshot(current: SyncStatus | null, snapshot: SyncSt
 }
 
 export class BackgroundCallError extends Error {
+  readonly code: string | null;
   readonly details: unknown;
 
-  constructor(message: string, details?: unknown) {
+  constructor(message: string, details?: unknown, code: string | null = null) {
     super(message);
     this.name = 'BackgroundCallError';
     this.details = details;
+    this.code = code;
   }
 }
 
 export async function bgCall<T = unknown>(type: string, extra?: Record<string, unknown>): Promise<T> {
   const res = (await chrome.runtime.sendMessage({ type, ...extra })) as
     | { ok: true; data?: T }
-    | { ok: false; error: string; details?: unknown };
-  if (!res.ok) throw new BackgroundCallError(res.error, res.details);
+    | { ok: false; error: string; code?: string; details?: unknown };
+  if (!res.ok) throw new BackgroundCallError(res.error, res.details, res.code ?? null);
   return (res.data ?? (undefined as unknown)) as T;
+}
+
+export function inspectBgsmAgentSessionCatalog(): Promise<AgentSessionCatalogInspection> {
+  return bgCall('inspectAgentSessionCatalog');
+}
+export function getOrCreateInitialDurableBgsmAgentSession(): Promise<LoadedAgentSession> {
+  return bgCall('getOrCreateInitialAgentSession');
+}
+
+
+export function inspectActiveBgsmAgentSessionTurn(
+  sessionId: string,
+): Promise<BgsmAgentActiveTurn | null> {
+  return bgCall('inspectActiveAgentSessionTurn', { sessionId });
+}
+
+export function createDurableBgsmAgentSession(sessionId?: string): Promise<LoadedAgentSession> {
+  return bgCall('createAgentSession', sessionId ? { sessionId } : undefined);
+}
+
+export function loadDurableBgsmAgentSession(sessionId: string): Promise<LoadedAgentSession> {
+  return bgCall('loadAgentSession', { sessionId });
+}
+
+export function loadDurableBgsmAgentSessionCommittedTurn(input: Readonly<{
+  sessionId: string;
+  turnAttemptId: string;
+  launchDigest: AgentSessionLaunchDigest;
+}>): Promise<AgentSessionCommitResult | null> {
+  return bgCall('loadCommittedAgentSessionTurn', {
+    sessionId: input.sessionId,
+    turnAttemptId: input.turnAttemptId,
+    launchDigest: input.launchDigest,
+  });
+}
+
+export async function readDurableAgentRetryDraftCandidate(
+  sessionId: string,
+): Promise<AgentRetryDraft | null> {
+  return bgCall<AgentRetryDraft | null>('readAgentRetryDraftCandidate', { sessionId });
+}
+
+export function dismissDurableAgentSessionRetry(input: Readonly<{
+  sessionId: string;
+  turnAttemptId: string;
+}>): Promise<boolean> {
+  return bgCall('dismissAgentSessionRetry', input);
+}
+export function abandonDurableAgentSessionUncertainAttempt(input: Readonly<{
+  sessionId: string;
+  turnAttemptId: string;
+}>): Promise<boolean> {
+  return bgCall('abandonAgentSessionUncertainAttempt', input);
+}
+
+
+export function discardDurableAgentSessionRecovery(sessionId: string): Promise<number> {
+  return bgCall('discardDamagedAgentSessionRecovery', { sessionId });
+}
+
+export function loadDurableBgsmAgentSessionTranscriptPage(
+  sessionId: string,
+  beforeSequence: number,
+): Promise<AgentSessionTranscriptPage> {
+  return bgCall('loadAgentSessionTranscriptPage', { sessionId, beforeSequence });
+}
+
+export async function deleteDurableBgsmAgentSession(sessionId: string): Promise<boolean> {
+  const result = await bgCall<{ deleted: boolean }>('deleteAgentSession', { sessionId });
+  return result.deleted;
 }
 
 export function onProgress(cb: (p: SyncStatus['progress']) => void): () => void {

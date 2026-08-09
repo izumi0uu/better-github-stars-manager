@@ -64,6 +64,32 @@ function providerFor(callId: string, args: WriteArgs) {
 const allow = async () => ({ type: 'allow' as const });
 
 describe('agent execution ledger', () => {
+  it.each([
+    ['none', 'none'],
+    ['failed', 'all_failed'],
+    ['authorized', 'unsafe'],
+    ['started', 'unsafe'],
+    ['committed', 'unsafe'],
+    ['unknown', 'unsafe'],
+  ] as const)('classifies %s write state as %s', (state, expected) => {
+    const ledger = new AgentExecutionLedger();
+    if (state !== 'none') {
+      ledger.authorize({
+        callId: `settlement-${state}`,
+        toolName: 'assign_repo_tags',
+        args: { full_name: 'owner/repo', tags: ['A'] },
+        effects: [['assign_repo_tags', 'scope:test', 'owner/repo', 'a']],
+        selectedEffects: [['assign_repo_tags', 'scope:test', 'owner/repo', 'a']],
+      });
+      if (state === 'started') ledger.markStarted(`settlement-${state}`);
+      if (state === 'failed' || state === 'committed' || state === 'unknown') {
+        ledger.settle(`settlement-${state}`, state);
+      }
+    }
+
+    assert.equal(ledger.writeSettlement(), expected);
+  });
+
   it('keeps a committed write receipt when byte recovery permits only a minimal envelope', async () => {
     const ledger = new AgentExecutionLedger();
     const writer = vi.fn(async (args: WriteArgs) => ({

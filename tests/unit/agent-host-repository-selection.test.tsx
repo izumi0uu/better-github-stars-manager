@@ -11,6 +11,7 @@ import { parseScopeFingerprintV1 } from '@/bgsm-agent/scope';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';
 import { AgentHost } from '@/ui/components/AgentHost';
 import type { BgsmAgentTurnHandlers } from '@/utils/messaging';
+import type { AgentSessionCommitResult } from '@/storage/agent-session-store';
 import {
   cleanupMountedRootsAndBody,
   click,
@@ -45,7 +46,6 @@ vi.mock('@/ui/agent-ui-presentation', async (importOriginal) => {
       if (!presentationMocks.ownsWorkbench) return view;
       return {
         ...view,
-        ownsSession: true,
         capabilities: {
           ...view.capabilities,
           canSwitchSession: false,
@@ -62,8 +62,12 @@ vi.mock('@/ui/hooks/use-bgsm-agent-workbench', async (importOriginal) => {
     ...actual,
     useBgsmAgentWorkbench: (...args: Parameters<typeof actual.useBgsmAgentWorkbench>) => {
       const workbench = actual.useBgsmAgentWorkbench(...args);
-      workbenchMocks.releaseOwnership = workbench.clearTerminal;
-      return workbench;
+      const [, forceOwnershipRender] = useState(0);
+      workbenchMocks.releaseOwnership = () => {
+        workbench.clearTerminal();
+        forceOwnershipRender((revision) => revision + 1);
+      };
+      return { ...workbench, state: { ...workbench.state } };
     },
   };
 });
@@ -75,9 +79,11 @@ type CapturedTurn = Readonly<{
 
 const mountedRoots: MountedRoot[] = [];
 let turns: CapturedTurn[];
+let turnBindings: Map<string, BgsmAgentConversationBinding>;
 
 beforeEach(() => {
   turns = [];
+  turnBindings = new Map();
   presentationMocks.ownsWorkbench = false;
   workbenchMocks.releaseOwnership = null;
   messagingMocks.startBgsmAgentTurn.mockReset();
@@ -267,6 +273,7 @@ async function bindAndComplete(
   binding: BgsmAgentConversationBinding,
 ): Promise<void> {
   await act(async () => {
+    turnBindings.set(turn.input.turnAttemptId, binding);
     turn.handlers.onEvent?.({
       ...deliveryIdentity(turn.input),
       type: 'conversation_bound',
@@ -283,6 +290,7 @@ async function bindTurn(
   binding: BgsmAgentConversationBinding,
 ): Promise<void> {
   await act(async () => {
+    turnBindings.set(turn.input.turnAttemptId, binding);
     turn.handlers.onEvent?.({
       ...deliveryIdentity(turn.input),
       type: 'conversation_bound',
@@ -306,21 +314,60 @@ function deliverTurnResult(turn: CapturedTurn): void {
     reason: 'final_answer',
     changed: false,
     changedCount: 0,
-    newMessages: [
-      {
-        id: `${turn.input.turnAttemptId}:user`,
-        role: 'user',
-        content: turn.input.prompt,
-        createdAt: 1,
-      },
-      {
-        id: `${turn.input.turnAttemptId}:assistant`,
-        role: 'agent',
-        content: 'Done.',
-        createdAt: 2,
-      },
-    ],
+    commit: commitForTurn(turn),
   });
+}
+
+function commitForTurn(turn: CapturedTurn): AgentSessionCommitResult {
+  const appliedRevision = turn.input.baseRevision + 1;
+  const messages = [
+    {
+      sequence: 1,
+      id: `${turn.input.turnAttemptId}:user`,
+      role: 'user' as const,
+      content: turn.input.prompt,
+      createdAt: 1,
+    },
+    {
+      sequence: 2,
+      id: `${turn.input.turnAttemptId}:assistant`,
+      role: 'agent' as const,
+      content: 'Done.',
+      createdAt: 2,
+    },
+  ];
+  return {
+    session: {
+      id: turn.input.sessionId,
+      revision: appliedRevision,
+      ...(turnBindings.has(turn.input.turnAttemptId)
+        ? { binding: turnBindings.get(turn.input.turnAttemptId) }
+        : {}),
+    },
+    summary: {
+      id: turn.input.sessionId,
+      title: turn.input.prompt,
+      createdAt: 1,
+      updatedAt: 2,
+    },
+    turnAttemptId: turn.input.turnAttemptId,
+    idempotent: false,
+    appliedRevision,
+    digest: `asd:v1:${'a'.repeat(43)}`,
+    launchDigest: `asl:v1:${'b'.repeat(43)}`,
+    outcome: {
+      reason: 'final_answer',
+      changed: false,
+      changedCount: 0,
+      writeSettlement: 'none',
+    },
+    transcript: {
+      sessionId: turn.input.sessionId,
+      messages,
+      nextBeforeSequence: null,
+    },
+    presentationMessages: messages,
+  } as AgentSessionCommitResult;
 }
 
 function deliveryIdentity(input: BgsmAgentTurnInput) {
@@ -381,7 +428,7 @@ async function expectSessionCount(container: HTMLElement, count: number): Promis
   const toggle = container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]');
   if (!toggle) throw new Error('Session menu toggle not found.');
   await click(toggle);
-  expect(container.querySelectorAll('[data-testid="agent-session-item"]')).toHaveLength(count);
+  expect(document.body.querySelectorAll('[data-testid="agent-session-item"]')).toHaveLength(count);
   await click(toggle);
 }
 
@@ -404,6 +451,8 @@ async function setTextareaValue(textarea: HTMLTextAreaElement, value: string): P
 
 async function flushEffects(): Promise<void> {
   await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
   });
