@@ -17,7 +17,8 @@ function mainTokenFetch(login: string, probeId: string): typeof fetch {
     if (url.endsWith('/gists') && method === 'POST') return response(201, { id: probeId });
     if (url.endsWith(`/gists/${probeId}`) && method === 'DELETE') return response(204);
     if (url.includes('/user/subscriptions') && method === 'GET') return response(200, []);
-    throw new Error(`unexpected credential fetch: ${method} ${url}`);
+    if (url.includes('/notifications?all=true&per_page=1') && method === 'GET') return response(200, []);
+    throw new Error('unexpected credential fetch');
   }) as typeof fetch;
 }
 
@@ -129,7 +130,7 @@ describe('GitHub credential context isolation', () => {
       const url = String(input);
       if (url.endsWith('/user')) return response(200, { login: 'idah' });
       if (url.includes('/notifications?all=true&per_page=1')) return response(200, []);
-      throw new Error(`unexpected Notifications fetch: ${url}`);
+      throw new Error('unexpected Notifications fetch');
     }) as typeof fetch;
     await first.authStore.setWatchNotificationsToken('ghp_context_watch');
 
@@ -144,12 +145,48 @@ describe('GitHub credential context isolation', () => {
 
     const current = await first.authStore.getConfig();
     assert.equal(current.username, null);
+    assert.equal(current.watchCredentialSource, null);
     assert.equal(current.tokenEncrypted, null);
     assert.equal(current.watchNotificationsTokenEncrypted, null);
-    assert.equal(await first.authStore.getToken(), null);
     assert.equal(await first.authStore.getWatchNotificationsToken(), null);
-    assert.equal(await second.authStore.getToken(), null);
     assert.equal(await second.authStore.getWatchNotificationsToken(), null);
+  });
+
+  it('publishes the selected Watch source and selected identity across auth contexts', async () => {
+    const { first, second } = await loadAuthStores();
+    globalThis.fetch = mainTokenFetch('idah', 'probe-context-source');
+    await first.authStore.setToken('github_pat_context_source');
+    await first.authStore.enableWatchWithMainToken();
+    const main = await second.authStore.getGitHubCredentialSnapshot();
+    assert.equal(main.watchCredentialSource, 'main');
+    assert.equal(main.notificationsToken, 'github_pat_context_source');
+    assert.equal(main.notificationsConfigured, true);
+
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/user')) return response(200, { login: 'idah' });
+      if (url.includes('/notifications?all=true&per_page=1')) return response(200, []);
+      throw new Error('unexpected dedicated credential fetch');
+    }) as typeof fetch;
+    await first.authStore.setWatchNotificationsToken('ghp_context_source');
+    const dedicated = await second.authStore.getGitHubCredentialSnapshot();
+    assert.equal(dedicated.watchCredentialSource, 'dedicated');
+    assert.equal(dedicated.notificationsToken, 'ghp_context_source');
+    assert.equal(dedicated.notificationsConfigured, true);
+    assert.notEqual(dedicated.notificationsIdentity, main.notificationsIdentity);
+  });
+
+  it('does not publish a stale selected source after a cross-context disconnect', async () => {
+    const { first, second } = await loadAuthStores();
+    globalThis.fetch = mainTokenFetch('idah', 'probe-context-disconnect');
+    await first.authStore.setToken('github_pat_context_disconnect');
+    await first.authStore.enableWatchWithMainToken();
+    assert.equal((await second.authStore.getGitHubCredentialSnapshot()).watchCredentialSource, 'main');
+    await second.authStore.clearWatchNotificationsToken();
+    const current = await first.authStore.getGitHubCredentialSnapshot();
+    assert.equal(current.watchCredentialSource, null);
+    assert.equal(current.notificationsToken, null);
+    assert.equal(await first.authStore.getToken(), 'github_pat_context_disconnect');
   });
 
   it('does not publish a decrypted token when the credential record changes mid-read', async () => {
@@ -183,6 +220,7 @@ describe('GitHub credential context isolation', () => {
           tokenCryptoMeta: null,
           watchNotificationsTokenEncrypted: null,
           watchNotificationsTokenCryptoMeta: null,
+          watchCredentialSource: null,
           username: null,
           avatarUrl: null,
           displayName: null,

@@ -13,6 +13,8 @@ const STARS_URL = 'https://github.com/smoke-user?tab=stars';
 const REPO_URL = 'https://github.com/smoke-user/smoke-repo';
 const WATCH_DESKTOP_SCREENSHOT = '/tmp/github-stars-watch-desktop.png';
 const WATCH_NARROW_SCREENSHOT = '/tmp/github-stars-watch-narrow.png';
+const WATCH_SETUP_PRIMARY_SCREENSHOT = '/tmp/github-stars-watch-setup-primary.png';
+const WATCH_SETUP_FALLBACK_SCREENSHOT = '/tmp/github-stars-watch-setup-fallback.png';
 const DOM_POLLING_MS = 100;
 
 if (!existsSync(path.join(DIST, 'manifest.json'))) {
@@ -52,7 +54,7 @@ try {
   await clickButtonByText(popup, /^Add PAT$/i);
   const optionsFromPopup = await openedOptions;
   await optionsFromPopup.waitForSelector('textarea', { timeout: 10_000 });
-  await waitForBodyText(optionsFromPopup, 'GitHub Token');
+  await waitForBodyText(optionsFromPopup, 'GitHub connection');
   ok('popup rendered no-token state and Add PAT opened Options');
 
   step('2) Options rejects invalid token without persisting auth');
@@ -86,6 +88,7 @@ try {
     tokenEncrypted: 'smoke-ciphertext',
     tokenCryptoMeta: { iv: 'smoke-iv', salt: 'smoke-salt' },
     starsPanelDefaultEnabled: true,
+    watchCredentialSource: null,
   });
   const ownStars = await browser.newPage();
   hookPageDiagnostics(ownStars, 'stars-own');
@@ -138,11 +141,13 @@ try {
 
   await waitForBackgroundIdle(optionsFromPopup);
   resetBackgroundGitHubApiCalls(browser, extId);
+  await optionsFromPopup.close();
 
   step('8) Watch renders the bounded stored snapshot without GitHub API calls');
   const seededWatch = await seedWatchFixture(extId);
   assert.deepEqual(seededWatch, {
     databaseVersion: 4,
+    credentialSource: 'dedicated',
     hasMainToken: true,
     hasNotificationsToken: true,
     allThreadCount: 3,
@@ -187,22 +192,63 @@ try {
   await ownStars.screenshot({ path: WATCH_NARROW_SCREENSHOT });
   ok(`Watch detail and responsive layout verified (${WATCH_DESKTOP_SCREENSHOT}, ${WATCH_NARROW_SCREENSHOT})`);
 
-  step('10) Removing only the classic token shows Watch setup without ejecting Manager');
+  step('10) Watch recovery opens focused setup, reuses a capable main credential, then reveals fallback on 403');
   await markManagerMount(ownStars);
   const disconnected = await clearWatchNotificationsCredential(extId);
   assert.deepEqual(disconnected, {
     mainCredentialPreserved: true,
     watchCredentialCleared: true,
+    watchSourceCleared: true,
     watchChangeDelivered: true,
   });
-  await openWatchSurface(
-    ownStars,
-    'Connect a separate classic token with the notifications scope',
-  );
+  await openWatchSurface(ownStars, 'Open options');
   await assertWatchSetupState(ownStars);
-  await assertNoBackgroundGitHubApiCalls(browser, extId);
-  ok('classic-token removal kept the main Manager mounted and rendered Watch setup');
+  const openedWatchOptions = waitForExtensionPage(`${OPTIONS_PATH}`);
+  await clickWatchRecoveryOptions(ownStars);
+  const watchOptions = await openedWatchOptions;
+  await assertWatchOptionsIntent(watchOptions);
+  await watchOptions.screenshot({ path: WATCH_SETUP_PRIMARY_SCREENSHOT });
+  const watchCapabilityFixture = await interceptWatchCapabilityFixture(watchOptions);
+  await assertWatchDedicatedFieldCollapsed(watchOptions);
+  await enableWatchWithMainCredential(watchOptions);
+  assertWatchCapabilityRequests(watchCapabilityFixture.snapshot(), 'capable');
+  assert.deepEqual(await readWatchCredentialState(watchOptions), {
+    configSource: 'main',
+    credentialRecordSource: 'main',
+    statusSource: 'main',
+    hasNotificationsToken: true,
+    dedicatedCipherPresent: false,
+    dedicatedMetaPresent: false,
+  });
+  ok('Watch recovery opened focused setup, selected main, and retained no dedicated cipher');
 
+  const disconnectedMain = await clearWatchNotificationsCredential(extId);
+  assert.deepEqual(disconnectedMain, {
+    mainCredentialPreserved: true,
+    watchCredentialCleared: true,
+    watchSourceCleared: true,
+    watchChangeDelivered: true,
+  });
+  watchCapabilityFixture.setMode('forbidden');
+  await openWatchSurface(ownStars, 'Open options');
+  await assertWatchSetupState(ownStars);
+  await clickWatchRecoveryOptions(ownStars, watchOptions);
+  await assertWatchOptionsIntent(watchOptions);
+  await assertWatchDedicatedFieldCollapsed(watchOptions);
+  await enableWatchWithMainCredential(watchOptions, { expectFallback: true });
+  await assertWatchFallbackState(watchOptions);
+  assertWatchCapabilityRequests(watchCapabilityFixture.snapshot(), 'forbidden');
+  assert.deepEqual(await readWatchCredentialState(watchOptions), {
+    configSource: null,
+    credentialRecordSource: null,
+    statusSource: null,
+    hasNotificationsToken: false,
+    dedicatedCipherPresent: false,
+    dedicatedMetaPresent: false,
+  });
+  await watchOptions.screenshot({ path: WATCH_SETUP_FALLBACK_SCREENSHOT });
+  await assertNoBackgroundGitHubApiCalls(browser, extId);
+  ok('Watch recovery revealed the classic-token fallback after a fixture-only forbidden probe');
   if (pageIssues.length) {
     failures.push(`unexpected browser diagnostics:\n${pageIssues.join('\n')}`);
   }
@@ -396,6 +442,7 @@ async function seedWatchFixture(extId) {
       tokenCryptoMeta: mainCredential.meta,
       watchNotificationsTokenEncrypted: watchCredential.cipher,
       watchNotificationsTokenCryptoMeta: watchCredential.meta,
+      watchCredentialSource: 'dedicated',
       username: 'smoke-user',
       avatarUrl: null,
       displayName: null,
@@ -419,6 +466,9 @@ async function seedWatchFixture(extId) {
     const initialStatus = await chrome.runtime.sendMessage({ type: 'getWatchStatus' });
     if (!initialStatus?.ok) {
       throw new Error(initialStatus?.error ?? 'Watch status did not accept seeded credentials');
+    }
+    if (initialStatus.data?.credentialSource !== 'dedicated') {
+      throw new Error(`seeded Watch status selected ${String(initialStatus.data?.credentialSource)}`);
     }
 
     const database = await openDatabase();
@@ -590,6 +640,7 @@ async function seedWatchFixture(extId) {
     }
     return {
       databaseVersion,
+      credentialSource: allInbox.data.status.credentialSource,
       hasMainToken: allInbox.data.status.hasMainToken,
       hasNotificationsToken: allInbox.data.status.hasNotificationsToken,
       allThreadCount: allInbox.data.totalCount,
@@ -645,13 +696,15 @@ async function clearWatchNotificationsCredential(extId) {
         afterCredentials.watchNotificationsTokenCryptoMeta === null &&
         afterConfig.watchNotificationsTokenEncrypted === null &&
         afterConfig.watchNotificationsTokenCryptoMeta === null,
+      watchSourceCleared:
+        (afterCredentials.watchCredentialSource ?? null) === null &&
+        (afterConfig.watchCredentialSource ?? null) === null,
       watchChangeDelivered,
     };
   });
   await page.close();
   return result;
 }
-
 async function installBackgroundGitHubApiGuard(browser, extId) {
   const unexpectedUrls = [];
   const clients = new Set();
@@ -731,6 +784,228 @@ async function invalidTokenApiResponse(request) {
     contentType: 'application/json',
     headers: { 'x-oauth-scopes': '' },
     body: JSON.stringify({ message: 'Bad credentials' }),
+  });
+}
+
+async function interceptWatchCapabilityFixture(page) {
+  let mode = 'capable';
+  const requests = [];
+  const unexpectedRequests = [];
+  await page.setRequestInterception(true);
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.origin !== 'https://api.github.com') {
+      void request.continue().catch(() => {});
+      return;
+    }
+    void (async () => {
+      const pathWithQuery = `${url.pathname}${url.search}`;
+      const authorizationPresent = typeof request.headers().authorization === 'string';
+      if (request.method() !== 'GET' || (url.pathname !== '/user' && url.pathname !== '/notifications')) {
+        unexpectedRequests.push({ method: request.method(), pathWithQuery });
+        await request.abort('blockedbyclient');
+        return;
+      }
+      if (url.pathname === '/user' && url.search === '') {
+        requests.push({ method: 'GET', path: '/user', authorizationPresent });
+        await request.respond({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ login: 'smoke-user', id: 1 }),
+        });
+        return;
+      }
+      if (
+        url.pathname === '/notifications' &&
+        url.searchParams.get('all') === 'true' &&
+        url.searchParams.get('per_page') === '1' &&
+        [...url.searchParams.keys()].length === 2
+      ) {
+        requests.push({ method: 'GET', path: pathWithQuery, authorizationPresent });
+        await delay(250);
+        await request.respond({
+          status: mode === 'forbidden' ? 403 : 200,
+          contentType: 'application/json',
+          headers: { 'x-oauth-scopes': mode === 'forbidden' ? '' : 'notifications' },
+          body: JSON.stringify(mode === 'forbidden' ? { message: 'forbidden' } : []),
+        });
+        return;
+      }
+      unexpectedRequests.push({ method: request.method(), pathWithQuery });
+      await request.abort('blockedbyclient');
+    })().catch((error) => {
+      recordPageIssue('watch-capability-fixture', formatError(error));
+      void request.abort('failed').catch(() => {});
+    });
+  });
+  return {
+    setMode(nextMode) {
+      assert.ok(nextMode === 'capable' || nextMode === 'forbidden');
+      mode = nextMode;
+      requests.length = 0;
+      unexpectedRequests.length = 0;
+    },
+    snapshot() {
+      return {
+        mode,
+        requests: [...requests],
+        unexpectedRequests: [...unexpectedRequests],
+      };
+    },
+  };
+}
+
+function assertWatchCapabilityRequests(snapshot, expectedMode) {
+  assert.equal(snapshot.mode, expectedMode);
+  assert.deepEqual(snapshot.unexpectedRequests, []);
+  assert.deepEqual(snapshot.requests.map(({ method, path, authorizationPresent }) => ({
+    method,
+    path,
+    authorizationPresent,
+  })), [
+    { method: 'GET', path: '/user', authorizationPresent: true },
+    {
+      method: 'GET',
+      path: '/notifications?all=true&per_page=1',
+      authorizationPresent: true,
+    },
+  ]);
+}
+
+async function assertWatchDedicatedFieldCollapsed(page) {
+  await page.waitForSelector('[data-testid="watch-inbox-settings"]', { timeout: 10_000 });
+  const state = await page.evaluate(() => {
+    const settings = document.querySelector('[data-testid="watch-inbox-settings"]');
+    const form = settings?.querySelector('[data-testid="watch-dedicated-form"]');
+    const enable = settings?.querySelector('[data-testid="watch-setup-enable"]');
+    const visible = (element) => {
+      if (!element || element instanceof HTMLElement && (element.hidden || element.getAttribute('aria-hidden') === 'true')) {
+        return false;
+      }
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    return {
+      settingsPresent: !!settings,
+      dedicatedFormPresent: !!form,
+      dedicatedFormVisible: visible(form),
+      setupVisible: visible(enable),
+    };
+  });
+  assert.equal(state.settingsPresent, true);
+  assert.equal(state.dedicatedFormVisible, false, 'classic Watch field was visible before capability setup');
+  assert.equal(state.setupVisible, true, 'Watch setup CTA was not available');
+}
+
+async function assertWatchOptionsIntent(page) {
+  await page.bringToFront();
+  await page.waitForFunction(() => {
+    const heading = document.querySelector('[data-testid="watch-inbox-settings"] #watch-inbox-heading');
+    const enable = document.querySelector('[data-testid="watch-inbox-settings"] [data-testid="watch-setup-enable"]');
+    const active = document.activeElement;
+    const visible = (element) => {
+      if (!element) return false;
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    return !!heading && active === heading && visible(enable);
+  }, { polling: DOM_POLLING_MS, timeout: 20_000 });
+  const state = await page.evaluate(() => ({
+    focusedHeading: document.activeElement?.id === 'watch-inbox-heading',
+    dedicatedFormPresent: !!document.querySelector(
+      '[data-testid="watch-inbox-settings"] [data-testid="watch-dedicated-form"]',
+    ),
+  }));
+  assert.equal(state.focusedHeading, true, 'Watch Options intent did not focus #watch-inbox-heading');
+  assert.equal(state.dedicatedFormPresent, false, 'primary Watch setup unexpectedly rendered dedicated form');
+}
+
+async function clickWatchRecoveryOptions(page) {
+  const clicked = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+    const button = [...(section?.querySelectorAll('button') ?? [])]
+      .find((candidate) => candidate.textContent?.trim() === 'Open options');
+    button?.click();
+    return !!button;
+  });
+  assert.equal(clicked, true, 'Watch setup CTA did not open Options');
+}
+
+async function enableWatchWithMainCredential(page, options = {}) {
+  const expectFallback = options.expectFallback === true;
+  await page.waitForSelector('[data-testid="watch-setup-enable"]', { timeout: 10_000 });
+  await page.click('[data-testid="watch-setup-enable"]');
+  await page.waitForFunction(() => {
+    const notice = document.querySelector('[data-testid="watch-main-checking"]');
+    if (!notice) return false;
+    const style = getComputedStyle(notice);
+    const rect = notice.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+  }, { polling: DOM_POLLING_MS, timeout: 5_000 });
+  if (expectFallback) {
+    await page.waitForFunction(() => {
+      const form = document.querySelector('[data-testid="watch-dedicated-form"]');
+      if (!form) return false;
+      const style = getComputedStyle(form);
+      const rect = form.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    }, { polling: DOM_POLLING_MS, timeout: 20_000 });
+    return;
+  }
+  await page.waitForSelector('[data-testid="watch-credential-source"]', { timeout: 20_000 });
+}
+
+async function assertWatchFallbackState(page) {
+  await page.waitForFunction(() => {
+    const form = document.querySelector('[data-testid="watch-dedicated-form"]');
+    const setup = document.querySelector('[data-testid="watch-setup-enable"]');
+    const checking = document.querySelector('[data-testid="watch-main-checking"]');
+    return !!form && setup instanceof HTMLButtonElement && !setup.disabled && !checking;
+  }, { polling: DOM_POLLING_MS, timeout: 20_000 });
+  const state = await page.evaluate(() => {
+    const form = document.querySelector('[data-testid="watch-dedicated-form"]');
+    const input = document.querySelector('#watch-notifications-token');
+    const connect = form?.querySelector('[data-testid="watch-token-connect"]');
+    const text = document.querySelector('[data-testid="watch-inbox-settings"]')?.textContent?.toLowerCase() ?? '';
+    const style = form ? getComputedStyle(form) : null;
+    const rect = form?.getBoundingClientRect();
+    return {
+      formVisible: !!form && style?.display !== 'none' && style?.visibility !== 'hidden' &&
+        (rect?.width ?? 0) > 0 && (rect?.height ?? 0) > 0,
+      inputPresent: !!input,
+      connectPresent: !!connect,
+      safeCopyPresent: ['stars', 'tags', 'gist', 'sync'].every((term) => text.includes(term)),
+    };
+  });
+  assert.deepEqual(state, {
+    formVisible: true,
+    inputPresent: true,
+    connectPresent: true,
+    safeCopyPresent: true,
+  });
+}
+
+async function readWatchCredentialState(page) {
+  return page.evaluate(async () => {
+    const [stored, response] = await Promise.all([
+      chrome.storage.local.get(['gsm_config', 'gsm_github_credentials_v1']),
+      chrome.runtime.sendMessage({ type: 'getWatchStatus' }),
+    ]);
+    const config = stored.gsm_config ?? {};
+    const credentials = stored.gsm_github_credentials_v1 ?? {};
+    const status = response?.data ?? {};
+    return {
+      configSource: config.watchCredentialSource ?? null,
+      credentialRecordSource: credentials.watchCredentialSource ?? config.watchCredentialSource ?? null,
+      statusSource: status.credentialSource ?? null,
+      hasNotificationsToken: status.hasNotificationsToken === true,
+      dedicatedCipherPresent: typeof credentials.watchNotificationsTokenEncrypted === 'string' &&
+        credentials.watchNotificationsTokenEncrypted.length > 0,
+      dedicatedMetaPresent: !!credentials.watchNotificationsTokenCryptoMeta,
+    };
   });
 }
 
@@ -1198,17 +1473,15 @@ async function assertWatchSetupState(page) {
         const host = document.getElementById('gsm-manager-host');
         const root = host?.shadowRoot?.getElementById('gsm-manager-root');
         const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
-        const text = section?.textContent ?? '';
         return document.querySelectorAll('#gsm-manager-host').length === 1 &&
           !!root && !!section &&
-          text.includes('Connect a separate classic token with the notifications scope') &&
           [...(section?.querySelectorAll('button') ?? [])]
             .some((candidate) => candidate.textContent?.trim() === 'Open options');
       },
       { polling: DOM_POLLING_MS, timeout: 20_000 },
     );
   } catch (error) {
-    throw await pageWaitError(page, 'Watch classic-token setup state did not render', error);
+    throw await pageWaitError(page, 'Watch setup recovery state did not render', error);
   }
   const state = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
@@ -1489,9 +1762,15 @@ function hookPageDiagnostics(page, label) {
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
     const text = message.text();
+    const location = message.location();
     if (label === OPTIONS_PATH && text.includes('api.github.com') && text.includes('401')) return;
     if (label === OPTIONS_PATH && text.includes('Failed to load resource') && text.includes('401')) return;
-    const location = message.location();
+    if (
+      label === OPTIONS_PATH &&
+      text.includes('Failed to load resource') &&
+      text.includes('403') &&
+      location.url === 'https://api.github.com/notifications?all=true&per_page=1'
+    ) return;
     recordPageIssue(label, `console.error: ${text}${location.url ? ` (${location.url})` : ''}`);
   });
   page.on('requestfailed', (request) => {

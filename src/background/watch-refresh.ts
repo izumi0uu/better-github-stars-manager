@@ -1,4 +1,4 @@
-import type { authStore } from '@/auth/auth-store';
+import type { GitHubCredentialSnapshot, authStore } from '@/auth/auth-store';
 import {
   WATCH_DEFAULT_POLL_INTERVAL_SECONDS,
   WATCH_MAX_POLL_INTERVAL_SECONDS,
@@ -72,7 +72,7 @@ export interface WatchRefreshCoordinator {
   isRefreshing(): boolean;
 }
 
-type AuthSnapshot = Awaited<ReturnType<WatchAuth['getGitHubCredentialSnapshot']>>;
+type AuthSnapshot = GitHubCredentialSnapshot;
 
 type RefreshOutcome = Omit<WatchRefreshResult, 'status'>;
 
@@ -108,6 +108,7 @@ export function createWatchRefreshCoordinator(
       latest.mainToken !== null &&
       latest.mainIdentity === snapshot.mainIdentity &&
       (!includeNotifications || (
+        latest.watchCredentialSource === snapshot.watchCredentialSource &&
         latest.notificationsToken === snapshot.notificationsToken &&
         latest.notificationsIdentity === snapshot.notificationsIdentity
       ));
@@ -117,15 +118,12 @@ export function createWatchRefreshCoordinator(
     return JSON.stringify([
       auth.accountLogin,
       auth.mainIdentity,
+      auth.watchCredentialSource,
       auth.notificationsIdentity,
       auth.mainToken !== null,
-      auth.notificationsConfigured,
     ]);
   }
 
-  function sameAuthSnapshot(left: AuthSnapshot, right: AuthSnapshot): boolean {
-    return refreshIdentity(left) === refreshIdentity(right);
-  }
 
   async function deriveStatusForAuth(
     auth: AuthSnapshot,
@@ -133,7 +131,8 @@ export function createWatchRefreshCoordinator(
     stateOverride?: WatchStatus['state'],
   ): Promise<WatchStatus> {
     const hasMainToken = !!(auth.accountLogin && auth.mainToken);
-    const hasNotificationsToken = !!auth.notificationsToken;
+    const credentialSource = auth.watchCredentialSource;
+    const hasNotificationsToken = credentialSource !== null && !!auth.notificationsToken;
     const state = stateOverride === undefined && hasMainToken && auth.accountLogin
       ? await dependencies.store.getState(auth.accountLogin)
       : stateOverride ?? null;
@@ -161,6 +160,7 @@ export function createWatchRefreshCoordinator(
     }
     return {
       accountLogin: auth.accountLogin,
+      credentialSource,
       hasMainToken,
       hasNotificationsToken,
       refreshing,
@@ -181,7 +181,7 @@ export function createWatchRefreshCoordinator(
       : null;
     const result = await dependencies.store.queryInbox({ accountLogin, unreadOnly });
     const latest = await readAuth();
-    if (!sameAuthSnapshot(auth, latest)) {
+    if (refreshIdentity(auth) !== refreshIdentity(latest)) {
       return {
         ...projectWatchInbox([], { unreadOnly }),
         status: await deriveStatusForAuth(latest, inFlight !== null),
@@ -202,13 +202,15 @@ export function createWatchRefreshCoordinator(
       inboxPublished: false,
       notModified: false,
     };
-    if (!auth.accountLogin || !auth.mainToken || !await sameCredentials(auth, true)) {
+    if (!auth.accountLogin || !auth.mainToken || !await sameCredentials(auth, false)) {
       return empty;
     }
     const refreshStartedAt = now();
     const attemptedAt = new Date(refreshStartedAt).toISOString();
     const previousState = await dependencies.store.getState(auth.accountLogin);
     if (
+      auth.watchCredentialSource !== null &&
+      auth.notificationsToken &&
       previousState?.inbox.nextAllowedAt &&
       Date.parse(previousState.inbox.nextAllowedAt) > refreshStartedAt
     ) return empty;
@@ -256,7 +258,7 @@ export function createWatchRefreshCoordinator(
 
     let inboxPublished = false;
     let notModified = false;
-    if (auth.notificationsToken && scopeAvailable && await sameCredentials(auth, true)) {
+    if (auth.watchCredentialSource !== null && auth.notificationsToken && scopeAvailable && await sameCredentials(auth, true)) {
       const state = await dependencies.store.getState(auth.accountLogin);
       try {
         const snapshot = await dependencies.fetchNotifications({
@@ -371,7 +373,7 @@ export function createWatchRefreshCoordinator(
         : false;
       const shouldClearNotifications = !auth.accountLogin || (
         !!options.invalidateNotificationsIdentity &&
-        auth.notificationsConfigured &&
+        auth.watchCredentialSource !== null &&
         auth.notificationsIdentity === options.invalidateNotificationsIdentity
       );
       let credentialsCleared = false;
@@ -379,7 +381,7 @@ export function createWatchRefreshCoordinator(
         const latest = await readAuth();
         if (
           !latest.accountLogin || (
-            latest.notificationsConfigured &&
+            latest.watchCredentialSource !== null &&
             latest.notificationsIdentity === options.invalidateNotificationsIdentity
           )
         ) {

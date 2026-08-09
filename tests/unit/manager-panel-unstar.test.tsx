@@ -214,8 +214,17 @@ vi.mock('@/ui/components/Toolbar', () => ({
 }));
 
 vi.mock('@/ui/components/WatchInbox', () => ({
-  WatchInbox: ({ onSelectRepository }: { onSelectRepository?: (fullName: string) => void }) => (
+  WatchInbox: ({
+    onOpenOptions,
+    onSelectRepository,
+  }: {
+    onOpenOptions?: () => void;
+    onSelectRepository?: (fullName: string) => void;
+  }) => (
     <div data-testid="watch-inbox">
+      <button type="button" aria-label="Open Watch options" onClick={onOpenOptions}>
+        Open options
+      </button>
       <button
         type="button"
         data-testid="watch-repository"
@@ -342,6 +351,7 @@ describe('ManagerPanel unstar flow', () => {
     expect(managerMocks.bgCall).toHaveBeenCalledWith('getWatchRepositoryDetail', {
       fullName: 'owner/repo',
     });
+
     expect(container.querySelector('[data-testid="repo-detail"]')?.textContent).toBe('owner/repo');
 
     act(() => {
@@ -349,6 +359,19 @@ describe('ManagerPanel unstar flow', () => {
     });
     expect(container.querySelector('[data-testid="filter-sidebar"]')).not.toBeNull();
     expect(managerMocks.resetFilters).not.toHaveBeenCalled();
+  });
+
+  it('routes Watch recovery to the Watch-scoped Options intent', () => {
+    const { container } = mountPanel();
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-surface"]')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open Watch options"]')?.click();
+    });
+
+    expect(managerMocks.bgCall).toHaveBeenCalledWith('openOptions', { section: 'watch' });
   });
 
   it('discards a late Watch detail response after returning to Stars', async () => {

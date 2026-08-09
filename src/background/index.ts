@@ -217,6 +217,7 @@ import {
   type BgsmOrganizeJobErrorReason,
   type BgsmOrganizeJobServerMessage,
 } from "@/utils/messaging";
+import { writeOptionsIntent } from '@/utils/options-intent';
 
 /**
  * Background SW — sync orchestrator and sole owner of the extension-origin
@@ -271,7 +272,7 @@ type Req = BgsmAgentSessionRequest
       workingContextWindow?: number | null;
       apiKey?: string;
     }
-  | { type: "openOptions" }
+  | { type: "openOptions"; section?: 'watch' }
   | { type: "devClearLocalData" }
   | { type: "runBackfill"; id: string }
   | { type: "deferBackfill"; id: string };
@@ -1822,6 +1823,12 @@ async function handle(req: Req): Promise<Res> {
       }
       case "openOptions": {
         // Content scripts have a restricted chrome.runtime without openOptionsPage, so they ask the background.
+        if (req.section !== undefined && req.section !== 'watch') {
+          return { ok: false, error: 'Unsupported Options section.' };
+        }
+        if (req.section !== undefined) {
+          await writeOptionsIntent(req.section);
+        }
         await chrome.runtime.openOptionsPage();
         return { ok: true };
       }

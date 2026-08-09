@@ -40,6 +40,7 @@ function baseConfig(): Config {
     tokenCryptoMeta: null,
     watchNotificationsTokenEncrypted: null,
     watchNotificationsTokenCryptoMeta: null,
+    watchCredentialSource: null,
     agentProvider: {
       provider: 'openai',
       protocol: null,

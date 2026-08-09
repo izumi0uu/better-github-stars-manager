@@ -178,6 +178,44 @@ describe('i18n catalog and locale propagation invariants', () => {
     );
   });
 
+  it('keeps Options section numbering continuous in both product locales', () => {
+    const english = getMessages('en').options;
+    const chinese = getMessages('zh-CN').options;
+
+    assert.deepEqual(
+      [
+        english.tokenHeading,
+        english.watchTokenHeading,
+        english.agentHeading,
+        english.gistHeading,
+        english.behaviorHeading,
+      ],
+      [
+        '1. GitHub connection',
+        '2. Watch Inbox (optional)',
+        '3. Cubby',
+        '4. Gist sync',
+        '5. Preferences',
+      ],
+    );
+    assert.deepEqual(
+      [
+        chinese.tokenHeading,
+        chinese.watchTokenHeading,
+        chinese.agentHeading,
+        chinese.gistHeading,
+        chinese.behaviorHeading,
+      ],
+      [
+        '1. GitHub 连接',
+        '2. Watch 收件箱（可选）',
+        '3. Cubby',
+        '4. Gist 同步',
+        '5. 偏好设置',
+      ],
+    );
+  });
+
   it('names the bounded Cubby ledger and separate Organize storage in both locales', () => {
     const english = getMessages('en').options;
     const chinese = getMessages('zh-CN').options;

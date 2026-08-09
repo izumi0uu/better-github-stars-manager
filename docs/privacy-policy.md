@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective date: 2026-08-06
+Effective date: 2026-08-09
 
 Better GitHub Stars Manager is a Chrome extension for organizing GitHub starred repositories. This policy describes the data the extension processes, where it goes, how long local records remain, and how you can delete them.
 
@@ -23,14 +23,17 @@ The extension processes data only to:
 - fetch and display your starred repositories
 - store and optionally sync your tags and notes through your own secret GitHub Gist
 - test or run Cubby through the AI service and exact origin you select
+- show the optional Watch Inbox after you request it, using your selected GitHub credential
 
 ## Data the extension processes
 
 The extension processes these data categories:
 
-- the GitHub personal access token you paste into Options
+- the main GitHub personal access token you paste into Options and, only when needed for Watch Inbox, an optional dedicated Notifications token
 - GitHub account identity from `GET /user`, such as username, display name, and avatar URL
 - star metadata from `GET /user/starred`, such as repository name, URL, description, language, topics, star count, and dates
+- watched-repository membership from `GET /user/subscriptions`
+- GitHub notification metadata for the optional Watch Inbox, including repository, reason, subject title and type, safe GitHub link, unread state, and update/read dates
 - tags and notes that you create inside the extension
 - metadata for the dedicated secret GitHub Gist used for optional sync
 - Cubby service configuration, including provider, model, canonical origin, encrypted API-key material, and connection readiness
@@ -45,6 +48,7 @@ The extension uses this data to provide these features:
 
 - fetch, search, filter, tag, and annotate your starred repositories
 - optionally sync your annotation layer through a secret GitHub Gist under your account
+- optionally show GitHub Notifications for currently starred repositories you watch
 - let Cubby analyze an explicitly selected or frozen repository scope
 - let Cubby perform ordinary bounded tag changes authorized by your current prompt and current-turn local evidence
 - run a separate full-library Organize workflow that freezes its scope, proposes additive tags, and requires your Review selections before Apply
@@ -56,14 +60,15 @@ The extension does not run ads, sell data, or send data to a developer-operated 
 
 The extension stores data in the following places:
 
-- Your GitHub token is stored in `chrome.storage.local` after Advanced Encryption Standard Galois/Counter Mode (AES-GCM) encryption
+- GitHub credentials are stored in `chrome.storage.local` after Advanced Encryption Standard Galois/Counter Mode (AES-GCM) encryption; Watch reuses the main credential after an explicit capability check or stores a separate encrypted Notifications token when required
 - AI-service API keys are stored in `chrome.storage.local` after AES-GCM encryption and are bound to the selected provider and canonical origin
 - Lightweight configuration, including the bound Gist ID, is stored in `chrome.storage.local`
 - Star metadata, tags, and notes are stored locally in IndexedDB for fast querying
+- Watch repository scope, notification-thread snapshots, and refresh state are stored unencrypted in local IndexedDB
 - Committed conversation history, attempt and recovery records, and paged artifacts are stored unencrypted in the extension's local IndexedDB database
 - Tags, notes, and tag metadata are stored in a secret GitHub Gist only when you use **Push** or **Pull**
 
-Cubby conversation, recovery, artifact, and Organize records are not synced through Gist.
+Watch scope and notification records, Cubby conversation/recovery/artifact records, and Organize records are not synced through Gist.
 
 Each admitted Cubby turn stores an immutable launch, including its prompt, in an attempt row. Pending continuation messages use a separate bounded recovery row. Cubby removes the recovery row when continuation authority ends.
 
@@ -120,7 +125,7 @@ The selected AI-service key must be sent to its bound origin for authentication.
 
 GitHub receives only data needed for a requested GitHub feature:
 
-- the GitHub REST API receives requests for account lookup, star retrieval, optional indexed public-code search, and Gist sync
+- the GitHub REST API receives requests for account lookup, star retrieval, optional watched-repository membership and Notifications when Watch Inbox is enabled, optional indexed public-code search, and Gist sync
 - the GitHub Gists API receives annotation data only when you use optional Push or Pull sync
 
 No analytics software development kit, ad network, tracking service, developer proxy, or developer server receives extension data. Provider-side retention and deletion follow the account and service terms you selected.
@@ -142,6 +147,7 @@ An unpacked development build can expose an explicitly enabled one-shot raw capt
 You can remove data in these ways:
 
 - clear the saved GitHub token in Options
+- turn off Watch Inbox to remove its selected binding, any separate Notifications token, and cached notification threads; same-account watched-repository scope may remain locally until the main GitHub account is cleared or the extension is uninstalled
 - remove the saved AI-service key or change the provider or origin, which invalidates the prior credential binding
 - delete a Cubby conversation after cancelling or completing any linked active Organize workflow
 - dismiss the retained completed or cancelled Organize result from the workbench

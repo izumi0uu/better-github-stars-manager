@@ -321,6 +321,7 @@ export interface AgentProviderConfig {
   credentialRevision: string | null;
   capability: AgentProviderCapabilityRecord | null;
 }
+export type WatchCredentialSource = 'main' | 'dedicated' | null;
 
 /** Light config kept in chrome.storage.local. */
 export interface Config {
@@ -328,6 +329,7 @@ export interface Config {
   tokenCryptoMeta: CryptoMeta | null;
   watchNotificationsTokenEncrypted: string | null;
   watchNotificationsTokenCryptoMeta: CryptoMeta | null;
+  watchCredentialSource: WatchCredentialSource;
   agentProvider: AgentProviderConfig;
   /** Explicit Agent data-sharing acknowledgement for one disclosure/provider/origin tuple. */
   agentDataDisclosureAcceptance: AgentDataDisclosureAcceptance | null;

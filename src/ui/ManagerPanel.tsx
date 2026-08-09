@@ -558,7 +558,7 @@ export function ManagerPanel() {
                 onUnreadOnlyChange={watchInbox.setUnreadOnly}
                 onRefresh={() => { void watchInbox.refresh(); }}
                 onRetryQuery={() => { void watchInbox.reload(); }}
-                onOpenOptions={() => bgCall('openOptions').catch(() => {})}
+                onOpenOptions={() => bgCall('openOptions', { section: 'watch' }).catch(() => {})}
                 onSelectRepository={(fullName) => { void handleWatchRepositorySelect(fullName); }}
               />
             ) : !statusLoaded || !status ? (

@@ -40,7 +40,7 @@ Better GitHub Stars Manager
 
 ### Short description
 
-Organize GitHub stars with search, tags, notes, filters, optional Gist sync, and a local-first AI assistant.
+Organize GitHub stars with search, tags, notes, filters, Watch Inbox, optional Gist sync, and a local-first AI assistant.
 
 ### Detailed description
 
@@ -53,13 +53,14 @@ Use it to:
 - organize repositories with custom tags and notes
 - filter by language, tags, and untagged status
 - sync only your annotation layer through your own secret GitHub Gist
+- view GitHub Notifications for currently starred repositories you watch through the optional Watch Inbox
 - use your own OpenAI, OpenRouter, Anthropic, or compatible AI service with Cubby
 
 Ordinary Cubby prompts can authorize bounded tag changes. Every write remains limited by current-turn local evidence, operation limits, and the current write policy.
 
 Full-library Organize is a separate workflow. It freezes the library scope, prepares additive tag suggestions, lets you select suggestions in Review, and changes tags only when you choose **Apply**.
 
-GitHub and Gist requests go directly to GitHub. Optional Cubby requests go directly to the selected AI service and exact configured origin. The developer operates no proxy or custom backend.
+GitHub, Watch Inbox, and Gist requests go directly to GitHub. Optional Cubby requests go directly to the selected AI service and exact configured origin. The developer operates no proxy or custom backend.
 
 ### Suggested category
 
@@ -103,7 +104,7 @@ These justifications derive from the current Manifest V3 source. The final clean
 
 ### `storage`
 
-Provides `chrome.storage.local` for lightweight configuration, encrypted GitHub and AI-service credentials, and query or UI state. Star and annotation data, Cubby's bounded conversation/recovery/artifact ledger, and separately bounded Organize records use extension-local IndexedDB.
+Provides `chrome.storage.local` for lightweight configuration, encrypted GitHub and AI-service credentials, the selected Watch credential source, and query or UI state. Star and annotation data, Watch snapshots, Cubby's bounded conversation/recovery/artifact ledger, and separately bounded Organize records use extension-local IndexedDB. A transient `chrome.storage.session` value routes Watch recovery to the relevant Options section and is consumed immediately.
 
 ### `alarms`
 
@@ -115,7 +116,7 @@ Mounts the manager on GitHub stars and repository pages. Manifest match patterns
 
 ### `https://api.github.com/*`
 
-Authenticates the provided token, fetches starred repositories, performs requested bounded public-code search, and syncs annotations through the user's own secret Gist.
+Authenticates the provided token, fetches starred and watched repositories, fetches Notifications only after Watch Inbox is enabled, performs requested bounded public-code search, and syncs annotations through the user's own secret Gist.
 
 ### `https://api.openai.com/*`
 
@@ -145,6 +146,8 @@ Use this source-backed mapping while completing the dashboard. The dashboard ans
 - Data is not sold or used for personalized advertising, credit, or lending decisions
 - No analytics or advertising software development kit receives extension data
 - GitHub and Gist receive only data needed for requested GitHub, search, and sync features
+- Watch Inbox processes watched-repository membership and bounded GitHub notification metadata only after explicit setup; it reuses the main credential after a successful capability check or stores a separate encrypted Notifications token when required
+- Watch scope, notification threads, and refresh state stay in local IndexedDB and are never synced through Gist or sent to an AI service by default
 - The selected AI service receives task data only when Cubby is used
 - No developer-operated proxy or backend receives GitHub, Gist, or Provider traffic
 - Star metadata remains in local IndexedDB unless you approve its use for a scoped Cubby task. Selected or frozen scope public repository metadata may reach the exact AI service you selected. Annotation data reaches your secret Gist only through optional **Push** or **Pull** sync.
@@ -173,7 +176,7 @@ Store credentials only in the Chrome Web Store Dashboard **Test instructions** t
 The dashboard should distinguish two paths:
 
 - **Credential-free path**: install, open Options, inspect disclosures, theme and locale controls, and verify that no private credential is bundled
-- **Credential-required path**: use dedicated, least-privilege, revocable GitHub and AI-service credentials supplied only in Dashboard Test Instructions
+- **Credential-required path**: use dedicated, least-privilege, revocable GitHub and AI-service credentials supplied only in Dashboard Test Instructions; include a same-account classic `notifications` PAT only when the main review credential cannot access Notifications
 
 Use these reviewer steps after private credentials are available:
 
@@ -182,19 +185,22 @@ Use these reviewer steps after private credentials are available:
 3. Click **Save & verify** and confirm the authenticated account appears.
 4. Open `https://github.com/your_username_here?tab=stars`, then run **Full Sync**.
 5. Verify that stars appear and that search, filters, notes, and manual tags work locally.
-6. Use **Push** and **Pull** to verify the dedicated secret Gist sync path.
-7. In Options, select the AI service and confirm the collapsed notice shows the selected service and exact origin.
-8. Enter the model and dedicated AI-service key from Dashboard Test Instructions, then run **Test connection**.
-9. For a custom compatible origin, use **Allow access** and verify that denying access sends no request.
-10. Ask Cubby for one ordinary bounded tag change and confirm only the prompt-authorized, locally evidenced change is applied.
-11. Reload after a committed turn and confirm the conversation remains available. Exercise **Retry** only after a visible retryable failure.
-12. Clear the re-fetchable tool cache in Options and confirm final answers and conversation history remain.
-13. Open Cubby on two GitHub pages and start full-library Organize on one page.
-14. Confirm the second page is read-only until the owner disconnects and you explicitly choose **Take control**.
-15. Select suggestions in Review, choose **Apply**, and confirm both pages converge on the terminal receipt.
-16. Delete the origin conversation and confirm the terminal Organize result remains reviewable, then choose **Dismiss**.
-17. Confirm requests target the selected origin. Inspect release diagnostics and evidence for bounded facts only, with no credentials, authentication headers, or raw Provider request and response bodies.
-18. Delete the dedicated review Gist and revoke or rotate all reviewer credentials after review.
+6. Open **Watch**, choose **Set up Watch Inbox**, and confirm the extension checks the existing GitHub connection before requesting another credential.
+7. If that credential can read Notifications, confirm Watch connects without storing a separate token. Otherwise use the same-account classic `notifications` PAT supplied only in Dashboard Test Instructions and confirm the fallback appears only after the failed capability check.
+8. Refresh Watch and confirm only notifications for repositories that are both currently starred and watched are displayed. Turn Watch off and confirm cached threads and any separate token are removed while Stars remains usable.
+9. Use **Push** and **Pull** to verify the dedicated secret Gist sync path.
+10. In Options, select the AI service and confirm the collapsed notice shows the selected service and exact origin.
+11. Enter the model and dedicated AI-service key from Dashboard Test Instructions, then run **Test connection**.
+12. For a custom compatible origin, use **Allow access** and verify that denying access sends no request.
+13. Ask Cubby for one ordinary bounded tag change and confirm only the prompt-authorized, locally evidenced change is applied.
+14. Reload after a committed turn and confirm the conversation remains available. Exercise **Retry** only after a visible retryable failure.
+15. Clear the re-fetchable tool cache in Options and confirm final answers and conversation history remain.
+16. Open Cubby on two GitHub pages and start full-library Organize on one page.
+17. Confirm the second page is read-only until the owner disconnects and you explicitly choose **Take control**.
+18. Select suggestions in Review, choose **Apply**, and confirm both pages converge on the terminal receipt.
+19. Delete the origin conversation and confirm the terminal Organize result remains reviewable, then choose **Dismiss**.
+20. Confirm requests target the selected origin. Inspect release diagnostics and evidence for bounded facts only, with no credentials, authentication headers, or raw Provider request and response bodies.
+21. Delete the dedicated review Gist and revoke or rotate all reviewer credentials after review.
 
 Do not place the credential values or cleanup secrets in this document. Dashboard setup, credential validity, live service behavior, and cleanup remain manual until observed.
 
