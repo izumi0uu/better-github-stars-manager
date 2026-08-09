@@ -25,7 +25,10 @@ function installChrome(initial: StoredState = {}) {
     areaName: string,
   ) => void> = [];
   const local = {
-    get: vi.fn(async (key: string) => ({ [key]: state[key] })),
+    get: vi.fn(async (key: string | string[]) => {
+      const keys = Array.isArray(key) ? key : [key];
+      return Object.fromEntries(keys.map((item) => [item, state[item]]));
+    }),
     set: vi.fn(async (values: StoredState) => {
       for (const [key, value] of Object.entries(values)) {
         const oldValue = state[key];

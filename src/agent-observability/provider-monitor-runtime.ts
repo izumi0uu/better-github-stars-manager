@@ -128,6 +128,7 @@ async function scrubFailureDetails(
 ): Promise<AgentProviderConnectionFailureDetails> {
   const settledSecrets = await Promise.allSettled([
     authStore.getToken(),
+    authStore.getWatchNotificationsToken(),
     authStore.getAgentApiKey(),
   ]);
   const secrets = settledSecrets.flatMap((result) => (

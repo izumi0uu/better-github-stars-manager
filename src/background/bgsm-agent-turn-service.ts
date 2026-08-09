@@ -35,6 +35,7 @@ import {
   type BgsmAgentTurnInput,
   type RepositoryCodeRefAuthority,
 } from '@/bgsm-agent';
+import type { BgsmAgentTagAssignmentPolicy } from '@/bgsm-agent/tag-assignment-policy';
 import type {
   BgsmAgentTurnLaunch,
   BgsmAgentTurnResult,
@@ -98,6 +99,7 @@ export type BgsmAgentTurnServiceDependencies = Readonly<{
   resolveLiveCandidate: BgsmAgentConversationResolver;
   getActiveOrganizeJob(): Promise<OrganizeJobRecord | undefined>;
   isOrganizeApplyBlockingWrites(job: OrganizeJobRecord | undefined): boolean;
+  createTagAssignmentPolicy(): Promise<BgsmAgentTagAssignmentPolicy>;
   assignManualTags: AgentManualTagWriter;
   removeVisibleTags: AgentVisibleTagRemovalWriter;
   deleteTagsEverywhere: AgentGlobalTagDeletionWriter;
@@ -281,7 +283,10 @@ export function createBgsmAgentTurnService(
         sessionId,
         scopeFingerprint,
       );
-      const activeOrganizeJob = await dependencies.getActiveOrganizeJob();
+      const [activeOrganizeJob, tagAssignmentPolicy] = await Promise.all([
+        dependencies.getActiveOrganizeJob(),
+        dependencies.createTagAssignmentPolicy(),
+      ]);
       const organizeApplyActive = dependencies.isOrganizeApplyBlockingWrites(activeOrganizeJob);
       if (liveness.signal.aborted) return settleWithoutTransition(terminalAfterAbort());
       const durableAttempt = recoveryClass === 'statically_read_only'
@@ -322,6 +327,7 @@ export function createBgsmAgentTurnService(
           return { status: 'accepted' };
         },
         assignManualTags: dependencies.assignManualTags,
+        tagAssignmentPolicy,
         removeVisibleTags: dependencies.removeVisibleTags,
         deleteTagsEverywhere: dependencies.deleteTagsEverywhere,
       });

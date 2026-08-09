@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Archive, Star as StarIcon, StickyNote } from 'lucide-react';
 import type { Star } from '@/types';
 import { Badge } from '@/ui/shadcn/badge';
@@ -10,6 +10,10 @@ import { useI18n } from '@/i18n';
 import { getLockedRegionProps } from '@/ui/interaction-lock';
 import type { ColumnId } from '@/ui/column-layout';
 import { fitInlineTags } from '@/ui/inline-tag-fit';
+import {
+  createRepositorySearchMatcher,
+  type SearchTextRange,
+} from '@/search/repository-search';
 
 /**
  * virtualized-list row. Fixed h-16 (64px) MUST match the virtualizer
@@ -23,6 +27,8 @@ const useIsomorphicLayoutEffect =
 
 export const StarRow = memo(function StarRow({
   star,
+  searchQuery = '',
+  showRepositoryOwner = true,
   tags,
   hasNotes,
   favorite,
@@ -42,6 +48,8 @@ export const StarRow = memo(function StarRow({
   onUnstarPopoverOpenChange,
 }: {
   star: Star;
+  searchQuery?: string;
+  showRepositoryOwner?: boolean;
   tags: string[];
   hasNotes: boolean;
   favorite: boolean;
@@ -78,6 +86,10 @@ export const StarRow = memo(function StarRow({
   const visible = tags.slice(0, visibleCount);
   const hiddenCount = tags.length - visible.length;
   const overflow = hiddenCount > 0;
+  const repositoryNameMatch = useMemo(
+    () => createRepositorySearchMatcher(searchQuery).matchName(star.full_name),
+    [searchQuery, star.full_name],
+  );
   const { m } = useI18n();
 
   useIsomorphicLayoutEffect(() => {
@@ -148,7 +160,17 @@ export const StarRow = memo(function StarRow({
           case 'repository':
             return (
               <div key={column} data-row-col={column} className={cn('flex items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
-                <span className="truncate text-primary">{star.full_name}</span>
+                <span
+                  className="truncate text-primary"
+                  title={showRepositoryOwner ? undefined : star.full_name}
+                  aria-label={showRepositoryOwner ? undefined : star.full_name}
+                >
+                  <HighlightedRepositoryName
+                    fullName={star.full_name}
+                    ranges={repositoryNameMatch.nameRanges}
+                    showOwner={showRepositoryOwner}
+                  />
+                </span>
                 {star.archived && <Archive className="size-3 shrink-0 text-warning" aria-label={m.starRow.archived} />}
               </div>
             );
@@ -363,6 +385,42 @@ export const StarRow = memo(function StarRow({
     </div>
   );
 });
+
+function HighlightedRepositoryName({
+  fullName,
+  ranges,
+  showOwner,
+}: {
+  fullName: string;
+  ranges: readonly SearchTextRange[];
+  showOwner: boolean;
+}) {
+  const sourceOffset = showOwner ? 0 : Math.max(0, fullName.lastIndexOf('/') + 1);
+  const label = fullName.slice(sourceOffset);
+  if (ranges.length === 0) return label;
+
+  const content: ReactNode[] = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    const start = Math.max(cursor, Math.min(label.length, range.start - sourceOffset));
+    const end = Math.max(start, Math.min(label.length, range.end - sourceOffset));
+    if (start > cursor) content.push(label.slice(cursor, start));
+    if (end > start) {
+      content.push(
+        <mark
+          key={`${start}:${end}`}
+          data-search-match=""
+          className="rounded-[2px] bg-search-match/70 text-search-match-foreground"
+        >
+          {label.slice(start, end)}
+        </mark>,
+      );
+    }
+    cursor = end;
+  }
+  if (cursor < label.length) content.push(label.slice(cursor));
+  return <>{content}</>;
+}
 
 function fmt(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;

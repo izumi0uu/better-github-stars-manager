@@ -21,6 +21,11 @@ import type {
 } from './agent-storage-model';
 import type { AgentAttemptRecord } from './agent-attempt-model';
 import type { AgentAttemptRecoveryRecord } from './agent-attempt-recovery-model';
+import type {
+  GitHubNotificationThread,
+  GitHubWatchRepository,
+  GitHubWatchStateRecord,
+} from '@/watch/watch-model';
 import { normalizeStoredTag, type LegacyTagRow } from './tag-shape';
 
 /**
@@ -45,6 +50,9 @@ export class StarsDB extends Dexie {
   agentArtifacts!: Table<AgentArtifactRecord, string>;
   agentArtifactChunks!: Table<AgentArtifactChunkRecord, string>;
   agentStorageUsage!: Table<AgentStorageUsageRecord, string>;
+  watchRepositories!: Table<GitHubWatchRepository, string>;
+  watchNotificationThreads!: Table<GitHubNotificationThread, string>;
+  watchState!: Table<GitHubWatchStateRecord, 'singleton'>;
 
   constructor() {
     super('better-github-stars-manager');
@@ -75,9 +83,10 @@ export class StarsDB extends Dexie {
       await table.bulkPut(rows.map((row) => normalizeStoredTag(row)));
     });
     // v4 adds isolated durable artifacts for whole-library tag organization,
-    // Gist dirtiness, and local Agent data. Transcripts, in-flight launch/retry
-    // authority, and chunked tool artifacts stay in IndexedDB so extension
-    // messages remain bounded and worker restarts do not lose admitted prompts.
+    // Gist dirtiness, local Agent data, and account-bound Watch snapshots.
+    // Transcripts, in-flight launch/retry authority, and chunked tool artifacts
+    // stay in IndexedDB so extension messages remain bounded and worker
+    // restarts do not lose admitted prompts.
     this.version(4).stores({
       stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
       tags: 'full_name, mtime',
@@ -95,6 +104,9 @@ export class StarsDB extends Dexie {
       agentArtifacts: 'id, sessionId, turnAttemptId, ownerMessageId, storageClass, [sessionId+storageClass], [storageClass+state+lastAccessedAt], [state+createdAt], expiresAt',
       agentArtifactChunks: 'id, artifactId, &[artifactId+index]',
       agentStorageUsage: 'id',
+      watchRepositories: 'full_name',
+      watchNotificationThreads: 'id, repositoryFullName, updatedAt, [repositoryFullName+updatedAt]',
+      watchState: 'id',
     });
   }
 }

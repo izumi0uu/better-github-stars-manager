@@ -1,6 +1,12 @@
-import { authStore, CONFIG_STORAGE_KEY } from "@/auth/auth-store";
+import {
+  authStore,
+  CONFIG_STORAGE_KEY,
+  GITHUB_CREDENTIALS_STORAGE_KEY,
+} from "@/auth/auth-store";
 import { canonicalJson, sha256Base64Url } from '@/agent-harness/canonical-json';
 import { githubStarSource } from "@/api/github-star-source";
+import { fetchGitHubNotifications } from '@/api/github-notifications-source';
+import { fetchGitHubWatchScope } from '@/api/github-watch-scope-source';
 import { getMessages } from "@/i18n";
 import {
   addBgsmAgentManualTags,
@@ -8,6 +14,7 @@ import {
   resetDirtyForDev,
 } from "@/storage/idb-tag-store";
 import { db } from "@/storage/db";
+import * as watchStore from '@/storage/watch-store';
 import { DEV } from "@/dev";
 import { attachDevTracePort } from '@/agent-observability/dev-port';
 import { createDevAgentTurnTraceFactory } from '@/agent-observability/agent-turn-trace';
@@ -46,6 +53,8 @@ import {
   createQueuedAgentVisibleTagRemovalWriter,
 } from "./agent-manual-tag-writer";
 import { createSerializedRunner } from "./serialized-runner";
+import { createWatchRefreshCoordinator } from './watch-refresh';
+import { canonicalRepositoryFullName } from '@/watch/watch-model';
 import {
   createOrganizeApplyPump,
   type OrganizeApplyPumpLifecycleEvent,
@@ -86,6 +95,7 @@ import {
   type OrganizeRunIdentity,
 } from "./organize-job-controller";
 import { OrganizeProposalAnalyzer } from "@/bgsm-agent/organize-proposal-analyzer";
+import { createBgsmAgentTagAssignmentPolicy } from '@/bgsm-agent/tag-assignment-policy';
 import {
   issueContinuationCursor,
   resolveContinuationCursor,
@@ -117,6 +127,7 @@ import {
 } from "@/bgsm-agent/organize-job";
 import {
   createEmptyRunBudgetUsage,
+  createOrganizeTagPolicySnapshot,
   createProductionRunBudget,
   type RunBudget,
   type RunBudgetUsage,
@@ -221,6 +232,12 @@ type Req = BgsmAgentSessionRequest
   | { type: "gistPush" }
   | { type: "gistPull" }
   | { type: "getStatus" }
+  | { type: "getWatchStatus" }
+  | { type: "queryWatchInbox"; unreadOnly?: unknown }
+  | { type: "getWatchRepositoryDetail"; fullName?: unknown }
+  | { type: "refreshWatchInbox" }
+  | { type: "disconnectWatchInbox" }
+  | { type: "clearWatchData" }
   | { type: "getUsername" }
   | { type: "getAccount" }
   | { type: "fetchAccount" }
@@ -267,6 +284,30 @@ type Res = { ok: true; data?: unknown } | {
 };
 
 const jobQueue = createSerializedRunner();
+const watchRefreshCoordinator = createWatchRefreshCoordinator({
+  runSerialized: (operation) => jobQueue.run(operation),
+  auth: authStore,
+  fetchScope: fetchGitHubWatchScope,
+  fetchNotifications: fetchGitHubNotifications,
+  loadLiveRepositoryNames: async () => (await db.stars.toArray())
+    .filter((star) => !star.tombstone)
+    .map((star) => star.full_name),
+  store: {
+    getState: watchStore.getWatchState,
+    getRepositories: watchStore.getWatchRepositories,
+    queryInbox: watchStore.queryStoredWatchInbox,
+    reconcileAccount: watchStore.reconcileWatchAccount,
+    reconcileLiveStars: watchStore.reconcileWatchLiveStars,
+    replaceScope: watchStore.replaceWatchScope,
+    recordScopeFailure: watchStore.recordWatchScopeFailure,
+    replaceInbox: watchStore.replaceWatchInbox,
+    revalidateInbox: watchStore.revalidateWatchInbox,
+    recordInboxFailure: watchStore.recordWatchInboxFailure,
+    disconnectInbox: watchStore.disconnectWatchInbox,
+    clearData: watchStore.clearWatchData,
+  },
+  broadcastChanged: broadcastWatchChanged,
+});
 const agentManualTagWriter = createQueuedAgentManualTagWriter({
   runSerialized: (operation, runOptions) => jobQueue.run(operation, runOptions),
   isBlocked: async () => organizeApplyBlocksAgentWrites(await getActiveOrganizeJob()),
@@ -374,6 +415,19 @@ if (DEV) {
     }
   });
 }
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  // Both keys can change atomically; the dedicated credential record owns identity.
+  const credentialsChange = changes[GITHUB_CREDENTIALS_STORAGE_KEY];
+  const accountChange = credentialsChange ?? changes[CONFIG_STORAGE_KEY];
+  if (!accountChange || !watchMainAccountChanged(accountChange)) return;
+
+  // The coordinator clears the account-bound token and IDB stores through the
+  // shared queue. Wrapping it in another queued operation would deadlock it.
+  void watchRefreshCoordinator.reconcileAccount({
+    invalidateNotificationsIdentity: watchNotificationsIdentity(accountChange.oldValue),
+  }).catch(() => {});
+});
 const organizeJobRunConnections = createBgsmOrganizeJobConnectionRegistry<chrome.runtime.Port>();
 let organizeJobRunMutationTail: Promise<void> = Promise.resolve();
 let pendingDurableOrganizeJobId: OrganizeJobId | null = null;
@@ -383,6 +437,7 @@ const devRawCaptureCoordinator = DEV
   ? createDevRawCaptureCoordinator({
       getConfiguredSecrets: async () => Promise.all([
         authStore.getToken(),
+        authStore.getWatchNotificationsToken(),
         authStore.getAgentApiKey(),
       ]),
     })
@@ -663,6 +718,7 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
           fingerprint: state.frozenScope.fingerprint,
         },
         taskInstruction: context.taskInstruction,
+        tagPolicy: state.tagPolicy,
         taxonomy: {
           fingerprint: taxonomyBundle.fingerprint,
           snapshot: {
@@ -1034,6 +1090,50 @@ function broadcastDataChanged() {
   chrome.runtime.sendMessage({ type: "dataChanged" }).catch(() => {});
 }
 
+function broadcastWatchChanged() {
+  chrome.runtime.sendMessage({ type: 'watchChanged' }).catch(() => {});
+}
+
+async function reconcileWatchScopeAfterStarsChange(): Promise<void> {
+  try {
+    if (await watchStore.reconcileWatchLiveStars(await authStore.getUsername())) {
+      broadcastWatchChanged();
+    }
+  } catch {
+    // Watch is optional; a local cleanup failure must not fail a Stars mutation.
+  }
+}
+
+function watchAccountLogin(config: unknown): string | null {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
+  const username = (config as { username?: unknown }).username;
+  if (typeof username !== 'string') return null;
+  const normalized = username.trim().toLowerCase();
+  return normalized || null;
+}
+
+function watchMainAccountChanged(change: { oldValue?: unknown; newValue?: unknown }): boolean {
+  const previous = watchAccountLogin(change.oldValue);
+  const next = watchAccountLogin(change.newValue);
+  return previous !== next && (previous !== null || next !== null);
+}
+
+function watchNotificationsIdentity(config: unknown): string | null {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
+  const value = config as {
+    watchNotificationsTokenEncrypted?: unknown;
+    watchNotificationsTokenCryptoMeta?: unknown;
+  };
+  if (
+    typeof value.watchNotificationsTokenEncrypted !== 'string' ||
+    !value.watchNotificationsTokenEncrypted ||
+    !value.watchNotificationsTokenCryptoMeta
+  ) return null;
+  return JSON.stringify([
+    value.watchNotificationsTokenEncrypted,
+    value.watchNotificationsTokenCryptoMeta,
+  ]);
+}
 async function clearLocalDataForDev() {
   if (!DEV) throw new Error("DEV_ONLY");
   if (persistTimer) {
@@ -1123,6 +1223,7 @@ async function autoTagAll(
   }
   return { tagged, remainingUntagged };
 }
+
 
 
 function agentTraceProviderIdentity(
@@ -1224,6 +1325,7 @@ async function performFullSyncJob() {
     message: m.background.fetchingPages(1),
   });
   const result = await githubStarSource.syncFull((p) => setProgress(p));
+  await reconcileWatchScopeAfterStarsChange();
   broadcastDataChanged();
   setIdleMessage(m.background.fullDone(result.added));
   return result;
@@ -1346,7 +1448,9 @@ async function handle(req: Req): Promise<Res> {
             total: null,
             message: m.background.incrementalSyncing,
           });
-          return githubStarSource.syncIncremental();
+          const syncResult = await githubStarSource.syncIncremental();
+          await reconcileWatchScopeAfterStarsChange();
+          return syncResult;
         });
         broadcastDataChanged();
         setIdleMessage(m.background.incrementalDone(result.added));
@@ -1370,7 +1474,9 @@ async function handle(req: Req): Promise<Res> {
             total: null,
             message: m.background.rescanningPages(1),
           });
-          return githubStarSource.syncRescan((p) => setProgress(p));
+          const syncResult = await githubStarSource.syncRescan((p) => setProgress(p));
+          await reconcileWatchScopeAfterStarsChange();
+          return syncResult;
         });
         broadcastDataChanged();
         setIdleMessage(
@@ -1448,6 +1554,69 @@ async function handle(req: Req): Promise<Res> {
       }
       case "getStatus":
         return { ok: true, data: await getStatusPayload() };
+      case 'getWatchStatus': {
+        const m = await getLocaleMessages();
+        try {
+          return { ok: true, data: await watchRefreshCoordinator.getStatus() };
+        } catch {
+          return { ok: false, error: m.background.watchStatusUnavailable };
+        }
+      }
+      case 'queryWatchInbox': {
+        const m = await getLocaleMessages();
+        if (req.unreadOnly !== undefined && typeof req.unreadOnly !== 'boolean') {
+          return { ok: false, error: m.background.watchInboxQueryInvalid };
+        }
+        const unreadOnly = req.unreadOnly ?? true;
+        try {
+          return { ok: true, data: await watchRefreshCoordinator.queryInbox(unreadOnly) };
+        } catch {
+          return { ok: false, error: m.background.watchInboxUnavailable };
+        }
+      }
+      case 'getWatchRepositoryDetail': {
+        const m = await getLocaleMessages();
+        const fullName = canonicalRepositoryFullName(req.fullName);
+        if (!fullName) return { ok: false, error: m.background.watchRepositoryInvalid };
+        try {
+          const star = await db.stars
+            .filter((row) => !row.tombstone && row.full_name.toLowerCase() === fullName)
+            .first();
+          return {
+            ok: true,
+            data: {
+              star: star ?? null,
+              tag: star ? (await idbTagStore.get(star.full_name)) ?? null : null,
+            },
+          };
+        } catch {
+          return { ok: false, error: m.background.watchRepositoryDetailUnavailable };
+        }
+      }
+      case 'refreshWatchInbox': {
+        const m = await getLocaleMessages();
+        try {
+          return { ok: true, data: await watchRefreshCoordinator.refresh() };
+        } catch {
+          return { ok: false, error: m.background.watchRefreshFailed };
+        }
+      }
+      case 'disconnectWatchInbox': {
+        const m = await getLocaleMessages();
+        try {
+          return { ok: true, data: await watchRefreshCoordinator.disconnectInbox() };
+        } catch {
+          return { ok: false, error: m.background.watchDisconnectFailed };
+        }
+      }
+      case 'clearWatchData': {
+        const m = await getLocaleMessages();
+        try {
+          return { ok: true, data: await watchRefreshCoordinator.clearData() };
+        } catch {
+          return { ok: false, error: m.background.watchDataClearFailed };
+        }
+      }
       case "getUsername":
         return { ok: true, data: { username: await authStore.getUsername() } };
       case "getAccount":
@@ -1536,6 +1705,7 @@ async function handle(req: Req): Promise<Res> {
           if (!star) return null;
           await githubStarSource.unstar(req.full_name);
           await db.stars.put({ ...star, tombstone: true });
+          await reconcileWatchScopeAfterStarsChange();
           return { full_name: req.full_name, tombstone: true };
         });
         if (!result)
@@ -1790,7 +1960,10 @@ chrome.runtime.onConnect.addListener((port) => {
               message,
               result.preflightToken,
             );
-            const taxonomyBundle = await loadOrganizeJobRunTaxonomy();
+            const [taxonomyBundle, config] = await Promise.all([
+              loadOrganizeJobRunTaxonomy(),
+              authStore.getConfig(),
+            ]);
             await createOrganizePreflight({
               jobId: context.jobId,
               controllerId: message.controllerId,
@@ -1806,6 +1979,7 @@ chrome.runtime.onConnect.addListener((port) => {
                 fingerprint: context.frozenScope.fingerprint,
               },
               taskInstruction: message.taskInstruction,
+              tagPolicy: createOrganizeTagPolicySnapshot(config),
               taxonomy: {
                 fingerprint: taxonomyBundle.fingerprint,
                 snapshot: {
@@ -2258,6 +2432,21 @@ const bgsmAgentRuntime = createBgsmAgentRuntime({
   resolveLiveCandidate: resolveLiveLaunchCandidate,
   getActiveOrganizeJob,
   isOrganizeApplyBlockingWrites: organizeApplyBlocksAgentWrites,
+  createTagAssignmentPolicy: async () => createBgsmAgentTagAssignmentPolicy(
+    await authStore.getConfig(),
+    async () => {
+      const [stars, storedTags, tagMeta] = await Promise.all([
+        db.stars.toArray(),
+        db.tags.toArray(),
+        db.tagMeta.toArray(),
+      ]);
+      return {
+        stars,
+        tags: storedTags.map((tag) => normalizeStoredTag(tag as LegacyTagRow)),
+        tagMeta,
+      };
+    },
+  ),
   assignManualTags: agentManualTagWriter,
   removeVisibleTags: agentVisibleTagRemovalWriter,
   deleteTagsEverywhere: agentGlobalTagDeletionWriter,
@@ -3149,6 +3338,7 @@ function buildRestoredOrganizeAnalysisState(
       capturedAt: job.frozenScope.capturedAt,
       fingerprint: parseScopeFingerprintV1(job.frozenScope.fingerprint),
     }),
+    tagPolicy: createOrganizeTagPolicySnapshot(job.tagPolicy),
     budget: job.budget as RunBudget,
     usage: job.usage as RunBudgetUsage,
     nextFrozenIndex: job.nextFrozenIndex,

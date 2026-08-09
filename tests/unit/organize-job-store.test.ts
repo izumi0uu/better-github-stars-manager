@@ -277,6 +277,152 @@ describe('durable whole-library organize job store', () => {
     }), /actively analyzing/u);
   });
 
+  it('snapshots organization preferences and reconciles tag coverage across persisted pages', async () => {
+    const repositoryIds = ['owner/a', 'owner/b', 'owner/c', 'owner/d'];
+    const requestedPolicy = { maxTagsPerRepo: 2, minTopicRepoCount: 3 };
+    const preflight = await createOrganizePreflight(preflightInput(repositoryIds, {
+      tagPolicy: requestedPolicy,
+    }));
+    requestedPolicy.maxTagsPerRepo = 5;
+    requestedPolicy.minTopicRepoCount = 1;
+    const activated = await activateOrganizePreflight({
+      preflightToken: preflight.preflight!.token,
+      controllerId: preflight.controllerId,
+      sessionId: preflight.sessionId,
+      taskInstruction: preflight.taskInstruction,
+      now: 10,
+    });
+    assert.deepEqual(activated.job.tagPolicy, {
+      maxTagsPerRepo: 2,
+      minTopicRepoCount: 3,
+    });
+
+    const action = (tag: string) => ({
+      kind: 'propose_new_tag' as const,
+      tag,
+      evidence: `${tag} evidence.`,
+    });
+    const first = await claimOrganizeAnalysisBatch(preflight.jobId, 2, {
+      ownerId: 'coverage-worker',
+      now: 20,
+    });
+    await settleOrganizeAnalysisBatch({
+      jobId: preflight.jobId,
+      leaseToken: first!.leaseToken,
+      now: 30,
+      outcomes: [
+        {
+          position: 0,
+          state: 'actionable',
+          sourceFingerprint: 'source:a',
+          proposedActions: [action('Shared'), action('Rare')],
+        },
+        {
+          position: 1,
+          state: 'actionable',
+          sourceFingerprint: 'source:b',
+          proposedActions: [action('shared')],
+        },
+      ],
+    });
+    assert.equal((await getOrganizeJob(preflight.jobId))?.status, 'analyzing');
+
+    const second = await claimOrganizeAnalysisBatch(preflight.jobId, 2, {
+      ownerId: 'coverage-worker',
+      now: 40,
+    });
+    const coverage = await settleOrganizeAnalysisBatch({
+      jobId: preflight.jobId,
+      leaseToken: second!.leaseToken,
+      now: 50,
+      outcomes: [
+        {
+          position: 2,
+          state: 'actionable',
+          sourceFingerprint: 'source:c',
+          proposedActions: [action('SHARED')],
+        },
+        {
+          position: 3,
+          state: 'actionable',
+          sourceFingerprint: 'source:d',
+          proposedActions: [action('rare')],
+        },
+      ],
+    });
+
+    assert.deepEqual(coverage, {
+      total: 4,
+      pending: 0,
+      leased: 0,
+      actionable: 3,
+      unchanged: 0,
+      insufficientEvidence: 1,
+      missing: 0,
+      tombstoned: 0,
+      failed: 0,
+      analyzed: 4,
+      complete: true,
+    });
+    const restored = await restoreOrganizeAnalysisCheckpoint(preflight.jobId);
+    assert.deepEqual(restored.job.tagPolicy, {
+      maxTagsPerRepo: 2,
+      minTopicRepoCount: 3,
+    });
+    assert.deepEqual(restored.items.map((row) => ({
+      position: row.position,
+      state: row.analysisState,
+      tags: row.proposedActions.map((entry) => entry.tag),
+    })), [
+      { position: 0, state: 'actionable', tags: ['Shared'] },
+      { position: 1, state: 'actionable', tags: ['shared'] },
+      { position: 2, state: 'actionable', tags: ['SHARED'] },
+      { position: 3, state: 'insufficient_evidence', tags: [] },
+    ]);
+
+    const reviewJob = (await getOrganizeJob(preflight.jobId))!;
+    const apply = await sealOrganizeApply(preflight.jobId, reviewJob.revision, 60);
+    assert.equal(apply.rowCount, 3);
+    const applyRows = await db.organizeApplyRows.where('applyId').equals(apply.applyId).sortBy('position');
+    assert.deepEqual(applyRows.map((row) => row.approvedAdditions), [
+      ['Shared'],
+      ['shared'],
+      ['SHARED'],
+    ]);
+  });
+
+  it('normalizes a legacy job without a tag policy to the default shared coverage', async () => {
+    const job = await createOrganizeJob(jobInput(['owner/legacy-policy']));
+    await db.organizeJobs.update(job.jobId, { tagPolicy: undefined });
+    const batch = await claimOrganizeAnalysisBatch(job.jobId, 1, {
+      ownerId: 'legacy-policy-worker',
+      now: 20,
+    });
+
+    const coverage = await settleOrganizeAnalysisBatch({
+      jobId: job.jobId,
+      leaseToken: batch!.leaseToken,
+      now: 30,
+      outcomes: [{
+        position: 0,
+        state: 'actionable',
+        sourceFingerprint: 'source:legacy-policy',
+        proposedActions: [{
+          kind: 'propose_new_tag',
+          tag: 'single-use',
+          evidence: 'Only one repository proposed this tag.',
+        }],
+      }],
+    });
+
+    assert.equal(coverage.actionable, 0);
+    assert.equal(coverage.insufficientEvidence, 1);
+    assert.deepEqual((await getOrganizeJob(job.jobId))?.tagPolicy, {
+      maxTagsPerRepo: 5,
+      minTopicRepoCount: 3,
+    });
+  });
+
   it('recovers expired leases and rejects settlement from the stale claimant', async () => {
     const job = await createOrganizeJob(jobInput(['owner/missing', 'owner/tombstoned']));
     const stale = await claimOrganizeAnalysisBatch(job.jobId, 25, {
@@ -1671,6 +1817,7 @@ function jobInput(
       fingerprint: `scope:${repositoryIds.length}`,
     },
     taskInstruction: 'Organize all tags.',
+    tagPolicy: { maxTagsPerRepo: 5, minTopicRepoCount: 1 },
     taxonomy,
     budget: { maxBatches: 10 },
     usage: { batches: 0 },

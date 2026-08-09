@@ -20,6 +20,7 @@ import type {
   AgentSessionCommitResult,
   LoadedAgentSession,
 } from '@/storage/agent-session-store';
+import type { BgsmAgentConversationCandidate } from '@/bgsm-agent/conversation-binding';
 import {
   createFrozenScope,
   parseScopeFingerprintV1,
@@ -194,6 +195,7 @@ function AgentPanel({
   handoff = null,
   onDismissHandoff,
   defaultCandidate = { kind: 'all_live_stars' },
+  blockedConversationCandidate = null,
   scopeCount,
   workbenchState,
   onClearTerminal,
@@ -208,6 +210,7 @@ function AgentPanel({
   handoff?: { remainingUntagged: number; autoTagged: number } | null;
   onDismissHandoff?: () => void;
   defaultCandidate?: LaunchCandidateContract;
+  blockedConversationCandidate?: BgsmAgentConversationCandidate | null;
   scopeCount?: number;
   workbenchState?: AgentWorkbenchState;
   onClearTerminal?: () => void;
@@ -256,6 +259,7 @@ function AgentPanel({
       agent={presentedAgent}
       workbench={workbench}
       defaultCandidate={defaultCandidate}
+      blockedConversationCandidate={blockedConversationCandidate}
       scopeCount={scopeCount}
       handoff={handoff}
       onDismissHandoff={onDismissHandoff}
@@ -373,6 +377,30 @@ describe('AgentPanel', () => {
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true);
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled)
       .toBe(true);
+  });
+
+  it('blocks chat from using the old scope while an Organize-owned session waits to switch', async () => {
+    const container = await mountAgentPanel(
+      <AgentPanel
+        open
+        onClose={vi.fn()}
+        defaultCandidate={{
+          kind: 'selected_repository',
+          selectedRepositoryIdHint: 'owner/repo-b',
+        }}
+        blockedConversationCandidate={{
+          kind: 'selected_repository',
+          selectedRepositoryIdHint: 'owner/repo-b',
+        }}
+      />,
+    );
+
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea');
+    expect(textarea?.disabled).toBe(true);
+    expect(container.textContent).toContain(
+      'Selected owner/repo-b · finish or discard the current Organize run to switch conversations',
+    );
+    expect(messagingMocks.startBgsmAgentTurn).not.toHaveBeenCalled();
   });
 
   it('opens the single Cubby settings surface without starting a request', async () => {
@@ -3813,6 +3841,53 @@ describe('AgentPanel', () => {
       }
     },
   );
+
+  it('blocks an internal context retry after repository context changes', async () => {
+    const turns: Array<{ input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers }> = [];
+    messagingMocks.startBgsmAgentTurn.mockImplementation((input, handlers) => {
+      turns.push({ input, handlers });
+      return { stop: vi.fn(), acknowledge: vi.fn() };
+    });
+    const initial = (
+      <AgentPanel open onClose={vi.fn()} />
+    );
+    const container = await mountAgentPanel(initial);
+    const prompt = 'Continue inspecting repository A';
+    await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, prompt);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!);
+    await act(async () => {
+      turns[0].handlers.onResult?.({
+        ...deliveryIdentity(turns[0].input),
+        reason: 'context_limit',
+        contextFailureReason: 'tool_result_memory_limit',
+        changed: false,
+        changedCount: 0,
+        commit: null,
+      });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      mountedRoots.at(-1)?.render(
+        <AgentPanel
+          open
+          onClose={vi.fn()}
+          blockedConversationCandidate={{
+            kind: 'selected_repository',
+            selectedRepositoryIdHint: 'owner/repo-b',
+          }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const retry = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Retry');
+    expect(retry?.disabled).toBe(true);
+    expect(container.textContent).toContain('Selected owner/repo-b');
+    await click(retry!);
+    expect(turns).toHaveLength(1);
+  });
 
   it('unlocks prompt editing after an internal memory terminal with a committed write', async () => {
     const turns: Array<{ input: BgsmAgentTurnInput; handlers: BgsmAgentTurnHandlers }> = [];

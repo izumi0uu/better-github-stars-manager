@@ -13,6 +13,7 @@ const managerMocks = vi.hoisted(() => ({
   bgCall: vi.fn(),
   setInfo: vi.fn(),
   refreshStars: vi.fn(),
+  resetFilters: vi.fn(),
   row: {
     full_name: 'owner/repo',
     html_url: 'https://github.com/owner/repo',
@@ -69,7 +70,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     setOnlyArchived: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
-    resetFilters: vi.fn(),
+    resetFilters: managerMocks.resetFilters,
   };
   const useFilterStore = Object.assign(() => filterState, {
     getState: () => filterState,
@@ -114,6 +115,19 @@ vi.mock('@/ui/hooks/use-theme', () => ({
     theme: 'light',
     themeClass: '',
     toggle: vi.fn(),
+  }),
+}));
+
+vi.mock('@/ui/hooks/use-watch-inbox', () => ({
+  useWatchInbox: () => ({
+    unreadOnly: true,
+    setUnreadOnly: vi.fn(),
+    result: { unreadCount: 3 },
+    loading: false,
+    refreshing: false,
+    error: null,
+    refresh: vi.fn(),
+    reload: vi.fn(),
   }),
 }));
 
@@ -178,7 +192,39 @@ vi.mock('@/content/stars-page/panel-toggle', () => ({
 }));
 
 vi.mock('@/ui/components/Toolbar', () => ({
-  Toolbar: () => <div data-testid="toolbar" />,
+  Toolbar: ({
+    surface,
+    onSurfaceChange,
+    watchUnreadCount,
+  }: {
+    surface: 'stars' | 'watch';
+    onSurfaceChange: (surface: 'stars' | 'watch') => void;
+    watchUnreadCount: number;
+  }) => (
+    <div data-testid="toolbar" data-watch-unread={watchUnreadCount}>
+      <button type="button" data-testid="stars-surface" onClick={() => onSurfaceChange('stars')}>
+        Stars
+      </button>
+      <button type="button" data-testid="watch-surface" onClick={() => onSurfaceChange('watch')}>
+        Watch
+      </button>
+      <span data-testid="active-surface">{surface}</span>
+    </div>
+  ),
+}));
+
+vi.mock('@/ui/components/WatchInbox', () => ({
+  WatchInbox: ({ onSelectRepository }: { onSelectRepository?: (fullName: string) => void }) => (
+    <div data-testid="watch-inbox">
+      <button
+        type="button"
+        data-testid="watch-repository"
+        onClick={() => onSelectRepository?.('owner/repo')}
+      >
+        owner/repo
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('@/ui/components/FilterSidebar', () => ({
@@ -249,6 +295,7 @@ beforeEach(() => {
   managerMocks.bgCall.mockReturnValue(new Promise(() => {}));
   managerMocks.setInfo.mockReset();
   managerMocks.refreshStars.mockReset();
+  managerMocks.resetFilters.mockReset();
 });
 
 afterEach(() => {
@@ -262,6 +309,75 @@ afterEach(() => {
 });
 
 describe('ManagerPanel unstar flow', () => {
+  it('switches to Watch without resetting Stars filters and opens targeted repository detail', async () => {
+    managerMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'getWatchRepositoryDetail') {
+        return Promise.resolve({ star: managerMocks.row, tag: null });
+      }
+      return new Promise(() => {});
+    });
+    const { container } = mountPanel();
+
+    expect(container.querySelector('[data-testid="filter-sidebar"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="select-row"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="toolbar"]')?.getAttribute('data-watch-unread'))
+      .toBe('3');
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-surface"]')?.click();
+    });
+
+    expect(container.querySelector('[data-testid="active-surface"]')?.textContent).toBe('watch');
+    expect(container.querySelector('[data-testid="watch-inbox"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="filter-sidebar"]')).toBeNull();
+    expect(container.querySelector('[data-testid="select-row"]')).toBeNull();
+    expect(managerMocks.resetFilters).not.toHaveBeenCalled();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-repository"]')?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(managerMocks.bgCall).toHaveBeenCalledWith('getWatchRepositoryDetail', {
+      fullName: 'owner/repo',
+    });
+    expect(container.querySelector('[data-testid="repo-detail"]')?.textContent).toBe('owner/repo');
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="stars-surface"]')?.click();
+    });
+    expect(container.querySelector('[data-testid="filter-sidebar"]')).not.toBeNull();
+    expect(managerMocks.resetFilters).not.toHaveBeenCalled();
+  });
+
+  it('discards a late Watch detail response after returning to Stars', async () => {
+    let resolveDetail!: (value: { star: Star; tag: null }) => void;
+    const detail = new Promise<{ star: Star; tag: null }>((resolve) => {
+      resolveDetail = resolve;
+    });
+    managerMocks.bgCall.mockImplementation((type: string) => (
+      type === 'getWatchRepositoryDetail' ? detail : new Promise(() => {})
+    ));
+    const { container } = mountPanel();
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-surface"]')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-repository"]')?.click();
+      container.querySelector<HTMLButtonElement>('[data-testid="stars-surface"]')?.click();
+    });
+    await act(async () => {
+      resolveDetail({ star: managerMocks.row, tag: null });
+      await detail;
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="active-surface"]')?.textContent).toBe('stars');
+    expect(container.querySelector('[data-testid="repo-detail"]')).toBeNull();
+  });
+
   it('dispatches markUnstarred immediately without an optimistic hide timer', () => {
     const { container } = mountPanel();
     const confirm = container.querySelector<HTMLButtonElement>('[data-testid="confirm-unstar"]');

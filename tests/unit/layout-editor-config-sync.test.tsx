@@ -690,6 +690,33 @@ describe('layout editor config sync', () => {
     expect(editor.current.layoutMode).toBe('default');
   });
 
+  it('previews and saves the repository owner visibility with the custom layout', async () => {
+    authMocks.getConfig.mockResolvedValue(defaultConfig());
+    const editor = mountLayoutEditor();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      editor.current.beginCustomLayoutEdit();
+      editor.current.setRepositoryOwnerVisible(false);
+    });
+
+    expect(editor.current.showRepositoryOwner).toBe(false);
+    expect(editor.current.draftLayout.showRepositoryOwner).toBe(false);
+
+    await act(async () => {
+      await editor.current.saveLayoutEdit();
+    });
+
+    expect(authMocks.update).toHaveBeenCalledWith({
+      columnLayoutMode: 'custom',
+      customColumnLayout: expect.objectContaining({ showRepositoryOwner: false }),
+    });
+    expect(editor.current.showRepositoryOwner).toBe(false);
+  });
+
   it('refreshes cancel target when config changes while layout edit is open', async () => {
     authMocks.getConfig.mockResolvedValue(configFor('default'));
     const editor = mountLayoutEditor();

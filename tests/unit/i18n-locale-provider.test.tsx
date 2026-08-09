@@ -165,7 +165,7 @@ describe('i18n catalog and locale propagation invariants', () => {
         english.agentPanel.agentSettings,
         english.options.agentHeading,
       ],
-      ['Cubby', 'Cubby', 'Cubby settings', '2. Cubby'],
+      ['Cubby', 'Cubby', 'Cubby settings', '3. Cubby'],
     );
     assert.deepEqual(
       [
@@ -174,7 +174,7 @@ describe('i18n catalog and locale propagation invariants', () => {
         chinese.agentPanel.agentSettings,
         chinese.options.agentHeading,
       ],
-      ['Cubby', 'Cubby', 'Cubby 设置', '2. Cubby'],
+      ['Cubby', 'Cubby', 'Cubby 设置', '3. Cubby'],
     );
   });
 
@@ -243,6 +243,16 @@ describe('i18n catalog and locale propagation invariants', () => {
     assert.match(chinese.agentDisclosureKeyException, /Anthropic 使用 x-api-key/u);
     assert.doesNotMatch(chinese.agentDisclosureLocalHistory, /最多\s*128/u);
     assert.doesNotMatch(english.agentDisclosureLocalHistory, /at most\s*128/u);
+  });
+
+  it('localizes Watch background failures in both product locales', () => {
+    const english = getMessages('en').background;
+    const chinese = getMessages('zh-CN').background;
+
+    assert.equal(english.watchDisconnectFailed, 'Watch Inbox disconnect failed.');
+    assert.equal(chinese.watchDisconnectFailed, '断开 Watch 收件箱失败。');
+    assert.equal(english.watchInboxQueryInvalid, 'Invalid Watch inbox query.');
+    assert.equal(chinese.watchInboxQueryInvalid, 'Watch 收件箱查询无效。');
   });
 
   it('localizes the development Cubby diagnostics surface while preserving raw evidence identifiers', () => {

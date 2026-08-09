@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'vitest';
 import {
   BGSM_AGENT_PROMPT_MAX_BYTES,
@@ -14,6 +15,34 @@ import {
   type BgsmAgentActiveTurn,
   type BgsmAgentTurnResult,
 } from '@/bgsm-agent/turn-protocol';
+
+const backgroundSource = readFileSync(
+  new URL('../../src/background/index.ts', import.meta.url),
+  'utf8',
+);
+const runtimeSource = readFileSync(
+  new URL('../../src/background/bgsm-agent-runtime.ts', import.meta.url),
+  'utf8',
+);
+const turnServiceSource = readFileSync(
+  new URL('../../src/background/bgsm-agent-turn-service.ts', import.meta.url),
+  'utf8',
+);
+const turnPortSource = readFileSync(
+  new URL('../../src/background/bgsm-agent-turn-port.ts', import.meta.url),
+  'utf8',
+);
+const episodeDriverSource = readFileSync(
+  new URL('../../src/background/bgsm-agent-episode-driver.ts', import.meta.url),
+  'utf8',
+);
+const agentRuntimeSource = [
+  backgroundSource,
+  runtimeSource,
+  turnServiceSource,
+  turnPortSource,
+  episodeDriverSource,
+].join('\n');
 
 type Listener<T> = (value: T) => void;
 
@@ -134,6 +163,70 @@ function findHello(transport: FakePort): { executionEpochId: string } {
   }
   return { executionEpochId: message.executionEpochId };
 }
+
+describe('background Agent runtime composition contract', () => {
+  it('keeps the configured Agent loop behind one durable worker authority', () => {
+    assert.doesNotMatch(backgroundSource, /type: ["']startBgsmAgentTurn["']/);
+    assert.match(backgroundSource, /const bgsmAgentRuntime = createBgsmAgentRuntime\(\{/);
+    assert.match(backgroundSource, /chrome\.runtime\.onConnect\.addListener/);
+    assert.match(backgroundSource, /port\.name !== ["']bgsm-agent["']/);
+    assert.match(turnPortSource, /bgsmAgentTurnEvent/);
+    assert.match(turnPortSource, /bgsmAgentTurnResult/);
+    assert.match(backgroundSource, /createProvider: createRegisteredAgentProvider/);
+    assert.match(backgroundSource, /agentProviderGate\.createRuntimeProvider\(\)/);
+    assert.match(backgroundSource, /agentProviderGate\.prepareRuntimeProvider\(\)/);
+
+    assert.match(runtimeSource, /const sessionCache = new AgentCanonicalSessionCache\(\)/);
+    assert.match(runtimeSource, /const attemptCoordinator =/);
+    assert.match(runtimeSource, /runTurn: \(launch, options\) => turnService\.run\(launch, options\)/);
+    assert.match(runtimeSource, /inspectActiveTurn: \(sessionId\) => turnRegistry\.inspectActiveTurn\(sessionId\)/);
+    assert.match(turnServiceSource, /dependencies\.attemptCoordinator\.admit\(/);
+    assert.match(turnServiceSource, /options\.onDurableLeaseAcquired\(\)/);
+    assert.match(turnServiceSource, /dependencies\.attemptCoordinator\.commit\(\{/);
+
+    assert.match(turnServiceSource, /providerFingerprint: preparedRuntimeProvider\.fingerprint/);
+    assert.match(episodeDriverSource, /runAgentLoop\(\{/);
+    assert.match(turnServiceSource, /const ledger = new AgentExecutionLedger\(\)/);
+    assert.match(
+      turnServiceSource,
+      /contextPolicy: profile,[\s\S]*?executionLedger: ledger,/,
+    );
+    assert.match(turnServiceSource, /loadCanonicalAgentSession\(sessionId, dependencies\.sessionCache\)/);
+    assert.match(turnServiceSource, /resolveBgsmAgentConversation\(input/);
+    assert.match(turnServiceSource, /const repositoryScope = conversation\.repositoryIds/);
+    assert.match(turnServiceSource, /const scopeFingerprint = conversation\.binding\.scopeFingerprint/);
+    assert.doesNotMatch(agentRuntimeSource, /loadLiveBgsmAgentRepositoryScope/);
+    assert.match(
+      turnServiceSource,
+      /hasSuccessfulRepositoryCodeToolHistory\(canonicalSession\.messages\)/,
+    );
+    assert.match(turnServiceSource, /repositoryCodeReadOnly = recoveryClass === 'statically_read_only'/);
+    assert.match(turnServiceSource, /createBgsmAgentToolRegistry\(\{[\s\S]*?repositoryScope,[\s\S]*?scopeFingerprint,/);
+    assert.match(turnServiceSource, /enableRepositoryCodeSearch: true/);
+    assert.match(turnServiceSource, /enableRepositoryNotes: true/);
+    assert.match(turnServiceSource, /enableOrganizeLibraryHandoff: !repositoryCodeReadOnly/);
+    assert.match(turnServiceSource, /requestOrganizeLibraryHandoff: async \(action\) =>/);
+    assert.match(turnServiceSource, /status: 'blocked_by_existing_job'/);
+    assert.match(turnServiceSource, /organizeLibraryHandoffRequested \?\?= action/);
+    assert.match(turnServiceSource, /enableTagWrites: !repositoryCodeReadOnly && !organizeApplyActive/);
+    assert.match(turnServiceSource, /dependencies\.createTagAssignmentPolicy\(\)/);
+    assert.match(turnServiceSource, /tagAssignmentPolicy,/);
+    assert.match(backgroundSource, /createTagAssignmentPolicy: async \(\) => createBgsmAgentTagAssignmentPolicy/);
+    assert.match(turnServiceSource, /toolRegistry\.getActiveTools\(\)/);
+    assert.match(
+      turnServiceSource,
+      /createBgsmAgentPromptScope\(\{[\s\S]*?kind: conversation\.binding\.candidateContract\.kind,[\s\S]*?label: scopeLabel,[\s\S]*?repositoryIds: repositoryScope/,
+    );
+    assert.match(
+      turnServiceSource,
+      /buildBgsmAgentSystemPrompt\(\{[\s\S]*?conversationScope,[\s\S]*?repositoryCodeReadOnly,[\s\S]*?activeToolNames: toolRegistry\.getActiveToolNames\(\)/,
+    );
+    assert.match(turnServiceSource, /prepareBgsmAgentTurn\(\{/);
+    assert.match(turnServiceSource, /emit: options\.emit/);
+    assert.doesNotMatch(turnServiceSource, /analyzeBgsmPromptIntent|promptIntent|repositoryCodeAccess/);
+    assert.doesNotMatch(turnServiceSource, /interactionScope|interactionParent|scope_selector/);
+  });
+});
 
 describe('background Agent turn transport contract', () => {
   it('routes an exact bounded launch through the runner and shared active-turn transport', async () => {

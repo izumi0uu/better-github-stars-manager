@@ -17,8 +17,10 @@ import {
 const authMocks = vi.hoisted(() => ({
   getConfig: vi.fn(),
   hasToken: vi.fn(),
+  hasWatchNotificationsToken: vi.fn(),
   setToken: vi.fn(),
   clearToken: vi.fn(),
+  setWatchNotificationsToken: vi.fn(),
   updateAgentProviderConfig: vi.fn(),
   acceptAgentDataDisclosure: vi.fn(),
   clearAgentProviderApiKey: vi.fn(),
@@ -29,6 +31,7 @@ const authMocks = vi.hoisted(() => ({
 
 vi.mock('@/auth/auth-store', () => ({
   CONFIG_STORAGE_KEY: 'gsm_config',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials_v1',
   authStore: authMocks,
 }));
 
@@ -82,6 +85,8 @@ function config(overrides: Partial<Config> = {}): Config {
     ...overrides,
     tokenEncrypted: overrides.tokenEncrypted ?? 'cipher',
     tokenCryptoMeta: overrides.tokenCryptoMeta ?? { iv: 'iv', salt: 'salt' },
+    watchNotificationsTokenEncrypted: overrides.watchNotificationsTokenEncrypted ?? null,
+    watchNotificationsTokenCryptoMeta: overrides.watchNotificationsTokenCryptoMeta ?? null,
     agentProvider: overrides.agentProvider
       ? {
           declaredContextWindow: overrides.agentProvider.provider === 'custom-openai-compatible'
@@ -163,12 +168,28 @@ async function blur(input: HTMLInputElement) {
   });
 }
 
+async function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
+  await act(async () => {
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value',
+    )?.set;
+    valueSetter?.call(textarea, value);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
 describe('Options preferences', () => {
   beforeEach(() => {
     authMocks.getConfig.mockReset();
     authMocks.hasToken.mockReset();
+    authMocks.hasWatchNotificationsToken.mockReset();
+    authMocks.hasWatchNotificationsToken.mockResolvedValue(false);
     authMocks.setToken.mockReset();
     authMocks.clearToken.mockReset();
+    authMocks.setWatchNotificationsToken.mockReset();
     authMocks.updateAgentProviderConfig.mockReset();
     authMocks.acceptAgentDataDisclosure.mockReset();
     authMocks.clearAgentProviderApiKey.mockReset();
@@ -384,6 +405,133 @@ describe('Options preferences', () => {
     });
 
     expect(document.querySelector('a[href="https://github.com/idah?tab=stars"]')).toBeNull();
+  });
+
+  it.each([
+    {
+      errorCode: 'TOKEN_WATCHING_FORBIDDEN',
+      expected: 'Watch needs Account · Watching (read).',
+    },
+    {
+      errorCode: 'TOKEN_WATCHING_NETWORK',
+      expected: 'Watch access could not be verified.',
+    },
+  ])('keeps a saved main token successful but surfaces $errorCode beside its form', async ({
+    errorCode,
+    expected,
+  }) => {
+    authMocks.getConfig.mockResolvedValue(config());
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.setToken.mockResolvedValue({
+      username: 'idah',
+      watching: { available: false, errorCode },
+    });
+
+    await renderOptions();
+
+    const input = document.querySelector<HTMLTextAreaElement>('textarea[placeholder="github_pat_..."]');
+    expect(input).toBeInstanceOf(HTMLTextAreaElement);
+    await setTextareaValue(input!, 'github_pat_without_watching');
+    const save = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Save & verify');
+    await click(save!);
+
+    expect(authMocks.setToken).toHaveBeenCalledWith('github_pat_without_watching');
+    expect(input?.value).toBe('');
+    const status = document.querySelector('[data-testid="main-token-status"]');
+    expect(status?.getAttribute('role')).toBe('status');
+    expect(status?.className).toContain('text-warning');
+    expect(status?.textContent).toContain(expected);
+  });
+
+  it('keeps the Watch Inbox token disabled until the main token is usable', async () => {
+    authMocks.getConfig.mockResolvedValue(config());
+    authMocks.hasToken.mockResolvedValue(false);
+
+    await renderOptions();
+
+    const input = document.querySelector<HTMLInputElement>('#watch-notifications-token');
+    const connect = document.querySelector<HTMLButtonElement>(
+      '[data-testid="watch-token-connect"]',
+    );
+    expect(input?.disabled).toBe(true);
+    expect(connect).toBeInstanceOf(HTMLButtonElement);
+    expect((connect as HTMLButtonElement).disabled).toBe(true);
+    expect(document.body.textContent).toContain('Connect a usable main GitHub token first.');
+  });
+
+  it('connects a same-account classic token and clears the submitted secret', async () => {
+    authMocks.getConfig.mockResolvedValue(config());
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.hasWatchNotificationsToken
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+    authMocks.setWatchNotificationsToken.mockResolvedValue({ username: 'idah' });
+
+    await renderOptions();
+
+    const input = document.querySelector<HTMLInputElement>('#watch-notifications-token');
+    expect(input).not.toBeNull();
+    await setInputValue(input!, 'ghp-watch');
+    const connect = document.querySelector<HTMLButtonElement>(
+      '[data-testid="watch-token-connect"]',
+    );
+    await click(connect!);
+
+    expect(authMocks.setWatchNotificationsToken).toHaveBeenCalledWith('ghp-watch');
+    expect(input?.value).toBe('');
+    expect(document.body.textContent).toContain('Watch Inbox connected as @idah.');
+  });
+
+  it('preserves a replacement token draft when verification fails', async () => {
+    authMocks.getConfig.mockResolvedValue(config({
+      watchNotificationsTokenEncrypted: 'watch-cipher',
+      watchNotificationsTokenCryptoMeta: { iv: 'watch-iv', salt: 'watch-salt' },
+    }));
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.hasWatchNotificationsToken.mockResolvedValue(true);
+    authMocks.setWatchNotificationsToken.mockRejectedValue(new Error('WATCH_TOKEN_FORBIDDEN'));
+
+    await renderOptions();
+
+    const input = document.querySelector<HTMLInputElement>('#watch-notifications-token');
+    await setInputValue(input!, 'ghp-replacement');
+    const replace = document.querySelector<HTMLButtonElement>(
+      '[data-testid="watch-token-connect"]',
+    );
+    await click(replace!);
+
+    expect(input?.value).toBe('ghp-replacement');
+    expect(document.querySelector('[data-testid="watch-token-status"]')?.getAttribute('role'))
+      .toBe('alert');
+    expect(document.body.textContent).toContain('Watch Inbox connected as @idah.');
+  });
+
+  it('disconnects Watch Inbox through the background cache boundary', async () => {
+    authMocks.getConfig.mockResolvedValue(config({
+      watchNotificationsTokenEncrypted: 'watch-cipher',
+      watchNotificationsTokenCryptoMeta: { iv: 'watch-iv', salt: 'watch-salt' },
+    }));
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.hasWatchNotificationsToken
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+
+    await renderOptions();
+
+    const disconnect = document.querySelector<HTMLButtonElement>(
+      '[data-testid="watch-token-disconnect"]',
+    );
+    await click(disconnect!);
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'disconnectWatchInbox',
+    });
+    expect(document.body.textContent).toContain(
+      'Watch Inbox disconnected and cached threads removed.',
+    );
   });
 
   it('saves and automatically tests Cubby settings with the saved key', async () => {

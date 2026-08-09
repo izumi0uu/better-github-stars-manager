@@ -272,6 +272,57 @@ describe('Integration (real query engine + Dexie)', () => {
     assert.deepEqual(r.rows.map((s) => s.full_name), ['b/rust']);
   });
 
+  it('ranks repository-name match tiers before metadata and keeps the selected sort within a tier', async () => {
+    await db.stars.bulkPut([
+      { ...base, full_name: 'rank/abc', starred_at: '2020-01-01' },
+      { ...base, full_name: 'rank/abc-old', starred_at: '2021-01-01' },
+      { ...base, full_name: 'rank/abc-new', starred_at: '2025-01-01' },
+      { ...base, full_name: 'rank/x-abc-tool', starred_at: '2026-01-01' },
+      { ...base, full_name: 'rank/a-big-catalog', starred_at: '2027-01-01' },
+      {
+        ...base,
+        full_name: 'rank/metadata-only',
+        description: 'Contains abc continuously',
+        starred_at: '2028-01-01',
+      },
+    ] as Star[]);
+    invalidateCache();
+
+    const r = await queryStars({
+      filter: { ...defaultFilter(), query: 'abc', sortKey: 'starred_at', sortDir: 'desc' },
+      offset: 0,
+      limit: 100,
+    });
+
+    assert.deepEqual(r.rows.map((s) => s.full_name), [
+      'rank/abc',
+      'rank/abc-new',
+      'rank/abc-old',
+      'rank/x-abc-tool',
+      'rank/a-big-catalog',
+      'rank/metadata-only',
+    ]);
+  });
+
+  it('ranks an owner-qualified path before an unrelated repository fuzzy match', async () => {
+    await db.stars.bulkPut([
+      { ...base, full_name: 'foo/bar-utils' },
+      { ...base, full_name: 'other/foobar-utils' },
+    ] as Star[]);
+    invalidateCache();
+
+    const r = await queryStars({
+      filter: { ...defaultFilter(), query: 'foo/bar', sortKey: 'name', sortDir: 'asc' },
+      offset: 0,
+      limit: 100,
+    });
+
+    assert.deepEqual(r.rows.map((s) => s.full_name), [
+      'foo/bar-utils',
+      'other/foobar-utils',
+    ]);
+  });
+
   it('filter by tag', async () => {
     const r = await queryStars({
       filter: { ...defaultFilter(), tags: ['rust'] },

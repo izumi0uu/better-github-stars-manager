@@ -7,7 +7,11 @@ import {
   AlertTriangle,
   ExternalLink,
 } from "lucide-react";
-import { authStore, CONFIG_STORAGE_KEY } from "@/auth/auth-store";
+import {
+  authStore,
+  CONFIG_STORAGE_KEY,
+  GITHUB_CREDENTIALS_STORAGE_KEY,
+} from "@/auth/auth-store";
 import {
   BackgroundCallError,
   bgCall,
@@ -17,6 +21,7 @@ import {
   type SyncStatus,
 } from "@/utils/messaging";
 import {
+  TOKEN_WATCHING_FORBIDDEN,
   translateError,
 } from "@/api/errors";
 import { Button } from "@/ui/shadcn/button";
@@ -81,7 +86,7 @@ const DEFAULT_CUSTOM_AGENT_PROTOCOL: AgentCustomProviderProtocol = "chat-complet
 const MIN_AGENT_CONTEXT_WINDOW = 4_096;
 const MAX_AGENT_CONTEXT_WINDOW = 2_000_000;
 
-type OptionsMessage = { kind: "ok" | "err"; text: string };
+type OptionsMessage = { kind: "ok" | "warn" | "err"; text: string };
 type AgentConnectionResult = {
   providerLabel: string;
   model: string;
@@ -100,14 +105,15 @@ function StatusNotice({
   return (
     <div
       data-testid={testId}
-      role={message.kind === "ok" ? "status" : "alert"}
-      aria-live={message.kind === "ok" ? "polite" : "assertive"}
+      role={message.kind === "err" ? "alert" : "status"}
+      aria-live={message.kind === "err" ? "assertive" : "polite"}
       className={cn(
         "gsm-status-note",
         className,
         {
           "text-success": message.kind === "ok",
-          "text-destructive": message.kind !== "ok",
+          "text-warning": message.kind === "warn",
+          "text-destructive": message.kind === "err",
         },
       )}
     >
@@ -119,6 +125,7 @@ function StatusNotice({
 export function Options() {
   const [username, setUsername] = useState<string | null>(null);
   const [hasUsableToken, setHasUsableToken] = useState(false);
+  const [hasWatchNotificationsToken, setHasWatchNotificationsToken] = useState(false);
   const [gistId, setGistId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [agentProvider, setAgentProvider] = useState<AgentProviderId>("openai");
@@ -142,6 +149,7 @@ export function Options() {
   const persistedMinTopicRepoCountRef = useRef(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
   const [starsPanelDefaultEnabled, setStarsPanelDefaultEnabled] = useState(true);
   const [tokenBusy, setTokenBusy] = useState(false);
+  const [watchTokenBusy, setWatchTokenBusy] = useState(false);
   const [agentSaveBusy, setAgentSaveBusy] = useState(false);
   const [agentTestBusy, setAgentTestBusy] = useState(false);
   const [agentStorageUsage, setAgentStorageUsage] =
@@ -152,9 +160,12 @@ export function Options() {
   const [agentStorageNotice, setAgentStorageNotice] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [msg, setMsg] = useState<OptionsMessage | null>(null);
+  const [watchMsg, setWatchMsg] = useState<OptionsMessage | null>(null);
   const [agentMsg, setAgentMsg] = useState<OptionsMessage | null>(null);
   const { locale, setLocale, m } = useI18n();
   const tokenInput = useImeBufferedInput("");
+  const watchTokenInput = useImeBufferedInput("");
+  const refreshGeneration = useRef(0);
 
   const loadAgentStorageUsage = async () => {
     setAgentStorageLoading(true);
@@ -173,13 +184,17 @@ export function Options() {
   };
 
   const refresh = async () => {
-    const [c, hasToken, status] = await Promise.all([
+    const generation = ++refreshGeneration.current;
+    const [c, hasToken, hasWatchToken, status] = await Promise.all([
       authStore.getConfig(),
       authStore.hasToken(),
+      authStore.hasWatchNotificationsToken(),
       bgCall<SyncStatus>("getStatus").catch(() => null),
     ]);
+    if (generation !== refreshGeneration.current) return;
     setUsername(c.username);
     setHasUsableToken(hasToken);
+    setHasWatchNotificationsToken(hasWatchToken);
     setGistId(c.gistId);
     setTheme(c.theme);
     setAgentProvider(c.agentProvider.provider);
@@ -227,8 +242,15 @@ export function Options() {
     setTokenBusy(true);
     setMsg(null);
     try {
-      const { username: u } = await authStore.setToken(tokenInput.value);
-      setMsg({ kind: "ok", text: m.options.tokenVerified(u) });
+      const { username: u, watching } = await authStore.setToken(tokenInput.value);
+      setMsg(watching.available
+        ? { kind: "ok", text: m.options.tokenVerified(u) }
+        : {
+            kind: "warn",
+            text: watching.errorCode === TOKEN_WATCHING_FORBIDDEN
+              ? m.options.tokenVerifiedWatchForbidden(u)
+              : m.options.tokenVerifiedWatchUnverified(u),
+          });
       tokenInput.commit("");
       await refresh();
     } catch (e) {
@@ -242,6 +264,41 @@ export function Options() {
     await authStore.clearToken();
     await refresh();
     setMsg({ kind: "ok", text: m.options.tokenRemoved });
+  };
+
+  const saveWatchNotificationsToken = async () => {
+    setWatchTokenBusy(true);
+    setWatchMsg(null);
+    try {
+      const { username: connectedUsername } = await authStore.setWatchNotificationsToken(
+        watchTokenInput.value,
+      );
+      watchTokenInput.commit("");
+      await refresh();
+      setWatchMsg({
+        kind: "ok",
+        text: m.options.watchTokenConnected(connectedUsername),
+      });
+    } catch (error) {
+      setWatchMsg({ kind: "err", text: translateError(error, m) });
+    } finally {
+      setWatchTokenBusy(false);
+    }
+  };
+
+  const disconnectWatchNotificationsToken = async () => {
+    setWatchTokenBusy(true);
+    setWatchMsg(null);
+    try {
+      await bgCall("disconnectWatchInbox");
+      watchTokenInput.commit("");
+      await refresh();
+      setWatchMsg({ kind: "ok", text: m.options.watchTokenDisconnected });
+    } catch (error) {
+      setWatchMsg({ kind: "err", text: translateError(error, m) });
+    } finally {
+      setWatchTokenBusy(false);
+    }
   };
 
   const requestAgentConnectionTest = (apiKey?: string) => bgCall<AgentConnectionResult>(
@@ -539,7 +596,12 @@ export function Options() {
       changes: Record<string, chrome.storage.StorageChange>,
       areaName: string,
     ) => {
-      if (areaName !== "local" || !changes[CONFIG_STORAGE_KEY]) return;
+      if (areaName !== "local") return;
+      if (changes[GITHUB_CREDENTIALS_STORAGE_KEY]) {
+        void refresh();
+        return;
+      }
+      if (!changes[CONFIG_STORAGE_KEY]) return;
       const oldCfg = changes[CONFIG_STORAGE_KEY].oldValue as Record<string, unknown> | undefined;
       const newCfg = changes[CONFIG_STORAGE_KEY].newValue as Record<string, unknown> | undefined;
       const visibleConfigUnchanged =
@@ -548,6 +610,12 @@ export function Options() {
         oldCfg?.theme === newCfg?.theme &&
         oldCfg?.locale === newCfg?.locale &&
         oldCfg?.tokenEncrypted === newCfg?.tokenEncrypted &&
+        JSON.stringify(oldCfg?.tokenCryptoMeta ?? null) ===
+          JSON.stringify(newCfg?.tokenCryptoMeta ?? null) &&
+        oldCfg?.watchNotificationsTokenEncrypted ===
+          newCfg?.watchNotificationsTokenEncrypted &&
+        JSON.stringify(oldCfg?.watchNotificationsTokenCryptoMeta ?? null) ===
+          JSON.stringify(newCfg?.watchNotificationsTokenCryptoMeta ?? null) &&
         JSON.stringify(oldCfg?.agentProvider ?? null) ===
           JSON.stringify(newCfg?.agentProvider ?? null) &&
         oldCfg?.maxTagsPerRepo === newCfg?.maxTagsPerRepo &&
@@ -675,6 +743,7 @@ export function Options() {
         <ul className="gsm-body-note mt-2">
           <li>{m.options.tokenPublicRepos}</li>
           <li>{m.options.tokenGists}</li>
+          <li>{m.options.tokenWatchingOptional}</li>
         </ul>
         <p className="mt-1 text-xs text-warning">{m.options.tokenGistNote}</p>
 
@@ -726,6 +795,92 @@ export function Options() {
             )}
           </Button>
         </div>
+        {msg && (
+          <StatusNotice
+            message={msg}
+            className="mt-3"
+            testId="main-token-status"
+          />
+        )}
+      </section>
+
+      <section className="mt-6">
+        <h2 className="text-base font-medium">{m.options.watchTokenHeading}</h2>
+        <p className="gsm-body-note mt-1">
+          {m.options.watchTokenIntroPrefix}{" "}
+          <a
+            className="text-primary hover:underline"
+            href="https://github.com/settings/tokens/new?scopes=notifications&description=GitHub%20Stars%20Manager%20Watch%20Inbox"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {m.options.watchTokenLinkLabel}
+          </a>
+          . {m.options.watchTokenIntroSuffix}
+        </p>
+        <p className="gsm-body-note mt-2">{m.options.watchTokenAccountHint}</p>
+
+        {hasWatchNotificationsToken && username && (
+          <div className="gsm-status-note my-3 flex flex-wrap items-center gap-1.5 text-success">
+            <Check className="size-4 shrink-0" />
+            <span>{m.options.watchTokenConnected(username)}</span>
+            <Button
+              data-testid="watch-token-disconnect"
+              variant="ghost"
+              size="sm"
+              className="ml-2"
+              disabled={watchTokenBusy}
+              onClick={() => void disconnectWatchNotificationsToken()}
+            >
+              {m.options.watchTokenDisconnect}
+            </Button>
+          </div>
+        )}
+
+        <label
+          htmlFor="watch-notifications-token"
+          className="mt-3 block text-sm font-medium text-foreground"
+        >
+          {m.options.watchTokenLabel}
+        </label>
+        <Input
+          id="watch-notifications-token"
+          name="watch-notifications-token"
+          type="password"
+          autoComplete="new-password"
+          spellCheck={false}
+          {...watchTokenInput.inputProps}
+          placeholder="ghp_..."
+          disabled={!hasUsableToken || !username || watchTokenBusy}
+          className="mt-1 font-mono"
+        />
+        {!hasUsableToken && (
+          <p className="mt-1 text-xs text-warning">{m.options.watchTokenMainRequired}</p>
+        )}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Button
+            data-testid="watch-token-connect"
+            disabled={
+              watchTokenBusy ||
+              !hasUsableToken ||
+              !username ||
+              !watchTokenInput.value.trim()
+            }
+            onClick={() => void saveWatchNotificationsToken()}
+          >
+            {watchTokenBusy ? (
+              <>
+                <Spinner data-icon="inline-start" />
+                {m.options.watchTokenVerifying}
+              </>
+            ) : hasWatchNotificationsToken ? (
+              m.options.watchTokenReplace
+            ) : (
+              m.options.watchTokenConnect
+            )}
+          </Button>
+        </div>
+        {watchMsg && <StatusNotice message={watchMsg} testId="watch-token-status" />}
       </section>
 
       <section className="mt-6">
@@ -1031,7 +1186,7 @@ export function Options() {
 
       <Separator className="my-6" />
 
-      {/* 2. Gist */}
+      {/* 4. Gist */}
       <section>
         <h2 className="text-base font-medium">{m.options.gistHeading}</h2>
         <p className="gsm-status-note mt-1 text-muted-foreground">
@@ -1073,7 +1228,7 @@ export function Options() {
         </div>
       </section>
 
-      {/* 3. Preference */}
+      {/* 5. Preference */}
       <section className="mt-6">
         <h2 className="text-base font-medium">{m.options.behaviorHeading}</h2>
         <div className="mt-3 grid gap-4 rounded-lg border border-border bg-muted/20 p-4">
@@ -1122,8 +1277,6 @@ export function Options() {
           </div>
         </div>
       </section>
-
-      {msg && <StatusNotice message={msg} className="mt-4" />}
     </div>
   );
 }

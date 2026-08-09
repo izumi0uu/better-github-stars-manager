@@ -177,6 +177,20 @@ describe('background Agent runtime composition', () => {
       isOrganizeApplyBlockingWrites() {
         return false;
       },
+      async createTagAssignmentPolicy() {
+        return {
+          maxTagsPerRepo: 5,
+          minRepoCount: 1,
+          async loadCoverage() {
+            return {
+              repositoriesByTag: new Map(),
+              visibleTagsByRepository: new Map(),
+              excludedTagKeys: new Set(),
+            };
+          },
+          invalidateCoverage() {},
+        };
+      },
       async assignManualTags() {
         throw new Error('not called by runtime construction');
       },

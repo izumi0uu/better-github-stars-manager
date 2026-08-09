@@ -57,6 +57,10 @@ export default {
         },
         success: 'hsl(var(--success))',
         warning: 'hsl(var(--warning))',
+        'search-match': {
+          DEFAULT: 'hsl(var(--search-match))',
+          foreground: 'hsl(var(--search-match-foreground))',
+        },
         favorite: {
           DEFAULT: 'hsl(var(--favorite))',
           hover: 'hsl(var(--favorite-hover))',
