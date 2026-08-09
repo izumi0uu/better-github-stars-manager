@@ -70,7 +70,7 @@ const scenarios = [
       const optionsPage = await optionsTarget.page();
       if (!optionsPage) throw new Error('Options page target opened but no page handle was available');
       await optionsPage.waitForSelector('textarea', { timeout: 10_000 });
-      await waitForBodyText(optionsPage, 'GitHub Token');
+      await waitForBodyText(optionsPage, 'GitHub connection');
       await waitForButtonByText(optionsPage, /save|verify/i);
     },
   },
