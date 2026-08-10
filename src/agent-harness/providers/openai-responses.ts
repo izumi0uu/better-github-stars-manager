@@ -550,8 +550,15 @@ async function* openAIResponsesStreamEvents(
       case 'response.cancelled':
       case 'response.incomplete':
         throw protocolError(`Responses stream ended with ${event.type}.`);
-      default:
-        throw protocolError('Responses stream emitted an unsupported event type.');
+      default: {
+        // 中转站（如部分 Azure / 自部署 OpenAI 兼容 Responses 服务）可能透传一些
+        // Cubby 不识别的扩展事件（file_search、code_interpreter、audio、annotation
+        // 等的子事件，或自定义元数据）。按 OpenAI 自身的流式规范，未知事件类型也
+        // 应当被客户端"忽略以保证前向兼容"。我们保留对结构异常的硬拒绝（已知事件
+        // 的 case 内仍会校验字段），这里仅对"事件类型不在白名单"做安全忽略。
+        requireStarted(started);
+        break;
+      }
     }
   }
 

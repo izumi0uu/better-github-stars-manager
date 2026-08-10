@@ -186,7 +186,10 @@ describe('OpenAI-compatible streaming adapter', () => {
     expect(observed.at(-1)).toEqual({ type: 'response_end', finishReason: 'tool_calls' });
   });
 
-  it('keeps custom-compatible streaming requests free of optional usage options', async () => {
+  it('sends stream_options.include_usage so relay services return token statistics', async () => {
+    // OpenAI 官方与绝大多数 OpenAI 兼容中转站（new-api、one-api、aiping 等）按规范
+    // 在 stream_options.include_usage=true 时，于流末尾返回 usage 统计；不识别该字段
+    // 的服务端通常会安全忽略。Cubby 始终开启它以确保能拿到 token 用量用于计费/限制。
     let requestBody: Record<string, unknown> | undefined;
     const provider = createOpenAICompatibleProvider({
       provider: 'custom-openai-compatible',
@@ -203,7 +206,7 @@ describe('OpenAI-compatible streaming adapter', () => {
     await expect(provider.generate({ messages: [], tools: [], maxOutputTokens: 8 }))
       .resolves.toMatchObject({ content: 'OK', finishReason: 'stop' });
     expect(requestBody?.stream).toBe(true);
-    expect(requestBody).not.toHaveProperty('stream_options');
+    expect(requestBody?.stream_options).toEqual({ include_usage: true });
   });
 
   it.each([

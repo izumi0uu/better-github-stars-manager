@@ -356,15 +356,16 @@ function serializeChatCompletion(
   try {
     const tools = input.tools.length > 0 ? input.tools.map(toApiTool) : undefined;
     const toolChoice = serializeToolChoice(input.toolChoice, input.tools);
+    // 始终带上 stream_options.include_usage：OpenAI 官方与绝大多数 OpenAI 兼容中转站
+    // （含国内 aiping / new-api / one-api 等）都按规范在最后一个 chunk 返回 usage；
+    // 不识别该字段的服务端通常会安全忽略。详见 openai-cookbook streaming 示例。
     const requestValue: Record<string, unknown> = {
       model: config.model,
       messages,
       tools,
       tool_choice: toolChoice,
       stream: true,
-      ...(config.provider === 'custom-openai-compatible'
-        ? {}
-        : { stream_options: { include_usage: true } }),
+      stream_options: { include_usage: true },
       [config.endpoint.profile.outputTokenField]: input.maxOutputTokens,
     };
     requestBody = stringifyProviderJson(requestValue, 'request');
@@ -795,9 +796,11 @@ async function* openAIChatStreamEvents(
       yield { type: 'usage', usage: parseStreamUsage(chunk.usage) };
       continue;
     }
-    if (chunk.usage != null) {
-      throw protocolError('Provider stream usage event must not contain choices.');
-    }
+    // 注：很多中转站（含 aiping.cn、new-api 等）会把"最后一个 choice（带
+    // finish_reason）"和"usage 统计"合并到同一个 chunk；按 OpenAI 官方规范这两者
+    // 应当分别返回（最后一个 chunk choices=[] + usage=...），但严格拒绝会令
+    // 中转站完全不可用。因此这里改为允许"非空 choices + usage"组合：
+    // 先按正常流程处理 choices（content/tool_calls/finish_reason），随后再 yield usage。
     if (finishReason !== undefined || sawUsage) {
       throw protocolError('Provider stream emitted choice data after its finish reason.');
     }
@@ -877,6 +880,19 @@ async function* openAIChatStreamEvents(
         throw protocolError('Provider stream emitted an invalid finish reason.');
       }
       finishReason = choice.finish_reason;
+    }
+    // 处理"中转站合并尾包"：当本 chunk 同时携带 usage 时，按 OpenAI 规范
+    // 应当在 choices=[] 的独立事件中 yield；但为兼容中转站，此处允许在带
+    // finish_reason 的最后一个 choice chunk 中一并 yield usage。
+    if (chunk.usage != null) {
+      if (sawUsage) {
+        throw protocolError('Provider stream emitted usage more than once.');
+      }
+      if (finishReason === undefined) {
+        throw protocolError('Provider stream emitted usage before its finish reason.');
+      }
+      sawUsage = true;
+      yield { type: 'usage', usage: parseStreamUsage(chunk.usage) };
     }
   }
 

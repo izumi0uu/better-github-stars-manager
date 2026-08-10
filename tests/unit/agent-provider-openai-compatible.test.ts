@@ -1470,4 +1470,96 @@ describe('openai-compatible agent provider', () => {
     removeSpy.mockRestore();
     clearTimeoutSpy.mockRestore();
   });
+
+  // 中转站（aiping.cn / new-api / one-api 等）常见非标准形态：
+  // 1) 最后一个 chunk 同时带 choices[].finish_reason 与 usage（合并尾包）
+  // 2) delta 中混入非标准字段（如 GLM 的 reasoning_content）
+  // 这里确保两者都被正确接受，不触发 protocol_error。
+  it('accepts a relay-style stream that combines the final choice and usage in one chunk', async () => {
+    const events: unknown[] = [
+      { id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'g',
+        choices: [{ index: 0, delta: { role: 'assistant', reasoning_content: '思考中...' }, finish_reason: null }],
+        system_fingerprint: 'fp_x', sla_metrics: { ttft_ms: 12 } },
+      { id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'g',
+        choices: [{ index: 0, delta: { reasoning_content: '继续。' }, finish_reason: null }],
+        system_fingerprint: 'fp_x' },
+      { id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'g',
+        choices: [{ index: 0, delta: { content: 'PONG' }, finish_reason: null }] },
+      // 合并尾包：choices[0].finish_reason="stop" 与 usage 同时存在
+      { id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'g',
+        choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 15, completion_tokens: 182, total_tokens: 197 } },
+      '[DONE]',
+    ];
+    const fetchMock = vi.fn(async () => sseResponse(events));
+    const provider = createOpenAICompatibleProvider({
+      provider: 'custom-openai-compatible',
+      baseUrl: 'https://relay.example.com/v1',
+      model: 'GLM-4.7-Flash',
+      apiKey: 'sk-relay',
+      fetchImpl: fetchMock as typeof fetch,
+      hostPermissionCheck: async () => true,
+      validateRuntimeIdentity: async () => true,
+    });
+    const result = await provider.generate({
+      messages: [{ role: 'user', content: 'PONG' }],
+      tools: [],
+      maxOutputTokens: 64,
+    });
+    expect(result.content).toBe('PONG');
+    expect(result.finishReason).toBe('stop');
+    expect(result.usage).toEqual({
+      inputTokens: 15,
+      outputTokens: 182,
+      totalTokens: 197,
+    });
+  });
+
+  it('sends stream_options.include_usage on the custom-openai-compatible request', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      // 断言请求体后再回复：先把请求 body 取出来检查，再返回固定流。
+      const body = JSON.parse(String(init?.body));
+      capturedRequestBodies.push(body);
+      return streamingChatResponse({
+        choices: [{ finish_reason: 'stop', message: { content: 'PONG' } }],
+      });
+    });
+    const capturedRequestBodies: unknown[] = [];
+    const provider = createOpenAICompatibleProvider({
+      provider: 'custom-openai-compatible',
+      baseUrl: 'https://relay.example.com/v1',
+      model: 'GLM-4.7-Flash',
+      apiKey: 'sk-relay',
+      fetchImpl: fetchMock as typeof fetch,
+      hostPermissionCheck: async () => true,
+      validateRuntimeIdentity: async () => true,
+    });
+    await provider.generate({
+      messages: [{ role: 'user', content: 'PONG' }],
+      tools: [],
+      maxOutputTokens: 64,
+    });
+    const body = capturedRequestBodies[0] as Record<string, unknown>;
+    expect(body.stream).toBe(true);
+    expect(body.stream_options).toEqual({ include_usage: true });
+  });
+
+  it('still rejects a usage chunk emitted before any finish reason', async () => {
+    // 一些不规范中转站会在尚未给出 finish_reason 的早期 chunk 中就附带 usage；
+    // 这种"超前 usage"应当被识别为 protocol_error（结束条件异常），而不是被吞掉。
+    const events: unknown[] = [
+      { id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'g',
+        choices: [{ index: 0, delta: { content: 'partial' }, finish_reason: null }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+      { id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'g',
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      '[DONE]',
+    ];
+    const provider = createOpenAICompatibleProvider({
+      provider: 'openai', model: 'gpt-5-mini', apiKey: 'sk',
+      fetchImpl: vi.fn(async () => sseResponse(events)) as typeof fetch,
+    });
+    await expect(provider.generate({ messages: [], tools: [], maxOutputTokens: 16 }))
+      .rejects.toMatchObject({ code: 'protocol_error' });
+  });
 });

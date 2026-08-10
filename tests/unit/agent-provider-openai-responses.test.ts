@@ -742,6 +742,53 @@ describe('OpenAI Responses adapter', () => {
     })).toThrow(expect.objectContaining({ code: 'provider_serialization_error' }));
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  // 中转站常会在标准流之外插入扩展事件（file_search、code_interpreter、audio、
+  // annotation 子事件、relay 自定义元数据等），按 OpenAI 流式规范的"前向兼容"
+  // 约定应当被忽略；同时不能影响已知事件的硬校验。下面的用例覆盖这条路径。
+  it('ignores unknown response.* events emitted by relay extensions', async () => {
+    const events: Array<Record<string, unknown>> = [
+      createdEvent(),
+      outputAdded(0, { id: 'msg_1', type: 'message', status: 'in_progress', role: 'assistant', content: [] }),
+      contentAdded('msg_1', 0, 0, { type: 'output_text', text: '', annotations: [] }),
+      textDelta('msg_1', 0, 0, 'PONG'),
+      // 中转站插入的扩展事件：file_search / code_interpreter / audio 子事件，
+      // 以及 relay 自带的元数据。全部应当被忽略、不影响主流解析。
+      { type: 'response.file_search_call.in_progress', item_id: 'fs_1' },
+      { type: 'response.code_interpreter_call.code.delta', delta: 'print(1)' },
+      { type: 'response.audio.delta', delta: '...' },
+      { type: 'response.metadata', extra: { trace_id: 'relay-12345' } },
+      textDone('msg_1', 0, 0, 'PONG'),
+      contentDone('msg_1', 0, 0, { type: 'output_text', text: 'PONG', annotations: [] }),
+      outputDone(0, completedMessage('msg_1', 'PONG')),
+      completedEvent(4, 2, 6),
+    ];
+    await expect(generate(events)).resolves.toMatchObject({
+      content: 'PONG',
+      finishReason: 'stop',
+    });
+  });
+
+  it('still rejects an unknown event type emitted before response.created', async () => {
+    // 已知状态：流必须由 response.created 起步。在 created 之前出现的任何事件
+    // （包括未识别事件）都是协议违规，应当被硬拒绝。
+    const events: Array<Record<string, unknown>> = [
+      { type: 'response.metadata', extra: { x: 1 } },
+      createdEvent(),
+      completedEvent(1, 1, 2),
+    ];
+    await expect(generate(events)).rejects.toMatchObject({ code: 'protocol_error' });
+  });
+
+  it('still rejects an unknown event type after response.completed', async () => {
+    // 已知状态：流结束后不允许再发任何事件。
+    const events: Array<Record<string, unknown>> = [
+      createdEvent(),
+      completedEvent(1, 1, 2),
+      { type: 'response.metadata', extra: { x: 1 } },
+    ];
+    await expect(generate(events)).rejects.toMatchObject({ code: 'protocol_error' });
+  });
 });
 
 function createProvider(fetchImpl: typeof fetch | ((...args: any[]) => Promise<Response>)) {
