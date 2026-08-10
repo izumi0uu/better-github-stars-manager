@@ -67,7 +67,12 @@ export async function settleBgsmOrganizeJobDisconnect(input: Readonly<{
   controller: Pick<BgsmAgentController, 'findLatestSnapshot'>;
   post?(message: BgsmOrganizeJobDisconnected): void;
 }>): Promise<void> {
-  const current = input.controller.findLatestSnapshot(input.identity);
+  let current: ReturnType<BgsmAgentController['findLatestSnapshot']> = null;
+  try {
+    current = input.controller.findLatestSnapshot(input.identity);
+  } catch {
+    current = null;
+  }
   input.post?.({
     type: 'bgsmOrganizeJobRunDisconnected',
     controllerId: input.identity.controllerId,

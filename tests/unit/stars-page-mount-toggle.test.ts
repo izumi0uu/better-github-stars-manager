@@ -42,19 +42,28 @@ function clearInjectedChrome(): void {
 }
 
 function installChromeMock() {
-  let listener: StorageListener | null = null;
+  const listeners = new Set<StorageListener>();
   const addListener = vi.fn((fn: StorageListener) => {
-    listener = fn;
+    listeners.add(fn);
+  });
+  const removeListener = vi.fn((fn: StorageListener) => {
+    listeners.delete(fn);
   });
   vi.stubGlobal('chrome', {
     storage: {
-      onChanged: { addListener },
+      onChanged: { addListener, removeListener },
     },
   });
   return {
     emitConfigChange(oldValue: Config, newValue: Config) {
-      assert.ok(listener);
-      listener({ [CONFIG_STORAGE_KEY]: { oldValue, newValue } }, 'local');
+      assert.ok(listeners.size > 0);
+      for (const listener of listeners) {
+        listener({ [CONFIG_STORAGE_KEY]: { oldValue, newValue } }, 'local');
+      }
+    },
+    removeListener,
+    listenerCount() {
+      return listeners.size;
     },
   };
 }
@@ -218,6 +227,51 @@ describe('stars-page mount and toggle invariants', () => {
     assert.notEqual(secondWindow.document.getElementById('gsm-manager-host'), null);
   });
 
+  it('replaces a cached runtime when the same Window exposes a new Document', async () => {
+    const loaded = await loadContentScript();
+    const firstFrame = document.createElement('iframe');
+    const secondFrame = document.createElement('iframe');
+    firstFrame.src = 'javascript:void 0';
+    secondFrame.src = 'javascript:void 0';
+    document.body.append(firstFrame, secondFrame);
+    const firstWindow = firstFrame.contentWindow;
+    const secondWindow = secondFrame.contentWindow;
+    assert.ok(firstWindow);
+    assert.ok(secondWindow);
+
+    for (const target of [firstWindow, secondWindow]) {
+      target.history.replaceState(null, '', '/idah?tab=stars');
+      target.document.body.innerHTML = '<main data-pjax-container><h1>Stars</h1></main>';
+    }
+
+    let activeWindow = firstWindow;
+    const reusedWindow = {
+      get document() {
+        return activeWindow.document;
+      },
+      get location() {
+        return activeWindow.location;
+      },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as Window;
+
+    loaded.installStarsPageRuntime(reusedWindow);
+    await waitFor(() => firstWindow.document.getElementById('gsm-manager-host') !== null);
+    loaded.hidePanel(reusedWindow);
+    await waitFor(() => firstWindow.document.getElementById('gsm-fab') !== null);
+
+    activeWindow = secondWindow;
+    loaded.installStarsPageRuntime(reusedWindow);
+
+    await waitFor(() => secondWindow.document.getElementById('gsm-manager-host') !== null);
+    assert.equal(firstWindow.document.getElementById('gsm-manager-host'), null);
+    assert.equal(firstWindow.document.getElementById('gsm-fab'), null);
+    assert.equal(secondWindow.document.getElementById('gsm-fab'), null);
+    assert.equal(loaded.chromeMock.listenerCount(), 2);
+    assert.equal(loaded.chromeMock.removeListener.mock.calls.length, 1);
+  });
+
   it('ignores stale async sync results before they can mutate panel/fab DOM', async () => {
     const firstConfig = deferred<Config>();
     const secondConfig = deferred<Config>();
@@ -238,6 +292,27 @@ describe('stars-page mount and toggle invariants', () => {
 
     assert.equal(document.querySelectorAll('#gsm-manager-host').length, 1);
     assert.equal(document.getElementById('gsm-fab'), null);
+  });
+
+  it('contains navigation sync failures and recovers on the next event', async () => {
+    let configRead = 0;
+    const loaded = await loadContentScript({
+      getConfig: () => {
+        configRead += 1;
+        return configRead === 2
+          ? Promise.reject(new Error('Config storage unavailable.'))
+          : Promise.resolve({ starsPanelDefaultEnabled: true });
+      },
+    });
+    await waitFor(() => document.getElementById('gsm-manager-host') !== null);
+
+    loaded.fireDocumentEvent('turbo:load');
+    await flush();
+    assert.equal(document.getElementById('gsm-manager-host'), null);
+    assert.equal(document.getElementById('gsm-fab'), null);
+
+    loaded.fireDocumentEvent('turbo:render');
+    await waitFor(() => document.getElementById('gsm-manager-host') !== null);
   });
 
   it('resets the session override before syncing a changed persisted default', async () => {

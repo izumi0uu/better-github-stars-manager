@@ -2279,7 +2279,7 @@ chrome.runtime.onConnect.addListener((port) => {
               filter: null,
             });
           }
-          publishOrganizeNoJobState();
+          await publishLatestOrganizeJobState();
         }
         return;
       }

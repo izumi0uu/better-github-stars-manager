@@ -25,6 +25,7 @@ import {
 } from './agent-runtime-release-evidence.mjs';
 import { readRuntimeReleaseDistIdentity } from './agent-runtime-evidence-contract.mjs';
 import { packageInputFingerprint } from './package-input-fingerprint.mjs';
+import { readZipInventory } from './package-extension.mjs';
 import {
   classifyForbiddenPackageEntry,
   validateManifestResourceClosure,
@@ -374,7 +375,7 @@ export function validatePackageArtifacts({ root, artifactsDir, distDir, provisio
   const checksumPath = resolveEvidenceFile(artifactsDir, checksumEvidence.relativePath);
   assert.equal(readFileSync(checksumPath, 'utf8'), `${zipEvidence.sha256}  ${path.basename(zipPath)}\n`, 'ZIP checksum contents are stale.');
 
-  const packageEntries = readZipEntries(zipPath);
+  const packageEntries = readZipInventory(zipPath);
   for (const entry of packageEntries) {
     assert.equal(classifyForbiddenPackageEntry(entry.relativePath), null, `Forbidden packaged entry: ${entry.relativePath}`);
   }
@@ -422,23 +423,6 @@ function createDefaultOperations(root) {
   };
 }
 
-function readZipEntries(zipPath) {
-  const names = execFileSync('unzip', ['-Z1', zipPath], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 })
-    .split(/\r?\n/u)
-    .filter(Boolean);
-  assert.equal(new Set(names).size, names.length, 'ZIP contains duplicate entries.');
-  return names
-    .filter((name) => !name.endsWith('/'))
-    .map((relativePath) => {
-      if (path.posix.isAbsolute(relativePath) || relativePath.split('/').some((segment) => segment === '..' || segment === '')) {
-        throw new Error(`Unsafe ZIP entry: ${relativePath}`);
-      }
-      return {
-        relativePath,
-        bytes: execFileSync('unzip', ['-p', zipPath, relativePath], { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 }),
-      };
-    });
-}
 
 function assertFreshFinalizationRoot(root, artifactsDir, runtimeEvidenceDir) {
   if (artifactsDir === root || !artifactsDir.startsWith(`${root}${path.sep}`)) {

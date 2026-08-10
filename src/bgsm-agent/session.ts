@@ -240,10 +240,12 @@ function applyBgsmAgentSessionTransitionInternal(
     : retainedActiveProjections;
   const cursorChanged = transition.candidateCheckpoint !== undefined
     || transition.candidateActiveProjection !== undefined;
-  const orderedActiveProjections = prefixIsValidated && !cursorChanged
+  const orderedActiveProjections = prefixIsValidated
+    && !cursorChanged
+    && transition.messageDelta.length === 0
     ? nextActiveProjections
     : orderActiveProjections(nextMessages, nextActiveProjections);
-  if (!prefixIsValidated || cursorChanged) {
+  if (!prefixIsValidated || cursorChanged || transition.messageDelta.length > 0) {
     verifyBgsmAgentActiveProjections(nextMessages, orderedActiveProjections, nextCheckpoint);
   }
 

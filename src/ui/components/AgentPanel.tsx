@@ -310,8 +310,7 @@ export function AgentPanel({
   useEffect(() => {
     if (!open) return;
     const drawer = drawerRef.current;
-    const root = drawer?.getRootNode() as (Document | ShadowRoot | null);
-    const activeElement = root && 'activeElement' in root ? root.activeElement : document.activeElement;
+    const activeElement = activeElementFor(drawer) ?? document.activeElement;
     restoreFocusRef.current = activeElement instanceof HTMLElement ? activeElement : null;
     queueMicrotask(() => closeButtonRef.current?.focus());
 
@@ -332,7 +331,7 @@ export function AgentPanel({
       }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      const current = root && 'activeElement' in root ? root.activeElement : document.activeElement;
+      const current = activeElementFor(drawer) ?? document.activeElement;
       if (event.shiftKey && (current === first || current === drawer)) {
         event.preventDefault();
         last.focus();
@@ -1265,7 +1264,9 @@ function OrganizeJobRunWorkbench({
   const previousControlNoticeRef = useRef(view.controlNotice);
   const [takeControlSucceeded, setTakeControlSucceeded] = useState(false);
   const takingControl = state.pendingCommand?.kind === 'take_control';
-  const workbenchHadFocus = !!workbenchContainerRef.current?.contains(document.activeElement);
+  const workbenchHadFocus = !!workbenchContainerRef.current?.contains(
+    activeElementFor(workbenchContainerRef.current),
+  );
 
   useEffect(() => {
     setShowChangedOrFailed(false);
@@ -1393,7 +1394,7 @@ function OrganizeJobRunWorkbench({
                   aria-busy={takingControl}
                   onClick={(event) => {
                     wasTakingControlRef.current = true;
-                    focusAfterTakeoverRef.current = document.activeElement === event.currentTarget;
+                    focusAfterTakeoverRef.current = activeElementFor(event.currentTarget) === event.currentTarget;
                     workbench.takeControl();
                   }}
                 >
@@ -2007,20 +2008,22 @@ function OrganizeJobRunWorkbench({
         </Message>
       )}
 
-      {view.error && !analysisBlocked && phase !== 'reconnecting' && (
+      {(view.error || workbench.terminalDismissFailed) && !analysisBlocked && phase !== 'reconnecting' && (
         <Message role="system">
           <div className="rounded-[10px] border border-border bg-card p-3 text-xs text-foreground" role="alert" data-testid="organize-job-error-card">
-            {view.error.kind === 'organize_already_running'
-              ? m.agentPanel.workbench.organizeAlreadyRunning
-              : view.error.kind === 'connection_interrupted'
-                ? m.agentPanel.workbench.connectionInterrupted
-                : view.error.kind === 'worker_lost'
-                  ? m.agentPanel.workbench.workerLost
-                  : view.error.kind === 'preflight_incomplete'
-                    ? m.agentPanel.workbench.analysisScopeIncomplete
-                    : view.error.kind === 'run_state_refreshed'
-                      ? m.agentPanel.workbench.runStateRefreshed
-                      : m.agentPanel.workbench.organizeCommandFailed}
+            {workbench.terminalDismissFailed
+              ? m.agentPanel.workbench.organizeCommandFailed
+              : view.error?.kind === 'organize_already_running'
+                ? m.agentPanel.workbench.organizeAlreadyRunning
+                : view.error?.kind === 'connection_interrupted'
+                  ? m.agentPanel.workbench.connectionInterrupted
+                  : view.error?.kind === 'worker_lost'
+                    ? m.agentPanel.workbench.workerLost
+                    : view.error?.kind === 'preflight_incomplete'
+                      ? m.agentPanel.workbench.analysisScopeIncomplete
+                      : view.error?.kind === 'run_state_refreshed'
+                        ? m.agentPanel.workbench.runStateRefreshed
+                        : m.agentPanel.workbench.organizeCommandFailed}
           </div>
         </Message>
       )}
@@ -2239,4 +2242,11 @@ function parseRepositoryCodeSearchResult(content: string): RepositoryCodeSearchD
   } catch {
     return null;
   }
+}
+
+function activeElementFor(owner: Node | null): Element | null {
+  const root = owner?.getRootNode();
+  return root && 'activeElement' in root
+    ? (root as Document | ShadowRoot).activeElement
+    : null;
 }

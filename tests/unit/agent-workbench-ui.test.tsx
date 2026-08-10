@@ -3,8 +3,10 @@
  */
 import { act, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRoot } from 'react-dom/client';
 import { AgentPanel } from '@/ui/components/AgentPanel';
 import { AgentHost, type AgentHostPresentation } from '@/ui/components/AgentHost';
+import { AgentSessionMenu } from '@/ui/components/AgentSessionMenu';
 import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
 import { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
 import {
@@ -81,6 +83,57 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
+
+describe('Agent conversation menu', () => {
+  it('keeps the current conversation operable when switching is locked', async () => {
+    const onSwitch = vi.fn(async () => true);
+    const container = mountReact(
+      <AgentSessionMenu
+        sessions={[
+          { id: 'current', title: 'Current conversation', createdAt: 1, updatedAt: 2 },
+          { id: 'other', title: 'Other conversation', createdAt: 1, updatedAt: 1 },
+        ]}
+        activeSessionId="current"
+        disabled={false}
+        canCreateSession={false}
+        canSwitchSession={false}
+        canDeleteSession={false}
+        onCreate={async () => false}
+        onSwitch={onSwitch}
+        onDelete={async () => false}
+      />,
+      mountedRoots,
+    );
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!);
+    const current = buttonWithText(document.body, 'Current conversation');
+    const other = buttonWithText(document.body, 'Other conversation');
+    expect(current.disabled).toBe(false);
+    expect(current.getAttribute('aria-current')).toBe('true');
+    expect(other.disabled).toBe(true);
+
+    await click(current);
+    expect(document.querySelector('[data-testid="agent-session-list"]')).toBeNull();
+    expect(onSwitch).not.toHaveBeenCalled();
+  });
+});
+
+describe('Agent workbench test fixtures', () => {
+  it('preserves an explicit null durable revision instead of applying a fallback', () => {
+    const fixture = new FakePort('bgsm-agent-organize-job');
+    const snapshot = reviewSnapshot('controller:v1:fixture', 'fixture-session', 1);
+    const presentation = presentationFor(snapshot, { revision: 7 });
+    fixture.emit({
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      presentation,
+      role: null,
+    }, 'live', null);
+    expect(fixture.lastEnvelope?.durableRevision).toBeNull();
+  });
+});
+
 
 describe('Agent organize-job workbench UI', () => {
   it('replaces the current run phase instead of accumulating a synthetic checklist', async () => {
@@ -2257,6 +2310,81 @@ describe('Agent organize-job workbench UI', () => {
     expect(sessionToggle.disabled).toBe(false);
   });
 
+  it('surfaces failed terminal dismissal without clearing durable evidence', async () => {
+    const container = await mountHarness();
+    const page = postedMessages('requestBgsmActiveOrganizeJob').at(-1)!;
+    const snapshot = reviewSnapshot(page.controllerId, page.sessionId, 1);
+    const terminal = presentationFor(snapshot, {
+      jobId: 'organize-job:v1:dismiss-delivery-failure',
+      revision: 12,
+      status: 'completed',
+    });
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: page.controllerId,
+      sessionId: page.sessionId,
+      presentation: terminal,
+      role: null,
+    });
+    const organizePort = activeOrganizePort();
+    organizePort.rejectPosts = true;
+
+    await click(buttonWithText(container, 'Dismiss'));
+    expect(postedMessages('dismissBgsmTerminalOrganizeJob')).toHaveLength(0);
+    expect(container.querySelector('[data-testid="organize-job-error-card"]')?.textContent)
+      .toContain("Cubby couldn't update this Organize run");
+    expect(container.textContent).not.toContain('Fake Port is disconnected');
+
+    organizePort.rejectPosts = false;
+    await click(buttonWithText(container, 'Dismiss'));
+    expect(postedMessages('dismissBgsmTerminalOrganizeJob')).toEqual([
+      expect.objectContaining({ jobId: terminal.jobId, expectedRevision: terminal.revision }),
+    ]);
+    expect(container.querySelector('[data-testid="organize-job-error-card"]')).toBeNull();
+  });
+
+  it('restores takeover focus inside the owning shadow root', async () => {
+    const host = document.createElement('div');
+    const shadow = host.attachShadow({ mode: 'open' });
+    const container = document.createElement('div');
+    shadow.appendChild(container);
+    document.body.appendChild(host);
+    const root = createRoot(container);
+    act(() => root.render(<Harness />));
+    mountedRoots.push(root);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const page = postedMessages('requestBgsmActiveOrganizeJob').at(-1)!;
+    const snapshot = reviewSnapshot(page.controllerId, page.sessionId, 1);
+    const presentation = presentationFor(snapshot, {
+      jobId: 'organize-job:v1:shadow-focus',
+      revision: 4,
+      status: 'review',
+    });
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: page.controllerId,
+      sessionId: page.sessionId,
+      presentation,
+      role: 'owner_lost',
+    });
+    const takeover = buttonWithText(container, 'Take control');
+    takeover.focus();
+    expect(shadow.activeElement).toBe(takeover);
+    expect(document.activeElement).toBe(host);
+    await click(takeover);
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: page.controllerId,
+      sessionId: page.sessionId,
+      presentation: { ...presentation, revision: 5 },
+      role: 'owner',
+    });
+    expect(shadow.activeElement).toBe(container.querySelector('[data-testid="organize-job-workbench"]'));
+  });
+
   it('posts canonical Take control identity and preserves the draft on typed conflict', async () => {
     const container = await mountHarness();
     const page = postedMessages('requestBgsmActiveOrganizeJob').at(-1)!;
@@ -2615,6 +2743,7 @@ function Harness() {
 
 class FakePort {
   posted: any[] = [];
+  lastEnvelope: BgsmOrganizeJobDeliveryEnvelope | null = null;
   disconnectCalls = 0;
   rejectPosts = false;
   private messageListeners = new Set<(message: unknown) => void>();
@@ -2648,15 +2777,16 @@ class FakePort {
       connectionEpochId: this.connectionEpochId,
       deliverySequence: this.deliverySequence,
       deliveryKind: deliveryKind ?? (isState ? 'authoritative_snapshot' : 'live'),
-      durableRevision: durableRevision ?? (
-        isState && serverMessage.presentation ? serverMessage.presentation.revision : null
-      ),
+      durableRevision: durableRevision === undefined
+        ? (isState && serverMessage.presentation ? serverMessage.presentation.revision : null)
+        : durableRevision,
       message: serverMessage,
     });
   }
 
   emitEnvelope(delivery: BgsmOrganizeJobDeliveryEnvelope) {
     this.deliverySequence = Math.max(this.deliverySequence, delivery.deliverySequence + 1);
+    this.lastEnvelope = delivery;
     this.messageListeners.forEach((listener) => listener(delivery));
   }
 

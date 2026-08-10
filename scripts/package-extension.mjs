@@ -230,6 +230,9 @@ export function validateZipEntryNames(entryNames) {
     if (typeof entryName !== 'string' || /[\u0000-\u001f\u007f]/u.test(entryName)) {
       throw new PackageExtensionError('zip_entry_path_invalid', String(entryName));
     }
+    if (entryName.startsWith('-') || /[*?\[\]]/u.test(entryName)) {
+      throw new PackageExtensionError('zip_entry_path_invalid', entryName);
+    }
     let relativePath;
     try {
       relativePath = normalizePackageRelativePath(entryName, `zip entry ${index}`);
@@ -256,13 +259,14 @@ export function findDevelopmentBuildHashes(javascriptSources) {
 }
 
 export function readZipInventory(zipPath) {
-  const names = execFileSync('unzip', ['-Z1', zipPath], {
+  const resolvedZipPath = path.resolve(zipPath);
+  const names = execFileSync('unzip', ['-Z1', resolvedZipPath], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   }).split(/\r?\n/u).filter(Boolean);
   const relativePaths = validateZipEntryNames(names);
   return Object.freeze(relativePaths.map((relativePath) => {
-    const bytes = execFileSync('unzip', ['-p', zipPath, relativePath], {
+    const bytes = execFileSync('unzip', ['-p', resolvedZipPath, relativePath], {
       encoding: 'buffer',
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -379,6 +383,7 @@ function createZipFromInventory({ zipPath, stageDir, inventory }) {
   if (inventory.length === 0) throw new PackageExtensionError('package_inventory_empty');
   execFileSync('zip', ['-X', '-q', zipPath, '--', ...inventory.map(({ relativePath }) => relativePath)], {
     cwd: stageDir,
+    env: { ...process.env, TZ: 'UTC' },
     stdio: 'inherit',
   });
 }

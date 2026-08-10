@@ -49,6 +49,8 @@ export async function createServiceWorkerReplacementController({
   let autoAttachClient = null;
   let autoAttachActive = false;
   let autoAttachListener = null;
+  const autoAttachedClients = new Set();
+  let stoppedInstallGuard = null;
   const runtimeMonitorFor = (client) => {
     if (runtimeMonitor) {
       if (runtimeMonitor.client !== client) throw new Error('Replacement worker changed its preinstalled Runtime client.');
@@ -99,6 +101,10 @@ export async function createServiceWorkerReplacementController({
       }).catch(() => {});
       autoAttachActive = false;
     }
+    for (const attachedClient of autoAttachedClients) {
+      await attachedClient.detach?.().catch(() => {});
+    }
+    autoAttachedClients.clear();
     await client.detach().catch(() => {});
     autoAttachClient = null;
   };
@@ -111,16 +117,44 @@ export async function createServiceWorkerReplacementController({
       if (history.length >= MAX_TRANSITIONS_PER_VERSION) history.shift();
       history.push(Object.freeze({ ...version }));
       transitions.set(update.versionId, history);
+      const guard = stoppedInstallGuard;
+      if (
+        guard
+        && version.sequence > guard.stoppedSequence
+        && version.registrationId === guard.identity.registrationId
+        && version.versionId === guard.identity.versionId
+        && version.targetId === guard.identity.targetId
+        && version.scriptURL === `chrome-extension://${extensionId}${guard.identity.route}`
+        && (version.runningStatus === 'starting' || version.runningStatus === 'running')
+      ) guard.prematureStart = true;
     }
   };
 
-  serviceWorkerClient.on('ServiceWorker.workerVersionUpdated', onVersionUpdated);
-  await serviceWorkerClient.send('ServiceWorker.enable');
-  await waitUntil(
-    () => singleRunningExtensionVersion(versions, extensionId),
-    timeoutMs,
-    'The packaged extension service worker did not reach one running state.',
-  );
+  let versionListenerInstalled = false;
+  const removeVersionListener = () => {
+    if (!versionListenerInstalled) return;
+    if (typeof serviceWorkerClient.off === 'function') {
+      serviceWorkerClient.off('ServiceWorker.workerVersionUpdated', onVersionUpdated);
+    } else {
+      serviceWorkerClient.removeListener?.('ServiceWorker.workerVersionUpdated', onVersionUpdated);
+    }
+    versionListenerInstalled = false;
+  };
+  try {
+    serviceWorkerClient.on('ServiceWorker.workerVersionUpdated', onVersionUpdated);
+    versionListenerInstalled = true;
+    await serviceWorkerClient.send('ServiceWorker.enable');
+    await waitUntil(
+      () => singleRunningExtensionVersion(versions, extensionId),
+      timeoutMs,
+      'The packaged extension service worker did not reach one running state.',
+    );
+  } catch (error) {
+    try { removeVersionListener(); } catch {}
+    await serviceWorkerClient.send('ServiceWorker.disable').catch(() => {});
+    await serviceWorkerClient.detach().catch(() => {});
+    throw error;
+  }
 
   const replace = async () => {
     if (closed) throw new Error('Worker replacement controller is closed.');
@@ -162,22 +196,27 @@ export async function createServiceWorkerReplacementController({
             rejectAttached(new Error('Paused auto-attached replacement CDP session is unavailable.'));
             return;
           }
+          autoAttachedClients.add(client);
           if (attachmentAccepted) {
-            void client.send('Runtime.runIfWaitingForDebugger').catch(() => {});
+            void client.send('Runtime.runIfWaitingForDebugger')
+              .finally(() => client.detach?.().catch(() => {}))
+              .finally(() => autoAttachedClients.delete(client))
+              .catch(() => {});
             return;
           }
           attachmentAccepted = true;
           void (async () => {
             const preinstalled = await preinstallAutoAttachedClient(client, oldIdentity);
+            installedClient = preinstalled?.installedClient ?? null;
             if (
               !preinstalled
               || preinstalled.client !== client
-              || !preinstalled.installedClient
+              || !installedClient
               || typeof preinstalled.attachmentId !== 'string'
             ) {
               throw new Error('Paused target provider preinstallation returned invalid evidence.');
             }
-            installedClient = preinstalled.installedClient;
+            autoAttachedClients.delete(client);
             const attachmentId = boundedIdentity(preinstalled.attachmentId, 'paused target attachment ID');
             const targetId = boundedIdentity(event.targetInfo.targetId, 'paused target ID');
             await client.send('Runtime.enable');
@@ -280,27 +319,35 @@ export async function createServiceWorkerReplacementController({
         'The exact old service-worker identity did not report a current stopped transition.',
       );
 
+      const installGuard = {
+        identity: oldIdentity,
+        stoppedSequence: stopped.sequence,
+        prematureStart: false,
+      };
+      stoppedInstallGuard = installGuard;
       const preinstalled = await preinstallStoppedClient(oldIdentity);
+      installedClient = preinstalled?.installedClient ?? null;
       if (
         !preinstalled
         || !preinstalled.client
-        || !preinstalled.installedClient
+        || !installedClient
         || typeof preinstalled.attachmentId !== 'string'
       ) {
         throw new Error('Stopped target provider preinstallation returned invalid evidence.');
       }
-      installedClient = preinstalled.installedClient;
       const attachmentId = boundedIdentity(preinstalled.attachmentId, 'stopped target attachment ID');
       const monitor = runtimeMonitorFor(preinstalled.client);
       const runtimeErrorBaseline = monitor.count;
 
       const installCompletedOrdinal = versionSequence;
       const latestStopped = versions.get(oldIdentity.versionId);
-      const prematureStart = transitions.get(oldIdentity.versionId)?.some((version) => (
-        version.sequence > stopped.sequence
-        && version.sequence <= installCompletedOrdinal
-        && (version.runningStatus === 'starting' || version.runningStatus === 'running')
-      ));
+      const prematureStart = installGuard.prematureStart
+        || transitions.get(oldIdentity.versionId)?.some((version) => (
+          version.sequence > stopped.sequence
+          && version.sequence <= installCompletedOrdinal
+          && (version.runningStatus === 'starting' || version.runningStatus === 'running')
+        ));
+      stoppedInstallGuard = null;
       if (prematureStart) {
         throw new Error('Stopped target restarted before provider installation completed.');
       }
@@ -375,6 +422,7 @@ export async function createServiceWorkerReplacementController({
         },
       });
     } finally {
+      stoppedInstallGuard = null;
       if (!completed && installedClient) await retireReplacementClient(installedClient).catch(() => {});
       if (!completed) removeRuntimeMonitor();
       if (!completed) await closeAutoAttach().catch(() => {});
@@ -388,11 +436,7 @@ export async function createServiceWorkerReplacementController({
     closed = true;
     removeRuntimeMonitor();
     await closeAutoAttach();
-    if (typeof serviceWorkerClient.off === 'function') {
-      serviceWorkerClient.off('ServiceWorker.workerVersionUpdated', onVersionUpdated);
-    } else {
-      serviceWorkerClient.removeListener?.('ServiceWorker.workerVersionUpdated', onVersionUpdated);
-    }
+    removeVersionListener();
     await serviceWorkerClient.send('ServiceWorker.disable').catch(() => {});
     await serviceWorkerClient.detach().catch(() => {});
   };

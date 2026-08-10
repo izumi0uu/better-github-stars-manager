@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   CONTROLLER_ID_PREFIX,
   type ControllerId,
@@ -57,6 +57,10 @@ export function useBgsmAgentWorkbench(
     undefined,
     () => createAgentWorkbenchState(controllerIdRef.current, sessionIdRef.current),
   );
+  const [terminalDismissFailure, setTerminalDismissFailure] = useState<Readonly<{
+    jobId: string;
+    revision: number;
+  }> | null>(null);
   const snapshotRef = useRef(state.snapshot);
   snapshotRef.current = state.snapshot;
   const stateRef = useRef(state);
@@ -66,6 +70,10 @@ export function useBgsmAgentWorkbench(
     dispatch(action);
   }, []);
   const displayedProcessed = displayedAnalyzedRepositoryCount(state);
+  const terminalDismissFailed = terminalDismissFailure !== null
+    && state.organizeJob !== null
+    && terminalDismissFailure.jobId === state.organizeJob.jobId
+    && terminalDismissFailure.revision === state.organizeJob.revision;
 
   const tryPost = useCallback((message: BgsmOrganizeJobClientMessage): boolean => {
     validateBgsmOrganizeJobMessageIdentity(message);
@@ -807,21 +815,24 @@ export function useBgsmAgentWorkbench(
   }, [sendOrganizeCommand]);
 
   const clearTerminal = useCallback(() => {
-    agentHandoffAuthorityRef.current += 1;
-    deferredHandoffCommandRef.current = null;
     const job = stateRef.current.organizeJob;
     if (!job || !['completed', 'cancelled'].includes(job.status)) return;
-    tryPost({
+    const delivered = tryPost({
       type: 'dismissBgsmTerminalOrganizeJob',
       controllerId: controllerIdRef.current,
       sessionId: sessionIdRef.current,
       jobId: job.jobId,
       expectedRevision: job.revision,
     });
+    setTerminalDismissFailure(delivered ? null : { jobId: job.jobId, revision: job.revision });
+    if (!delivered) return;
+    agentHandoffAuthorityRef.current += 1;
+    deferredHandoffCommandRef.current = null;
   }, [tryPost]);
 
   return useMemo(() => ({
     state,
+    terminalDismissFailed,
     displayedProcessed,
     requestPreflight,
     captureAgentHandoffAuthority,
@@ -861,6 +872,7 @@ export function useBgsmAgentWorkbench(
     resumeOrganizeApply,
     restartWholeLibrary,
     setAllProposalRowsSelected,
+    terminalDismissFailed,
     state,
     stop,
     toggleProposalRow,

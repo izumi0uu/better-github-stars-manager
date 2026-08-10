@@ -23,6 +23,8 @@ import {
 import { createAgentSession } from '@/storage/agent-session-store';
 import { db } from '@/storage/db';
 
+const MAX_TEST_ARTIFACT_PAGES = 16;
+
 const OUTCOME = {
   reason: 'final_answer' as const,
   changed: false,
@@ -190,7 +192,10 @@ describe('background Agent artifact coverage coordinator', () => {
     assert.equal(await db.agentMessages.count(), 0);
 
     let cursor: string | null = null;
+    let pagesRead = 0;
     do {
+      pagesRead += 1;
+      assert.ok(pagesRead <= MAX_TEST_ARTIFACT_PAGES, 'artifact pagination did not terminate');
       const page = await loadAgentArtifactSliceForSession({
         sessionId,
         artifactId,
@@ -352,7 +357,10 @@ describe('background Agent artifact coverage coordinator', () => {
       continuation: continuation([secondCoverage], secondMessages.slice(0, 3), 20),
     });
     cursor = null;
+    pagesRead = 0;
     do {
+      pagesRead += 1;
+      assert.ok(pagesRead <= MAX_TEST_ARTIFACT_PAGES, 'artifact pagination did not terminate');
       const page = await loadAgentArtifactSliceForSession({
         sessionId,
         artifactId,

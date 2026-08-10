@@ -70,7 +70,10 @@ describe('Agent release conformance', () => {
     expect(submission).toMatch(/current attempt and damaged recovery evidence may remain until explicit conversation deletion/i);
 
     const review = read('docs/bgsm-agent-implementation-review.md');
-    const currentRecord = review.slice(0, review.indexOf('## 1. Executive summary'));
+    const currentRecordEnd = review.indexOf('## 1. Original 2026-07 audit summary');
+    expect(currentRecordEnd, 'implementation review is missing the historical-review boundary')
+      .toBeGreaterThan(-1);
+    const currentRecord = review.slice(0, currentRecordEnd);
     expect(currentRecord).toContain('Phase 7B worker-replacement evidence');
     expect(currentRecord).toMatch(/Phase 7B worker-replacement proofs are implemented and verified/i);
     expect(review).toContain('This document preserves the original findings and remediation plan as review history');

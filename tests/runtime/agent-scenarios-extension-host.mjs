@@ -259,6 +259,8 @@ function createRuntime(requested) {
     workerAttachedListener: null,
     workerDetachedListener: null,
     workerAutoAttachActive: false,
+    workerResources: new Set(),
+    workerSetupTasks: new Set(),
     workerRecords: [],
     workerSetupFailure: null,
     pageDiagnostics: null,
@@ -290,7 +292,6 @@ function createRuntime(requested) {
     },
   };
 }
-
 export async function installScenarioExtensionWithContainment(browser, dist, runtime, {
   timeoutMs = TIMEOUT_MS,
 } = {}) {
@@ -300,6 +301,8 @@ export async function installScenarioExtensionWithContainment(browser, dist, run
   if (!runtime || !runtime.network || !Array.isArray(runtime.workerRecords)) {
     throw new TypeError('Scenario runtime must expose bounded worker containment state.');
   }
+  runtime.workerResources ??= new Set();
+  runtime.workerSetupTasks ??= new Set();
 
   const browserClient = await browser.target().createCDPSession();
   runtime.workerBrowserClient = browserClient;
@@ -310,32 +313,11 @@ export async function installScenarioExtensionWithContainment(browser, dist, run
   const onAttached = (event) => {
     if (event.targetInfo?.type !== 'service_worker') return;
     const client = browserClient.connection().session(event.sessionId);
-    if (runtime.workerRecords.length >= MAX_ISSUE_ITEMS) {
-      runtime.network.workerOverflow = true;
-      const error = new Error('worker_containment_overflow');
-      if (!client) {
-        runtime.workerSetupFailure ??= error;
-        rejectSetupFailure(error);
-        return;
-      }
-      const overflowRecord = {
-        sessionId: event.sessionId,
-        targetUrl: event.targetInfo.url,
-        client,
-        listeners: null,
-        fetchEnabled: false,
-        resumed: false,
-        detached: false,
-      };
-      void configurePausedWorker(overflowRecord, runtime)
-        .finally(() => {
-          runtime.workerSetupFailure ??= error;
-          rejectSetupFailure(error);
-        });
-      return;
-    }
+    const overflow = runtime.workerRecords.length >= MAX_ISSUE_ITEMS;
+    if (overflow) runtime.network.workerOverflow = true;
+    const overflowError = overflow ? new Error('worker_containment_overflow') : null;
     if (!client) {
-      const error = new Error('worker_containment_session_missing');
+      const error = overflowError ?? new Error('worker_containment_session_missing');
       runtime.workerSetupFailure ??= error;
       rejectSetupFailure(error);
       return;
@@ -349,15 +331,25 @@ export async function installScenarioExtensionWithContainment(browser, dist, run
       resumed: false,
       detached: false,
     };
-    runtime.workerRecords.push(record);
-    void configurePausedWorker(record, runtime)
-      .catch((error) => {
-        runtime.workerSetupFailure ??= error;
-        rejectSetupFailure(error);
-      });
+    runtime.workerResources.add(record);
+    if (!overflow) runtime.workerRecords.push(record);
+    let setupTask;
+    setupTask = configurePausedWorker(record, runtime)
+      .catch((setupError) => {
+        runtime.workerSetupFailure ??= overflowError ?? setupError;
+        rejectSetupFailure(runtime.workerSetupFailure);
+      })
+      .then(() => {
+        if (overflowError) {
+          runtime.workerSetupFailure ??= overflowError;
+          rejectSetupFailure(runtime.workerSetupFailure);
+        }
+      })
+      .finally(() => runtime.workerSetupTasks.delete(setupTask));
+    runtime.workerSetupTasks.add(setupTask);
   };
   const onDetached = (event) => {
-    const record = runtime.workerRecords.find((candidate) => candidate.sessionId === event.sessionId);
+    const record = [...runtime.workerResources].find((candidate) => candidate.sessionId === event.sessionId);
     if (record) record.detached = true;
   };
   runtime.workerAttachedListener = onAttached;
@@ -399,7 +391,6 @@ export async function installScenarioExtensionWithContainment(browser, dist, run
   );
   return Object.freeze({ extensionId });
 }
-
 async function configurePausedWorker(record, runtime) {
   const onException = () => recordWorkerIssue(runtime, 'exception');
   const onConsole = (event) => {
@@ -853,14 +844,27 @@ async function teardown(runtime) {
     }
   });
   const pageDiagnosticsDetached = await cleanup(async () => runtime.pageDiagnostics?.cleanup());
+  const workerRecords = [
+    ...new Set([
+      ...(runtime.workerRecords ?? []),
+      ...(runtime.workerResources ?? []),
+    ]),
+  ];
+  if (
+    runtime.workerSetupFailure === null
+    && workerRecords.every((record) => record.resumed || record.detached)
+  ) {
+    await Promise.allSettled([...(runtime.workerSetupTasks ?? [])]);
+  }
   const hasPausedWorker = runtime.workerSetupFailure !== null
-    || runtime.workerRecords.some((record) => !record.resumed && !record.detached);
+    || workerRecords.some((record) => !record.resumed && !record.detached);
 
   let workerGateClosed = false;
   let workerDiagnosticsDetached = false;
   if (!hasPausedWorker) {
+    await Promise.allSettled([...(runtime.workerSetupTasks ?? [])]);
     workerGateClosed = await cleanup(async () => {
-      for (const record of runtime.workerRecords) {
+      for (const record of workerRecords) {
         if (record.fetchEnabled && !record.detached) await record.client.send('Fetch.disable');
         record.fetchEnabled = false;
       }
@@ -881,17 +885,20 @@ async function teardown(runtime) {
       if (parent && runtime.workerDetachedListener) {
         removeListener(parent, 'Target.detachedFromTarget', runtime.workerDetachedListener);
       }
-      for (const record of runtime.workerRecords) {
+      for (const record of workerRecords) {
         if (record.listeners) {
           removeListener(record.client, 'Runtime.exceptionThrown', record.listeners.onException);
           removeListener(record.client, 'Runtime.consoleAPICalled', record.listeners.onConsole);
           removeListener(record.client, 'Fetch.requestPaused', record.listeners.onRequestPaused);
+          record.listeners = null;
         }
         if (!record.detached) {
           await record.client.send('Runtime.disable').catch(() => {});
           await record.client.detach();
         }
       }
+      runtime.workerResources?.clear();
+      runtime.workerSetupTasks?.clear();
       await parent?.detach();
       runtime.workerBrowserClient = null;
     });
@@ -903,8 +910,27 @@ async function teardown(runtime) {
   });
   runtime.cleanup.browserClosed = await cleanup(async () => closeBrowser(runtime.browser));
   if (hasPausedWorker) {
+    await Promise.allSettled([...(runtime.workerSetupTasks ?? [])]);
     workerGateClosed = runtime.cleanup.browserClosed;
-    workerDiagnosticsDetached = runtime.cleanup.browserClosed;
+    workerDiagnosticsDetached = await cleanup(async () => {
+      const parent = runtime.workerBrowserClient;
+      if (parent && runtime.workerAttachedListener) {
+        removeListener(parent, 'Target.attachedToTarget', runtime.workerAttachedListener);
+      }
+      if (parent && runtime.workerDetachedListener) {
+        removeListener(parent, 'Target.detachedFromTarget', runtime.workerDetachedListener);
+      }
+      for (const record of workerRecords) {
+        if (!record.listeners) continue;
+        removeListener(record.client, 'Runtime.exceptionThrown', record.listeners.onException);
+        removeListener(record.client, 'Runtime.consoleAPICalled', record.listeners.onConsole);
+        removeListener(record.client, 'Fetch.requestPaused', record.listeners.onRequestPaused);
+        record.listeners = null;
+      }
+      runtime.workerBrowserClient = null;
+      runtime.workerResources?.clear();
+      runtime.workerSetupTasks?.clear();
+    });
   }
   runtime.cleanup.networkGatesClosed = pageGateClosed && workerGateClosed;
   runtime.cleanup.diagnosticsDetached = pageDiagnosticsDetached && workerDiagnosticsDetached;

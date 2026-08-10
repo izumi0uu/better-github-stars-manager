@@ -429,7 +429,8 @@ export function validateRuntimeEvidenceFile(contract, raw, context = {}) {
       if (value.diagnosticsBuild.manifest.extensionVersion !== value.releaseDist.manifest.extensionVersion) {
         throw new ReleaseEvidenceError('diagnostics_build_version_mismatch', '$.diagnosticsBuild.manifest.extensionVersion');
       }
-      if (!deepEqual(value.scenarioLab.scenarios.ids, EXPECTED_SCENARIO_IDS)) {
+      const expectedScenarioIds = context.expectedScenarioIds ?? EXPECTED_SCENARIO_IDS;
+      if (!deepEqual(value.scenarioLab.scenarios.ids, expectedScenarioIds)) {
         throw new ReleaseEvidenceError('scenario_ids_mismatch', '$.scenarioLab.scenarios.ids');
       }
     }

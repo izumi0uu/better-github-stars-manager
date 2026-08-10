@@ -413,7 +413,10 @@ export async function runToolStep(input: ToolStepInput): Promise<ToolStepResult>
         },
       });
     }
-    if (!outcome.result) throw new Error('Tool execution produced no protocol result.');
+    if (!outcome.result) {
+      await disposeBestEffort(disposals);
+      throw new Error('Tool execution produced no protocol result.');
+    }
 
     const originalResult = outcome.result;
     const writeOutcome = outcome.writeOutcome ?? (

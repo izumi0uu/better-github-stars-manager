@@ -618,6 +618,70 @@ describe('durable Agent session store', () => {
     );
     assert.equal(await db.agentMessages.count(), messages.length + followupMessages.length);
   });
+
+  it('transactionally prunes structurally valid residual recovery with the oldest settled attempt', async () => {
+    const sessionId = 'session-prune-residual-recovery';
+    await createAgentSession({ idFactory: () => sessionId, now: () => 1 });
+    const cache = new AgentCanonicalSessionCache();
+    const transitionFor = (index: number): BgsmAgentSessionTransition => ({
+      sessionId,
+      baseRevision: index,
+      messageDelta: [
+        {
+          id: `prune-user-${index}`,
+          role: 'user',
+          content: `Question ${index}`,
+          createdAt: index * 2 + 1,
+        },
+        {
+          id: `prune-agent-${index}`,
+          role: 'agent',
+          content: `Answer ${index}`,
+          createdAt: index * 2 + 2,
+        },
+      ],
+    });
+
+    for (let index = 0; index < 129; index += 1) {
+      await commitAgentSessionTransition({
+        turnAttemptId: `attempt-prune-${index}`,
+        transition: transitionFor(index),
+        now: () => index + 10,
+      }, cache);
+    }
+    const oldest = await db.agentAttempts
+      .where('[sessionId+turnAttemptId]')
+      .equals([sessionId, 'attempt-prune-0'])
+      .first();
+    assert.ok(oldest);
+    const recoveryMessage: BgsmAgentSessionMessage = {
+      id: 'prune-residual-user',
+      role: 'user',
+      content: 'Residual recovery projection.',
+      createdAt: 500,
+    };
+    await db.agentAttemptRecoveries.put({
+      id: oldest.id,
+      schemaVersion: 1,
+      sessionId,
+      turnAttemptId: oldest.turnAttemptId,
+      projectedMessages: [recoveryMessage],
+      canonicalRawMessages: [recoveryMessage],
+      updatedAt: 500,
+    });
+    await reconcileAgentStorageUsage(() => 501);
+
+    await commitAgentSessionTransition({
+      turnAttemptId: 'attempt-prune-129',
+      transition: transitionFor(129),
+      now: () => 600,
+    }, cache);
+
+    assert.equal(await db.agentAttempts.get(oldest.id), undefined);
+    assert.equal(await db.agentAttemptRecoveries.get(oldest.id), undefined);
+    const accountedBytes = (await getAgentStorageUsage()).canonicalBytes;
+    assert.equal((await reconcileAgentStorageUsage(() => 601)).canonicalBytes, accountedBytes);
+  }, 20_000);
   it('joins exact read-only recovery rows, fails closed when damaged, and preserves the transcript', async () => {
     const sessionId = 'session-recovery-join';
     await createAgentSession({ idFactory: () => sessionId, now: () => 1 });

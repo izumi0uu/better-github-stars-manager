@@ -792,6 +792,7 @@ function optionsGithubFixture({ route, method }) {
   const routes = {
     'GET github-user': json({ login: 'runtime-user', avatar_url: null, name: 'Runtime User' }, 'github-user', 200, { 'x-oauth-scopes': 'public_repo, gist' }),
     'GET github-starred': json([], 'github-starred'),
+    'GET github-watch-scope': json([], 'github-watch-scope'),
     'POST github-gists': json({ id: 'runtime-probe-gist' }, 'github-gist-create', 201),
     'DELETE github-probe-gist': { status: 204, contentType: 'application/json', body: '', kind: 'github-gist-delete' },
   };
@@ -997,6 +998,17 @@ function installRawProductionPortController() {
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Production Port controller timed out.')), timeout); }),
     ]).finally(() => clearTimeout(timer));
   };
+  const scheduleRecovery = (state) => {
+    if (
+      !state.recoveryMode
+      || !state.recoveryPending
+      || state.recoveryStarted
+      || recoveryWakeupsPaused
+    ) return;
+    state.recoveryPending = false;
+    state.recoveryStarted = true;
+    queueMicrotask(() => recover(state));
+  };
   const sameDeliveryIdentity = (payload, launch) => payload?.turnAttemptId === launch.turnAttemptId
     && payload?.sessionId === launch.sessionId
     && payload?.baseRevision === launch.baseRevision;
@@ -1086,9 +1098,9 @@ function installRawProductionPortController() {
       state.activePortIdentity = state.port === port;
       lifelines.delete(port);
       if (state.port === port) state.port = null;
-      if (state.recoveryMode && !state.recoveryStarted && !recoveryWakeupsPaused) {
-        state.recoveryStarted = true;
-        queueMicrotask(() => recover(state));
+      if (state.recoveryMode && !state.recoveryStarted) {
+        state.recoveryPending = true;
+        scheduleRecovery(state);
       }
     });
     return ready;
@@ -1122,11 +1134,7 @@ function installRawProductionPortController() {
     },
     resumeRecoveryWakeups() {
       recoveryWakeupsPaused = false;
-      for (const state of turns.values()) {
-        if (!state.recoveryMode || state.recoveryStarted || state.port !== null) continue;
-        state.recoveryStarted = true;
-        queueMicrotask(() => recover(state));
-      }
+      for (const state of turns.values()) scheduleRecovery(state);
     },
     start(id, launch) {
       if (turns.has(id)) throw new Error('Duplicate production Port turn ID.');
@@ -1147,6 +1155,7 @@ function installRawProductionPortController() {
         inspectionPresent: false,
         recoveryMode: null,
         recoveryStarted: false,
+        recoveryPending: false,
         terminal: deferred(),
         recovery: deferred(),
       };
@@ -1175,6 +1184,7 @@ function installRawProductionPortController() {
         epochCount: state.epochs.length,
         recoveryMode: state.recoveryMode,
         recoveryStarted: state.recoveryStarted,
+        recoveryPending: state.recoveryPending,
         portPresent: state.port !== null,
         terminalDeliverySeen: state.terminalDeliverySeen,
         ackRequestPosted: state.ackRequestPosted,
@@ -1682,6 +1692,17 @@ async function boundedDiagnostics(error) {
     providerFailures: provider?.failures?.slice(0, 8) ?? [],
     lastProviderRequest: scenario.lastProviderRequest,
     unexpectedRoutes: provider?.unexpectedRequests?.slice(0, 8).map((entry) => ({ route: entry.route, method: entry.method, kind: entry.kind })) ?? [],
+    pageHttpPolicy: {
+      unexpectedCount: pageHttpPolicy.unexpectedRequests.length,
+      expectedCount: pageHttpPolicy.expectedRequests.length,
+      overflow: pageHttpPolicy.overflow,
+      interceptionFailure: pageHttpPolicy.interceptionFailure,
+      unexpectedRoutes: pageHttpPolicy.unexpectedRequests.slice(0, 8).map((entry) => ({
+        route: entry.route,
+        method: entry.method,
+        resourceType: entry.resourceType,
+      })),
+    },
     pageIssueKinds: pageIssues.slice(0, 8).map((entry) => entry.kind),
   };
 }

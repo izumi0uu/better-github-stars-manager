@@ -192,9 +192,13 @@ export function hookPageDiagnostics(page, label = 'extension-page', { issues = [
     const rawUrl = request.url?.() ?? '';
     const method = normalizeMethod(request.method?.());
     const failure = request.failure?.()?.errorText ?? '';
-    if (request.isNavigationRequest?.() === true && /ERR_ABORTED/u.test(failure)) return;
+    const isExtensionResource = /^chrome-extension:\/\//iu.test(rawUrl);
+    if (
+      failure === 'net::ERR_ABORTED'
+      && (request.isNavigationRequest?.() === true || isExtensionResource)
+    ) return;
     if (/^(?:data|blob|about):/iu.test(rawUrl)) return;
-    if (/^chrome-extension:\/\//iu.test(rawUrl)) {
+    if (isExtensionResource) {
       record('request-failed', `${method} extension-resource`);
       return;
     }
@@ -307,6 +311,8 @@ function classifySafeHttpRoute(value) {
     if (url.origin === 'https://api.openai.com' && url.pathname === '/v1/responses') return 'responses';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user') return 'github-user';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user/starred') return 'github-starred';
+    if (url.origin === 'https://api.github.com' && url.pathname === '/user/subscriptions') return 'github-watch-scope';
+    if (url.origin === 'https://api.github.com' && url.pathname === '/notifications') return 'github-notifications';
     if (url.origin === 'https://api.github.com' && url.pathname === '/gists/runtime-probe-gist') return 'github-probe-gist';
     if (url.origin === 'https://api.github.com' && url.pathname.startsWith('/gists')) return 'github-gists';
     if (url.origin === 'https://avatars.githubusercontent.com') return 'github-avatar';

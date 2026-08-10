@@ -247,6 +247,9 @@ describe('background Agent turn transport contract', () => {
     registry.attach(transport.port);
 
     start(transport, input);
+    await waitUntil(() => (
+      received !== null && registry.inspectActiveTurn(input.sessionId) !== null
+    ));
 
     assert.deepEqual(received, input);
     const active: BgsmAgentActiveTurn | null = registry.inspectActiveTurn(input.sessionId);
@@ -287,6 +290,11 @@ describe('background Agent turn transport contract', () => {
     registry.attach(transport.port);
 
     start(transport, input);
+    if (expectedRuns === 1) {
+      await waitUntil(() => runCount === 1);
+    } else {
+      await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    }
 
     assert.equal(runCount, expectedRuns);
     if (expectedRuns === 1) {
@@ -314,6 +322,7 @@ describe('background Agent turn transport contract', () => {
     const transport = fakePort();
     registry.attach(transport.port);
     start(transport, input);
+    await waitUntil(() => signal !== undefined);
     const hello = findHello(transport);
 
     transport.deliver({
