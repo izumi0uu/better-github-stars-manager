@@ -151,6 +151,8 @@ describe('Cubby background controller', () => {
     assert.equal(snapshot.proposalReviewSummary?.totalRows, 1);
     assert.equal(JSON.stringify(snapshot).includes('sourceFingerprint'), false);
     assert.equal(JSON.stringify(snapshot).includes('taxonomyFingerprint'), false);
+    assert.deepEqual(controller.findSnapshotByRun(restoredRunId, 3), snapshot);
+    assert.equal(controller.findSnapshotByRun(restoredRunId, 4), null);
   });
 
   it('rejects exhausted generations before allocating run authority', () => {

@@ -153,18 +153,29 @@ export interface OrganizeAnalysisRange {
   depth: number;
 }
 
+/** Preference snapshot that stays fixed for one whole-library organization job. */
+export interface OrganizeTagPolicySnapshot {
+  maxTagsPerRepo: number;
+  minTopicRepoCount: number;
+}
+
 /** Durable header for a resumable whole-library tag organization job. */
 export interface OrganizeJobRecord {
   jobId: string;
-  /** Present only while active; v1 enforces one job per slot with a unique index. */
+  /** Present only while active; v4 enforces one job per slot with a unique index. */
   activeSlot?: string;
+  /** Current durable control binding; changed only by explicit revision-checked takeover. */
   controllerId: string;
   sessionId: string;
+  /** Immutable Agent session that created this durable workflow; the session may be deleted. */
+  readonly originAgentSessionId: string;
   runId: string;
   generation: number;
   proposalId: string;
   frozenScope: OrganizeFrozenScopeSnapshot;
   taskInstruction: string;
+  /** Optional only for legacy v4 rows created before organization preferences were snapshotted. */
+  tagPolicy?: OrganizeTagPolicySnapshot;
   budget: unknown;
   usage: unknown;
   nextFrozenIndex: number;
@@ -310,6 +321,7 @@ export interface AgentProviderConfig {
   credentialRevision: string | null;
   capability: AgentProviderCapabilityRecord | null;
 }
+export type WatchCredentialSource = 'main' | 'dedicated' | null;
 
 /** Light config kept in chrome.storage.local. */
 export interface Config {
@@ -317,6 +329,7 @@ export interface Config {
   tokenCryptoMeta: CryptoMeta | null;
   watchNotificationsTokenEncrypted: string | null;
   watchNotificationsTokenCryptoMeta: CryptoMeta | null;
+  watchCredentialSource: WatchCredentialSource;
   agentProvider: AgentProviderConfig;
   /** Explicit Agent data-sharing acknowledgement for one disclosure/provider/origin tuple. */
   agentDataDisclosureAcceptance: AgentDataDisclosureAcceptance | null;
@@ -339,9 +352,9 @@ export interface Config {
   autoTagAgentPromptSeen: boolean;
   /** Legacy max topic-derived tags per repo. Read as compatibility input only. */
   autoTagLimit: number;
-  /** Max topic-derived tags per repo for Auto Tags. */
+  /** Max topic-derived tags per repo for automated organization. */
   maxTagsPerRepo: number;
-  /** Minimum repos that must share a topic before bulk Auto Tags generates it. */
+  /** Minimum repos that must share a topic/tag before automated organization uses it. */
   minTopicRepoCount: number;
   /** Durable library view intent for filters and primary sort. */
   libraryView: LibraryViewPrefs;
@@ -354,6 +367,7 @@ export interface Config {
     order: string[];
     hidden: string[];
     widths?: Partial<Record<ColumnId, number>>;
+    showRepositoryOwner?: boolean;
   } | null;
   /** One-shot migration flag: clear auto-derived `language` tags (now that
    *  language is a first-class filter, not a tag). Set true after the migration

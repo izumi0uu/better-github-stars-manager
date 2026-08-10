@@ -1,4 +1,5 @@
 import type { MessageCatalog } from '@/i18n';
+import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/turn-protocol';
 
 /**
  * Errors are thrown at their origin as stable code strings; `translateError`
@@ -143,6 +144,9 @@ export function translateError(e: unknown, m: MessageCatalog): string {
   if (raw === AGENT_CONTEXT_CAPABILITY_REQUIRED) return m.errors.agentContextCapabilityRequired;
   if (raw === AGENT_CONTEXT_CAPABILITY_INFEASIBLE) {
     return m.errors.agentContextCapabilityInfeasible;
+  }
+  if (providerErrorCode === AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE) {
+    return m.errors.agentArtifactCoverageStalled;
   }
   if (providerErrorCode === 'protocol_error' || providerErrorCode === 'parse_error') {
     return m.errors.agentProviderResponseInvalid;

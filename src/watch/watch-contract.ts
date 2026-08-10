@@ -2,6 +2,7 @@ import type {
   GitHubWatchStateRecord,
   WatchInboxProjection,
 } from '@/watch/watch-model';
+import type { WatchCredentialSource } from '@/types';
 
 export type WatchScopeStatus =
   | 'not_configured'
@@ -21,6 +22,7 @@ export type WatchInboxStatus =
 
 export interface WatchStatus {
   accountLogin: string | null;
+  credentialSource: WatchCredentialSource;
   hasMainToken: boolean;
   hasNotificationsToken: boolean;
   refreshing: boolean;

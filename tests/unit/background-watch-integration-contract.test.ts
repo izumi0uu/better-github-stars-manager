@@ -1,6 +1,41 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  consumeOptionsIntent,
+  OPTIONS_INTENT_STORAGE_KEY,
+  parseOptionsIntent,
+  writeOptionsIntent,
+} from '@/utils/options-intent';
 import { backgroundSource, caseBlock } from '../helpers/background-case-block';
+
+const optionsSource = readFileSync(
+  new URL('../../src/options/Options.tsx', import.meta.url),
+  'utf8',
+);
+const watchContractSource = readFileSync(
+  new URL('../../src/watch/watch-contract.ts', import.meta.url),
+  'utf8',
+);
+const watchRefreshSource = readFileSync(
+  new URL('../../src/background/watch-refresh.ts', import.meta.url),
+  'utf8',
+);
+
+function installOptionsSessionMock(initial: Record<string, unknown> = {}) {
+  const values = new Map(Object.entries(initial));
+  const session = {
+    get: vi.fn(async (key: string) => ({ [key]: values.get(key) })),
+    set: vi.fn(async (items: Record<string, unknown>) => {
+      for (const [key, value] of Object.entries(items)) values.set(key, value);
+    }),
+    remove: vi.fn(async (key: string) => {
+      values.delete(key);
+    }),
+  };
+  vi.stubGlobal('chrome', { storage: { session } });
+  return { session, values };
+}
 
 function extract(source: string, pattern: RegExp, group = 1): string {
   const match = source.match(pattern);
@@ -9,6 +44,11 @@ function extract(source: string, pattern: RegExp, group = 1): string {
   assert.ok(value, `Contract capture ${group} was empty: ${pattern}`);
   return value;
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('Watch background integration contract', () => {
   it('uses the shared queue and only publishes a Watch-specific invalidation', () => {
@@ -96,5 +136,78 @@ describe('Watch background integration contract', () => {
     assert.match(detail, /row\.full_name\.toLowerCase\(\) === fullName/);
     assert.match(detail, /idbTagStore\.get\(star\.full_name\)/);
     assert.doesNotMatch(detail, /queryStars|invalidateCache|broadcastDataChanged/);
+  });
+
+  it('keeps Watch credential source explicit in every status projection', () => {
+    assert.match(watchContractSource, /credentialSource:\s*WatchCredentialSource/);
+    assert.match(watchRefreshSource, /const credentialSource = auth\.watchCredentialSource/);
+    assert.match(watchRefreshSource, /return \{\s*accountLogin: auth\.accountLogin,\s*credentialSource,/);
+  });
+
+  it('accepts ordinary and Watch-targeted openOptions without broadening the request', () => {
+    assert.match(
+      backgroundSource,
+      /\|\s*\{\s*type:\s*["']openOptions["'];\s*section\?:\s*["']watch["']\s*\}/,
+    );
+    assert.doesNotMatch(backgroundSource, /type:\s*["']openOptions["'];\s*section\?:\s*(?:string|unknown)/);
+
+    const block = caseBlock('openOptions', 'devClearLocalData');
+    assert.match(block, /if \(req\.section !== undefined && req\.section !== ['"]watch['"]\)/);
+    assert.match(block, /return \{ ok: false, error: ['"]Unsupported Options section\.['"] \}/);
+    assert.match(
+      block,
+      /if \(req\.section !== undefined\) \{\s*await writeOptionsIntent\(req\.section\);\s*\}\s*await chrome\.runtime\.openOptionsPage\(\)/,
+    );
+    assert.doesNotMatch(block, /storage\.local/);
+  });
+
+  it('stores and consumes only the transient Watch intent under session storage', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_786_225_645_000);
+    const { session, values } = installOptionsSessionMock({
+      unrelatedSessionState: { keep: true },
+    });
+    expect(OPTIONS_INTENT_STORAGE_KEY).toBe('gsm_options_intent_v1');
+
+    await writeOptionsIntent('watch');
+    expect(session.set).toHaveBeenCalledWith({
+      [OPTIONS_INTENT_STORAGE_KEY]: {
+        section: 'watch',
+        requestedAt: 1_786_225_645_000,
+      },
+    });
+    expect(values.get('unrelatedSessionState')).toEqual({ keep: true });
+
+    await expect(consumeOptionsIntent()).resolves.toEqual({
+      section: 'watch',
+      requestedAt: 1_786_225_645_000,
+    });
+    expect(session.remove).toHaveBeenCalledWith(OPTIONS_INTENT_STORAGE_KEY);
+    expect(values.has(OPTIONS_INTENT_STORAGE_KEY)).toBe(false);
+    expect(values.get('unrelatedSessionState')).toEqual({ keep: true });
+  });
+
+  it('fails malformed sections closed before persistence or Options navigation', async () => {
+    const { session } = installOptionsSessionMock();
+
+    expect(parseOptionsIntent({ section: 'stars', requestedAt: 1 })).toBeNull();
+    expect(parseOptionsIntent({ section: 'watch', requestedAt: Number.NaN })).toBeNull();
+    await expect(writeOptionsIntent('stars' as 'watch')).rejects.toThrow('Invalid Options intent section.');
+    expect(session.set).not.toHaveBeenCalled();
+
+    const block = caseBlock('openOptions', 'devClearLocalData');
+    const rejectAt = block.indexOf("req.section !== 'watch'");
+    const writeAt = block.indexOf('writeOptionsIntent(req.section)');
+    const openAt = block.indexOf('chrome.runtime.openOptionsPage()');
+    assert.ok(rejectAt >= 0 && rejectAt < writeAt && writeAt < openAt);
+  });
+
+  it('consumes the intent on mount and listens for a new session intent on an already-open page', () => {
+    assert.match(optionsSource, /consumeOptionsIntent\(\)/);
+    assert.match(optionsSource, /OPTIONS_INTENT_STORAGE_KEY/);
+    assert.match(optionsSource, /areaName !== ["']session["']/);
+    assert.match(optionsSource, /changes\[OPTIONS_INTENT_STORAGE_KEY\]/);
+    assert.match(optionsSource, /chrome\.storage\.onChanged\.addListener\(listener\)/);
+    assert.match(optionsSource, /chrome\.storage\.onChanged\.removeListener\(listener\)/);
+    assert.doesNotMatch(optionsSource, /storage\.local\.(?:set|remove)\([^)]*OPTIONS_INTENT_STORAGE_KEY/);
   });
 });

@@ -71,6 +71,7 @@ export function AgentDataDisclosurePanel({
           />
 
           <p className="gsm-body-note">{m.options.agentDisclosureKeyException}</p>
+          <p className="gsm-body-note">{m.options.agentDisclosureLocalHistory}</p>
           <p className="gsm-body-note">
             {customHostAccessRequired
               ? m.options.agentDisclosureCustomAccess

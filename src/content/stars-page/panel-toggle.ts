@@ -14,30 +14,57 @@
  * The flag is NOT persisted (see the content-script header): refresh / re-entry
  * always lands on the panel.
  */
-let enabledOverride: boolean | null = null;
-let dispatch = (): void => {};
+type PanelToggleState = {
+  enabledOverride: boolean | null;
+  dispatch: () => void;
+};
 
-export function isPanelEnabled(defaultEnabled = true): boolean {
-  return enabledOverride ?? defaultEnabled;
+const pageStates = new WeakMap<object, PanelToggleState>();
+
+function stateFor(target: object): PanelToggleState {
+  let state = pageStates.get(target);
+  if (!state) {
+    state = { enabledOverride: null, dispatch: () => {} };
+    pageStates.set(target, state);
+  }
+  return state;
+}
+
+export function isPanelEnabled(
+  defaultEnabled = true,
+  target: object = typeof window === 'undefined' ? globalThis : window,
+): boolean {
+  return stateFor(target).enabledOverride ?? defaultEnabled;
 }
 
 /** Register the effect that actually re-evaluates panel/fab visibility. */
-export function onPanelToggle(fn: () => void): void {
-  dispatch = fn;
+export function onPanelToggle(
+  fn: () => void,
+  target: object = typeof window === 'undefined' ? globalThis : window,
+): void {
+  stateFor(target).dispatch = fn;
 }
 
 /** Retract the panel overlay (toolbar "hide panel"). Session-local. */
-export function hidePanel(): void {
-  enabledOverride = false;
-  dispatch();
+export function hidePanel(
+  target: object = typeof window === 'undefined' ? globalThis : window,
+): void {
+  const state = stateFor(target);
+  state.enabledOverride = false;
+  state.dispatch();
 }
 
 /** Re-mount the panel overlay (FAB "show panel"). Session-local. */
-export function showPanel(): void {
-  enabledOverride = true;
-  dispatch();
+export function showPanel(
+  target: object = typeof window === 'undefined' ? globalThis : window,
+): void {
+  const state = stateFor(target);
+  state.enabledOverride = true;
+  state.dispatch();
 }
 
-export function resetPanelToggle(): void {
-  enabledOverride = null;
+export function resetPanelToggle(
+  target: object = typeof window === 'undefined' ? globalThis : window,
+): void {
+  stateFor(target).enabledOverride = null;
 }

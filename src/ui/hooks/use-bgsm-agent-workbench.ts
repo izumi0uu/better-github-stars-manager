@@ -40,6 +40,7 @@ type PendingReceiptPageRequest = Readonly<{
 export function useBgsmAgentWorkbench(
   onAuthoritativeDataChanged?: () => void,
   sharedSessionId?: string,
+  enabled = true,
 ) {
   const controllerIdRef = useRef<ControllerId>(createControllerId());
   const sessionIdRef = useRef(sharedSessionId ?? `organize-session:${createNonce()}`);
@@ -106,6 +107,7 @@ export function useBgsmAgentWorkbench(
   }, [dispatchTracked, tryPost]);
 
   useEffect(() => {
+    if (!enabled) return;
     const nextSessionId = sharedSessionId ?? sessionIdRef.current;
     if (nextSessionId !== sessionIdRef.current) {
       controllerIdRef.current = createControllerId();
@@ -230,9 +232,9 @@ export function useBgsmAgentWorkbench(
           snapshotRef.current = nextState.snapshot;
           dispatch(action);
           if (
-            message.type === 'bgsmOrganizeJobState' &&
-            message.presentation.status === 'completed' &&
-            currentState.organizeJob?.status !== 'completed'
+            message.type === 'bgsmOrganizeJobState'
+            && message.presentation?.status === 'completed'
+            && currentState.organizeJob?.status !== 'completed'
           ) {
             onAuthoritativeDataChangedRef.current?.();
           }
@@ -270,32 +272,26 @@ export function useBgsmAgentWorkbench(
         } catch {
           reconnectFromTransport();
         }
-      } else if (currentState.organizeJob) {
-        const request: BgsmOrganizeJobClientMessage = {
-          type: 'requestBgsmActiveOrganizeJob',
-          controllerId,
-          sessionId,
-        };
-        validateBgsmOrganizeJobMessageIdentity(request);
-        port.postMessage(request);
-      } else if (snapshot) {
-        const request: BgsmOrganizeJobClientMessage = {
-          type: 'requestBgsmOrganizeJobSnapshot',
-          controllerId,
-          sessionId,
-          runId: snapshot.runId,
-          generation: snapshot.generation,
-        };
-        validateBgsmOrganizeJobMessageIdentity(request);
-        port.postMessage(request);
       } else {
-        const request: BgsmOrganizeJobClientMessage = {
-          type: 'requestBgsmActiveOrganizeJob',
-          controllerId,
-          sessionId,
-        };
-        validateBgsmOrganizeJobMessageIdentity(request);
-        port.postMessage(request);
+        const request: BgsmOrganizeJobClientMessage = snapshot && !currentState.organizeJob
+          ? {
+              type: 'requestBgsmOrganizeJobSnapshot',
+              controllerId,
+              sessionId,
+              runId: snapshot.runId,
+              generation: snapshot.generation,
+            }
+          : {
+              type: 'requestBgsmActiveOrganizeJob',
+              controllerId,
+              sessionId,
+            };
+        try {
+          validateBgsmOrganizeJobMessageIdentity(request);
+          port.postMessage(request);
+        } catch {
+          reconnectFromTransport();
+        }
       }
     };
     connect();
@@ -307,17 +303,18 @@ export function useBgsmAgentWorkbench(
       activePort = null;
       portRef.current = null;
       pendingReceiptPageRequestRef.current = null;
-      if (!port) return;
-      try {
-        port.postMessage({
-          type: 'disconnectBgsmOrganizeJob',
-          controllerId,
-          sessionId,
-        } satisfies BgsmOrganizeJobClientMessage);
-      } catch {
-        // The worker may already be gone; disconnect remains best-effort.
+      if (port) {
+        try {
+          port.postMessage({
+            type: 'disconnectBgsmOrganizeJob',
+            controllerId,
+            sessionId,
+          } satisfies BgsmOrganizeJobClientMessage);
+        } catch {
+          // The worker may already be gone; disconnect remains best-effort.
+        }
+        port.disconnect();
       }
-      port.disconnect();
       for (const retiringPort of retiringPorts) {
         try {
           retiringPort.disconnect();
@@ -327,7 +324,7 @@ export function useBgsmAgentWorkbench(
       }
       retiringPorts.clear();
     };
-  }, [dispatchTracked, sharedSessionId]);
+  }, [dispatchTracked, enabled, sharedSessionId]);
 
   const requestOrganizeReviewPage = useCallback((rowOffset: number) => {
     const current = stateRef.current;
@@ -788,23 +785,40 @@ export function useBgsmAgentWorkbench(
     }));
   }, [sendOrganizeCommand]);
 
+  const takeControl = useCallback(() => {
+    const job = stateRef.current.organizeJob;
+    if (!job || stateRef.current.role !== 'owner_lost') return;
+    sendOrganizeCommand({
+      kind: 'take_control',
+      runId: job.runId,
+      generation: job.generation,
+      jobId: job.jobId,
+      baselineRevision: job.revision,
+    }, (requestId) => ({
+      type: 'takeControlBgsmOrganizeJob',
+      controllerId: controllerIdRef.current,
+      sessionId: sessionIdRef.current,
+      runId: job.runId,
+      generation: job.generation,
+      requestId,
+      jobId: job.jobId,
+      expectedRevision: job.revision,
+    }));
+  }, [sendOrganizeCommand]);
+
   const clearTerminal = useCallback(() => {
     agentHandoffAuthorityRef.current += 1;
     deferredHandoffCommandRef.current = null;
     const job = stateRef.current.organizeJob;
-    if (job?.status === 'completed' && job.apply) {
-      post({
-        type: 'dismissBgsmOrganizeReceipt',
-        controllerId: controllerIdRef.current,
-        sessionId: sessionIdRef.current,
-        runId: job.runId,
-        generation: job.generation,
-        jobId: job.jobId,
-        applyId: job.apply.applyId,
-      });
-    }
-    dispatchTracked({ type: 'clear_terminal' });
-  }, [dispatchTracked, post]);
+    if (!job || !['completed', 'cancelled'].includes(job.status)) return;
+    tryPost({
+      type: 'dismissBgsmTerminalOrganizeJob',
+      controllerId: controllerIdRef.current,
+      sessionId: sessionIdRef.current,
+      jobId: job.jobId,
+      expectedRevision: job.revision,
+    });
+  }, [tryPost]);
 
   return useMemo(() => ({
     state,
@@ -826,6 +840,7 @@ export function useBgsmAgentWorkbench(
     resumeOrganizeApply,
     requestOrganizeReviewPage,
     requestOrganizeReceiptPage,
+    takeControl,
     clearTerminal,
   }), [
     cancelPreflight,
@@ -842,6 +857,7 @@ export function useBgsmAgentWorkbench(
     startWholeLibraryFromAgent,
     requestOrganizeReceiptPage,
     requestOrganizeReviewPage,
+    takeControl,
     resumeOrganizeApply,
     restartWholeLibrary,
     setAllProposalRowsSelected,

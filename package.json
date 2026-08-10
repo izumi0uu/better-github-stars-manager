@@ -1,6 +1,6 @@
 {
   "name": "better-github-stars-manager",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Manage your GitHub starred repos: tag, note, filter, search across thousands of stars. UI injected into the stars page.",
   "packageManager": "pnpm@10.33.2",
   "devEngines": {
@@ -24,7 +24,7 @@
     "package:extension": "node scripts/package-extension.mjs",
     "build:agent-dev-diagnostics": "node scripts/build-agent-dev-diagnostics.mjs",
     "capture:store-screenshots": "node scripts/capture-store-screenshots.mjs",
-    "verify:agent-phase5": "node scripts/run-agent-phase5-verification.mjs",
+    "verify:agent-runtime": "node scripts/run-agent-runtime-verification.mjs",
     "verify:agent-release-gates": "node scripts/verify-agent-release-gates.mjs",
     "preinstall": "node scripts/enforce-package-manager.mjs",
     "prepare": "node scripts/setup-hooks.mjs",
@@ -41,6 +41,10 @@
     "test:runtime": "node tests/runtime/puppeteer-runtime.test.mjs",
     "test:runtime:agent-diagnostics": "node tests/runtime/agent-diagnostics-release-isolation.mjs",
     "test:runtime:agent-scenarios": "node tests/runtime/agent-scenarios-extension-host.mjs",
+    "test:runtime:agent-session": "node tests/runtime/agent-session-extension-host.mjs",
+    "test:runtime:agent-worker-recovery": "node tests/runtime/agent-worker-recovery-extension-host.mjs",
+    "test:runtime:agent-ui-history": "node tests/runtime/agent-ui-history-extension-host.mjs",
+    "test:runtime:agent-composition": "node tests/runtime/agent-runtime-composition.mjs",
     "test:runtime:organize-job-host": "node tests/runtime/organize-job-extension-host.mjs",
     "test:runtime:organize-job-recovery": "GSM_RUNTIME_WORKER_RECOVERY=1 node tests/runtime/organize-job-extension-host.mjs",
     "test:smoke": "node tests/runtime/extension-browser-smoke.mjs",

@@ -24,6 +24,7 @@ vi.mock('@/i18n', () => ({
         columnFavorite: 'Favorite',
         columnNotes: 'Notes',
         lockedColumn: 'Locked',
+        showRepositoryOwner: 'Show repository owner',
       },
     },
   }),
@@ -42,6 +43,7 @@ describe('layout edit chrome interactions', () => {
   it('keeps the column menu open after internal item clicks', async () => {
     const { LayoutColumnMenu } = await import('@/ui/components/LayoutEditChrome');
     const onSetColumnHidden = vi.fn();
+    const onSetRepositoryOwnerVisible = vi.fn();
 
     const menu = LayoutColumnMenu({
       container: {} as HTMLElement,
@@ -50,6 +52,7 @@ describe('layout edit chrome interactions', () => {
       position: { left: 0, top: 0 },
       draftLayout: DEFAULT_COLUMN_LAYOUT,
       onSetColumnHidden,
+      onSetRepositoryOwnerVisible,
     });
     const buttons = elementChildren(menu);
 
@@ -58,6 +61,9 @@ describe('layout edit chrome interactions', () => {
     expect(onSetColumnHidden).toHaveBeenCalledTimes(1);
     expect(onSetColumnHidden).toHaveBeenCalledWith('description', true);
     expect(Object.keys(buttons[1].props)).not.toContain('onClose');
+
+    buttons.at(-1)?.props.onClick();
+    expect(onSetRepositoryOwnerVisible).toHaveBeenCalledWith(false);
   });
 
   it('keeps outside-click detection scoped to layout column menu islands', () => {

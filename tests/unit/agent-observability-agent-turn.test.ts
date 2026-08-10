@@ -100,6 +100,7 @@ describe('ordinary Agent trace instrumentation', () => {
       deliverySequence: 7,
       deliveryKind: 'live',
     });
+    if (result.reason === undefined) throw new TypeError('Expected a terminal Agent result.');
     trace.finish('completed', result.reason);
     await trace.flush();
 

@@ -98,6 +98,7 @@ export function AgentProposalReviewCard({
   proposal,
   selectedProposalRowIds,
   reviewEditable,
+  reviewPageable = reviewEditable,
   applyInFlight,
   applySelectedTotal,
   selectedRepositoryCount,
@@ -115,6 +116,7 @@ export function AgentProposalReviewCard({
   proposal: WorkbenchProposalSummary;
   selectedProposalRowIds: ReadonlySet<string>;
   reviewEditable: boolean;
+  reviewPageable?: boolean;
   applyInFlight: boolean;
   applySelectedTotal: number;
   selectedRepositoryCount?: number;
@@ -352,7 +354,7 @@ export function AgentProposalReviewCard({
                 size="icon"
                 className="size-7"
                 onClick={() => onPageChange(Math.max(0, rowOffset - 100))}
-                disabled={!reviewEditable || rowOffset === 0}
+                disabled={!reviewPageable || rowOffset === 0}
                 title={labels.previousPage}
                 aria-label={labels.previousPage}
               >
@@ -363,7 +365,7 @@ export function AgentProposalReviewCard({
                 size="icon"
                 className="size-7"
                 onClick={() => nextRowOffset !== null && onPageChange(nextRowOffset)}
-                disabled={!reviewEditable || nextRowOffset === null}
+                disabled={!reviewPageable || nextRowOffset === null}
                 title={labels.nextPage}
                 aria-label={labels.nextPage}
               >

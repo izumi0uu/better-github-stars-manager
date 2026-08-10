@@ -25,6 +25,7 @@ function configWithCursor(lastSyncStarredAt: string | null): Config {
     tokenCryptoMeta: null,
     watchNotificationsTokenEncrypted: null,
     watchNotificationsTokenCryptoMeta: null,
+    watchCredentialSource: null,
     agentProvider: {
       provider: 'openai',
       protocol: null,

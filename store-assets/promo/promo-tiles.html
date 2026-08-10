@@ -1,0 +1,176 @@
+<!doctype html>
+<!--
+  Chrome Web Store promo tile source (single source of truth).
+
+  Outputs (rendered by scripts/generate-store-promo.mjs):
+    node scripts/generate-store-promo.mjs
+    -> store-assets/promo/small-tile.png  (440x280)
+    -> store-assets/promo/marquee.png     (1400x560)
+
+  Copy rules (do not regress):
+    - Never claim "zero server" or "100% private" absolutes. The extension
+      intentionally talks to GitHub/Gist and, when configured, the
+      user-selected AI provider.
+    - Truthful framing only: local-first storage, direct connections to
+      GitHub/Gist and the selected AI provider, no developer-operated proxy.
+    - No credentials, tokens, account data, private notes/code, prompts, or
+      Provider payloads may appear in this source. It is vector/type only.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BGSM store promo tiles</title>
+<style>
+  :root {
+    --canvas: #f7f8fa;
+    --ink: #222325;
+    --body: #4b515a;
+    --muted: #565b64;
+    --faint: #868c96;
+    --amber: #f6a70d;
+    --amber-dark: #a76a05;
+    --amber-tint: #fdf0d3;
+    --card: #ffffff;
+    --card-border: #e4e6ea;
+    --sparkle-gray: #d6dae1;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #666; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .tile { position: relative; overflow: hidden; background: var(--canvas); display: none; }
+  body[data-tile="small"] .tile-small { display: block; }
+  body[data-tile="marquee"] .tile-marquee { display: block; }
+  .tile-small { width: 440px; height: 280px; }
+  .tile-marquee { width: 1400px; height: 560px; }
+  .abs { position: absolute; }
+
+  /* ---------- shared brand bits ---------- */
+  .brand-row { display: flex; align-items: center; }
+  .brand-row img { display: block; }
+  .brand-name { font-weight: 650; color: var(--ink); letter-spacing: -0.01em; }
+  .headline { font-weight: 750; color: var(--ink); letter-spacing: -0.022em; }
+  .headline .dot { color: var(--amber); }
+  .star { position: absolute; }
+
+  /* ---------- small tile 440x280 ---------- */
+  .st-brand { left: 28px; top: 28px; gap: 12px; }
+  .st-brand img { width: 44px; height: 44px; }
+  .st-brand .brand-name { font-size: 16.5px; }
+  .st-headline { left: 28px; top: 96px; font-size: 33px; line-height: 1.13; }
+  .st-sub {
+    left: 28px; top: 186px; width: 384px;
+    font-size: 14.5px; line-height: 1.5; color: var(--muted); font-weight: 450;
+  }
+  .st-foot {
+    left: 28px; top: 247px;
+    font-size: 12px; letter-spacing: 0.02em; color: var(--faint); font-weight: 500;
+  }
+
+  /* ---------- marquee 1400x560 ---------- */
+  .mq-brand { left: 64px; top: 64px; gap: 15px; }
+  .mq-brand img { width: 52px; height: 52px; }
+  .mq-brand .brand-name { font-size: 20px; }
+  .mq-headline { left: 64px; top: 146px; font-size: 46px; line-height: 1.09; }
+  .mq-sub {
+    left: 64px; top: 264px; width: 468px;
+    font-size: 16.5px; line-height: 1.55; color: var(--body); font-weight: 450;
+  }
+  .mq-meta {
+    left: 64px; top: 494px;
+    font-size: 12.5px; letter-spacing: 0.09em; color: var(--faint); font-weight: 600;
+  }
+  .mq-card {
+    position: absolute; left: 640px; width: 696px; height: 138px;
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 14px; box-shadow: 0 1px 2px rgba(23, 25, 35, 0.05);
+  }
+  .mq-card .badge {
+    position: absolute; left: 22px; top: 46px; width: 46px; height: 46px;
+    border-radius: 12px; background: var(--amber-tint);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .mq-card .badge svg { width: 24px; height: 24px; stroke: var(--amber-dark); }
+  .mq-card .card-title {
+    position: absolute; left: 92px; top: 34px;
+    font-size: 17.5px; font-weight: 650; color: var(--ink); letter-spacing: -0.01em;
+  }
+  .mq-card .card-body {
+    position: absolute; left: 92px; top: 62px; width: 566px;
+    font-size: 14px; line-height: 1.45; color: var(--muted); font-weight: 450;
+  }
+</style>
+</head>
+<body>
+<script>
+  document.body.dataset.tile = new URLSearchParams(location.search).get('tile') || 'small';
+</script>
+
+<!-- ==================== small promo tile 440x280 ==================== -->
+<div class="tile tile-small" role="img"
+  aria-label="Better GitHub Stars Manager. Local-first star organization. Direct to GitHub and your selected AI provider. No developer-operated proxy.">
+  <svg class="star" style="left:384px; top:26px" width="20" height="20" viewBox="0 0 24 24" fill="#f6a70d"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+  <svg class="star" style="left:412px; top:56px" width="12" height="12" viewBox="0 0 24 24" fill="#d6dae1"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+  <svg class="star" style="left:362px; top:60px" width="10" height="10" viewBox="0 0 24 24" fill="#f6a70d" opacity="0.55"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+  <svg class="star" style="left:398px; top:88px" width="8" height="8" viewBox="0 0 24 24" fill="#d6dae1"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+
+  <div class="abs brand-row st-brand">
+    <img src="../../public/icons/icon-128.png" alt="">
+    <div class="brand-name">Better GitHub Stars Manager</div>
+  </div>
+  <div class="abs headline st-headline">Local-first<br>star organization<span class="dot">.</span></div>
+  <div class="abs st-sub">Direct to GitHub and your selected AI provider.<br>No developer-operated proxy.</div>
+  <div class="abs st-foot">Tags&#160;&#183;&#160;Notes&#160;&#183;&#160;Filters&#160;&#183;&#160;Search&#160;&#183;&#160;Gist sync</div>
+</div>
+
+<!-- ==================== marquee promo tile 1400x560 ==================== -->
+<div class="tile tile-marquee" role="img"
+  aria-label="Better GitHub Stars Manager. Local-first star organization. Your stars, tags, and notes live in your browser. Sync and AI requests go directly to GitHub and the AI provider you select, never through a developer-operated proxy.">
+  <svg class="star" style="left:576px; top:74px" width="22" height="22" viewBox="0 0 24 24" fill="#f6a70d"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+  <svg class="star" style="left:612px; top:120px" width="13" height="13" viewBox="0 0 24 24" fill="#d6dae1"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+  <svg class="star" style="left:548px; top:150px" width="10" height="10" viewBox="0 0 24 24" fill="#f6a70d" opacity="0.55"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+  <svg class="star" style="left:1292px; top:40px" width="20" height="20" viewBox="0 0 24 24" fill="#f6a70d"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+  <svg class="star" style="left:1328px; top:80px" width="12" height="12" viewBox="0 0 24 24" fill="#d6dae1"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+  <svg class="star" style="left:1258px; top:92px" width="9" height="9" viewBox="0 0 24 24" fill="#f6a70d" opacity="0.55"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+  <svg class="star" style="left:1308px; top:520px" width="12" height="12" viewBox="0 0 24 24" fill="#d6dae1"><path d="M12 1.8l2.5 6.4 6.9.5-5.3 4.5 1.6 6.7-5.7-3.7-5.7 3.7 1.6-6.7-5.3-4.5 6.9-.5z"/></svg>
+
+  <div class="abs brand-row mq-brand">
+    <img src="../../public/icons/icon-128.png" alt="">
+    <div class="brand-name">Better GitHub Stars Manager</div>
+  </div>
+  <h1 class="abs headline mq-headline">Local-first<br>star organization<span class="dot">.</span></h1>
+  <p class="abs mq-sub">Your stars, tags, and notes live in your browser. Sync and AI
+    requests go directly to GitHub and the AI provider you select &#8212; never
+    through a developer-operated proxy.</p>
+  <div class="abs mq-meta">TAGS&#160;&#160;&#183;&#160;&#160;NOTES&#160;&#160;&#183;&#160;&#160;FILTERS&#160;&#160;&#183;&#160;&#160;SEARCH&#160;&#160;&#183;&#160;&#160;GIST SYNC&#160;&#160;&#183;&#160;&#160;OPTIONAL AI</div>
+
+  <div class="mq-card" style="top:62px">
+    <div class="badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></svg>
+    </div>
+    <div class="card-title">Local-first storage</div>
+    <div class="card-body">Stars, tags, and notes are stored locally in your browser.<br>No developer-operated proxy.</div>
+  </div>
+
+  <div class="mq-card" style="top:216px">
+    <div class="badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>
+    </div>
+    <div class="card-title">Direct connections</div>
+    <div class="card-body">Requests go straight to GitHub and the AI provider you select,<br>never through a developer-operated proxy.</div>
+  </div>
+
+  <div class="mq-card" style="top:370px">
+    <div class="badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+    </div>
+    <div class="card-title">Yours to keep</div>
+    <div class="card-body">Optional sync through your own secret Gist.<br>Push and pull your tags and notes across devices.</div>
+  </div>
+</div>
+</body>
+</html>

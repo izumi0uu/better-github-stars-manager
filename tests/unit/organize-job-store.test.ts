@@ -9,9 +9,9 @@ import {
 import { parseProposalId, parseRunId } from '@/bgsm-agent/identity';
 import { createEmptyRunBudgetUsage, createProductionRunBudget } from '@/bgsm-agent/policy';
 import { db } from '@/storage/db';
+import { createAgentSession, deleteAgentSession } from '@/storage/agent-session-store';
 import { idbTagStore, resetDirtyForDev } from '@/storage/idb-tag-store';
 import {
-  attachOrganizeJob,
   activateOrganizePreflight,
   advanceOrganizeJobRun,
   bindOrganizeJobProvider,
@@ -21,9 +21,9 @@ import {
   claimOrganizeAnalysisBatch,
   claimOrganizeApplyChunk,
   completeOrganizeJobWithoutApply,
-  createOrganizeJob,
-  createOrganizePreflight,
-  dismissOrganizeReceipt,
+  createOrganizeJob as createStoredOrganizeJob,
+  createOrganizePreflight as createStoredOrganizePreflight,
+  dismissTerminalOrganizeJob,
   getActiveOrganizeJob,
   getOrganizeCoverage,
   getOrganizeJob,
@@ -45,8 +45,25 @@ import {
   settleOrganizeApplyChunk,
   splitOrganizeAnalysisPage,
   updateOrganizeSelection,
+  takeControlOrganizeJob,
 } from '@/storage/organize-job-store';
 import { fakeStar } from './test-utils';
+
+async function createOrganizeJob(input: Parameters<typeof createStoredOrganizeJob>[0]) {
+  await ensureAgentSession(input.sessionId);
+  return createStoredOrganizeJob(input);
+}
+
+async function createOrganizePreflight(input: Parameters<typeof createStoredOrganizePreflight>[0]) {
+  await ensureAgentSession(input.sessionId);
+  return createStoredOrganizePreflight(input);
+}
+
+async function ensureAgentSession(sessionId: string): Promise<void> {
+  if (!await db.agentSessions.get(sessionId)) {
+    await createAgentSession({ idFactory: () => sessionId });
+  }
+}
 
 describe('durable whole-library organize job store', () => {
   beforeEach(async () => {
@@ -214,10 +231,17 @@ describe('durable whole-library organize job store', () => {
     assert.equal(await db.tagDirtyOutbox.count(), 100);
     assert.equal(await getActiveOrganizeJob(), undefined);
 
-    assert.equal(await dismissOrganizeReceipt(apply.applyId), true);
+    const terminalJob = (await getOrganizeJob(job.jobId))!;
+    assert.equal(await dismissTerminalOrganizeJob({
+      jobId: terminalJob.jobId,
+      expectedRevision: terminalJob.revision,
+    }), true);
     assert.equal(await getOrganizeJob(job.jobId), undefined);
     assert.equal(await getOrganizeTaxonomy(job.jobId), undefined);
     assert.equal(await getOrganizeReceipt(apply.applyId), undefined);
+    assert.equal(await db.organizeItems.where('jobId').equals(job.jobId).count(), 0);
+    assert.equal(await db.organizeApplies.get(apply.applyId), undefined);
+    assert.equal(await db.organizeApplyRows.where('applyId').equals(apply.applyId).count(), 0);
   }, 20_000);
 
   it('blocks review when terminal analysis failures leave incomplete coverage', async () => {
@@ -242,8 +266,6 @@ describe('durable whole-library organize job store', () => {
     assert.equal((await getOrganizeJob(job.jobId))?.status, 'analysis_blocked');
     await assert.rejects(() => advanceOrganizeJobRun({
       jobId: job.jobId,
-      controllerId: job.controllerId,
-      sessionId: job.sessionId,
       runId: parseRunId('run:v1:blocked-at-end-child'),
       generation: 2,
       expectedParent: { runId, generation: 1 },
@@ -253,6 +275,152 @@ describe('durable whole-library organize job store', () => {
       startFrozenIndex: 1,
       analysisPendingRanges: [],
     }), /actively analyzing/u);
+  });
+
+  it('snapshots organization preferences and reconciles tag coverage across persisted pages', async () => {
+    const repositoryIds = ['owner/a', 'owner/b', 'owner/c', 'owner/d'];
+    const requestedPolicy = { maxTagsPerRepo: 2, minTopicRepoCount: 3 };
+    const preflight = await createOrganizePreflight(preflightInput(repositoryIds, {
+      tagPolicy: requestedPolicy,
+    }));
+    requestedPolicy.maxTagsPerRepo = 5;
+    requestedPolicy.minTopicRepoCount = 1;
+    const activated = await activateOrganizePreflight({
+      preflightToken: preflight.preflight!.token,
+      controllerId: preflight.controllerId,
+      sessionId: preflight.sessionId,
+      taskInstruction: preflight.taskInstruction,
+      now: 10,
+    });
+    assert.deepEqual(activated.job.tagPolicy, {
+      maxTagsPerRepo: 2,
+      minTopicRepoCount: 3,
+    });
+
+    const action = (tag: string) => ({
+      kind: 'propose_new_tag' as const,
+      tag,
+      evidence: `${tag} evidence.`,
+    });
+    const first = await claimOrganizeAnalysisBatch(preflight.jobId, 2, {
+      ownerId: 'coverage-worker',
+      now: 20,
+    });
+    await settleOrganizeAnalysisBatch({
+      jobId: preflight.jobId,
+      leaseToken: first!.leaseToken,
+      now: 30,
+      outcomes: [
+        {
+          position: 0,
+          state: 'actionable',
+          sourceFingerprint: 'source:a',
+          proposedActions: [action('Shared'), action('Rare')],
+        },
+        {
+          position: 1,
+          state: 'actionable',
+          sourceFingerprint: 'source:b',
+          proposedActions: [action('shared')],
+        },
+      ],
+    });
+    assert.equal((await getOrganizeJob(preflight.jobId))?.status, 'analyzing');
+
+    const second = await claimOrganizeAnalysisBatch(preflight.jobId, 2, {
+      ownerId: 'coverage-worker',
+      now: 40,
+    });
+    const coverage = await settleOrganizeAnalysisBatch({
+      jobId: preflight.jobId,
+      leaseToken: second!.leaseToken,
+      now: 50,
+      outcomes: [
+        {
+          position: 2,
+          state: 'actionable',
+          sourceFingerprint: 'source:c',
+          proposedActions: [action('SHARED')],
+        },
+        {
+          position: 3,
+          state: 'actionable',
+          sourceFingerprint: 'source:d',
+          proposedActions: [action('rare')],
+        },
+      ],
+    });
+
+    assert.deepEqual(coverage, {
+      total: 4,
+      pending: 0,
+      leased: 0,
+      actionable: 3,
+      unchanged: 0,
+      insufficientEvidence: 1,
+      missing: 0,
+      tombstoned: 0,
+      failed: 0,
+      analyzed: 4,
+      complete: true,
+    });
+    const restored = await restoreOrganizeAnalysisCheckpoint(preflight.jobId);
+    assert.deepEqual(restored.job.tagPolicy, {
+      maxTagsPerRepo: 2,
+      minTopicRepoCount: 3,
+    });
+    assert.deepEqual(restored.items.map((row) => ({
+      position: row.position,
+      state: row.analysisState,
+      tags: row.proposedActions.map((entry) => entry.tag),
+    })), [
+      { position: 0, state: 'actionable', tags: ['Shared'] },
+      { position: 1, state: 'actionable', tags: ['shared'] },
+      { position: 2, state: 'actionable', tags: ['SHARED'] },
+      { position: 3, state: 'insufficient_evidence', tags: [] },
+    ]);
+
+    const reviewJob = (await getOrganizeJob(preflight.jobId))!;
+    const apply = await sealOrganizeApply(preflight.jobId, reviewJob.revision, 60);
+    assert.equal(apply.rowCount, 3);
+    const applyRows = await db.organizeApplyRows.where('applyId').equals(apply.applyId).sortBy('position');
+    assert.deepEqual(applyRows.map((row) => row.approvedAdditions), [
+      ['Shared'],
+      ['shared'],
+      ['SHARED'],
+    ]);
+  });
+
+  it('normalizes a legacy job without a tag policy to the default shared coverage', async () => {
+    const job = await createOrganizeJob(jobInput(['owner/legacy-policy']));
+    await db.organizeJobs.update(job.jobId, { tagPolicy: undefined });
+    const batch = await claimOrganizeAnalysisBatch(job.jobId, 1, {
+      ownerId: 'legacy-policy-worker',
+      now: 20,
+    });
+
+    const coverage = await settleOrganizeAnalysisBatch({
+      jobId: job.jobId,
+      leaseToken: batch!.leaseToken,
+      now: 30,
+      outcomes: [{
+        position: 0,
+        state: 'actionable',
+        sourceFingerprint: 'source:legacy-policy',
+        proposedActions: [{
+          kind: 'propose_new_tag',
+          tag: 'single-use',
+          evidence: 'Only one repository proposed this tag.',
+        }],
+      }],
+    });
+
+    assert.equal(coverage.actionable, 0);
+    assert.equal(coverage.insufficientEvidence, 1);
+    assert.deepEqual((await getOrganizeJob(job.jobId))?.tagPolicy, {
+      maxTagsPerRepo: 5,
+      minTopicRepoCount: 3,
+    });
   });
 
   it('recovers expired leases and rejects settlement from the stale claimant', async () => {
@@ -272,10 +440,13 @@ describe('durable whole-library organize job store', () => {
       /lease has expired/u,
     );
     assert.deepEqual(await recoverExpiredOrganizeLeases(111), { analysis: 2, apply: 0 });
-    const attached = await attachOrganizeJob({
+    await ensureAgentSession('session:replacement');
+    const recoveredJob = (await getOrganizeJob(job.jobId))!;
+    const attached = await takeControlOrganizeJob({
       jobId: job.jobId,
       controllerId: 'controller:replacement',
       sessionId: 'session:replacement',
+      expectedRevision: recoveredJob.revision,
       now: 111,
     });
     assert.equal(attached.controllerId, 'controller:replacement');
@@ -304,6 +475,29 @@ describe('durable whole-library organize job store', () => {
     assert.equal(coverage.complete, true);
     assert.equal(coverage.missing, 1);
     assert.equal(coverage.tombstoned, 1);
+  });
+
+  it('never resurrects a cancelled job from late scheduler or expired-lease cleanup', async () => {
+    const job = await createOrganizeJob(jobInput(['owner/terminal-lease']));
+    const lease = await claimOrganizeAnalysisBatch(job.jobId, 1, {
+      ownerId: 'late-worker',
+      durationMs: 10,
+      now: 100,
+    });
+    assert.ok(lease);
+    assert.equal(await cancelOrganizeJob(job.jobId, 105), true);
+    const terminal = await getOrganizeJob(job.jobId);
+    const rows = await db.organizeItems.where('jobId').equals(job.jobId).toArray();
+    assert.equal(terminal?.status, 'cancelled');
+
+    assert.equal(await releaseOrganizeAnalysisPage({
+      jobId: job.jobId,
+      leaseToken: lease.leaseToken,
+      now: 106,
+    }), false);
+    assert.deepEqual(await recoverExpiredOrganizeLeases(111), { analysis: 0, apply: 0 });
+    assert.deepEqual(await getOrganizeJob(job.jobId), terminal);
+    assert.deepEqual(await db.organizeItems.where('jobId').equals(job.jobId).toArray(), rows);
   });
 
   it('checkpoints the scheduler exact page and retries only the failed suffix', async () => {
@@ -371,8 +565,6 @@ describe('durable whole-library organize job store', () => {
     const run2 = parseRunId('run:v1:exact-page-2');
     const advanced = await advanceOrganizeJobRun({
       jobId: job.jobId,
-      controllerId: job.controllerId,
-      sessionId: job.sessionId,
       runId: run2,
       generation: 2,
       expectedParent: { runId: run1, generation: 1 },
@@ -470,8 +662,6 @@ describe('durable whole-library organize job store', () => {
 
     const advance = () => advanceOrganizeJobRun({
       jobId: job.jobId,
-      controllerId: job.controllerId,
-      sessionId: job.sessionId,
       runId,
       generation: 1,
       proposalId: parseProposalId(job.proposalId),
@@ -796,8 +986,6 @@ describe('durable whole-library organize job store', () => {
 
     await assert.rejects(() => advanceOrganizeJobRun({
       jobId: job.jobId,
-      controllerId: job.controllerId,
-      sessionId: job.sessionId,
       runId: parentRunId,
       generation: 1,
       proposalId: parseProposalId(job.proposalId),
@@ -823,8 +1011,6 @@ describe('durable whole-library organize job store', () => {
     const childRunId = parseRunId('run:v1:split-continuation-child');
     const continued = await advanceOrganizeJobRun({
       jobId: job.jobId,
-      controllerId: job.controllerId,
-      sessionId: job.sessionId,
       runId: childRunId,
       generation: 2,
       expectedParent: { runId: parentRunId, generation: 1 },
@@ -906,8 +1092,6 @@ describe('durable whole-library organize job store', () => {
     });
     const continuationInput = {
       jobId: job.jobId,
-      controllerId: job.controllerId,
-      sessionId: job.sessionId,
       generation: 2,
       expectedParent: { runId: parentRunId, generation: 1 },
       budget: createProductionRunBudget(),
@@ -932,6 +1116,7 @@ describe('durable whole-library organize job store', () => {
     });
     assert.equal(firstChild.runId, firstChildRunId);
     assert.equal(firstChild.generation, 2);
+    assert.equal(firstChild.originAgentSessionId, job.sessionId);
 
     await assert.rejects(() => advanceOrganizeJobRun({
       ...continuationInput,
@@ -944,6 +1129,7 @@ describe('durable whole-library organize job store', () => {
     assert.equal(durable?.runId, firstChildRunId);
     assert.equal(durable?.generation, 2);
     assert.equal(durable?.proposalId, 'proposal:v1:continuation-child-first');
+    assert.equal(durable?.originAgentSessionId, job.sessionId);
   });
 
   it('releases a captured page token after the job advances to a child generation', async () => {
@@ -970,8 +1156,6 @@ describe('durable whole-library organize job store', () => {
     const childRunId = parseRunId('run:v1:lease-child');
     await advanceOrganizeJobRun({
       jobId: job.jobId,
-      controllerId: job.controllerId,
-      sessionId: job.sessionId,
       runId: childRunId,
       generation: 2,
       expectedParent: { runId: parentRunId, generation: 1 },
@@ -1184,16 +1368,16 @@ describe('durable whole-library organize job store', () => {
     assert.equal((await getOrganizeReceipt(apply.applyId))?.counts.changed, 1);
   });
 
-  it('prunes no-change, cancelled, and superseded terminal artifacts', async () => {
+  it('atomically replaces the one retained terminal result and all of its evidence', async () => {
     const noChange = await createOrganizeJob(jobInput([]));
-    await completeOrganizeJobWithoutApply(noChange.jobId);
-    assert.equal(await db.organizeJobs.count(), 0);
-    assert.equal(await db.organizeItems.count(), 0);
-    assert.equal(await db.organizeTaxonomies.count(), 0);
+    const noChangeTerminal = await completeOrganizeJobWithoutApply(noChange.jobId);
+    assert.equal((await getOrganizeJob(noChange.jobId))?.status, 'completed');
+    assert.equal(await db.organizeTaxonomies.where('jobId').equals(noChange.jobId).count(), 1);
 
     const star = fakeStar({ full_name: 'owner/old-receipt' });
     await db.stars.put(star);
     const completedJob = await createOrganizeJob(jobInput([star.full_name]));
+    assert.equal(await getOrganizeJob(noChangeTerminal.jobId), undefined);
     const analysis = await claimOrganizeAnalysisBatch(completedJob.jobId, 1, { ownerId: 'analysis' });
     await settleOrganizeAnalysisBatch({
       jobId: completedJob.jobId,
@@ -1216,8 +1400,20 @@ describe('durable whole-library organize job store', () => {
       selections: [{ position: 0, selected: false }],
     });
     const oldApply = await sealOrganizeApply(completedJob.jobId, deselected.revision);
-    assert.equal(oldApply.status, 'completed');
-    assert.equal(await db.organizeApplies.count(), 1);
+    const oldJob = (await getOrganizeJob(completedJob.jobId))!;
+    const oldTaxonomy = await getOrganizeTaxonomy(completedJob.jobId);
+    const oldReceipt = await getOrganizeReceipt(oldApply.applyId);
+
+    const failedInsert = vi.spyOn(db.organizeTaxonomies, 'add')
+      .mockRejectedValueOnce(new Error('replacement taxonomy unavailable'));
+    await assert.rejects(
+      () => createOrganizeJob(jobInput(['owner/failed-replacement'])),
+      /replacement taxonomy unavailable/u,
+    );
+    failedInsert.mockRestore();
+    assert.deepEqual(await getOrganizeJob(completedJob.jobId), oldJob);
+    assert.deepEqual(await getOrganizeTaxonomy(completedJob.jobId), oldTaxonomy);
+    assert.deepEqual(await getOrganizeReceipt(oldApply.applyId), oldReceipt);
 
     const replacement = await createOrganizeJob(jobInput(['owner/replacement']));
     assert.equal(await getOrganizeJob(completedJob.jobId), undefined);
@@ -1226,10 +1422,47 @@ describe('durable whole-library organize job store', () => {
     assert.equal(await db.organizeItems.count(), 1);
     assert.equal(await db.organizeTaxonomies.count(), 1);
 
-    assert.equal(await cancelOrganizeJob(replacement.jobId), true);
-    assert.equal(await db.organizeJobs.count(), 0);
-    assert.equal(await db.organizeItems.count(), 0);
-    assert.equal(await db.organizeTaxonomies.count(), 0);
+    assert.equal(await cancelOrganizeJob(replacement.jobId, 500), true);
+    const cancelled = (await getOrganizeJob(replacement.jobId))!;
+    assert.equal(cancelled.status, 'cancelled');
+    assert.equal(cancelled.cancelledAt, 500);
+    assert.equal(await db.organizeItems.where('jobId').equals(replacement.jobId).count(), 1);
+    assert.equal(await db.organizeTaxonomies.where('jobId').equals(replacement.jobId).count(), 1);
+    const nextPreflight = await createOrganizePreflight(preflightInput(['owner/next-preflight']));
+    assert.equal(await getOrganizeJob(cancelled.jobId), undefined);
+    assert.equal((await getOrganizeJob(nextPreflight.jobId))?.status, 'preflight_ready');
+    assert.equal(await db.organizeJobs.count(), 1);
+    assert.equal(await db.organizeItems.count(), 1);
+    assert.equal(await db.organizeTaxonomies.count(), 1);
+  });
+
+  it('dismisses cancelled jobs without Apply only at the exact terminal revision', async () => {
+    const job = await createOrganizeJob(jobInput(['owner/cancelled-dismiss']));
+    await assert.rejects(
+      () => dismissTerminalOrganizeJob({ jobId: job.jobId, expectedRevision: job.revision }),
+      /Only terminal organize jobs/u,
+    );
+    assert.equal(await cancelOrganizeJob(job.jobId, 200), true);
+    const cancelled = (await getOrganizeJob(job.jobId))!;
+    const items = await db.organizeItems.where('jobId').equals(job.jobId).toArray();
+    const taxonomy = await getOrganizeTaxonomy(job.jobId);
+
+    await assert.rejects(
+      () => dismissTerminalOrganizeJob({ jobId: job.jobId, expectedRevision: job.revision }),
+      /revision is stale/u,
+    );
+    assert.deepEqual(await getOrganizeJob(job.jobId), cancelled);
+    assert.deepEqual(await db.organizeItems.where('jobId').equals(job.jobId).toArray(), items);
+    assert.deepEqual(await getOrganizeTaxonomy(job.jobId), taxonomy);
+
+    assert.equal(await dismissTerminalOrganizeJob({
+      jobId: job.jobId,
+      expectedRevision: cancelled.revision,
+    }), true);
+    assert.equal(await getOrganizeJob(job.jobId), undefined);
+    assert.equal(await db.organizeItems.where('jobId').equals(job.jobId).count(), 0);
+    assert.equal(await getOrganizeTaxonomy(job.jobId), undefined);
+    assert.equal(await db.organizeApplies.where('jobId').equals(job.jobId).count(), 0);
   });
 
   it('rejects a nonzero create cursor instead of fabricating prior outcomes', async () => {
@@ -1247,31 +1480,101 @@ describe('durable whole-library organize job store', () => {
     });
     assert.equal(created.jobId, jobId);
     assert.equal((await getOrganizeJob(jobId))?.jobId, jobId);
-
-    const attached = await attachOrganizeJob({
-      jobId,
-      controllerId: 'controller:replacement',
-      sessionId: 'session:replacement',
-      now: 2,
-    });
-    assert.equal(attached.jobId, jobId);
     await assert.rejects(
       () => createOrganizeJob({ ...jobInput(['owner/duplicate']), jobId }),
       /active job/u,
     );
   });
 
-  it('keeps an attach idempotent when the durable owner is unchanged', async () => {
-    const created = await createOrganizeJob(jobInput(['owner/idempotent-attach']));
-    const attached = await attachOrganizeJob({
+  it('revision-checks concurrent takeover and never rewrites origin provenance', async () => {
+    const created = await createOrganizeJob(jobInput(['owner/origin-job']));
+    await Promise.all([
+      ensureAgentSession('session:takeover-a'),
+      ensureAgentSession('session:takeover-b'),
+    ]);
+
+    const attempts = await Promise.allSettled([
+      takeControlOrganizeJob({
+        jobId: created.jobId,
+        controllerId: 'controller:takeover-a',
+        sessionId: 'session:takeover-a',
+        expectedRevision: created.revision,
+        now: 2,
+      }),
+      takeControlOrganizeJob({
+        jobId: created.jobId,
+        controllerId: 'controller:takeover-b',
+        sessionId: 'session:takeover-b',
+        expectedRevision: created.revision,
+        now: 3,
+      }),
+    ]);
+
+    assert.equal(attempts.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal(attempts.filter((result) => result.status === 'rejected').length, 1);
+    const controlled = (await getOrganizeJob(created.jobId))!;
+    assert.equal(controlled.revision, created.revision + 1);
+    assert.equal(controlled.originAgentSessionId, created.originAgentSessionId);
+    assert.notEqual(controlled.sessionId, created.sessionId);
+    await assert.rejects(
+      () => takeControlOrganizeJob({
+        jobId: created.jobId,
+        controllerId: 'controller:stale',
+        sessionId: 'session:takeover-a',
+        expectedRevision: created.revision,
+      }),
+      /revision is stale/u,
+    );
+    assert.equal((await getOrganizeJob(created.jobId))?.originAgentSessionId, created.sessionId);
+
+    const continued = await advanceOrganizeJobRun({
+      jobId: created.jobId,
+      runId: parseRunId('run:v1:takeover-continuation'),
+      generation: created.generation + 1,
+      expectedParent: {
+        runId: parseRunId(created.runId),
+        generation: created.generation,
+      },
+      proposalId: parseProposalId('proposal:v1:takeover-continuation'),
+      budget: createProductionRunBudget(),
+      usage: createEmptyRunBudgetUsage(),
+      startFrozenIndex: created.nextFrozenIndex,
+      analysisPendingRanges: [],
+      now: 4,
+    });
+    assert.equal(continued.controllerId, controlled.controllerId);
+    assert.equal(continued.sessionId, controlled.sessionId);
+    assert.equal(continued.originAgentSessionId, created.originAgentSessionId);
+  });
+
+  it('never leaves an orphan Agent origin when session deletion races job creation', async () => {
+    const input = jobInput(['owner/session-race']);
+    await createAgentSession({ idFactory: () => input.sessionId });
+
+    const results = await Promise.allSettled([
+      deleteAgentSession(input.sessionId),
+      createStoredOrganizeJob(input),
+    ]);
+
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    const jobs = await db.organizeJobs.toArray();
+    for (const job of jobs) {
+      assert.ok(await db.agentSessions.get(job.originAgentSessionId));
+    }
+  });
+
+  it('keeps explicit control idempotent when the durable owner is unchanged', async () => {
+    const created = await createOrganizeJob(jobInput(['owner/idempotent-control']));
+    const controlled = await takeControlOrganizeJob({
       jobId: created.jobId,
       controllerId: created.controllerId,
       sessionId: created.sessionId,
+      expectedRevision: created.revision,
       now: created.updatedAt + 100,
     });
 
-    assert.equal(attached.revision, created.revision);
-    assert.equal(attached.updatedAt, created.updatedAt);
+    assert.equal(controlled.revision, created.revision);
+    assert.equal(controlled.updatedAt, created.updatedAt);
     assert.deepEqual(await getOrganizeJob(created.jobId), created);
   });
 
@@ -1309,6 +1612,25 @@ describe('durable whole-library organize job store', () => {
     assert.equal(replayed.job.runId, started.job.runId);
     assert.equal(await db.organizeJobs.count(), 1);
     assert.equal(await db.organizeItems.count(), 2);
+  });
+
+  it('keeps preflight origin immutable during explicit control takeover', async () => {
+    const input = preflightInput(['owner/origin-preflight']);
+    const ready = await createOrganizePreflight(input);
+    await ensureAgentSession('session:replacement-preflight');
+
+    const controlled = await takeControlOrganizeJob({
+      jobId: ready.jobId,
+      controllerId: 'controller:replacement-preflight',
+      sessionId: 'session:replacement-preflight',
+      expectedRevision: ready.revision,
+      now: 2,
+    });
+
+    assert.equal(ready.originAgentSessionId, input.sessionId);
+    assert.equal(controlled.sessionId, 'session:replacement-preflight');
+    assert.equal(controlled.originAgentSessionId, input.sessionId);
+    assert.equal((await getOrganizeJob(ready.jobId))?.originAgentSessionId, input.sessionId);
   });
 
   it('rejects blank activation identity and instruction before reading the durable token', async () => {
@@ -1495,6 +1817,7 @@ function jobInput(
       fingerprint: `scope:${repositoryIds.length}`,
     },
     taskInstruction: 'Organize all tags.',
+    tagPolicy: { maxTagsPerRepo: 5, minTopicRepoCount: 1 },
     taxonomy,
     budget: { maxBatches: 10 },
     usage: { batches: 0 },

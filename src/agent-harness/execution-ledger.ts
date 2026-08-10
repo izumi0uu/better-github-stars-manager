@@ -7,6 +7,8 @@ export type ExecutionLedgerState =
   | 'failed'
   | 'unknown';
 
+export type AgentWriteSettlement = 'none' | 'all_failed' | 'unsafe';
+
 /** A stable, exact identity for one logical side effect. */
 export type CanonicalToolEffect = readonly [string, ...string[]];
 
@@ -45,8 +47,8 @@ type EffectReceipt = {
 };
 
 /**
- * In-process facts for one background turn attempt. This deliberately does not
- * use IndexedDB or the transcript: a service-worker restart must lose it and
+ * In-process facts for one background turn attempt. This deliberately avoids
+ * durable state and the transcript: a service-worker restart must lose it and
  * report attempt_state_lost instead of replaying an uncertain write.
  */
 export class AgentExecutionLedger {
@@ -164,6 +166,13 @@ export class AgentExecutionLedger {
 
   stateForCall(callId: string): ExecutionLedgerState | undefined {
     return this.calls.get(callId)?.state;
+  }
+
+  writeSettlement(): AgentWriteSettlement {
+    if (this.calls.size === 0) return 'none';
+    return [...this.calls.values()].every((receipt) => receipt.state === 'failed')
+      ? 'all_failed'
+      : 'unsafe';
   }
 
   private requireCall(callId: string): CallReceipt {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { BgsmAgentConversationCandidate } from '@/bgsm-agent/conversation-binding';
 import type { LaunchCandidateContract } from '@/bgsm-agent/scope';
 import { useI18n } from '@/i18n';
@@ -42,30 +42,88 @@ export function AgentHost({
 }) {
   const { m } = useI18n();
   const agent = useBgsmAgent(onDataChanged, chatCandidate);
-  const workbench = useBgsmAgentWorkbench(onDataChanged, agent.sessionId);
-  const presentation = useMemo<AgentHostPresentation>(() => {
-    const organizeView = selectOrganizeWorkbenchView(
-      workbench.state,
-      workbench.displayedProcessed,
-    );
-    const ui = resolveAgentUiPresentation({
+  const workbench = useBgsmAgentWorkbench(onDataChanged, agent.sessionId, agent.sessionReady);
+  useEffect(() => {
+    if (workbench.state.deletedSessionIds.size > 0) {
+      agent.invalidateDeletedSessions(workbench.state.deletedSessionIds);
+    }
+  }, [agent.invalidateDeletedSessions, workbench.state.deletedSessionIds]);
+  const organizeView = useMemo(() => selectOrganizeWorkbenchView(
+    workbench.state,
+    workbench.displayedProcessed,
+  ), [workbench.displayedProcessed, workbench.state]);
+  const uiPresentation = useMemo(() => {
+    return resolveAgentUiPresentation({
       phase: agent.phase,
       hasError: agent.error !== null,
       hasContextRecovery: agent.contextLimitRecovery !== null,
       unsafeReplayBlocked: false,
     }, organizeView);
-    return {
-      status: resolveToolbarStatus(ui, agent.status?.text ?? null, m.agentPanel),
-      active: ui.toolbar.active,
-    };
   }, [
     agent.contextLimitRecovery,
     agent.error,
     agent.phase,
+    organizeView,
+  ]);
+  const presentation = useMemo<AgentHostPresentation>(() => {
+    return {
+      status: resolveToolbarStatus(uiPresentation, agent.status?.text ?? null, m.agentPanel),
+      active: uiPresentation.toolbar.active,
+    };
+  }, [
     agent.status?.text,
     m.agentPanel,
-    workbench.displayedProcessed,
-    workbench.state,
+    uiPresentation,
+  ]);
+  const candidateContextKey = conversationCandidateContextKey(chatCandidate);
+  const previousCandidateContextKeyRef = useRef(candidateContextKey);
+  const pendingCandidateContextKeyRef = useRef<string | null>(null);
+  const pendingContextKey = candidateContextKey !== previousCandidateContextKeyRef.current
+    ? candidateContextKey
+    : pendingCandidateContextKeyRef.current;
+  const boundContextKey = agent.conversationBinding
+    ? conversationCandidateContextKey(agent.conversationBinding.candidateContract)
+    : null;
+  // Organize ownership implies !canSwitchSession; while a candidate is blocked,
+  // the effect cannot consume its pending switch before ownership releases and rerenders.
+  const blockedConversationCandidate = !organizeView.capabilities.canSwitchSession
+    && pendingContextKey !== null
+    && pendingContextKey !== boundContextKey
+    ? chatCandidate
+    : null;
+
+  useEffect(() => {
+    if (candidateContextKey !== previousCandidateContextKeyRef.current) {
+      previousCandidateContextKeyRef.current = candidateContextKey;
+      pendingCandidateContextKeyRef.current = candidateContextKey;
+    }
+
+    const queuedCandidateContextKey = pendingCandidateContextKeyRef.current;
+    if (!queuedCandidateContextKey) return;
+    if (!agent.conversationBinding) {
+      if (uiPresentation.sessionPolicy.canSwitchSession) {
+        pendingCandidateContextKeyRef.current = null;
+      }
+      return;
+    }
+    if (conversationCandidateContextKey(agent.conversationBinding.candidateContract)
+      === queuedCandidateContextKey) {
+      pendingCandidateContextKeyRef.current = null;
+      return;
+    }
+    if (!uiPresentation.sessionPolicy.canSwitchSession) return;
+    void agent.createSession().then((createdSessionId) => {
+      if (
+        createdSessionId !== null
+        && pendingCandidateContextKeyRef.current === queuedCandidateContextKey
+      ) pendingCandidateContextKeyRef.current = null;
+    });
+  }, [
+    agent.activeSessionId,
+    agent.conversationBinding,
+    agent.createSession,
+    candidateContextKey,
+    uiPresentation.sessionPolicy.canSwitchSession,
   ]);
 
   useEffect(() => {
@@ -80,11 +138,18 @@ export function AgentHost({
       agent={agent}
       workbench={workbench}
       defaultCandidate={defaultCandidate}
+      blockedConversationCandidate={blockedConversationCandidate}
       scopeCount={scopeCount}
       handoff={handoff}
       onDismissHandoff={onDismissHandoff}
     />
   );
+}
+
+function conversationCandidateContextKey(candidate: BgsmAgentConversationCandidate): string {
+  return candidate.kind === 'selected_repository'
+    ? `selected_repository:${candidate.selectedRepositoryIdHint}`
+    : 'current_view';
 }
 
 function resolveToolbarStatus(

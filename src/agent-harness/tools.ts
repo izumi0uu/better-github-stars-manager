@@ -11,6 +11,8 @@ import {
   utf8ByteLength,
 } from './results';
 import type { WriteEffectPlan } from './execution-ledger';
+import type { AgentMessage, AgentOpaqueReference } from './messages';
+import type { ModelToolCall } from './provider';
 
 export { errorToolResult, okToolResult } from './results';
 export type { ToolResult } from './results';
@@ -32,6 +34,44 @@ export type ToolResultAllowance = Readonly<{
   memoryRemainingBytes: number;
   /** Maximum serialized result bytes admitted by the exact Provider projection. */
   providerResultCeilingBytes?: number;
+}>;
+
+export type AgentRequiredBeforeFinalDirective = Readonly<{
+  reference: string;
+  progressToken: string;
+  requiredBeforeFinal: true;
+}>;
+
+export type AgentToolResultAdmission = Readonly<{
+  result: ToolResult;
+  opaqueReferences?: readonly AgentOpaqueReference[];
+  /** Authoritative complete set. Absence preserves the current directive set. */
+  requiredBeforeFinal?: readonly AgentRequiredBeforeFinalDirective[];
+  admissionToken?: unknown;
+  dispose?: () => Promise<void>;
+  /** Requests retention of a no-progress internal envelope; honored only for a successful, token-backed whole envelope checkpointed by the admission host. */
+  retainOnNoProgress?: boolean;
+}>;
+
+export type AgentToolResultEnvelopeKind = 'canonical_source' | 'internal_continuation';
+
+export type AgentToolResultAdmissionHost = Readonly<{
+  afterToolResult(input: Readonly<{
+    sessionId: string;
+    assistantMessage: AgentMessage;
+    toolCall: ModelToolCall;
+    result: ToolResult;
+    risk: ToolRisk;
+    allowance: ToolResultAllowance;
+    requiredBeforeFinal: readonly AgentRequiredBeforeFinalDirective[];
+  }>): Promise<AgentToolResultAdmission | null>;
+  admitEnvelope?(input: Readonly<{
+    admissionTokens: readonly unknown[];
+    requiredBeforeFinal: readonly AgentRequiredBeforeFinalDirective[];
+    projectedMessages: readonly AgentMessage[];
+    canonicalRawMessages: readonly AgentMessage[];
+    envelopeKind: AgentToolResultEnvelopeKind;
+  }>): Promise<void>;
 }>;
 
 export type AgentToolSuspendOutcome = Readonly<{

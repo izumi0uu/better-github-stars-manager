@@ -24,8 +24,12 @@ import {
 import type { OrganizeStoredJobStatus, Star, Tag } from '@/types';
 import {
   MAX_SEMANTIC_TAG_NAME_BYTES,
-  TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT,
 } from './policy';
+import {
+  createBgsmAgentTagAssignmentPolicy,
+  prospectiveBgsmAgentTagCoverage,
+  type BgsmAgentTagAssignmentPolicy,
+} from './tag-assignment-policy';
 import {
   createRepositoryCodeTools,
   type RepositoryCodeRefAuthority,
@@ -37,6 +41,18 @@ import {
   type BgsmAgentToolName,
 } from './tool-catalog';
 import { BgsmAgentToolRegistry } from './tool-registry';
+import {
+  BGSM_AGENT_ARTIFACT_MAX_BYTES,
+  BGSM_AGENT_ARTIFACT_SEARCH_MAX_QUERY_BYTES,
+  publishBgsmAgentArtifactReadEvidence,
+} from './tool-result-externalizer';
+import type {
+  BgsmAgentArtifactEvidenceHandoff,
+  BgsmAgentArtifactReadArgs,
+  BgsmAgentArtifactReader,
+  BgsmAgentArtifactReadAuthorization,
+  BgsmAgentArtifactReadResult,
+} from './tool-result-externalizer';
 
 const DEFAULT_PAGE_LIMIT = 20;
 const MAX_PAGE_LIMIT = 50;
@@ -175,12 +191,16 @@ export type CreateBgsmAgentToolRegistryOptions = Readonly<{
     action: BgsmAgentOrganizeLibraryAction,
   ) => BgsmAgentOrganizeLibraryHandoffDecision | Promise<BgsmAgentOrganizeLibraryHandoffDecision>;
   assignManualTags?: BgsmAgentManualTagWriter;
+  tagAssignmentPolicy?: BgsmAgentTagAssignmentPolicy;
   removeVisibleTags?: BgsmAgentVisibleTagRemovalWriter;
   deleteTagsEverywhere?: BgsmAgentGlobalTagDeletionWriter;
+  artifactReader?: BgsmAgentArtifactReader;
+  artifactEvidenceHandoff?: BgsmAgentArtifactEvidenceHandoff;
 }>;
 
 type BgsmAgentToolFactoryContext = Readonly<{
   options: CreateBgsmAgentToolRegistryOptions;
+  tagAssignmentPolicy: BgsmAgentTagAssignmentPolicy;
   repositoryScope: ReadonlySet<string>;
   repositorySearchScope: RepositorySearchScope;
   repositoryCodeTools: ReadonlyMap<string, AgentTool>;
@@ -212,29 +232,40 @@ const BGSM_AGENT_TOOL_FACTORIES = {
     searchStarsTool(repositorySearchScope)
   ),
   [BGSM_AGENT_TOOL_NAMES.inspectTag]: ({ repositoryScope }) => inspectTagTool(repositoryScope),
-  [BGSM_AGENT_TOOL_NAMES.assignRepoTags]: ({ options, repositorySearchScope }) => (
+  [BGSM_AGENT_TOOL_NAMES.assignRepoTags]: ({
+    options,
+    repositorySearchScope,
+    tagAssignmentPolicy,
+  }) => (
     options.enableTagWrites === false
       ? undefined
       : assignRepoTagsTool(
           repositorySearchScope,
           options.scopeFingerprint,
           options.assignManualTags ?? directManualTagWriter,
+          tagAssignmentPolicy,
         )
   ),
-  [BGSM_AGENT_TOOL_NAMES.removeRepoTags]: ({ options, repositorySearchScope }) => (
+  [BGSM_AGENT_TOOL_NAMES.removeRepoTags]: ({
+    options,
+    repositorySearchScope,
+    tagAssignmentPolicy,
+  }) => (
     options.enableTagWrites === false
       ? undefined
       : removeRepoTagsTool(
           repositorySearchScope,
           options.scopeFingerprint,
           options.removeVisibleTags ?? directVisibleTagRemovalWriter,
+          tagAssignmentPolicy,
         )
   ),
-  [BGSM_AGENT_TOOL_NAMES.deleteTagsEverywhere]: ({ options }) => (
+  [BGSM_AGENT_TOOL_NAMES.deleteTagsEverywhere]: ({ options, tagAssignmentPolicy }) => (
     options.enableTagWrites === false
       ? undefined
       : deleteTagsEverywhereTool(
           options.deleteTagsEverywhere ?? directGlobalTagDeletionWriter,
+          tagAssignmentPolicy,
         )
   ),
   [BGSM_AGENT_TOOL_NAMES.listRepositoryFiles]: ({ repositoryCodeTools }) => (
@@ -251,6 +282,11 @@ const BGSM_AGENT_TOOL_FACTORIES = {
       ? createRepositoryNotesTool(options.repositoryScope)
       : undefined
   ),
+  [BGSM_AGENT_TOOL_NAMES.readAgentArtifact]: ({ options }) => (
+    options.artifactReader && options.artifactEvidenceHandoff
+      ? readAgentArtifactTool(options.artifactReader, options.artifactEvidenceHandoff)
+      : undefined
+  ),
 } satisfies Record<BgsmAgentToolName, BgsmAgentToolFactory>;
 
 export function createBgsmAgentToolRegistry(
@@ -259,7 +295,11 @@ export function createBgsmAgentToolRegistry(
   if (options.enableOrganizeLibraryHandoff && !options.requestOrganizeLibraryHandoff) {
     throw new TypeError('Full-library handoff requires an execution callback.');
   }
+  if (Boolean(options.artifactReader) !== Boolean(options.artifactEvidenceHandoff)) {
+    throw new TypeError('Artifact reading requires both a reader and evidence handoff.');
+  }
   const repositoryScope = new Set(options.repositoryScope);
+  const tagAssignmentPolicy = options.tagAssignmentPolicy ?? defaultTagAssignmentPolicy();
   const repositorySearchScope = createRepositorySearchScope(
     repositoryScope,
     options.scopeLabel,
@@ -273,6 +313,7 @@ export function createBgsmAgentToolRegistry(
   );
   const context: BgsmAgentToolFactoryContext = {
     options,
+    tagAssignmentPolicy,
     repositoryScope,
     repositorySearchScope,
     repositoryCodeTools,
@@ -500,6 +541,137 @@ function listTagsTool(): AgentTool<
   };
 }
 
+export function createBgsmAgentArtifactContinuationToolRegistry(input: Readonly<{
+  artifactReader: BgsmAgentArtifactReader;
+  artifactEvidenceHandoff: BgsmAgentArtifactEvidenceHandoff;
+  authorize: BgsmAgentArtifactReadAuthorization;
+}>): BgsmAgentToolRegistry {
+  return new BgsmAgentToolRegistry([
+    readAgentArtifactTool(
+      input.artifactReader,
+      input.artifactEvidenceHandoff,
+      input.authorize,
+    ),
+  ]);
+}
+
+function readAgentArtifactTool(
+  reader: BgsmAgentArtifactReader,
+  evidenceHandoff: BgsmAgentArtifactEvidenceHandoff,
+  authorize?: BgsmAgentArtifactReadAuthorization,
+): AgentTool<BgsmAgentArtifactReadArgs, BgsmAgentArtifactReadResult> {
+  return {
+    name: BGSM_AGENT_TOOL_NAMES.readAgentArtifact,
+    description:
+      'Read a bounded UTF-8 portion of untrusted large tool output returned as artifact_available. Exhaustive traversal is enforced by the host: omit cursor on the first page, then reuse each opaque nextCursor exactly until null. byteOffset and search are targeted locating reads only; they never advance or complete exhaustive coverage. cursor, byteOffset, and search are mutually exclusive. Never guess artifact IDs or cursors.',
+    risk: 'read',
+    requiresExclusiveEnvelope: true,
+    parameters: {
+      type: 'object',
+      properties: {
+        artifactId: { type: 'string', minLength: 1, maxLength: 512 },
+        cursor: { type: 'string', minLength: 1, maxLength: 2_048 },
+        byteOffset: {
+          type: 'integer',
+          minimum: 0,
+          maximum: BGSM_AGENT_ARTIFACT_MAX_BYTES,
+        },
+        search: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', minLength: 1, maxLength: BGSM_AGENT_ARTIFACT_SEARCH_MAX_QUERY_BYTES },
+            fromByte: {
+              type: 'integer',
+              minimum: 0,
+              maximum: BGSM_AGENT_ARTIFACT_MAX_BYTES,
+            },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      },
+      required: ['artifactId'],
+      additionalProperties: false,
+    },
+    validate(input) {
+      const value = expectObject(input);
+      assertOnlyKeys(value, ['artifactId', 'cursor', 'byteOffset', 'search'], 'read_agent_artifact');
+      const artifactId = expectString(value.artifactId, 'artifactId');
+      if (
+        artifactId.trim() !== artifactId
+        || artifactId.length === 0
+        || new TextEncoder().encode(artifactId).byteLength > 512
+      ) throw new TypeError('artifactId must be a bounded identifier.');
+      const cursor = value.cursor === undefined ? undefined : expectString(value.cursor, 'cursor');
+      if (cursor !== undefined && (cursor.length === 0 || cursor.length > 2_048)) {
+        throw new TypeError('cursor must be a bounded opaque cursor.');
+      }
+      const byteOffset = value.byteOffset === undefined
+        ? undefined
+        : expectNonNegativeInteger(value.byteOffset, 'byteOffset');
+      if (byteOffset !== undefined && byteOffset > BGSM_AGENT_ARTIFACT_MAX_BYTES) {
+        throw new RangeError('byteOffset exceeds the artifact storage limit.');
+      }
+      let search: BgsmAgentArtifactReadArgs['search'];
+      if (value.search !== undefined) {
+        const rawSearch = expectObject(value.search);
+        assertOnlyKeys(rawSearch, ['query', 'fromByte'], 'read_agent_artifact search');
+        const query = expectString(rawSearch.query, 'search.query');
+        if (
+          query.length === 0
+          || new TextEncoder().encode(query).byteLength > BGSM_AGENT_ARTIFACT_SEARCH_MAX_QUERY_BYTES
+        ) throw new TypeError('search.query must be a bounded nonempty literal.');
+        const fromByte = rawSearch.fromByte === undefined
+          ? 0
+          : expectNonNegativeInteger(rawSearch.fromByte, 'search.fromByte');
+        if (fromByte > BGSM_AGENT_ARTIFACT_MAX_BYTES) {
+          throw new RangeError('search.fromByte exceeds the artifact storage limit.');
+        }
+        search = { query, fromByte };
+      }
+      const modes = Number(cursor !== undefined) + Number(byteOffset !== undefined) + Number(search !== undefined);
+      if (modes > 1) {
+        throw new TypeError('cursor, byteOffset, and search are mutually exclusive.');
+      }
+      return {
+        artifactId,
+        ...(cursor !== undefined ? { cursor } : {}),
+        ...(byteOffset !== undefined ? { byteOffset } : {}),
+        ...(search ? { search } : {}),
+      };
+    },
+    async execute(args, context) {
+      if (authorize && !await authorize({
+        sessionId: context.sessionId,
+        toolCallId: context.callId,
+        arguments: args,
+      })) {
+        throw new TypeError('Artifact continuation read is not authorized.');
+      }
+      const maxSerializedResultBytes = resultAllowanceBytes(context);
+      const read = await reader({
+        sessionId: context.sessionId,
+        toolCallId: context.callId,
+        arguments: args,
+        maxSerializedResultBytes,
+        ...(context.signal ? { signal: context.signal } : {}),
+      });
+      if (serializedToolResultByteLength(okToolResult(read.result)) > maxSerializedResultBytes) {
+        throw new ToolOutputTooLargeError('Artifact reader exceeded the current result budget.');
+      }
+      publishBgsmAgentArtifactReadEvidence({
+        handoff: evidenceHandoff,
+        sessionId: context.sessionId,
+        toolCallId: context.callId,
+        arguments: args,
+        result: read.result,
+        evidence: read.evidence,
+      });
+      return read.result;
+    }
+  };
+}
+
 function getStarTool(repositoryScope: RepositorySearchScope): AgentTool<
   { full_name: string },
   {
@@ -707,14 +879,17 @@ function assignRepoTagsTool(
   repositoryScope: RepositorySearchScope,
   scopeFingerprint: string | undefined,
   assignManualTags: BgsmAgentManualTagWriter,
+  policy: BgsmAgentTagAssignmentPolicy,
 ): AgentTool<
   { full_name: string; tags: string[] },
   { full_name: string; tags: string[]; changed: boolean; reason: BgsmAgentManualTagAdditionResult['reason'] }
 > {
+  const assignedTagKeysByRepository = new Map<string, Set<string>>();
+  let assignmentTail: Promise<void> = Promise.resolve();
   return {
     name: BGSM_AGENT_TOOL_NAMES.assignRepoTags,
     description:
-      'Add one or more manual tags to a repository only when the user wants its tags changed. Arguments: full_name string, tags string array. Use after inspecting local repository data in the current turn.',
+      `Add up to ${policy.maxTagsPerRepo} manual tags to one repository only when the user wants its tags changed. Every tag must reach at least ${policy.minRepoCount} live repositories across GitHub topics or visible local tags after this assignment. Use after inspecting local repository data in the current turn.`,
     risk: 'write',
     parameters: {
       type: 'object',
@@ -723,7 +898,7 @@ function assignRepoTagsTool(
         tags: {
           type: 'array',
           items: { type: 'string' },
-          maxItems: TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT,
+          maxItems: policy.maxTagsPerRepo,
         },
       },
       required: ['full_name', 'tags'],
@@ -736,7 +911,7 @@ function assignRepoTagsTool(
         full_name: repositoryScope.canonicalByNormalizedFullName.get(
           normalizeRepositoryIdentity(requestedFullName),
         ) ?? requestedFullName,
-        tags: expectAgentTagArray(value.tags, 'tags'),
+        tags: expectAgentTagArray(value.tags, 'tags', policy.maxTagsPerRepo),
       };
     },
     ...(scopeFingerprint ? { writeEffectPlan: {
@@ -777,17 +952,55 @@ function assignRepoTagsTool(
       startBoundary: 'delegated',
     } } : {}),
     async execute(args, context) {
-      assertRepositoryInSearchScope(repositoryScope, args.full_name);
-      const write = await assignManualTags(args.full_name, args.tags, context);
-      const excluded = await loadExcludedTagKeys();
-      return {
-        full_name: args.full_name,
-        tags: write.manualTags.filter((tag) => !excluded.has(policyTagKey(tag))),
-        changed: write.changed,
-        reason: write.reason,
-      };
+      const pending = assignmentTail.then(async () => {
+        assertRepositoryInSearchScope(repositoryScope, args.full_name);
+        const coverage = await policy.loadCoverage();
+        const visibleTagKeys = coverage.visibleTagsByRepository.get(args.full_name) ?? new Set<string>();
+        const assignedTagKeys = assignedTagKeysByRepository.get(args.full_name) ?? new Set<string>();
+        const newTags = args.tags.filter((tag) => {
+          const key = policyTagKey(tag);
+          return !visibleTagKeys.has(key) && !assignedTagKeys.has(key);
+        });
+        const ineligibleTags = newTags.filter((tag) => (
+          prospectiveBgsmAgentTagCoverage(coverage, args.full_name, tag) < policy.minRepoCount
+        ));
+        if (ineligibleTags.length > 0) {
+          throw new TypeError(
+            `Tags do not meet the minimum live-repository coverage of ${policy.minRepoCount}: ${ineligibleTags.join(', ')}`,
+          );
+        }
+
+        const newTagKeys = newTags.map(policyTagKey);
+        if (assignedTagKeys.size + newTagKeys.length > policy.maxTagsPerRepo) {
+          throw new TypeError(
+            `Cubby may add at most ${policy.maxTagsPerRepo} tags to one repository in a turn.`,
+          );
+        }
+
+        const write = await assignManualTags(args.full_name, args.tags, context);
+        if (write.reason === null) {
+          newTagKeys.forEach((key) => assignedTagKeys.add(key));
+          assignedTagKeysByRepository.set(args.full_name, assignedTagKeys);
+        }
+        const excluded = await loadExcludedTagKeys();
+        return {
+          full_name: args.full_name,
+          tags: write.manualTags.filter((tag) => !excluded.has(policyTagKey(tag))),
+          changed: write.changed,
+          reason: write.reason,
+        };
+      });
+      assignmentTail = pending.then(() => undefined, () => undefined);
+      return pending;
     },
   };
+}
+
+function defaultTagAssignmentPolicy(): BgsmAgentTagAssignmentPolicy {
+  return createBgsmAgentTagAssignmentPolicy(
+    { maxTagsPerRepo: 5, minTopicRepoCount: 1 },
+    () => ({ stars: [], tags: [], tagMeta: [] }),
+  );
 }
 
 const directManualTagWriter: BgsmAgentManualTagWriter = (fullName, tags, context) => {
@@ -799,6 +1012,7 @@ function removeRepoTagsTool(
   repositoryScope: RepositorySearchScope,
   scopeFingerprint: string | undefined,
   removeVisibleTags: BgsmAgentVisibleTagRemovalWriter,
+  tagAssignmentPolicy: BgsmAgentTagAssignmentPolicy,
 ): AgentTool<
   { changes: VisibleTagBulkRemoval[] },
   VisibleTagBulkRemovalResult
@@ -880,13 +1094,16 @@ function removeRepoTagsTool(
       for (const change of args.changes) {
         assertRepositoryInSearchScope(repositoryScope, change.full_name);
       }
-      return removeVisibleTags(args.changes, context);
+      const result = await removeVisibleTags(args.changes, context);
+      if (result.changed > 0) tagAssignmentPolicy.invalidateCoverage();
+      return result;
     },
   };
 }
 
 function deleteTagsEverywhereTool(
   deleteTagsEverywhere: BgsmAgentGlobalTagDeletionWriter,
+  tagAssignmentPolicy: BgsmAgentTagAssignmentPolicy,
 ): AgentTool<
   { tags: string[] },
   GlobalTagBulkDeletionResult
@@ -940,7 +1157,9 @@ function deleteTagsEverywhereTool(
       startBoundary: 'delegated',
     },
     async execute(args, context) {
-      return deleteTagsEverywhere(args.tags, context);
+      const result = await deleteTagsEverywhere(args.tags, context);
+      tagAssignmentPolicy.invalidateCoverage();
+      return result;
     },
   };
 }
@@ -1389,8 +1608,8 @@ function expectString(input: unknown, field: string): string {
   return input;
 }
 
-function expectAgentTagArray(input: unknown, field: string): string[] {
-  return expectTagArray(input, field, TAG_ADDITIONS_PER_REPOSITORY_HARD_LIMIT);
+function expectAgentTagArray(input: unknown, field: string, maxItems: number): string[] {
+  return expectTagArray(input, field, maxItems);
 }
 
 function expectTagArray(input: unknown, field: string, maxItems: number): string[] {
@@ -1584,9 +1803,16 @@ function buildBoundedPage<TItem, TResult>(
   if (available.length === 0) {
     const result = build([], null);
     if (serializedToolResultByteLength(okToolResult(result)) <= maxSerializedBytes) return result;
+    return result;
   }
 
-  throw new ToolOutputTooLargeError('The next item is too large to return safely.');
+  // Preserve one complete item so the Agent loop can externalize the payload.
+  // Throwing here would discard the only copy before the artifact fallback runs.
+  const nextOffset = args.cursor + 1;
+  return build(
+    available.slice(0, 1),
+    nextOffset < items.length ? cursorForOffset(nextOffset) : null,
+  );
 }
 
 function resultAllowanceBytes(context: ToolExecutionContext): number {
@@ -1598,7 +1824,9 @@ function ensureToolResultFits<TResult>(result: TResult, context: ToolExecutionCo
     serializedToolResultByteLength(okToolResult(result))
     <= resultAllowanceBytes(context)
   ) return result;
-  throw new ToolOutputTooLargeError('The tool result is too large to return safely.');
+  // The centralized loop turns oversized successful read results into durable,
+  // paged artifacts. Returning the value is required for that fallback to work.
+  return result;
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

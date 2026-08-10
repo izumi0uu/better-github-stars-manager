@@ -30,6 +30,10 @@ import type {
   BgsmOrganizeJobPresentation,
   BgsmOrganizeJobServerMessage,
 } from '@/utils/messaging';
+import type {
+  AgentSessionCommitResult,
+  AgentSessionPresentationMessage,
+} from '@/storage/agent-session-store';
 import {
   cleanupMountedRootsAndBody,
   click,
@@ -43,11 +47,13 @@ let ports: FakePort[];
 let fakePortEpoch = 0;
 let handoffTurnSequence = 0;
 let agentPortExecutionEpochIds: string[];
+let lastAgentMessageCreatedAt = 0;
 
 beforeEach(() => {
   ports = [];
   handoffTurnSequence = 0;
   agentPortExecutionEpochIds = [];
+  lastAgentMessageCreatedAt = 0;
   vi.stubGlobal('chrome', {
     runtime: {
       connect: vi.fn((connectInfo?: { name?: string }) => {
@@ -123,8 +129,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: analyzing.controllerId,
       sessionId: analyzing.sessionId,
-      runId: analyzing.runId,
-      generation: analyzing.generation,
+      role: 'owner',
       presentation: presentationFor(analyzing, {
         coverage: {
           total: 30,
@@ -180,8 +185,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: analyzing.controllerId,
       sessionId: analyzing.sessionId,
-      runId: analyzing.runId,
-      generation: analyzing.generation,
+      role: 'owner',
       presentation: presentationFor(analyzing, {
         coverage: {
           total: 30,
@@ -247,8 +251,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: review.controllerId,
       sessionId: review.sessionId,
-      runId: review.runId,
-      generation: review.generation,
+      role: null,
       presentation: presentationFor(review, { status: 'completed' }),
     });
 
@@ -304,8 +307,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: parent.controllerId,
       sessionId: parent.sessionId,
-      runId: parent.runId,
-      generation: parent.generation,
+      role: 'owner',
       presentation: presentationFor(parent),
     });
     await emitMessage({
@@ -386,8 +388,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: analyzing.controllerId,
       sessionId: analyzing.sessionId,
-      runId: analyzing.runId,
-      generation: analyzing.generation,
+      role: 'owner',
       presentation: presentationFor(analyzing),
     });
     await emitMessage({
@@ -462,7 +463,7 @@ describe('Agent organize-job workbench UI', () => {
       message: 'The saved analysis scope expired. Prepare it again.',
       requestId: readyRequest.requestId,
     });
-    expect(container.textContent).toContain('The saved analysis scope expired. Prepare it again.');
+    expect(container.textContent).toContain('The saved analysis scope is incomplete. Prepare it again.');
     expect(container.textContent).not.toContain('Confirm analysis scope');
   });
 
@@ -562,7 +563,7 @@ describe('Agent organize-job workbench UI', () => {
           reason: 'final_answer',
           changed: false,
           changedCount: 0,
-          newMessages: [
+          commit: workbenchCommitForMessages(turn, [
             { id: 'deferred-request-user', role: 'user', content: prompt, createdAt: 10 },
             {
               id: 'deferred-request-agent',
@@ -570,7 +571,7 @@ describe('Agent organize-job workbench UI', () => {
               content: 'Opening scope confirmation.',
               createdAt: 11,
             },
-          ],
+          ], { organizeLibraryAction: 'request_confirmation' }),
           organizeLibraryHandoff: {
             type: 'organize_whole_library',
             action: 'request_confirmation',
@@ -710,8 +711,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: blocked.controllerId,
       sessionId: blocked.sessionId,
-      runId: blocked.runId,
-      generation: blocked.generation,
+      role: 'owner',
       presentation: presentationFor(blocked, {
         jobId: 'organize-job:v1:analysis-blocked',
         status: 'analysis_blocked',
@@ -839,8 +839,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: 'owner',
       presentation: applying,
     });
     const pauseButton = buttonWithText(container, 'Pause');
@@ -860,8 +859,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: 'owner',
       presentation: { ...applying, revision: applying.revision + 1 },
     });
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
@@ -875,8 +873,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: 'owner',
       presentation: paused,
     });
     const resumeButton = buttonWithText(container, 'Continue');
@@ -896,8 +893,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: 'owner',
       presentation: { ...paused, revision: paused.revision + 1 },
     });
     expect(buttonWithText(container, 'Continue').disabled).toBe(true);
@@ -926,8 +922,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: 'owner',
       presentation: applying,
     });
     const stalePauseButton = buttonWithText(container, 'Pause');
@@ -942,8 +937,7 @@ describe('Agent organize-job workbench UI', () => {
         type: 'bgsmOrganizeJobState',
         controllerId: snapshot.controllerId,
         sessionId: snapshot.sessionId,
-        runId: snapshot.runId,
-        generation: snapshot.generation,
+        role: 'owner',
         presentation: paused,
       });
       stalePauseButton.click();
@@ -980,8 +974,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: blocked.controllerId,
       sessionId: blocked.sessionId,
-      runId: blocked.runId,
-      generation: blocked.generation,
+      role: 'owner',
       presentation: presentationFor(blocked, {
         jobId: 'organize-job:v1:mixed-authority-discard',
         status: 'analyzing',
@@ -1042,8 +1035,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: parent.controllerId,
       sessionId: parent.sessionId,
-      runId: parent.runId,
-      generation: parent.generation,
+      role: 'owner',
       presentation: parentPresentation,
     });
     await click(buttonWithText(container, 'Continue remaining'));
@@ -1079,8 +1071,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: child.controllerId,
       sessionId: child.sessionId,
-      runId: child.runId,
-      generation: child.generation,
+      role: 'owner',
       presentation: childPresentation,
     });
     await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: child });
@@ -1111,8 +1102,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: child.controllerId,
       sessionId: child.sessionId,
-      runId: child.runId,
-      generation: child.generation,
+      role: 'owner',
       presentation: reviewPresentation,
     });
 
@@ -1138,8 +1128,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: parent.controllerId,
       sessionId: parent.sessionId,
-      runId: parent.runId,
-      generation: parent.generation,
+      role: 'owner',
       presentation: parentPresentation,
     });
 
@@ -1167,8 +1156,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: childPresentation.controllerId,
       sessionId: childPresentation.sessionId,
-      runId: childPresentation.runId,
-      generation: childPresentation.generation,
+      role: 'owner',
       presentation: childPresentation,
     });
 
@@ -1232,7 +1220,7 @@ describe('Agent organize-job workbench UI', () => {
 
     expect(container.textContent).not.toContain('Run limit reached');
     expect(container.textContent).not.toContain('Continue remaining');
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true);
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
 
     const child: OrganizeJobRunSnapshot = {
       ...parent,
@@ -1298,8 +1286,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: parent.controllerId,
       sessionId: parent.sessionId,
-      runId: parent.runId,
-      generation: parent.generation,
+      role: 'owner',
       presentation: parentPresentation,
     });
 
@@ -1334,8 +1321,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: child.controllerId,
       sessionId: child.sessionId,
-      runId: child.runId,
-      generation: child.generation,
+      role: 'owner',
       presentation: childPresentation,
     });
 
@@ -1366,8 +1352,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: child.controllerId,
       sessionId: child.sessionId,
-      runId: child.runId,
-      generation: child.generation,
+      role: 'owner',
       presentation: reviewPresentation,
     });
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
@@ -1383,8 +1368,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: base.controllerId,
       sessionId: base.sessionId,
-      runId: base.runId,
-      generation: base.generation,
+      role: 'owner',
       presentation: presentationFor(base, {
         status: 'analyzing',
         coverage: {
@@ -1439,7 +1423,7 @@ describe('Agent organize-job workbench UI', () => {
           contextFailureReason: 'final_preflight_failed',
           changed: false,
           changedCount: 0,
-          newMessages: [],
+          commit: null,
         },
       });
       await Promise.resolve();
@@ -1494,7 +1478,7 @@ describe('Agent organize-job workbench UI', () => {
     const resumedTurn = restartedPort?.posted.find((message) => message.type === 'startBgsmAgentTurn');
     if (!restartedPort || !resumedTurn) throw new Error('Agent turn did not reconnect.');
     expect(resumedTurn).toEqual(expect.objectContaining({
-      executionEpochId: 'worker-epoch-ui-original',
+      executionEpochId: 'worker-epoch-ui-restarted',
       turnAttemptId: firstTurn.turnAttemptId,
       prompt,
     }));
@@ -1510,7 +1494,7 @@ describe('Agent organize-job workbench UI', () => {
           reason: 'attempt_state_lost',
           changed: false,
           changedCount: 0,
-          newMessages: [],
+          commit: null,
         },
       });
       await Promise.resolve();
@@ -1547,8 +1531,8 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: firstTurn.sessionId,
       baseRevision: firstTurn.baseRevision,
       prompt,
-      history: [],
     }));
+    expect(retryTurn).not.toHaveProperty('history');
     expect(retryTurn.turnAttemptId).not.toBe(firstTurn.turnAttemptId);
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeTruthy();
     expect(textarea.disabled).toBe(true);
@@ -1570,8 +1554,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: 'owner',
       presentation,
     });
     await act(async () => { await Promise.resolve(); });
@@ -1664,8 +1647,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: 'owner',
       presentation: durable,
     });
     await act(async () => { await Promise.resolve(); });
@@ -1706,8 +1688,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: null,
       presentation: presentationFor(snapshot, {
         status: 'completed',
         coverage: completeCoverage(1, 1),
@@ -1753,8 +1734,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: null,
       presentation: completedPresentation,
     });
     await act(async () => { await Promise.resolve(); });
@@ -1824,8 +1804,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: null,
       presentation: completedPresentation,
     }, 'authoritative_snapshot', completedPresentation.revision);
     expect(postedMessages('requestBgsmOrganizeReceiptPage')).toEqual([
@@ -1924,8 +1903,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: parent.controllerId,
       sessionId: parent.sessionId,
-      runId: parent.runId,
-      generation: parent.generation,
+      role: 'owner',
       presentation: parentPresentation,
     });
 
@@ -1962,8 +1940,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: child.controllerId,
       sessionId: child.sessionId,
-      runId: child.runId,
-      generation: child.generation,
+      role: 'owner',
       presentation: {
         ...parentPresentation,
         runId: child.runId,
@@ -2000,7 +1977,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(currentPhase(container)).toBe('Analyzing');
   });
 
-  it('ends reconnecting only after an authoritative no-active response', async () => {
+  it('ends reconnecting only after an authoritative no-job projection', async () => {
     const container = await mountHarness();
     const request = await requestOrganizePreflight(container);
     const firstPort = activeOrganizePort();
@@ -2024,9 +2001,11 @@ describe('Agent organize-job workbench UI', () => {
     expect(container.textContent).toContain('Cubby connection was interrupted. Reconnecting');
 
     await emitMessageOn(replacement, {
-      type: 'bgsmOrganizeJobRunNoActive',
+      type: 'bgsmOrganizeJobState',
       controllerId: analyzing.controllerId,
       sessionId: analyzing.sessionId,
+      presentation: null,
+      role: null,
     }, 'authoritative_snapshot');
     expect(container.textContent).not.toContain('Cubby connection was interrupted. Reconnecting');
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
@@ -2063,8 +2042,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: 'owner',
       presentation,
     });
     await act(async () => { await Promise.resolve(); });
@@ -2128,8 +2106,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: 'owner',
       presentation: revised,
     });
     await emitMessage({
@@ -2174,8 +2151,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: 'owner',
       presentation: { ...revised, revision: 10, status: 'applying', apply: durableApply },
     });
     expect(container.textContent).toContain('Applying selected changes');
@@ -2192,8 +2168,7 @@ describe('Agent organize-job workbench UI', () => {
       type: 'bgsmOrganizeJobState',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
+      role: null,
       presentation: { ...revised, revision: 11, status: 'completed', apply: completedApply },
     });
     await act(async () => { await Promise.resolve(); });
@@ -2261,19 +2236,89 @@ describe('Agent organize-job workbench UI', () => {
       .not.toBe(0);
 
     const sessionToggle = container.querySelector<HTMLButtonElement>('[data-testid="agent-session-toggle"]')!;
-    expect(sessionToggle.disabled).toBe(true);
+    expect(sessionToggle.disabled).toBe(false);
     await click(buttonWithText(container, 'Dismiss'));
     expect(activeOrganizePort().posted.at(-1)).toEqual({
-      type: 'dismissBgsmOrganizeReceipt',
+      type: 'dismissBgsmTerminalOrganizeJob',
       controllerId: snapshot.controllerId,
       sessionId: snapshot.sessionId,
-      runId: snapshot.runId,
-      generation: snapshot.generation,
       jobId: presentation.jobId,
-      applyId: completedApply.applyId,
+      expectedRevision: 11,
+    });
+    expect(container.querySelector('[data-testid="organize-job-receipt-card"]')).not.toBeNull();
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: snapshot.controllerId,
+      sessionId: snapshot.sessionId,
+      presentation: null,
+      role: null,
     });
     expect(container.querySelector('[data-testid="organize-job-receipt-card"]')).toBeNull();
     expect(sessionToggle.disabled).toBe(false);
+  });
+
+  it('posts canonical Take control identity and preserves the draft on typed conflict', async () => {
+    const container = await mountHarness();
+    const page = postedMessages('requestBgsmActiveOrganizeJob').at(-1)!;
+    const snapshot = reviewSnapshot(page.controllerId, page.sessionId, 2);
+    const presentation = presentationFor(snapshot, {
+      jobId: 'organize-job:v1:take-control-ui',
+      revision: 17,
+      status: 'review',
+      coverage: completeCoverage(2, 2),
+      selectedRepositories: 2,
+      selectedActions: 2,
+    });
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: page.controllerId,
+      sessionId: page.sessionId,
+      presentation,
+      role: 'owner_lost',
+    });
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    await setTextareaValue(textarea, 'Keep this takeover draft');
+    await click(buttonWithText(container, 'Take control'));
+
+    const request = postedMessages('takeControlBgsmOrganizeJob').at(-1)!;
+    expect(request).toEqual({
+      type: 'takeControlBgsmOrganizeJob',
+      controllerId: page.controllerId,
+      sessionId: page.sessionId,
+      runId: presentation.runId,
+      generation: presentation.generation,
+      requestId: expect.any(String),
+      jobId: presentation.jobId,
+      expectedRevision: presentation.revision,
+    });
+    expect(buttonWithText(container, 'Taking control…').disabled).toBe(true);
+
+    await emitMessage({
+      type: 'bgsmOrganizeJobRunError',
+      controllerId: page.controllerId,
+      sessionId: page.sessionId,
+      runId: presentation.runId,
+      generation: presentation.generation,
+      requestId: request.requestId,
+      reason: 'revision_conflict',
+      message: 'Internal revision detail.',
+    });
+    expect(container.querySelector('[data-testid="organize-job-take-control-error"]')?.textContent)
+      .toContain('changed while taking control');
+    expect(container.textContent).not.toContain('Internal revision detail.');
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Keep this takeover draft');
+    expect(buttonWithText(container, 'Take control').disabled).toBe(false);
+
+    await click(buttonWithText(container, 'Take control'));
+    await emitMessage({
+      type: 'bgsmOrganizeJobState',
+      controllerId: page.controllerId,
+      sessionId: page.sessionId,
+      presentation: { ...presentation, revision: presentation.revision + 1 },
+      role: 'owner',
+    });
+    expect(container.querySelector('[data-testid="organize-job-control-notice"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Keep this takeover draft');
   });
 });
 
@@ -2312,7 +2357,7 @@ async function requestOrganizePreflight(container: HTMLElement) {
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: workbenchCommitForMessages(turn, [
           {
             id: `workbench-handoff-user-${sequence}`,
             role: 'user',
@@ -2325,7 +2370,7 @@ async function requestOrganizePreflight(container: HTMLElement) {
             content: 'Opening scope confirmation.',
             createdAt: sequence * 2,
           },
-        ],
+        ], { organizeLibraryAction: 'request_confirmation' }),
         organizeLibraryHandoff: {
           type: 'organize_whole_library',
           action: 'request_confirmation',
@@ -2340,6 +2385,84 @@ async function requestOrganizePreflight(container: HTMLElement) {
   const request = postedMessages('requestBgsmOrganizeJobPreflight').at(-1);
   if (!request) throw new Error('Agent handoff did not request Organize preflight.');
   return request;
+}
+
+function workbenchCommitForMessages(
+  input: Readonly<{
+    turnAttemptId: string;
+    sessionId: string;
+    baseRevision: number;
+    prompt?: string;
+  }>,
+  messages: readonly {
+    id: string;
+    role: 'user' | 'agent' | 'tool';
+    content: string;
+    createdAt: number;
+    toolCallId?: string;
+    toolName?: string;
+    toolCalls?: { id: string; name: string; arguments: unknown }[];
+  }[],
+  options: Readonly<{
+    organizeLibraryAction?: 'request_confirmation' | 'start_analysis';
+  }> = {},
+): AgentSessionCommitResult {
+  const transcript = messages.map((message, index) => ({
+    sequence: index + 1,
+    ...message,
+    ...(message.toolCalls ? { toolCalls: [...message.toolCalls] } : {}),
+  }));
+  const presentationMessages: readonly AgentSessionPresentationMessage[] = transcript
+    .filter((message): message is typeof message & { role: 'user' | 'agent' } => (
+      message.role === 'user' || message.role === 'agent'
+    ))
+    .filter((message) => message.content.trim().length > 0)
+    .map((message) => ({
+      sequence: message.sequence,
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt,
+    }));
+  const appliedRevision = input.baseRevision + 1;
+  return {
+    session: {
+      id: input.sessionId,
+      revision: appliedRevision,
+    },
+    summary: {
+      id: input.sessionId,
+      title: input.prompt ?? presentationMessages[0]?.content ?? '',
+      createdAt: 1,
+      updatedAt: 2,
+    },
+    turnAttemptId: input.turnAttemptId,
+    idempotent: false,
+    appliedRevision,
+    digest: `asd:v1:${'a'.repeat(43)}`,
+    launchDigest: `asl:v1:${'b'.repeat(43)}`,
+    outcome: {
+      reason: 'final_answer',
+      changed: false,
+      changedCount: 0,
+      writeSettlement: 'none',
+      ...(options.organizeLibraryAction
+        ? {
+            organizeLibraryAction: options.organizeLibraryAction,
+            handoffAnchor: {
+              messageId: presentationMessages.at(-1)?.id ?? null,
+              createdAt: presentationMessages.at(-1)?.createdAt ?? 2,
+            },
+          }
+        : {}),
+    },
+    transcript: {
+      sessionId: input.sessionId,
+      messages: transcript,
+      nextBeforeSequence: null,
+    },
+    presentationMessages,
+  };
 }
 
 async function completeAgentOrganizeAction(
@@ -2361,7 +2484,7 @@ async function completeAgentOrganizeAction(
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages: [
+        commit: workbenchCommitForMessages(turn, [
           {
             id: `workbench-command-user-${sequence}`,
             role: 'user',
@@ -2376,7 +2499,7 @@ async function completeAgentOrganizeAction(
               : 'Opening scope confirmation.',
             createdAt: sequence * 2 + 101,
           },
-        ],
+        ], { organizeLibraryAction: action }),
         organizeLibraryHandoff: {
           type: 'organize_whole_library',
           action,
@@ -2404,7 +2527,7 @@ async function completeObservedAgentTurn(
   const turn = agentPort?.posted.find((message) => message.type === 'startBgsmAgentTurn');
   if (!agentPort || !turn) throw new Error('Agent turn did not start.');
   const messageCreatedAtBase = createdAtBase
-    ?? Math.max(Date.now(), (turn.history.at(-1)?.createdAt ?? 0) + 1);
+    ?? Math.max(Date.now(), lastAgentMessageCreatedAt + 1);
   const toolCallId = `${turn.turnAttemptId}:tool-call`;
   const newMessages = [
     {
@@ -2437,6 +2560,7 @@ async function completeObservedAgentTurn(
       createdAt: messageCreatedAtBase + (tool ? 3 : 1),
     },
   ];
+  lastAgentMessageCreatedAt = newMessages.at(-1)!.createdAt;
   await act(async () => {
     agentPort.emit({
       type: 'bgsmAgentTurnResult',
@@ -2448,7 +2572,7 @@ async function completeObservedAgentTurn(
         reason: 'final_answer',
         changed: false,
         changedCount: 0,
-        newMessages,
+        commit: workbenchCommitForMessages(turn, newMessages),
       },
     });
     await Promise.resolve();
@@ -2474,7 +2598,7 @@ function Harness() {
       sortDir: 'desc',
     },
   });
-  const workbench = useBgsmAgentWorkbench(undefined, agent.sessionId);
+  const workbench = useBgsmAgentWorkbench(undefined, agent.sessionId, agent.sessionReady);
   return (
     <>
       <button type="button" onClick={() => setOpen(true)}>Show Cubby</button>
@@ -2510,20 +2634,24 @@ class FakePort {
 
   emit(
     message: unknown,
-    deliveryKind: BgsmOrganizeJobDeliveryEnvelope['deliveryKind'] = 'live',
-    durableRevision: number | null = null,
+    deliveryKind?: BgsmOrganizeJobDeliveryEnvelope['deliveryKind'],
+    durableRevision?: number | null,
   ) {
     if (this.name !== 'bgsm-agent-organize-job') {
       this.messageListeners.forEach((listener) => listener(message));
       return;
     }
+    const serverMessage = message as BgsmOrganizeJobServerMessage;
+    const isState = serverMessage.type === 'bgsmOrganizeJobState';
     this.emitEnvelope({
       type: 'bgsmOrganizeJobRunDelivery',
       connectionEpochId: this.connectionEpochId,
       deliverySequence: this.deliverySequence,
-      deliveryKind,
-      durableRevision,
-      message: message as BgsmOrganizeJobServerMessage,
+      deliveryKind: deliveryKind ?? (isState ? 'authoritative_snapshot' : 'live'),
+      durableRevision: durableRevision ?? (
+        isState && serverMessage.presentation ? serverMessage.presentation.revision : null
+      ),
+      message: serverMessage,
     });
   }
 
@@ -2630,8 +2758,7 @@ async function enterBlockedAnalysis(container: HTMLElement, suffix: string) {
     type: 'bgsmOrganizeJobState',
     controllerId: blocked.controllerId,
     sessionId: blocked.sessionId,
-    runId: blocked.runId,
-    generation: blocked.generation,
+    role: 'owner',
     presentation: presentationFor(blocked, {
       jobId: `organize-job:v1:${suffix}`,
       status: 'analysis_blocked',
@@ -2659,8 +2786,7 @@ async function enterDurableReview(container: HTMLElement, suffix: string) {
     type: 'bgsmOrganizeJobState',
     controllerId: snapshot.controllerId,
     sessionId: snapshot.sessionId,
-    runId: snapshot.runId,
-    generation: snapshot.generation,
+    role: 'owner',
     presentation,
   });
   await act(async () => { await Promise.resolve(); });
@@ -2745,6 +2871,7 @@ function presentationFor(
     runId: snapshot.runId,
     generation: snapshot.generation,
     jobId: 'organize-job:v1:ui',
+    originAgentSessionId: snapshot.sessionId,
     revision: 1,
     status: 'analyzing',
     scopeLabel: snapshot.frozenScope.label,
@@ -2807,8 +2934,8 @@ async function emitMessage(message: BgsmOrganizeJobServerMessage) {
 async function emitMessageOn(
   target: FakePort,
   message: BgsmOrganizeJobServerMessage,
-  deliveryKind: BgsmOrganizeJobDeliveryEnvelope['deliveryKind'] = 'live',
-  durableRevision: number | null = null,
+  deliveryKind?: BgsmOrganizeJobDeliveryEnvelope['deliveryKind'],
+  durableRevision?: number | null,
 ) {
   await act(async () => {
     target.emit(message, deliveryKind, durableRevision);

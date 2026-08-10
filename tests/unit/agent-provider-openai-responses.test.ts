@@ -54,14 +54,18 @@ describe('OpenAI Responses adapter', () => {
     }
   });
 
-  it('uses a Custom registry endpoint while enforcing its exact origin', async () => {
-    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+  it('uses a Custom registry endpoint with exact origin and bearer authorization', async () => {
+    const apiKey = 'synthetic-openai-responses-key';
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe('https://relay.example/v1/responses');
+      expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${apiKey}`);
+      expect(String(input)).not.toContain(apiKey);
+      expect(String(init?.body)).not.toContain(apiKey);
       return responsesSse(textEvents('custom ok'));
     });
     const provider = createOpenAIResponsesProvider({
       model: 'custom-model',
-      apiKey: 'custom-secret',
+      apiKey,
       endpoint: 'https://relay.example/v1/responses',
       expectedOrigin: 'https://relay.example',
       fetchImpl: fetchImpl as typeof fetch,

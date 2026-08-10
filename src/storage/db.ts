@@ -11,6 +11,17 @@ import type {
   TagMeta,
 } from '@/types';
 import type {
+  AgentSessionMessageRecord,
+  AgentSessionRecord,
+} from './agent-session-model';
+import type {
+  AgentArtifactChunkRecord,
+  AgentArtifactRecord,
+  AgentStorageUsageRecord,
+} from './agent-storage-model';
+import type { AgentAttemptRecord } from './agent-attempt-model';
+import type { AgentAttemptRecoveryRecord } from './agent-attempt-recovery-model';
+import type {
   GitHubNotificationThread,
   GitHubWatchRepository,
   GitHubWatchStateRecord,
@@ -32,6 +43,13 @@ export class StarsDB extends Dexie {
   organizeApplies!: Table<OrganizeApplyRecord, string>;
   organizeApplyRows!: Table<OrganizeApplyRowRecord, string>;
   tagDirtyOutbox!: Table<TagDirtyOutboxRecord, string>;
+  agentSessions!: Table<AgentSessionRecord, string>;
+  agentAttempts!: Table<AgentAttemptRecord, string>;
+  agentAttemptRecoveries!: Table<AgentAttemptRecoveryRecord, string>;
+  agentMessages!: Table<AgentSessionMessageRecord, string>;
+  agentArtifacts!: Table<AgentArtifactRecord, string>;
+  agentArtifactChunks!: Table<AgentArtifactChunkRecord, string>;
+  agentStorageUsage!: Table<AgentStorageUsageRecord, string>;
   watchRepositories!: Table<GitHubWatchRepository, string>;
   watchNotificationThreads!: Table<GitHubNotificationThread, string>;
   watchState!: Table<GitHubWatchStateRecord, 'singleton'>;
@@ -65,17 +83,27 @@ export class StarsDB extends Dexie {
       await table.bulkPut(rows.map((row) => normalizeStoredTag(row)));
     });
     // v4 adds isolated durable artifacts for whole-library tag organization,
-    // Gist dirtiness, and the account-bound Watch snapshots.
+    // Gist dirtiness, local Agent data, and account-bound Watch snapshots.
+    // Transcripts, in-flight launch/retry authority, and chunked tool artifacts
+    // stay in IndexedDB so extension messages remain bounded and worker
+    // restarts do not lose admitted prompts.
     this.version(4).stores({
       stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
       tags: 'full_name, mtime',
       tagMeta: 'name, dimension, mtime',
-      organizeJobs: 'jobId, &activeSlot, status, updatedAt',
+      organizeJobs: 'jobId, &activeSlot, status, updatedAt, originAgentSessionId, sessionId',
       organizeItems: 'id, [jobId+position], [jobId+analysisState], jobId, position, analysisState, leaseExpiresAt',
       organizeTaxonomies: 'jobId',
       organizeApplies: 'applyId, jobId, status',
       organizeApplyRows: 'id, [applyId+position], [applyId+state], applyId, state, leaseExpiresAt',
       tagDirtyOutbox: 'id, kind, updatedAt',
+      agentSessions: 'id, updatedAt, createdAt',
+      agentMessages: 'id, sessionId, &[sessionId+sequence], [sessionId+turnAttemptId]',
+      agentAttempts: 'id, sessionId, &[sessionId+turnAttemptId], [sessionId+state], updatedAt',
+      agentAttemptRecoveries: 'id, sessionId, &[sessionId+turnAttemptId], updatedAt',
+      agentArtifacts: 'id, sessionId, turnAttemptId, ownerMessageId, storageClass, [sessionId+storageClass], [storageClass+state+lastAccessedAt], [state+createdAt], expiresAt',
+      agentArtifactChunks: 'id, artifactId, &[artifactId+index]',
+      agentStorageUsage: 'id',
       watchRepositories: 'full_name',
       watchNotificationThreads: 'id, repositoryFullName, updatedAt, [repositoryFullName+updatedAt]',
       watchState: 'id',

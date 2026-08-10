@@ -659,8 +659,16 @@ async function compactBgsmAgentActiveTurn(input: Parameters<typeof compactBgsmAg
     policyRevision: input.profile.policyRevision,
     summary: summaryResult.checkpoint.summary,
   };
+
+  const baselineCurrentUser = input.baselineProjection.at(-1);
+  if (!baselineCurrentUser || baselineCurrentUser.role !== 'user') {
+    throw new TypeError('Active-turn baseline projection must end with the current user message.');
+  }
+  // The planner builds a fresh projection ID, but continuation checkpoints must
+  // retain the original current-user identity used by the append-only raw turn.
   const messages = [
-    ...input.baselineProjection,
+    ...input.baselineProjection.slice(0, -1),
+    { ...currentUser },
     buildBgsmAgentActiveSummaryProjectionMessage(activeProjection),
     ...candidate.retainedHistory,
   ];

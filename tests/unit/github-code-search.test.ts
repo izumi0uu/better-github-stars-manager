@@ -5,7 +5,6 @@ import {
   MAX_TOOL_RESULT_BYTES,
   okToolResult,
   serializedToolResultByteLength,
-  ToolOutputTooLargeError,
 } from '../../src/agent-harness';
 import {
   GithubCodeSearchError,
@@ -486,8 +485,7 @@ describe('repository list and read', () => {
       entries: [],
       nextCursor: '0',
     }));
-    await assert.rejects(
-      () => list.execute(listArgs, {
+    const oversizedEntry = await list.execute(listArgs, {
         sessionId: 's-list-too-small',
         callId: 'c-list-too-small',
         resultAllowance: {
@@ -495,9 +493,10 @@ describe('repository list and read', () => {
           contextRemainingTokens: 10_000,
           memoryRemainingBytes: zeroEntryAllowance,
         },
-      }),
-      (error) => error instanceof ToolOutputTooLargeError && /single directory entry/i.test(error.message),
-    );
+      }) as Awaited<ReturnType<typeof listRepositoryFiles>>;
+    assert.equal(oversizedEntry.entries.length, 1);
+    assert.equal(oversizedEntry.nextCursor, '1');
+    assert.ok(serializedToolResultByteLength(okToolResult(oversizedEntry)) > zeroEntryAllowance);
 
     const listAllowance = 700;
     const listed = await list.execute(
@@ -537,8 +536,7 @@ describe('repository list and read', () => {
     assert.ok(serializedToolResultByteLength(okToolResult(file)) <= readAllowance);
 
     fileSource = 'x'.repeat(2_000);
-    await assert.rejects(
-      () => read.execute(
+    const oversizedLine = await read.execute(
         read.validate?.({ repository: 'octo/one', path: 'src/index.ts', ref: COMMIT }),
         {
           sessionId: 's-read-long-line',
@@ -549,9 +547,9 @@ describe('repository list and read', () => {
             memoryRemainingBytes: readAllowance,
           },
         },
-      ),
-      (error) => error instanceof ToolOutputTooLargeError && /first requested line/i.test(error.message),
-    );
+      ) as Awaited<ReturnType<typeof readRepositoryFile>>;
+    assert.equal(oversizedLine.content, fileSource);
+    assert.ok(serializedToolResultByteLength(okToolResult(oversizedLine)) > readAllowance);
   });
 
   it('searches one selected repository from a large frozen scope and trusts its returned ref', async () => {
@@ -720,7 +718,7 @@ describe('searchIndexedRepositoryCode', () => {
     assert.equal('query' in result, false);
   });
 
-  it('refuses to discard the only verified match to fit the result allowance', async () => {
+  it('returns the only verified match for the harness artifact fallback', async () => {
     vi.spyOn(authStore, 'getToken').mockResolvedValue('github_pat_test');
     const fetchImpl = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
@@ -733,8 +731,7 @@ describe('searchIndexedRepositoryCode', () => {
     const args = tool.validate?.({ query: 'needle' });
     assert.ok(args);
     const maxSerializedBytes = 300;
-    await assert.rejects(
-      () => tool.execute(args, {
+    const result = await tool.execute(args, {
         sessionId: 's-code-allowance',
         callId: 'c-code-allowance',
         resultAllowance: {
@@ -742,9 +739,9 @@ describe('searchIndexedRepositoryCode', () => {
           contextRemainingTokens: 10_000,
           memoryRemainingBytes: maxSerializedBytes,
         },
-      }),
-      (error) => error instanceof ToolOutputTooLargeError && /single verified match/i.test(error.message),
-    );
+      });
+    assert.equal(result.matches.length, 1);
+    assert.ok(serializedToolResultByteLength(okToolResult(result)) > maxSerializedBytes);
   });
 
   it('keeps one verified match and marks a multi-match allowance reduction partial', async () => {
@@ -950,7 +947,7 @@ describe('searchIndexedRepositoryCode', () => {
     assert.deepEqual(result.matches.map((match) => match.path), ['src/valid.ts']);
   });
 
-  it('bounds the complete success envelope with maximum repository names and paths', async () => {
+  it('preserves a complete domain-bounded result for the harness artifact fallback', async () => {
     vi.spyOn(authStore, 'getToken').mockResolvedValue('github_pat_test');
     const repository = `${`o${'a'.repeat(38)}`}/${`r${'b'.repeat(99)}`}`;
     const paths = Array.from(
@@ -974,11 +971,11 @@ describe('searchIndexedRepositoryCode', () => {
       { fetchImpl },
     );
 
-    assert.equal(result.status, 'partial');
-    assert.ok(result.matches.length > 0 && result.matches.length < paths.length);
-    assert.ok(result.warnings.includes('match_limit_reached'));
+    assert.equal(result.status, 'complete');
+    assert.equal(result.matches.length, paths.length);
+    assert.equal(result.warnings.includes('match_limit_reached'), false);
     assert.ok(
-      serializedToolResultByteLength(okToolResult(result)) <= MAX_TOOL_RESULT_BYTES,
+      serializedToolResultByteLength(okToolResult(result)) > MAX_TOOL_RESULT_BYTES,
     );
   });
 

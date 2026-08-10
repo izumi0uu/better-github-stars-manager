@@ -27,6 +27,14 @@ describe('Agent observability Scenario Lab', () => {
     ['organize-cross-batch-recovery', ['organize_generation_state', 'organize_durable_state'], 'completed'],
     ['organize-cancel-during-apply', ['organize_apply_chunk', 'root_cancelled'], 'cancelled'],
     ['organize-port-reconnect', ['organize_durable_state', 'organize_review_state'], 'completed'],
+    ['cubby-artifact-continuation-coverage', [
+      'provider_request_prepared',
+      'provider_finished',
+      'tool_completed',
+      'continuation_started',
+      'continuation_finished',
+      'context_reduction_finished',
+    ], 'completed'],
   ] as const satisfies readonly [DevTraceScenarioId, readonly string[], string][];
 
   for (const [scenarioId, expectedKinds, terminalState] of cases) {
@@ -137,6 +145,16 @@ function assertScenarioEvidence(
       expect(dataFor('organize_durable_state')).toEqual(expect.arrayContaining([
         expect.objectContaining({ observation: 'duplicate', revision: 4 }),
         expect.objectContaining({ observation: 'gap_reconciled', revision: 6 }),
+      ]));
+      return;
+    case 'cubby-artifact-continuation-coverage':
+      expect(dataFor('provider_request_prepared').length).toBeGreaterThan(12);
+      expect(dataFor('continuation_started')).toEqual(expect.arrayContaining([
+        expect.objectContaining({ reason: 'artifact_no_progress' }),
+        expect.objectContaining({ reason: 'artifact_episode_exhausted' }),
+      ]));
+      expect(dataFor('context_reduction_finished')).toEqual(expect.arrayContaining([
+        expect.objectContaining({ outcome: 'summary' }),
       ]));
   }
 }

@@ -90,6 +90,7 @@ export interface MessageCatalog {
     noThreads: string;
     noMatchingThreads: string;
     staleSnapshot: string;
+    credentialStaleSnapshot: string;
     scopeFailed: string;
     inboxFailed: string;
     truncated: string;
@@ -161,6 +162,7 @@ export interface MessageCatalog {
     editingLayout: string;
     columnsButton: string;
     columnsButtonTitle: string;
+    showRepositoryOwner: string;
     hiddenColumns: (count: number) => string;
     hiddenColumnsTip: string;
     hideColumn: (label: string) => string;
@@ -216,13 +218,22 @@ export interface MessageCatalog {
     functionReviewNotesDescription: string;
     askingAboutCurrentView: (count: number) => string;
     askingAboutAllLiveStars: (count?: number) => string;
+    conversationSwitchPending: (scope: string) => string;
     agentChanged: (count: number) => string;
     turnFailed: string;
     attemptStateLost: string;
+    attemptResumeStateUnknown: string;
     providerErrorTitle: string;
     providerErrorSubtitle: string;
     providerErrorBody: string;
     retry: string;
+    retryDraftStoppedTitle: string;
+    retryDraftFailedTitle: string;
+    retryDraftContextTitle: string;
+    retryDraftSubtitle: string;
+    retryDraftBody: string;
+    retryDraftPendingSubtitle: string;
+    retryDraftPendingBody: string;
     contextSettingsTitle: string;
     contextSettingsMessage: string;
     contextPromptTooLargeTitle: string;
@@ -237,11 +248,22 @@ export interface MessageCatalog {
     startNewConversation: string;
     sessionsLabel: string;
     sessionUntitled: string;
+    sessionUnavailable: string;
     sessionDelete: string;
     sessionDeleteTitle: string;
     sessionDeleteMessage: (title: string) => string;
     sessionDeleteConfirm: string;
     sessionDeleteCancel: string;
+    sessionDeleteBlocked: string;
+    sessionDeleteFailed: string;
+    sessionOperationFailed: string;
+    sessionLoadFailed: string;
+    sessionLoadTitle: string;
+    sessionLoadSubtitle: string;
+    sessionLoadBody: string;
+    sessionLoadRetry: string;
+    loadEarlierMessages: string;
+    loadingEarlierMessages: string;
     hideWhileRunning: string;
     runContinuesWhileHidden: string;
     confirmScopeHeader: string;
@@ -380,6 +402,18 @@ export interface MessageCatalog {
     handoffAutoTagsUpdated: string;
     agentActivityLabel: string;
     workbench: {
+      controlledElsewhere: string;
+      ownerDisconnected: string;
+      takeControl: string;
+      takingControl: string;
+      takeControlFailedOwnerConnected: string;
+      takeControlFailedConflict: string;
+      takeControlFailedUnavailable: string;
+      takeControlFailed: string;
+      takeControlSucceeded: string;
+      organizeAlreadyRunning: string;
+      organizeCommandFailed: string;
+      receiptOriginDeleted: string;
       resolvingSubtitle: string;
       resolvingBody: string;
       resolvingHint: string;
@@ -665,11 +699,36 @@ export interface MessageCatalog {
     agentDisclosureNotSentHeading: string;
     agentDisclosureNotSentSecrets: string;
     agentDisclosureKeyException: string;
+    agentDisclosureLocalHistory: string;
     agentDisclosureBuiltInAccess: string;
     agentDisclosureCustomAccess: string;
     agentGrantAccess: string;
     agentAccessGranted: string;
     agentHostAccessRequired: string;
+    agentStorageHeading: string;
+    agentStorageIntro: string;
+    agentStorageOrganizeRetention: string;
+    agentStorageRefresh: string;
+    agentStorageLoading: string;
+    agentStorageDurableData: string;
+    agentStorageConversationCount: (sessions: number, messages: number) => string;
+    agentStorageToolCache: string;
+    agentStorageArtifactCount: (artifacts: number) => string;
+    agentStorageLedgerTotal: string;
+    agentStorageLogicalLimit: (limit: string) => string;
+    agentStorageLedgerUsageLabel: string;
+    agentStorageThresholds: (warning: string, limit: string) => string;
+    agentStorageBrowserUsage: (usage: string, quota: string) => string;
+    agentStorageBrowserUnavailable: string;
+    agentStorageWarning: string;
+    agentStorageLimitReached: string;
+    agentStorageClearHint: string;
+    agentStorageClearCache: string;
+    agentStorageClearingCache: string;
+    agentStorageCacheCleared: (artifacts: number, bytes: string, protectedArtifacts: number) => string;
+    agentStorageUnavailable: (error: string) => string;
+    agentStorageClearFailed: (error: string) => string;
+    agentStorageRetry: string;
     behaviorHeading: string;
     maxTagsPerRepoLabel: string;
     maxTagsPerRepoHint: string;
@@ -696,6 +755,14 @@ export interface MessageCatalog {
     tokenVerifiedWatchForbidden: (username: string) => string;
     tokenVerifiedWatchUnverified: (username: string) => string;
     tokenRemoved: string;
+    watchSetupDescription: string;
+    watchSetupEnable: string;
+    watchSetupChecking: string;
+    watchSetupMainConnected: (username: string) => string;
+    watchSetupDedicatedConnected: (username: string) => string;
+    watchSetupMainUnavailable: string;
+    watchSetupCheckFailed: string;
+    watchSetupOtherFeaturesSafe: string;
     watchTokenHeading: string;
     watchTokenIntroPrefix: string;
     watchTokenLinkLabel: string;
@@ -822,6 +889,7 @@ export interface MessageCatalog {
     agentDataDisclosureRequired: string;
     agentContextCapabilityRequired: string;
     agentContextCapabilityInfeasible: string;
+    agentArtifactCoverageStalled: string;
     unknown: (raw: string) => string;
   };
   /** First-run onboarding card (ManagerPanel). Context-aware: shows until the
@@ -948,18 +1016,22 @@ const messages: Record<Locale, MessageCatalog> = {
       refreshing: "Refreshing…",
       openOptions: "Open options",
       configureMainToken: "Add Watching: read to the main GitHub token to load watched repositories.",
-      configureNotificationsToken: "Connect a separate classic token with the notifications scope to load Inbox threads.",
+      configureNotificationsToken: "Set up the optional Watch Inbox. Your current GitHub connection will be checked first.",
       scopeNeverLoaded: "Refresh to load watched repositories from GitHub.",
       inboxNeverLoaded: "Refresh to load the latest bounded Inbox snapshot.",
       queryFailed: "The Watch snapshot could not be loaded.",
       refreshFailed: "The latest Watch refresh failed; the previous snapshot remains available.",
       retry: "Retry",
-      scopePermissionDenied: "The main token cannot read Watching. Add the optional Watching: read permission and reconnect it in Options.",
-      inboxPermissionDenied: "The Notifications token cannot read GitHub Inbox. Reconnect a classic token with notifications access in Options.",
+      scopePermissionDenied:
+        "Watch is paused because the main GitHub connection was rejected or lacks Watching: read access. Stars, tags, Gist, and sync still work.",
+      inboxPermissionDenied:
+        "Watch is paused because the selected GitHub credential was rejected or cannot read Notifications. Stars, tags, Gist, and sync still work.",
       scopeUnavailable: "The watched-repository scope is not available yet, so Inbox threads cannot be matched.",
       noWatchedRepositories: "None of the currently starred repositories are watched on GitHub.",
       noUnreadThreads: "No unread threads in the latest Watch snapshot.",
       noThreads: "No Inbox threads matched the watched starred repositories in this snapshot.",
+      credentialStaleSnapshot:
+        "Watch is paused because its credential can no longer access GitHub. Stars, tags, Gist, and sync still work; showing the last successful snapshot.",
       noMatchingThreads: "No threads match the current Watch search and reason filters.",
       staleSnapshot: "Showing the last successful snapshot because the latest refresh failed.",
       scopeFailed: "Watched repositories could not be refreshed.",
@@ -1032,6 +1104,7 @@ const messages: Record<Locale, MessageCatalog> = {
       editingLayout: "Editing layout",
       columnsButton: "Columns",
       columnsButtonTitle: "Show or hide columns",
+      showRepositoryOwner: "Show repository owner",
       hiddenColumns: (count) => `${count} hidden`,
       hiddenColumnsTip: "Click to restore · drag into the header to place",
       hideColumn: (label) => `Hide ${label}`,
@@ -1111,13 +1184,24 @@ const messages: Record<Locale, MessageCatalog> = {
             : `All starred repositories · ${count} repositories`)
           : "All starred repositories"
       ),
+      conversationSwitchPending: (scope) => (
+        `Selected ${scope} · finish or discard the current Organize run to switch conversations`
+      ),
       agentChanged: (count) => `${count} tag update${count === 1 ? '' : 's'} applied`,
       turnFailed: "Cubby couldn't complete this request",
       attemptStateLost: "The extension restarted, so Cubby couldn't recover this request. Check any completed changes before retrying.",
+      attemptResumeStateUnknown: "Cubby couldn't confirm this resumed request's final state. Direct retry is disabled to avoid repeating a completed change. Review the result, then edit and send again.",
       providerErrorTitle: "AI service error",
       providerErrorSubtitle: "No local data was modified",
       providerErrorBody: "Your message and scope are saved. Retry, or start a new conversation.",
       retry: "Retry",
+      retryDraftStoppedTitle: "Stopped request restored",
+      retryDraftFailedTitle: "Failed request restored",
+      retryDraftContextTitle: "Context-limited request restored",
+      retryDraftSubtitle: "Ready to retry",
+      retryDraftBody: "The prompt is restored in the composer. Retry it as-is or edit it first.",
+      retryDraftPendingSubtitle: "Retry needs confirmation",
+      retryDraftPendingBody: "The prompt is restored, but Cubby could not confirm that no change was applied. Review or edit it before sending a new request.",
       contextSettingsTitle: "AI service settings need attention",
       contextSettingsMessage: "Adjust this service's context settings before continuing. Your draft is preserved.",
       contextPromptTooLargeTitle: "This request is too large",
@@ -1132,11 +1216,22 @@ const messages: Record<Locale, MessageCatalog> = {
       startNewConversation: "Start new conversation",
       sessionsLabel: "Conversations",
       sessionUntitled: "New conversation",
+      sessionUnavailable: "Unavailable conversation",
       sessionDelete: "Delete conversation",
       sessionDeleteTitle: "Delete this conversation?",
-      sessionDeleteMessage: (title) => `Delete “${title}”? Its local transcript will be removed from this panel.`,
+      sessionDeleteMessage: (title) => `Delete “${title}”? Its conversation history, recovery state, and saved tool data will be deleted. The latest completed or cancelled Organize result is kept until you dismiss it or a new run replaces it.`,
       sessionDeleteConfirm: "Delete",
       sessionDeleteCancel: "Cancel",
+      sessionDeleteBlocked: "Finish, stop, or discard the active work linked to this conversation before deleting it.",
+      sessionDeleteFailed: "This conversation could not be deleted. Try again.",
+      sessionOperationFailed: "The conversation could not be loaded. Try again.",
+      sessionLoadFailed: "Local conversation history is temporarily unavailable.",
+      sessionLoadTitle: "Couldn't load conversations",
+      sessionLoadSubtitle: "Cubby is waiting for local history.",
+      sessionLoadBody: "Try again. Your saved conversations have not been changed.",
+      sessionLoadRetry: "Try again",
+      loadEarlierMessages: "Load earlier messages",
+      loadingEarlierMessages: "Loading earlier messages…",
       hideWhileRunning: "Hide Cubby",
       runContinuesWhileHidden: "You can hide this panel; the turn continues.",
       confirmScopeHeader: "Confirm scope",
@@ -1337,6 +1432,18 @@ const messages: Record<Locale, MessageCatalog> = {
       handoffAutoTagsUpdated: "Auto Tags already updated topic-based auto tags.",
       agentActivityLabel: "Cubby activity",
       workbench: {
+        controlledElsewhere: "This run is controlled from another Cubby page. This page is read-only.",
+        ownerDisconnected: "The page controlling this run disconnected. Take control here to keep managing it.",
+        takeControl: "Take control",
+        takingControl: "Taking control…",
+        takeControlFailedOwnerConnected: "The controlling page reconnected, so this page stays read-only.",
+        takeControlFailedConflict: "This run changed while taking control. Try again.",
+        takeControlFailedUnavailable: "This run is no longer available.",
+        takeControlFailed: "Could not take control. Try again.",
+        takeControlSucceeded: "You now control this run.",
+        organizeAlreadyRunning: "An Organize run is already in progress. Wait for it to finish, or dismiss its result before starting another.",
+        organizeCommandFailed: "Cubby couldn't update this Organize run. Refresh its latest state and try again.",
+        receiptOriginDeleted: "Started from a conversation that has been deleted.",
         resolvingSubtitle: "Preparing your starred library",
         resolvingBody: "This analysis includes every currently starred repository. Filters and the selected row won't narrow the scope.",
         resolvingHint: "No tags change during this step",
@@ -1390,7 +1497,7 @@ const messages: Record<Locale, MessageCatalog> = {
         selectedRowsLocked: (count) => `${count} selected · selection locked`,
         applying: "Applying…",
         applySelected: (count) => `Apply ${count} selected`,
-        applyTagImpact: (tags, repositories) => `Apply ${tags} tags to ${repositories} repositories`,
+        applyTagImpact: (tags, repositories) => `Apply ${tags} ${tags === 1 ? 'tag' : 'tags'} to ${repositories} ${repositories === 1 ? 'repository' : 'repositories'}`,
         selectAll: "Select all",
         clear: "Clear",
         previousPage: "Previous page",
@@ -1649,7 +1756,9 @@ const messages: Record<Locale, MessageCatalog> = {
       agentDisclosureNotSentHeading: "Never included as model input",
       agentDisclosureNotSentSecrets: "GitHub token, API keys, other credentials, or repositories outside the active scope",
       agentDisclosureKeyException:
-        "The AI service API key is sent only to the exact address above as an Authorization header. It is never included in prompts or logs.",
+        "The AI service API key is sent only to the exact address above in the provider-required authentication header, including Anthropic's x-api-key. It is never included in prompts or logs.",
+      agentDisclosureLocalHistory:
+        "Committed conversation history, recent attempt rows that include the admitted prompt, bounded continuation-recovery projections, and paged artifacts may be stored unencrypted in this browser's extension storage. They are not synced, exported, or included in release diagnostics. Deleting a conversation removes its transcript, attempt and recovery data, and conversation-owned artifacts; re-fetchable tool cache can also be cleared separately. Unpacked development builds disclose raw capture separately before it can be enabled.",
       agentDisclosureBuiltInAccess:
         "This service is covered by the extension's built-in Chrome access.",
       agentDisclosureCustomAccess:
@@ -1657,17 +1766,51 @@ const messages: Record<Locale, MessageCatalog> = {
       agentGrantAccess: "Allow access",
       agentAccessGranted: "Access allowed",
       agentHostAccessRequired: "Allow Chrome access to test or use this custom service.",
-      behaviorHeading: "5. Preference",
-      maxTagsPerRepoLabel: "Max Auto Tags per repo",
+      agentStorageHeading: "Local Cubby conversation, recovery & artifact ledger",
+      agentStorageIntro:
+        "This ledger covers conversation transcripts, attempt and recovery state, saved conversation artifacts, and re-fetchable tool cache on this device. It does not represent all Cubby or extension storage.",
+      agentStorageOrganizeRetention:
+        "Organize data is separate and bounded: active or preflight task instructions and frozen scope, proposal, Apply, and receipt records, plus one latest completed or cancelled result. None is counted in this ledger. Deleting the origin conversation keeps that latest result until you dismiss it or a new Organize run replaces it.",
+      agentStorageRefresh: "Refresh storage usage",
+      agentStorageLoading: "Checking Agent storage…",
+      agentStorageDurableData: "Conversation, recovery & saved artifacts",
+      agentStorageConversationCount: (sessions, messages) =>
+        `${sessions} conversation${sessions === 1 ? "" : "s"} · ${messages} message${messages === 1 ? "" : "s"}`,
+      agentStorageToolCache: "Re-fetchable tool cache",
+      agentStorageArtifactCount: (artifacts) =>
+        `${artifacts} cached tool artifact${artifacts === 1 ? "" : "s"}`,
+      agentStorageLedgerTotal: "Conversation, recovery & artifact ledger total",
+      agentStorageLogicalLimit: (limit) => `${limit} ledger limit`,
+      agentStorageLedgerUsageLabel: "Conversation, recovery, and artifact ledger used",
+      agentStorageThresholds: (warning, limit) =>
+        `This ledger only: warning at ${warning} · new ledger writes refused at ${limit}`,
+      agentStorageBrowserUsage: (usage, quota) =>
+        `Whole-extension browser storage estimate: ${usage} of ${quota}`,
+      agentStorageBrowserUnavailable: "Whole-extension browser storage estimate unavailable",
+      agentStorageWarning:
+        "This ledger is above its warning level; other Cubby and extension storage is outside this threshold. Clear the re-fetchable tool cache before storage-heavy work.",
+      agentStorageLimitReached:
+        "This ledger reached its local limit. New ledger data is refused until space is available; other Cubby and extension storage is outside this threshold.",
+      agentStorageClearHint:
+        "Clears only re-fetchable tool cache. Final answers and conversation transcripts, attempt and recovery state, and saved conversation artifacts remain.",
+      agentStorageClearCache: "Clear tool cache",
+      agentStorageClearingCache: "Clearing tool cache…",
+      agentStorageCacheCleared: (artifacts, bytes, protectedArtifacts) =>
+        `Cleared ${artifacts} cached tool artifact${artifacts === 1 ? "" : "s"} and freed ${bytes}.${protectedArtifacts > 0 ? ` Kept ${protectedArtifacts} active or referenced artifact${protectedArtifacts === 1 ? "" : "s"}.` : ""}`,
+      agentStorageUnavailable: (error) => `Cubby ledger usage is unavailable: ${error}`,
+      agentStorageClearFailed: (error) => `Tool cache could not be cleared: ${error}`,
+      agentStorageRetry: "Try again",
+      behaviorHeading: "5. Preferences",
+      maxTagsPerRepoLabel: "Max automatic tags per repo",
       maxTagsPerRepoHint:
-        "When you run Auto Tags, each repo can receive at most this many topic tags.",
-      minTopicRepoCountLabel: "Minimum topic coverage",
+        "Auto Tags uses this limit. In Chat, Cubby may add at most this many tags to a repository per turn; Organize uses the lower of this value and its 5-tag safety cap.",
+      minTopicRepoCountLabel: "Minimum shared tag coverage",
       minTopicRepoCountHint:
-        "Auto Tags adds a topic only when it appears on at least this many repositories.",
+        "Cubby Chat assigns a tag only when the target brings its topic-or-visible-tag coverage to this many live repositories. Organize uses proposal-wide coverage; Auto Tags applies the same threshold to topics.",
       starsPanelDefaultLabel: "Open my stars page with the manager panel by default",
       starsPanelDefaultHint:
         "Turn this off if you prefer to land on GitHub's native stars list and open the overlay manually.",
-      tokenHeading: "1. GitHub Token",
+      tokenHeading: "1. GitHub connection",
       tokenIntroPrefix: "Create a fine-grained PAT at",
       tokenLinkLabel: "github.com/settings/tokens",
       tokenIntroSuffix: "Required permissions:",
@@ -1690,20 +1833,32 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenVerifiedWatchForbidden: (username) => `Token saved for ${username}. Sync and Gist access checked, but Watch needs Account · Watching (read). Add that permission, then Save & verify again.`,
       tokenVerifiedWatchUnverified: (username) => `Token saved for ${username}. Sync and Gist access checked, but Watch access could not be verified. Try Save & verify again; if this persists, confirm Account · Watching (read).`,
       tokenRemoved: "Token removed.",
-      watchTokenHeading: "2. Watch Inbox Token",
-      watchTokenIntroPrefix: "Create a classic PAT with only the notifications scope at",
+      watchSetupDescription:
+        "Watch Inbox is optional. It shows GitHub notifications for watched starred repositories and usually needs no second credential.",
+      watchSetupEnable: "Set up Watch Inbox",
+      watchSetupChecking: "Checking your GitHub connection…",
+      watchSetupMainConnected: (username) => `Watch Inbox uses the main GitHub connection for @${username}.`,
+      watchSetupDedicatedConnected: (username) => `Watch Inbox uses a separate Notifications credential for @${username}.`,
+      watchSetupMainUnavailable:
+        "The main GitHub connection cannot read Notifications. Use a dedicated classic PAT with the notifications scope instead.",
+      watchSetupCheckFailed: "Watch could not check Notifications access. Try again.",
+      watchSetupOtherFeaturesSafe:
+        "Watch is paused. Stars, tags, Gist, and sync keep working.",
+      watchTokenHeading: "2. Watch Inbox (optional)",
+      watchTokenIntroPrefix:
+        "Create the fallback classic PAT at",
       watchTokenLinkLabel: "GitHub token settings",
-      watchTokenIntroSuffix: "This token is used only for the optional Watch Inbox.",
+      watchTokenIntroSuffix: "Select only the notifications scope.",
       watchTokenAccountHint:
-        "It must belong to the same GitHub account as the main token. The extension verifies both identity and Inbox access before saving it.",
-      watchTokenLabel: "Classic Notifications token",
-      watchTokenMainRequired: "Connect a usable main GitHub token first.",
-      watchTokenConnect: "Connect Inbox",
-      watchTokenReplace: "Replace token",
-      watchTokenDisconnect: "Disconnect Inbox",
-      watchTokenVerifying: "Verifying…",
-      watchTokenConnected: (username) => `Watch Inbox connected as @${username}.`,
-      watchTokenDisconnected: "Watch Inbox disconnected and cached threads removed.",
+        "Use the same GitHub account as the main connection. The token is saved only after its account and Notifications access are verified.",
+      watchTokenLabel: "Dedicated classic Notifications token",
+      watchTokenMainRequired: "Connect your main GitHub account before setting up Watch Inbox.",
+      watchTokenConnect: "Use dedicated token",
+      watchTokenReplace: "Replace dedicated token",
+      watchTokenDisconnect: "Disconnect Watch Inbox",
+      watchTokenVerifying: "Checking token…",
+      watchTokenConnected: (username) => `Watch Inbox uses a separate Notifications credential for @${username}.`,
+      watchTokenDisconnected: "Watch Inbox disconnected. Cached Inbox threads were removed.",
       tokenStepsTitle: "How to create the token (fine-grained PAT)",
       tokenStep1:
         "Open GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token.",
@@ -1714,7 +1869,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenStep4:
         'Account permissions → enable "Starring (read and write)" and "Gists (read and write)". Optionally enable "Watching (read)" for Watch.',
       tokenStep5:
-        "Generate → copy the token (starts with github_pat_…) → paste it above → Save & verify.",
+        "Generate → copy the complete token → paste it above → Save & verify.",
       shotNewToken: 'Screenshot: the "Generate new token" form',
       shotRepoAccess:
         "Screenshot: repository access set to all public repositories",
@@ -1797,20 +1952,27 @@ const messages: Record<Locale, MessageCatalog> = {
         `GitHub created the probe Gist but cleanup failed (${status}). Nothing was saved; retry.`,
       tokenGistCleanupNetwork:
         "GitHub created the probe Gist but cleanup could not be confirmed. Nothing was saved; retry.",
-      watchTokenEmpty: "Paste a classic GitHub token first.",
-      watchTokenMainAccountRequired: "Connect the main GitHub account before configuring Watch Inbox.",
-      watchTokenRejected: "GitHub rejected this classic token. Check that you copied the complete value.",
-      watchTokenAccountMismatch: "This classic token belongs to a different GitHub account.",
-      watchTokenAccountChanged: "The main GitHub account changed during verification. Retry with the matching account.",
+      watchTokenEmpty: "Paste the dedicated classic token.",
+      watchTokenMainAccountRequired: "Connect your main GitHub account before setting up Watch Inbox.",
+      watchTokenRejected: "GitHub rejected this dedicated token. Watch did not save it; check the value and retry.",
+      watchTokenAccountMismatch:
+        "Watch did not save this token because it belongs to a different GitHub account. Use the same account as the main connection.",
+      watchTokenAccountChanged:
+        "The main GitHub account changed while Watch checked the token. Nothing changed; retry with a token for the current account.",
       watchTokenProfileStatus: (status) =>
-        `GitHub responded with ${status} while checking the classic token account. Nothing was saved.`,
-      watchTokenProfileBadShape: "GitHub returned an unexpected account response for the classic token.",
-      watchTokenProfileNetwork: "Could not reach GitHub while checking the classic token account.",
-      watchTokenNotificationsForbidden: "This classic token cannot read Notifications. Create one with the notifications scope.",
+        `GitHub returned ${status} while Watch checked the token account. Nothing changed; retry.`,
+      watchTokenProfileBadShape:
+        "Watch received an unexpected account response from GitHub. Nothing changed; retry.",
+      watchTokenProfileNetwork:
+        "Watch could not reach GitHub while checking the token account. Nothing changed; retry.",
+      watchTokenNotificationsForbidden:
+        "Watch cannot use this token for Notifications. Create a classic PAT for the same account with only the notifications scope.",
       watchTokenNotificationsStatus: (status) =>
-        `GitHub responded with ${status} while checking Notifications access. Nothing was saved.`,
-      watchTokenNotificationsNetwork: "Could not reach GitHub while checking Notifications access.",
-      watchTokenNotificationsBadShape: "GitHub returned an unexpected Notifications response. Nothing was saved.",
+        `GitHub returned ${status} while Watch checked Notifications access. Nothing changed; retry.`,
+      watchTokenNotificationsNetwork:
+        "Watch could not reach GitHub while checking Notifications access. Nothing changed; retry.",
+      watchTokenNotificationsBadShape:
+        "Watch received an unexpected Notifications response from GitHub. Nothing changed; retry.",
       ghTokenRejected: "GitHub rejected the saved token. Re-add it in Options.",
       ghRateLimit: "GitHub rate limit reached. Wait a minute and retry.",
       ghForbidden:
@@ -1851,6 +2013,8 @@ const messages: Record<Locale, MessageCatalog> = {
         "Check the context window, then test the connection before using Cubby.",
       agentContextCapabilityInfeasible:
         "Increase the working context window in Advanced settings before using Cubby.",
+      agentArtifactCoverageStalled:
+        "Cubby couldn't finish verifying the complete stored result. Retry the request.",
       unknown: (raw) => `Something went wrong: ${raw}`,
     },
     onboarding: {
@@ -1976,17 +2140,21 @@ const messages: Record<Locale, MessageCatalog> = {
       refreshing: "刷新中…",
       openOptions: "打开选项页",
       configureMainToken: "请为主 GitHub token 添加 Watching: read 权限，以读取已 Watch 的仓库。",
-      configureNotificationsToken: "请另行连接仅含 notifications scope 的 classic token，以读取 Inbox threads。",
+      configureNotificationsToken: "设置可选的 Watch 收件箱。系统会先检查当前 GitHub 连接。",
       scopeNeverLoaded: "刷新后可从 GitHub 加载已 Watch 的仓库。",
       inboxNeverLoaded: "刷新后可加载最新的有界 Inbox 快照。",
       queryFailed: "无法加载 Watch 快照。",
       refreshFailed: "最近一次 Watch 刷新失败，仍可查看之前的快照。",
       retry: "重试",
-      scopePermissionDenied: "主 token 无法读取 Watching。请在选项页添加可选的 Watching: read 权限后重新连接。",
-      inboxPermissionDenied: "Notifications token 无法读取 GitHub Inbox。请在选项页重新连接有 notifications 权限的 classic token。",
+      scopePermissionDenied:
+        "Watch 已暂停，因为主 GitHub 连接被拒绝或缺少 Watching: read 权限。Stars、标签、Gist 和同步仍可使用。",
+      inboxPermissionDenied:
+        "Watch 已暂停，因为当前选定的 GitHub 凭据被拒绝或无法读取 Notifications。Stars、标签、Gist 和同步仍可使用。",
       scopeUnavailable: "已 Watch 的仓库范围尚未可用，因此无法匹配 Inbox threads。",
       noWatchedRepositories: "当前已 Star 的仓库中，没有在 GitHub 上处于 Watch 状态的仓库。",
       noUnreadThreads: "最近一次 Watch 快照中没有未读 thread。",
+      credentialStaleSnapshot:
+        "Watch 已暂停，因为其凭据无法再访问 GitHub。Stars、标签、Gist 和同步仍可使用；当前显示上一次成功快照。",
       noThreads: "这次快照中没有 Inbox thread 匹配已 Watch 且已 Star 的仓库。",
       noMatchingThreads: "没有 thread 匹配当前 Watch 搜索和通知原因筛选。",
       staleSnapshot: "最近一次刷新失败，当前仍显示上一次成功快照。",
@@ -2058,6 +2226,7 @@ const messages: Record<Locale, MessageCatalog> = {
       editingLayout: "正在编辑布局",
       columnsButton: "列",
       columnsButtonTitle: "显示或隐藏列",
+      showRepositoryOwner: "显示仓库所有者",
       hiddenColumns: (count) => `已隐藏 ${count}`,
       hiddenColumnsTip: "点击恢复 · 拖回表头可插入位置",
       hideColumn: (label) => `隐藏「${label}」`,
@@ -2137,13 +2306,24 @@ const messages: Record<Locale, MessageCatalog> = {
             : `全部星标仓库 · ${count} 个仓库`)
           : "全部星标仓库"
       ),
+      conversationSwitchPending: (scope) => (
+        `已选择 ${scope} · 完成或放弃当前整理任务后切换对话`
+      ),
       agentChanged: (count) => `已应用 ${count} 次标签更新`,
       turnFailed: "Cubby 未能完成这次请求",
       attemptStateLost: "扩展已重启，Cubby 无法恢复这次请求。重试前请检查已完成的变更。",
+      attemptResumeStateUnknown: "Cubby 无法确认这次恢复请求的最终状态。为避免重复执行已完成的变更，直接重试已禁用；请检查结果后编辑并重新发送。",
       providerErrorTitle: "AI 服务错误",
       providerErrorSubtitle: "本地数据未被修改",
       providerErrorBody: "你的消息和范围已保存。可以重试，或开始新对话。",
       retry: "重试",
+      retryDraftStoppedTitle: "已恢复停止的请求",
+      retryDraftFailedTitle: "已恢复失败的请求",
+      retryDraftContextTitle: "已恢复受上下文限制的请求",
+      retryDraftSubtitle: "可以重新尝试",
+      retryDraftBody: "提示词已恢复到输入框。你可以直接重试，也可以先编辑。",
+      retryDraftPendingSubtitle: "重试仍需确认",
+      retryDraftPendingBody: "提示词已恢复，但 Cubby 尚无法确认是否已有变更生效。请检查或编辑后，再作为新请求发送。",
       contextSettingsTitle: "AI 服务设置需要调整",
       contextSettingsMessage: "请先调整此服务的上下文设置。你的草稿已保留。",
       contextPromptTooLargeTitle: "本次请求内容过多",
@@ -2158,11 +2338,22 @@ const messages: Record<Locale, MessageCatalog> = {
       startNewConversation: "开始新对话",
       sessionsLabel: "对话列表",
       sessionUntitled: "新对话",
+      sessionUnavailable: "不可用的对话",
       sessionDelete: "删除对话",
       sessionDeleteTitle: "删除这个对话？",
-      sessionDeleteMessage: (title) => `确定删除「${title}」吗？它在本面板中的本地记录会被移除。`,
+      sessionDeleteMessage: (title) => `确定删除「${title}」吗？其对话历史、恢复状态和已保存的工具数据都会被删除。最近一次已完成或已取消的整理结果会保留，直到你关闭它或被新的运行替换。`,
       sessionDeleteConfirm: "删除",
       sessionDeleteCancel: "取消",
+      sessionDeleteBlocked: "请先完成、停止或丢弃与这个对话关联的任务，再删除对话。",
+      sessionDeleteFailed: "无法删除这个对话，请重试。",
+      sessionOperationFailed: "无法加载这个对话，请重试。",
+      sessionLoadFailed: "本地对话历史暂时不可用。",
+      sessionLoadTitle: "无法加载对话",
+      sessionLoadSubtitle: "Cubby 正在等待本地历史恢复。",
+      sessionLoadBody: "请重试；你已保存的对话不会受到影响。",
+      sessionLoadRetry: "重试",
+      loadEarlierMessages: "加载更早的消息",
+      loadingEarlierMessages: "正在加载更早的消息…",
       hideWhileRunning: "隐藏 Cubby",
       runContinuesWhileHidden: "可以隐藏面板；本轮会继续。",
       confirmScopeHeader: "确认范围",
@@ -2363,6 +2554,18 @@ const messages: Record<Locale, MessageCatalog> = {
       handoffAutoTagsUpdated: "自动标签已更新基于主题的标签。",
       agentActivityLabel: "Cubby 活动",
       workbench: {
+        controlledElsewhere: "本次任务正由另一个 Cubby 页面控制，本页面为只读。",
+        ownerDisconnected: "控制本次任务的页面已断开连接。可在本页面接管并继续管理。",
+        takeControl: "接管控制",
+        takingControl: "正在接管…",
+        takeControlFailedOwnerConnected: "原控制页面已重新连接，本页面保持只读。",
+        takeControlFailedConflict: "接管期间任务状态已变化，请重试。",
+        takeControlFailedUnavailable: "该任务已不可用。",
+        takeControlFailed: "暂时无法接管，请重试。",
+        takeControlSucceeded: "你已接管本次任务。",
+        organizeAlreadyRunning: "已有整理任务正在进行。请等待其完成，或先关闭其结果，再开始新的整理。",
+        organizeCommandFailed: "Cubby 无法更新本次整理任务。请刷新最新状态后重试。",
+        receiptOriginDeleted: "该结果来自一个已删除的对话。",
         resolvingSubtitle: "正在准备你的星标资料库",
         resolvingBody: "本次分析会包含全部仍在星标的仓库。筛选条件和当前选中行都不会缩小范围。",
         resolvingHint: "此步骤不会修改标签",
@@ -2674,7 +2877,9 @@ const messages: Record<Locale, MessageCatalog> = {
       agentDisclosureNotSentHeading: "绝不会作为模型输入",
       agentDisclosureNotSentSecrets: "GitHub token、API 密钥、其他凭据，或当前范围外的仓库",
       agentDisclosureKeyException:
-        "AI 服务 API 密钥只会通过 Authorization 请求头发送到上方准确地址，绝不会写入提示词或日志。",
+        "AI 服务 API 密钥只会通过服务商要求的认证请求头发送到上方准确地址（Anthropic 使用 x-api-key），绝不会写入提示词或日志。",
+      agentDisclosureLocalHistory:
+        "已提交的对话历史、包含已提交提示词的近期尝试记录、有界续接恢复投影，以及分页工件，可能会以明文保存在本机浏览器的扩展存储中，不会同步、导出或进入发布版诊断。删除对话会移除对应对话记录、尝试与恢复数据，以及归该对话所有的工件；可重新获取的工具缓存也可单独清理。解压加载的开发版会在启用原始捕获前另行披露风险。",
       agentDisclosureBuiltInAccess:
         "此服务已包含在扩展内置的 Chrome 访问范围中。",
       agentDisclosureCustomAccess:
@@ -2682,17 +2887,50 @@ const messages: Record<Locale, MessageCatalog> = {
       agentGrantAccess: "允许访问",
       agentAccessGranted: "已允许访问",
       agentHostAccessRequired: "测试或使用此自定义服务前，请先允许 Chrome 访问。",
-      behaviorHeading: "5. 偏好",
+      agentStorageHeading: "本机 Cubby 对话、恢复与工件账本",
+      agentStorageIntro:
+        "此账本涵盖本机的对话记录、尝试与恢复状态、已保存的对话工件，以及可重新获取的工具缓存；不代表 Cubby 或扩展的全部存储。",
+      agentStorageOrganizeRetention:
+        "Organize 数据单独有界保存：活动中或预检阶段的任务指令与冻结范围、提案、Apply 与回执记录，以及最近一次已完成或已取消的结果；这些数据均不计入此账本。删除来源对话仍会保留该最近结果，直到你将其关闭或新的 Organize 运行将其替换。",
+      agentStorageRefresh: "刷新存储用量",
+      agentStorageLoading: "正在检查 Agent 存储…",
+      agentStorageDurableData: "对话、恢复与已保存工件",
+      agentStorageConversationCount: (sessions, messages) =>
+        `${sessions} 个对话 · ${messages} 条消息`,
+      agentStorageToolCache: "可重新获取的工具缓存",
+      agentStorageArtifactCount: (artifacts) => `${artifacts} 个缓存工具工件`,
+      agentStorageLedgerTotal: "对话、恢复与工件账本总量",
+      agentStorageLogicalLimit: (limit) => `账本上限 ${limit}`,
+      agentStorageLedgerUsageLabel: "对话、恢复与工件账本已用空间",
+      agentStorageThresholds: (warning, limit) =>
+        `仅此账本：${warning} 时提醒 · ${limit} 时拒绝新的账本写入`,
+      agentStorageBrowserUsage: (usage, quota) =>
+        `整个扩展的浏览器存储估算：已用 ${usage}，可用额度 ${quota}`,
+      agentStorageBrowserUnavailable: "暂时无法获取整个扩展的浏览器存储估算",
+      agentStorageWarning:
+        "此账本已超过提醒线；其他 Cubby 与扩展存储不受此阈值限制。进行高存储量任务前，请先清理可重新获取的工具缓存。",
+      agentStorageLimitReached:
+        "此账本已达到本机上限。释放空间前将拒绝新的账本数据；其他 Cubby 与扩展存储不受此阈值限制。",
+      agentStorageClearHint:
+        "只清理可重新获取的工具缓存；最终回答与对话记录、尝试与恢复状态，以及已保存的对话工件会保留。",
+      agentStorageClearCache: "清理工具缓存",
+      agentStorageClearingCache: "正在清理工具缓存…",
+      agentStorageCacheCleared: (artifacts, bytes, protectedArtifacts) =>
+        `已清理 ${artifacts} 个缓存工具工件，释放 ${bytes}。${protectedArtifacts > 0 ? `另有 ${protectedArtifacts} 个正在使用或仍被引用的工件已保留。` : ""}`,
+      agentStorageUnavailable: (error) => `无法获取 Cubby 账本用量：${error}`,
+      agentStorageClearFailed: (error) => `无法清理工具缓存：${error}`,
+      agentStorageRetry: "重试",
+      behaviorHeading: "5. 偏好设置",
       maxTagsPerRepoLabel: "每个仓库最多自动标签数",
       maxTagsPerRepoHint:
-        "点击 Auto Tags 时，单个仓库最多自动添加这么多个主题标签。",
-      minTopicRepoCountLabel: "主题最低覆盖数",
+        "Auto Tags 使用此上限；聊天中 Cubby 每轮最多为单个仓库新增这么多个标签；整理功能取此值与 5 个标签安全上限中的较小值。",
+      minTopicRepoCountLabel: "共同标签最低覆盖数",
       minTopicRepoCountHint:
-        "只有当一个主题至少出现在这么多个仓库中，Auto Tags 才会添加它。",
+        "聊天中，只有目标仓库加入后，同一主题或可见标签至少覆盖这么多个有效仓库，Cubby 才会分配该标签；整理功能按整批建议计算，Auto Tags 对主题使用相同阈值。",
       starsPanelDefaultLabel: "默认打开自己的 stars 页面时显示管理面板",
       starsPanelDefaultHint:
         "关闭后会优先显示 GitHub 原生 stars 列表，需要时再手动打开悬浮面板。",
-      tokenHeading: "1. GitHub Token",
+      tokenHeading: "1. GitHub 连接",
       tokenIntroPrefix: "在这里创建细粒度 PAT：",
       tokenLinkLabel: "github.com/settings/tokens",
       tokenIntroSuffix: "所需权限：",
@@ -2715,20 +2953,32 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenVerifiedWatchForbidden: (username) => `已保存 ${username} 的 token，并检查同步和 Gist 权限，但 Watch 还需要 Account · Watching（只读）权限。添加后请再次保存并验证。`,
       tokenVerifiedWatchUnverified: (username) => `已保存 ${username} 的 token，并检查同步和 Gist 权限，但暂时无法验证 Watch 访问权限。请再次保存并验证；若问题持续，请确认已添加 Account · Watching（只读）权限。`,
       tokenRemoved: "Token 已移除。",
-      watchTokenHeading: "2. Watch Inbox Token",
-      watchTokenIntroPrefix: "在这里创建仅含 notifications scope 的 classic PAT：",
+      watchSetupDescription:
+        "Watch 收件箱是可选功能，用于查看已 Watch 且已 Star 仓库的 GitHub 通知，通常不需要第二个凭据。",
+      watchSetupEnable: "设置 Watch 收件箱",
+      watchSetupChecking: "正在检查 GitHub 连接…",
+      watchSetupMainConnected: (username) => `Watch 收件箱正在使用 @${username} 的主 GitHub 连接。`,
+      watchSetupDedicatedConnected: (username) => `Watch 收件箱正在使用 @${username} 的独立 Notifications 凭据。`,
+      watchSetupMainUnavailable:
+        "主 GitHub 连接无法读取 Notifications。请改用仅含 notifications scope 的专用 classic PAT。",
+      watchSetupCheckFailed: "Watch 暂时无法检查 Notifications 访问权限，请重试。",
+      watchSetupOtherFeaturesSafe:
+        "Watch 已暂停。Stars、标签、Gist 和同步仍可正常使用。",
+      watchTokenHeading: "2. Watch 收件箱（可选）",
+      watchTokenIntroPrefix:
+        "在这里创建备用 classic PAT：",
       watchTokenLinkLabel: "GitHub token 设置",
-      watchTokenIntroSuffix: "该 token 只用于可选的 Watch Inbox。",
+      watchTokenIntroSuffix: "仅选择 notifications scope。",
       watchTokenAccountHint:
-        "它必须与主 token 属于同一 GitHub 账号。扩展会在保存前验证账号身份和 Inbox 访问权限。",
-      watchTokenLabel: "Classic Notifications token",
-      watchTokenMainRequired: "请先连接可用的主 GitHub token。",
-      watchTokenConnect: "连接 Inbox",
-      watchTokenReplace: "替换 token",
-      watchTokenDisconnect: "断开 Inbox",
-      watchTokenVerifying: "验证中…",
-      watchTokenConnected: (username) => `Watch Inbox 已连接为 @${username}。`,
-      watchTokenDisconnected: "已断开 Watch Inbox，并移除缓存的 threads。",
+        "请使用与主连接相同的 GitHub 账号。扩展会验证账号和 Notifications 访问权限，全部通过后才会保存 token。",
+      watchTokenLabel: "Watch 专用 classic Notifications token",
+      watchTokenMainRequired: "请先连接主 GitHub 账号，再设置 Watch 收件箱。",
+      watchTokenConnect: "使用专用 token",
+      watchTokenReplace: "替换专用 token",
+      watchTokenDisconnect: "断开 Watch 收件箱",
+      watchTokenVerifying: "正在检查 token…",
+      watchTokenConnected: (username) => `Watch 收件箱正在使用 @${username} 的独立 Notifications 凭据。`,
+      watchTokenDisconnected: "Watch 收件箱已断开，并已移除缓存的 Inbox threads。",
       tokenStepsTitle: "如何创建 token(fine-grained PAT)",
       tokenStep1:
         "打开 GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token。",
@@ -2738,7 +2988,7 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenStep4:
         "Account permissions → 开启「Starring (read and write)」和「Gists (read and write)」；使用 Watch 时可选开启「Watching (read)」。",
       tokenStep5:
-        "Generate → 复制 token(以 github_pat_ 开头)→ 粘贴到上面 → 保存并验证。",
+        "Generate → 复制完整 token → 粘贴到上面 → 保存并验证。",
       shotNewToken: "截图:「Generate new token」表单",
       shotRepoAccess: "截图:仓库访问设为所有公开仓库",
       shotPermissions:
@@ -2815,20 +3065,27 @@ const messages: Record<Locale, MessageCatalog> = {
         `GitHub 已创建探针 Gist,但清理失败(${status})。未保存 token,请重试。`,
       tokenGistCleanupNetwork:
         "GitHub 已创建探针 Gist,但无法确认清理是否完成。未保存 token,请重试。",
-      watchTokenEmpty: "请先粘贴 classic GitHub token。",
-      watchTokenMainAccountRequired: "请先连接主 GitHub 账户，再配置 Watch 收件箱。",
-      watchTokenRejected: "GitHub 拒绝了这个 classic token，请确认已完整复制。",
-      watchTokenAccountMismatch: "这个 classic token 属于另一个 GitHub 账户。",
-      watchTokenAccountChanged: "验证期间主 GitHub 账户发生变化，请使用匹配账户重试。",
+      watchTokenEmpty: "请粘贴 Watch 专用的 classic token。",
+      watchTokenMainAccountRequired: "请先连接主 GitHub 账号，再设置 Watch 收件箱。",
+      watchTokenRejected: "GitHub 拒绝了这个专用 token。Watch 未保存它，请检查 token 后重试。",
+      watchTokenAccountMismatch:
+        "Watch 未保存这个 token，因为它属于另一个 GitHub 账号。请使用与主连接相同的账号。",
+      watchTokenAccountChanged:
+        "Watch 检查 token 时主 GitHub 账号发生了变化。现有设置未变，请使用当前账号的 token 重试。",
       watchTokenProfileStatus: (status) =>
-        `GitHub 在检查 classic token 账户时返回 ${status}，未保存 token。`,
-      watchTokenProfileBadShape: "GitHub 为 classic token 返回了非预期的账户信息。",
-      watchTokenProfileNetwork: "检查 classic token 账户时无法连接 GitHub。",
-      watchTokenNotificationsForbidden: "这个 classic token 无法读取 Notifications，请创建包含 notifications scope 的 token。",
+        `Watch 检查 token 账号时，GitHub 返回 ${status}。现有设置未变，请重试。`,
+      watchTokenProfileBadShape:
+        "Watch 收到了非预期的 GitHub 账号响应。现有设置未变，请重试。",
+      watchTokenProfileNetwork:
+        "Watch 检查 token 账号时无法连接 GitHub。现有设置未变，请重试。",
+      watchTokenNotificationsForbidden:
+        "Watch 无法用这个 token 读取 Notifications。请为同一账号创建仅含 notifications scope 的 classic PAT。",
       watchTokenNotificationsStatus: (status) =>
-        `GitHub 在检查 Notifications 权限时返回 ${status}，未保存 token。`,
-      watchTokenNotificationsNetwork: "检查 Notifications 权限时无法连接 GitHub。",
-      watchTokenNotificationsBadShape: "GitHub 返回了非预期的 Notifications 响应，未保存 token。",
+        `Watch 检查 Notifications 访问权限时，GitHub 返回 ${status}。现有设置未变，请重试。`,
+      watchTokenNotificationsNetwork:
+        "Watch 检查 Notifications 访问权限时无法连接 GitHub。现有设置未变，请重试。",
+      watchTokenNotificationsBadShape:
+        "Watch 收到了非预期的 GitHub Notifications 响应。现有设置未变，请重试。",
       ghTokenRejected: "GitHub 拒绝了已保存的 token,请在选项页重新添加。",
       ghRateLimit: "已达到 GitHub 速率限制,请稍候重试。",
       ghForbidden:
@@ -2866,6 +3123,8 @@ const messages: Record<Locale, MessageCatalog> = {
         "请检查上下文窗口并测试连接后再使用 Cubby。",
       agentContextCapabilityInfeasible:
         "请先在高级设置中增大工作上下文窗口，再使用 Cubby。",
+      agentArtifactCoverageStalled:
+        "Cubby 无法完成对已存结果的完整校验，请重试该请求。",
       unknown: (raw) => `出错了:${raw}`,
     },
     onboarding: {

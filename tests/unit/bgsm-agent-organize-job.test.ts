@@ -37,11 +37,14 @@ import { parseProposalId, parseRunId } from '@/bgsm-agent/identity';
 import {
   createEmptyRunBudgetUsage,
   createLowerTestRunBudget,
+  createOrganizeTagPolicySnapshot,
   createProductionRunBudget,
+  reconcileOrganizeTagCoverage,
 } from '@/bgsm-agent/policy';
 import {
   parseSourceFingerprintV1,
   parseTaxonomyFingerprintV1,
+  type AnalyzerBatchProposalRow,
 } from '@/bgsm-agent/proposal';
 import {
   createFrozenScope,
@@ -371,7 +374,10 @@ describe('OrganizeProposalAnalyzer', () => {
   });
 
   it('binds the proposal schema to the immutable batch and its exact row count', () => {
-    const batch = analyzerBatch(['a/a', 'b/b']);
+    const batch = analyzerBatch(['a/a', 'b/b'], {
+      maxTagsPerRepo: 2,
+      minTopicRepoCount: 3,
+    });
     const prepared = new OrganizeProposalAnalyzer({ provider: preparedProvider([]) })
       .prepareAttempt(batch);
     const request = JSON.parse(prepared.serializedRequestBody) as {
@@ -411,7 +417,7 @@ describe('OrganizeProposalAnalyzer', () => {
     expect(properties.rows.items.properties.classifications.oneOf).toMatchObject([
       {
         minItems: 1,
-        maxItems: 5,
+        maxItems: 2,
         items: { properties: { kind: { enum: ['add_existing_tag', 'propose_new_tag'] } } },
       },
       {
@@ -420,6 +426,39 @@ describe('OrganizeProposalAnalyzer', () => {
         items: { properties: { kind: { enum: ['unchanged', 'insufficient_evidence'] } } },
       },
     ]);
+  });
+
+  it('rejects provider output above the snapshotted per-repository tag limit', async () => {
+    const batch = analyzerBatch(['a/a'], {
+      maxTagsPerRepo: 2,
+      minTopicRepoCount: 3,
+    });
+    const row = {
+      ...analyzerRow(0, 'a/a'),
+      classifications: ['infra', 'backend', 'tooling'].map((tag) => ({
+        kind: 'propose_new_tag' as const,
+        tag,
+        evidence: `${tag} evidence.`,
+      })),
+    };
+    const response: ModelResponse = {
+      finishReason: 'tool_calls',
+      toolCalls: [{
+        id: 'call-over-limit',
+        name: 'submit_semantic_tag_batch_proposal',
+        arguments: analyzerProposal([row]),
+      }],
+    };
+    const prepared = new OrganizeProposalAnalyzer({ provider: preparedProvider([response]) })
+      .prepareAttempt(batch);
+
+    await expect(prepared.execute()).rejects.toMatchObject({
+      failureKind: 'output_contract',
+      diagnostic: {
+        rejectionCode: 'classification',
+        schemaViolation: 'Proposal classifications exceeded the snapshotted per-repository tag limit.',
+      },
+    });
   });
 
   it('uses a silent Responses prepared request for one validated proposal tool call', async () => {
@@ -1412,6 +1451,81 @@ describe('OrganizeJobRun scheduler and row universes', () => {
     expect(result.nextFrozenIndex).toBe(4);
   });
 
+  it('reconciles canonical tag coverage across all analyzer pages before review', () => {
+    const ids = ['a/a', 'b/b', 'c/c', 'd/d'];
+    const tagPolicy = { maxTagsPerRepo: 2, minTopicRepoCount: 3 };
+    const taxonomy = buildSemanticTaxonomyDto([]);
+    const action = (tag: string) => ({
+      kind: 'propose_new_tag' as const,
+      tag,
+      evidence: `${tag} evidence.`,
+    });
+    let state = plannedState(analysisState(ids, createProductionRunBudget(), tagPolicy), 2);
+    state = finalizeAnalyzerBatch({
+      state,
+      positions: [livePosition(0, ids[0]), livePosition(1, ids[1])],
+      proposal: analyzerProposal([
+        { ...analyzerRow(0, ids[0]), classifications: [action('Shared'), action('Rare')] },
+        { ...analyzerRow(1, ids[1]), classifications: [action('shared')] },
+      ]),
+      taxonomy,
+      taxonomyFingerprint: TAXONOMY_FINGERPRINT,
+    }).state;
+    expect(state.status).toBe('analyzing');
+
+    state = plannedState(state, 2);
+    state = finalizeAnalyzerBatch({
+      state,
+      positions: [livePosition(2, ids[2]), livePosition(3, ids[3])],
+      proposal: analyzerProposal([
+        { ...analyzerRow(2, ids[2]), classifications: [action('SHARED')] },
+        { ...analyzerRow(3, ids[3]), classifications: [action('rare')] },
+      ]),
+      taxonomy,
+      taxonomyFingerprint: TAXONOMY_FINGERPRINT,
+    }).state;
+
+    expect(state.status).toBe('review');
+    expect(state.actionableProposalRows.map((row) => ({
+      frozenIndex: row.frozenIndex,
+      tags: row.actions.map((entry) => entry.tag),
+    }))).toEqual([
+      { frozenIndex: 0, tags: ['Shared'] },
+      { frozenIndex: 1, tags: ['shared'] },
+      { frozenIndex: 2, tags: ['SHARED'] },
+    ]);
+    expect(state.nonActionableAnalysisOutcomes).toEqual([
+      { frozenIndex: 3, repositoryId: 'd/d', kind: 'insufficient_evidence' },
+    ]);
+    expect(state.analyzedFrozenPositions[3]?.classification).toBe('non_actionable');
+    expect(JSON.stringify(createOrganizeProposal(state))).not.toContain('Rare');
+  });
+
+  it('counts canonical tag coverage at most once per repository', () => {
+    const action = (tag: string) => ({
+      kind: 'propose_new_tag' as const,
+      tag,
+      evidence: 'Evidence.',
+    });
+    const reconciled = reconcileOrganizeTagCoverage([
+      { repositoryId: 'a/a', actions: [action('Shared'), action('shared')] },
+      { repositoryId: 'b/b', actions: [action('SHARED')] },
+    ], createOrganizeTagPolicySnapshot({ minTopicRepoCount: 3 }));
+
+    expect(reconciled).toEqual([[], []]);
+    expect(createOrganizeTagPolicySnapshot(undefined)).toEqual({
+      maxTagsPerRepo: 5,
+      minTopicRepoCount: 3,
+    });
+    expect(createOrganizeTagPolicySnapshot({
+      maxTagsPerRepo: 50,
+      minTopicRepoCount: '4',
+    })).toEqual({
+      maxTagsPerRepo: 5,
+      minTopicRepoCount: 4,
+    });
+  });
+
   it('analyzes all actionable rows beyond 100 before entering review', () => {
     const ids = Array.from({ length: 102 }, (_, index) => `owner/repo-${index}`);
     let state = analysisState(ids);
@@ -1475,12 +1589,14 @@ describe('OrganizeJobRun scheduler and row universes', () => {
 function analysisState(
   ids: readonly string[],
   budget = createProductionRunBudget(),
+  tagPolicy = { maxTagsPerRepo: 5, minTopicRepoCount: 1 },
 ): OrganizeJobRunAnalysisState {
   return createOrganizeJobRunAnalysisState({
     runId: RUN_ID,
     generation: 1,
     proposalId: PROPOSAL_ID,
     frozenScope: frozenScope(ids),
+    tagPolicy,
     budget,
   });
 }
@@ -1531,13 +1647,17 @@ function livePosition(frozenIndex: number, repositoryId: string): OrganizeJobRun
   };
 }
 
-function analyzerBatch(ids: readonly string[]): SemanticAnalyzerBatch {
+function analyzerBatch(
+  ids: readonly string[],
+  tagPolicy = { maxTagsPerRepo: 5, minTopicRepoCount: 1 },
+): SemanticAnalyzerBatch {
   return {
     version: 1,
     runId: RUN_ID,
     generation: 1,
     scopeFingerprint: SCOPE_FINGERPRINT,
     taskInstruction: 'Classify repositories.',
+    tagPolicy,
     repositories: ids.map((id, index) =>
       (livePosition(index, id) as Extract<OrganizeJobRunPagePosition, { kind: 'live' }>).repository),
     taxonomy: buildSemanticTaxonomyDto([
@@ -1555,7 +1675,7 @@ function analyzerRow(frozenIndex: number, repositoryId: string) {
   };
 }
 
-function analyzerProposal(rows: ReturnType<typeof analyzerRow>[]) {
+function analyzerProposal(rows: readonly AnalyzerBatchProposalRow[]) {
   return {
     version: 1 as const,
     runId: RUN_ID,
@@ -1565,7 +1685,7 @@ function analyzerProposal(rows: ReturnType<typeof analyzerRow>[]) {
   };
 }
 
-function analyzerResponse(rows: ReturnType<typeof analyzerRow>[]): ModelResponse {
+function analyzerResponse(rows: readonly AnalyzerBatchProposalRow[]): ModelResponse {
   return {
     finishReason: 'tool_calls',
     toolCalls: [{

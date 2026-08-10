@@ -1,5 +1,5 @@
 import type { AgentErrorCategory } from '@/agent-harness';
-import type { BgsmAgentTurnResult } from '@/utils/messaging';
+import type { BgsmAgentTurnResult } from '@/bgsm-agent/turn-protocol';
 
 export type BgsmAgentStatus = Readonly<{
   kind: 'idle' | 'queued' | 'working' | 'compacting' | 'tool' | 'done' | 'stopped' | 'error';
@@ -47,12 +47,14 @@ export type AgentTurnState = Readonly<{
   contextLimitRecovery: BgsmAgentContextLimitRecovery | null;
   draftRecovery: string | null;
   canRetryLastTurn: boolean;
+  transientSafeResendPrompt: string | null;
   toolActivities: readonly BgsmAgentToolActivity[];
   preCompactionStatus: BgsmAgentStatus | null;
 }>;
 
 export type AgentTurnAction =
   | Readonly<{ type: 'turn_started'; status: BgsmAgentStatus }>
+  | Readonly<{ type: 'turn_subscribed'; status: BgsmAgentStatus }>
   | Readonly<{ type: 'status_changed'; status: BgsmAgentStatus | null }>
   | Readonly<{ type: 'tool_activity_updated'; activity: BgsmAgentToolActivity }>
   | Readonly<{ type: 'tool_activity_removed'; callId: string }>
@@ -76,6 +78,11 @@ export type AgentTurnAction =
       status: BgsmAgentStatus;
       prompt: string;
       canRetry: boolean;
+      transientSafeResend?: boolean;
+    }>
+  | Readonly<{
+      type: 'subscribed_turn_failed';
+      status: BgsmAgentStatus;
     }>
   | Readonly<{
       type: 'context_recovery_required';
@@ -104,6 +111,7 @@ export type AgentTurnAction =
       fallbackStatus: BgsmAgentStatus;
     }>
   | Readonly<{ type: 'context_recovery_dismissed' }>
+  | Readonly<{ type: 'transient_safe_resend_cleared' }>
   | Readonly<{ type: 'session_cleared' }>;
 
 export function createAgentTurnState(): AgentTurnState {
@@ -117,6 +125,7 @@ export function createAgentTurnState(): AgentTurnState {
     contextLimitRecovery: null,
     draftRecovery: null,
     canRetryLastTurn: true,
+    transientSafeResendPrompt: null,
     toolActivities: [],
     preCompactionStatus: null,
   };
@@ -133,6 +142,17 @@ export function reduceAgentTurn(
         phase: 'queued',
         running: true,
         status: action.status,
+      };
+    case 'turn_subscribed':
+      return {
+        ...state,
+        phase: 'queued',
+        running: true,
+        status: action.status,
+        lastTurnResult: null,
+        contextLimitRecovery: null,
+        toolActivities: [],
+        preCompactionStatus: null,
       };
     case 'status_changed':
       return state.error
@@ -168,6 +188,7 @@ export function reduceAgentTurn(
         status: action.status,
         draftRecovery: action.prompt,
         canRetryLastTurn: action.canRetry,
+        transientSafeResendPrompt: null,
         toolActivities: failOpenToolActivities(state.toolActivities),
         preCompactionStatus: null,
       };
@@ -182,7 +203,17 @@ export function reduceAgentTurn(
         lastTurnResult: action.result,
         contextLimitRecovery: null,
         draftRecovery: action.prompt,
+        transientSafeResendPrompt: action.transientSafeResend ? action.prompt : null,
         canRetryLastTurn: action.canRetry,
+        toolActivities: failOpenToolActivities(state.toolActivities),
+        preCompactionStatus: null,
+      };
+    case 'subscribed_turn_failed':
+      return {
+        ...state,
+        phase: 'failed',
+        running: false,
+        status: action.status,
         toolActivities: failOpenToolActivities(state.toolActivities),
         preCompactionStatus: null,
       };
@@ -197,6 +228,7 @@ export function reduceAgentTurn(
         lastTurnResult: action.result,
         contextLimitRecovery: action.recovery,
         draftRecovery: action.prompt,
+        transientSafeResendPrompt: null,
         canRetryLastTurn: action.canRetry,
         toolActivities: failOpenToolActivities(state.toolActivities),
         preCompactionStatus: null,
@@ -234,6 +266,10 @@ export function reduceAgentTurn(
         contextLimitRecovery: null,
         status: null,
       };
+    case 'transient_safe_resend_cleared':
+      return state.transientSafeResendPrompt === null
+        ? state
+        : { ...state, transientSafeResendPrompt: null };
     case 'session_cleared':
       return createAgentTurnState();
   }
@@ -251,7 +287,7 @@ function settleTurn(
       running: false,
       lastTurnResult: action.result,
       draftRecovery: state.draftRecovery ?? action.prompt,
-      canRetryLastTurn: action.canRetry,
+      canRetryLastTurn: state.canRetryLastTurn,
       toolActivities,
       preCompactionStatus: null,
     };

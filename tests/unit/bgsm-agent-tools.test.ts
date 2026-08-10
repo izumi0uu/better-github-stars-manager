@@ -6,8 +6,20 @@ import {
   okToolResult,
   serializedToolResultByteLength,
 } from '@/agent-harness';
-import { createBgsmAgentTools, loadLiveBgsmAgentRepositoryScope } from '@/bgsm-agent';
+import {
+  buildBgsmAgentInstructions,
+  createBgsmAgentTools,
+  createBgsmAgentArtifactEvidenceHandoff,
+  loadLiveBgsmAgentRepositoryScope,
+  validateAgentArtifactCoverageEvidence,
+} from '@/bgsm-agent';
+import { createBgsmAgentArtifactStorageAdapter } from '@/background/agent-artifact-service';
 import { db } from '@/storage/db';
+import { createAgentSession } from '@/storage/agent-session-store';
+import {
+  AGENT_ARTIFACT_CHUNK_MAX_BYTES,
+  storeAgentArtifact,
+} from '@/storage/agent-storage-store';
 import { resetDirtyForDev, snapshotDirty } from '@/storage/idb-tag-store';
 import { visibleTagNames } from '@/tags/tag-model';
 import type { Star } from '@/types';
@@ -39,7 +51,13 @@ const star = {
 } satisfies Star;
 
 function createTools(repositoryScope: readonly string[] = [star.full_name]) {
-  return createBgsmAgentTools({ repositoryScope, scopeFingerprint: 'scope:test' });
+  const storage = createBgsmAgentArtifactStorageAdapter();
+  return createBgsmAgentTools({
+    repositoryScope,
+    scopeFingerprint: 'scope:test',
+    artifactReader: storage.artifactReader,
+    artifactEvidenceHandoff: createBgsmAgentArtifactEvidenceHandoff(),
+  });
 }
 
 describe('Cubby tools', () => {
@@ -76,6 +94,210 @@ describe('Cubby tools', () => {
     const names = createTools().map((tool) => tool.name);
     assert.equal(names.includes('suggest_repo_tags'), false);
     assert.equal(names.includes('suggest_tag_cleanup'), false);
+  });
+
+  it('reads artifact pages within the current result allowance and session only', async () => {
+    await createAgentSession({ idFactory: () => 'artifact-tool-owner' });
+    await createAgentSession({ idFactory: () => 'artifact-tool-other' });
+    const content = JSON.stringify({ repositories: Array.from({ length: 100 }, (_, index) => (
+      `owner/repository-${index}`
+    )) });
+    await storeAgentArtifact({
+      artifactId: 'artifact-tool-result',
+      sessionId: 'artifact-tool-owner',
+      turnAttemptId: 'artifact-tool-attempt',
+      toolCallId: 'artifact-source-call',
+      toolName: 'list_stars',
+      storageClass: 'canonical',
+      content,
+    });
+    const tool = createTools().find((candidate) => candidate.name === 'read_agent_artifact');
+    assert.ok(tool);
+
+    const parts: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const args = tool.validate?.({
+        artifactId: 'artifact-tool-result',
+        ...(cursor ? { cursor } : {}),
+      });
+      const page = await tool.execute(args, {
+        sessionId: 'artifact-tool-owner',
+        callId: `artifact-page-${parts.length}`,
+        resultAllowance: resultAllowance(700),
+      }) as { content: string; nextCursor: string | null };
+      assert.ok(serializedToolResultByteLength(okToolResult(page)) <= 700);
+      parts.push(page.content);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    assert.equal(parts.join(''), content);
+
+    const args = tool.validate?.({ artifactId: 'artifact-tool-result' });
+    await assert.rejects(
+      () => tool.execute(args, {
+        sessionId: 'artifact-tool-other',
+        callId: 'artifact-cross-session',
+        resultAllowance: resultAllowance(700),
+      }),
+      /not available to session/u,
+    );
+  });
+
+  it('validates artifact access modes and bounds search, ranges, ownership, and envelopes', async () => {
+    await createAgentSession({ idFactory: () => 'artifact-random-owner' });
+    await createAgentSession({ idFactory: () => 'artifact-random-other' });
+    const target = 'TARGET-near-the-end';
+    const content = `${'x'.repeat(80 * 1024)}${target}${'y'.repeat(1_000)}`;
+    await storeAgentArtifact({
+      artifactId: 'artifact-random-tool-result',
+      sessionId: 'artifact-random-owner',
+      turnAttemptId: 'artifact-random-attempt',
+      toolCallId: 'artifact-random-source-call',
+      toolName: 'read_repository_file',
+      storageClass: 'canonical',
+      content,
+    });
+    const tool = createTools().find((candidate) => candidate.name === 'read_agent_artifact');
+    assert.ok(tool);
+    assert.match(tool.description, /byteOffset/u);
+    assert.match(tool.description, /host/u);
+    const instructions = buildBgsmAgentInstructions();
+    assert.match(instructions, /targeted locating reads/u);
+    assert.match(instructions, /never advance or discharge/u);
+
+    assert.throws(
+      () => tool.validate?.({
+        artifactId: 'artifact-random-tool-result',
+        cursor: 'opaque',
+        byteOffset: 10,
+      }),
+      /mutually exclusive/u,
+    );
+    assert.throws(
+      () => tool.validate?.({ artifactId: 'artifact-random-tool-result', byteOffset: -1 }),
+      /non-negative integer/u,
+    );
+    assert.throws(
+      () => tool.validate?.({
+        artifactId: 'artifact-random-tool-result',
+        search: { query: 'q'.repeat(513) },
+      }),
+      /bounded nonempty literal/u,
+    );
+    assert.throws(
+      () => tool.validate?.({
+        artifactId: 'artifact-random-tool-result',
+        search: { query: target, unexpected: true },
+      }),
+      /accepts only/u,
+    );
+    await assert.rejects(
+      () => tool.execute(tool.validate?.({
+        artifactId: 'artifact-random-tool-result',
+        cursor: 'not-an-opaque-artifact-cursor',
+      }), {
+        sessionId: 'artifact-random-owner',
+        callId: 'artifact-malformed-cursor',
+        resultAllowance: resultAllowance(700),
+      }),
+      /cursor is malformed/u,
+    );
+
+    const searchArgs = tool.validate?.({
+      artifactId: 'artifact-random-tool-result',
+      search: { query: target },
+    });
+    const searched = await tool.execute(searchArgs, {
+      sessionId: 'artifact-random-owner',
+      callId: 'artifact-random-search',
+      resultAllowance: resultAllowance(700),
+    }) as { content: string; matchByteOffset: number | null; nextCursor: string | null };
+    assert.equal(searched.content.startsWith(target), true);
+    assert.equal(searched.matchByteOffset, 80 * 1024);
+    assert.ok(serializedToolResultByteLength(okToolResult(searched)) <= 700);
+
+    const offsetArgs = tool.validate?.({
+      artifactId: 'artifact-random-tool-result',
+      byteOffset: 80 * 1024,
+    });
+    const offsetPage = await tool.execute(offsetArgs, {
+      sessionId: 'artifact-random-owner',
+      callId: 'artifact-random-offset',
+      resultAllowance: resultAllowance(700),
+    }) as { content: string };
+    assert.equal(offsetPage.content.startsWith(target), true);
+    await assert.rejects(
+      () => tool.execute(tool.validate?.({
+        artifactId: 'artifact-random-tool-result',
+        byteOffset: content.length + 1,
+      }), {
+        sessionId: 'artifact-random-owner',
+        callId: 'artifact-random-outside',
+        resultAllowance: resultAllowance(700),
+      }),
+      /outside the payload/u,
+    );
+    await assert.rejects(
+      () => tool.execute(searchArgs, {
+        sessionId: 'artifact-random-other',
+        callId: 'artifact-random-cross-session',
+        resultAllowance: resultAllowance(700),
+      }),
+      /not available to session/u,
+    );
+  });
+
+  it('merges literal search and returned slice chunks into search evidence', async () => {
+    const sessionId = 'artifact-search-evidence-owner';
+    const artifactId = 'artifact-search-evidence';
+    const target = 'TARGET-CROSS-CHUNK';
+    const trailingChunkZeroBytes = 8;
+    const content = `${'x'.repeat(
+      AGENT_ARTIFACT_CHUNK_MAX_BYTES - target.length - trailingChunkZeroBytes,
+    )}${target}${'y'.repeat(trailingChunkZeroBytes + 1_000)}`;
+    await createAgentSession({ idFactory: () => sessionId });
+    await storeAgentArtifact({
+      artifactId,
+      sessionId,
+      turnAttemptId: 'artifact-search-evidence-attempt',
+      toolCallId: 'artifact-search-evidence-source',
+      toolName: 'read_repository_file',
+      storageClass: 'canonical',
+      content,
+    });
+
+    const handoff = createBgsmAgentArtifactEvidenceHandoff();
+    const storage = createBgsmAgentArtifactStorageAdapter();
+    const tool = createBgsmAgentTools({
+      repositoryScope: [star.full_name],
+      scopeFingerprint: 'scope:test',
+      artifactReader: storage.artifactReader,
+      artifactEvidenceHandoff: handoff,
+    }).find((candidate) => candidate.name === 'read_agent_artifact');
+    assert.ok(tool);
+
+    const toolCallId = 'artifact-search-evidence-call';
+    const result = await tool.execute(tool.validate?.({
+      artifactId,
+      search: { query: target },
+    }), {
+      sessionId,
+      callId: toolCallId,
+      resultAllowance: resultAllowance(700),
+    }) as { content: string; matchByteOffset: number | null };
+    assert.equal(result.content.startsWith(target), true);
+    assert.ok(result.content.length > target.length + trailingChunkZeroBytes);
+
+    const handoffEntry = handoff.consume({ sessionId, toolCallId });
+    assert.ok(handoffEntry);
+    assert.equal(handoffEntry.accessKind, 'search');
+    assert.equal(handoffEntry.evidence.readKind, 'search');
+    assert.equal(handoffEntry.evidence.pageBytes, 0);
+    assert.equal(handoffEntry.evidence.nextCursor, null);
+    assert.deepEqual(handoffEntry.evidence.touchedChunks.map((chunk) => chunk.index), [0, 1]);
+    assert.equal(handoffEntry.evidence.touchedChunkCount, 2);
+    assert.equal(handoffEntry.evidence.touchedChunkBytes, encoder.encode(content).byteLength);
+    validateAgentArtifactCoverageEvidence(handoffEntry.evidence);
   });
 
   it('exposes all local tag mutation tools on regular turns without intent gating', () => {
@@ -1368,6 +1590,7 @@ describe('Cubby tools', () => {
     assert.deepEqual(result.tags, [{ name: 'unused', repos: 0 }]);
   });
 
+
   it('uses the newest canonical metadata state when listing tags', async () => {
     await db.tagMeta.bulkPut([
       {
@@ -1476,6 +1699,18 @@ describe('Cubby tools', () => {
     assert.equal(listed.tags.length, 1);
     assert.equal(listed.nextCursor, '1');
     assert.ok(serializedToolResultByteLength(okToolResult(listed)) <= listBudget);
+
+    const tinyListBudget = listBudget - 1;
+    const artifactCandidate = await list.execute(list.validate?.({ limit: 50 }), {
+      sessionId: 's-list-artifact-fallback',
+      callId: 'c-list-artifact-fallback',
+      resultAllowance: resultAllowance(tinyListBudget),
+    }) as { tags: unknown[]; nextCursor: string | null };
+    assert.equal(artifactCandidate.tags.length, 1);
+    assert.equal(artifactCandidate.nextCursor, '1');
+    assert.ok(
+      serializedToolResultByteLength(okToolResult(artifactCandidate)) > tinyListBudget,
+    );
 
     const oneSearched = await search.execute(search.validate?.({
       terms: ['owner/allowance'],
