@@ -104,7 +104,7 @@ async function main() {
   if (runtime) {
     try {
       runtime.stage = 'teardown';
-      await teardown(runtime);
+      await teardownScenarioRuntime(runtime);
     } catch (error) {
       teardownFailure = captureFailure(runtime, error);
     }
@@ -826,7 +826,19 @@ export function validateScenarioEvidence(value) {
   );
 }
 
-async function teardown(runtime) {
+async function settleWorkerSetupTasks(runtime) {
+  for (;;) {
+    const tasks = [...(runtime.workerSetupTasks ?? [])];
+    if (tasks.length > 0) {
+      await Promise.allSettled(tasks);
+      continue;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    if ((runtime.workerSetupTasks?.size ?? 0) === 0) return;
+  }
+}
+
+export async function teardownScenarioRuntime(runtime) {
   const cleanup = async (operation) => {
     try {
       await operation();
@@ -844,39 +856,46 @@ async function teardown(runtime) {
     }
   });
   const pageDiagnosticsDetached = await cleanup(async () => runtime.pageDiagnostics?.cleanup());
-  const workerRecords = [
-    ...new Set([
-      ...(runtime.workerRecords ?? []),
-      ...(runtime.workerResources ?? []),
-    ]),
-  ];
-  if (
-    runtime.workerSetupFailure === null
-    && workerRecords.every((record) => record.resumed || record.detached)
-  ) {
-    await Promise.allSettled([...(runtime.workerSetupTasks ?? [])]);
-  }
-  const hasPausedWorker = runtime.workerSetupFailure !== null
-    || workerRecords.some((record) => !record.resumed && !record.detached);
-
-  let workerGateClosed = false;
-  let workerDiagnosticsDetached = false;
-  if (!hasPausedWorker) {
-    await Promise.allSettled([...(runtime.workerSetupTasks ?? [])]);
-    workerGateClosed = await cleanup(async () => {
-      for (const record of workerRecords) {
-        if (record.fetchEnabled && !record.detached) await record.client.send('Fetch.disable');
-        record.fetchEnabled = false;
-      }
+  const workerAutoAttachClosed = await cleanup(async () => {
+    const parent = runtime.workerBrowserClient;
+    try {
       if (runtime.workerAutoAttachActive) {
-        await runtime.workerBrowserClient.send('Target.setAutoAttach', {
+        if (!parent) throw new Error('worker_browser_client_missing');
+        await parent.send('Target.setAutoAttach', {
           autoAttach: false,
           waitForDebuggerOnStart: false,
           flatten: true,
         });
         runtime.workerAutoAttachActive = false;
       }
+    } finally {
+      if (parent && runtime.workerAttachedListener) {
+        removeListener(parent, 'Target.attachedToTarget', runtime.workerAttachedListener);
+        runtime.workerAttachedListener = null;
+      }
+    }
+  });
+  // Queued Target events can still start setup after auto-attach is disabled.
+  await settleWorkerSetupTasks(runtime);
+  const workerRecords = [
+    ...new Set([
+      ...(runtime.workerRecords ?? []),
+      ...(runtime.workerResources ?? []),
+    ]),
+  ];
+  const hasPausedWorker = runtime.workerSetupFailure !== null
+    || workerRecords.some((record) => !record.resumed && !record.detached);
+
+  let workerGateClosed = workerAutoAttachClosed;
+  let workerDiagnosticsDetached = false;
+  if (!hasPausedWorker) {
+    const fetchGatesClosed = await cleanup(async () => {
+      for (const record of workerRecords) {
+        if (record.fetchEnabled && !record.detached) await record.client.send('Fetch.disable');
+        record.fetchEnabled = false;
+      }
     });
+    workerGateClosed = workerAutoAttachClosed && fetchGatesClosed;
     workerDiagnosticsDetached = await cleanup(async () => {
       const parent = runtime.workerBrowserClient;
       if (parent && runtime.workerAttachedListener) {

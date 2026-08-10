@@ -753,9 +753,9 @@ try {
       timeoutMs: TIMEOUT_MS,
     }),
   ]);
+  runtimeStage = 'trusted_origin_deletion_port_invalidation_assert';
   assert.equal(ownerInvalidation.invalidationDelivery.deliveryKind, 'live');
   assert.equal(observerInvalidation.invalidationDelivery.deliveryKind, 'live');
-  runtimeStage = 'trusted_origin_deletion_port_invalidation_assert';
 
   runtimeStage = 'trusted_origin_deletion_terminal_evidence';
   const [ownerEvidence, observerEvidence] = await Promise.all([
@@ -1176,6 +1176,7 @@ function githubWorkerFixture({ route, method }) {
       { 'x-oauth-scopes': 'public_repo, gist' },
     ),
     'GET github-watch-scope': json([], 'github_watch_scope'),
+    // This host configures only the main token; dedicated notification-token coverage lives in extension-browser-smoke.mjs.
     'POST github-gists': json({ id: 'runtime-probe-gist' }, 'github_gist_create', 201),
     'DELETE github-probe-gist': {
       status: 204,
