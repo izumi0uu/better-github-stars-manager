@@ -10,6 +10,9 @@ const REQUIRED_ENV = Object.freeze([
   'CWS_EXTENSION_ID',
   'CWS_PUBLISHER_ID',
 ]);
+const DEFAULT_UPLOAD_POLL_INTERVAL_MS = 5_000;
+const DEFAULT_UPLOAD_POLL_TIMEOUT_MS = 5 * 60_000;
+const UPLOAD_STATE_IN_PROGRESS = 'IN_PROGRESS';
 const UPLOAD_STATE_SUCCEEDED = 'SUCCEEDED';
 const SUCCESSFUL_PUBLISH_STATES_BY_TYPE = Object.freeze({
   DEFAULT_PUBLISH: Object.freeze([
@@ -28,8 +31,12 @@ export async function publishChromeWebStore({
   env = process.env,
   fetchImpl = globalThis.fetch,
   log = console.log,
+  sleep = delay,
+  uploadPollIntervalMs = DEFAULT_UPLOAD_POLL_INTERVAL_MS,
+  uploadPollTimeoutMs = DEFAULT_UPLOAD_POLL_TIMEOUT_MS,
 } = {}) {
   assertRequiredEnvironment(env);
+  assertUploadPollingOptions({ uploadPollIntervalMs, uploadPollTimeoutMs });
   const publishType = env.CWS_PUBLISH_TYPE || 'DEFAULT_PUBLISH';
   if (!Object.hasOwn(SUCCESSFUL_PUBLISH_STATES_BY_TYPE, publishType)) {
     throw new Error(`unsupported Chrome Web Store publish type: ${publishType}`);
@@ -53,9 +60,15 @@ export async function publishChromeWebStore({
     fetchImpl,
   );
 
-  assertSuccessfulUpload(upload, {
+  const completedUpload = await awaitSuccessfulUpload({
+    upload,
+    accessToken,
     extensionId: env.CWS_EXTENSION_ID,
     resourcePath,
+    fetchImpl,
+    sleep,
+    uploadPollIntervalMs,
+    uploadPollTimeoutMs,
   });
 
   const publish = await apiFetch(
@@ -80,8 +93,8 @@ export async function publishChromeWebStore({
   });
 
   const output = {
-    uploadState: upload.uploadState,
-    itemId: upload.itemId,
+    uploadState: completedUpload.uploadState,
+    itemId: completedUpload.itemId,
     published: {
       name: publish.name,
       itemId: publish.itemId,
@@ -134,18 +147,68 @@ async function apiFetch(url, init, accessToken, fetchImpl) {
   return res.json();
 }
 
-function assertSuccessfulUpload(upload, { extensionId, resourcePath }) {
-  if (!isRecord(upload) || upload.uploadState !== UPLOAD_STATE_SUCCEEDED) {
-    const state = isRecord(upload) ? upload.uploadState ?? 'missing' : 'missing';
+async function awaitSuccessfulUpload({
+  upload,
+  accessToken,
+  extensionId,
+  resourcePath,
+  fetchImpl,
+  sleep,
+  uploadPollIntervalMs,
+  uploadPollTimeoutMs,
+}) {
+  let state = assertUploadResponse(upload, {
+    extensionId,
+    resourcePath,
+    stateKey: 'uploadState',
+  });
+  if (state === UPLOAD_STATE_SUCCEEDED) return upload;
+  if (state !== UPLOAD_STATE_IN_PROGRESS) {
     throw new Error(`upload failed with state ${state}`);
   }
 
-  if (upload.itemId !== extensionId) {
+  const maxPollAttempts = Math.floor(uploadPollTimeoutMs / uploadPollIntervalMs);
+  const statusUrl =
+    `https://chromewebstore.googleapis.com/v2/${resourcePath}:fetchStatus`;
+
+  for (let attempt = 0; attempt < maxPollAttempts; attempt += 1) {
+    await sleep(uploadPollIntervalMs);
+    const status = await apiFetch(
+      statusUrl,
+      { method: 'GET' },
+      accessToken,
+      fetchImpl,
+    );
+    state = assertUploadResponse(status, {
+      extensionId,
+      resourcePath,
+      stateKey: 'lastAsyncUploadState',
+    });
+    if (state === UPLOAD_STATE_SUCCEEDED) {
+      return {
+        name: status.name,
+        itemId: status.itemId,
+        uploadState: state,
+      };
+    }
+    if (state !== UPLOAD_STATE_IN_PROGRESS) {
+      throw new Error(`upload failed with state ${state}`);
+    }
+  }
+
+  throw new Error(`upload timed out after ${uploadPollTimeoutMs}ms`);
+}
+
+function assertUploadResponse(response, { extensionId, resourcePath, stateKey }) {
+  if (!isRecord(response)) throw new Error('upload failed with state missing');
+  if (response.itemId !== extensionId) {
     throw new Error('upload failed: itemId does not match configured extension ID');
   }
-  if (upload.name !== resourcePath) {
+  if (response.name !== resourcePath) {
     throw new Error('upload failed: name does not match configured extension resource');
   }
+
+  return response[stateKey] ?? 'missing';
 }
 
 function assertSuccessfulPublish(publish, { extensionId, publishType, resourcePath }) {
@@ -165,8 +228,27 @@ function assertSuccessfulPublish(publish, { extensionId, publishType, resourcePa
 
 function assertRequiredEnvironment(env) {
   for (const key of REQUIRED_ENV) {
-    if (!env?.[key]) throw new Error(`missing required env: ${key}`);
+    const value = env?.[key];
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new Error(`missing required env: ${key}`);
+    }
   }
+}
+
+function assertUploadPollingOptions({ uploadPollIntervalMs, uploadPollTimeoutMs }) {
+  if (!Number.isFinite(uploadPollIntervalMs) || uploadPollIntervalMs <= 0) {
+    throw new Error('upload poll interval must be a positive finite number');
+  }
+  if (
+    !Number.isFinite(uploadPollTimeoutMs)
+    || uploadPollTimeoutMs < uploadPollIntervalMs
+  ) {
+    throw new Error('upload poll timeout must be finite and at least one interval');
+  }
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function isRecord(value) {
