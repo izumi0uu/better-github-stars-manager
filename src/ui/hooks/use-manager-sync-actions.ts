@@ -195,7 +195,7 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
   const syncingNow = !!pendingAction || progressActive;
   useEffect(() => {
     if (!statusLoaded || !status) return;
-    if (status.onboardingStage !== 'syncing' || syncingNow) return;
+    if ((status.onboardingStage !== 'syncing' && status.onboardingStage !== 'awaiting_sync') || syncingNow) return;
     void finalizeOnboardingAfterSync(status.hasToken);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusLoaded, status?.onboardingStage, status?.hasToken, syncingNow]);

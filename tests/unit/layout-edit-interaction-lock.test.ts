@@ -93,7 +93,7 @@ describe('layout edit interaction lock invariants', () => {
     const hook = read('src/ui/hooks/use-column-layout-editor.ts');
     const table = read('src/ui/components/StarsTable.tsx');
     const motion = read('src/ui/styles/motion.css');
-    const skill = read('.codex/skills/github-stars-frontend/SKILL.md');
+    const skill = read('.agents/skills/github-stars-frontend/SKILL.md');
     const transitionGridRule = motion.match(
       /\.gsm-layout-table-shell\[data-layout-mode-transition='entering'\] \.gsm-layout-grid\s*\{([^}]*)\}/,
     )?.[1] ?? '';
@@ -147,7 +147,7 @@ describe('layout edit interaction lock invariants', () => {
   });
 
   it('documents the shared Stars column alignment invariant in the frontend skill', () => {
-    const skill = read('.codex/skills/github-stars-frontend/SKILL.md');
+    const skill = read('.agents/skills/github-stars-frontend/SKILL.md');
 
     expect(skill).toContain('Keep the Stars count column start-aligned in every layout context:');
     expect(skill).toContain('default browse, editing, saved custom mode, and custom hover preview');

@@ -46,7 +46,6 @@ function queryResponse(totalCount: number): WatchInboxQueryResponse {
     status: {
       accountLogin: 'idah',
       hasMainToken: true,
-      hasNotificationsToken: true,
       refreshing: false,
       scopeStatus: 'fresh',
       inboxStatus: 'fresh',
@@ -244,8 +243,8 @@ describe('useWatchInbox', () => {
     await act(async () => {
       storageListeners[0]?.({
         gsm_github_credentials_v1: {
-          oldValue: { watchNotificationsTokenEncrypted: null },
-          newValue: { watchNotificationsTokenEncrypted: 'ciphertext' },
+          oldValue: { tokenEncrypted: null },
+          newValue: { tokenEncrypted: 'ciphertext' },
         },
       }, 'local');
       await Promise.resolve();

@@ -323,24 +323,24 @@ export function ManagerPanel() {
 
   const agentCandidate = useMemo(() => starsSurface && selected
     ? {
-        kind: 'selected_repository' as const,
-        selectedRepositoryIdHint: selected,
-      }
+      kind: 'selected_repository' as const,
+      selectedRepositoryIdHint: selected,
+    }
     : {
-        kind: 'current_view' as const,
-        filter: {
-          query: f.query,
-          languages: [...new Set(f.languages)],
-          tags: [...new Set(f.tags)],
-          tagMode: f.tagMode,
-          showTombstone: f.showTombstone,
-          onlyFavorite: f.onlyFavorite,
-          onlyUntagged: f.onlyUntagged,
-          onlyArchived: f.onlyArchived,
-          sortKey: f.sortKey,
-          sortDir: f.sortDir,
-        },
-      }, [
+      kind: 'current_view' as const,
+      filter: {
+        query: f.query,
+        languages: [...new Set(f.languages)],
+        tags: [...new Set(f.tags)],
+        tagMode: f.tagMode,
+        showTombstone: f.showTombstone,
+        onlyFavorite: f.onlyFavorite,
+        onlyUntagged: f.onlyUntagged,
+        onlyArchived: f.onlyArchived,
+        sortKey: f.sortKey,
+        sortDir: f.sortDir,
+      },
+    }, [
     f.languages,
     f.onlyArchived,
     f.onlyFavorite,
@@ -392,6 +392,7 @@ export function ManagerPanel() {
       .then(() => {
         setSelected((current) => (current === fullName ? null : current));
         setUnstarFeedback({ kind: 'done', fullName });
+        refreshStars();
       })
       .catch((error) => {
         setUnstarFeedback({
@@ -451,242 +452,242 @@ export function ManagerPanel() {
   return (
     <PortalProvider containerRef={rootRef}>
       <TooltipProvider delayDuration={300} skipDelayDuration={150}>
-      <div
-        ref={rootRef}
-        className={cn('relative flex h-full flex-col bg-background text-foreground font-sans', themeClass)}
-      >
-        <Toolbar
-          f={f}
-          status={status}
-          loading={loading}
-          listPhase={phase}
-          total={visibleTotal}
-          grandTotal={visibleGrandTotal}
-          busy={busy}
-          pendingAction={pendingAction}
-          successAction={successAction}
-          onSync={doSync}
-          onAutoAssignTags={() => { void autoTagAgentPrompt.requestAutoTags(); }}
-          onOpenAgent={openAgentPanel}
-          agentStatus={agentPresentation.status}
-          agentActive={agentPresentation.active}
-          onStatusPatch={applyStatusPatch}
-          onToggleTheme={toggleTheme}
-          onTogglePanel={hidePanel}
-          theme={theme}
-          searchRef={searchRef}
-          layoutMode={layoutMode}
-          layoutEditing={editingLayout}
-          layoutConfigReady={layoutConfigReady}
-          layoutEditReady={layoutEditReady}
-          customLayoutDirty={customLayoutDirty}
-          customPreviewing={previewingCustomLayout}
-          hiddenColumnCount={hiddenColumnCount}
-          onLayoutModeChange={setBrowseLayoutMode}
-          onStartLayoutEdit={editingLayout ? cancelLayoutEdit : beginCustomLayoutEdit}
-          onPreviewCustomChange={previewCustomLayout}
-          layoutEditChrome={layoutEditChrome}
-          surface={surface}
-          onSurfaceChange={handleSurfaceChange}
-          watchUnreadCount={watchInbox.result?.unreadCount ?? 0}
-        />
-        {starsSurface && layoutColumnMenu}
-
-        {starsSurface && statusLoaded && status && !status.hasToken && status.onboardingStage === 'done' && (
-          <div className="flex items-center gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
-            <AlertTriangle className="size-4 shrink-0" />
-            <span>{m.manager.noTokenBanner}</span>
-            <Button
-              size="sm"
-              disabled={interactionLocked}
-              onClick={() => bgCall('openOptions').catch(() => {})}
-            >
-              {m.manager.addPat}
-            </Button>
-          </div>
-        )}
-
-        {starsSurface && <div
-          className={cn('gsm-active-filter-row', { open: hasActiveFilter })}
-          aria-hidden={!hasActiveFilter}
-          {...getLockedRegionProps(!hasActiveFilter)}
+        <div
+          ref={rootRef}
+          className={cn('relative flex h-full flex-col bg-background text-foreground font-sans', themeClass)}
         >
-          <div>
-            <ActiveFilterChips f={f} count={visibleTotal} interactionLocked={interactionLocked} />
-          </div>
-        </div>}
-
-        {starsSurface && (info || unstarFeedback) && (
-          <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">
-            <span
-              key={helperInfoKey(info, unstarFeedback)}
-              className="gsm-helper-text-update inline-block rounded-sm px-1 transition-[background-color,opacity,transform] duration-150"
-            >
-              <HelperInfoText info={info} unstarFeedback={unstarFeedback} m={m} />
-            </span>
-          </div>
-        )}
-
-        <div className="flex min-h-0 flex-1">
-          {starsSurface && <FilterSidebar
+          <Toolbar
             f={f}
-            languages={languages}
-            tagTree={tagTree}
-            interactionLocked={interactionLocked}
-            onTagMutationMessage={(message) => {
-              if (message) setInfo(message);
-              if (message) setUnstarFeedback(null);
-            }}
-            onTagMutationSuccess={refreshStars}
+            status={status}
+            loading={loading}
+            listPhase={phase}
+            total={visibleTotal}
+            grandTotal={visibleGrandTotal}
+            busy={busy}
+            pendingAction={pendingAction}
+            successAction={successAction}
+            onSync={doSync}
+            onAutoAssignTags={() => { void autoTagAgentPrompt.requestAutoTags(); }}
+            onOpenAgent={openAgentPanel}
+            agentStatus={agentPresentation.status}
+            agentActive={agentPresentation.active}
+            onStatusPatch={applyStatusPatch}
+            onToggleTheme={toggleTheme}
+            onTogglePanel={hidePanel}
+            theme={theme}
+            searchRef={searchRef}
+            layoutMode={layoutMode}
+            layoutEditing={editingLayout}
+            layoutConfigReady={layoutConfigReady}
+            layoutEditReady={layoutEditReady}
+            customLayoutDirty={customLayoutDirty}
+            customPreviewing={previewingCustomLayout}
+            hiddenColumnCount={hiddenColumnCount}
+            onLayoutModeChange={setBrowseLayoutMode}
+            onStartLayoutEdit={editingLayout ? cancelLayoutEdit : beginCustomLayoutEdit}
+            onPreviewCustomChange={previewCustomLayout}
+            layoutEditChrome={layoutEditChrome}
+            surface={surface}
+            onSurfaceChange={handleSurfaceChange}
+            watchUnreadCount={watchInbox.result?.unreadCount ?? 0}
+          />
+          {starsSurface && layoutColumnMenu}
+
+          {starsSurface && statusLoaded && status && !status.hasToken && status.onboardingStage === 'done' && (
+            <div className="flex items-center gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <AlertTriangle className="size-4 shrink-0" />
+              <span>{m.manager.noTokenBanner}</span>
+              <Button
+                size="sm"
+                disabled={interactionLocked}
+                onClick={() => bgCall('openOptions').catch(() => { })}
+              >
+                {m.manager.addPat}
+              </Button>
+            </div>
+          )}
+
+          {starsSurface && <div
+            className={cn('gsm-active-filter-row', { open: hasActiveFilter })}
+            aria-hidden={!hasActiveFilter}
+            {...getLockedRegionProps(!hasActiveFilter)}
+          >
+            <div>
+              <ActiveFilterChips f={f} count={visibleTotal} interactionLocked={interactionLocked} />
+            </div>
+          </div>}
+
+          {starsSurface && (info || unstarFeedback) && (
+            <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">
+              <span
+                key={helperInfoKey(info, unstarFeedback)}
+                className="gsm-helper-text-update inline-block rounded-sm px-1 transition-[background-color,opacity,transform] duration-150"
+              >
+                <HelperInfoText info={info} unstarFeedback={unstarFeedback} m={m} />
+              </span>
+            </div>
+          )}
+
+          <div className="flex min-h-0 flex-1">
+            {starsSurface && <FilterSidebar
+              f={f}
+              languages={languages}
+              tagTree={tagTree}
+              interactionLocked={interactionLocked}
+              onTagMutationMessage={(message) => {
+                if (message) setInfo(message);
+                if (message) setUnstarFeedback(null);
+              }}
+              onTagMutationSuccess={refreshStars}
+            />}
+
+            <div
+              ref={listRef}
+              data-coach-target={starsSurface ? 'repo' : undefined}
+              className="no-scrollbar flex-1 overflow-auto"
+            >
+              {!starsSurface ? (
+                <WatchInbox
+                  result={watchInbox.result}
+                  loading={watchInbox.loading}
+                  refreshing={watchInbox.refreshing}
+                  error={watchInbox.error}
+                  unreadOnly={watchInbox.unreadOnly}
+                  onUnreadOnlyChange={watchInbox.setUnreadOnly}
+                  onRefresh={() => { void watchInbox.refresh(); }}
+                  onRetryQuery={() => { void watchInbox.reload(); }}
+                  onOpenOptions={() => bgCall('openOptions').catch(() => { })}
+                  onSelectRepository={(fullName) => { void handleWatchRepositorySelect(fullName); }}
+                />
+              ) : !statusLoaded || !status ? (
+                <div className="p-10 text-center text-sm text-muted-foreground">
+                  {m.common.loading}
+                </div>
+              ) : isOnboardingCardStage(status.onboardingStage) && coachStep === null ? (
+                <OnboardingCard
+                  stage={status.onboardingStage}
+                  failedInfo={info}
+                  interactionLocked={interactionLocked}
+                  onOpenOptions={() => bgCall('openOptions').catch(() => { })}
+                  onRetry={() => void doSync('syncFull', m.popup.syncFull)}
+                />
+              ) : status.hasToken && activeBackfillId && activeBackfillState && coachStep === null ? (
+                <BackfillCard
+                  state={activeBackfillState}
+                  progress={status.progress}
+                  actionBusy={busy || !!pendingAction}
+                  interactionLocked={interactionLocked}
+                  onRun={() => void runBackfill(activeBackfillId)}
+                  onDefer={() => void deferBackfill(activeBackfillId)}
+                />
+              ) : (
+                <StarsTable
+                  rows={visibleRows}
+                  loading={loading}
+                  phase={phase}
+                  tagsByFullName={tagsByFullName}
+                  favoriteOverrides={favoriteOverrides}
+                  selectedTags={f.tags}
+                  selectedFullName={selected}
+                  visibleColumns={visibleColumns}
+                  gridTemplateColumns={gridTemplateColumns}
+                  tableMinWidth={tableMinWidth}
+                  interactionLocked={interactionLocked}
+                  layoutEdit={{
+                    editing: editingLayout,
+                    faded: layoutFaded,
+                    transitionPhase: layoutModeTransitionPhase,
+                    draggedColumnId: layoutDrag?.kind === 'column' ? layoutDrag.id : null,
+                    draggedColumnHideIntent: layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false,
+                    columnShifts,
+                    flashedColumn,
+                    trayCaretX,
+                    onBeginColumnDrag: beginColumnDrag,
+                    onMoveColumnByKeyboard: moveColumnByKeyboard,
+                  }}
+                  layoutResize={layoutResize}
+                  scrollRef={listRef}
+                  rootRef={rootRef}
+                  headerRef={headerRef}
+                  layoutResizeLiveAdapterRef={layoutResizeLiveAdapterRef}
+                  onLayoutViewportChange={setLayoutViewport}
+                  onSelect={handleSelect}
+                  onToggleTag={f.toggleTag}
+                  onToggleFavorite={handleToggleFavorite}
+                  onConfirmUnstar={handleConfirmUnstar}
+                  openUnstarFullName={openUnstarFullName}
+                  onOpenUnstarChange={handleOpenUnstarChange}
+                  onBeginColumnResize={beginColumnResize}
+                  onResizeColumnByKeyboard={resizeColumnByKeyboard}
+                  onAutoFitColumnWidth={autoFitColumnWidth}
+                />
+              )}
+            </div>
+
+            <div className={cn('drawer-anim border-l border-border', {
+              'drawer-enter': selectedStar,
+              'drawer-exit': !selectedStar,
+            })}>
+              {selectedStar && (
+                <RepoDetailPanel
+                  star={selectedStar}
+                  tag={selectedTag}
+                  selectedTags={f.tags}
+                  onToggleTag={f.toggleTag}
+                  onDataChanged={handleDetailDataChanged}
+                  onClose={() => {
+                    watchDetailGeneration.current++;
+                    setSelected(null);
+                    setWatchDetail(null);
+                  }}
+                  onPrev={() => starsSurface && selectedIdx > 0 && setSelected(visibleRows[selectedIdx - 1].full_name)}
+                  onNext={() => starsSurface && selectedIdx >= 0 && selectedIdx < visibleRows.length - 1 && setSelected(visibleRows[selectedIdx + 1].full_name)}
+                  hasPrev={starsSurface && selectedIdx > 0}
+                  hasNext={starsSurface && selectedIdx >= 0 && selectedIdx < visibleRows.length - 1}
+                  interactionLocked={interactionLocked}
+                />
+              )}
+            </div>
+          </div>
+
+          <FloatingLocaleToggle drawerOpen={!!selectedStar} interactionLocked={interactionLocked} />
+
+          <LayoutDragGhost ghost={dragGhost} />
+
+          {starsSurface && agentHostMounted && (
+            <Suspense fallback={null}>
+              <LazyAgentHost
+                open={agentPanelOpen}
+                onHide={() => setAgentPanelOpen(false)}
+                onOpenOptions={() => bgCall('openOptions').catch(() => { })}
+                onDataChanged={refreshStars}
+                onPresentationChange={setAgentPresentation}
+                defaultCandidate={agentCandidate}
+                chatCandidate={agentCandidate}
+                scopeCount={agentCandidate.kind === 'selected_repository' ? 1 : visibleTotal}
+              />
+            </Suspense>
+          )}
+
+          {starsSurface && <AutoTagAgentPrompt
+            open={autoTagAgentPrompt.open}
+            onChooseAgent={autoTagAgentPrompt.chooseAgent}
+            onChooseAutoTags={autoTagAgentPrompt.chooseAutoTags}
+            onDismiss={autoTagAgentPrompt.dismiss}
           />}
 
-          <div
-            ref={listRef}
-            data-coach-target={starsSurface ? 'repo' : undefined}
-            className="no-scrollbar flex-1 overflow-auto"
-          >
-            {!starsSurface ? (
-              <WatchInbox
-                result={watchInbox.result}
-                loading={watchInbox.loading}
-                refreshing={watchInbox.refreshing}
-                error={watchInbox.error}
-                unreadOnly={watchInbox.unreadOnly}
-                onUnreadOnlyChange={watchInbox.setUnreadOnly}
-                onRefresh={() => { void watchInbox.refresh(); }}
-                onRetryQuery={() => { void watchInbox.reload(); }}
-                onOpenOptions={() => bgCall('openOptions').catch(() => {})}
-                onSelectRepository={(fullName) => { void handleWatchRepositorySelect(fullName); }}
-              />
-            ) : !statusLoaded || !status ? (
-              <div className="p-10 text-center text-sm text-muted-foreground">
-                {m.common.loading}
-              </div>
-            ) : isOnboardingCardStage(status.onboardingStage) && coachStep === null ? (
-              <OnboardingCard
-                stage={status.onboardingStage}
-                failedInfo={info}
-                interactionLocked={interactionLocked}
-                onOpenOptions={() => bgCall('openOptions').catch(() => {})}
-                onRetry={() => void doSync('syncFull', m.popup.syncFull)}
-              />
-            ) : status.hasToken && activeBackfillId && activeBackfillState && coachStep === null ? (
-              <BackfillCard
-                state={activeBackfillState}
-                progress={status.progress}
-                actionBusy={busy || !!pendingAction}
-                interactionLocked={interactionLocked}
-                onRun={() => void runBackfill(activeBackfillId)}
-                onDefer={() => void deferBackfill(activeBackfillId)}
-              />
-            ) : (
-              <StarsTable
-                rows={visibleRows}
-                loading={loading}
-                phase={phase}
-                tagsByFullName={tagsByFullName}
-                favoriteOverrides={favoriteOverrides}
-                selectedTags={f.tags}
-                selectedFullName={selected}
-                visibleColumns={visibleColumns}
-                gridTemplateColumns={gridTemplateColumns}
-                tableMinWidth={tableMinWidth}
-                interactionLocked={interactionLocked}
-                layoutEdit={{
-                  editing: editingLayout,
-                  faded: layoutFaded,
-                  transitionPhase: layoutModeTransitionPhase,
-                  draggedColumnId: layoutDrag?.kind === 'column' ? layoutDrag.id : null,
-                  draggedColumnHideIntent: layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false,
-                  columnShifts,
-                  flashedColumn,
-                  trayCaretX,
-                  onBeginColumnDrag: beginColumnDrag,
-                  onMoveColumnByKeyboard: moveColumnByKeyboard,
-                }}
-                layoutResize={layoutResize}
-                scrollRef={listRef}
-                rootRef={rootRef}
-                headerRef={headerRef}
-                layoutResizeLiveAdapterRef={layoutResizeLiveAdapterRef}
-                onLayoutViewportChange={setLayoutViewport}
-                onSelect={handleSelect}
-                onToggleTag={f.toggleTag}
-                onToggleFavorite={handleToggleFavorite}
-                onConfirmUnstar={handleConfirmUnstar}
-                openUnstarFullName={openUnstarFullName}
-                onOpenUnstarChange={handleOpenUnstarChange}
-                onBeginColumnResize={beginColumnResize}
-                onResizeColumnByKeyboard={resizeColumnByKeyboard}
-                onAutoFitColumnWidth={autoFitColumnWidth}
-              />
-            )}
-          </div>
-
-          <div className={cn('drawer-anim border-l border-border', {
-            'drawer-enter': selectedStar,
-            'drawer-exit': !selectedStar,
-          })}>
-            {selectedStar && (
-              <RepoDetailPanel
-                star={selectedStar}
-                tag={selectedTag}
-                selectedTags={f.tags}
-                onToggleTag={f.toggleTag}
-                onDataChanged={handleDetailDataChanged}
-                onClose={() => {
-                  watchDetailGeneration.current++;
-                  setSelected(null);
-                  setWatchDetail(null);
-                }}
-                onPrev={() => starsSurface && selectedIdx > 0 && setSelected(visibleRows[selectedIdx - 1].full_name)}
-                onNext={() => starsSurface && selectedIdx >= 0 && selectedIdx < visibleRows.length - 1 && setSelected(visibleRows[selectedIdx + 1].full_name)}
-                hasPrev={starsSurface && selectedIdx > 0}
-                hasNext={starsSurface && selectedIdx >= 0 && selectedIdx < visibleRows.length - 1}
-                interactionLocked={interactionLocked}
-              />
-            )}
-          </div>
-        </div>
-
-        <FloatingLocaleToggle drawerOpen={!!selectedStar} interactionLocked={interactionLocked} />
-
-        <LayoutDragGhost ghost={dragGhost} />
-
-        {starsSurface && agentHostMounted && (
-          <Suspense fallback={null}>
-            <LazyAgentHost
-              open={agentPanelOpen}
-              onHide={() => setAgentPanelOpen(false)}
-              onOpenOptions={() => bgCall('openOptions').catch(() => {})}
-              onDataChanged={refreshStars}
-              onPresentationChange={setAgentPresentation}
-              defaultCandidate={agentCandidate}
-              chatCandidate={agentCandidate}
-              scopeCount={agentCandidate.kind === 'selected_repository' ? 1 : visibleTotal}
+          {starsSurface && statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
+            <CoachOverlay
+              step={coachStep}
+              total={COACH_TARGETS.length}
+              rootRef={rootRef}
+              onNext={() => setCoachStep((s) => (s === null ? s : Math.min(s + 1, COACH_TARGETS.length - 1)))}
+              onBack={() => setCoachStep((s) => (s === null ? s : Math.max(s - 1, 0)))}
+              onFinish={() => void finishCoach()}
+              onSkip={() => void skipCoach()}
             />
-          </Suspense>
-        )}
-
-        {starsSurface && <AutoTagAgentPrompt
-          open={autoTagAgentPrompt.open}
-          onChooseAgent={autoTagAgentPrompt.chooseAgent}
-          onChooseAutoTags={autoTagAgentPrompt.chooseAutoTags}
-          onDismiss={autoTagAgentPrompt.dismiss}
-        />}
-
-        {starsSurface && statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
-          <CoachOverlay
-            step={coachStep}
-            total={COACH_TARGETS.length}
-            rootRef={rootRef}
-            onNext={() => setCoachStep((s) => (s === null ? s : Math.min(s + 1, COACH_TARGETS.length - 1)))}
-            onBack={() => setCoachStep((s) => (s === null ? s : Math.max(s - 1, 0)))}
-            onFinish={() => void finishCoach()}
-            onSkip={() => void skipCoach()}
-          />
-        )}
-      </div>
+          )}
+        </div>
       </TooltipProvider>
     </PortalProvider>
   );
@@ -725,7 +726,7 @@ function OnboardingCard({
               <li>
                 <a
                   className="text-primary hover:underline"
-                  href="https://github.com/settings/personal-access-tokens/new"
+                  href="https://github.com/settings/tokens"
                   target="_blank"
                   rel="noreferrer"
                   {...getLockedAnchorProps(interactionLocked)}

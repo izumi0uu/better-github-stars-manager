@@ -692,12 +692,6 @@ export function WatchInbox({
         />
       ) : state.scope.repositoryCount === 0 ? (
         <EmptyState icon={<Inbox className="size-5" />} text={m.watch.noWatchedRepositories} />
-      ) : !status.hasNotificationsToken ? (
-        <EmptyState
-          icon={<Settings2 className="size-5" />}
-          text={m.watch.configureNotificationsToken}
-          action={<Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>}
-        />
       ) : status.inboxStatus === 'scope_unavailable' ? (
         <EmptyState
           icon={<AlertTriangle className="size-5" />}

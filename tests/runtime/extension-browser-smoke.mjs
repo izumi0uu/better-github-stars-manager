@@ -140,11 +140,11 @@ try {
   resetBackgroundGitHubApiCalls(browser, extId);
 
   step('8) Watch renders the bounded stored snapshot without GitHub API calls');
+
   const seededWatch = await seedWatchFixture(extId);
   assert.deepEqual(seededWatch, {
     databaseVersion: 4,
     hasMainToken: true,
-    hasNotificationsToken: true,
     allThreadCount: 3,
     allGroupCount: 2,
     outOfScopeVisible: false,
@@ -187,21 +187,11 @@ try {
   await ownStars.screenshot({ path: WATCH_NARROW_SCREENSHOT });
   ok(`Watch detail and responsive layout verified (${WATCH_DESKTOP_SCREENSHOT}, ${WATCH_NARROW_SCREENSHOT})`);
 
-  step('10) Removing only the classic token shows Watch setup without ejecting Manager');
+  step('10) Watch renders the populated inbox using the single classic token');
   await markManagerMount(ownStars);
-  const disconnected = await clearWatchNotificationsCredential(extId);
-  assert.deepEqual(disconnected, {
-    mainCredentialPreserved: true,
-    watchCredentialCleared: true,
-    watchChangeDelivered: true,
-  });
-  await openWatchSurface(
-    ownStars,
-    'Connect a separate classic token with the notifications scope',
-  );
-  await assertWatchSetupState(ownStars);
+  await openWatchSurface(ownStars, 'Unread issue thread');
   await assertNoBackgroundGitHubApiCalls(browser, extId);
-  ok('classic-token removal kept the main Manager mounted and rendered Watch setup');
+  ok('single classic token kept Watch mounted and the inbox ready without extra GitHub calls');
 
   if (pageIssues.length) {
     failures.push(`unexpected browser diagnostics:\n${pageIssues.join('\n')}`);
@@ -394,8 +384,6 @@ async function seedWatchFixture(extId) {
       version: 1,
       tokenEncrypted: mainCredential.cipher,
       tokenCryptoMeta: mainCredential.meta,
-      watchNotificationsTokenEncrypted: watchCredential.cipher,
-      watchNotificationsTokenCryptoMeta: watchCredential.meta,
       username: 'smoke-user',
       avatarUrl: null,
       displayName: null,
@@ -591,7 +579,6 @@ async function seedWatchFixture(extId) {
     return {
       databaseVersion,
       hasMainToken: allInbox.data.status.hasMainToken,
-      hasNotificationsToken: allInbox.data.status.hasNotificationsToken,
       allThreadCount: allInbox.data.totalCount,
       allGroupCount: allInbox.data.groups.length,
       outOfScopeVisible: allInbox.data.threads.some((item) => item.id === 'watch-out-of-scope'),
@@ -599,57 +586,6 @@ async function seedWatchFixture(extId) {
   });
   await page.close();
   return seeded;
-}
-
-async function clearWatchNotificationsCredential(extId) {
-  const page = await openExtensionPage(extId, OPTIONS_PATH, 'clear-watch-credential');
-  const result = await page.evaluate(async () => {
-    const CONFIG_KEY = 'gsm_config';
-    const CREDENTIALS_KEY = 'gsm_github_credentials_v1';
-    const current = await chrome.storage.local.get([CONFIG_KEY, CREDENTIALS_KEY]);
-    const beforeConfig = current[CONFIG_KEY] ?? {};
-    const beforeCredentials = current[CREDENTIALS_KEY] ?? {};
-    let listener;
-    const changed = new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        chrome.runtime.onMessage.removeListener(listener);
-        resolve(false);
-      }, 5_000);
-      listener = (message) => {
-        if (message?.type !== 'watchChanged') return;
-        clearTimeout(timeout);
-        chrome.runtime.onMessage.removeListener(listener);
-        resolve(true);
-      };
-      chrome.runtime.onMessage.addListener(listener);
-    });
-    const response = await chrome.runtime.sendMessage({ type: 'disconnectWatchInbox' });
-    if (!response?.ok) {
-      chrome.runtime.onMessage.removeListener(listener);
-      throw new Error(response?.error ?? 'Watch disconnect failed');
-    }
-    const watchChangeDelivered = await changed;
-    const stored = await chrome.storage.local.get([CONFIG_KEY, CREDENTIALS_KEY]);
-    const afterConfig = stored[CONFIG_KEY] ?? {};
-    const afterCredentials = stored[CREDENTIALS_KEY] ?? {};
-    return {
-      mainCredentialPreserved:
-        afterCredentials.tokenEncrypted === beforeCredentials.tokenEncrypted &&
-        JSON.stringify(afterCredentials.tokenCryptoMeta ?? null) ===
-          JSON.stringify(beforeCredentials.tokenCryptoMeta ?? null) &&
-        afterCredentials.username === beforeCredentials.username &&
-        afterConfig.tokenEncrypted === beforeConfig.tokenEncrypted &&
-        afterConfig.username === beforeConfig.username,
-      watchCredentialCleared:
-        afterCredentials.watchNotificationsTokenEncrypted === null &&
-        afterCredentials.watchNotificationsTokenCryptoMeta === null &&
-        afterConfig.watchNotificationsTokenEncrypted === null &&
-        afterConfig.watchNotificationsTokenCryptoMeta === null,
-      watchChangeDelivered,
-    };
-  });
-  await page.close();
-  return result;
 }
 
 async function installBackgroundGitHubApiGuard(browser, extId) {

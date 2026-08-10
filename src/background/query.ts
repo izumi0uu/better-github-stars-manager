@@ -237,10 +237,11 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
   const { filter, offset, limit } = params;
   const { stars, tags, excluded } = await ensureCache();
   const filtered = filterAndSortRows(stars, tags, filter);
+  const liveStars = stars.filter((s) => !s.tombstone);
 
-  // Languages facet over ALL stars (stable sidebar regardless of filter).
+  // Languages facet over ALL live stars (stable sidebar regardless of filter).
   const langCounts = new Map<string, number>();
-  for (const s of stars) if (s.language) langCounts.set(s.language, (langCounts.get(s.language) ?? 0) + 1);
+  for (const s of liveStars) if (s.language) langCounts.set(s.language, (langCounts.get(s.language) ?? 0) + 1);
   const languages: [string, number][] = [...langCounts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 40);
@@ -272,7 +273,7 @@ export async function queryStars(params: QueryParams): Promise<QueryResult> {
   return {
     rows,
     total: filtered.length,
-    grandTotal: stars.length,
+    grandTotal: liveStars.length,
     tagsForRows,
     languages,
     tagTree,

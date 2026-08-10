@@ -315,8 +315,6 @@ export interface AgentProviderConfig {
 export interface Config {
   tokenEncrypted: string | null;
   tokenCryptoMeta: CryptoMeta | null;
-  watchNotificationsTokenEncrypted: string | null;
-  watchNotificationsTokenCryptoMeta: CryptoMeta | null;
   agentProvider: AgentProviderConfig;
   /** Explicit Agent data-sharing acknowledgement for one disclosure/provider/origin tuple. */
   agentDataDisclosureAcceptance: AgentDataDisclosureAcceptance | null;

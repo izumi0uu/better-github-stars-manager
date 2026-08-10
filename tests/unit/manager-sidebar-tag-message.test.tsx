@@ -10,7 +10,7 @@ describe('ManagerPanel sidebar tag mutation wiring', () => {
     assert.match(source, /onTagMutationSuccess=\{refreshStars\}/);
     assert.doesNotMatch(source, /onTagDeleted=/);
 
-    const messageCallback = source.match(/onTagMutationMessage=\{\(message\) => \{[\s\S]*?\n            \}\}/)?.[0] ?? '';
+    const messageCallback = source.match(/onTagMutationMessage=\{\(message\) => \{[\s\S]*?\}\}/)?.[0] ?? '';
     assert.ok(messageCallback, 'FilterSidebar tag mutation message callback should exist');
     assert.doesNotMatch(messageCallback, /refreshStars\(\)/);
     assert.match(messageCallback, /if \(message\) setInfo\(message\);/);

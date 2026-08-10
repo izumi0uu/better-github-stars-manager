@@ -4,13 +4,8 @@ import type {
   Config,
 } from "@/types";
 import { encrypt, decrypt } from "./crypto";
-import {
-  TOKEN_EMPTY,
-  WATCH_TOKEN_ACCOUNT_CHANGED,
-  WATCH_TOKEN_EMPTY,
-  WATCH_TOKEN_MAIN_ACCOUNT_REQUIRED,
-} from "@/api/errors";
-import { probeTokenCapabilities, probeWatchNotificationsToken } from "./token-probe";
+import { TOKEN_EMPTY } from "@/api/errors";
+import { probeTokenCapabilities } from "./token-probe";
 import {
   normalizeOnboardingStage,
   stageMarksOnboardingSeen,
@@ -46,12 +41,13 @@ import {
 } from "@/bgsm-agent/disclosure";
 
 /**
- * Owns the fine-grained PAT lifecycle.
+ * Owns the GitHub PAT lifecycle.
  *
- * The options page collects a token, verifies the GitHub capabilities this
- * extension needs, captures account identity, and only then persists the token.
- * Plaintext stays in memory; the stored copy is AES-GCM encrypted in
- * `chrome.storage.local`.
+ * The options page collects a classic PAT (with repo, gist, and notifications
+ * scopes), verifies the GitHub capabilities this extension needs by reading
+ * the `x-oauth-scopes` header, captures account identity, and only then
+ * persists the token. Plaintext stays in memory; the stored copy is AES-GCM
+ * encrypted in `chrome.storage.local`.
  */
 
 export const CONFIG_STORAGE_KEY = "gsm_config";
@@ -61,8 +57,6 @@ type StoredGitHubCredentials = Readonly<{
   version: 1;
   tokenEncrypted: string | null;
   tokenCryptoMeta: Config['tokenCryptoMeta'];
-  watchNotificationsTokenEncrypted: string | null;
-  watchNotificationsTokenCryptoMeta: Config['watchNotificationsTokenCryptoMeta'];
   username: string | null;
   avatarUrl: string | null;
   displayName: string | null;
@@ -94,8 +88,6 @@ export type AgentProviderCredentialSnapshot = Readonly<{
 const DEFAULT_CONFIG: Config = {
   tokenEncrypted: null,
   tokenCryptoMeta: null,
-  watchNotificationsTokenEncrypted: null,
-  watchNotificationsTokenCryptoMeta: null,
   agentProvider: {
     provider: "openai",
     protocol: null,
@@ -144,17 +136,13 @@ type PlaintextCredentialCache = {
 export type GitHubCredentialSnapshot = Readonly<{
   accountLogin: string | null;
   mainToken: string | null;
-  notificationsToken: string | null;
-  notificationsConfigured: boolean;
   mainIdentity: string;
-  notificationsIdentity: string;
 }>;
 
 const CONFIG_OPERATION_LOCK = 'better-github-stars-manager:config:v1';
 
 let cache: Config | null = null;
 let plaintextToken: PlaintextCredentialCache | null = null; // in-memory only
-let plaintextWatchNotificationsToken: PlaintextCredentialCache | null = null; // in-memory only
 let plaintextAgentApiKey: {
   cipher: string;
   cryptoMeta: string;
@@ -192,21 +180,6 @@ function runConfigExclusive<T>(operation: () => Promise<T>): Promise<T> {
 function mergeStoredConfig(stored: Partial<Config>): Config {
   const maxTagsPerRepo =
     stored.maxTagsPerRepo === undefined ? stored.autoTagLimit : stored.maxTagsPerRepo;
-  const watchTokenEncrypted = typeof stored.watchNotificationsTokenEncrypted === 'string' &&
-    stored.watchNotificationsTokenEncrypted.length > 0
-    ? stored.watchNotificationsTokenEncrypted
-    : null;
-  const watchTokenMeta = validCryptoMeta(stored.watchNotificationsTokenCryptoMeta)
-    ? stored.watchNotificationsTokenCryptoMeta
-    : null;
-  const hasBoundMainCredential = typeof stored.username === 'string' &&
-    stored.username.trim().length > 0 &&
-    typeof stored.tokenEncrypted === 'string' &&
-    stored.tokenEncrypted.length > 0 &&
-    validCryptoMeta(stored.tokenCryptoMeta);
-  const hasCompleteWatchToken = !!(
-    hasBoundMainCredential && watchTokenEncrypted && watchTokenMeta
-  );
   return {
     ...DEFAULT_CONFIG,
     ...stored,
@@ -219,8 +192,6 @@ function mergeStoredConfig(stored: Partial<Config>): Config {
     ),
     autoTagAgentPromptSeen: stored.autoTagAgentPromptSeen === true,
     maxTagsPerRepo: maxTagsPerRepo ?? DEFAULT_CONFIG.maxTagsPerRepo,
-    watchNotificationsTokenEncrypted: hasCompleteWatchToken ? watchTokenEncrypted : null,
-    watchNotificationsTokenCryptoMeta: hasCompleteWatchToken ? watchTokenMeta : null,
   };
 }
 
@@ -235,8 +206,6 @@ function credentialsFromConfig(config: Config): StoredGitHubCredentials {
     version: 1,
     tokenEncrypted: config.tokenEncrypted,
     tokenCryptoMeta: config.tokenCryptoMeta,
-    watchNotificationsTokenEncrypted: config.watchNotificationsTokenEncrypted,
-    watchNotificationsTokenCryptoMeta: config.watchNotificationsTokenCryptoMeta,
     username: config.username,
     avatarUrl: config.avatarUrl,
     displayName: config.displayName,
@@ -257,22 +226,10 @@ function normalizeStoredGitHubCredentials(value: unknown): StoredGitHubCredentia
     ? stored.tokenCryptoMeta
     : null;
   const hasMainCredential = !!(username && tokenEncrypted && tokenCryptoMeta);
-  const watchTokenEncrypted = typeof stored.watchNotificationsTokenEncrypted === 'string' &&
-    stored.watchNotificationsTokenEncrypted
-    ? stored.watchNotificationsTokenEncrypted
-    : null;
-  const watchTokenCryptoMeta = validCryptoMeta(stored.watchNotificationsTokenCryptoMeta)
-    ? stored.watchNotificationsTokenCryptoMeta
-    : null;
-  const hasWatchCredential = !!(
-    hasMainCredential && watchTokenEncrypted && watchTokenCryptoMeta
-  );
   return {
     version: 1,
     tokenEncrypted: hasMainCredential ? tokenEncrypted : null,
     tokenCryptoMeta: hasMainCredential ? tokenCryptoMeta : null,
-    watchNotificationsTokenEncrypted: hasWatchCredential ? watchTokenEncrypted : null,
-    watchNotificationsTokenCryptoMeta: hasWatchCredential ? watchTokenCryptoMeta : null,
     username: hasMainCredential ? username : null,
     avatarUrl: hasMainCredential && typeof stored.avatarUrl === 'string'
       ? stored.avatarUrl
@@ -291,8 +248,6 @@ function withGitHubCredentials(
     ...config,
     tokenEncrypted: credentials.tokenEncrypted,
     tokenCryptoMeta: credentials.tokenCryptoMeta,
-    watchNotificationsTokenEncrypted: credentials.watchNotificationsTokenEncrypted,
-    watchNotificationsTokenCryptoMeta: credentials.watchNotificationsTokenCryptoMeta,
     username: credentials.username,
     avatarUrl: credentials.avatarUrl,
     displayName: credentials.displayName,
@@ -368,52 +323,16 @@ function mainCredentialIdentity(config: Config): string {
   ]);
 }
 
-function notificationsCredentialIdentity(config: Config): string {
-  return JSON.stringify([
-    config.watchNotificationsTokenEncrypted,
-    config.watchNotificationsTokenCryptoMeta,
-  ]);
-}
-
-function hasCompleteMainCredential(config: Config): boolean {
-  return !!(
-    normalizedAccountLogin(config.username) &&
-    config.tokenEncrypted &&
-    validCryptoMeta(config.tokenCryptoMeta)
-  );
-}
-
-function preserveCredentialBinding(previous: Config, proposed: Config): Config {
-  const accountChanged = normalizedAccountLogin(previous.username) !==
-    normalizedAccountLogin(proposed.username);
-  if (!accountChanged && hasCompleteMainCredential(proposed)) return proposed;
-  return {
-    ...proposed,
-    watchNotificationsTokenEncrypted: null,
-    watchNotificationsTokenCryptoMeta: null,
-  };
-}
-
-function updateCredentialCaches(previous: Config, normalized: Config): void {
-  cache = normalized;
-  if (mainCredentialIdentity(previous) !== mainCredentialIdentity(normalized)) {
-    plaintextToken = null;
-  }
-  if (
-    notificationsCredentialIdentity(previous) !== notificationsCredentialIdentity(normalized) ||
-    normalizedAccountLogin(previous.username) !== normalizedAccountLogin(normalized.username)
-  ) {
-    plaintextWatchNotificationsToken = null;
-  }
-}
-
 async function persistConfigUnlocked(previous: Config, proposed: Config): Promise<Config> {
   const normalized = withNormalizedConfig(withGitHubCredentials(
     proposed,
     credentialsFromConfig(previous),
   ));
   await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: normalized });
-  updateCredentialCaches(previous, normalized);
+  if (mainCredentialIdentity(previous) !== mainCredentialIdentity(normalized)) {
+    plaintextToken = null;
+  }
+  cache = normalized;
   return normalized;
 }
 
@@ -421,14 +340,17 @@ async function persistGitHubCredentialsUnlocked(
   previous: Config,
   proposed: Config,
 ): Promise<Config> {
-  const normalized = withNormalizedConfig(preserveCredentialBinding(previous, proposed));
+  const normalized = withNormalizedConfig(proposed);
   const credentials = normalizeStoredGitHubCredentials(credentialsFromConfig(normalized));
   const next = withGitHubCredentials(normalized, credentials);
   await chrome.storage.local.set({
     [CONFIG_STORAGE_KEY]: next,
     [GITHUB_CREDENTIALS_STORAGE_KEY]: credentials,
   });
-  updateCredentialCaches(previous, next);
+  if (mainCredentialIdentity(previous) !== mainCredentialIdentity(next)) {
+    plaintextToken = null;
+  }
+  cache = next;
   return next;
 }
 
@@ -489,68 +411,29 @@ async function readDecryptedToken(): Promise<string | null> {
   });
 }
 
-async function readDecryptedWatchNotificationsToken(): Promise<string | null> {
-  return runConfigExclusive(async () => {
-    const before = await readStoredConfig();
-    const decrypted = await decryptCredential(
-      before.watchNotificationsTokenEncrypted,
-      before.watchNotificationsTokenCryptoMeta,
-      plaintextWatchNotificationsToken,
-    );
-    const latest = await readStoredConfig();
-    if (
-      normalizedAccountLogin(before.username) !== normalizedAccountLogin(latest.username) ||
-      notificationsCredentialIdentity(before) !== notificationsCredentialIdentity(latest)
-    ) return null;
-    cache = latest;
-    plaintextWatchNotificationsToken = decrypted;
-    return decrypted?.value ?? null;
-  });
-}
-
 async function readGitHubCredentialSnapshot(): Promise<GitHubCredentialSnapshot> {
   return runConfigExclusive(async () => {
     const before = await readStoredConfig();
-    const [main, notifications] = await Promise.all([
-      decryptCredential(before.tokenEncrypted, before.tokenCryptoMeta, plaintextToken),
-      decryptCredential(
-        before.watchNotificationsTokenEncrypted,
-        before.watchNotificationsTokenCryptoMeta,
-        plaintextWatchNotificationsToken,
-      ),
-    ]);
+    const main = await decryptCredential(
+      before.tokenEncrypted,
+      before.tokenCryptoMeta,
+      plaintextToken,
+    );
     const latest = await readStoredConfig();
     const mainIdentity = mainCredentialIdentity(before);
-    const notificationsIdentity = notificationsCredentialIdentity(before);
-    if (
-      mainIdentity !== mainCredentialIdentity(latest) ||
-      notificationsIdentity !== notificationsCredentialIdentity(latest)
-    ) {
+    if (mainIdentity !== mainCredentialIdentity(latest)) {
       return {
         accountLogin: normalizedAccountLogin(latest.username),
         mainToken: null,
-        notificationsToken: null,
-        notificationsConfigured: !!(
-          latest.watchNotificationsTokenEncrypted &&
-          latest.watchNotificationsTokenCryptoMeta
-        ),
         mainIdentity: mainCredentialIdentity(latest),
-        notificationsIdentity: notificationsCredentialIdentity(latest),
       };
     }
     cache = latest;
     plaintextToken = main;
-    plaintextWatchNotificationsToken = notifications;
     return {
       accountLogin: normalizedAccountLogin(before.username),
       mainToken: main?.value ?? null,
-      notificationsToken: notifications?.value ?? null,
-      notificationsConfigured: !!(
-        before.watchNotificationsTokenEncrypted &&
-        before.watchNotificationsTokenCryptoMeta
-      ),
       mainIdentity,
-      notificationsIdentity,
     };
   });
 }
@@ -696,13 +579,6 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
         JSON.stringify(cache.tokenCryptoMeta ?? null);
     if (tokenChanged) plaintextToken = null;
 
-    const watchTokenChanged =
-      prev?.watchNotificationsTokenEncrypted !== cache.watchNotificationsTokenEncrypted ||
-      JSON.stringify(prev?.watchNotificationsTokenCryptoMeta ?? null) !==
-        JSON.stringify(cache.watchNotificationsTokenCryptoMeta ?? null) ||
-      prev?.username?.trim().toLowerCase() !== cache.username?.trim().toLowerCase();
-    if (watchTokenChanged) plaintextWatchNotificationsToken = null;
-
     plaintextAgentApiKey = null;
   });
 }
@@ -724,14 +600,6 @@ export const authStore = {
   /** A single account-bound credential view for background Watch operations. */
   async getGitHubCredentialSnapshot(): Promise<GitHubCredentialSnapshot> {
     return readGitHubCredentialSnapshot();
-  },
-
-  async hasWatchNotificationsToken(): Promise<boolean> {
-    return !!(await readDecryptedWatchNotificationsToken());
-  },
-
-  async getWatchNotificationsToken(): Promise<string | null> {
-    return readDecryptedWatchNotificationsToken();
   },
 
   /** The decrypted AI service API key, or null. Held only in memory. */
@@ -1073,17 +941,13 @@ export const authStore = {
    */
   async setToken(token: string): Promise<{
     username: string;
-    watching: Awaited<ReturnType<typeof probeTokenCapabilities>>['watching'];
   }> {
     const clean = token.trim();
     if (!clean) throw new Error(TOKEN_EMPTY);
 
-    const { login, avatarUrl, displayName, watching } =
-      await probeTokenCapabilities(clean);
+    const { login, avatarUrl, displayName } = await probeTokenCapabilities(clean);
     const { cipher, meta } = await encrypt(clean);
     await mutateGitHubCredentials((current) => {
-      const accountChanged = !!current.username &&
-        current.username.trim().toLowerCase() !== login.trim().toLowerCase();
       const onboardingStage =
         current.onboardingStage === "done" ? "done" : "awaiting_sync";
       return {
@@ -1094,17 +958,11 @@ export const authStore = {
         avatarUrl,
         displayName,
         onboardingStage,
-        watchNotificationsTokenEncrypted: accountChanged
-          ? null
-          : current.watchNotificationsTokenEncrypted,
-        watchNotificationsTokenCryptoMeta: accountChanged
-          ? null
-          : current.watchNotificationsTokenCryptoMeta,
       };
     }, () => {
       plaintextToken = { cipher, cryptoMeta: JSON.stringify(meta), value: clean };
     });
-    return { username: login, watching };
+    return { username: login };
   },
 
   async clearToken(): Promise<void> {
@@ -1119,53 +977,9 @@ export const authStore = {
         avatarUrl: null,
         displayName: null,
         onboardingStage,
-        watchNotificationsTokenEncrypted: null,
-        watchNotificationsTokenCryptoMeta: null,
       };
     }, () => {
       plaintextToken = null;
-      plaintextWatchNotificationsToken = null;
-    });
-  },
-
-  async setWatchNotificationsToken(token: string): Promise<{ username: string }> {
-    const clean = token.trim();
-    if (!clean) throw new Error(WATCH_TOKEN_EMPTY);
-    const before = await readGitHubCredentialSnapshot();
-    if (!before.mainToken || !before.accountLogin) {
-      throw new Error(WATCH_TOKEN_MAIN_ACCOUNT_REQUIRED);
-    }
-    const { login } = await probeWatchNotificationsToken(clean, before.accountLogin);
-    const { cipher, meta } = await encrypt(clean);
-    await mutateGitHubCredentials((current) => {
-      if (
-        normalizedAccountLogin(current.username) !== before.accountLogin ||
-        !hasCompleteMainCredential(current)
-      ) {
-        throw new Error(WATCH_TOKEN_ACCOUNT_CHANGED);
-      }
-      return {
-        ...current,
-        watchNotificationsTokenEncrypted: cipher,
-        watchNotificationsTokenCryptoMeta: meta,
-      };
-    }, () => {
-      plaintextWatchNotificationsToken = {
-        cipher,
-        cryptoMeta: JSON.stringify(meta),
-        value: clean,
-      };
-    });
-    return { username: login };
-  },
-
-  async clearWatchNotificationsToken(): Promise<void> {
-    await mutateGitHubCredentials((current) => ({
-        ...current,
-        watchNotificationsTokenEncrypted: null,
-        watchNotificationsTokenCryptoMeta: null,
-    }), () => {
-      plaintextWatchNotificationsToken = null;
     });
   },
 
@@ -1173,8 +987,6 @@ export const authStore = {
     const touchesGitHubCredentials = [
       'tokenEncrypted',
       'tokenCryptoMeta',
-      'watchNotificationsTokenEncrypted',
-      'watchNotificationsTokenCryptoMeta',
       'username',
       'avatarUrl',
       'displayName',

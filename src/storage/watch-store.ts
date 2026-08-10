@@ -421,33 +421,6 @@ export async function recordWatchInboxFailure(input: {
   );
 }
 
-export async function disconnectWatchInbox(
-  accountLogin: string | null | undefined,
-): Promise<void> {
-  const normalizedLogin = accountLogin?.trim()
-    ? normalizeAccountLogin(accountLogin)
-    : null;
-  await db.transaction(
-    'rw',
-    db.watchRepositories,
-    db.watchNotificationThreads,
-    db.watchState,
-    async () => {
-      const state = await db.watchState.get(WATCH_STATE_ID);
-      if (!normalizedLogin || state?.accountLogin !== normalizedLogin) {
-        await Promise.all([
-          db.watchRepositories.clear(),
-          db.watchNotificationThreads.clear(),
-          db.watchState.clear(),
-        ]);
-        return;
-      }
-      await db.watchNotificationThreads.clear();
-      await db.watchState.put({ ...state, inbox: emptyInbox() });
-    },
-  );
-}
-
 export async function clearWatchData(): Promise<void> {
   await db.transaction(
     'rw',

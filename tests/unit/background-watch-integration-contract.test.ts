@@ -27,13 +27,12 @@ describe('Watch background integration contract', () => {
     assert.doesNotMatch(broadcast, /invalidateCache|dataChanged/);
   });
 
-  it('includes the classic Notifications PAT in development capture redaction', () => {
+  it('includes the configured credentials in development capture redaction', () => {
     const configuredSecrets = extract(
       backgroundSource,
       /getConfiguredSecrets: async \(\) => Promise\.all\(\[([\s\S]*?)\]\)/,
     );
     assert.match(configuredSecrets, /authStore\.getToken\(\)/);
-    assert.match(configuredSecrets, /authStore\.getWatchNotificationsToken\(\)/);
     assert.match(configuredSecrets, /authStore\.getAgentApiKey\(\)/);
   });
 
@@ -48,8 +47,7 @@ describe('Watch background integration contract', () => {
 
     for (const [name, next, message] of [
       ['getWatchStatus', 'queryWatchInbox', 'watchStatusUnavailable'],
-      ['refreshWatchInbox', 'disconnectWatchInbox', 'watchRefreshFailed'],
-      ['disconnectWatchInbox', 'clearWatchData', 'watchDisconnectFailed'],
+      ['refreshWatchInbox', 'clearWatchData', 'watchRefreshFailed'],
       ['clearWatchData', 'getUsername', 'watchDataClearFailed'],
     ] as const) {
       const block = caseBlock(name, next);
@@ -63,13 +61,12 @@ describe('Watch background integration contract', () => {
   it('reconciles an account boundary without polling or nested queue work', () => {
     const listener = extract(
       backgroundSource,
-      /chrome\.storage\.onChanged\.addListener\(\(changes, areaName\) => \{([\s\S]*?)\n\}\);\nconst organizeJobRunConnections/,
+      /chrome\.storage\.onChanged\.addListener\(\(changes, areaName\) => \{([\s\S]*?)\r?\n\}\);\r?\nconst organizeJobRunConnections/,
     );
     assert.match(listener, /const credentialsChange = changes\[GITHUB_CREDENTIALS_STORAGE_KEY\]/);
     assert.match(listener, /const accountChange = credentialsChange \?\? changes\[CONFIG_STORAGE_KEY\]/);
     assert.match(listener, /watchMainAccountChanged\(accountChange\)/);
-    assert.match(listener, /void watchRefreshCoordinator\.reconcileAccount\(\{/);
-    assert.match(listener, /invalidateNotificationsIdentity: watchNotificationsIdentity\(accountChange\.oldValue\)/);
+    assert.match(listener, /void watchRefreshCoordinator\.reconcileAccount\(\)\.catch/);
     assert.doesNotMatch(listener, /jobQueue\.run/);
     assert.doesNotMatch(listener, /watchStore\.clearWatchData/);
     assert.doesNotMatch(listener, /watchRefreshCoordinator\.refresh|fetchGitHub/);

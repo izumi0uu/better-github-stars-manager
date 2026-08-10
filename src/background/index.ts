@@ -260,7 +260,6 @@ type Req =
   | { type: "queryWatchInbox"; unreadOnly?: unknown }
   | { type: "getWatchRepositoryDetail"; fullName?: unknown }
   | { type: "refreshWatchInbox" }
-  | { type: "disconnectWatchInbox" }
   | { type: "clearWatchData" }
   | { type: "getUsername" }
   | { type: "getAccount" }
@@ -326,7 +325,6 @@ const watchRefreshCoordinator = createWatchRefreshCoordinator({
     replaceInbox: watchStore.replaceWatchInbox,
     revalidateInbox: watchStore.revalidateWatchInbox,
     recordInboxFailure: watchStore.recordWatchInboxFailure,
-    disconnectInbox: watchStore.disconnectWatchInbox,
     clearData: watchStore.clearWatchData,
   },
   broadcastChanged: broadcastWatchChanged,
@@ -447,9 +445,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
   // The coordinator clears the account-bound token and IDB stores through the
   // shared queue. Wrapping it in another queued operation would deadlock it.
-  void watchRefreshCoordinator.reconcileAccount({
-    invalidateNotificationsIdentity: watchNotificationsIdentity(accountChange.oldValue),
-  }).catch(() => {});
+  void watchRefreshCoordinator.reconcileAccount().catch(() => {});
 });
 const organizeJobRunConnections = createBgsmOrganizeJobConnectionRegistry<chrome.runtime.Port>();
 let organizeJobRunMutationTail: Promise<void> = Promise.resolve();
@@ -465,7 +461,6 @@ const devRawCaptureCoordinator = DEV
   ? createDevRawCaptureCoordinator({
       getConfiguredSecrets: async () => Promise.all([
         authStore.getToken(),
-        authStore.getWatchNotificationsToken(),
         authStore.getAgentApiKey(),
       ]),
     })
@@ -1137,23 +1132,6 @@ function watchMainAccountChanged(change: { oldValue?: unknown; newValue?: unknow
   const previous = watchAccountLogin(change.oldValue);
   const next = watchAccountLogin(change.newValue);
   return previous !== next && (previous !== null || next !== null);
-}
-
-function watchNotificationsIdentity(config: unknown): string | null {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
-  const value = config as {
-    watchNotificationsTokenEncrypted?: unknown;
-    watchNotificationsTokenCryptoMeta?: unknown;
-  };
-  if (
-    typeof value.watchNotificationsTokenEncrypted !== 'string' ||
-    !value.watchNotificationsTokenEncrypted ||
-    !value.watchNotificationsTokenCryptoMeta
-  ) return null;
-  return JSON.stringify([
-    value.watchNotificationsTokenEncrypted,
-    value.watchNotificationsTokenCryptoMeta,
-  ]);
 }
 
 type BgsmAgentTurnResult = {
@@ -1970,14 +1948,6 @@ async function handle(req: Req): Promise<Res> {
           return { ok: true, data: await watchRefreshCoordinator.refresh() };
         } catch {
           return { ok: false, error: m.background.watchRefreshFailed };
-        }
-      }
-      case 'disconnectWatchInbox': {
-        const m = await getLocaleMessages();
-        try {
-          return { ok: true, data: await watchRefreshCoordinator.disconnectInbox() };
-        } catch {
-          return { ok: false, error: m.background.watchDisconnectFailed };
         }
       }
       case 'clearWatchData': {

@@ -5,7 +5,6 @@ import { db } from '@/storage/db';
 import { createChromeMock } from '../../helpers/chrome-mock';
 import {
   clearWatchData,
-  disconnectWatchInbox,
   getWatchRepositories,
   getWatchState,
   queryStoredWatchInbox,
@@ -313,76 +312,6 @@ describe('Watch snapshot storage', () => {
     assert.equal(result.state?.inbox.errorCode, null);
     assert.equal(result.state?.inbox.candidateCount, 2);
     assert.equal(result.state?.inbox.truncated, true);
-  });
-
-  it('isolates account changes and lets disconnect clear only private Inbox data', async () => {
-    await replaceWatchScope({
-      accountLogin: ACCOUNT,
-      repositories: [{ full_name: 'owner/repo' }],
-      attemptedAt: FIRST,
-    });
-    await replaceWatchInbox({
-      accountLogin: ACCOUNT,
-      threads: [thread('1')],
-      attemptedAt: FIRST,
-      lastModified: null,
-      nextAllowedAt: SECOND,
-      candidateCount: 1,
-      truncated: false,
-    });
-
-    await disconnectWatchInbox('IDAH');
-    assert.deepEqual(await getWatchRepositories('idah'), [{ full_name: 'owner/repo' }]);
-    assert.equal((await queryStoredWatchInbox({ accountLogin: 'idah' })).threads.length, 0);
-
-    await replaceWatchScope({
-      accountLogin: 'another-user',
-      repositories: [{ full_name: 'other/repo' }],
-      attemptedAt: SECOND,
-    });
-    assert.equal(await getWatchState('idah'), null);
-    assert.deepEqual(await getWatchRepositories('another-user'), [{ full_name: 'other/repo' }]);
-  });
-
-  it('never rebinds mismatched or orphaned rows to another account', async () => {
-    await replaceWatchScope({
-      accountLogin: ACCOUNT,
-      repositories: [{ full_name: 'alice/private' }],
-      attemptedAt: FIRST,
-    });
-    await replaceWatchInbox({
-      accountLogin: ACCOUNT,
-      threads: [thread('private', 'alice/private')],
-      attemptedAt: FIRST,
-      lastModified: null,
-      nextAllowedAt: null,
-      candidateCount: 1,
-      truncated: false,
-    });
-
-    await disconnectWatchInbox('bob');
-    assert.equal(await db.watchRepositories.count(), 0);
-    assert.equal(await db.watchNotificationThreads.count(), 0);
-    assert.equal(await db.watchState.count(), 0);
-
-    await replaceWatchScope({
-      accountLogin: ACCOUNT,
-      repositories: [{ full_name: 'alice/private' }],
-      attemptedAt: FIRST,
-    });
-    await db.watchState.clear();
-    await recordWatchScopeFailure({
-      accountLogin: 'bob',
-      attemptedAt: SECOND,
-      errorCode: 'network_error',
-    });
-    assert.deepEqual(await getWatchRepositories('bob'), []);
-    assert.equal(await db.watchRepositories.count(), 0);
-
-    await db.watchRepositories.put({ full_name: 'alice/private' });
-    await db.watchState.clear();
-    await disconnectWatchInbox(null);
-    assert.equal(await db.watchRepositories.count(), 0);
   });
 
   it('clears only Watch data while preserving annotations, Agent stores, and Gist state', async () => {

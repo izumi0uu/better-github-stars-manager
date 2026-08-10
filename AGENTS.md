@@ -14,6 +14,7 @@ Keep this file short and practical. Add rules here only when they are core to th
 - `src/types/index.ts`: shared domain types and config shape.
 - `src/auth/auth-store.ts`: `chrome.storage.local` config normalization.
 - `src/api/github-star-source.ts`: GitHub REST/GraphQL sync logic.
+- `src/content/stars-page/native-star-listener.ts`: native GitHub star/unstar DOM event interception.
 - `src/upgrades/backfill-state.ts` and `src/upgrades/tasks.ts`: one-shot feature/data backfills.
 - `src/background/index.ts`: backfill orchestration and sync entrypoints.
 - `tests/unit`, `tests/integration`, `tests/regressions`, `tests/runtime`: test layers.
@@ -49,6 +50,7 @@ Keep this file short and practical. Add rules here only when they are core to th
 
 ## Sync And GitHub API Rules
 
+- GitHub authentication uses Classic Personal Access Tokens (PAT, starting with `ghp_`) requiring `repo`, `gist`, and `notifications` scopes.
 - Keep incremental sync and rescan aligned with authenticated REST `GET /user/starred`; that endpoint matches the current cursor and tombstone model.
 - Keep full sync, incremental sync, and rescan aligned with authenticated REST `GET /user/starred` whenever the required metadata already exists there.
 - `archived` must come from GitHub metadata (`repo.archived` or GraphQL `isArchived`) and be stored locally; never guess it from UI state.

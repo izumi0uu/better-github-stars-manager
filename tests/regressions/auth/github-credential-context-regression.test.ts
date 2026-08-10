@@ -11,7 +11,7 @@ function mainTokenFetch(login: string, probeId: string): typeof fetch {
     const url = String(input);
     const method = init?.method ?? 'GET';
     if (url.endsWith('/user') && method === 'GET') {
-      return response(200, { login, avatar_url: null, name: login }, { 'x-oauth-scopes': '' });
+      return response(200, { login, avatar_url: null, name: login }, { 'x-oauth-scopes': 'repo, gist, notifications' });
     }
     if (url.includes('/user/starred') && method === 'GET') return response(200, []);
     if (url.endsWith('/gists') && method === 'POST') return response(201, { id: probeId });
@@ -125,14 +125,6 @@ describe('GitHub credential context isolation', () => {
     globalThis.fetch = mainTokenFetch('idah', 'probe-context-main');
     await first.authStore.setToken('github_pat_context_main');
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.endsWith('/user')) return response(200, { login: 'idah' });
-      if (url.includes('/notifications?all=true&per_page=1')) return response(200, []);
-      throw new Error(`unexpected Notifications fetch: ${url}`);
-    }) as typeof fetch;
-    await first.authStore.setWatchNotificationsToken('ghp_context_watch');
-
     const stale = await chromeMock.api.storage.local.get('gsm_config');
     await second.authStore.clearToken();
     await chromeMock.api.storage.local.set({
@@ -145,11 +137,8 @@ describe('GitHub credential context isolation', () => {
     const current = await first.authStore.getConfig();
     assert.equal(current.username, null);
     assert.equal(current.tokenEncrypted, null);
-    assert.equal(current.watchNotificationsTokenEncrypted, null);
     assert.equal(await first.authStore.getToken(), null);
-    assert.equal(await first.authStore.getWatchNotificationsToken(), null);
     assert.equal(await second.authStore.getToken(), null);
-    assert.equal(await second.authStore.getWatchNotificationsToken(), null);
   });
 
   it('does not publish a decrypted token when the credential record changes mid-read', async () => {
@@ -181,8 +170,6 @@ describe('GitHub credential context isolation', () => {
           ...(stored.gsm_github_credentials_v1 as Record<string, unknown>),
           tokenEncrypted: null,
           tokenCryptoMeta: null,
-          watchNotificationsTokenEncrypted: null,
-          watchNotificationsTokenCryptoMeta: null,
           username: null,
           avatarUrl: null,
           displayName: null,

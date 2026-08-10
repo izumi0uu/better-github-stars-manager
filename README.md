@@ -104,24 +104,21 @@ Chrome will handle updates automatically after installation from the store.
 
 ### Token setup
 
-Step 1: Create a **fine-grained personal access token** and click **Generate new token**.
+Step 1: Open GitHub → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)**, then click **Generate new token (classic)**.
 
-![Create a fine-grained token](public/tutorial/img_01.png)
+![Create classic PAT](public/tutorial/img_01.png)
 
-Step 2: For repository access, choose **Public repositories**.
+Step 2: Select the required scopes: `repo`, `gist`, and `notifications`, then generate and copy the token (starts with `ghp_`).
 
-![Choose repository access](public/tutorial/img_02.png)
+![Select token scopes](public/tutorial/img_02.png)
 
-Step 3: Add **Gists: read and write** so cross-device sync can work.
+Required GitHub token scopes:
 
-![Grant Gists permission](public/tutorial/img_03.png)
+- **repo** (full repository control — needed for sync, unstar, and watch scope)
+- **gist** (read/write — for cross-device tag and note sync)
+- **notifications** (notifications — for Watch Inbox)
 
-Recommended GitHub token permissions:
-
-- **Public Repositories (read)**
-- **Gists (read/write)**
-
-> Fine-grained token Gist permissions are account-level (they cannot be scoped per gist). The extension creates a dedicated secret gist for sync.
+> Note: classic PAT `gist` permissions are account-wide. The extension creates one dedicated secret gist for sync.
 
 ### Another way --> Local development install
 

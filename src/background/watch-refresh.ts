@@ -7,7 +7,6 @@ import {
 import type { fetchGitHubWatchScope } from '@/api/github-watch-scope-source';
 import type {
   clearWatchData,
-  disconnectWatchInbox,
   getWatchRepositories,
   getWatchState,
   queryStoredWatchInbox,
@@ -31,10 +30,7 @@ import type {
   WatchStatus,
 } from '@/watch/watch-contract';
 
-type WatchAuth = Pick<typeof authStore,
-  | 'getGitHubCredentialSnapshot'
-  | 'clearWatchNotificationsToken'
->;
+type WatchAuth = Pick<typeof authStore, 'getGitHubCredentialSnapshot'>;
 
 export interface WatchRefreshCoordinatorDependencies {
   runSerialized<T>(operation: () => Promise<T>): Promise<T>;
@@ -53,7 +49,6 @@ export interface WatchRefreshCoordinatorDependencies {
     replaceInbox: typeof replaceWatchInbox;
     revalidateInbox: typeof revalidateWatchInbox;
     recordInboxFailure: typeof recordWatchInboxFailure;
-    disconnectInbox: typeof disconnectWatchInbox;
     clearData: typeof clearWatchData;
   };
   now?: () => number;
@@ -64,11 +59,8 @@ export interface WatchRefreshCoordinator {
   getStatus(): Promise<WatchStatus>;
   queryInbox(unreadOnly: boolean): Promise<WatchInboxQueryResponse>;
   refresh(): Promise<WatchRefreshResult>;
-  disconnectInbox(): Promise<WatchStatus>;
   clearData(): Promise<WatchStatus>;
-  reconcileAccount(options?: {
-    invalidateNotificationsIdentity?: string | null;
-  }): Promise<void>;
+  reconcileAccount(): Promise<void>;
   isRefreshing(): boolean;
 }
 
@@ -99,27 +91,18 @@ export function createWatchRefreshCoordinator(
     return dependencies.auth.getGitHubCredentialSnapshot();
   }
 
-  async function sameCredentials(
-    snapshot: AuthSnapshot,
-    includeNotifications: boolean,
-  ): Promise<boolean> {
+  async function sameCredentials(snapshot: AuthSnapshot): Promise<boolean> {
     const latest = await readAuth();
     return latest.accountLogin === snapshot.accountLogin &&
       latest.mainToken !== null &&
-      latest.mainIdentity === snapshot.mainIdentity &&
-      (!includeNotifications || (
-        latest.notificationsToken === snapshot.notificationsToken &&
-        latest.notificationsIdentity === snapshot.notificationsIdentity
-      ));
+      latest.mainIdentity === snapshot.mainIdentity;
   }
 
   function refreshIdentity(auth: AuthSnapshot): string {
     return JSON.stringify([
       auth.accountLogin,
       auth.mainIdentity,
-      auth.notificationsIdentity,
       auth.mainToken !== null,
-      auth.notificationsConfigured,
     ]);
   }
 
@@ -133,7 +116,6 @@ export function createWatchRefreshCoordinator(
     stateOverride?: WatchStatus['state'],
   ): Promise<WatchStatus> {
     const hasMainToken = !!(auth.accountLogin && auth.mainToken);
-    const hasNotificationsToken = !!auth.notificationsToken;
     const state = stateOverride === undefined && hasMainToken && auth.accountLogin
       ? await dependencies.store.getState(auth.accountLogin)
       : stateOverride ?? null;
@@ -143,7 +125,7 @@ export function createWatchRefreshCoordinator(
         ? state?.scope.errorCode ? 'error' : 'never_loaded'
         : state.scope.errorCode ? 'stale' : 'fresh';
     let inboxStatus: WatchStatus['inboxStatus'];
-    if (!hasNotificationsToken) {
+    if (!hasMainToken) {
       inboxStatus = 'not_configured';
     } else if (!state?.scope.lastSuccessfulAt) {
       inboxStatus = 'scope_unavailable';
@@ -162,7 +144,6 @@ export function createWatchRefreshCoordinator(
     return {
       accountLogin: auth.accountLogin,
       hasMainToken,
-      hasNotificationsToken,
       refreshing,
       scopeStatus,
       inboxStatus,
@@ -202,7 +183,7 @@ export function createWatchRefreshCoordinator(
       inboxPublished: false,
       notModified: false,
     };
-    if (!auth.accountLogin || !auth.mainToken || !await sameCredentials(auth, true)) {
+    if (!auth.accountLogin || !auth.mainToken || !await sameCredentials(auth)) {
       return empty;
     }
     const refreshStartedAt = now();
@@ -222,7 +203,7 @@ export function createWatchRefreshCoordinator(
         dependencies.fetchScope({ token: auth.mainToken, now: () => refreshStartedAt }),
         dependencies.loadLiveRepositoryNames(),
       ]);
-      if (!await sameCredentials(auth, false)) return empty;
+      if (!await sameCredentials(auth)) return empty;
       const live = new Set(liveNames.flatMap((name) => {
         const canonical = canonicalRepositoryFullName(name);
         return canonical ? [canonical] : [];
@@ -239,7 +220,7 @@ export function createWatchRefreshCoordinator(
       scopePublished = true;
       changed = true;
     } catch (error) {
-      if (!await sameCredentials(auth, false)) return empty;
+      if (!await sameCredentials(auth)) return empty;
       await dependencies.store.recordScopeFailure({
         accountLogin: auth.accountLogin,
         attemptedAt,
@@ -256,16 +237,16 @@ export function createWatchRefreshCoordinator(
 
     let inboxPublished = false;
     let notModified = false;
-    if (auth.notificationsToken && scopeAvailable && await sameCredentials(auth, true)) {
+    if (auth.mainToken && scopeAvailable && await sameCredentials(auth)) {
       const state = await dependencies.store.getState(auth.accountLogin);
       try {
         const snapshot = await dependencies.fetchNotifications({
-          token: auth.notificationsToken,
+          token: auth.mainToken,
           before: refreshStartedAt,
           lastModified: state?.inbox.lastModified ?? null,
           now: () => refreshStartedAt,
         });
-        if (!await sameCredentials(auth, true)) {
+        if (!await sameCredentials(auth)) {
           if (changed) dependencies.broadcastChanged();
           return { ...empty, scopePublished };
         }
@@ -297,7 +278,7 @@ export function createWatchRefreshCoordinator(
         }
         changed = true;
       } catch (error) {
-        if (await sameCredentials(auth, true)) {
+        if (await sameCredentials(auth)) {
           await dependencies.store.recordInboxFailure({
             accountLogin: auth.accountLogin,
             attemptedAt,
@@ -339,55 +320,23 @@ export function createWatchRefreshCoordinator(
     return promise;
   }
 
-  async function disconnectInboxCommand(): Promise<WatchStatus> {
-    await reconcileAccount();
-    await dependencies.runSerialized(async () => {
-      const auth = await readAuth();
-      await dependencies.auth.clearWatchNotificationsToken();
-      await dependencies.store.disconnectInbox(auth.accountLogin);
-      dependencies.broadcastChanged();
-    });
-    return deriveStatus(false);
-  }
-
   async function clearDataCommand(): Promise<WatchStatus> {
     await reconcileAccount();
     await dependencies.runSerialized(async () => {
-      await dependencies.auth.clearWatchNotificationsToken();
       await dependencies.store.clearData();
       dependencies.broadcastChanged();
     });
     return deriveStatus(false);
   }
 
-  async function reconcileAccount(options: {
-    invalidateNotificationsIdentity?: string | null;
-  } = {}): Promise<void> {
+  async function reconcileAccount(): Promise<void> {
     await dependencies.runSerialized(async () => {
       const auth = await readAuth();
       const dataCleared = await dependencies.store.reconcileAccount(auth.accountLogin);
       const scopePruned = !dataCleared && auth.accountLogin
         ? await dependencies.store.reconcileLiveStars(auth.accountLogin)
         : false;
-      const shouldClearNotifications = !auth.accountLogin || (
-        !!options.invalidateNotificationsIdentity &&
-        auth.notificationsConfigured &&
-        auth.notificationsIdentity === options.invalidateNotificationsIdentity
-      );
-      let credentialsCleared = false;
-      if (shouldClearNotifications) {
-        const latest = await readAuth();
-        if (
-          !latest.accountLogin || (
-            latest.notificationsConfigured &&
-            latest.notificationsIdentity === options.invalidateNotificationsIdentity
-          )
-        ) {
-          await dependencies.auth.clearWatchNotificationsToken();
-          credentialsCleared = true;
-        }
-      }
-      if (dataCleared || scopePruned || credentialsCleared) dependencies.broadcastChanged();
+      if (dataCleared || scopePruned) dependencies.broadcastChanged();
     });
   }
 
@@ -401,7 +350,6 @@ export function createWatchRefreshCoordinator(
       return queryInbox(unreadOnly);
     },
     refresh,
-    disconnectInbox: disconnectInboxCommand,
     clearData: clearDataCommand,
     reconcileAccount,
     isRefreshing: () => inFlight !== null,

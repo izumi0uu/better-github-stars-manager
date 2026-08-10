@@ -50,7 +50,6 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
     status: overrides.status ?? {
       accountLogin: 'idah',
       hasMainToken: true,
-      hasNotificationsToken: true,
       refreshing: false,
       scopeStatus: 'fresh',
       inboxStatus: 'fresh',

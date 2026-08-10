@@ -22,8 +22,6 @@ function config(): Config {
   return {
     tokenEncrypted: 'main-cipher',
     tokenCryptoMeta: { iv: 'main-iv', salt: 'main-salt' },
-    watchNotificationsTokenEncrypted: 'watch-cipher',
-    watchNotificationsTokenCryptoMeta: { iv: 'watch-iv', salt: 'watch-salt' },
     agentProvider: {
       provider: 'openai',
       protocol: null,
@@ -126,37 +124,20 @@ function deferred<T>() {
 }
 
 function harness(input: {
-  hasNotificationsToken?: boolean;
+  hasMainToken?: boolean;
   fetchScope?: WatchRefreshCoordinatorDependencies['fetchScope'];
   fetchNotifications?: WatchRefreshCoordinatorDependencies['fetchNotifications'];
   queryInbox?: typeof watchStore.queryStoredWatchInbox;
-  disconnectInbox?: typeof watchStore.disconnectWatchInbox;
   liveRepositoryNames?: string[];
   currentTime?: number;
   now?: () => number;
   runSerialized?: WatchRefreshCoordinatorDependencies['runSerialized'];
 } = {}) {
   let currentConfig = config();
-  let mainToken: string | null = 'main-token';
-  let notificationsToken: string | null = input.hasNotificationsToken === false ? null : 'watch-token';
-  if (!notificationsToken) {
-    currentConfig = {
-      ...currentConfig,
-      watchNotificationsTokenEncrypted: null,
-      watchNotificationsTokenCryptoMeta: null,
-    };
-  }
+  let mainToken: string | null = input.hasMainToken === false ? null : 'main-token';
   const fetchScope = input.fetchScope ?? vi.fn(async () => scopeSnapshot());
   const fetchNotifications = input.fetchNotifications ?? vi.fn(async () => inboxSnapshot());
   const broadcastChanged = vi.fn();
-  const clearWatchNotificationsToken = vi.fn(async () => {
-    notificationsToken = null;
-    currentConfig = {
-      ...currentConfig,
-      watchNotificationsTokenEncrypted: null,
-      watchNotificationsTokenCryptoMeta: null,
-    };
-  });
   const runner = createSerializedRunner();
   const runSerialized = input.runSerialized ?? ((operation) => runner.run(operation));
   const coordinator = createWatchRefreshCoordinator({
@@ -165,22 +146,12 @@ function harness(input: {
       getGitHubCredentialSnapshot: async () => ({
         accountLogin: currentConfig.username?.trim().toLowerCase() ?? null,
         mainToken,
-        notificationsToken,
-        notificationsConfigured: !!(
-          currentConfig.watchNotificationsTokenEncrypted &&
-          currentConfig.watchNotificationsTokenCryptoMeta
-        ),
         mainIdentity: JSON.stringify([
           currentConfig.username?.trim().toLowerCase() ?? null,
           currentConfig.tokenEncrypted,
           currentConfig.tokenCryptoMeta,
         ]),
-        notificationsIdentity: JSON.stringify([
-          currentConfig.watchNotificationsTokenEncrypted,
-          currentConfig.watchNotificationsTokenCryptoMeta,
-        ]),
       }),
-      clearWatchNotificationsToken,
     },
     fetchScope,
     fetchNotifications,
@@ -196,7 +167,6 @@ function harness(input: {
       replaceInbox: watchStore.replaceWatchInbox,
       revalidateInbox: watchStore.revalidateWatchInbox,
       recordInboxFailure: watchStore.recordWatchInboxFailure,
-      disconnectInbox: input.disconnectInbox ?? watchStore.disconnectWatchInbox,
       clearData: watchStore.clearWatchData,
     },
     now: input.now ?? (() => input.currentTime ?? NOW),
@@ -207,22 +177,8 @@ function harness(input: {
     fetchScope,
     fetchNotifications,
     broadcastChanged,
-    clearWatchNotificationsToken,
-    clearWatchToken() {
-      notificationsToken = null;
-      currentConfig = {
-        ...currentConfig,
-        watchNotificationsTokenEncrypted: null,
-        watchNotificationsTokenCryptoMeta: null,
-      };
-    },
-    setWatchToken(value = 'replacement-watch-token') {
-      notificationsToken = value;
-      currentConfig = {
-        ...currentConfig,
-        watchNotificationsTokenEncrypted: `${value}:cipher`,
-        watchNotificationsTokenCryptoMeta: { iv: `${value}:iv`, salt: `${value}:salt` },
-      };
+    clearMainToken() {
+      mainToken = null;
     },
     logout() {
       currentConfig = { ...currentConfig, username: null };
@@ -308,13 +264,14 @@ describe('Watch background refresh coordinator', () => {
     expect(h.broadcastChanged).not.toHaveBeenCalled();
   });
 
-  it('refreshes native scope without a classic Notifications token', async () => {
-    const h = harness({ hasNotificationsToken: false });
+  it('skips refresh when no main token is configured', async () => {
+    const h = harness({ hasMainToken: false });
     const result = await h.coordinator.refresh();
 
-    expect(h.fetchScope).toHaveBeenCalledTimes(1);
+    expect(h.fetchScope).not.toHaveBeenCalled();
     expect(h.fetchNotifications).not.toHaveBeenCalled();
-    expect(result.scopePublished).toBe(true);
+    expect(result.scopePublished).toBe(false);
+    expect(result.status.scopeStatus).toBe('not_configured');
     expect(result.status.inboxStatus).toBe('not_configured');
   });
 
@@ -498,10 +455,7 @@ describe('Watch background refresh coordinator', () => {
     const fetchScope = vi.fn(async () => (
       fetchScope.mock.calls.length === 1 ? firstScope.promise : scopeSnapshot()
     ));
-    const h = harness({
-      hasNotificationsToken: false,
-      fetchScope,
-    });
+    const h = harness({ fetchScope });
 
     const first = h.coordinator.refresh();
     await vi.waitFor(() => expect(fetchScope).toHaveBeenCalledTimes(1));
@@ -531,13 +485,13 @@ describe('Watch background refresh coordinator', () => {
     expect(state?.inbox.nextAllowedAt).toBe(new Date(clock + 60_000).toISOString());
   });
 
-  it('does not send the old Notifications token when it is revoked during scope refresh', async () => {
+  it('does not send the revoked main token when it is cleared during scope refresh', async () => {
     const pendingScope = deferred<WatchScopeSnapshot>();
     const h = harness({ fetchScope: vi.fn(async () => pendingScope.promise) });
 
     const refresh = h.coordinator.refresh();
     await vi.waitFor(() => expect(h.fetchScope).toHaveBeenCalledTimes(1));
-    h.clearWatchToken();
+    h.clearMainToken();
     pendingScope.resolve(scopeSnapshot());
 
     await refresh;
@@ -561,7 +515,7 @@ describe('Watch background refresh coordinator', () => {
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     await pending.shift()!(); // entry reconciliation
     await vi.waitFor(() => expect(pending).toHaveLength(1));
-    h.clearWatchToken();
+    h.clearMainToken();
     await pending.shift()!(); // refresh operation
 
     const result = await refresh;
@@ -570,48 +524,7 @@ describe('Watch background refresh coordinator', () => {
     expect(h.fetchNotifications).not.toHaveBeenCalled();
   });
 
-  it('reconciles an interrupted account cleanup without deleting a newer Watch token', async () => {
-    await watchStore.replaceWatchScope({
-      accountLogin: ACCOUNT,
-      repositories: [{ full_name: 'owner/repo' }],
-      attemptedAt: new Date(NOW).toISOString(),
-    });
-    const h = harness();
-    h.changeAccount('another-user');
-    h.setWatchToken();
-
-    await h.coordinator.reconcileAccount({
-      invalidateNotificationsIdentity: JSON.stringify([
-        'watch-cipher',
-        { iv: 'watch-iv', salt: 'watch-salt' },
-      ]),
-    });
-
-    expect(await watchStore.getWatchState(ACCOUNT)).toBeNull();
-    expect((await h.coordinator.getStatus()).hasNotificationsToken).toBe(true);
-  });
-
-  it('clears the old classic credential only when its persisted identity still matches', async () => {
-    await watchStore.replaceWatchScope({
-      accountLogin: ACCOUNT,
-      repositories: [{ full_name: 'owner/repo' }],
-      attemptedAt: new Date(NOW).toISOString(),
-    });
-    const h = harness();
-    h.changeAccount('another-user');
-
-    await h.coordinator.reconcileAccount({
-      invalidateNotificationsIdentity: JSON.stringify([
-        'watch-cipher',
-        { iv: 'watch-iv', salt: 'watch-salt' },
-      ]),
-    });
-
-    expect((await h.coordinator.getStatus()).hasNotificationsToken).toBe(false);
-    expect(await watchStore.getWatchState(ACCOUNT)).toBeNull();
-  });
-
-  it('clears stale account data and the classic credential after logout on the next Watch entry', async () => {
+  it('clears stale account data after logout on the next Watch entry', async () => {
     await watchStore.replaceWatchScope({
       accountLogin: ACCOUNT,
       repositories: [{ full_name: 'owner/repo' }],
@@ -622,25 +535,7 @@ describe('Watch background refresh coordinator', () => {
 
     const status = await h.coordinator.getStatus();
 
-    expect(status.hasNotificationsToken).toBe(false);
+    expect(status.hasMainToken).toBe(false);
     expect(await watchStore.getWatchState(ACCOUNT)).toBeNull();
-  });
-
-  it('broadcasts disconnect invalidation only after cached threads are cleared', async () => {
-    const pendingDisconnect = deferred<void>();
-    const disconnectInbox = vi.fn(async () => pendingDisconnect.promise);
-    const h = harness({ disconnectInbox });
-
-    const disconnect = h.coordinator.disconnectInbox();
-    await vi.waitFor(() => {
-      expect(h.clearWatchNotificationsToken).toHaveBeenCalledTimes(1);
-      expect(disconnectInbox).toHaveBeenCalledWith(ACCOUNT);
-    });
-    expect(h.broadcastChanged).not.toHaveBeenCalled();
-
-    pendingDisconnect.resolve();
-    await disconnect;
-
-    expect(h.broadcastChanged).toHaveBeenCalledTimes(1);
   });
 });

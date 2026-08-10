@@ -22,7 +22,6 @@ export type WatchInboxStatus =
 export interface WatchStatus {
   accountLogin: string | null;
   hasMainToken: boolean;
-  hasNotificationsToken: boolean;
   refreshing: boolean;
   scopeStatus: WatchScopeStatus;
   inboxStatus: WatchInboxStatus;

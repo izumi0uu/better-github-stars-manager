@@ -104,24 +104,21 @@ Chrome 商店安装地址:
 
 ### Token 配置
 
-Step 1: 创建一个 **fine-grained personal access token**,点 **Generate new token**。
+Step 1: 打开 GitHub → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)**，点击 **Generate new token (classic)**。
 
-![创建 fine-grained token](public/tutorial/img_01.png)
+![创建 classic PAT](public/tutorial/img_01.png)
 
-Step 2: Repository access 选 **Public repositories**。
+Step 2: 勾选所需 scope：`repo`、`gist`、`notifications`，生成并复制 Token（以 `ghp_` 开头）。
 
-![选择仓库访问范围](public/tutorial/img_02.png)
+![选择 scope 权限](public/tutorial/img_02.png)
 
-Step 3: 加上 **Gists: read and write**,以便跨设备同步可用。
+所需的 GitHub token 权限 (scopes):
 
-![授予 Gists 权限](public/tutorial/img_03.png)
+- **repo** (仓库完整控制 —— 用于同步、unstar 和 Watch scope)
+- **gist** (读写 —— 用于跨设备标签与笔记同步)
+- **notifications** (通知 —— 用于 Watch Inbox)
 
-推荐的 GitHub token 权限:
-
-- **Public Repositories (read)**
-- **Gists (read/write)**
-
-> 细粒度 token 的 Gist 权限是账号级的(不能按 gist 隔离)。扩展会为同步创建一个专用 secret gist。
+> 注意：classic PAT 的 `gist` 权限是账号级的。扩展会为同步创建一个专用 secret gist。
 
 ### 另一种方式 --> 本地开发安装
 

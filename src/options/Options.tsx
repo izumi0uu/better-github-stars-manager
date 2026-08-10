@@ -21,7 +21,6 @@ import {
   type SyncStatus,
 } from "@/utils/messaging";
 import {
-  TOKEN_WATCHING_FORBIDDEN,
   translateError,
 } from "@/api/errors";
 import { Button } from "@/ui/shadcn/button";
@@ -72,7 +71,6 @@ import { AgentDataDisclosurePanel } from "./AgentDataDisclosurePanel";
 
 const tutorialNewToken = "/tutorial/img_01.png";
 const tutorialRepoAccess = "/tutorial/img_02.png";
-const tutorialPermissions = "/tutorial/img_03.png";
 const agentProviders = getAgentProviders();
 const DEFAULT_CUSTOM_AGENT_PROTOCOL: AgentCustomProviderProtocol = "chat-completions";
 const MIN_AGENT_CONTEXT_WINDOW = 4_096;
@@ -118,7 +116,6 @@ function StatusNotice({
 export function Options() {
   const [username, setUsername] = useState<string | null>(null);
   const [hasUsableToken, setHasUsableToken] = useState(false);
-  const [hasWatchNotificationsToken, setHasWatchNotificationsToken] = useState(false);
   const [gistId, setGistId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [agentProvider, setAgentProvider] = useState<AgentProviderId>("openai");
@@ -142,30 +139,25 @@ export function Options() {
   const persistedMinTopicRepoCountRef = useRef(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
   const [starsPanelDefaultEnabled, setStarsPanelDefaultEnabled] = useState(true);
   const [tokenBusy, setTokenBusy] = useState(false);
-  const [watchTokenBusy, setWatchTokenBusy] = useState(false);
   const [agentSaveBusy, setAgentSaveBusy] = useState(false);
   const [agentTestBusy, setAgentTestBusy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [msg, setMsg] = useState<OptionsMessage | null>(null);
-  const [watchMsg, setWatchMsg] = useState<OptionsMessage | null>(null);
   const [agentMsg, setAgentMsg] = useState<OptionsMessage | null>(null);
   const { locale, setLocale, m } = useI18n();
   const tokenInput = useImeBufferedInput("");
-  const watchTokenInput = useImeBufferedInput("");
   const refreshGeneration = useRef(0);
 
   const refresh = async () => {
     const generation = ++refreshGeneration.current;
-    const [c, hasToken, hasWatchToken, status] = await Promise.all([
+    const [c, hasToken, status] = await Promise.all([
       authStore.getConfig(),
       authStore.hasToken(),
-      authStore.hasWatchNotificationsToken(),
       bgCall<SyncStatus>("getStatus").catch(() => null),
     ]);
     if (generation !== refreshGeneration.current) return;
     setUsername(c.username);
     setHasUsableToken(hasToken);
-    setHasWatchNotificationsToken(hasWatchToken);
     setGistId(c.gistId);
     setTheme(c.theme);
     setAgentProvider(c.agentProvider.provider);
@@ -209,15 +201,8 @@ export function Options() {
     setTokenBusy(true);
     setMsg(null);
     try {
-      const { username: u, watching } = await authStore.setToken(tokenInput.value);
-      setMsg(watching.available
-        ? { kind: "ok", text: m.options.tokenVerified(u) }
-        : {
-            kind: "warn",
-            text: watching.errorCode === TOKEN_WATCHING_FORBIDDEN
-              ? m.options.tokenVerifiedWatchForbidden(u)
-              : m.options.tokenVerifiedWatchUnverified(u),
-          });
+      const { username: u } = await authStore.setToken(tokenInput.value);
+      setMsg({ kind: "ok", text: m.options.tokenVerified(u) });
       tokenInput.commit("");
       await refresh();
     } catch (e) {
@@ -231,41 +216,6 @@ export function Options() {
     await authStore.clearToken();
     await refresh();
     setMsg({ kind: "ok", text: m.options.tokenRemoved });
-  };
-
-  const saveWatchNotificationsToken = async () => {
-    setWatchTokenBusy(true);
-    setWatchMsg(null);
-    try {
-      const { username: connectedUsername } = await authStore.setWatchNotificationsToken(
-        watchTokenInput.value,
-      );
-      watchTokenInput.commit("");
-      await refresh();
-      setWatchMsg({
-        kind: "ok",
-        text: m.options.watchTokenConnected(connectedUsername),
-      });
-    } catch (error) {
-      setWatchMsg({ kind: "err", text: translateError(error, m) });
-    } finally {
-      setWatchTokenBusy(false);
-    }
-  };
-
-  const disconnectWatchNotificationsToken = async () => {
-    setWatchTokenBusy(true);
-    setWatchMsg(null);
-    try {
-      await bgCall("disconnectWatchInbox");
-      watchTokenInput.commit("");
-      await refresh();
-      setWatchMsg({ kind: "ok", text: m.options.watchTokenDisconnected });
-    } catch (error) {
-      setWatchMsg({ kind: "err", text: translateError(error, m) });
-    } finally {
-      setWatchTokenBusy(false);
-    }
   };
 
   const requestAgentConnectionTest = (apiKey?: string) => bgCall<AgentConnectionResult>(
@@ -439,14 +389,14 @@ export function Options() {
   );
   const progressValue = syncStatus?.progress.total
     ? Math.max(
-        1,
-        Math.min(
-          100,
-          Math.round(
-            (syncStatus.progress.done / syncStatus.progress.total) * 100,
-          ),
+      1,
+      Math.min(
+        100,
+        Math.round(
+          (syncStatus.progress.done / syncStatus.progress.total) * 100,
         ),
-      )
+      ),
+    )
     : null;
   const progressCount = syncStatus?.progress.total
     ? `${syncStatus.progress.done}/${syncStatus.progress.total}`
@@ -556,13 +506,9 @@ export function Options() {
         oldCfg?.locale === newCfg?.locale &&
         oldCfg?.tokenEncrypted === newCfg?.tokenEncrypted &&
         JSON.stringify(oldCfg?.tokenCryptoMeta ?? null) ===
-          JSON.stringify(newCfg?.tokenCryptoMeta ?? null) &&
-        oldCfg?.watchNotificationsTokenEncrypted ===
-          newCfg?.watchNotificationsTokenEncrypted &&
-        JSON.stringify(oldCfg?.watchNotificationsTokenCryptoMeta ?? null) ===
-          JSON.stringify(newCfg?.watchNotificationsTokenCryptoMeta ?? null) &&
+        JSON.stringify(newCfg?.tokenCryptoMeta ?? null) &&
         JSON.stringify(oldCfg?.agentProvider ?? null) ===
-          JSON.stringify(newCfg?.agentProvider ?? null) &&
+        JSON.stringify(newCfg?.agentProvider ?? null) &&
         oldCfg?.maxTagsPerRepo === newCfg?.maxTagsPerRepo &&
         oldCfg?.minTopicRepoCount === newCfg?.minTopicRepoCount &&
         oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled;
@@ -648,7 +594,7 @@ export function Options() {
           {m.options.tokenIntroPrefix}{" "}
           <a
             className="text-primary hover:underline"
-            href="https://github.com/settings/personal-access-tokens/new"
+            href="https://github.com/settings/tokens"
             target="_blank"
             rel="noreferrer"
           >
@@ -677,10 +623,6 @@ export function Options() {
             <ScreenshotCard
               src={tutorialRepoAccess}
               caption={m.options.shotRepoAccess}
-            />
-            <ScreenshotCard
-              src={tutorialPermissions}
-              caption={m.options.shotPermissions}
             />
           </div>
         </details>
@@ -724,7 +666,7 @@ export function Options() {
 
         <Textarea
           {...tokenInput.inputProps}
-          placeholder="github_pat_..."
+          placeholder="ghp_..."
           rows={2}
           className="mt-1 font-mono"
         />
@@ -747,85 +689,6 @@ export function Options() {
             testId="main-token-status"
           />
         )}
-      </section>
-
-      <section className="mt-6">
-        <h2 className="text-base font-medium">{m.options.watchTokenHeading}</h2>
-        <p className="gsm-body-note mt-1">
-          {m.options.watchTokenIntroPrefix}{" "}
-          <a
-            className="text-primary hover:underline"
-            href="https://github.com/settings/tokens/new?scopes=notifications&description=GitHub%20Stars%20Manager%20Watch%20Inbox"
-            target="_blank"
-            rel="noreferrer"
-          >
-            {m.options.watchTokenLinkLabel}
-          </a>
-          . {m.options.watchTokenIntroSuffix}
-        </p>
-        <p className="gsm-body-note mt-2">{m.options.watchTokenAccountHint}</p>
-
-        {hasWatchNotificationsToken && username && (
-          <div className="gsm-status-note my-3 flex flex-wrap items-center gap-1.5 text-success">
-            <Check className="size-4 shrink-0" />
-            <span>{m.options.watchTokenConnected(username)}</span>
-            <Button
-              data-testid="watch-token-disconnect"
-              variant="ghost"
-              size="sm"
-              className="ml-2"
-              disabled={watchTokenBusy}
-              onClick={() => void disconnectWatchNotificationsToken()}
-            >
-              {m.options.watchTokenDisconnect}
-            </Button>
-          </div>
-        )}
-
-        <label
-          htmlFor="watch-notifications-token"
-          className="mt-3 block text-sm font-medium text-foreground"
-        >
-          {m.options.watchTokenLabel}
-        </label>
-        <Input
-          id="watch-notifications-token"
-          name="watch-notifications-token"
-          type="password"
-          autoComplete="new-password"
-          spellCheck={false}
-          {...watchTokenInput.inputProps}
-          placeholder="ghp_..."
-          disabled={!hasUsableToken || !username || watchTokenBusy}
-          className="mt-1 font-mono"
-        />
-        {!hasUsableToken && (
-          <p className="mt-1 text-xs text-warning">{m.options.watchTokenMainRequired}</p>
-        )}
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Button
-            data-testid="watch-token-connect"
-            disabled={
-              watchTokenBusy ||
-              !hasUsableToken ||
-              !username ||
-              !watchTokenInput.value.trim()
-            }
-            onClick={() => void saveWatchNotificationsToken()}
-          >
-            {watchTokenBusy ? (
-              <>
-                <Spinner data-icon="inline-start" />
-                {m.options.watchTokenVerifying}
-              </>
-            ) : hasWatchNotificationsToken ? (
-              m.options.watchTokenReplace
-            ) : (
-              m.options.watchTokenConnect
-            )}
-          </Button>
-        </div>
-        {watchMsg && <StatusNotice message={watchMsg} testId="watch-token-status" />}
       </section>
 
       <section className="mt-6">
@@ -935,70 +798,70 @@ export function Options() {
 
               {agentDeclaredContextVisible && (
                 <div className="grid gap-1.5">
-                    <label
-                      htmlFor="agent-provider-context-window"
-                      className="text-sm font-medium text-foreground"
-                    >
-                      {m.options.agentProviderContextWindowLabel}
-                    </label>
-                    <p className="gsm-body-note">
-                      {m.options.agentProviderContextWindowHint}
-                    </p>
-                    <Input
-                      id="agent-provider-context-window"
-                      data-testid="agent-provider-context-window"
-                      type="number"
-                      inputMode="numeric"
-                      min={MIN_AGENT_CONTEXT_WINDOW}
-                      max={MAX_AGENT_CONTEXT_WINDOW}
-                      step={1}
-                      required={agentDeclaredContextRequired}
-                      aria-invalid={!agentDeclaredContextValid}
-                      value={agentDeclaredContextWindow}
-                      onChange={(event) => {
-                        setAgentMsg(null);
-                        setAgentDeclaredContextWindow(event.currentTarget.value);
-                      }}
-                      placeholder={trustedAgentContextCapability
-                        ? String(trustedAgentContextCapability.contextWindow)
-                        : "128000"}
-                    />
-                    {!agentDeclaredContextValid && (
-                      <p className="text-xs text-destructive" role="alert">
-                        {agentDeclaredContextWindow.trim()
-                          ? m.options.agentContextWindowRange
-                          : m.options.agentProviderContextWindowRequired}
-                      </p>
-                    )}
-                </div>
-              )}
-
-              <div className="grid gap-1.5">
                   <label
-                    htmlFor="agent-working-context-window"
+                    htmlFor="agent-provider-context-window"
                     className="text-sm font-medium text-foreground"
                   >
-                    {m.options.agentWorkingContextWindowLabel}
+                    {m.options.agentProviderContextWindowLabel}
                   </label>
                   <p className="gsm-body-note">
-                    {m.options.agentWorkingContextWindowHint}
+                    {m.options.agentProviderContextWindowHint}
                   </p>
                   <Input
-                    id="agent-working-context-window"
-                    data-testid="agent-working-context-window"
+                    id="agent-provider-context-window"
+                    data-testid="agent-provider-context-window"
                     type="number"
                     inputMode="numeric"
                     min={MIN_AGENT_CONTEXT_WINDOW}
                     max={MAX_AGENT_CONTEXT_WINDOW}
                     step={1}
-                    aria-invalid={!agentWorkingContextValid}
-                    value={agentWorkingContextWindow}
+                    required={agentDeclaredContextRequired}
+                    aria-invalid={!agentDeclaredContextValid}
+                    value={agentDeclaredContextWindow}
                     onChange={(event) => {
                       setAgentMsg(null);
-                      setAgentWorkingContextWindow(event.currentTarget.value);
+                      setAgentDeclaredContextWindow(event.currentTarget.value);
                     }}
-                    placeholder={m.options.agentWorkingContextWindowPlaceholder}
+                    placeholder={trustedAgentContextCapability
+                      ? String(trustedAgentContextCapability.contextWindow)
+                      : "128000"}
                   />
+                  {!agentDeclaredContextValid && (
+                    <p className="text-xs text-destructive" role="alert">
+                      {agentDeclaredContextWindow.trim()
+                        ? m.options.agentContextWindowRange
+                        : m.options.agentProviderContextWindowRequired}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="grid gap-1.5">
+                <label
+                  htmlFor="agent-working-context-window"
+                  className="text-sm font-medium text-foreground"
+                >
+                  {m.options.agentWorkingContextWindowLabel}
+                </label>
+                <p className="gsm-body-note">
+                  {m.options.agentWorkingContextWindowHint}
+                </p>
+                <Input
+                  id="agent-working-context-window"
+                  data-testid="agent-working-context-window"
+                  type="number"
+                  inputMode="numeric"
+                  min={MIN_AGENT_CONTEXT_WINDOW}
+                  max={MAX_AGENT_CONTEXT_WINDOW}
+                  step={1}
+                  aria-invalid={!agentWorkingContextValid}
+                  value={agentWorkingContextWindow}
+                  onChange={(event) => {
+                    setAgentMsg(null);
+                    setAgentWorkingContextWindow(event.currentTarget.value);
+                  }}
+                  placeholder={m.options.agentWorkingContextWindowPlaceholder}
+                />
                 {!agentWorkingContextValid && (
                   <p className="text-xs text-destructive" role="alert">
                     {agentWorkingContextExceedsProvider

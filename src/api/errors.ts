@@ -8,41 +8,16 @@ import type { MessageCatalog } from '@/i18n';
 
 // Auth / token-probe codes (thrown by auth-store.setToken).
 export const TOKEN_EMPTY = 'TOKEN_EMPTY';
+/** Thrown on 401, or when the x-oauth-scopes header is missing (fine-grained PAT). */
 export const TOKEN_REJECTED = 'TOKEN_REJECTED';
-export const TOKEN_STARS_FORBIDDEN = 'TOKEN_STARS_FORBIDDEN';
-export const TOKEN_GISTS_FORBIDDEN = 'TOKEN_GISTS_FORBIDDEN';
 /** Followed by the HTTP status, e.g. `TOKEN_PROFILE_STATUS:403`. */
 export const TOKEN_PROFILE_STATUS = 'TOKEN_PROFILE_STATUS:';
 export const TOKEN_PROFILE_BAD_SHAPE = 'TOKEN_PROFILE_BAD_SHAPE';
 export const TOKEN_PROFILE_NETWORK = 'TOKEN_PROFILE_NETWORK';
-/** Followed by the HTTP status, e.g. `TOKEN_STARS_STATUS:403`. */
-export const TOKEN_STARS_STATUS = 'TOKEN_STARS_STATUS:';
-export const TOKEN_STARS_NETWORK = 'TOKEN_STARS_NETWORK';
-/** Followed by the HTTP status, e.g. `TOKEN_GISTS_STATUS:500`. */
-export const TOKEN_GISTS_STATUS = 'TOKEN_GISTS_STATUS:';
-export const TOKEN_GISTS_NETWORK = 'TOKEN_GISTS_NETWORK';
-export const TOKEN_GIST_PROBE_BAD_SHAPE = 'TOKEN_GIST_PROBE_BAD_SHAPE';
-/** Followed by the HTTP status, e.g. `TOKEN_GIST_CLEANUP_STATUS:500`. */
-export const TOKEN_GIST_CLEANUP_STATUS = 'TOKEN_GIST_CLEANUP_STATUS:';
-export const TOKEN_GIST_CLEANUP_NETWORK = 'TOKEN_GIST_CLEANUP_NETWORK';
-export const TOKEN_WATCHING_FORBIDDEN = 'TOKEN_WATCHING_FORBIDDEN';
-export const TOKEN_WATCHING_BAD_SHAPE = 'TOKEN_WATCHING_BAD_SHAPE';
-export const TOKEN_WATCHING_STATUS = 'TOKEN_WATCHING_STATUS:';
-export const TOKEN_WATCHING_NETWORK = 'TOKEN_WATCHING_NETWORK';
-
-// Optional classic token used only by the Watch Inbox.
-export const WATCH_TOKEN_EMPTY = 'WATCH_TOKEN_EMPTY';
-export const WATCH_TOKEN_MAIN_ACCOUNT_REQUIRED = 'WATCH_TOKEN_MAIN_ACCOUNT_REQUIRED';
-export const WATCH_TOKEN_REJECTED = 'WATCH_TOKEN_REJECTED';
-export const WATCH_TOKEN_ACCOUNT_MISMATCH = 'WATCH_TOKEN_ACCOUNT_MISMATCH';
-export const WATCH_TOKEN_ACCOUNT_CHANGED = 'WATCH_TOKEN_ACCOUNT_CHANGED';
-export const WATCH_TOKEN_PROFILE_STATUS = 'WATCH_TOKEN_PROFILE_STATUS:';
-export const WATCH_TOKEN_PROFILE_BAD_SHAPE = 'WATCH_TOKEN_PROFILE_BAD_SHAPE';
-export const WATCH_TOKEN_PROFILE_NETWORK = 'WATCH_TOKEN_PROFILE_NETWORK';
-export const WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN = 'WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN';
-export const WATCH_TOKEN_NOTIFICATIONS_STATUS = 'WATCH_TOKEN_NOTIFICATIONS_STATUS:';
-export const WATCH_TOKEN_NOTIFICATIONS_NETWORK = 'WATCH_TOKEN_NOTIFICATIONS_NETWORK';
-export const WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE = 'WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE';
+/** Thrown when x-oauth-scopes does not include the required scope. */
+export const TOKEN_REPO_MISSING = 'TOKEN_REPO_MISSING';
+export const TOKEN_GIST_MISSING = 'TOKEN_GIST_MISSING';
+export const TOKEN_NOTIFICATIONS_MISSING = 'TOKEN_NOTIFICATIONS_MISSING';
 
 // Sync / stars-fetch codes (thrown by github-star-source.ts).
 export const GH_TOKEN_REJECTED = 'GH_TOKEN_REJECTED';
@@ -85,34 +60,12 @@ export function translateError(e: unknown, m: MessageCatalog): string {
   // Auth / probe codes.
   if (raw === TOKEN_EMPTY) return m.errors.tokenEmpty;
   if (raw === TOKEN_REJECTED) return m.errors.tokenRejected;
-  if (raw === TOKEN_STARS_FORBIDDEN) return m.errors.tokenStarsForbidden;
-  if (raw === TOKEN_GISTS_FORBIDDEN) return m.errors.tokenGistsForbidden;
   if (raw.startsWith(TOKEN_PROFILE_STATUS)) return m.errors.tokenProfileStatus(raw.slice(TOKEN_PROFILE_STATUS.length));
   if (raw === TOKEN_PROFILE_BAD_SHAPE) return m.errors.tokenProfileBadShape;
   if (raw === TOKEN_PROFILE_NETWORK) return m.errors.tokenProfileNetwork;
-  if (raw.startsWith(TOKEN_STARS_STATUS)) return m.errors.tokenStarsStatus(raw.slice(TOKEN_STARS_STATUS.length));
-  if (raw === TOKEN_STARS_NETWORK) return m.errors.tokenStarsNetwork;
-  if (raw.startsWith(TOKEN_GISTS_STATUS)) return m.errors.tokenGistsStatus(raw.slice(TOKEN_GISTS_STATUS.length));
-  if (raw === TOKEN_GISTS_NETWORK) return m.errors.tokenGistsNetwork;
-  if (raw === TOKEN_GIST_PROBE_BAD_SHAPE) return m.errors.tokenGistProbeBadShape;
-  if (raw.startsWith(TOKEN_GIST_CLEANUP_STATUS)) return m.errors.tokenGistCleanupStatus(raw.slice(TOKEN_GIST_CLEANUP_STATUS.length));
-  if (raw === TOKEN_GIST_CLEANUP_NETWORK) return m.errors.tokenGistCleanupNetwork;
-  if (raw === WATCH_TOKEN_EMPTY) return m.errors.watchTokenEmpty;
-  if (raw === WATCH_TOKEN_MAIN_ACCOUNT_REQUIRED) return m.errors.watchTokenMainAccountRequired;
-  if (raw === WATCH_TOKEN_REJECTED) return m.errors.watchTokenRejected;
-  if (raw === WATCH_TOKEN_ACCOUNT_MISMATCH) return m.errors.watchTokenAccountMismatch;
-  if (raw === WATCH_TOKEN_ACCOUNT_CHANGED) return m.errors.watchTokenAccountChanged;
-  if (raw.startsWith(WATCH_TOKEN_PROFILE_STATUS)) {
-    return m.errors.watchTokenProfileStatus(raw.slice(WATCH_TOKEN_PROFILE_STATUS.length));
-  }
-  if (raw === WATCH_TOKEN_PROFILE_BAD_SHAPE) return m.errors.watchTokenProfileBadShape;
-  if (raw === WATCH_TOKEN_PROFILE_NETWORK) return m.errors.watchTokenProfileNetwork;
-  if (raw === WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN) return m.errors.watchTokenNotificationsForbidden;
-  if (raw.startsWith(WATCH_TOKEN_NOTIFICATIONS_STATUS)) {
-    return m.errors.watchTokenNotificationsStatus(raw.slice(WATCH_TOKEN_NOTIFICATIONS_STATUS.length));
-  }
-  if (raw === WATCH_TOKEN_NOTIFICATIONS_NETWORK) return m.errors.watchTokenNotificationsNetwork;
-  if (raw === WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE) return m.errors.watchTokenNotificationsBadShape;
+  if (raw === TOKEN_REPO_MISSING) return m.errors.tokenRepoMissing;
+  if (raw === TOKEN_GIST_MISSING) return m.errors.tokenGistMissing;
+  if (raw === TOKEN_NOTIFICATIONS_MISSING) return m.errors.tokenNotificationsMissing;
 
   // Sync / stars-fetch codes.
   if (raw === GH_TOKEN_REJECTED) return m.errors.ghTokenRejected;

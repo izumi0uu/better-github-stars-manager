@@ -78,9 +78,10 @@ describe('query seeded fuzz', () => {
 
     invalidateCache();
     const refreshed = await queryStars(generated.params);
+    const expectedGrandTotal = generated.stars.filter((s) => !s.tombstone).length + 1;
     assert.equal(
       refreshed.grandTotal,
-      generated.stars.length + 1,
+      expectedGrandTotal,
       fuzzFailure({
         suite: SUITE,
         prefix: PREFIX,
@@ -88,7 +89,7 @@ describe('query seeded fuzz', () => {
         caseIndex: CASES.singleCase ?? 0,
         file: FILE,
         invariant: 'invalidateCache observes direct DB mutation',
-        expected: generated.stars.length + 1,
+        expected: expectedGrandTotal,
         actual: refreshed.grandTotal,
       }),
     );
@@ -223,7 +224,8 @@ function referenceQuery(input: GeneratedQueryCase): QueryResult {
   });
   const sorted = sortReferenceRows(filtered, input.params.filter.sortKey, input.params.filter.sortDir);
   const rows = sorted.slice(input.params.offset, input.params.offset + input.params.limit);
-  const languagesFacet = [...countLanguages(indexedStars).entries()].sort((a, b) => b[1] - a[1]).slice(0, 40);
+  const liveStars = indexedStars.filter((s) => !s.tombstone);
+  const languagesFacet = [...countLanguages(liveStars).entries()].sort((a, b) => b[1] - a[1]).slice(0, 40);
   const tagCounts = countTags(indexedTags, excluded);
   const tagTree = [...tagCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
   const tagsForRows: Record<string, Tag | undefined> = {};
@@ -231,7 +233,7 @@ function referenceQuery(input: GeneratedQueryCase): QueryResult {
   return {
     rows,
     total: filtered.length,
-    grandTotal: input.stars.length,
+    grandTotal: liveStars.length,
     tagsForRows,
     languages: languagesFacet,
     tagTree,

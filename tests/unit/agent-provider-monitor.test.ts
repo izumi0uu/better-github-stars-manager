@@ -10,7 +10,6 @@ vi.mock('@/auth/auth-store', () => ({
   authStore: {
     getConfig: vi.fn(),
     getToken: vi.fn(),
-    getWatchNotificationsToken: vi.fn(),
     getAgentApiKey: vi.fn(),
   },
 }));
@@ -223,9 +222,6 @@ describe('Provider diagnostics runtime probe scrubbing', () => {
     const stored = new Map<string, unknown>();
     const posts: string[] = [];
     vi.mocked(authStore.getToken).mockResolvedValue('configured-github-token-value');
-    vi.mocked(authStore.getWatchNotificationsToken).mockResolvedValue(
-      'configured-watch-token-value',
-    );
     vi.mocked(authStore.getAgentApiKey).mockResolvedValue('agent-key-value-123');
     vi.mocked(authStore.getConfig).mockResolvedValue({
       agentProvider: providerConfig,
@@ -263,7 +259,6 @@ describe('Provider diagnostics runtime probe scrubbing', () => {
     expect(serialized).not.toContain('agent-key-value-123');
     expect(serialized).not.toContain('abcdefghijklmnopqrstuvwxyz123456');
     expect(serialized).not.toContain('configured-github-token-value');
-    expect(serialized).not.toContain('configured-watch-token-value');
   });
 });
 

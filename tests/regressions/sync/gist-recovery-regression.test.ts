@@ -63,7 +63,7 @@ async function storeSyntheticToken() {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const method = init?.method ?? 'GET';
-    if (url.endsWith('/user') && method === 'GET') return response(200, { login: 'idah', avatar_url: null, name: 'Idah' });
+    if (url.endsWith('/user') && method === 'GET') return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': 'repo, gist, notifications' });
     if (url.includes('/user/starred?per_page=1&page=1') && method === 'GET') return response(200, []);
     if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-gist' });
     if (url.endsWith('/gists/probe-gist') && method === 'DELETE') return response(204);
@@ -96,21 +96,19 @@ describe('Gist recovery regressions', () => {
       mtime: '2026-06-24T12:00:00.000Z',
     });
     const calls: string[] = [];
-    let gistCreateCount = 0;
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       calls.push(`${method} ${url}`);
 
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' });
+        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': 'repo, gist, notifications' });
       }
       if (url.includes('/user/starred?per_page=1&page=1') && method === 'GET') {
         return response(200, []);
       }
       if (url.endsWith('/gists') && method === 'POST') {
-        gistCreateCount++;
-        return response(201, { id: gistCreateCount === 1 ? 'probe-gist' : 'fresh-gist' });
+        return response(201, { id: 'fresh-gist' });
       }
       if (url.endsWith('/gists/probe-gist') && method === 'DELETE') {
         return response(204);
@@ -171,7 +169,7 @@ describe('Gist recovery regressions', () => {
       calls.push(`${method} ${url}`);
 
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' });
+        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': 'repo, gist, notifications' });
       }
       if (url.includes('/user/starred?per_page=1&page=1') && method === 'GET') {
         return response(200, []);
@@ -215,21 +213,19 @@ describe('Gist recovery regressions', () => {
       mtime: '2026-06-24T12:00:00.000Z',
     });
     const calls: string[] = [];
-    let gistCreateCount = 0;
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       calls.push(`${method} ${url}`);
 
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' });
+        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': 'repo, gist, notifications' });
       }
       if (url.includes('/user/starred?per_page=1&page=1') && method === 'GET') {
         return response(200, []);
       }
       if (url.endsWith('/gists') && method === 'POST') {
-        gistCreateCount++;
-        return response(201, { id: gistCreateCount === 1 ? 'probe-gist' : 'fresh-gist' });
+        return response(201, { id: 'fresh-gist' });
       }
       if (url.endsWith('/gists/probe-gist') && method === 'DELETE') {
         return response(204);

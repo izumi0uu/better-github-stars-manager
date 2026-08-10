@@ -3,10 +3,11 @@ import { afterAll, afterEach, describe, it } from 'vitest';
 import { createChromeMock, response } from '../../helpers/chrome-mock';
 import {
   TOKEN_EMPTY,
-  TOKEN_GIST_CLEANUP_STATUS,
+  TOKEN_NOTIFICATIONS_MISSING,
   TOKEN_PROFILE_STATUS,
-  TOKEN_STARS_STATUS,
-  TOKEN_WATCHING_FORBIDDEN,
+  TOKEN_REJECTED,
+  TOKEN_REPO_MISSING,
+  TOKEN_GIST_MISSING,
   translateError,
 } from '../../../src/api/errors';
 import { probeTokenCapabilities } from '../../../src/auth/token-probe';
@@ -17,18 +18,12 @@ function fakeMessages() {
     errors: {
       tokenEmpty: 'token-empty',
       tokenRejected: 'token-rejected',
-      tokenStarsForbidden: 'token-stars-forbidden',
-      tokenGistsForbidden: 'token-gists-forbidden',
       tokenProfileStatus: (status: number | string) => `profile:${status}`,
       tokenProfileBadShape: 'profile-bad-shape',
       tokenProfileNetwork: 'profile-network',
-      tokenStarsStatus: (status: number | string) => `stars:${status}`,
-      tokenStarsNetwork: 'stars-network',
-      tokenGistsStatus: (status: number | string) => `gists:${status}`,
-      tokenGistsNetwork: 'gists-network',
-      tokenGistProbeBadShape: 'gist-probe-bad-shape',
-      tokenGistCleanupStatus: (status: number | string) => `gist-cleanup:${status}`,
-      tokenGistCleanupNetwork: 'gist-cleanup-network',
+      tokenRepoMissing: 'token-repo-missing',
+      tokenGistMissing: 'token-gist-missing',
+      tokenNotificationsMissing: 'token-notifications-missing',
       ghTokenRejected: 'gh-token-rejected',
       ghRateLimit: 'gh-rate-limit',
       ghForbidden: 'gh-forbidden',
@@ -53,34 +48,17 @@ const { authStore, GITHUB_CREDENTIALS_STORAGE_KEY } = await import(
   '../../../src/auth/auth-store'
 );
 
-async function storeReadableToken(token: string, probeId: string) {
+async function storeReadableToken(token: string) {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const method = init?.method ?? 'GET';
     if (url.endsWith('/user') && method === 'GET') {
-      return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+      return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': 'repo, gist, notifications' });
     }
-    if (url.includes('/user/starred') && method === 'GET') return response(200, []);
-    if (url.endsWith('/gists') && method === 'POST') return response(201, { id: probeId });
-    if (url.endsWith(`/gists/${probeId}`) && method === 'DELETE') return response(204);
     throw new Error(`unexpected fetch: ${method} ${url}`);
   }) as typeof fetch;
   await authStore.setToken(token);
   return authStore.getConfig();
-}
-
-function successfulProbeFetch(probeId: string): typeof fetch {
-  return (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-    const method = init?.method ?? 'GET';
-    if (url.endsWith('/user') && method === 'GET') {
-      return response(200, { login: 'later', avatar_url: 'https://example.com/later.png', name: 'Later' }, { 'x-oauth-scopes': '' });
-    }
-    if (url.includes('/user/starred') && method === 'GET') return response(200, []);
-    if (url.endsWith('/gists') && method === 'POST') return response(201, { id: probeId });
-    if (url.endsWith(`/gists/${probeId}`) && method === 'DELETE') return response(204);
-    throw new Error(`unexpected fetch: ${method} ${url}`);
-  }) as typeof fetch;
 }
 
 afterEach(() => {
@@ -137,50 +115,89 @@ describe('Status/token regressions', () => {
     assert.equal(merged!.inFlight, true);
   });
 
-  it('translateError keeps split token-probe codes distinct', () => {
+  it('translateError keeps token-probe codes distinct', () => {
     const messages = fakeMessages();
     assert.equal(translateError(new Error(`${TOKEN_PROFILE_STATUS}502`), messages as never), 'profile:502');
-    assert.equal(translateError(new Error(`${TOKEN_STARS_STATUS}503`), messages as never), 'stars:503');
-    assert.equal(translateError(new Error(`${TOKEN_GIST_CLEANUP_STATUS}500`), messages as never), 'gist-cleanup:500');
+    assert.equal(translateError(new Error(TOKEN_REPO_MISSING), messages as never), 'token-repo-missing');
+    assert.equal(translateError(new Error(TOKEN_GIST_MISSING), messages as never), 'token-gist-missing');
+    assert.equal(translateError(new Error(TOKEN_NOTIFICATIONS_MISSING), messages as never), 'token-notifications-missing');
   });
 
-  it('probeTokenCapabilities rejects when probe-gist cleanup fails', async () => {
+  it('probeTokenCapabilities rejects when the classic PAT is missing the repo scope', async () => {
     const calls: string[] = [];
     const fetchMock = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       calls.push(`${method} ${url}`);
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': 'gist, notifications' });
       }
-      if (url.includes('/user/starred?per_page=1&page=1') && method === 'GET') return response(200, []);
-      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-1' });
-      if (url.endsWith('/gists/probe-1') && method === 'DELETE') return response(500);
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }) as typeof fetch;
 
     await assert.rejects(
       () => probeTokenCapabilities('github_pat_test', fetchMock),
-      (e: unknown) => e instanceof Error && e.message === `${TOKEN_GIST_CLEANUP_STATUS}500`,
+      (e: unknown) => e instanceof Error && e.message === TOKEN_REPO_MISSING,
     );
     assert.deepEqual(calls, [
       'GET https://api.github.com/user',
-      'GET https://api.github.com/user/starred?per_page=1&page=1',
-      'POST https://api.github.com/gists',
-      'DELETE https://api.github.com/gists/probe-1',
     ]);
   });
 
-  it('authStore.setToken does not persist anything when probe cleanup fails', async () => {
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  it('probeTokenCapabilities rejects when the classic PAT is missing the gist scope', async () => {
+    const fetchMock = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': 'repo, notifications' });
       }
-      if (url.includes('/user/starred') && method === 'GET') return response(200, []);
-      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-2' });
-      if (url.endsWith('/gists/probe-2') && method === 'DELETE') return response(500);
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    await assert.rejects(
+      () => probeTokenCapabilities('github_pat_test', fetchMock),
+      (e: unknown) => e instanceof Error && e.message === TOKEN_GIST_MISSING,
+    );
+  });
+
+  it('probeTokenCapabilities rejects when the classic PAT is missing the notifications scope', async () => {
+    const fetchMock = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/user') && method === 'GET') {
+        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': 'repo, gist' });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    await assert.rejects(
+      () => probeTokenCapabilities('github_pat_test', fetchMock),
+      (e: unknown) => e instanceof Error && e.message === TOKEN_NOTIFICATIONS_MISSING,
+    );
+  });
+
+  it('probeTokenCapabilities rejects fine-grained PATs that omit x-oauth-scopes', async () => {
+    const fetchMock = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/user') && method === 'GET') {
+        // Fine-grained PATs do not set x-oauth-scopes; header is absent.
+        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    await assert.rejects(
+      () => probeTokenCapabilities('github_pat_fine_grained', fetchMock),
+      (e: unknown) => e instanceof Error && e.message === TOKEN_REJECTED,
+    );
+  });
+
+  it('authStore.setToken does not persist anything when the token is rejected', async () => {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/user') && method === 'GET') return response(401);
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }) as typeof fetch;
 
@@ -197,7 +214,7 @@ describe('Status/token regressions', () => {
 
     await assert.rejects(
       () => authStore.setToken('github_pat_test'),
-      (e: unknown) => e instanceof Error && e.message === `${TOKEN_GIST_CLEANUP_STATUS}500`,
+      (e: unknown) => e instanceof Error && e.message === TOKEN_REJECTED,
     );
 
     const cfg = await authStore.getConfig();
@@ -206,31 +223,26 @@ describe('Status/token regressions', () => {
     assert.equal(await authStore.getToken(), null);
   });
 
-  it('persists a valid main token while reporting optional Watching permission failure', async () => {
+  it('authStore.setToken rejects classic PATs missing required scopes without persisting', async () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': 'repo' });
       }
-      if (url.includes('/user/starred') && method === 'GET') return response(200, []);
-      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'watching-optional' });
-      if (url.endsWith('/gists/watching-optional') && method === 'DELETE') return response(204);
-      if (url.includes('/user/subscriptions') && method === 'GET') return response(403);
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }) as typeof fetch;
 
     await authStore.clearToken();
-    const result = await authStore.setToken('github_pat_without_watching');
+    await assert.rejects(
+      () => authStore.setToken('github_pat_partial_scopes'),
+      (e: unknown) => e instanceof Error && e.message === TOKEN_GIST_MISSING,
+    );
 
-    assert.deepEqual(result.watching, {
-      available: false,
-      errorCode: TOKEN_WATCHING_FORBIDDEN,
-    });
     const cfg = await authStore.getConfig();
-    assert.ok(cfg.tokenEncrypted);
-    assert.equal(cfg.username, 'idah');
-    assert.equal(await authStore.getToken(), 'github_pat_without_watching');
+    assert.equal(cfg.tokenEncrypted, null);
+    assert.equal(cfg.username, null);
+    assert.equal(await authStore.getToken(), null);
   });
 
   it('authStore.update keeps the previous cached config when storage write fails', async () => {
@@ -251,11 +263,8 @@ describe('Status/token regressions', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': 'repo, gist, notifications' });
       }
-      if (url.includes('/user/starred') && method === 'GET') return response(200, []);
-      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-3' });
-      if (url.endsWith('/gists/probe-3') && method === 'DELETE') return response(204);
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }) as typeof fetch;
 
@@ -363,35 +372,39 @@ describe('Status/token regressions', () => {
     });
   });
 
-  it('authStore.setToken keeps existing persisted token when probe cleanup fails', async () => {
-    const previousConfig = await storeReadableToken('github_pat_existing_cleanup_guard', 'probe-existing');
+  it('authStore.setToken keeps existing persisted token when probe rejects a new token', async () => {
+    const previousConfig = await storeReadableToken('github_pat_existing_guard');
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'later', avatar_url: 'https://example.com/later.png', name: 'Later' }, { 'x-oauth-scopes': '' });
+        return response(401);
       }
-      if (url.includes('/user/starred') && method === 'GET') return response(200, []);
-      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-cleanup-blocked' });
-      if (url.endsWith('/gists/probe-cleanup-blocked') && method === 'DELETE') return response(500);
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }) as typeof fetch;
 
     await assert.rejects(
-      () => authStore.setToken('github_pat_rejected_cleanup_guard'),
-      (e: unknown) => e instanceof Error && e.message === `${TOKEN_GIST_CLEANUP_STATUS}500`,
+      () => authStore.setToken('github_pat_rejected_guard'),
+      (e: unknown) => e instanceof Error && e.message === TOKEN_REJECTED,
     );
 
     const cfg = await authStore.getConfig();
     assert.equal(cfg.tokenEncrypted, previousConfig.tokenEncrypted);
     assert.deepEqual(cfg.tokenCryptoMeta, previousConfig.tokenCryptoMeta);
     assert.equal(cfg.username, 'idah');
-    assert.equal(await authStore.getToken(), 'github_pat_existing_cleanup_guard');
+    assert.equal(await authStore.getToken(), 'github_pat_existing_guard');
   });
 
   it('authStore.setToken leaves existing plaintext cache unchanged when storage write fails', async () => {
-    const previousConfig = await storeReadableToken('github_pat_existing_write_guard', 'probe-write-existing');
-    globalThis.fetch = successfulProbeFetch('probe-write-failed');
+    const previousConfig = await storeReadableToken('github_pat_existing_write_guard');
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/user') && method === 'GET') {
+        return response(200, { login: 'later', avatar_url: 'https://example.com/later.png', name: 'Later' }, { 'x-oauth-scopes': 'repo, gist, notifications' });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
     chromeMock.rejectNextSet(new Error('storage write failed'));
 
     await assert.rejects(
@@ -441,7 +454,7 @@ describe('Status/token regressions', () => {
   });
 
   it('authStore clears cached plaintext on external token crypto changes only', async () => {
-    const persisted = await storeReadableToken('github_pat_cache_invalidation_guard', 'probe-cache-guard');
+    const persisted = await storeReadableToken('github_pat_cache_invalidation_guard');
     const originalDecrypt = crypto.subtle.decrypt.bind(crypto.subtle);
     let decryptCalls = 0;
     crypto.subtle.decrypt = (async (...args: Parameters<SubtleCrypto['decrypt']>) => {

@@ -228,13 +228,13 @@ describe('Integration (real query engine + Dexie)', () => {
 
   it('returns all live rows by default', async () => {
     const r = await queryStars({ filter: defaultFilter(), offset: 0, limit: 100 });
-    assert.equal(r.grandTotal, 3);
+    assert.equal(r.grandTotal, 2);
     assert.equal(r.total, 2);
   });
 
   it('language facet computed over all stars', async () => {
     const r = await queryStars({ filter: defaultFilter(), offset: 0, limit: 100 });
-    assert.deepEqual(r.languages.find(([l]) => l === 'Python'), ['Python', 2]);
+    assert.deepEqual(r.languages.find(([l]) => l === 'Python'), ['Python', 1]);
   });
 
   it('tag tree is a flat list with counts (no dimension)', async () => {
@@ -385,7 +385,7 @@ describe('Integration (real query engine + Dexie)', () => {
     } as Star);
     invalidateCache();
     const r = await queryStars({ filter: defaultFilter(), offset: 0, limit: 100 });
-    assert.equal(r.grandTotal, 4);
+    assert.equal(r.grandTotal, 3);
   });
 
   it('tagsForRows returned for the window', async () => {

@@ -11,6 +11,7 @@ import {
   resetPanelToggle,
   showPanel,
 } from '@/content/stars-page/panel-toggle';
+import { setupNativeStarListener } from '@/content/stars-page/native-star-listener';
 import cssText from '@/ui/styles/index.css?inline';
 
 /**
@@ -202,6 +203,7 @@ async function sync(): Promise<void> {
 
 onPanelToggle(sync);
 
+setupNativeStarListener();
 sync();
 document.addEventListener('turbo:load', sync);
 document.addEventListener('turbo:render', sync);
