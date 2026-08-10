@@ -40,6 +40,12 @@ describe('E2E credential isolation', () => {
     );
     expect(authenticatedJob).toMatch(/^[ \t]*environment:[ \t]*e2e-credentials[ \t]*$/m);
     expect(authenticatedJob).toMatch(
+      /^[ \t]*group:[ \t]*e2e-credentials-\$\{\{ github\.ref \}\}[ \t]*$/m,
+    );
+    expect(authenticatedJob).toMatch(
+      /^[ \t]*cancel-in-progress:[ \t]*false[ \t]*$/m,
+    );
+    expect(authenticatedJob).toMatch(
       /\$\{\{\s*secrets\.E2E_GH_TOKEN\s*\}\}/,
     );
     expect(authenticatedJob).toMatch(
