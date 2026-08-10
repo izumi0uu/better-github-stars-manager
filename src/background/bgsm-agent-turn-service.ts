@@ -445,7 +445,7 @@ export function createBgsmAgentTurnService(
         if (!continuation.rawMessages) {
           throw new TypeError('Cubby continuation requires an append-only raw turn transcript.');
         }
-        const artifactProjectionOnly = artifactAdmissionRuntime?.nextPendingCoverage() !== null;
+        const artifactProjectionOnly = artifactAdmissionRuntime?.nextPendingCoverage() != null;
         let compactionRawMessages = continuation.rawMessages;
         if (artifactProjectionOnly) {
           const currentUser = continuation.rawMessages[0];

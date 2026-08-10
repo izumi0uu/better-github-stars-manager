@@ -304,6 +304,43 @@ describe('controlled Responses provider CDP lifecycle', () => {
     }
   });
 
+  it('accepts explicit status 200 and rejects other non-error statuses', async () => {
+    const successControl = createControlledResponsesProvider({
+      handler: async () => ({
+        kind: 'explicit-success',
+        completion: { content: 'bounded' },
+        httpStatus: 200,
+      }),
+    });
+    const successClient = new FakeCdpClient('explicit-success');
+    await installControlledProviderClient(successClient, successControl);
+    successClient.emit('Fetch.requestPaused', responsesRequest('explicit-success'));
+    await assertControlledProviderHealthy(successControl);
+    assert.equal(successControl.capture[0].httpStatus, 200);
+    assert.equal(
+      successClient.calls.find(({ method }) => method === 'Fetch.fulfillRequest')?.params?.responseCode,
+      200,
+    );
+    await closeControlledResponsesProvider(successControl);
+
+    const invalidControl = createControlledResponsesProvider({
+      handler: async () => ({
+        kind: 'invalid-non-error-status',
+        completion: { content: 'never delivered' },
+        httpStatus: 201,
+      }),
+    });
+    const invalidClient = new FakeCdpClient('invalid-non-error-status');
+    await installControlledProviderClient(invalidClient, invalidControl);
+    invalidClient.emit('Fetch.requestPaused', responsesRequest('invalid-non-error-status'));
+    await assert.rejects(
+      assertControlledProviderHealthy(invalidControl),
+      /interception health failed/,
+    );
+    assert.equal(invalidClient.calls.some(({ method }) => method === 'Fetch.failRequest'), true);
+    await closeControlledResponsesProvider(invalidControl);
+  });
+
 
   it('classifies GitHub contents routes by exact path and method semantics', async () => {
     const fixtures = new Map([
@@ -324,6 +361,18 @@ describe('controlled Responses provider CDP lifecycle', () => {
         contentType: 'application/json',
         body: '{"updated":true}',
         kind: 'repository-file-write',
+      }],
+      ['GET github-watch-scope', {
+        status: 200,
+        contentType: 'application/json',
+        body: '[]',
+        kind: 'watch-scope-probe',
+      }],
+      ['GET github-notifications', {
+        status: 200,
+        contentType: 'application/json',
+        body: '[]',
+        kind: 'watch-notifications-probe',
       }],
       ['GET unknown-http-route', {
         status: 404,
@@ -349,6 +398,8 @@ describe('controlled Responses provider CDP lifecycle', () => {
       httpRequest('directory-read', 'https://api.github.com/repos/octo/project/contents?ref=main', 'get'),
       httpRequest('empty-file-path', 'https://api.github.com/repos/octo/project/contents/', 'GET'),
       httpRequest('file-read', 'https://api.github.com/repos/octo/project/contents/README.md?ref=main', 'gEt'),
+      httpRequest('watch-scope', 'https://api.github.com/user/subscriptions?per_page=1&page=1', 'GET'),
+      httpRequest('watch-notifications', 'https://api.github.com/notifications?all=true&per_page=1', 'GET'),
     ]) {
       client.emit('Fetch.requestPaused', request);
     }
@@ -364,6 +415,8 @@ describe('controlled Responses provider CDP lifecycle', () => {
         { kind: 'repository-empty-file-path', method: 'GET', route: 'unknown-http-route', status: 404 },
         { kind: 'repository-file-read', method: 'GET', route: 'github-contents-file', status: 206 },
         { kind: 'repository-file-write', method: 'PUT', route: 'github-contents-file', status: 201 },
+        { kind: 'watch-notifications-probe', method: 'GET', route: 'github-notifications', status: 200 },
+        { kind: 'watch-scope-probe', method: 'GET', route: 'github-watch-scope', status: 200 },
       ],
     );
     assert.deepEqual(
@@ -376,6 +429,8 @@ describe('controlled Responses provider CDP lifecycle', () => {
         ['empty-file-path', 404],
         ['file-read', 206],
         ['file-write', 201],
+        ['watch-notifications', 200],
+        ['watch-scope', 200],
       ],
     );
 

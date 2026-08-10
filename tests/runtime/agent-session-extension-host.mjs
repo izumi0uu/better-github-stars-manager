@@ -406,6 +406,7 @@ async function run() {
       'GET github-starred',
       'POST github-gists',
       'DELETE github-probe-gist',
+      'GET github-watch-scope',
     ]);
     runtime.containmentStep = 'page-unexpected';
     assert.equal(pageHttpPolicy.unexpectedRequests.length, 0);
@@ -756,6 +757,7 @@ function githubWorkerFixture({ route, method }) {
       { 'x-oauth-scopes': 'public_repo, gist' },
     ),
     'GET github-starred': json([], 'github-token-stars'),
+    'GET github-watch-scope': json([], 'github-token-watch-scope'),
     'POST github-gists': json({ id: 'runtime-probe-gist' }, 'github-token-gist-create', 201),
     'DELETE github-probe-gist': {
       status: 204,
@@ -1756,6 +1758,8 @@ function safeRouteLabel(value) {
     'responses',
     'github-user',
     'github-starred',
+    'github-watch-scope',
+    'github-notifications',
     'github-gists',
     'github-probe-gist',
     'github-avatar',

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'vitest';
 import {
   buildExtensionBrowserLaunchOptions,
@@ -7,6 +10,7 @@ import {
 import {
   buildScenarioFailureDiagnostic,
   installScenarioExtensionWithContainment,
+  teardownScenarioRuntime,
 } from './agent-scenarios-extension-host.mjs';
 import { openExtensionPage } from './extension-runtime-targets.mjs';
 
@@ -45,6 +49,7 @@ class FakeCdpClient extends EventEmitter {
     this.order = order;
     this.sessionId = sessionId;
     this.calls = [];
+    this.autoAttachEvents = [];
   }
 
   connection() {
@@ -59,15 +64,17 @@ class FakeCdpClient extends EventEmitter {
     this.calls.push(method);
     this.order.push(`${this.sessionId ? 'worker' : 'browser'}:${method}`);
     if (method === 'Target.setAutoAttach') {
-      queueMicrotask(() => this.emit('Target.attachedToTarget', {
-        sessionId: 'worker-session',
-        targetInfo: {
-          type: 'service_worker',
-          url: 'chrome-extension://scenario-extension/background.js',
-        },
-      }));
+      const event = this.autoAttachEvents.shift();
+      if (event) queueMicrotask(() => this.emit('Target.attachedToTarget', event));
     }
     return {};
+  }
+
+  queueAutoAttach(sessionId, url = 'chrome-extension://scenario-extension/background.js') {
+    this.autoAttachEvents.push({
+      sessionId,
+      targetInfo: { type: 'service_worker', url },
+    });
   }
 
   async detach() {
@@ -108,6 +115,7 @@ test('Scenario worker containment arms auto-attach before installing and resumes
   const order = [];
   const worker = new FakeCdpClient(order, 'worker-session');
   const browserClient = new FakeCdpClient(order);
+  browserClient.queueAutoAttach('worker-session');
   browserClient.connection = () => ({ session: (sessionId) => sessionId === 'worker-session' ? worker : null });
   const browser = {
     target: () => ({ createCDPSession: async () => browserClient }),
@@ -126,6 +134,55 @@ test('Scenario worker containment arms auto-attach before installing and resumes
   assert.ok(order.indexOf('worker:Runtime.enable') < order.indexOf('worker:Fetch.enable'));
   assert.ok(order.indexOf('worker:Fetch.enable') < order.indexOf('worker:Runtime.runIfWaitingForDebugger'));
   assert.equal(runtime.network.workerUnexpectedRequests, 0);
+});
+
+test('Scenario teardown closes workers attached while auto-attach is being disabled', async () => {
+  const order = [];
+  const firstWorker = new FakeCdpClient(order, 'first-worker-session');
+  const lateWorker = new FakeCdpClient(order, 'late-worker-session');
+  const workers = new Map([
+    ['first-worker-session', firstWorker],
+    ['late-worker-session', lateWorker],
+  ]);
+  const browserClient = new FakeCdpClient(order);
+  browserClient.connection = () => ({ session: (sessionId) => workers.get(sessionId) ?? null });
+  browserClient.queueAutoAttach('first-worker-session');
+  const browser = {
+    target: () => ({ createCDPSession: async () => browserClient }),
+    installExtension: async () => 'scenario-extension',
+    process: () => null,
+    close: async () => { order.push('browser-close'); },
+  };
+  const runtime = runtimeState();
+  await installScenarioExtensionWithContainment(browser, '/tmp/dist', runtime, { timeoutMs: 500 });
+  browserClient.queueAutoAttach('late-worker-session');
+  const pageHttpPolicy = {
+    closed: false,
+    async close() { this.closed = true; },
+  };
+  Object.assign(runtime, {
+    browser,
+    page: null,
+    pageHttpPolicy,
+    pageDiagnostics: { cleanup: () => {} },
+    cleanupFailures: 0,
+    cleanup: {
+      networkGatesClosed: false,
+      diagnosticsDetached: false,
+      pagesClosed: false,
+      browserClosed: false,
+      temporaryStateRemoved: false,
+    },
+    tempRoot: mkdtempSync(path.join(os.tmpdir(), 'bgsm-scenario-teardown-')),
+  });
+
+  await teardownScenarioRuntime(runtime);
+
+  assert.equal(lateWorker.calls.includes('Fetch.disable'), true);
+  assert.equal(lateWorker.calls.includes('Runtime.disable'), true);
+  assert.equal(order.filter((entry) => entry === 'worker:detach').length, 2);
+  assert.equal(runtime.workerResources.size, 0);
+  assert.equal(Object.values(runtime.cleanup).every(Boolean), true);
 });
 
 const EXTENSION_ID = 'a'.repeat(32);

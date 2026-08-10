@@ -71,6 +71,17 @@ function withFixture(run) {
   }
 }
 
+function withTimezone(timezone, run) {
+  const previous = process.env.TZ;
+  process.env.TZ = timezone;
+  try {
+    return run();
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+}
+
 function createDist(root, manifestOverrides = {}) {
   const dist = path.join(root, 'dist');
   const manifest = {
@@ -163,8 +174,8 @@ function expectCode(run, code) {
 }
 
 test('packages one deterministic inventory into staged files, ZIP, checksum, and immutable schema-v2 evidence', () => withFixture((root) => {
-  const first = packageFixture(root, 'artifacts-a');
-  const second = packageFixture(root, 'artifacts-b');
+  const first = withTimezone('Pacific/Honolulu', () => packageFixture(root, 'artifacts-a'));
+  const second = withTimezone('Asia/Kathmandu', () => packageFixture(root, 'artifacts-b'));
   assert.equal(hash(readFileSync(first.zipPath)), hash(readFileSync(second.zipPath)));
   assert.deepEqual(readFileSync(first.checksumPath), readFileSync(second.checksumPath));
   assert.deepEqual(readFileSync(first.evidencePath), readFileSync(second.evidencePath));
@@ -420,11 +431,15 @@ test('never overwrites immutable, stale-trust, or unrelated artifacts', () => {
   }
 });
 
-test('rejects ZIP traversal, absolute, directory, and duplicate entries', () => {
+test('rejects ZIP traversal, absolute, directory, filespec, option-like, and duplicate entries', () => {
   expectCode(() => validateZipEntryNames(['manifest.json', '../escape.js']), 'zip_entry_path_invalid');
   expectCode(() => validateZipEntryNames(['manifest.json', '/escape.js']), 'zip_entry_path_invalid');
   expectCode(() => validateZipEntryNames(['manifest.json', 'assets/']), 'zip_entry_path_invalid');
   expectCode(() => validateZipEntryNames(['manifest.json', 'assets/line\nbreak.js']), 'zip_entry_path_invalid');
+  expectCode(() => validateZipEntryNames(['manifest.json', '-metadata.json']), 'zip_entry_path_invalid');
+  expectCode(() => validateZipEntryNames(['manifest.json', 'assets/*.js']), 'zip_entry_path_invalid');
+  expectCode(() => validateZipEntryNames(['manifest.json', 'assets/file?.js']), 'zip_entry_path_invalid');
+  expectCode(() => validateZipEntryNames(['manifest.json', 'assets/file[0].js']), 'zip_entry_path_invalid');
   expectCode(() => validateZipEntryNames(['manifest.json', 'manifest.json']), 'zip_entry_duplicate');
   expectCode(() => validateZipEntryNames(['assets/app.js']), 'zip_root_manifest_missing');
 });

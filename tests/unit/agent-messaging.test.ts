@@ -72,17 +72,26 @@ function commitForMessaging(
   }> = {},
 ): AgentSessionCommitResult {
   const appliedRevision = input.baseRevision + 1;
-  const presentationMessages = messages
-    .filter((message): message is typeof message & { role: 'user' | 'agent' } => (
-      message.role === 'user' || message.role === 'agent'
-    ))
-    .filter((message) => message.content.trim().length > 0)
-    .map((message, index) => ({
-      sequence: index + 1,
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      createdAt: message.createdAt,
+  const transcriptMessages = messages.map((message, index) => ({
+    sequence: index + 1,
+    ...message,
+  }));
+  const user = transcriptMessages.find((message) => message.role === 'user');
+  const assistant = transcriptMessages.findLast((message) => (
+    message.role === 'agent' && message.content.trim().length > 0
+  ));
+  const presentationMessages = [user, assistant]
+    .filter((message): message is NonNullable<typeof message> => message !== undefined)
+    .filter((message, index, selected) => selected.findIndex((candidate) => (
+      candidate.sequence === message.sequence
+    )) === index)
+    .sort((left, right) => left.sequence - right.sequence)
+    .map(({ sequence, id, role, content, createdAt }) => ({
+      sequence,
+      id,
+      role: role as 'user' | 'agent',
+      content,
+      createdAt,
     }));
   return {
     session: {
@@ -113,7 +122,7 @@ function commitForMessaging(
     },
     transcript: {
       sessionId: input.sessionId,
-      messages: messages.map((message, index) => ({ sequence: index + 1, ...message })),
+      messages: transcriptMessages,
       nextBeforeSequence: null,
     },
     presentationMessages,
@@ -141,6 +150,38 @@ describe('Cubby messaging', () => {
       turnAttemptId: 'turn-attempt-hydrate',
       launchDigest: `asl:v1:${'a'.repeat(43)}`,
     });
+  });
+
+  it('keeps presentation sequences anchored to canonical transcript order', () => {
+    const input: BgsmAgentTurnInput = {
+      turnAttemptId: 'turn-attempt-presentation-order',
+      sessionId: 'session-presentation-order',
+      baseRevision: 0,
+      prompt: 'Inspect the ordered envelope.',
+      history: [],
+    };
+    const commit = commitForMessaging(input, [
+      { id: 'ordered-user', role: 'user', content: input.prompt, createdAt: 1 },
+      {
+        id: 'ordered-call',
+        role: 'agent',
+        content: '',
+        createdAt: 2,
+        toolCalls: [{ id: 'ordered-tool-call', name: 'list_tags', arguments: {} }],
+      },
+      {
+        id: 'ordered-tool',
+        role: 'tool',
+        content: '{"ok":true,"data":{}}',
+        createdAt: 3,
+        toolCallId: 'ordered-tool-call',
+        toolName: 'list_tags',
+      },
+      { id: 'ordered-answer', role: 'agent', content: 'Finished.', createdAt: 4 },
+    ]);
+
+    expect(commit.transcript.messages.map(({ sequence }) => sequence)).toEqual([1, 2, 3, 4]);
+    expect(commit.presentationMessages.map(({ sequence }) => sequence)).toEqual([1, 4]);
   });
 
   it('sends retry projection reads and explicit command payloads', async () => {
@@ -238,7 +279,7 @@ describe('Cubby messaging', () => {
 
   it.each(AGENT_TURN_ERROR_CODES)(
     'round-trips producer-normalized Agent error code %s through the UI Port',
-    (code: AgentTurnErrorCode) => {
+    async (code: AgentTurnErrorCode) => {
       expect(normalizeAgentTurnErrorCode({ code })).toBe(code);
       expect(parseAgentTurnErrorCode(code)).toBe(code);
 
@@ -253,8 +294,8 @@ describe('Cubby messaging', () => {
       };
       const onError = vi.fn();
       startBgsmAgentTurn(input, { onError });
-      runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-      runtime.deliver({
+      await runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+      await runtime.deliver({
         type: 'bgsmAgentTurnError',
         sequence: 0,
         error: {
@@ -271,7 +312,7 @@ describe('Cubby messaging', () => {
     },
   );
 
-  it('fails closed for unknown Agent error codes', () => {
+  it('fails closed for unknown Agent error codes', async () => {
     const runtime = createRuntimePort();
     vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
     const input: BgsmAgentTurnInput = {
@@ -283,8 +324,8 @@ describe('Cubby messaging', () => {
     };
     const onError = vi.fn();
     startBgsmAgentTurn(input, { onError });
-    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    runtime.deliver({
+    await runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await runtime.deliver({
       type: 'bgsmAgentTurnError',
       sequence: 0,
       error: {
@@ -310,7 +351,7 @@ describe('Cubby messaging', () => {
     ['none', false, 0],
     ['all_failed', false, 0],
     ['unsafe', true, 1],
-  ] as const)('accepts a %s terminal write settlement across the Port', (
+  ] as const)('accepts a %s terminal write settlement across the Port', async (
     writeSettlement,
     changed,
     changedCount,
@@ -343,8 +384,8 @@ describe('Cubby messaging', () => {
     };
 
     startBgsmAgentTurn(input, { onResult, onError });
-    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
+    await runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
 
     expect(onResult).toHaveBeenCalledWith(result);
     expect(onError).not.toHaveBeenCalled();
@@ -354,7 +395,7 @@ describe('Cubby messaging', () => {
     ['invalid value', false, 0, 'partially_failed'],
     ['changed with none', true, 1, 'none'],
     ['changed with all_failed', true, 1, 'all_failed'],
-  ] as const)('rejects terminal settlement contract: %s', (
+  ] as const)('rejects terminal settlement contract: %s', async (
     label,
     changed,
     changedCount,
@@ -396,15 +437,15 @@ describe('Cubby messaging', () => {
     };
 
     startBgsmAgentTurn(input, { onResult, onError });
-    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
+    await runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
 
     expect(onResult).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ category: 'other' }));
     expect(runtime.port.disconnect).toHaveBeenCalledOnce();
   });
 
-  it('requires persisted sequence on durable transcript messages', () => {
+  it('requires persisted sequence on durable transcript messages', async () => {
     const runtime = createRuntimePort();
     vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
     const input: BgsmAgentTurnInput = {
@@ -438,15 +479,15 @@ describe('Cubby messaging', () => {
     const onError = vi.fn();
 
     startBgsmAgentTurn(input, { onResult, onError });
-    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
+    await runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
 
     expect(onResult).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ category: 'other' }));
     expect(runtime.port.disconnect).toHaveBeenCalledOnce();
   });
 
-  it('delivers context preflight diagnostics across the Port', () => {
+  it('delivers context preflight diagnostics across the Port', async () => {
     const runtime = createRuntimePort();
     vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
     const input: BgsmAgentTurnInput = {
@@ -459,7 +500,7 @@ describe('Cubby messaging', () => {
     const onEvent = vi.fn();
 
     startBgsmAgentTurn(input, { onEvent });
-    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
     const event = {
       type: 'context_diagnostic' as const,
       turnAttemptId: input.turnAttemptId,
@@ -477,12 +518,12 @@ describe('Cubby messaging', () => {
       trigger: 'context_preflight' as const,
     };
 
-    runtime.deliver({ type: 'bgsmAgentTurnEvent', sequence: 0, event });
+    await runtime.deliver({ type: 'bgsmAgentTurnEvent', sequence: 0, event });
 
     expect(onEvent).toHaveBeenCalledWith(event);
   });
 
-  it('delivers a sequence-free live tool message before its terminal result', () => {
+  it('delivers a sequence-free live tool message before its terminal result', async () => {
     const runtime = createRuntimePort();
     vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
     const input: BgsmAgentTurnInput = {
@@ -521,16 +562,16 @@ describe('Cubby messaging', () => {
     };
 
     startBgsmAgentTurn(input, { onEvent, onResult, onError });
-    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    runtime.deliver({ type: 'bgsmAgentTurnEvent', sequence: 0, event });
-    runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 1, result });
+    await runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await runtime.deliver({ type: 'bgsmAgentTurnEvent', sequence: 0, event });
+    await runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 1, result });
 
     expect(onEvent).toHaveBeenCalledWith(event);
     expect(onResult).toHaveBeenCalledWith(result);
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it('rejects durable sequence metadata on a live message update', () => {
+  it('rejects durable sequence metadata on a live message update', async () => {
     const runtime = createRuntimePort();
     vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
     const input: BgsmAgentTurnInput = {
@@ -544,8 +585,8 @@ describe('Cubby messaging', () => {
     const onError = vi.fn();
 
     startBgsmAgentTurn(input, { onEvent, onError });
-    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    runtime.deliver({
+    await runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await runtime.deliver({
       type: 'bgsmAgentTurnEvent',
       sequence: 0,
       event: {
@@ -568,7 +609,7 @@ describe('Cubby messaging', () => {
     expect(runtime.port.disconnect).toHaveBeenCalledOnce();
   });
 
-  it('delivers the internal tool-memory recovery reason across the Port', () => {
+  it('delivers the internal tool-memory recovery reason across the Port', async () => {
     const runtime = createRuntimePort();
     vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
     const input: BgsmAgentTurnInput = {
@@ -581,7 +622,7 @@ describe('Cubby messaging', () => {
     const onResult = vi.fn();
 
     startBgsmAgentTurn(input, { onResult });
-    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
     const result: BgsmAgentTurnResult = {
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
@@ -592,12 +633,12 @@ describe('Cubby messaging', () => {
       changedCount: 0,
       commit: null,
     };
-    runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
+    await runtime.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
 
     expect(onResult).toHaveBeenCalledWith(result);
   });
 
-  it('preserves every durable launch identity field in the start message', () => {
+  it('preserves every durable launch identity field in the start message', async () => {
     const runtime = createRuntimePort();
     vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => runtime.port) } });
     const launch: BgsmAgentTurnLaunch = {
@@ -613,7 +654,7 @@ describe('Cubby messaging', () => {
     };
 
     startBgsmAgentTurn(launch, {});
-    runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await runtime.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
 
     expect(runtime.port.postMessage).toHaveBeenCalledWith({
       type: 'startBgsmAgentTurn',
@@ -849,11 +890,9 @@ describe('Cubby messaging', () => {
     const onError = vi.fn();
 
     startBgsmAgentTurn(input, { onError });
-    transports[0].deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    await Promise.resolve();
-    transports[1].deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    await Promise.resolve();
-    transports[2].deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await transports[0].deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await transports[1].deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await transports[2].deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
 
     expect(connect).toHaveBeenCalledTimes(3);
     expect(transports.every(({ port }) => port.disconnect.mock.calls.length === 1)).toBe(true);
@@ -866,7 +905,7 @@ describe('Cubby messaging', () => {
     });
   });
 
-  it('reconnects to the same worker and skips replayed deliveries already applied by the UI', () => {
+  it('reconnects to the same worker and skips replayed deliveries already applied by the UI', async () => {
     const first = createRuntimePort();
     const replay = createRuntimePort();
     const connect = vi.fn()
@@ -884,17 +923,17 @@ describe('Cubby messaging', () => {
     const onResult = vi.fn();
 
     const control = startBgsmAgentTurn(input, { onEvent, onResult });
-    first.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await first.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
     const queued = {
       type: 'agent_queued' as const,
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
       baseRevision: input.baseRevision,
     };
-    first.deliver({ type: 'bgsmAgentTurnEvent', sequence: 0, event: queued });
+    await first.deliver({ type: 'bgsmAgentTurnEvent', sequence: 0, event: queued });
     first.disconnect();
 
-    replay.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await replay.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
     expect(replay.port.postMessage).toHaveBeenCalledWith({
       type: 'startBgsmAgentTurn',
       executionEpochId: 'worker-epoch-1',
@@ -903,7 +942,7 @@ describe('Cubby messaging', () => {
       baseRevision: input.baseRevision,
       prompt: input.prompt,
     });
-    replay.deliver({ type: 'bgsmAgentTurnEvent', sequence: 0, event: queued });
+    await replay.deliver({ type: 'bgsmAgentTurnEvent', sequence: 0, event: queued });
     const result: BgsmAgentTurnResult = {
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
@@ -913,13 +952,13 @@ describe('Cubby messaging', () => {
       changedCount: 0,
       commit: null,
     };
-    replay.deliver({ type: 'bgsmAgentTurnResult', sequence: 1, result });
+    await replay.deliver({ type: 'bgsmAgentTurnResult', sequence: 1, result });
 
     expect(onEvent).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledWith(result);
     control.acknowledge({ disposition: 'applied', appliedRevision: 3 });
     expect(replay.port.disconnect).not.toHaveBeenCalled();
-    replay.deliver({
+    await replay.deliver({
       type: 'bgsmAgentTurnAck',
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
@@ -930,7 +969,7 @@ describe('Cubby messaging', () => {
     expect(replay.port.disconnect).toHaveBeenCalledOnce();
   });
 
-  it('uses the replacement hello epoch and accepts attempt_state_lost at sequence zero', () => {
+  it('uses the replacement hello epoch and accepts attempt_state_lost at sequence zero', async () => {
     const first = createRuntimePort();
     const restarted = createRuntimePort();
     const connect = vi.fn()
@@ -947,8 +986,8 @@ describe('Cubby messaging', () => {
     const onResult = vi.fn();
 
     const control = startBgsmAgentTurn(input, { onResult });
-    first.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
-    first.deliver({
+    await first.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await first.deliver({
       type: 'bgsmAgentTurnEvent',
       sequence: 0,
       event: {
@@ -959,7 +998,7 @@ describe('Cubby messaging', () => {
       },
     });
     first.disconnect();
-    restarted.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-2' });
+    await restarted.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-2' });
     expect(restarted.port.postMessage).toHaveBeenCalledWith({
       type: 'startBgsmAgentTurn',
       executionEpochId: 'worker-epoch-2',
@@ -977,11 +1016,11 @@ describe('Cubby messaging', () => {
       changedCount: 0,
       commit: null,
     };
-    restarted.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
+    await restarted.deliver({ type: 'bgsmAgentTurnResult', sequence: 0, result });
 
     expect(onResult).toHaveBeenCalledWith(result);
     control.acknowledge({ disposition: 'no_transition', appliedRevision: null });
-    restarted.deliver({
+    await restarted.deliver({
       type: 'bgsmAgentTurnAck',
       turnAttemptId: input.turnAttemptId,
       sessionId: input.sessionId,
@@ -992,7 +1031,7 @@ describe('Cubby messaging', () => {
     expect(restarted.port.disconnect).toHaveBeenCalledOnce();
   });
 
-  it('sends a resume-only launch only when the inspected worker epoch still matches', () => {
+  it('sends a resume-only launch only when the inspected worker epoch still matches', async () => {
     const matching = createRuntimePort();
     const changed = createRuntimePort();
     const connect = vi.fn()
@@ -1011,7 +1050,7 @@ describe('Cubby messaging', () => {
       expectedExecutionEpochId: 'worker-epoch-1',
       resumeOnly: true,
     });
-    matching.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await matching.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
     expect(matching.port.postMessage).toHaveBeenCalledWith({
       type: 'startBgsmAgentTurn',
       executionEpochId: 'worker-epoch-1',
@@ -1027,7 +1066,7 @@ describe('Cubby messaging', () => {
       expectedExecutionEpochId: 'worker-epoch-1',
       resumeOnly: true,
     });
-    changed.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-2' });
+    await changed.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-2' });
     expect(changed.port.postMessage).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({
       code: 'agent_turn_resume_epoch_changed',
@@ -1266,7 +1305,7 @@ describe('Cubby messaging', () => {
     expect(retry.port.disconnect).toHaveBeenCalledOnce();
   });
 
-  it('detaches without stopping, acknowledging, reconnecting, or delivering callbacks', () => {
+  it('detaches without stopping, acknowledging, reconnecting, or delivering callbacks', async () => {
     const transport = createRuntimePort();
     const connect = vi.fn(() => transport.port);
     vi.stubGlobal('chrome', {
@@ -1282,10 +1321,10 @@ describe('Cubby messaging', () => {
     const onResult = vi.fn();
     const onError = vi.fn();
     const control = startBgsmAgentTurn(input, { onResult, onError });
-    transport.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
+    await transport.deliver({ type: 'bgsmAgentTurnHello', executionEpochId: 'worker-epoch-1' });
     control.detach();
     transport.disconnect();
-    transport.deliver({
+    await transport.deliver({
       type: 'bgsmAgentTurnResult',
       sequence: 0,
       result: {

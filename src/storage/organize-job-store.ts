@@ -1767,7 +1767,7 @@ export async function recoverExpiredOrganizeLeases(now = Date.now()): Promise<Re
     const analysisJobs = new Map<string, OrganizeJobRecord>();
     for (const jobId of new Set(expiredAnalysis.map((row) => row.jobId))) {
       const job = await requireJob(jobId);
-      if (job.status !== 'analyzing') continue;
+      if (!['analyzing', 'analysis_blocked'].includes(job.status)) continue;
       analysisJobs.set(jobId, job);
       recoverableAnalysis.push(...expiredAnalysis.filter((row) => row.jobId === jobId));
     }
@@ -1880,7 +1880,7 @@ export async function releaseOrganizeJobLeases(
           ...job,
           status: applyRows.length > 0
             ? job.pauseRequested ? 'paused' : 'apply_sealed'
-            : 'analyzing',
+            : job.status,
           pauseRequested: false,
           revision: job.revision + 1,
           updatedAt: now,

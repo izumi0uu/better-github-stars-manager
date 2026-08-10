@@ -143,6 +143,17 @@ describe('Cubby tools', () => {
     );
   });
 
+  it('does not name the artifact reader when only repository-code tools are enabled', () => {
+    const instructions = buildBgsmAgentInstructions([
+      'list_repository_files',
+      'search_repository_code',
+      'read_repository_file',
+    ]);
+
+    assert.match(instructions, /Use repository-code tools/u);
+    assert.doesNotMatch(instructions, /read_agent_artifact/u);
+  });
+
   it('validates artifact access modes and bounds search, ranges, ownership, and envelopes', async () => {
     await createAgentSession({ idFactory: () => 'artifact-random-owner' });
     await createAgentSession({ idFactory: () => 'artifact-random-other' });

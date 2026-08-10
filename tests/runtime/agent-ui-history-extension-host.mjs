@@ -754,6 +754,7 @@ function githubWorkerFixture({ route, method }) {
       { 'x-oauth-scopes': 'public_repo, gist' },
     ),
     'GET github-starred': json([], 'github-token-stars'),
+    'GET github-watch-scope': json([], 'github-token-watch-scope'),
     'POST github-gists': json({ id: 'runtime-probe-gist' }, 'github-token-gist-create', 201),
     'DELETE github-probe-gist': {
       status: 204,

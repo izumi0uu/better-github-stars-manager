@@ -173,4 +173,26 @@ describe('OrganizeJobRun Port lifecycle', () => {
       generation: run.frozen.generation,
     }]);
   });
+  it('contains a snapshot lookup failure during disconnect cleanup', async () => {
+    const posted: unknown[] = [];
+    await settleBgsmOrganizeJobDisconnect({
+      identity: {
+        controllerId: parseControllerId('controller:v1:disconnect-lookup-failure'),
+        sessionId: 'disconnect-lookup-failure-session',
+      },
+      controller: {
+        findLatestSnapshot() {
+          throw new Error('ephemeral state unavailable');
+        },
+      },
+      post: (message) => posted.push(message),
+    });
+    assert.deepEqual(posted, [{
+      type: 'bgsmOrganizeJobRunDisconnected',
+      controllerId: parseControllerId('controller:v1:disconnect-lookup-failure'),
+      sessionId: 'disconnect-lookup-failure-session',
+      runId: null,
+      generation: null,
+    }]);
+  });
 });

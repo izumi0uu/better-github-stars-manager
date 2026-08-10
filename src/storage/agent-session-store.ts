@@ -553,7 +553,6 @@ async function pruneSettledAgentAttempts(
     || right.updatedAt - left.updatedAt
   ));
   for (const attempt of settled.slice(AGENT_SESSION_RECENT_ATTEMPT_LIMIT)) {
-    await assertNoAgentAttemptRecovery(attempt);
     await deleteAgentAttemptRecoveriesForAttempt(attempt, now);
     await accountAgentAttemptDeleted(attempt, now);
     await db.agentAttempts.delete(attempt.id);

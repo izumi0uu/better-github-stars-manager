@@ -312,6 +312,22 @@ test('rejects reordered producer keys, path substitution, and diagnostics versio
   expectCode(() => assertEvidenceRedacted({ safe: 'x'.repeat(1_025) }), 'evidence_unbounded');
 });
 
+test('honors caller-provided Scenario Lab ID contracts with the existing mismatch error', () => {
+  const fixture = runtimeRecords();
+  const scenario = clone(fixture.documents.scenarioLab);
+  scenario.scenarioLab.scenarios.ids = ['custom-scenario'];
+  const raw = serializeProducer(scenario);
+  expectCode(() => validateRuntimeEvidenceFile('scenarioLab', raw), 'scenario_ids_mismatch');
+  assert.deepEqual(
+    validateRuntimeEvidenceFile('scenarioLab', raw, { expectedScenarioIds: ['custom-scenario'] }).value.scenarioLab.scenarios.ids,
+    ['custom-scenario'],
+  );
+  expectCode(
+    () => validateRuntimeEvidenceFile('scenarioLab', raw, { expectedScenarioIds: ['different-scenario'] }),
+    'scenario_ids_mismatch',
+  );
+});
+
 test('rejects nonzero failure, private, unexpected, issue, and cleanup evidence in passed records', () => {
   const fixture = runtimeRecords();
   const worker = clone(fixture.documents.workerRecovery);

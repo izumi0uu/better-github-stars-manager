@@ -10,6 +10,7 @@ import {
   digestAgentArtifactTouchedChunks,
   settleAgentArtifactCoverageIncomplete,
   validateAgentArtifactCoverageRecord,
+  verifyAgentArtifactCoverageRecord,
   type AgentArtifactCoverageEvidence,
   type AgentArtifactTouchedChunk,
 } from '@/bgsm-agent/artifact-coverage';
@@ -81,6 +82,23 @@ describe('Agent artifact exact coverage', () => {
     assert.equal(second.record.bytesDelivered, 10);
     assert.equal(second.record.expectedCursor, null);
     assert.equal(createAgentArtifactCoverageReceipt(second.record, 100).byteLength, 10);
+  });
+
+  it('rejects stale progress tokens after any immutable artifact identity changes', async () => {
+    const initial = await coverage();
+    await verifyAgentArtifactCoverageRecord(initial);
+    for (const patch of [
+      { artifactId: 'artifact-other' },
+      { sourceToolCallId: 'call-other' },
+      { expectedBytes: initial.expectedBytes + 1 },
+      { artifactSha256: 'z'.repeat(43) },
+      { integrityManifestSha256: 'n'.repeat(43) },
+    ]) {
+      await assert.rejects(
+        () => verifyAgentArtifactCoverageRecord({ ...initial, ...patch }),
+        /deterministic identity is inconsistent/u,
+      );
+    }
   });
 
   it('admits locators only between pending pages without changing coverage', async () => {
@@ -197,14 +215,17 @@ describe('Agent artifact exact coverage', () => {
       AgentArtifactCoverageError,
     );
     const tampered = {
-      ...firstEvidence,
-      cursorSupplied: true,
-      inputCursor: 'cursor-four',
+      ...await pageEvidence({
+        cursorSupplied: true,
+        inputCursor: 'cursor-four',
+        pageBytes: 3,
+        nextCursor: 'cursor-seven',
+      }),
       touchedChunkDigest: `atc:v1:${await sha256Base64Url('tampered')}`,
     };
     await assert.rejects(
       () => applyAgentArtifactCoverageEvidence(first, tampered),
-      AgentArtifactCoverageError,
+      /Touched chunk evidence is inconsistent/u,
     );
     assert.throws(
       () => validateAgentArtifactCoverageRecord({

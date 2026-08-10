@@ -538,6 +538,23 @@ describe('Cubby session', () => {
       }),
       /raw creation prefix/i,
     );
+
+    assert.throws(
+      () => applyBgsmAgentSessionTransitionToValidatedPrefix(projected.session, {
+        sessionId: projected.session.id,
+        baseRevision: projected.session.revision,
+        messageDelta: [
+          {
+            id: candidateProjection.currentUserMessageId,
+            role: 'user',
+            content: 'Reuse an existing projection identity.',
+            createdAt: 9,
+          },
+          { id: 'duplicate-answer', role: 'agent', content: 'No.', createdAt: 10 },
+        ],
+      }),
+      /current user identity is not unique/i,
+    );
   });
 
   it('applies a candidate checkpoint and complete delta in one transition', () => {

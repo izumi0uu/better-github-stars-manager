@@ -226,6 +226,7 @@ function AgentPanel({
   const workbench = {
     state: workbenchState ?? createAgentWorkbenchState('controller:v1:test', presentedAgent.sessionId),
     displayedProcessed: 0,
+    terminalDismissFailed: false,
     requestPreflight: messagingMocks.requestPreflight,
     captureAgentHandoffAuthority: vi.fn(() => 0),
     applyAgentHandoff: vi.fn((handoff) => {

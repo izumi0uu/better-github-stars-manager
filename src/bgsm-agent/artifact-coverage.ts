@@ -156,14 +156,8 @@ export async function agentArtifactCoverageId(
 export async function agentArtifactCoverageProgressToken(
   record: Omit<AgentArtifactCoverageRecord, 'progressToken'>,
 ): Promise<string> {
-  return `acp:v1:${await sha256Base64Url(canonicalJson({
-    coverageId: record.coverageId,
-    expectedCursor: record.expectedCursor,
-    bytesDelivered: record.bytesDelivered,
-    cursorChainDigest: record.cursorChainDigest,
-    state: record.state,
-    failureCode: record.failureCode,
-  }))}`;
+  const { progressToken: _progressToken, ...body } = record as AgentArtifactCoverageRecord;
+  return `acp:v1:${await sha256Base64Url(canonicalJson(body))}`;
 }
 
 export async function verifyAgentArtifactCoverageRecord(
