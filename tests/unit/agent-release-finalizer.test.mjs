@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -409,6 +411,46 @@ test('requires provisional generated files to be the canonical ZIP and checksum 
       },
     }), /exact canonical ZIP and checksum inventory/);
     assert.deepEqual(readdirSync(artifactsDir), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('applies the package exact-entry rules before the finalizer reads ZIP members', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'bgsm-finalizer-zip-entry-'));
+  const artifactsDir = path.join(root, 'artifacts');
+  const distDir = path.join(root, 'dist');
+  const stageDir = path.join(root, 'stage');
+  mkdirSync(artifactsDir);
+  mkdirSync(distDir);
+  mkdirSync(stageDir);
+  const zipName = `better-github-stars-manager-${VERSION}.zip`;
+  const checksumName = `${zipName}.sha256`;
+  const zipPath = path.join(artifactsDir, zipName);
+  const checksumPath = path.join(artifactsDir, checksumName);
+  writeFileSync(path.join(stageDir, 'manifest.json'), JSON.stringify({ manifest_version: 3, version: VERSION }));
+  writeFileSync(path.join(stageDir, '-metadata.json'), '{}');
+  execFileSync('zip', ['-X', '-q', zipPath, '--', 'manifest.json', '-metadata.json'], { cwd: stageDir });
+  const zipBytes = readFileSync(zipPath);
+  const zipSha256 = createHash('sha256').update(zipBytes).digest('hex');
+  writeFileSync(checksumPath, `${zipSha256}  ${zipName}\n`);
+  const generatedFiles = [zipName, checksumName]
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
+    .map((relativePath) => {
+      const bytes = readFileSync(path.join(artifactsDir, relativePath));
+      return { relativePath, bytes: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex') };
+    });
+  try {
+    assert.throws(
+      () => validatePackageArtifacts({
+        root,
+        artifactsDir,
+        distDir,
+        packageVersion: VERSION,
+        provisional: { generatedFiles },
+      }),
+      (error) => error?.code === 'zip_entry_path_invalid',
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

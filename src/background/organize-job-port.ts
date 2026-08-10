@@ -160,8 +160,7 @@ export function createBgsmOrganizeJobConnectionRegistry<Port extends BgsmOrganiz
       if (connectionByPort.get(connection.port) !== connection) return false;
       connectionByPort.delete(connection.port);
       const key = connectionKey(connection.identity);
-      if (currentByIdentity.get(key) !== connection) return false;
-      currentByIdentity.delete(key);
+      if (currentByIdentity.get(key) === connection) currentByIdentity.delete(key);
       return true;
     },
 

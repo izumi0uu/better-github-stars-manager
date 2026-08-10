@@ -224,7 +224,12 @@ export function createBgsmAgentToolResultExternalizer(input: Readonly<{
         toolCallId: admissionInput.toolCall.id,
       });
 
-      if (admissionInput.risk === 'write') return null;
+      if (admissionInput.risk === 'write') {
+        if (evidence) {
+          throw new TypeError('Artifact evidence was published for a write tool call.');
+        }
+        return null;
+      }
       if (admissionInput.toolCall.name === 'read_agent_artifact') {
         if (!admissionInput.result.ok) {
           if (admissionInput.requiredBeforeFinal.length > 0) {

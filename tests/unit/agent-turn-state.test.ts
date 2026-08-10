@@ -124,6 +124,7 @@ describe('Agent turn reducer', () => {
       type: 'turn_started',
       status: { kind: 'queued', text: 'Queued' },
     }).transientSafeResendPrompt).toBeNull();
+
   });
 
   it.each([

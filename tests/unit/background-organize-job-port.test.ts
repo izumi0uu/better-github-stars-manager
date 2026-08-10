@@ -124,7 +124,7 @@ describe('OrganizeJobRun connection registry', () => {
 
     registry.markDisconnected(firstPort);
     assert.equal(registry.ownsIdentity(second), true);
-    assert.equal(registry.release(first), false);
+    assert.equal(registry.release(first), true);
     assert.equal(registry.forPort(firstPort), null);
     assert.equal(registry.current(identity), second);
     assert.equal(registry.markDisconnected(secondPort), second);

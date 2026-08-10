@@ -23,25 +23,33 @@ import cssText from '@/ui/styles/index.css?inline';
  * cannot strand the user with an apparently missing extension.
  */
 type StarsPageRuntime = {
+  document: Document;
   sync(): Promise<void>;
+  dispose(): void;
 };
 
 const pageRuntimes = new WeakMap<Window, StarsPageRuntime>();
 
 /**
  * CRXJS loads content entries as cached ES modules and calls `onExecute` for
- * every manifest injection. Keep all mutable mount state under that page's
- * Window so a second target never reuses another page's root or generation.
+ * every manifest injection. A WindowProxy may survive navigation while its
+ * Document changes, so reuse is valid only for the exact current Document.
  */
 export function installStarsPageRuntime(pageWindow: Window): void {
+  const pageDocument = pageWindow.document;
   const current = pageRuntimes.get(pageWindow);
-  if (current) {
+  if (current?.document === pageDocument) {
     void current.sync();
     return;
   }
+  if (current) {
+    current.dispose();
+    resetPanelToggle(pageWindow);
+  }
 
   const window = pageWindow;
-  const { document, location } = window;
+  const document = pageDocument;
+  const { location } = window;
 
   function isStarsPage(): boolean {
     return new URLSearchParams(location.search).get('tab') === 'stars';
@@ -200,36 +208,39 @@ export function installStarsPageRuntime(pageWindow: Window): void {
   }
 
   // Drop stale async results across rapid PJAX navigations.
+  let active = true;
   let syncGen = 0;
   async function sync(): Promise<void> {
+    if (!active) return;
     const gen = ++syncGen;
-    const [isOwn, config] = await Promise.all([isOwnStars(), authStore.getConfig()]);
-    if (gen !== syncGen) return; // superseded by a newer navigation
-    const state = mountState(
-      isOwn,
-      isPanelEnabled(config.starsPanelDefaultEnabled, pageWindow),
-    );
-    if (state === 'panel') {
-      injectPanel();
-      ejectFab();
-    } else if (state === 'fab') {
-      ejectPanel();
-      injectFab();
-    } else {
+    try {
+      const [isOwn, config] = await Promise.all([isOwnStars(), authStore.getConfig()]);
+      if (!active || gen !== syncGen) return; // superseded or replaced
+      const state = mountState(
+        isOwn,
+        isPanelEnabled(config.starsPanelDefaultEnabled, pageWindow),
+      );
+      if (state === 'panel') {
+        injectPanel();
+        ejectFab();
+      } else if (state === 'fab') {
+        ejectPanel();
+        injectFab();
+      } else {
+        ejectPanel();
+        ejectFab();
+      }
+    } catch {
+      if (!active || gen !== syncGen) return;
       ejectPanel();
       ejectFab();
     }
   }
 
-  pageRuntimes.set(pageWindow, { sync });
-  onPanelToggle(sync, pageWindow);
-
-  void sync();
-  document.addEventListener('turbo:load', sync);
-  document.addEventListener('turbo:render', sync);
-  window.addEventListener('popstate', sync);
-
-  chrome.storage.onChanged.addListener((changes, areaName) => {
+  const handleStorageChange = (
+    changes: Record<string, chrome.storage.StorageChange>,
+    areaName: string,
+  ): void => {
     if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]) return;
     const oldCfg = changes[CONFIG_STORAGE_KEY].oldValue as
       | { starsPanelDefaultEnabled?: boolean }
@@ -240,7 +251,30 @@ export function installStarsPageRuntime(pageWindow: Window): void {
     if (oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled) return;
     resetPanelToggle(pageWindow);
     void sync();
-  });
+  };
+
+  function dispose(): void {
+    if (!active) return;
+    active = false;
+    syncGen += 1;
+    document.removeEventListener('turbo:load', sync);
+    document.removeEventListener('turbo:render', sync);
+    window.removeEventListener('popstate', sync);
+    chrome.storage.onChanged.removeListener(handleStorageChange);
+    onPanelToggle(() => {}, pageWindow);
+    ejectPanel();
+    ejectFab();
+  }
+
+  const runtime = { document, sync, dispose };
+  pageRuntimes.set(pageWindow, runtime);
+  onPanelToggle(sync, pageWindow);
+
+  void sync();
+  document.addEventListener('turbo:load', sync);
+  document.addEventListener('turbo:render', sync);
+  window.addEventListener('popstate', sync);
+  chrome.storage.onChanged.addListener(handleStorageChange);
 }
 
 export function onExecute(): void {

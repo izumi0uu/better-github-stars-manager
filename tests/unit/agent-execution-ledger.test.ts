@@ -90,6 +90,20 @@ describe('agent execution ledger', () => {
     assert.equal(ledger.writeSettlement(), expected);
   });
 
+  it('ignores replay-only calls that select no new write effects', () => {
+    const ledger = new AgentExecutionLedger();
+    ledger.authorize({
+      callId: 'replay-only',
+      toolName: 'assign_repo_tags',
+      args: { full_name: 'owner/repo', tags: ['A'] },
+      effects: [['assign_repo_tags', 'scope:test', 'owner/repo', 'a']],
+      selectedEffects: [],
+    });
+    ledger.settle('replay-only', 'committed');
+
+    assert.equal(ledger.writeSettlement(), 'none');
+  });
+
   it('keeps a committed write receipt when byte recovery permits only a minimal envelope', async () => {
     const ledger = new AgentExecutionLedger();
     const writer = vi.fn(async (args: WriteArgs) => ({

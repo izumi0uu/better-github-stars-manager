@@ -169,8 +169,11 @@ export class AgentExecutionLedger {
   }
 
   writeSettlement(): AgentWriteSettlement {
-    if (this.calls.size === 0) return 'none';
-    return [...this.calls.values()].every((receipt) => receipt.state === 'failed')
+    const writeReceipts = [...this.calls.values()].filter(
+      (receipt) => receipt.selectedEffects.length > 0,
+    );
+    if (writeReceipts.length === 0) return 'none';
+    return writeReceipts.every((receipt) => receipt.state === 'failed')
       ? 'all_failed'
       : 'unsafe';
   }

@@ -120,6 +120,16 @@ const ORGANIZE_RUNTIME_STAGES = new Set([
   'trusted_origin_deletion_invalidation_convergence_terminal_projection',
   'trusted_origin_deletion_invalidation_convergence_catalog_open_page_a',
   'trusted_origin_deletion_invalidation_convergence_catalog_open_page_b',
+  'trusted_origin_deletion_invalidation_convergence_catalog_projection',
+  'trusted_origin_deletion_invalidation_convergence_catalog_close',
+  'trusted_origin_deletion_durable_authority',
+  'trusted_origin_deletion_port_invalidation',
+  'trusted_origin_deletion_port_invalidation_assert',
+  'trusted_origin_deletion_terminal_evidence',
+  'trusted_origin_deletion_dismiss',
+  'trusted_origin_deletion_dismiss_content_convergence',
+  'trusted_origin_deletion_dismiss_convergence',
+  'trusted_origin_deletion_dismiss_evidence',
   'worker_recovery_start',
   'worker_recovery_stall',
   'worker_recovery_pause_before_expiry',
@@ -304,6 +314,7 @@ try {
   }
   runtimeStage = 'production_full_sync';
   await runTrustedFullSync(contentPageA, page, ROW_COUNT);
+  await dismissOnboardingTourIfVisible(contentPageA);
 
   runtimeStage = 'production_next_admission_page_b';
   contentPageB = await openOrganizeContentPage(browser, PAGE_B_URL, 'organize-page-b-admission');
@@ -530,10 +541,30 @@ try {
   await contentPageB.bringToFront();
   await openAgentDrawer(contentPageB);
   runtimeStage = 'mount_two_content_pages_catalog_selection';
-  await Promise.all([
-    selectSessionThroughUi(contentPageA, ownerStart.pageSessionId),
-    selectSessionThroughUi(contentPageB, ownerStart.pageSessionId),
-  ]);
+  try {
+    await Promise.all([
+      selectSessionThroughUi(contentPageA, ownerStart.pageSessionId),
+      selectSessionThroughUi(contentPageB, ownerStart.pageSessionId),
+    ]);
+  } catch (error) {
+    const catalogDiagnostics = await Promise.all([contentPageA, contentPageB].map(async (candidate) => (
+      candidate.evaluate((expected) => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+        const rows = [...(root?.querySelectorAll('[data-testid="agent-session-item"]') ?? [])];
+        const list = root?.querySelector('[data-testid="agent-session-list"]');
+        const toggle = root?.querySelector('[data-testid="agent-session-toggle"]');
+        return {
+          menuOpen: list?.getAttribute('data-state') === 'open',
+          rowCount: rows.length,
+          targetPresent: rows.some((row) => row.getAttribute('data-session-id') === expected),
+          currentCount: rows.filter((row) => row.querySelector('[aria-current="true"]')).length,
+          toggleDisabled: toggle instanceof HTMLButtonElement && toggle.disabled,
+        };
+      }, ownerStart.pageSessionId).catch(() => null)
+    )));
+    console.error(JSON.stringify({ diagnostic: 'catalog_selection', catalogDiagnostics }));
+    throw error;
+  }
   const originSelections = await Promise.all([
     readOrganizeContentUi(contentPageA),
     readOrganizeContentUi(contentPageB),
@@ -711,7 +742,7 @@ try {
     applyId: completedByOwner.presentation.apply.applyId,
     rowCount: ROW_COUNT,
   });
-  runtimeStage = 'trusted_origin_deletion';
+  runtimeStage = 'trusted_origin_deletion_port_invalidation';
   const [ownerInvalidation, observerInvalidation] = await Promise.all([
     page.evaluate(waitForOwnershipDeletionInvalidation, {
       deletedSessionId: ownerStart.pageSessionId,
@@ -722,9 +753,11 @@ try {
       timeoutMs: TIMEOUT_MS,
     }),
   ]);
+  runtimeStage = 'trusted_origin_deletion_port_invalidation_assert';
   assert.equal(ownerInvalidation.invalidationDelivery.deliveryKind, 'live');
   assert.equal(observerInvalidation.invalidationDelivery.deliveryKind, 'live');
 
+  runtimeStage = 'trusted_origin_deletion_terminal_evidence';
   const [ownerEvidence, observerEvidence] = await Promise.all([
     page.evaluate(readTwoPageOwnershipTerminalEvidence, completedByOwner.presentation.jobId),
     observerPage.evaluate(readTwoPageOwnershipTerminalEvidence, completedByOwner.presentation.jobId),
@@ -736,17 +769,21 @@ try {
   assert.equal(ownerEvidence.apply.jobId, completedByOwner.presentation.jobId);
   assert.equal(ownerEvidence.applyRowCount, ROW_COUNT);
 
+  runtimeStage = 'trusted_origin_deletion_dismiss';
   await clickDismissThroughUi(contentPageB);
+  runtimeStage = 'trusted_origin_deletion_dismiss_content_convergence';
   await Promise.all([
     waitForContentTerminalDismissed(contentPageA),
     waitForContentTerminalDismissed(contentPageB),
   ]);
+  runtimeStage = 'trusted_origin_deletion_dismiss_convergence';
   const [dismissed, formerOwnerNoJob] = await Promise.all([
     observerPage.evaluate(waitForTwoPageOwnershipNoJob, { timeoutMs: TIMEOUT_MS }),
     page.evaluate(waitForTwoPageOwnershipNoJob, { timeoutMs: TIMEOUT_MS }),
   ]);
   assert.equal(dismissed.presentation, null);
   assert.equal(formerOwnerNoJob.presentation, null);
+  runtimeStage = 'trusted_origin_deletion_dismiss_evidence';
   const dismissedEvidence = await observerPage.evaluate(
     readTwoPageOwnershipTerminalEvidence,
     completedByOwner.presentation.jobId,
@@ -1138,6 +1175,8 @@ function githubWorkerFixture({ route, method }) {
       200,
       { 'x-oauth-scopes': 'public_repo, gist' },
     ),
+    'GET github-watch-scope': json([], 'github_watch_scope'),
+    // This host configures only the main token; dedicated notification-token coverage lives in extension-browser-smoke.mjs.
     'POST github-gists': json({ id: 'runtime-probe-gist' }, 'github_gist_create', 201),
     'DELETE github-probe-gist': {
       status: 204,
@@ -1156,6 +1195,8 @@ function classifyRuntimeRoute(value) {
     if (url.origin === 'https://api.openai.com' && url.pathname === '/v1/responses') return 'responses';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user') return 'github-user';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user/starred') return 'github-starred';
+    if (url.origin === 'https://api.github.com' && url.pathname === '/user/subscriptions') return 'github-watch-scope';
+    if (url.origin === 'https://api.github.com' && url.pathname === '/notifications') return 'github-notifications';
     if (url.origin === 'https://api.github.com' && url.pathname === '/gists/runtime-probe-gist') return 'github-probe-gist';
     if (url.origin === 'https://api.github.com' && url.pathname === '/gists') return 'github-gists';
     if (url.origin === 'https://api.github.com' && /^\/repos\/[^/]+\/[^/]+$/u.test(url.pathname)) return 'github-repository';
@@ -1884,18 +1925,17 @@ async function classifyContentEntry(page, extensionId) {
   }
 }
 
+
+
 async function runTrustedFullSync(page, storagePage, expectedCount) {
   runtimeStage = 'production_full_sync_wait_button';
-  await waitUntil(async () => {
-    const uiIdle = await page.evaluate(() => {
-      const button = document.getElementById('gsm-manager-host')?.shadowRoot
-        ?.querySelector('[data-coach-target="full-sync"]');
-      return button instanceof HTMLButtonElement
-        && !button.disabled
-        && button.getClientRects().length > 0;
-    });
-    return uiIdle && storagePage.evaluate(hasExpectedStarCount, expectedCount);
-  }, TIMEOUT_MS);
+  await waitUntil(() => page.evaluate(() => {
+    const button = document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('[data-coach-target="full-sync"]');
+    return button instanceof HTMLButtonElement
+      && !button.disabled
+      && button.getClientRects().length > 0;
+  }), TIMEOUT_MS);
   await dismissOnboardingTourIfVisible(page);
   await waitUntil(() => page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot;
@@ -1938,7 +1978,8 @@ async function runTrustedFullSync(page, storagePage, expectedCount) {
         && !button.disabled
         && button.getClientRects().length > 0;
     });
-    return uiIdle && storagePage.evaluate(hasExpectedStarCount, expectedCount);
+    if (!uiIdle) return false;
+    return await storagePage.evaluate(hasExpectedStarCount, expectedCount);
   }, TIMEOUT_MS);
 }
 
@@ -2648,6 +2689,19 @@ async function runOriginDeletionInvalidationScenario({
 }
 
 async function clickDismissThroughUi(page) {
+  await page.bringToFront();
+  await waitUntil(() => page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const card = root?.querySelector('[data-testid="organize-job-receipt-card"]');
+    const button = [...(card?.querySelectorAll('button') ?? [])].find((candidate) => (
+      /^Dismiss$/u.test(candidate.textContent?.trim() ?? '')
+    ));
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+    const rect = button.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const hitTarget = root?.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return hitTarget === button || button.contains(hitTarget);
+  }), TIMEOUT_MS);
   await clickShadowTextTrusted(
     page,
     'button',
@@ -4671,6 +4725,8 @@ function boundedUnexpectedRequestKinds(records) {
     'responses',
     'github-user',
     'github-starred',
+    'github-watch-scope',
+    'github-notifications',
     'github-probe-gist',
     'github-gists',
     'github-repository',

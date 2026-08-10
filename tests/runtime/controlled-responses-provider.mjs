@@ -854,7 +854,7 @@ function normalizeResourceType(value) {
 function normalizeStatus(value) {
   if (value === undefined || value === null) return 200;
   const status = boundedNonnegativeInteger(value);
-  if (status === null || status < 400 || status > 599) {
+  if (status === null || (status !== 200 && (status < 400 || status > 599))) {
     throw new RangeError('Controlled Responses status must be 200 or an HTTP error status.');
   }
   return status;
@@ -912,6 +912,8 @@ function classifyHttpRoute(control, value) {
     if (/^\/repos\/[^/]+\/[^/]+\/contents$/u.test(url.pathname)) return 'github-contents';
     if (/^\/repos\/[^/]+\/[^/]+\/contents\/.+$/u.test(url.pathname)) return 'github-contents-file';
     if (url.pathname === '/user/starred') return 'github-starred';
+    if (url.pathname === '/user/subscriptions') return 'github-watch-scope';
+    if (url.pathname === '/notifications') return 'github-notifications';
     if (url.pathname === '/gists') return 'github-gists';
     if (url.pathname === '/gists/runtime-probe-gist') return 'github-probe-gist';
   } catch {

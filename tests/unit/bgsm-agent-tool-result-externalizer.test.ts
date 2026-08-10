@@ -229,7 +229,7 @@ describe('Cubby tool-result externalizer', () => {
     );
   });
 
-  it('clears evidence for failed and write-classified results without externalizing them', async () => {
+  it('clears failed-reader evidence and rejects evidence attached to write results', async () => {
     const fixture = externalizer();
     fixture.evidenceHandoff.publish({
       sessionId: 'session:externalizer',
@@ -259,12 +259,15 @@ describe('Cubby tool-result externalizer', () => {
       accessKind: 'offset',
       evidence: coverageEvidence('offset'),
     });
-    const write = await fixture.host.afterToolResult(admissionInput({
-      callId: 'call:write',
-      toolName: 'assign_repo_tags',
-      risk: 'write',
-      result: okToolResult({ payload: 'x'.repeat(2_000) }),
-    }));
+    await assert.rejects(
+      () => fixture.host.afterToolResult(admissionInput({
+        callId: 'call:write',
+        toolName: 'assign_repo_tags',
+        risk: 'write',
+        result: okToolResult({ payload: 'x'.repeat(2_000) }),
+      })),
+      /evidence was published for a write tool call/u,
+    );
     const ordinary = await fixture.host.afterToolResult(admissionInput({
       callId: 'call:ordinary-read',
       toolName: 'list_tags',
@@ -272,7 +275,6 @@ describe('Cubby tool-result externalizer', () => {
     }));
 
     assert.equal(failed, null);
-    assert.equal(write, null);
     assert.equal(ordinary, null);
     assert.equal(fixture.storeInputs.length, 0);
     assert.equal(fixture.evidenceHandoff.consume({

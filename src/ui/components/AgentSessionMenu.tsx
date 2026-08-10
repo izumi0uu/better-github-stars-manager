@@ -184,7 +184,7 @@ export function AgentSessionMenu({
                   type="button"
                   className="min-w-0 flex-1 truncate rounded-sm px-1.5 py-1.5 text-left text-xs text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   aria-current={isCurrent ? 'true' : undefined}
-                  disabled={busy || !canSwitchSession || session.corrupt === true}
+                  disabled={busy || session.corrupt === true || (!isCurrent && !canSwitchSession)}
                   onClick={async () => {
                     if (isCurrent) {
                       close();
