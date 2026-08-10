@@ -14,6 +14,7 @@ const INVALID_TOKEN =
   'github_pat_invalid_test_value_for_first_run_matrix';
 
 const args = new Set(process.argv.slice(2));
+const requireSelected = args.has('--require-selected');
 const selectedArg = process.argv
   .slice(2)
   .find((arg) => arg.startsWith('--scenario='));
@@ -39,6 +40,7 @@ Optional env:
 
 Optional args:
   --scenario=no-token,invalid-token,valid-token
+  --require-selected     fail when a selected scenario skips for missing prerequisites
 `);
   process.exit(0);
 }
@@ -48,8 +50,6 @@ if (!existsSync(path.join(DIST, 'manifest.json'))) {
   process.exit(1);
 }
 
-const summaries = [];
-const starsUser = await resolveGitHubUser();
 
 const scenarios = [
   {
@@ -137,6 +137,22 @@ if (args.has('--list')) {
   }
   process.exit(0);
 }
+if (requireSelected && selectedNames) {
+  const scenarioNames = new Set(scenarios.map((scenario) => scenario.id));
+  const unknownNames = [...selectedNames].filter((name) => !scenarioNames.has(name));
+
+  if (selectedNames.size === 0) {
+    console.error('❌ --require-selected cannot be used with an empty --scenario selection.');
+    process.exit(1);
+  }
+  if (unknownNames.length > 0) {
+    console.error(`❌ Unknown --scenario selection: ${unknownNames.join(', ')}`);
+    process.exit(1);
+  }
+}
+
+const summaries = [];
+const starsUser = await resolveGitHubUser();
 
 for (const scenario of scenarios) {
   if (selectedNames && !selectedNames.has(scenario.id)) continue;
@@ -200,7 +216,13 @@ for (const item of summaries) {
 }
 
 const failed = summaries.filter((item) => item.status === 'failed');
-if (failed.length > 0) process.exit(1);
+const skipped = summaries.filter((item) => item.status === 'skipped');
+
+if (requireSelected && skipped.length > 0) {
+  console.error(`❌ --require-selected: selected scenario(s) skipped: ${skipped.map((item) => item.id).join(', ')}`);
+}
+
+if (failed.length > 0 || (requireSelected && skipped.length > 0)) process.exit(1);
 
 async function resolveGitHubUser() {
   if (process.env.GH_USER) return process.env.GH_USER;
