@@ -29,6 +29,7 @@ export async function publishChromeWebStore({
   fetchImpl = globalThis.fetch,
   log = console.log,
 } = {}) {
+  assertRequiredEnvironment(env);
   const publishType = env.CWS_PUBLISH_TYPE || 'DEFAULT_PUBLISH';
   if (!Object.hasOwn(SUCCESSFUL_PUBLISH_STATES_BY_TYPE, publishType)) {
     throw new Error(`unsupported Chrome Web Store publish type: ${publishType}`);
@@ -159,6 +160,12 @@ function assertSuccessfulPublish(publish, { extensionId, publishType, resourcePa
   }
   if (publish.name !== resourcePath) {
     throw new Error('publish failed: name does not match configured extension resource');
+  }
+}
+
+function assertRequiredEnvironment(env) {
+  for (const key of REQUIRED_ENV) {
+    if (!env?.[key]) throw new Error(`missing required env: ${key}`);
   }
 }
 

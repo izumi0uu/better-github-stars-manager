@@ -137,12 +137,12 @@ if (args.has('--list')) {
   }
   process.exit(0);
 }
-if (requireSelected && selectedNames) {
+if (selectedNames) {
   const scenarioNames = new Set(scenarios.map((scenario) => scenario.id));
   const unknownNames = [...selectedNames].filter((name) => !scenarioNames.has(name));
 
   if (selectedNames.size === 0) {
-    console.error('❌ --require-selected cannot be used with an empty --scenario selection.');
+    console.error('❌ empty --scenario selection is not allowed.');
     process.exit(1);
   }
   if (unknownNames.length > 0) {

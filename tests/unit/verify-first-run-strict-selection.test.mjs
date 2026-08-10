@@ -34,7 +34,7 @@ function outputOf(result) {
   return `${result.stdout}\n${result.stderr}`;
 }
 
-test('selected valid-token skips without Chrome and strict mode fails closed', () => {
+test('valid selections preserve skip behavior while invalid selections fail before Chrome', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'verify-first-run-strict-'));
 
   try {
@@ -64,13 +64,13 @@ test('selected valid-token skips without Chrome and strict mode fails closed', (
     assert.match(missingToken.stderr, /selected scenario\(s\) skipped: valid-token/u);
     assert.doesNotMatch(missingToken.stdout, /Profile:/u);
 
-    const unknown = runVerifyFirstRun(root, ['--scenario=unknown', '--require-selected']);
+    const unknown = runVerifyFirstRun(root, ['--scenario=unknown']);
     assert.equal(unknown.error, undefined, unknown.error?.message);
     assert.equal(unknown.status, 1, outputOf(unknown));
     assert.match(unknown.stderr, /Unknown --scenario selection: unknown/u);
     assert.doesNotMatch(unknown.stdout, /Summary:/u);
 
-    const empty = runVerifyFirstRun(root, ['--scenario=', '--require-selected']);
+    const empty = runVerifyFirstRun(root, ['--scenario=']);
     assert.equal(empty.error, undefined, empty.error?.message);
     assert.equal(empty.status, 1, outputOf(empty));
     assert.match(empty.stderr, /empty --scenario selection/u);

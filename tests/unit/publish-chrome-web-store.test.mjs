@@ -481,3 +481,30 @@ test('rejects an unsupported publish type before any network request', async () 
     assertLogsOmitCredentials(logs, env);
   });
 });
+
+test('rejects each missing required environment value before any network request', async () => {
+  await withTemporaryZip(async (zipPath) => {
+    for (const key of Object.keys(BASE_ENV)) {
+      const env = environment();
+      delete env[key];
+      const calls = [];
+
+      await assert.rejects(
+        publishChromeWebStore({
+          zipPath,
+          env,
+          fetchImpl: async (...args) => {
+            calls.push(args);
+            throw new Error('unexpected network request');
+          },
+          log: () => {
+            throw new Error('unexpected log output');
+          },
+        }),
+        new RegExp(`missing required env: ${key}`, 'u'),
+      );
+
+      assert.deepEqual(calls, []);
+    }
+  });
+});
