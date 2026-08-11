@@ -104,24 +104,15 @@ Chrome 商店安装地址:
 
 ### Token 配置
 
-Step 1: 创建一个 **fine-grained personal access token**,点 **Generate new token**。
+完整的 GitHub 功能需要一个 Fine-grained 主 Token；如果 Watch Inbox 需要备用凭据，再为同一账号创建一个只带 `notifications` scope 的 Classic PAT。
 
-![创建 fine-grained token](public/tutorial/img_01.png)
+具体权限、API 对应关系、配置步骤、单 Token 备选方案和 GitHub 官方依据，见[GitHub Token 权限文档](docs/zh/github-token-permissions.md)。
 
-Step 2: Repository access 选 **Public repositories**。
+快速对照：
 
-![选择仓库访问范围](public/tutorial/img_02.png)
-
-Step 3: 加上 **Gists: read and write**,以便跨设备同步可用。
-
-![授予 Gists 权限](public/tutorial/img_03.png)
-
-推荐的 GitHub token 权限:
-
-- **Public Repositories (read)**
-- **Gists (read/write)**
-
-> 细粒度 token 的 Gist 权限是账号级的(不能按 gist 隔离)。扩展会为同步创建一个专用 secret gist。
+- Fine-grained 主 Token：`Public repositories`；账号权限为 `Starring: read and write`、`Gists: read and write`、`Watching: read`。
+- Watch Inbox 备用 Token：Classic PAT，只勾选 `notifications`。
+- Cubby：还需要单独配置 AI 服务的 API Key、Base URL 和模型。工具、权限、持久化，以及我们怎样借鉴 Pi，见 [Cubby Agent 架构与设计](docs/zh/cubby-agent.md)。
 
 ### 另一种方式 --> 本地开发安装
 
@@ -154,7 +145,7 @@ Push / Pull 只同步批注层:
 
 没有自建后端,也没有独立的应用账号。
 
-面向商店的隐私声明 [docs/privacy-policy.md](docs/privacy-policy.md)。
+面向商店的隐私声明见 [docs/zh/privacy-policy.md](docs/zh/privacy-policy.md)。
 
 ## 许可证
 
