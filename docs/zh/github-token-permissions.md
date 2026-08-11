@@ -97,4 +97,4 @@ Token 与密码一样敏感。请设置过期时间，只在扩展的 Options �
 - [Classic PAT 与 OAuth scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps)
 - [Code search REST API](https://docs.github.com/en/rest/search/search#search-code)
 
-GitHub 在 2026 年 6 月 30 日宣布弃用公开的 `GET /users/{username}/subscriptions` 接口。Better GitHub Stars Manager 使用的是已认证的 `GET /user/subscriptions`。GitHub 当前的 Fine-grained 权限表仍把这个接口列在 `Watching: read` 下。相关说明见 [GitHub API 访问限制公告](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/)。
+GitHub 已宣布弃用公开的 `GET /users/{username}/subscriptions` 接口。过渡期间，该接口仍可访问，但可能返回空响应；GitHub 计划在后续阶段完全移除它。Better GitHub Stars Manager 使用的是已认证的 `GET /user/subscriptions` 接口，GitHub 当前的 Fine-grained 权限表仍将它列在 `Watching: read` 下。相关说明见 [GitHub API 访问限制公告](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/)。

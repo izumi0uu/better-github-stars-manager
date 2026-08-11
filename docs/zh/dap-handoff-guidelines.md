@@ -104,7 +104,7 @@ Known blind spots and how to avoid false conclusions.
 
 ## 命名
 
-文件名应包含模块和优先级，并能直接说明用途，例如：
+文件名应包含模块和用途，并能直接说明诊断目标，例如：
 
 - `dap-github-stars-sync-handoff.md`
 - `dap-auth-token-probe-handoff.md`

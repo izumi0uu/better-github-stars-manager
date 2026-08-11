@@ -134,11 +134,11 @@ Allows a user who configures Anthropic to test the connection and run Cubby dire
 
 ### Optional custom AI-service hosts
 
-The manifest declares broad HTTPS and localhost or 127.0.0.1 patterns as optional host permissions because a custom compatible origin is not known at install time. Options requests access only after an explicit **Allow access** action.
+The manifest declares `https://*/*`, `http://localhost/*`, and `http://127.0.0.1/*` as optional host permissions because a custom compatible origin is not known at install time. The broad HTTPS pattern lets the extension connect to an arbitrary HTTPS-compatible service configured by the user. Options requests access only after an explicit **Allow access** action.
 
 Chrome's permission pattern may cover every port for a scheme and hostname. The extension separately binds the credential and request to the exact canonical origin, including its port. Denied optional access makes no Provider request.
 
-Google explains required and optional host access in [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions). The dashboard permission fields must be reconciled manually with the final ZIP manifest.
+Google explains required and optional host access in [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions). The Dashboard justification must explicitly explain the `https://*/*` scope, and the final ZIP manifest must match these documented patterns.
 
 ## Privacy practices mapping
 
@@ -228,7 +228,7 @@ The final chain must prove the ZIP root contains `manifest.json`, every manifest
 
 The two verification commands above do not upload the package or prove live credentials, dashboard values, review, or publication.
 
-The tag-triggered release workflow contains a gated Chrome Web Store API upload-and-publish step. It runs only when `CWS_DEPLOY_ENABLED` is true and the required Web Store credentials and item identifiers are configured. Local source does not show whether that gate is enabled or whether the step has ever run.
+The release workflow runs its package and GitHub Release path for tag pushes, but the Chrome Web Store publish step does not run automatically from a tag push. That step runs only when `workflow_dispatch` is invoked on a tag with `publish_to_chrome_web_store` set to `true` and `CWS_DEPLOY_ENABLED` set to `true`. If the step is selected while required Web Store credentials or item identifiers are missing, it still starts and the publisher script fails closed. Local source does not show whether this gate is enabled or whether the step has ever run.
 
 ## Dashboard and publication checklist
 

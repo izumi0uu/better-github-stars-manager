@@ -104,7 +104,7 @@ must tie debugger observations back to a named fixture and invariant.
 
 ## Naming
 
-Use a descriptive filename that includes the module and priority, for example:
+Use a descriptive filename that includes the module and purpose, for example:
 
 - `dap-github-stars-sync-handoff.md`
 - `dap-auth-token-probe-handoff.md`

@@ -6,12 +6,11 @@ This guide covers the GitHub credentials used by Better GitHub Stars Manager. Cu
 
 Last checked against the GitHub documentation: 2026-08-11.
 
-
-### Recommended setup
+## Recommended setup
 
 Use two credentials. This keeps the main connection fine-grained and limits the classic token to Notifications.
 
-#### Main connection: fine-grained PAT
+### Main connection: fine-grained PAT
 
 Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) with these settings:
 
@@ -39,7 +38,7 @@ The permissions map to the extension as follows:
 
 `Save & verify` checks the account, reads one page of stars, creates a temporary secret Gist, deletes it, and checks Watching access. The Gist probe confirms both write and cleanup access. The extension does not test Unstar during setup because that would change your GitHub account, so keep Starring set to read and write.
 
-#### Watch Inbox: classic PAT
+### Watch Inbox: classic PAT
 
 GitHub's Notifications REST API currently accepts personal access tokens (classic), not fine-grained PATs. Create a [classic personal access token](https://github.com/settings/tokens/new) for the same GitHub account and select only:
 
@@ -53,7 +52,7 @@ Connect the main token first. In Options, choose `Set up Watch Inbox`. The exten
 
 The dedicated token must belong to the same GitHub account as the main connection. The extension rejects an account mismatch.
 
-### One-token alternative
+## One-token alternative
 
 If you want one credential instead of the recommended two-token setup, use a classic PAT with:
 
@@ -67,11 +66,11 @@ This covers the extension's GitHub features, including Unstar, Gist sync, Watchi
 
 The two-token setup is safer because the main PAT stays fine-grained and the classic PAT has only `notifications`.
 
-### Cubby and AI features
+## Cubby and AI features
 
 A GitHub token does not authorize Cubby with an AI provider. To use Cubby, configure the provider's API key, Base URL, and model separately in Options. The extension does not send either GitHub token to the selected AI model.
 
-### Verify the setup
+## Verify the setup
 
 1. Paste the main token into `Options > GitHub connection`, then select `Save & verify`.
 2. Confirm that the account, Stars, Gist, and Watching checks pass.
@@ -81,13 +80,13 @@ A GitHub token does not authorize Cubby with an AI provider. To use Cubby, confi
 
 Watch displays GitHub notification threads only for repositories that are both currently starred and watched. Refreshing Watch does not change your GitHub subscription settings.
 
-### Security notes
+## Security notes
 
 Treat both tokens as passwords. Give them an expiration date, paste them only into the extension's Options page, and revoke them if they are exposed. GitHub recommends fine-grained PATs when possible and recommends expiration dates for classic PATs.
 
 The extension encrypts GitHub credentials before storing them in `chrome.storage.local`. See the [privacy policy](privacy-policy.md) for storage and data-flow details.
 
-### Official GitHub references
+## Official GitHub references
 
 - [Managing personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
 - [Fine-grained PAT permissions and endpoint mapping](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
@@ -98,4 +97,4 @@ The extension encrypts GitHub credentials before storing them in `chrome.storage
 - [Classic PAT and OAuth scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps)
 - [Code search REST API](https://docs.github.com/en/rest/search/search#search-code)
 
-GitHub's June 30, 2026 announcement deprecated the public `GET /users/{username}/subscriptions` endpoint. Better GitHub Stars Manager uses the authenticated `GET /user/subscriptions` endpoint instead. GitHub's current fine-grained permission table still maps that endpoint to `Watching: read`. See [GitHub's access-restriction announcement](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/).
+GitHub has announced the deprecation of the public `GET /users/{username}/subscriptions` endpoint. During the transition, that endpoint remains accessible but may return empty responses; GitHub plans to remove it in a later phase. Better GitHub Stars Manager instead uses the authenticated `GET /user/subscriptions` endpoint, which GitHub's current fine-grained permission table maps to `Watching: read`. See [GitHub's access-restriction announcement](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/).

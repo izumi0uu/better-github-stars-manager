@@ -92,7 +92,7 @@ Phase 8 源码清单记录了以下本地文件和尺寸。这不能证明素材
 
 Google 的[图片要求](https://developer.chrome.com/docs/webstore/images)要求 128x128 图标、至少一张截图和 440x280 的小型宣传图。1400x560 的 marquee 图是可选项。截图必须展示当前产品体验。
 
-审查后的 tile 文案是“Local-first star organization.”和“Direct to GitHub and your selected AI provider. No developer-operated proxy.”Marquee 还说明 Stars、标签和笔记留在浏览器中，而同步和 AI 请求直接发送到选定服务。它的“Yours to keep”卡片说明可通过用户自己的 Secret Gist 和 **Push**、**Pull** 进行可选同步。文案没有 JSON、CSV、Markdown、导出或备份承诺。此前的“Zero server. 100% private.”和“Private by Design”已删除。
+审查后的 tile 文案是“Local-first star organization.”和“Direct to GitHub and your selected AI provider. No developer-operated proxy.”。Marquee 还说明 Stars、标签和笔记留在浏览器中，而同步和 AI 请求直接发送到选定服务。它的“Yours to keep”卡片说明可通过用户自己的 Secret Gist 和 **Push**、**Pull** 进行可选同步。文案没有 JSON、CSV、Markdown、导出或备份承诺。此前的“Zero server. 100% private.”和“Private by Design”已删除。
 
 这些 tile 只包含字体和品牌图标，不包含截图。审查没有发现凭据、Token、账号数据、私有笔记、提示词、Provider 载荷、绝对隐私承诺或无依据的导出承诺。重新生成的小 tile 的 SHA-256 是 `10b3b09739a454c63e805fa292d969c8223fb3bf5257c04a854d399b07b82aea`。修正后的 marquee 的 SHA-256 是 `874796aa24006e023d22fdab1cd074862ec158cf2cbb71539136630ac6810258`。
 
@@ -134,11 +134,11 @@ Dashboard 中的素材是否存在、顺序、locale 分配、审核状态和公
 
 ### 可选的自定义 AI 服务主机
 
-由于安装时不知道自定义兼容服务的地址，manifest 声明了较宽的 HTTPS 以及 localhost 或 127.0.0.1 匹配模式作为可选主机权限。Options 只有在用户明确点击 **Allow access** 后才会请求访问。
+由于安装时不知道自定义兼容服务的地址，manifest 将 `https://*/*`、`http://localhost/*` 和 `http://127.0.0.1/*` 声明为可选主机权限。其中 `https://*/*` 用于连接用户配置的任意 HTTPS 兼容服务。Options 只有在用户明确点击 **Allow access** 后才会请求访问。
 
 Chrome 的权限匹配模式可能覆盖某个协议和主机名下的所有端口。扩展会另外把凭据和请求绑定到精确的规范化地址，包括端口。拒绝可选访问后，扩展不会发起 Provider 请求。
 
-Google 在 [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions) 中解释了必需和可选的主机访问权限。Dashboard 中的权限字段仍需与最终 ZIP 的 manifest 手动核对。
+Google 在 [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions) 中解释了必需和可选的主机访问权限。Dashboard 权限说明必须明确解释 `https://*/*` 的用途，最终 ZIP 的 manifest 也必须与这些文档化的模式一致。
 
 ## 隐私实践对应关系
 
@@ -227,7 +227,7 @@ pnpm verify:agent-release-gates
 
 上面两个验证命令不会上传安装包，也不能证明真实凭据、Dashboard 值、审核或发布状态。
 
-Tag 触发的发布工作流包含一个受门禁控制的 Chrome Web Store API 上传和发布步骤。只有 `CWS_DEPLOY_ENABLED` 为 true，并且 Web Store 凭据和 item 标识符都已配置时才会运行。源码无法证明这个门禁是否启用，也无法证明这一步曾经运行过。
+发布工作流会在推送 Tag 时执行打包和 GitHub Release 流程，但 Chrome Web Store 发布步骤不会因 Tag 推送而自动运行。只有在某个 Tag 上手动触发 `workflow_dispatch`、将 `publish_to_chrome_web_store` 设为 `true`，并且 `CWS_DEPLOY_ENABLED` 为 `true` 时，该步骤才会运行。如果步骤已被选中但缺少必需的 Web Store 凭据或 item 标识符，它仍会启动，并由发布脚本失败关闭。源码无法证明这个门禁是否启用，也无法证明这一步曾经运行过。
 
 ## Dashboard 与发布清单
 
