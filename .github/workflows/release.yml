@@ -29,17 +29,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 10.33.2
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: pnpm
@@ -54,6 +55,9 @@ jobs:
         run: |
           package_version="$(node -p "require('./package.json').version")"
           test "$TAG_NAME" = "v$package_version"
+
+      - name: Install Chrome for Testing
+        run: pnpm exec puppeteer browsers install chrome
 
       - name: Run integrated Agent runtime verification
         run: pnpm verify:agent-runtime
@@ -73,14 +77,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload packaged artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-artifacts-${{ github.sha }}
           path: ${{ steps.release-artifacts.outputs.files }}
           if-no-files-found: error
           retention-days: 14
 
-      - name: Create or update GitHub release
+      - name: Create or verify immutable GitHub release
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -89,7 +93,24 @@ jobs:
           mapfile -t release_files < "$RUNNER_TEMP/release-artifacts.txt"
           test "${#release_files[@]}" -gt 0
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" "${release_files[@]}" --clobber
+            existing_release_dir="$(mktemp -d "$RUNNER_TEMP/existing-release.XXXXXX")"
+            expected_asset_names="$existing_release_dir/expected-asset-names.txt"
+            actual_asset_names="$existing_release_dir/actual-asset-names.txt"
+            printf '%s\n' "${release_files[@]##*/}" | LC_ALL=C sort > "$expected_asset_names"
+            gh release view "$TAG_NAME" --json assets --jq '.assets[].name' |
+              LC_ALL=C sort > "$actual_asset_names"
+            if ! cmp -s "$expected_asset_names" "$actual_asset_names"; then
+              echo "Existing GitHub Release asset inventory differs from the canonical release artifacts; refusing to mutate immutable assets." >&2
+              exit 1
+            fi
+            gh release download "$TAG_NAME" --dir "$existing_release_dir/downloaded"
+            for release_file in "${release_files[@]}"; do
+              asset_name="${release_file##*/}"
+              if ! cmp -s "$release_file" "$existing_release_dir/downloaded/$asset_name"; then
+                echo "Existing GitHub Release asset $asset_name differs from the canonical release artifact; refusing to mutate immutable assets." >&2
+                exit 1
+              fi
+            done
           else
             gh release create "$TAG_NAME" "${release_files[@]}" --generate-notes --title "$TAG_NAME"
           fi

@@ -2,12 +2,15 @@ name: E2E Chrome Verification
 
 on:
   pull_request:
+  push:
+    branches:
+      - master
   workflow_dispatch:
     inputs:
       scenario:
         description: Comma-separated verify-first-run scenarios
         required: false
-        default: no-token,invalid-token,valid-token
+        default: invalid-token,no-gists-token,valid-token
   schedule:
     - cron: '0 4 * * 1'
 
@@ -19,21 +22,23 @@ permissions:
   contents: read
 
 jobs:
-  verify-extension:
+  verify-extension-no-token:
     runs-on: ubuntu-latest
     timeout-minutes: 50
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 10.33.2
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: pnpm
@@ -53,19 +58,67 @@ jobs:
           PUPPETEER_HEADLESS: 'false'
         run: xvfb-run -a pnpm test:smoke
 
-      - name: Run first-run Chrome verification
+      - name: Run credential-free first-run Chrome verification
         env:
           CI: 'true'
           PUPPETEER_HEADLESS: 'false'
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          GH_TOKEN_NO_GISTS: ${{ secrets.GH_TOKEN_NO_GISTS }}
+        run: xvfb-run -a pnpm test:verify-first-run -- --scenario=no-token
+
+      - name: Rebuild release extension for packaged Agent verification
+        run: GSM_RELEASE=true GSM_DEV=false pnpm build
+
+      - name: Run credential-free packaged Agent session verification
+        env:
+          CI: 'true'
+          PUPPETEER_HEADLESS: 'false'
+        run: xvfb-run -a pnpm test:runtime:agent-session
+
+  verify-extension-authenticated:
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    environment: e2e-credentials
+    concurrency:
+      group: e2e-credentials-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 10.33.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chrome for Testing
+        run: pnpm exec puppeteer browsers install chrome
+
+      - name: Build extension
+        run: pnpm build
+
+      - name: Run authenticated first-run Chrome verification
+        env:
+          CI: 'true'
+          PUPPETEER_HEADLESS: 'false'
+          GH_TOKEN: ${{ secrets.E2E_GH_TOKEN }}
+          GH_TOKEN_NO_GISTS: ${{ secrets.E2E_GH_TOKEN_NO_GISTS }}
           GH_USER: ${{ vars.GH_USER }}
-          GSM_RESET_GIST: '1'
           GSM_SCENARIO: ${{ github.event.inputs.scenario }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            scenario="no-token"
-          else
-            scenario="${GSM_SCENARIO:-no-token,invalid-token,valid-token}"
-          fi
-          xvfb-run -a pnpm test:verify-first-run -- --scenario="$scenario"
+          scenario="${GSM_SCENARIO:-invalid-token,no-gists-token,valid-token}"
+          xvfb-run -a pnpm test:verify-first-run -- --scenario="$scenario" --require-selected

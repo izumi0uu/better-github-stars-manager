@@ -21,15 +21,34 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
+      - name: Lint workflows with actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          actionlint_dir="${RUNNER_TEMP}/actionlint-1.7.12"
+          archive="${actionlint_dir}/actionlint_1.7.12_linux_amd64.tar.gz"
+          checksum_file="${actionlint_dir}/actionlint_1.7.12_linux_amd64.tar.gz.sha256"
+          mkdir --parents "$actionlint_dir"
+          curl --fail --location --silent --show-error \
+            --output "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz"
+          printf '%s  %s\n' \
+            '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+            "$archive" > "$checksum_file"
+          sha256sum --check --status "$checksum_file"
+          tar --extract --gzip --file "$archive" --directory "$actionlint_dir" actionlint
+          "$actionlint_dir/actionlint" .github/workflows/*.yml
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 10.33.2
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: pnpm
@@ -47,7 +66,7 @@ jobs:
         run: pnpm test
 
       - name: Upload dist artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dist-${{ github.sha }}
           path: dist
