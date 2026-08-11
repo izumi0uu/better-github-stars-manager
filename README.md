@@ -104,24 +104,15 @@ Chrome will handle updates automatically after installation from the store.
 
 ### Token setup
 
-Step 1: Create a **fine-grained personal access token** and click **Generate new token**.
+The complete GitHub feature set uses a fine-grained main PAT and, for Watch Inbox when needed, a same-account classic PAT with only the `notifications` scope.
 
-![Create a fine-grained token](public/tutorial/img_01.png)
+See the [GitHub token permissions guide](docs/en/github-token-permissions.md) for the exact permissions, endpoint mapping, setup steps, one-token alternative, and official GitHub references.
 
-Step 2: For repository access, choose **Public repositories**.
+Quick reference:
 
-![Choose repository access](public/tutorial/img_02.png)
-
-Step 3: Add **Gists: read and write** so cross-device sync can work.
-
-![Grant Gists permission](public/tutorial/img_03.png)
-
-Recommended GitHub token permissions:
-
-- **Public Repositories (read)**
-- **Gists (read/write)**
-
-> Fine-grained token Gist permissions are account-level (they cannot be scoped per gist). The extension creates a dedicated secret gist for sync.
+- Main fine-grained PAT: `Public repositories`; Account permissions `Starring: read and write`, `Gists: read and write`, and `Watching: read`.
+- Watch Inbox fallback: classic PAT with only `notifications`.
+- Cubby: separate AI service API key, Base URL, and model. See [Cubby agent architecture](docs/en/cubby-agent.md) for its tools, safety boundaries, persistence, and Pi-influenced design.
 
 ### Another way --> Local development install
 
@@ -154,7 +145,7 @@ Push / Pull only sync your annotation layer:
 
 There is no custom backend and no separate app account.
 
-For a store-ready privacy statement, see [docs/privacy-policy.md](docs/privacy-policy.md).
+For a store-ready privacy statement, see [docs/en/privacy-policy.md](docs/en/privacy-policy.md).
 
 ## License
 

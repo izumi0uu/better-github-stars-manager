@@ -1,5 +1,7 @@
 # Privacy policy
 
+[简体中文](../zh/privacy-policy.md)
+
 Effective date: 2026-08-09
 
 Better GitHub Stars Manager is a Chrome extension for organizing GitHub starred repositories. This policy describes the data the extension processes, where it goes, how long local records remain, and how you can delete them.

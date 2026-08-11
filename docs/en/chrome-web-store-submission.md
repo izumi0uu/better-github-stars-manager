@@ -1,5 +1,7 @@
 # Chrome Web Store update notes
 
+[简体中文](../zh/chrome-web-store-submission.md)
+
 This reference collects candidate listing copy, manifest-derived permission justifications, reviewer steps, and external Chrome Web Store work. It does not claim that a package is release-ready, uploaded, under review, or published.
 
 ## Current update status
@@ -23,7 +25,7 @@ Google documents the update flow in [Update your Chrome Web Store item](https://
 ## Public URLs
 
 - [Project homepage](https://github.com/izumi0uu/better-github-stars-manager)
-- [Candidate privacy policy](https://github.com/izumi0uu/better-github-stars-manager/blob/master/docs/privacy-policy.md)
+- [Candidate privacy policy](https://github.com/izumi0uu/better-github-stars-manager/blob/master/docs/en/privacy-policy.md)
 - [Support and issue tracker](https://github.com/izumi0uu/better-github-stars-manager/issues)
 
 The privacy URL is usable only after the reviewed policy is public and retrievable without authentication. Dashboard values and the public listing, privacy display, promo assets, and installed version must be checked manually.

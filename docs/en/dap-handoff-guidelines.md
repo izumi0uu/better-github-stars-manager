@@ -1,5 +1,7 @@
 # DAP Handoff Guidelines
 
+[简体中文](../zh/dap-handoff-guidelines.md)
+
 This project uses DAP handoff documents as debugging contracts for modules where
 plain tests are not enough to explain failures. A DAP handoff should tell a
 debugging agent what invariant to probe, which fixture exposes the issue, where

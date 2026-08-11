@@ -428,7 +428,7 @@ Repository text, code, notes, artifact pages, and Provider output are untrusted 
 
 ### 9.4 Observability boundaries
 
-Development builds record bounded typed runtime events (metadata: byte/token counts, normalized error codes, status, retryability, stream class, finish reason, duration) that never contain hidden reasoning. One-shot raw capture must be explicitly armed through the development control Port (`arm_raw_capture`), redacts configured secrets and authorization headers, exists only in development builds, and the development build warns before arming. Release builds exclude the development trace and raw-capture modules. Release evidence, per the [privacy policy](../privacy-policy.md), stores bounded semantic facts, counts, relative paths, and digests instead of prompts, credentials, authentication headers, or raw Provider requests and responses.
+Development builds record bounded typed runtime events (metadata: byte/token counts, normalized error codes, status, retryability, stream class, finish reason, duration) that never contain hidden reasoning. One-shot raw capture must be explicitly armed through the development control Port (`arm_raw_capture`), redacts configured secrets and authorization headers, exists only in development builds, and the development build warns before arming. Release builds exclude the development trace and raw-capture modules. Release evidence, per the [privacy policy](privacy-policy.md), stores bounded semantic facts, counts, relative paths, and digests instead of prompts, credentials, authentication headers, or raw Provider requests and responses.
 
 ## 10. Pi-informed decisions
 
