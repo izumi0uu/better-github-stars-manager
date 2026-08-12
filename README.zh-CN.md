@@ -104,15 +104,19 @@ Chrome 商店安装地址:
 
 ### Token 配置
 
-完整的 GitHub 功能需要一个 Fine-grained 主 Token；如果 Watch Inbox 需要备用凭据，再为同一账号创建一个只带 `notifications` scope 的 Classic PAT。
+创建一个 **classic personal access token**，然后点击 **Generate new token**。
 
-具体权限、API 对应关系、配置步骤、单 Token 备选方案和 GitHub 官方依据，见[GitHub Token 权限文档](docs/zh/github-token-permissions.md)。
+![创建 classic token](public/tutorial/img_01.png)
 
-快速对照：
+推荐权限：
 
-- Fine-grained 主 Token：`Public repositories`；账号权限为 `Starring: read and write`、`Gists: read and write`、`Watching: read`。
-- Watch Inbox 备用 Token：Classic PAT，只勾选 `notifications`。
-- Cubby：还需要单独配置 AI 服务的 API Key、Base URL 和模型。工具、权限、持久化，以及我们怎样借鉴 Pi，见 [Cubby Agent 架构与设计](docs/zh/cubby-agent.md)。
+- **`repo`**：Stars、私有仓库访问，以及仓库 Issue/Pull Request 详情。
+- **`gist`**：扩展会创建一个私有 Gist，用于跨设备同步标签和笔记。
+- **`notifications`**（可选）：用于 Watch 收件箱，包括读取通知和标记已读或完成。
+
+如果旧 token 需要重新授权，本地的 Stars、标签、笔记和设置都会保留。新 token 验证成功后才会替换旧凭据。
+
+`gist` 是账号级权限。扩展会创建一个私有 Gist 来同步标签和笔记。
 
 ### 另一种方式 --> 本地开发安装
 

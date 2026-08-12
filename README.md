@@ -104,15 +104,19 @@ Chrome will handle updates automatically after installation from the store.
 
 ### Token setup
 
-The complete GitHub feature set uses a fine-grained main PAT and, for Watch Inbox when needed, a same-account classic PAT with only the `notifications` scope.
+Create a **classic personal access token** and click **Generate new token**.
 
-See the [GitHub token permissions guide](docs/en/github-token-permissions.md) for the exact permissions, endpoint mapping, setup steps, one-token alternative, and official GitHub references.
+![Create a classic token](public/tutorial/img_01.png)
 
-Quick reference:
+Recommended permissions:
 
-- Main fine-grained PAT: `Public repositories`; Account permissions `Starring: read and write`, `Gists: read and write`, and `Watching: read`.
-- Watch Inbox fallback: classic PAT with only `notifications`.
-- Cubby: separate AI service API key, Base URL, and model. See [Cubby agent architecture](docs/en/cubby-agent.md) for its tools, safety boundaries, persistence, and Pi-influenced design.
+- **`repo`**: Stars, private-repository access, and repository Issue/Pull Request details.
+- **`gist`**: cross-device annotation sync through a private Gist created by the extension.
+- **`notifications`** (optional): Watch Inbox, including reading notifications and marking them as read or done.
+
+If an older saved token needs authorization again, the extension keeps local Stars, tags, notes, and settings until the replacement passes verification.
+
+The `gist` permission applies to the whole account. The extension creates a private Gist for annotation sync.
 
 ### Another way --> Local development install
 

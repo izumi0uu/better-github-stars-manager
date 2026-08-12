@@ -22,7 +22,6 @@ import {
 } from "@/utils/messaging";
 import {
   TOKEN_WATCHING_FORBIDDEN,
-  WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN,
   translateError,
 } from "@/api/errors";
 import {
@@ -73,7 +72,6 @@ import type {
   AgentCustomProviderProtocol,
   AgentProviderConfig,
   AgentProviderId,
-  WatchCredentialSource,
 } from "@/types";
 import type {
   AgentStorageCleanupResult,
@@ -132,8 +130,6 @@ function StatusNotice({
 export function Options() {
   const [username, setUsername] = useState<string | null>(null);
   const [hasUsableToken, setHasUsableToken] = useState(false);
-  const [watchCredentialSource, setWatchCredentialSource] =
-    useState<WatchCredentialSource>(null);
   const [gistId, setGistId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [agentProvider, setAgentProvider] = useState<AgentProviderId>("openai");
@@ -157,10 +153,6 @@ export function Options() {
   const persistedMinTopicRepoCountRef = useRef(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
   const [starsPanelDefaultEnabled, setStarsPanelDefaultEnabled] = useState(true);
   const [tokenBusy, setTokenBusy] = useState(false);
-  const [watchTokenBusy, setWatchTokenBusy] = useState(false);
-  const [watchSetupBusy, setWatchSetupBusy] = useState(false);
-  const [watchMainUnavailable, setWatchMainUnavailable] = useState(false);
-  const [watchShowOtherFeaturesSafe, setWatchShowOtherFeaturesSafe] = useState(false);
   const [agentSaveBusy, setAgentSaveBusy] = useState(false);
   const [agentTestBusy, setAgentTestBusy] = useState(false);
   const [agentStorageUsage, setAgentStorageUsage] =
@@ -175,8 +167,8 @@ export function Options() {
   const [agentMsg, setAgentMsg] = useState<OptionsMessage | null>(null);
   const { locale, setLocale, m } = useI18n();
   const tokenInput = useImeBufferedInput("");
-  const watchTokenInput = useImeBufferedInput("");
   const refreshGeneration = useRef(0);
+  const tokenHeadingRef = useRef<HTMLHeadingElement>(null);
   const watchHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const loadAgentStorageUsage = async () => {
@@ -205,7 +197,7 @@ export function Options() {
     if (generation !== refreshGeneration.current) return;
     setUsername(c.username);
     setHasUsableToken(hasToken);
-    setWatchCredentialSource(c.watchCredentialSource);
+    // The main Classic PAT is the only GitHub credential.
     setGistId(c.gistId);
     setTheme(c.theme);
     setAgentProvider(c.agentProvider.provider);
@@ -249,29 +241,29 @@ export function Options() {
     void loadAgentStorageUsage();
   }, []);
 
-  // Deep-link from Watch setup/recovery actions: consume the transient session
-  // intent on mount and on later writes (already-open page), then move focus to
-  // the Watch block heading. The dedicated fallback is never revealed here.
+  // Deep-link from credential recovery actions: consume the transient session
+  // intent on mount and on later writes to an already-open Options page.
   useEffect(() => {
     let cancelled = false;
-    const applyWatchIntent = async () => {
+    const applyOptionsIntent = async () => {
       const intent = await consumeOptionsIntent();
-      if (cancelled || intent?.section !== "watch") return;
-      const heading = watchHeadingRef.current;
+      if (cancelled || !intent) return;
+      const heading = intent.section === "github"
+        ? tokenHeadingRef.current
+        : watchHeadingRef.current;
       if (!heading) return;
       heading.scrollIntoView?.({ block: "start" });
       heading.focus({ preventScroll: true });
     };
-    void applyWatchIntent();
+    void applyOptionsIntent();
     const handleStorageChanged = (
       changes: Record<string, chrome.storage.StorageChange>,
       areaName: string,
     ) => {
       if (areaName !== "session") return;
       const change = changes[OPTIONS_INTENT_STORAGE_KEY];
-      if (!change) return;
-      if (parseOptionsIntent(change.newValue)?.section !== "watch") return;
-      void applyWatchIntent();
+      if (!change || !parseOptionsIntent(change.newValue)) return;
+      void applyOptionsIntent();
     };
     chrome.storage.onChanged.addListener(handleStorageChanged);
     return () => {
@@ -284,12 +276,12 @@ export function Options() {
     setTokenBusy(true);
     setMsg(null);
     try {
-      const { username: u, watching } = await authStore.setToken(tokenInput.value);
-      setMsg(watching.available
+      const { username: u, notifications } = await authStore.setToken(tokenInput.value);
+      setMsg(notifications.available
         ? { kind: "ok", text: m.options.tokenVerified(u) }
         : {
             kind: "warn",
-            text: watching.errorCode === TOKEN_WATCHING_FORBIDDEN
+            text: notifications.errorCode === TOKEN_WATCHING_FORBIDDEN
               ? m.options.tokenVerifiedWatchForbidden(u)
               : m.options.tokenVerifiedWatchUnverified(u),
           });
@@ -308,75 +300,14 @@ export function Options() {
     setMsg({ kind: "ok", text: m.options.tokenRemoved });
   };
 
-  // Explicit Watch opt-in: probe the stable main credential/account for the
-  // Notifications capability. Only a proven permission rejection reveals the
-  // dedicated classic-PAT fallback; network/unknown failures stay retryable.
-  const enableWatchWithMainConnection = async () => {
-    setWatchSetupBusy(true);
+  const disconnectWatchNotifications = async () => {
     setWatchMsg(null);
-    setWatchShowOtherFeaturesSafe(false);
-    try {
-      const { username: connectedUsername } =
-        await authStore.enableWatchWithMainToken();
-      setWatchMainUnavailable(false);
-      watchTokenInput.commit("");
-      await refresh();
-      setWatchMsg({
-        kind: "ok",
-        text: m.options.watchSetupMainConnected(connectedUsername),
-      });
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message === WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN
-      ) {
-        setWatchMainUnavailable(true);
-      } else {
-        setWatchMsg({ kind: "err", text: m.options.watchSetupCheckFailed });
-        setWatchShowOtherFeaturesSafe(true);
-      }
-    } finally {
-      setWatchSetupBusy(false);
-    }
-  };
-
-  const saveWatchNotificationsToken = async () => {
-    setWatchTokenBusy(true);
-    setWatchMsg(null);
-    setWatchShowOtherFeaturesSafe(false);
-    try {
-      const { username: connectedUsername } = await authStore.setWatchNotificationsToken(
-        watchTokenInput.value,
-      );
-      watchTokenInput.commit("");
-      setWatchMainUnavailable(false);
-      await refresh();
-      setWatchMsg({
-        kind: "ok",
-        text: m.options.watchTokenConnected(connectedUsername),
-      });
-    } catch (error) {
-      setWatchMsg({ kind: "err", text: translateError(error, m) });
-      setWatchShowOtherFeaturesSafe(true);
-    } finally {
-      setWatchTokenBusy(false);
-    }
-  };
-
-  const disconnectWatchNotificationsToken = async () => {
-    setWatchTokenBusy(true);
-    setWatchMsg(null);
-    setWatchShowOtherFeaturesSafe(false);
     try {
       await bgCall("disconnectWatchInbox");
-      watchTokenInput.commit("");
-      setWatchMainUnavailable(false);
       await refresh();
       setWatchMsg({ kind: "ok", text: m.options.watchTokenDisconnected });
     } catch (error) {
       setWatchMsg({ kind: "err", text: translateError(error, m) });
-    } finally {
-      setWatchTokenBusy(false);
     }
   };
 
@@ -590,10 +521,6 @@ export function Options() {
     : null;
   const starsUrl =
     hasUsableToken && username ? `https://github.com/${username}?tab=stars` : null;
-  // The dedicated classic-PAT fallback stays collapsed until the main
-  // credential proves unavailable or a dedicated source is already selected.
-  const watchDedicatedFormVisible =
-    watchCredentialSource === "dedicated" || watchMainUnavailable;
   const customAgentSelected = agentProvider === "custom-openai-compatible";
   const trustedAgentContextCapability = trustedAgentModelContextCapability(
     agentProvider,
@@ -695,11 +622,8 @@ export function Options() {
         oldCfg?.tokenEncrypted === newCfg?.tokenEncrypted &&
         JSON.stringify(oldCfg?.tokenCryptoMeta ?? null) ===
           JSON.stringify(newCfg?.tokenCryptoMeta ?? null) &&
-        oldCfg?.watchNotificationsTokenEncrypted ===
-          newCfg?.watchNotificationsTokenEncrypted &&
-        JSON.stringify(oldCfg?.watchNotificationsTokenCryptoMeta ?? null) ===
-          JSON.stringify(newCfg?.watchNotificationsTokenCryptoMeta ?? null) &&
-        oldCfg?.watchCredentialSource === newCfg?.watchCredentialSource &&
+        oldCfg?.githubCredentialStatus === newCfg?.githubCredentialStatus &&
+        oldCfg?.watchNotificationsEnabled === newCfg?.watchNotificationsEnabled &&
         JSON.stringify(oldCfg?.agentProvider ?? null) ===
           JSON.stringify(newCfg?.agentProvider ?? null) &&
         oldCfg?.maxTagsPerRepo === newCfg?.maxTagsPerRepo &&
@@ -782,12 +706,19 @@ export function Options() {
 
       {/* 1. Token */}
       <section className="mt-6">
-        <h2 className="text-base font-medium">{m.options.tokenHeading}</h2>
+        <h2
+          id="github-connection-heading"
+          ref={tokenHeadingRef}
+          tabIndex={-1}
+          className="text-base font-medium"
+        >
+          {m.options.tokenHeading}
+        </h2>
         <p className="gsm-body-note mt-1">
           {m.options.tokenIntroPrefix}{" "}
           <a
             className="text-primary hover:underline"
-            href="https://github.com/settings/personal-access-tokens/new"
+            href="https://github.com/settings/tokens/new?scopes=repo,gist,notifications&description=Better%20GitHub%20Stars%20Manager"
             target="_blank"
             rel="noreferrer"
           >
@@ -828,6 +759,8 @@ export function Options() {
           <li>{m.options.tokenPublicRepos}</li>
           <li>{m.options.tokenGists}</li>
           <li>{m.options.tokenWatchingOptional}</li>
+          <li>{m.options.tokenIssuesOptional}</li>
+          <li>{m.options.tokenFollowersOptional}</li>
         </ul>
         <p className="mt-1 text-xs text-warning">{m.options.tokenGistNote}</p>
 
@@ -888,9 +821,7 @@ export function Options() {
         )}
       </section>
 
-      {/* Watch Inbox (optional): reuse the main GitHub connection when it can
-          read Notifications; the dedicated classic-PAT form appears only after
-          the main credential proves unavailable or is already selected. */}
+      {/* Watch uses the optional Notifications capability on the single PAT. */}
       <section className="mt-6" data-testid="watch-inbox-settings">
         <h2
           id="watch-inbox-heading"
@@ -901,142 +832,20 @@ export function Options() {
           {m.options.watchTokenHeading}
         </h2>
         <p className="gsm-body-note mt-1">{m.options.watchSetupDescription}</p>
-
-        {watchCredentialSource && username && (
-          <div
-            data-testid="watch-credential-source"
-            className="gsm-status-note my-3 flex flex-wrap items-center gap-1.5 text-success"
+        <p className="gsm-body-note mt-2">{m.options.watchSetupOtherFeaturesSafe}</p>
+        {hasUsableToken && (
+          <Button
+            data-testid="watch-token-disconnect"
+            variant="ghost"
+            size="sm"
+            className="mt-2"
+            onClick={() => void disconnectWatchNotifications()}
           >
-            <Check className="size-4 shrink-0" />
-            <span>
-              {watchCredentialSource === "main"
-                ? m.options.watchSetupMainConnected(username)
-                : m.options.watchSetupDedicatedConnected(username)}
-            </span>
-            <Button
-              data-testid="watch-token-disconnect"
-              variant="ghost"
-              size="sm"
-              className="ml-2"
-              disabled={watchTokenBusy || watchSetupBusy}
-              onClick={() => void disconnectWatchNotificationsToken()}
-            >
-              {m.options.watchTokenDisconnect}
-            </Button>
-          </div>
+            {m.options.watchTokenDisconnect}
+          </Button>
         )}
-
-        {!watchCredentialSource && (
-          <div className="mt-3">
-            <Button
-              data-testid="watch-setup-enable"
-              variant={watchMainUnavailable ? "outline" : "default"}
-              disabled={
-                watchSetupBusy || watchTokenBusy || !hasUsableToken || !username
-              }
-              onClick={() => void enableWatchWithMainConnection()}
-            >
-              {watchSetupBusy ? (
-                <>
-                  <Spinner data-icon="inline-start" />
-                  {m.options.watchSetupChecking}
-                </>
-              ) : (
-                m.options.watchSetupEnable
-              )}
-            </Button>
-            {!hasUsableToken && (
-              <p className="mt-1 text-xs text-warning">
-                {m.options.watchTokenMainRequired}
-              </p>
-            )}
-          </div>
-        )}
-        {watchSetupBusy && (
-          <div
-            data-testid="watch-main-checking"
-            role="status"
-            aria-live="polite"
-            className="gsm-status-note mt-3 text-muted-foreground"
-          >
-            {m.options.watchSetupChecking}
-          </div>
-        )}
-
-        {watchDedicatedFormVisible && (
-          <div
-            data-testid="watch-dedicated-form"
-            className="mt-4 rounded-md border border-border bg-muted/20 p-3"
-          >
-            {watchMainUnavailable && !watchCredentialSource && (
-              <div className="mb-3">
-                <StatusNotice
-                  message={{
-                    kind: "warn",
-                    text: m.options.watchSetupMainUnavailable,
-                  }}
-                />
-                <p className="gsm-body-note mt-1">
-                  {m.options.watchSetupOtherFeaturesSafe}
-                </p>
-              </div>
-            )}
-            <p className="gsm-body-note">
-              {m.options.watchTokenIntroPrefix}{" "}
-              <a
-                className="text-primary hover:underline"
-                href="https://github.com/settings/tokens/new?scopes=notifications&description=GitHub%20Stars%20Manager%20Watch%20Inbox"
-                target="_blank"
-                rel="noreferrer"
-              >
-                {m.options.watchTokenLinkLabel}
-              </a>
-              . {m.options.watchTokenIntroSuffix}
-            </p>
-            <p className="gsm-body-note mt-2">{m.options.watchTokenAccountHint}</p>
-
-            <label
-              htmlFor="watch-notifications-token"
-              className="mt-3 block text-sm font-medium text-foreground"
-            >
-              {m.options.watchTokenLabel}
-            </label>
-            <Input
-              id="watch-notifications-token"
-              name="watch-notifications-token"
-              type="password"
-              autoComplete="new-password"
-              spellCheck={false}
-              {...watchTokenInput.inputProps}
-              placeholder="ghp_..."
-              disabled={!hasUsableToken || !username || watchTokenBusy}
-              className="mt-1 font-mono"
-            />
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Button
-                data-testid="watch-token-connect"
-                disabled={
-                  watchTokenBusy ||
-                  watchSetupBusy ||
-                  !hasUsableToken ||
-                  !username ||
-                  !watchTokenInput.value.trim()
-                }
-                onClick={() => void saveWatchNotificationsToken()}
-              >
-                {watchTokenBusy ? (
-                  <>
-                    <Spinner data-icon="inline-start" />
-                    {m.options.watchTokenVerifying}
-                  </>
-                ) : watchCredentialSource === "dedicated" ? (
-                  m.options.watchTokenReplace
-                ) : (
-                  m.options.watchTokenConnect
-                )}
-              </Button>
-            </div>
-          </div>
+        {!hasUsableToken && (
+          <p className="mt-2 text-xs text-warning">{m.options.watchTokenMainRequired}</p>
         )}
         {watchMsg && (
           <StatusNotice
@@ -1044,11 +853,6 @@ export function Options() {
             className="mt-3"
             testId="watch-token-status"
           />
-        )}
-        {watchShowOtherFeaturesSafe && watchMsg?.kind === "err" && (
-          <p className="gsm-body-note mt-1">
-            {m.options.watchSetupOtherFeaturesSafe}
-          </p>
         )}
       </section>
 

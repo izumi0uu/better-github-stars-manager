@@ -6,7 +6,7 @@ import {
   TOKEN_GIST_CLEANUP_STATUS,
   TOKEN_PROFILE_STATUS,
   TOKEN_STARS_STATUS,
-  TOKEN_WATCHING_FORBIDDEN,
+  TOKEN_WATCHING_NETWORK,
   translateError,
 } from '../../../src/api/errors';
 import { probeTokenCapabilities } from '../../../src/auth/token-probe';
@@ -206,7 +206,7 @@ describe('Status/token regressions', () => {
     assert.equal(await authStore.getToken(), null);
   });
 
-  it('persists a valid main token while reporting optional Watching permission failure', async () => {
+  it('persists a valid main token while reporting optional Notifications permission failure', async () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
@@ -214,23 +214,23 @@ describe('Status/token regressions', () => {
         return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': '' });
       }
       if (url.includes('/user/starred') && method === 'GET') return response(200, []);
-      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'watching-optional' });
-      if (url.endsWith('/gists/watching-optional') && method === 'DELETE') return response(204);
-      if (url.includes('/user/subscriptions') && method === 'GET') return response(403);
+      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'notifications-optional' });
+      if (url.endsWith('/gists/notifications-optional') && method === 'DELETE') return response(204);
+      if (url.includes('/notifications?all=true&per_page=1') && method === 'GET') throw new Error('network down');
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }) as typeof fetch;
 
     await authStore.clearToken();
-    const result = await authStore.setToken('github_pat_without_watching');
+    const result = await authStore.setToken('github_pat_without_notifications');
 
-    assert.deepEqual(result.watching, {
+    assert.deepEqual(result.notifications, {
       available: false,
-      errorCode: TOKEN_WATCHING_FORBIDDEN,
+      errorCode: TOKEN_WATCHING_NETWORK,
     });
     const cfg = await authStore.getConfig();
     assert.ok(cfg.tokenEncrypted);
     assert.equal(cfg.username, 'idah');
-    assert.equal(await authStore.getToken(), 'github_pat_without_watching');
+    assert.equal(await authStore.getToken(), 'github_pat_without_notifications');
   });
 
   it('authStore.update keeps the previous cached config when storage write fails', async () => {
@@ -309,6 +309,7 @@ describe('Status/token regressions', () => {
         onlyFavorite: false,
         onlyUntagged: false,
         onlyArchived: false,
+        onlyOwned: false,
       },
       sort: {
         sortKey: 'starred_at',
