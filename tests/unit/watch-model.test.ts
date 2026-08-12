@@ -5,7 +5,9 @@ import {
   KNOWN_NOTIFICATION_REASONS,
   normalizeNotificationThread,
   safeSubjectHtmlUrl,
+  watchSubjectIdentity,
 } from '@/watch/watch-model';
+import { parseWatchThreadIds, WATCH_MAX_THREAD_ACTIONS } from '@/watch/watch-contract';
 
 function thread(id: string, repositoryFullName: string, updatedAt: string, unread = true) {
   return normalizeNotificationThread({
@@ -42,6 +44,38 @@ describe('Watch domain model', () => {
       .toBeNull();
     expect(safeSubjectHtmlUrl('owner/repo', 'Issue', 'https://api.github.com/repos/other/repo/issues/12'))
       .toBeNull();
+  });
+
+  it('rebuilds Issue/PR detail identities from matching cached notification routes only', () => {
+    const issue = thread('1', 'Owner/Repo', '2026-08-05T02:00:00Z');
+    expect(watchSubjectIdentity(issue)).toEqual({
+      kind: 'issue',
+      repositoryFullName: 'owner/repo',
+      number: 1,
+      apiUrl: 'https://api.github.com/repos/owner/repo/issues/1',
+      htmlUrl: 'https://github.com/owner/repo/issues/1',
+    });
+
+    const pull = {
+      ...issue,
+      subjectType: 'PullRequest',
+      subjectApiUrl: 'https://api.github.com/repos/OWNER/REPO/pulls/42',
+    };
+    expect(watchSubjectIdentity(pull)).toEqual({
+      kind: 'pull_request',
+      repositoryFullName: 'owner/repo',
+      number: 42,
+      apiUrl: 'https://api.github.com/repos/owner/repo/issues/42',
+      htmlUrl: 'https://github.com/owner/repo/pull/42',
+    });
+
+    expect(watchSubjectIdentity({ ...issue, subjectApiUrl: 'https://evil.example/repos/owner/repo/issues/1' }))
+      .toBeNull();
+    expect(watchSubjectIdentity({ ...issue, subjectApiUrl: 'https://api.github.com/repos/other/repo/issues/1' }))
+      .toBeNull();
+    expect(watchSubjectIdentity({ ...issue, subjectApiUrl: 'https://api.github.com/repos/owner/repo/issues/1?token=secret' }))
+      .toBeNull();
+    expect(watchSubjectIdentity({ ...issue, subjectType: 'Release' })).toBeNull();
   });
 
   it('rebuilds repository links from the canonical name instead of remote HTML URLs', () => {
@@ -108,4 +142,15 @@ describe('Watch domain model', () => {
       'team_mention',
     ]);
   });
+  it('accepts only bounded unique numeric notification thread ids', () => {
+    expect(parseWatchThreadIds([' 123 ', '456'])).toEqual(['123', '456']);
+    expect(parseWatchThreadIds([])).toBeNull();
+    expect(parseWatchThreadIds(['123', '123'])).toBeNull();
+    expect(parseWatchThreadIds(['thread-123'])).toBeNull();
+    expect(parseWatchThreadIds(Array.from(
+      { length: WATCH_MAX_THREAD_ACTIONS + 1 },
+      (_, index) => String(index + 1),
+    ))).toBeNull();
+  });
+
 });

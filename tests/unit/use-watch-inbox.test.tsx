@@ -14,6 +14,8 @@ import {
 
 const watchMocks = vi.hoisted(() => ({
   bgCall: vi.fn(),
+  getConfig: vi.fn(),
+  updateWatchRepositoryCollapse: vi.fn(),
 }));
 
 type RuntimeListener = (message: { type?: string }) => void;
@@ -27,6 +29,15 @@ const storageListeners: StorageListener[] = [];
 
 vi.mock('@/utils/messaging', () => ({
   bgCall: watchMocks.bgCall,
+}));
+
+vi.mock('@/auth/auth-store', () => ({
+  CONFIG_STORAGE_KEY: 'gsm_config',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials_v1',
+  authStore: {
+    getConfig: watchMocks.getConfig,
+    updateWatchRepositoryCollapse: watchMocks.updateWatchRepositoryCollapse,
+  },
 }));
 
 function deferred<T>() {
@@ -92,12 +103,45 @@ function Harness() {
       <button type="button" data-testid="all" onClick={() => inbox.setUnreadOnly(false)}>
         All
       </button>
+      <button type="button" data-testid="unread" onClick={() => inbox.setUnreadOnly(true)}>
+        Unread
+      </button>
       <button type="button" data-testid="refresh" onClick={() => void inbox.refresh()}>
         Refresh
+      </button>
+      <button
+        type="button"
+        data-testid="mark-read"
+        onClick={() => void inbox.markThreadsRead(['1'])}
+      >
+        Mark read
+      </button>
+      <button
+        type="button"
+        data-testid="mark-done"
+        onClick={() => void inbox.markThreadsDone(['1', '2'])}
+      >
+        Mark done
+      </button>
+      <button
+        type="button"
+        data-testid="collapse"
+        onClick={() => inbox.updateRepositoryCollapse('owner/repo', 'signature')}
+      >
+        Collapse
       </button>
       <span data-testid="mode">{inbox.unreadOnly ? 'unread' : 'all'}</span>
       <span data-testid="loading">{inbox.loading ? 'loading' : 'ready'}</span>
       <span data-testid="count">{inbox.result?.totalCount ?? 'none'}</span>
+      <span data-testid="collapsed">
+        {Object.keys(inbox.collapsedRepositories).length}
+      </span>
+      <span data-testid="action-pending">
+        {inbox.actionPending
+          ? `${inbox.actionPending.action}:${inbox.actionPending.threadIds.join(',')}`
+          : 'none'}
+      </span>
+      <span data-testid="action-error">{inbox.actionError ?? 'none'}</span>
     </div>
   );
 }
@@ -106,6 +150,10 @@ const mountedRoots: MountedRoot[] = [];
 
 beforeEach(() => {
   watchMocks.bgCall.mockReset();
+  watchMocks.getConfig.mockReset();
+  watchMocks.getConfig.mockResolvedValue({ watchCollapsedRepositories: {} });
+  watchMocks.updateWatchRepositoryCollapse.mockReset();
+  watchMocks.updateWatchRepositoryCollapse.mockResolvedValue(undefined);
   runtimeListeners.length = 0;
   storageListeners.length = 0;
   vi.stubGlobal('chrome', {
@@ -137,15 +185,14 @@ afterEach(() => {
 });
 
 describe('useWatchInbox', () => {
-  it('uses the latest Unread/All mode after an in-flight refresh completes', async () => {
+  it('keeps the latest local Unread/All mode after an in-flight refresh completes', async () => {
     const refresh = deferred<unknown>();
     const queryModes: boolean[] = [];
     watchMocks.bgCall.mockImplementation((type: string, payload?: { unreadOnly?: boolean }) => {
       if (type === 'refreshWatchInbox') return refresh.promise;
       if (type === 'queryWatchInbox') {
-        const unreadOnly = payload?.unreadOnly ?? true;
-        queryModes.push(unreadOnly);
-        return Promise.resolve(queryResponse(unreadOnly ? 1 : 2));
+        queryModes.push(payload?.unreadOnly ?? true);
+        return Promise.resolve(queryResponse(2));
       }
       throw new Error(`Unexpected request: ${type}`);
     });
@@ -155,16 +202,11 @@ describe('useWatchInbox', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
 
     await click(container.querySelector<HTMLButtonElement>('[data-testid="refresh"]')!);
     await click(container.querySelector<HTMLButtonElement>('[data-testid="all"]')!);
-    await act(async () => {
-      await Promise.resolve();
-    });
-
     expect(container.querySelector('[data-testid="mode"]')?.textContent).toBe('all');
-    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
 
     await act(async () => {
       refresh.resolve({});
@@ -173,19 +215,18 @@ describe('useWatchInbox', () => {
       await Promise.resolve();
     });
 
-    expect(queryModes).toEqual([true, false, false]);
+    expect(queryModes).toEqual([false, false]);
     expect(container.querySelector('[data-testid="mode"]')?.textContent).toBe('all');
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
     expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
   });
 
-  it('marks a projection mode change as loading until the new query commits', async () => {
-    const allQuery = deferred<WatchInboxQueryResponse>();
+  it('switches projection mode locally without clearing or requerying the fetched snapshot', async () => {
+    const queryModes: boolean[] = [];
     watchMocks.bgCall.mockImplementation((type: string, payload?: { unreadOnly?: boolean }) => {
       if (type !== 'queryWatchInbox') throw new Error(`Unexpected request: ${type}`);
-      return payload?.unreadOnly === false
-        ? allQuery.promise
-        : Promise.resolve(queryResponse(1));
+      queryModes.push(payload?.unreadOnly ?? true);
+      return Promise.resolve(queryResponse(2));
     });
 
     const container = mountReact(<Harness />, mountedRoots);
@@ -195,19 +236,12 @@ describe('useWatchInbox', () => {
     });
     await click(container.querySelector<HTMLButtonElement>('[data-testid="all"]')!);
 
-    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('loading');
-
-    await act(async () => {
-      allQuery.resolve(queryResponse(2));
-      await allQuery.promise;
-      await Promise.resolve();
-    });
-
+    expect(queryModes).toEqual([false]);
     expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
   });
 
-  it('silently reloads when the authoritative GitHub credential record changes', async () => {
+  it('silently reloads only when the authoritative GitHub credential record changes', async () => {
     const credentialQuery = deferred<WatchInboxQueryResponse>();
     const queryModes: boolean[] = [];
     watchMocks.bgCall.mockImplementation((
@@ -215,10 +249,9 @@ describe('useWatchInbox', () => {
       payload?: { unreadOnly?: boolean },
     ) => {
       if (type !== 'queryWatchInbox') throw new Error(`Unexpected request: ${type}`);
-      const mode = payload?.unreadOnly ?? true;
-      queryModes.push(mode);
-      if (queryModes.length === 3) return credentialQuery.promise;
-      return Promise.resolve(queryResponse(queryModes.length));
+      queryModes.push(payload?.unreadOnly ?? true);
+      if (queryModes.length === 2) return credentialQuery.promise;
+      return Promise.resolve(queryResponse(1));
     });
 
     const container = mountReact(<Harness />, mountedRoots);
@@ -229,18 +262,17 @@ describe('useWatchInbox', () => {
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
     expect(storageListeners).toHaveLength(1);
     await click(container.querySelector<HTMLButtonElement>('[data-testid="all"]')!);
-    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
 
     await act(async () => {
       storageListeners[0]?.({
         gsm_github_credentials_v1: { newValue: {} },
       }, 'sync');
       storageListeners[0]?.({
-        gsm_config: { newValue: {} },
+        gsm_config: { newValue: { watchCollapsedRepositories: { 'owner/repo': 'signature' } } },
       }, 'local');
       await Promise.resolve();
     });
-    expect(queryModes).toEqual([true, false]);
+    expect(queryModes).toEqual([false]);
 
     await act(async () => {
       storageListeners[0]?.({
@@ -252,9 +284,9 @@ describe('useWatchInbox', () => {
       await Promise.resolve();
     });
 
-    expect(queryModes).toEqual([true, false, false]);
+    expect(queryModes).toEqual([false, false]);
     expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
-    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
 
     await act(async () => {
       credentialQuery.resolve(queryResponse(3));
@@ -383,6 +415,103 @@ describe('useWatchInbox', () => {
     expect(queryCount).toBe(3);
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('3');
   });
+
+  it('falls back to empty collapse memory when config hydration fails', async () => {
+    watchMocks.bgCall.mockResolvedValue(queryResponse(1));
+    watchMocks.getConfig.mockRejectedValue(new Error('storage unavailable'));
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(watchMocks.getConfig).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-testid="collapsed"]')?.textContent?.trim()).toBe('0');
+  });
+
+  it('clears optimistic collapse memory when persistence and recovery both fail', async () => {
+    watchMocks.bgCall.mockResolvedValue(queryResponse(1));
+    watchMocks.getConfig
+      .mockResolvedValueOnce({ watchCollapsedRepositories: {} })
+      .mockRejectedValueOnce(new Error('storage unavailable'));
+    watchMocks.updateWatchRepositoryCollapse.mockRejectedValue(new Error('write failed'));
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="collapse"]')!);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(watchMocks.updateWatchRepositoryCollapse).toHaveBeenCalledWith(
+      'owner/repo',
+      'signature',
+    );
+    expect(watchMocks.getConfig).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-testid="collapsed"]')?.textContent?.trim()).toBe('0');
+  });
+  it('tracks notification mutations and reloads the authoritative projection', async () => {
+    const mutation = deferred<unknown>();
+    let queryCount = 0;
+    watchMocks.bgCall.mockImplementation((type: string, payload?: { threadIds?: string[] }) => {
+      if (type === 'queryWatchInbox') {
+        queryCount++;
+        return Promise.resolve(queryResponse(queryCount === 1 ? 2 : 1));
+      }
+      if (type === 'markWatchThreadsRead') {
+        expect(payload?.threadIds).toEqual(['1']);
+        return mutation.promise;
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+    const container = mountReact(<Harness />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="mark-read"]')!);
+    expect(container.querySelector('[data-testid="action-pending"]')?.textContent).toBe('read:1');
+
+    mutation.resolve(undefined);
+    await act(async () => {
+      await mutation.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="action-pending"]')?.textContent).toBe('none');
+    expect(container.querySelector('[data-testid="action-error"]')?.textContent).toBe('none');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+  });
+
+  it('surfaces a failed done mutation after reloading saved rows', async () => {
+    watchMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryWatchInbox') return Promise.resolve(queryResponse(2));
+      if (type === 'markWatchThreadsDone') return Promise.reject(new Error('failed'));
+      throw new Error(`Unexpected request: ${type}`);
+    });
+    const container = mountReact(<Harness />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="mark-done"]')!);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="action-pending"]')?.textContent).toBe('none');
+    expect(container.querySelector('[data-testid="action-error"]')?.textContent).toBe('done');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
+  });
+
 
   it('removes credential and runtime invalidation listeners on unmount', async () => {
     watchMocks.bgCall.mockResolvedValue(queryResponse(1));

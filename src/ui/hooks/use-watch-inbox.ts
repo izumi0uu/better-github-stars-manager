@@ -1,20 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GITHUB_CREDENTIALS_STORAGE_KEY } from '@/auth/auth-store';
+import {
+  authStore,
+  CONFIG_STORAGE_KEY,
+  GITHUB_CREDENTIALS_STORAGE_KEY,
+} from '@/auth/auth-store';
 import { bgCall } from '@/utils/messaging';
 import type {
   WatchInboxQueryResponse,
   WatchRefreshResult,
+  WatchThreadAction,
+  WatchThreadMutationResult,
 } from '@/watch/watch-contract';
+import { normalizeWatchCollapsedRepositories } from '@/preferences';
+import type { WatchCollapsedRepositorySignatures } from '@/types';
 
 export function useWatchInbox() {
   const [unreadOnly, setUnreadOnly] = useState(true);
+  const [collapsedRepositories, setCollapsedRepositories] =
+    useState<WatchCollapsedRepositorySignatures>({});
   const [result, setResult] = useState<WatchInboxQueryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<'query' | 'refresh' | null>(null);
+  const [actionPending, setActionPending] = useState<{
+    action: WatchThreadAction;
+    threadIds: readonly string[];
+  } | null>(null);
+  const [actionError, setActionError] = useState<WatchThreadAction | null>(null);
   const generation = useRef(0);
-  const unreadOnlyRef = useRef(unreadOnly);
   const refreshingRef = useRef(false);
+  const actionPendingRef = useRef(false);
   const mountedRef = useRef(true);
   const cooldownProbeRef = useRef<{ deadline: string | null; attempts: number }>({
     deadline: null,
@@ -30,7 +45,7 @@ export function useWatchInbox() {
     };
   }, []);
 
-  const load = useCallback(async (silent = false, mode = unreadOnlyRef.current) => {
+  const load = useCallback(async (silent = false) => {
     if (!mountedRef.current) return;
     const requestGeneration = ++generation.current;
     if (!silent) {
@@ -38,7 +53,7 @@ export function useWatchInbox() {
       setResult(null);
     }
     try {
-      const next = await bgCall<WatchInboxQueryResponse>('queryWatchInbox', { unreadOnly: mode });
+      const next = await bgCall<WatchInboxQueryResponse>('queryWatchInbox', { unreadOnly: false });
       if (!mountedRef.current || generation.current !== requestGeneration) return;
       setResult(next);
       setError(null);
@@ -51,9 +66,21 @@ export function useWatchInbox() {
   }, []);
 
   useEffect(() => {
-    unreadOnlyRef.current = unreadOnly;
-    void load(false, unreadOnly);
-  }, [load, unreadOnly]);
+    void load(false);
+  }, [load]);
+  useEffect(() => {
+    let active = true;
+    void authStore.getConfig()
+      .then((config) => {
+        if (active) setCollapsedRepositories(config.watchCollapsedRepositories);
+      })
+      .catch(() => {
+        if (active) setCollapsedRepositories({});
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const onMessage = chrome.runtime?.onMessage;
@@ -72,8 +99,14 @@ export function useWatchInbox() {
       changes: Record<string, chrome.storage.StorageChange>,
       areaName: string,
     ) => {
-      if (areaName !== 'local' || !changes[GITHUB_CREDENTIALS_STORAGE_KEY]) return;
-      void load(true);
+      if (areaName !== 'local') return;
+      if (changes[CONFIG_STORAGE_KEY]) {
+        const nextConfig = changes[CONFIG_STORAGE_KEY].newValue as Record<string, unknown> | undefined;
+        setCollapsedRepositories(normalizeWatchCollapsedRepositories(
+          nextConfig?.watchCollapsedRepositories,
+        ));
+      }
+      if (changes[GITHUB_CREDENTIALS_STORAGE_KEY]) void load(true);
     };
     onChanged.addListener(listener);
     return () => onChanged.removeListener(listener);
@@ -122,19 +155,79 @@ export function useWatchInbox() {
     }
   }, [load]);
 
+  const mutateThreads = useCallback(async (
+    action: WatchThreadAction,
+    requestedIds: readonly string[],
+  ) => {
+    if (!mountedRef.current || actionPendingRef.current) return;
+    const threadIds = [...new Set(requestedIds)];
+    if (threadIds.length === 0) return;
+    actionPendingRef.current = true;
+    setActionPending({ action, threadIds });
+    setActionError(null);
+    try {
+      await bgCall<WatchThreadMutationResult>(
+        action === 'read' ? 'markWatchThreadsRead' : 'markWatchThreadsDone',
+        { threadIds },
+      );
+      await load(true);
+    } catch {
+      await load(true);
+      if (mountedRef.current) setActionError(action);
+    } finally {
+      actionPendingRef.current = false;
+      if (mountedRef.current) setActionPending(null);
+    }
+  }, [load]);
+
+  const markThreadsRead = useCallback((threadIds: readonly string[]) => (
+    mutateThreads('read', threadIds)
+  ), [mutateThreads]);
+
+  const markThreadsDone = useCallback((threadIds: readonly string[]) => (
+    mutateThreads('done', threadIds)
+  ), [mutateThreads]);
+
   const changeUnreadOnly = useCallback((next: boolean) => {
-    unreadOnlyRef.current = next;
     setUnreadOnly(next);
+  }, []);
+
+  const updateRepositoryCollapse = useCallback((
+    repositoryFullName: string,
+    contentSignature: string | null,
+  ) => {
+    const repository = repositoryFullName.trim().toLowerCase();
+    setCollapsedRepositories((current) => {
+      const next = { ...current };
+      delete next[repository];
+      if (contentSignature) next[repository] = contentSignature;
+      return next;
+    });
+    void authStore.updateWatchRepositoryCollapse(repository, contentSignature).catch(async () => {
+      if (!mountedRef.current) return;
+      try {
+        const config = await authStore.getConfig();
+        if (mountedRef.current) setCollapsedRepositories(config.watchCollapsedRepositories);
+      } catch {
+        if (mountedRef.current) setCollapsedRepositories({});
+      }
+    });
   }, []);
 
   return {
     unreadOnly,
     setUnreadOnly: changeUnreadOnly,
+    collapsedRepositories,
+    updateRepositoryCollapse,
     result,
     loading,
     refreshing: refreshing || result?.status.refreshing === true,
     error,
     refresh,
     reload: load,
+    actionPending,
+    actionError,
+    markThreadsRead,
+    markThreadsDone,
   };
 }

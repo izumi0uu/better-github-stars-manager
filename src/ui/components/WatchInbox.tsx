@@ -4,8 +4,6 @@ import {
   BookOpen,
   ChevronDown,
   CircleDot,
-  Clock3,
-  Eye,
   GitCommitHorizontal,
   GitPullRequest,
   Inbox,
@@ -20,14 +18,24 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
+  useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
+  type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
+import { Streamdown } from 'streamdown';
 import { useI18n } from '@/i18n';
+
 import { cn } from '@/lib/utils';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
+import { usePrefersReducedMotion } from '@/ui/hooks/use-prefers-reduced-motion';
+import { useWatchSubjectDetails } from '@/ui/hooks/use-watch-subject-details';
+import { SurfaceWorkCanvas } from '@/ui/components/SurfaceWorkCanvas';
+import { SurfaceListEndMarker } from '@/ui/components/SurfaceListEndMarker';
 import { Button } from '@/ui/shadcn/button';
 import { Checkbox } from '@/ui/shadcn/checkbox';
 import { Input } from '@/ui/shadcn/input';
@@ -35,29 +43,91 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
 import { Spinner } from '@/ui/shadcn/spinner';
 import {
   countWatchReasons,
+  deriveWatchStatusPresentation,
   filterWatchInboxProjection,
   formatWatchRelativeTime,
+  hasNewWatchGroupContent,
+  watchGroupContentSignature,
   watchReasonPresetValues,
   type WatchReasonCount,
   type WatchReasonPreset,
 } from '@/ui/watch-inbox-presentation';
 import {
   notificationSubjectTypeLabel,
+  projectWatchInbox,
   type GitHubNotificationThread,
+  type WatchSubjectDetail,
 } from '@/watch/watch-model';
 import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
+import type { WatchCollapsedRepositorySignatures } from '@/types';
+const WATCH_MARKDOWN_DISALLOWED_ELEMENTS = [
+  'img',
+  'iframe',
+  'video',
+  'audio',
+  'object',
+  'embed',
+  'svg',
+  'math',
+  'script',
+  'style',
+  'canvas',
+  'source',
+  'track',
+] as const;
+
+function safeWatchMarkdownUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    if (
+      (url.protocol !== 'https:' && url.protocol !== 'http:') ||
+      url.username ||
+      url.password ||
+      url.port
+    ) return undefined;
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
+function WatchMarkdownLink({
+  children,
+  node: _node,
+  ...props
+}: ComponentProps<'a'> & { node?: unknown }) {
+  return <a {...props} target="_blank" rel="noreferrer">{children}</a>;
+}
 
 interface WatchInboxProps {
   result: WatchInboxQueryResponse | null;
   loading: boolean;
   refreshing: boolean;
   error: 'query' | 'refresh' | null;
+  actionPending: {
+    action: 'read' | 'done';
+    threadIds: readonly string[];
+  } | null;
+  actionError: 'read' | 'done' | null;
   unreadOnly: boolean;
   onUnreadOnlyChange: (unreadOnly: boolean) => void;
   onRefresh: () => void;
   onRetryQuery: () => void;
   onOpenOptions: () => void;
+  onOpenMainTokenOptions: () => void;
+  onMarkThreadsRead: (ids: readonly string[]) => void;
+  onMarkThreadsDone: (ids: readonly string[]) => void;
+  collapsedRepositories?: WatchCollapsedRepositorySignatures;
+  onRepositoryCollapseChange?: (repository: string, signature: string | null) => void;
   onSelectRepository?: (fullName: string) => void;
+}
+
+interface WatchSurfaceActionsProps {
+  unreadOnly: boolean;
+  refreshing: boolean;
+  refreshDisabled: boolean;
+  onUnreadOnlyChange: (unreadOnly: boolean) => void;
+  onRefresh: () => void;
 }
 
 const REASON_PRESETS: readonly WatchReasonPreset[] = [
@@ -92,27 +162,28 @@ function handleThreadListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
   if (event.altKey || event.ctrlKey || event.metaKey) return;
   if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
   const target = event.target instanceof Element
-    ? event.target.closest<HTMLAnchorElement>('a[data-watch-thread]')
+    ? event.target.closest<HTMLButtonElement>('button[data-watch-thread]')
     : null;
   if (!target || !event.currentTarget.contains(target)) return;
 
-  // Collapsed groups do not render anchors, so this list is also the visible
-  // navigation order and remains scoped to this Watch surface.
-  const links = Array.from(
-    event.currentTarget.querySelectorAll<HTMLAnchorElement>('a[data-watch-thread]'),
+  // Only expanded groups participate in list-level keyboard navigation.
+  const buttons = Array.from(
+    event.currentTarget.querySelectorAll<HTMLButtonElement>(
+      'button[data-watch-thread]:not([data-watch-thread-hidden])',
+    ),
   );
-  const currentIndex = links.indexOf(target);
-  if (currentIndex < 0 || links.length === 0) return;
+  const currentIndex = buttons.indexOf(target);
+  if (currentIndex < 0 || buttons.length === 0) return;
 
   const nextIndex = event.key === 'Home'
     ? 0
     : event.key === 'End'
-      ? links.length - 1
+      ? buttons.length - 1
       : event.key === 'ArrowUp'
         ? Math.max(0, currentIndex - 1)
-        : Math.min(links.length - 1, currentIndex + 1);
+        : Math.min(buttons.length - 1, currentIndex + 1);
   event.preventDefault();
-  links[nextIndex]?.focus();
+  buttons[nextIndex]?.focus();
 }
 
 function ReasonFilterPopover({
@@ -284,97 +355,568 @@ function formatTime(value: string | null, locale: string): string | null {
   }).format(date);
 }
 
+function WatchSurfaceActions({
+  unreadOnly,
+  refreshing,
+  refreshDisabled,
+  onUnreadOnlyChange,
+  onRefresh,
+}: WatchSurfaceActionsProps) {
+  const { m } = useI18n();
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+      <div
+        className="inline-flex h-[26px] items-center rounded-md bg-muted p-0.5"
+        role="group"
+        aria-label={m.watch.filterLabel}
+      >
+        <button
+          type="button"
+          aria-pressed={unreadOnly}
+          onClick={() => onUnreadOnlyChange(true)}
+          className={cn('h-[22px] rounded-sm px-2.5 text-[11px] font-medium text-muted-foreground transition-[background-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
+            'bg-card text-foreground shadow-sm': unreadOnly,
+          })}
+        >
+          {m.watch.unread}
+        </button>
+        <button
+          type="button"
+          aria-pressed={!unreadOnly}
+          onClick={() => onUnreadOnlyChange(false)}
+          className={cn('h-[22px] rounded-sm px-2.5 text-[11px] font-medium text-muted-foreground transition-[background-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
+            'bg-card text-foreground shadow-sm': !unreadOnly,
+          })}
+        >
+          {m.watch.all}
+        </button>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-[30px] gap-1.5 px-2.5 text-xs"
+        disabled={refreshDisabled}
+        onClick={onRefresh}
+        aria-label={refreshing ? m.watch.refreshing : m.watch.refresh}
+      >
+        {refreshing ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
+        <span className="max-[520px]:hidden">
+          {refreshing ? m.watch.refreshing : m.watch.refresh}
+        </span>
+      </Button>
+    </div>
+  );
+}
+export function WatchStatusRibbon({
+  result,
+  loading,
+  refreshing,
+  error,
+  onOpenOptions,
+}: Pick<WatchInboxProps, 'result' | 'loading' | 'refreshing' | 'error'> & {
+  onOpenOptions?: () => void;
+}) {
+  const { m, locale } = useI18n();
+  const presentation = deriveWatchStatusPresentation({ result, loading, refreshing, error });
+  const status = result?.status;
+  const state = status?.state;
+  const snapshotAt = formatTime(presentation.snapshotAt, locale);
+  const text = (() => {
+    switch (presentation.kind) {
+      case 'loading':
+        return m.common.loading;
+      case 'refreshing':
+        return presentation.snapshotAt ? m.watch.statusRefreshingSaved : m.watch.refreshing;
+      case 'credential_error':
+        return m.watch.statusCredential;
+      case 'query_error':
+        return m.watch.queryFailed;
+      case 'refresh_error':
+      case 'stale':
+        return m.watch.statusRefreshFailedSaved;
+      case 'cooldown': {
+        const cooldownUntil = formatTime(state?.inbox.nextAllowedAt ?? null, locale);
+        return cooldownUntil ? m.watch.statusCooldown(cooldownUntil) : m.watch.statusRefreshFailedSaved;
+      }
+      case 'scope_error':
+        return m.watch.scopeFailed;
+      case 'inbox_error':
+        return m.watch.inboxFailed;
+      case 'truncated':
+        return m.watch.statusTruncated(result?.threads.length ?? 0);
+      case 'never_loaded':
+        return status?.hasMainToken ? m.watch.statusNeverLoaded : m.watch.configureMainToken;
+      case 'fresh':
+        return m.watch.statusFresh(result?.unreadCount ?? 0, state?.scope.repositoryCount ?? 0);
+    }
+  })();
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      className={cn('shrink-0 overflow-hidden border-b border-border text-xs', {
+        'bg-card': presentation.tone === 'muted',
+        'bg-success/[0.07]': presentation.tone === 'success',
+        'bg-warning/[0.07]': presentation.tone === 'warning',
+        'bg-destructive/[0.07]': presentation.tone === 'destructive',
+      })}
+      data-watch-status={presentation.kind}
+    >
+      <SurfaceWorkCanvas variant="watch" className="relative flex h-[30px] items-center gap-2 px-3.5">
+        {presentation.kind === 'refreshing' || (refreshing && presentation.kind !== 'loading') ? (
+          <Spinner className="size-3 shrink-0" />
+        ) : (
+          <span
+            className={cn('size-[7px] shrink-0 rounded-full', {
+              'border border-muted-foreground bg-transparent': presentation.tone === 'muted',
+              'bg-success': presentation.tone === 'success',
+              'bg-warning': presentation.tone === 'warning',
+              'bg-destructive': presentation.tone === 'destructive',
+            })}
+            aria-hidden="true"
+          />
+        )}
+        <span className="min-w-0 truncate text-foreground/90">{text}</span>
+        <span className="flex-1" />
+        {presentation.kind === 'credential_error' && onOpenOptions && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 shrink-0 px-2 text-[11px]"
+            onClick={onOpenOptions}
+          >
+            {m.watch.openOptions}
+          </Button>
+        )}
+        {snapshotAt && (
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground max-[640px]:hidden">
+            {snapshotAt}
+          </span>
+        )}
+        {refreshing && <span className="gsm-watch-refresh-bar" aria-hidden="true" />}
+      </SurfaceWorkCanvas>
+    </div>
+  );
+}
+
 function EmptyState({
   icon,
+  title,
   text,
   action,
+  tone = 'muted',
 }: {
   icon: React.ReactNode;
+  title?: string;
   text: string;
   action?: React.ReactNode;
+  tone?: 'muted' | 'success' | 'destructive';
 }) {
   return (
-    <div className="grid min-h-64 place-items-center px-6 py-12 text-center">
-      <div className="max-w-md">
-        <div className="mx-auto mb-3 grid size-10 place-items-center rounded-md bg-muted text-muted-foreground">
+    <SurfaceWorkCanvas variant="watch">
+      <div className="flex min-h-64 flex-col items-center justify-center gap-2 px-5 py-12 text-center">
+        <div className={cn('grid size-8 place-items-center rounded-lg', {
+          'bg-muted text-muted-foreground': tone === 'muted',
+          'bg-success/10 text-success': tone === 'success',
+          'bg-destructive/10 text-destructive': tone === 'destructive',
+        })}>
           {icon}
         </div>
-        <p className="text-sm leading-6 text-muted-foreground">{text}</p>
-        {action && <div className="mt-4">{action}</div>}
+        {title && <p className="text-[13.5px] font-semibold text-foreground">{title}</p>}
+        <p className="max-w-md text-xs leading-5 text-muted-foreground">{text}</p>
+        {action && <div className="mt-2 flex gap-2">{action}</div>}
+      </div>
+    </SurfaceWorkCanvas>
+  );
+}
+
+function SubjectDetailContent({
+  detail,
+  locale,
+}: {
+  detail: WatchSubjectDetail;
+  locale: string;
+}) {
+  const { m } = useI18n();
+  const [bodyExpanded, setBodyExpanded] = useState(false);
+  const [bodyOverflowing, setBodyOverflowing] = useState(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const bodyId = useId();
+  const created = formatTime(detail.createdAt, locale) ?? detail.createdAt;
+  const updated = formatTime(detail.updatedAt, locale) ?? detail.updatedAt;
+  const bodyMarkdown = detail.bodyMarkdown?.trim() ?? '';
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || bodyExpanded) return;
+    const measure = () => setBodyOverflowing(body.scrollHeight > body.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [bodyExpanded, bodyMarkdown]);
+
+  return (
+    <div data-watch-subject-detail="success">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-[11px] font-semibold text-foreground">{m.watch.subjectDetails}</span>
+        <span
+          className={cn('inline-flex min-h-[18px] items-center rounded-full border px-1.5 text-[11px] font-semibold', {
+            'border-success/40 text-success': detail.state === 'open',
+            'border-border bg-card/65 text-muted-foreground': detail.state === 'closed',
+          })}
+        >
+          {detail.state === 'open' ? m.watch.subjectStateOpen : m.watch.subjectStateClosed}
+        </span>
+        {detail.stateReason && (
+          <span className="text-[11px] text-muted-foreground">
+            {m.watch.subjectStateReason(detail.stateReason)}
+          </span>
+        )}
+      </div>
+      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px] text-muted-foreground">
+        <span>#{detail.number}</span>
+        <a className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={detail.author.htmlUrl} target="_blank" rel="noreferrer">
+          {m.watch.subjectAuthor(detail.author.login)}
+        </a>
+        <time dateTime={detail.createdAt}>{m.watch.subjectCreated(created)}</time>
+        <time dateTime={detail.updatedAt}>{m.watch.threadUpdated}: {updated}</time>
+        <span>{m.watch.subjectComments(detail.commentCount)}</span>
+        {detail.milestoneTitle && <span>{m.watch.subjectMilestone(detail.milestoneTitle)}</span>}
+        {detail.assignees.length > 0 && (
+          <span>{m.watch.subjectAssignees(detail.assignees.map((person) => `@${person.login}`).join(', '))}</span>
+        )}
+      </div>
+      {detail.labels.length > 0 && (
+        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1" aria-label={m.watch.subjectLabels}>
+          {detail.labels.map((label) => (
+            <span
+              key={`${label.name}:${label.color}`}
+              className="inline-flex min-h-[18px] items-center rounded border border-border bg-card/70 px-1.5 font-mono text-[11px] text-muted-foreground"
+              title={`#${label.color}`}
+            >
+              {label.name}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="gsm-watch-subject-body-wrap mt-1.5">
+        {bodyMarkdown ? (
+          <>
+            <div
+              ref={bodyRef}
+              id={bodyId}
+              className={cn('gsm-watch-subject-markdown', {
+                'gsm-watch-subject-markdown-preview': !bodyExpanded,
+                'gsm-watch-subject-markdown-expanded': bodyExpanded,
+                'gsm-watch-subject-markdown-faded': !bodyExpanded && bodyOverflowing,
+              })}
+              data-watch-subject-body={bodyExpanded ? 'expanded' : 'preview'}
+            >
+              <Streamdown
+                mode="static"
+                animated={false}
+                controls={false}
+                lineNumbers={false}
+                skipHtml
+                disallowedElements={WATCH_MARKDOWN_DISALLOWED_ELEMENTS}
+                linkSafety={{ enabled: false }}
+                urlTransform={safeWatchMarkdownUrl}
+                components={{ a: WatchMarkdownLink }}
+                className="gsm-watch-subject-markdown-content"
+              >
+                {bodyMarkdown}
+              </Streamdown>
+            </div>
+            {bodyOverflowing || bodyExpanded ? (
+              <button
+                type="button"
+                className="mt-1 rounded-sm text-[11px] font-semibold text-muted-foreground underline decoration-muted-foreground/45 underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-expanded={bodyExpanded}
+                aria-controls={bodyId}
+                onClick={() => setBodyExpanded((current) => !current)}
+              >
+                {bodyExpanded ? m.watch.subjectCollapseDescription : m.watch.subjectShowDescription}
+              </button>
+            ) : null}
+          </>
+        ) : (
+          <p className="text-xs leading-[1.5] text-muted-foreground">{m.watch.subjectNoDescription}</p>
+        )}
       </div>
     </div>
+  );
+}
+
+function SubjectDetailSlot({
+  thread,
+  expanded,
+  locale,
+  onOpenMainTokenOptions,
+}: {
+  thread: GitHubNotificationThread;
+  expanded: boolean;
+  locale: string;
+  onOpenMainTokenOptions: () => void;
+}) {
+  const { m } = useI18n();
+  const reducedMotion = usePrefersReducedMotion();
+  const { state, supported, retry } = useWatchSubjectDetails({ thread, expanded });
+  const [renderedState, setRenderedState] = useState(state);
+  const [swapping, setSwapping] = useState(false);
+
+  useEffect(() => {
+    if (state.status === 'loading' || state.status === 'idle' || reducedMotion) {
+      setRenderedState(state);
+      setSwapping(false);
+      return;
+    }
+    setRenderedState(state);
+    setSwapping(true);
+    const timer = window.setTimeout(() => setSwapping(false), 70);
+    return () => window.clearTimeout(timer);
+  }, [reducedMotion, state]);
+
+  if (!expanded || !supported || renderedState.status === 'idle') return null;
+  const credentialError = renderedState.status === 'error' && (
+    renderedState.code === 'authentication_required' || renderedState.code === 'permission_denied'
+  );
+  const detailErrorMessage = renderedState.status === 'error'
+    ? renderedState.code === 'authentication_required'
+      ? m.watch.subjectDetailsAuthentication
+      : renderedState.code === 'permission_denied'
+        ? m.watch.subjectDetailsPermission
+        : renderedState.message || m.watch.subjectDetailsUnavailable
+    : null;
+  return (
+    <section
+      className={cn('gsm-watch-subject-detail-slot mt-1 border-t border-border/80 pt-1', {
+        'gsm-watch-subject-detail-swapping': swapping,
+      })}
+      data-state={renderedState.status}
+      aria-label={m.watch.subjectDetails}
+      aria-live="polite"
+      aria-busy={renderedState.status === 'loading'}
+    >
+      {renderedState.status === 'loading' ? (
+        <div data-watch-subject-detail="loading">
+          <span className="text-[11.5px] text-muted-foreground">{m.watch.subjectDetailsLoading}</span>
+          <span className="gsm-watch-subject-skeleton mt-1.5" aria-hidden="true">
+            <span />
+            <span />
+          </span>
+        </div>
+      ) : renderedState.status === 'success' ? (
+        <SubjectDetailContent detail={renderedState.detail} locale={locale} />
+      ) : renderedState.status === 'error' ? (
+        <div data-watch-subject-detail="error">
+          <p className="text-xs leading-[1.5] text-foreground/80">
+            {detailErrorMessage}
+          </p>
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+            {credentialError && (
+              <Button size="sm" className="h-7 px-2.5 text-xs" onClick={onOpenMainTokenOptions}>
+                {m.watch.openOptions}
+              </Button>
+            )}
+            <Button
+              variant={credentialError ? "outline" : "ghost"}
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              onClick={retry}
+            >
+              {m.watch.retry}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
 function ThreadRow({
   thread,
   locale,
+  hidden,
+  actionPending,
+  onOpenMainTokenOptions,
+  onMarkThreadsRead,
+  onMarkThreadsDone,
 }: {
   thread: GitHubNotificationThread;
   locale: string;
+  hidden: boolean;
+  actionPending: WatchInboxProps['actionPending'];
+  onOpenMainTokenOptions: () => void;
+  onMarkThreadsRead: (ids: readonly string[]) => void;
+  onMarkThreadsDone: (ids: readonly string[]) => void;
 }) {
   const { m } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const [keyboardTransition, setKeyboardTransition] = useState(false);
   const target = thread.subjectHtmlUrl ?? thread.repositoryHtmlUrl;
   const updated = formatWatchRelativeTime(thread.updatedAt);
   const updatedTitle = formatTime(thread.updatedAt, locale);
   const subjectType = notificationSubjectTypeLabel(thread.subjectType);
   const SubjectIcon = notificationSubjectIcon(thread.subjectType, thread.reason);
-  const metadataId = useId();
+  const disclosureId = useId();
+  const detailsId = `${disclosureId}-details`;
+  const metadataId = `${disclosureId}-metadata`;
+  const actionDisabled = actionPending !== null;
+  const threadActionPending = actionPending?.threadIds.includes(thread.id) === true;
+  const readPending = threadActionPending && actionPending?.action === 'read';
+  const donePending = threadActionPending && actionPending?.action === 'done';
+
+  useEffect(() => {
+    if (hidden) setExpanded(false);
+  }, [hidden]);
+
+  const toggleExpanded = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    const keyboard = event.detail === 0;
+    setKeyboardTransition(keyboard);
+    setExpanded((current) => !current);
+    if (keyboard) requestAnimationFrame(() => setKeyboardTransition(false));
+  };
+
   return (
-    <a
-      href={target}
-      target="_blank"
-      rel="noreferrer"
-      data-watch-thread
-      aria-label={`${m.watch.openOnGitHub}: ${thread.subjectTitle}`}
-      aria-describedby={metadataId}
-      className="group relative grid min-h-10 grid-cols-[18px_16px_minmax(0,1fr)_auto] items-center gap-x-2 px-4 py-1.5 text-foreground outline-none transition-colors hover:bg-muted/35 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[18px_16px_minmax(0,1fr)_minmax(0,auto)_auto]"
-    >
-      <span className="relative z-10 grid size-[18px] place-items-center bg-background" aria-hidden="true">
-        <span
-          className={cn('size-2 rounded-full', {
-            'bg-foreground': thread.unread,
-            'border border-muted-foreground/45 bg-background': !thread.unread,
+    <article className="min-w-0" data-watch-thread-row={thread.id}>
+      <button
+        id={disclosureId}
+        type="button"
+        data-watch-thread
+        data-watch-thread-hidden={hidden || undefined}
+        tabIndex={hidden ? -1 : undefined}
+        aria-expanded={expanded}
+        aria-controls={detailsId}
+        aria-label={`${m.watch.threadDetails}: ${thread.subjectTitle}`}
+        aria-describedby={metadataId}
+        onClick={toggleExpanded}
+        className={cn('group flex h-[37px] w-full min-w-0 items-center gap-[9px] rounded-md pr-2 text-left text-foreground outline-none transition-colors hover:bg-muted/55 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', {
+          'bg-muted/45': expanded,
+        })}
+      >
+        <span className="relative z-10 flex w-[15px] shrink-0 justify-center bg-background" aria-hidden="true">
+          <span
+            className={cn('rounded-full bg-background ring-[2.5px] ring-background', {
+              'size-[7px] bg-foreground': thread.unread,
+              'size-[5px] border border-muted-foreground/40': !thread.unread,
+            })}
+            title={thread.unread ? m.watch.unreadSnapshot : undefined}
+          />
+        </span>
+        <SubjectIcon
+          className={cn('size-[15px] shrink-0', {
+            'text-foreground/75': thread.unread,
+            'text-muted-foreground': !thread.unread,
           })}
-          title={thread.unread ? m.watch.unreadSnapshot : undefined}
+          aria-hidden="true"
         />
-      </span>
-      <SubjectIcon
-        className={cn('size-4 shrink-0', {
-          'text-foreground': thread.unread,
-          'text-muted-foreground': !thread.unread,
-        })}
-        aria-hidden="true"
-      />
-      <span
-        className={cn('min-w-0 truncate text-[13px] leading-5 group-hover:underline', {
-          'font-semibold text-foreground': thread.unread,
-          'font-medium text-foreground/80': !thread.unread,
-        })}
-        title={thread.subjectTitle}
-      >
-        {thread.subjectTitle}
-      </span>
-      <span id={metadataId} className="sr-only">
-        {thread.unread ? `${m.watch.unreadSnapshot}. ` : ''}
-        {subjectType}. {thread.reason}. {updatedTitle ?? ''}
-      </span>
-      <code
-        className="hidden max-w-44 truncate rounded-sm bg-muted px-1.5 py-0.5 text-[10px] leading-4 text-muted-foreground sm:block"
-        title={thread.reason}
-      >
-        {thread.reason}
-      </code>
-      {updated && (
-        <time
-          dateTime={thread.updatedAt}
-          title={updatedTitle ?? undefined}
-          className="min-w-[4ch] text-right font-mono text-[10px] tabular-nums text-muted-foreground"
+        <span
+          className={cn('min-w-0 flex-1 truncate text-[13px]', {
+            'font-semibold text-foreground': thread.unread,
+            'font-normal text-muted-foreground': !thread.unread,
+          })}
+          title={thread.subjectTitle}
         >
-          {updated}
-        </time>
-      )}
-    </a>
+          {thread.subjectTitle}
+        </span>
+        <span id={metadataId} className="sr-only">
+          {subjectType}. {thread.reason}. {thread.unread ? m.watch.unreadStatus : m.watch.readStatus}. {updatedTitle ?? ''}
+        </span>
+        <code
+          className="max-w-44 truncate rounded-sm bg-muted px-1.5 py-px font-mono text-[11px] text-muted-foreground max-[720px]:hidden"
+          title={thread.reason}
+        >
+          {thread.reason}
+        </code>
+        {updated && (
+          <time
+            dateTime={thread.updatedAt}
+            title={updatedTitle ?? undefined}
+            className="w-11 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground"
+          >
+            {updated}
+          </time>
+        )}
+        <ChevronDown
+          className={cn('gsm-watch-thread-chevron size-3.5 shrink-0 text-muted-foreground', {
+            'rotate-180': expanded,
+          })}
+          aria-hidden="true"
+        />
+      </button>
+      <div
+        id={detailsId}
+        role="region"
+        aria-labelledby={disclosureId}
+        aria-hidden={!expanded}
+        {...(!expanded
+          ? ({ inert: '' } as unknown as React.HTMLAttributes<HTMLDivElement>)
+          : {})}
+        data-open={expanded}
+        data-keyboard={keyboardTransition || undefined}
+        className="gsm-watch-thread-disclosure ml-6 min-w-0"
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="gsm-watch-thread-inspector mb-2 min-w-0 border-y border-border bg-muted/35 px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {m.watch.threadDetails}
+              </p>
+              <h4 className="mt-1 break-words text-[13px] font-semibold leading-5 text-foreground">
+                {thread.subjectTitle}
+              </h4>
+              <p className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px] text-muted-foreground">
+                <span>{subjectType}</span>
+                <span aria-hidden="true">·</span>
+                <span className="min-w-0 break-all font-mono text-[11px]">{thread.repositoryFullName}</span>
+              </p>
+            </div>
+            <dl className="mt-2 grid min-w-0 grid-cols-1 gap-x-5 gap-y-1.5 text-[11.5px] min-[520px]:grid-cols-3">
+              <div className="flex min-w-0 items-baseline gap-2 min-[520px]:block">
+                <dt className="shrink-0 text-muted-foreground">{m.watch.threadReason}</dt>
+                <dd className="min-w-0 break-all font-mono text-[11px] text-foreground min-[520px]:mt-0.5">{thread.reason}</dd>
+              </div>
+              <div className="flex min-w-0 items-baseline gap-2 min-[520px]:block">
+                <dt className="shrink-0 text-muted-foreground">{m.watch.threadStatus}</dt>
+                <dd className="min-w-0 text-foreground min-[520px]:mt-0.5">{thread.unread ? m.watch.unreadStatus : m.watch.readStatus}</dd>
+              </div>
+              <div className="flex min-w-0 items-baseline gap-2 min-[520px]:block">
+                <dt className="shrink-0 text-muted-foreground">{m.watch.threadUpdated}</dt>
+                <dd className="min-w-0 font-mono text-[11px] text-foreground min-[520px]:mt-0.5"><time dateTime={thread.updatedAt}>{updatedTitle ?? thread.updatedAt}</time></dd>
+              </div>
+            </dl>
+            <SubjectDetailSlot
+              thread={thread}
+              expanded={expanded}
+              locale={locale}
+              onOpenMainTokenOptions={onOpenMainTokenOptions}
+            />
+            <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-2 border-t border-border pt-2">
+              <Button variant="ghost" size="sm" className="h-7 px-2.5 text-muted-foreground" disabled={actionDisabled} onClick={() => onMarkThreadsDone([thread.id])}>
+                {donePending && <Spinner data-icon="inline-start" aria-label={m.watch.markingDone} />}
+                {donePending ? m.watch.markingDone : m.watch.markAsDone}
+              </Button>
+              <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
+                <Button variant="outline" size="sm" className="h-7 px-2.5" disabled={actionDisabled || !thread.unread} onClick={() => onMarkThreadsRead([thread.id])}>
+                  {readPending && <Spinner data-icon="inline-start" aria-label={m.watch.markingRead} />}
+                  {readPending ? m.watch.markingRead : m.watch.markAsRead}
+                </Button>
+                <Button asChild size="sm" className="h-7 min-w-0 max-w-full px-2.5">
+                  <a href={target} target="_blank" rel="noreferrer" title={m.watch.openSubjectOnGitHub(subjectType)}>
+                    <span className="min-w-0 truncate">{m.watch.openSubjectOnGitHub(subjectType)}</span>
+                  </a>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -399,86 +941,171 @@ function notificationSubjectIcon(type: string, reason: string): LucideIcon {
 
 function WatchGroup({
   group,
+  sourceGroup,
   locale,
-  defaultOpen,
+  persistedSignature,
   revealMatches,
+  autoExpanded,
+  actionPending,
+  onCollapseChange,
   onSelectRepository,
+  onOpenMainTokenOptions,
+  onMarkThreadsRead,
+  onMarkThreadsDone,
 }: {
   group: WatchInboxQueryResponse['groups'][number];
+  sourceGroup: WatchInboxQueryResponse['groups'][number];
   locale: string;
-  defaultOpen: boolean;
+  persistedSignature: string | null;
   revealMatches: boolean;
+  autoExpanded: boolean;
+  actionPending: WatchInboxProps['actionPending'];
+  onCollapseChange?: (repository: string, signature: string | null) => void;
   onSelectRepository?: (fullName: string) => void;
+  onOpenMainTokenOptions: () => void;
+  onMarkThreadsRead: (ids: readonly string[]) => void;
+  onMarkThreadsDone: (ids: readonly string[]) => void;
 }) {
   const { m } = useI18n();
-  const [open, setOpen] = useState(defaultOpen);
-  const expanded = revealMatches || open;
-  const unreadCount = group.threads.reduce(
+  const [manualExpansion, setManualExpansion] = useState<'expanded' | 'collapsed' | null>(null);
+  const contentId = useId();
+  const contentSignature = watchGroupContentSignature(sourceGroup.threads);
+  const hasNewContent = persistedSignature
+    ? hasNewWatchGroupContent(persistedSignature, sourceGroup.threads)
+    : false;
+  const persistentlyCollapsed = persistedSignature !== null && !hasNewContent;
+  const expanded = revealMatches || hasNewContent || manualExpansion === 'expanded'
+    || (!persistentlyCollapsed && manualExpansion !== 'collapsed');
+  const unreadCount = sourceGroup.threads.reduce(
     (count, thread) => count + Number(thread.unread),
     0,
   );
+  const latest = formatWatchRelativeTime(sourceGroup.latestUpdatedAt);
+  const allThreadIds = sourceGroup.threads.map((thread) => thread.id);
+  const unreadThreadIds = sourceGroup.threads
+    .filter((thread) => thread.unread)
+    .map((thread) => thread.id);
+  const actionDisabled = actionPending !== null;
+  const pendingTargetsThisRepository = actionPending !== null
+    && actionPending.threadIds.length === (
+      actionPending.action === 'read' ? unreadThreadIds.length : allThreadIds.length
+    )
+    && actionPending.threadIds.every((id) => (
+      actionPending.action === 'read' ? unreadThreadIds : allThreadIds
+    ).includes(id));
+  const readPending = pendingTargetsThisRepository && actionPending?.action === 'read';
+  const donePending = pendingTargetsThisRepository && actionPending?.action === 'done';
+
+  useEffect(() => {
+    if (hasNewContent) setManualExpansion('expanded');
+  }, [hasNewContent]);
+
+  const toggleExpanded = () => {
+    if (revealMatches) return;
+    if (expanded) {
+      setManualExpansion('collapsed');
+      onCollapseChange?.(group.repositoryFullName, contentSignature);
+    } else {
+      setManualExpansion('expanded');
+      onCollapseChange?.(group.repositoryFullName, null);
+    }
+  };
+
   return (
     <section
-      className="relative bg-background"
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '44px 320px' }}
+      className={cn('relative bg-background', { 'gsm-watch-auto-expanded': autoExpanded })}
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '26px 320px' }}
+      data-watch-repository={group.repositoryFullName}
     >
-      {expanded && group.threads.length > 0 && (
-        <span
-          className="pointer-events-none absolute bottom-5 left-6 top-5 w-px bg-border"
-          aria-hidden="true"
-        />
-      )}
-      <div className="relative grid min-h-11 grid-cols-[18px_16px_minmax(0,1fr)_auto] items-center gap-x-2 px-4 py-1.5 hover:bg-muted/25">
+      <div className="flex min-h-[26px] min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md">
+        <span className="relative z-10 flex w-[15px] shrink-0 justify-center bg-background" aria-hidden="true">
+          <span className="size-[9px] rounded-full border-2 border-muted-foreground/50 bg-background ring-[2.5px] ring-background" />
+        </span>
         <button
           type="button"
-          className="relative z-10 grid size-[18px] place-items-center rounded-sm bg-background text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-background"
+          className="gsm-touch-target grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-transparent"
           aria-expanded={expanded}
+          aria-controls={contentId}
           aria-label={expanded
             ? m.watch.collapseRepository(group.repositoryFullName)
             : m.watch.expandRepository(group.repositoryFullName)}
           disabled={revealMatches}
-          onClick={() => setOpen((current) => !current)}
+          onClick={toggleExpanded}
         >
           <ChevronDown
             className={cn('size-3.5 transition-transform', { '-rotate-90': !expanded })}
           />
         </button>
-        <BookOpen className="size-3.5 text-muted-foreground" aria-hidden="true" />
-        <div className="flex min-w-0 items-center gap-2">
-          {onSelectRepository ? (
-            <button
-              type="button"
-              className="min-w-0 truncate rounded-sm text-left text-[13px] font-semibold text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => onSelectRepository(group.repositoryFullName)}
-            >
-              {group.repositoryFullName}
-            </button>
-          ) : (
-            <a
-              href={group.repositoryHtmlUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="min-w-0 truncate rounded-sm text-[13px] font-semibold text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {group.repositoryFullName}
-            </a>
-          )}
-          <span className="hidden shrink-0 items-center gap-1 text-[10px] text-muted-foreground md:inline-flex">
-            <Eye className="size-3" aria-hidden="true" />
-            {m.watch.watchedOnGitHub}
-          </span>
-        </div>
-        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
-          {m.watch.repositoryUnreadCount(unreadCount)}
+        <BookOpen className="size-[15px] shrink-0 text-muted-foreground" aria-hidden="true" />
+        {onSelectRepository ? (
+          <button
+            type="button"
+            className="min-w-0 truncate rounded-sm text-left text-[13.5px] font-semibold text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => onSelectRepository(group.repositoryFullName)}
+          >
+            {group.repositoryFullName}
+          </button>
+        ) : (
+          <a
+            href={group.repositoryHtmlUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="min-w-0 truncate rounded-sm text-[13.5px] font-semibold text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {group.repositoryFullName}
+          </a>
+        )}
+        <span className="ml-auto shrink-0 rounded-full border border-border px-2 py-px font-mono text-[11px] tabular-nums text-muted-foreground">
+          {expanded
+            ? m.watch.repositoryUnreadCount(unreadCount)
+            : `${m.watch.threadCount(sourceGroup.threads.length)} · ${latest ?? '—'} · ${m.watch.repositoryUnreadCount(unreadCount)}`}
         </span>
+        <div className="flex shrink-0 items-center gap-1" role="group" aria-label={group.repositoryFullName}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[11px]"
+            disabled={actionDisabled || unreadThreadIds.length === 0}
+            onClick={() => onMarkThreadsRead(unreadThreadIds)}
+          >
+            {readPending && <Spinner data-icon="inline-start" aria-label={m.watch.markingRead} />}
+            <span>{readPending ? m.watch.markingRead : m.watch.markAllRead}</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[11px] text-muted-foreground"
+            disabled={actionDisabled || allThreadIds.length === 0}
+            onClick={() => onMarkThreadsDone(allThreadIds)}
+          >
+            {donePending && <Spinner data-icon="inline-start" aria-label={m.watch.markingDone} />}
+            <span>{donePending ? m.watch.markingDone : m.watch.markAllDone}</span>
+          </Button>
+        </div>
       </div>
-      {expanded && (
-        <div>
+      <div
+        id={contentId}
+        className={cn('gsm-watch-group-content', { 'gsm-watch-group-content-open': expanded })}
+        aria-hidden={!expanded}
+        {...(!expanded
+          ? ({ inert: '' } as unknown as React.HTMLAttributes<HTMLDivElement>)
+          : {})}
+      >
+        <div className="min-h-0 overflow-hidden">
           {group.threads.map((thread) => (
-            <ThreadRow key={thread.id} thread={thread} locale={locale} />
+            <ThreadRow
+              key={thread.id}
+              thread={thread}
+              locale={locale}
+              hidden={!expanded}
+              actionPending={actionPending}
+              onOpenMainTokenOptions={onOpenMainTokenOptions}
+              onMarkThreadsRead={onMarkThreadsRead}
+              onMarkThreadsDone={onMarkThreadsDone}
+            />
           ))}
         </div>
-      )}
+      </div>
     </section>
   );
 }
@@ -487,45 +1114,92 @@ export function WatchInbox({
   result,
   loading,
   refreshing,
-  error,
+  actionPending,
+  actionError,
   unreadOnly,
   onUnreadOnlyChange,
   onRefresh,
   onRetryQuery,
   onOpenOptions,
+  onOpenMainTokenOptions,
+  onMarkThreadsRead,
+  onMarkThreadsDone,
+  collapsedRepositories = {},
+  onRepositoryCollapseChange,
   onSelectRepository,
 }: WatchInboxProps) {
   const { m, locale } = useI18n();
   const [query, setQuery] = useState('');
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
+  const [autoExpandedRepositories, setAutoExpandedRepositories] = useState<Record<string, true>>({});
+  const reconciledCollapseSignatures = useRef<Record<string, string>>({});
   const searchInput = useImeBufferedInput(query, setQuery);
   const status = result?.status;
   const state = status?.state;
-  const cooldownUntil = formatTime(state?.inbox.nextAllowedAt ?? null, locale);
-  const checkedAt = formatTime(state?.inbox.lastSuccessfulAt ?? null, locale);
+  const modeProjection = useMemo(
+    () => result ? projectWatchInbox(result.threads, { unreadOnly }) : null,
+    [result, unreadOnly],
+  );
   const reasonCounts = useMemo(
-    () => countWatchReasons(result?.threads ?? []),
-    [result?.threads],
+    () => countWatchReasons(modeProjection?.threads ?? []),
+    [modeProjection?.threads],
   );
   const visibleProjection = useMemo(
-    () => result
-      ? filterWatchInboxProjection(result, { query, reasons: selectedReasons })
+    () => modeProjection
+      ? filterWatchInboxProjection(modeProjection, { query, reasons: selectedReasons })
       : null,
-    [query, result, selectedReasons],
+    [modeProjection, query, selectedReasons],
   );
+  const sourceGroupsByRepository = useMemo(() => new Map(
+    (result?.groups ?? []).map((group) => [group.repositoryFullName.toLowerCase(), group]),
+  ), [result?.groups]);
   const groups = visibleProjection?.groups ?? [];
   const hasPresentationFilters = query.trim().length > 0 || selectedReasons.length > 0;
-  const refreshDisabled = refreshing || status?.inboxStatus === 'cooldown';
+  const refreshDisabled = refreshing || actionPending !== null || status?.inboxStatus === 'cooldown';
 
-  if (loading) {
-    return <EmptyState icon={<Spinner className="size-5" />} text={m.common.loading} />;
+  useEffect(() => {
+    if (!result || !onRepositoryCollapseChange) return;
+    const newlyExpanded: Record<string, true> = {};
+    for (const group of result.groups) {
+      const repository = group.repositoryFullName.toLowerCase();
+      const persistedSignature = collapsedRepositories[repository];
+      if (!persistedSignature) {
+        delete reconciledCollapseSignatures.current[repository];
+        continue;
+      }
+      const currentSignature = watchGroupContentSignature(group.threads);
+      const reconciliation = `${persistedSignature}\n${currentSignature}`;
+      if (reconciledCollapseSignatures.current[repository] === reconciliation) continue;
+      reconciledCollapseSignatures.current[repository] = reconciliation;
+      if (hasNewWatchGroupContent(persistedSignature, group.threads)) {
+        newlyExpanded[repository] = true;
+        onRepositoryCollapseChange(group.repositoryFullName, null);
+      } else if (persistedSignature !== currentSignature) {
+        onRepositoryCollapseChange(group.repositoryFullName, currentSignature);
+      }
+    }
+    if (Object.keys(newlyExpanded).length > 0) {
+      setAutoExpandedRepositories((current) => ({ ...current, ...newlyExpanded }));
+    }
+  }, [collapsedRepositories, onRepositoryCollapseChange, result]);
+
+  useEffect(() => {
+    if (Object.keys(autoExpandedRepositories).length === 0) return;
+    const timer = window.setTimeout(() => setAutoExpandedRepositories({}), 1_000);
+    return () => window.clearTimeout(timer);
+  }, [autoExpandedRepositories]);
+
+  if (loading && !result) {
+    return <EmptyState icon={<Spinner className="size-4" />} text={m.common.loading} />;
   }
 
   if (!result || !status) {
     return (
       <EmptyState
-        icon={<AlertTriangle className="size-5" />}
+        icon={<AlertTriangle className="size-4" />}
+        title={m.watch.title}
         text={m.watch.queryFailed}
+        tone="destructive"
         action={<Button onClick={onRetryQuery}>{m.watch.retry}</Button>}
       />
     );
@@ -534,7 +1208,8 @@ export function WatchInbox({
   if (!status.hasMainToken) {
     return (
       <EmptyState
-        icon={<Settings2 className="size-5" />}
+        icon={<Settings2 className="size-4" />}
+        title={m.watch.title}
         text={m.watch.configureMainToken}
         action={<Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>}
       />
@@ -545,75 +1220,153 @@ export function WatchInbox({
   const inboxNeverLoaded = !state?.inbox.lastSuccessfulAt;
   const scopeCredentialFailure = isWatchCredentialError(state?.scope.errorCode);
   const inboxCredentialFailure = isWatchCredentialError(state?.inbox.errorCode);
-  const credentialStale =
-    (status.scopeStatus === 'stale' && scopeCredentialFailure) ||
-    (status.inboxStatus === 'stale' && inboxCredentialFailure);
+
+  let content: React.ReactNode;
+  if (status.scopeStatus === 'error' && scopeNeverLoaded) {
+    content = (
+      <EmptyState
+        icon={<AlertTriangle className="size-4" />}
+        title={m.watch.title}
+        text={scopeCredentialFailure ? m.watch.scopePermissionDenied : m.watch.scopeFailed}
+        tone="destructive"
+        action={scopeCredentialFailure
+          ? <Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>
+          : <Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.retry}</Button>}
+      />
+    );
+  } else if (scopeNeverLoaded) {
+    content = (
+      <EmptyState
+        icon={<RefreshCw className="size-4" />}
+        title={m.watch.title}
+        text={m.watch.scopeNeverLoaded}
+        action={<Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.refresh}</Button>}
+      />
+    );
+  } else if (state.scope.repositoryCount === 0) {
+    content = (
+      <EmptyState
+        icon={<Inbox className="size-4" />}
+        title={m.watch.watchSurface}
+        text={m.watch.noWatchedRepositories}
+        tone="success"
+      />
+    );
+  } else if (!status.hasNotificationsToken) {
+    content = (
+      <EmptyState
+        icon={<Settings2 className="size-4" />}
+        title={m.watch.title}
+        text={m.watch.configureNotificationsToken}
+        action={<Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>}
+      />
+    );
+  } else if (status.inboxStatus === 'scope_unavailable' && inboxNeverLoaded) {
+    content = (
+      <EmptyState
+        icon={<AlertTriangle className="size-4" />}
+        title={m.watch.title}
+        text={m.watch.scopeUnavailable}
+        action={<Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.retry}</Button>}
+      />
+    );
+  } else if (status.inboxStatus === 'error' && inboxNeverLoaded) {
+    content = (
+      <EmptyState
+        icon={<AlertTriangle className="size-4" />}
+        title={m.watch.title}
+        text={inboxCredentialFailure ? m.watch.inboxPermissionDenied : m.watch.inboxFailed}
+        tone="destructive"
+        action={inboxCredentialFailure
+          ? <Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>
+          : <Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.retry}</Button>}
+      />
+    );
+  } else if (inboxNeverLoaded) {
+    content = (
+      <EmptyState
+        icon={<RefreshCw className="size-4" />}
+        title={m.watch.title}
+        text={m.watch.inboxNeverLoaded}
+        action={<Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.refresh}</Button>}
+      />
+    );
+  } else if (groups.length === 0) {
+    content = (
+      <EmptyState
+        icon={<Inbox className="size-4" />}
+        title={hasPresentationFilters ? m.watch.reasonPresetAll : m.watch.watchSurface}
+        text={(modeProjection?.threads.length ?? 0) > 0 && hasPresentationFilters
+          ? m.watch.noMatchingThreads
+          : unreadOnly ? m.watch.noUnreadThreads : m.watch.noThreads}
+        tone={hasPresentationFilters ? 'muted' : 'success'}
+      />
+    );
+  } else {
+    const listEndTone = state?.inbox.truncated
+      ? 'info'
+      : status.inboxStatus === 'error'
+        || status.inboxStatus === 'stale'
+        || status.inboxStatus === 'cooldown'
+        ? 'warning'
+        : 'muted';
+    const visibleThreadCount = visibleProjection?.threads.length ?? 0;
+    const listEndText = state?.inbox.truncated
+      ? m.watch.listEndWindow
+      : listEndTone === 'warning'
+        ? m.watch.listEndSaved(visibleThreadCount)
+        : hasPresentationFilters
+          ? m.watch.listEndMatches(visibleThreadCount)
+          : m.watch.listEndSnapshot(visibleThreadCount);
+    content = (
+      <SurfaceWorkCanvas variant="watch" className="px-4 py-3 max-sm:px-3">
+        <div
+          className="relative flex flex-col gap-3.5 before:absolute before:bottom-3 before:left-[7px] before:top-3 before:w-px before:bg-muted-foreground/30 before:content-['']"
+          data-watch-thread-list
+          onKeyDown={handleThreadListKeyDown}
+        >
+          {groups.map((group) => {
+            const repository = group.repositoryFullName.toLowerCase();
+            const sourceGroup = sourceGroupsByRepository.get(repository) ?? group;
+            return (
+              <WatchGroup
+                key={group.repositoryFullName}
+                group={group}
+                sourceGroup={sourceGroup}
+                locale={locale}
+                persistedSignature={collapsedRepositories[repository] ?? null}
+                revealMatches={hasPresentationFilters}
+                autoExpanded={autoExpandedRepositories[repository] === true}
+                actionPending={actionPending}
+                onCollapseChange={onRepositoryCollapseChange}
+                onSelectRepository={onSelectRepository}
+                onOpenMainTokenOptions={onOpenMainTokenOptions}
+                onMarkThreadsRead={onMarkThreadsRead}
+                onMarkThreadsDone={onMarkThreadsDone}
+              />
+            );
+          })}
+          <SurfaceListEndMarker
+            variant="timeline"
+            tone={listEndTone}
+            text={listEndText}
+          />
+        </div>
+      </SurfaceWorkCanvas>
+    );
+  }
 
   return (
     <section className="min-h-full bg-background" aria-label={m.watch.title}>
-      <header className="sticky top-0 z-20 border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-semibold leading-5 text-foreground sm:truncate">
-              {m.watch.title}
-            </h2>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-              <span>{m.watch.watchedRepositoryCount(state?.scope.repositoryCount ?? 0)}</span>
-              <span>{m.watch.threadCount(visibleProjection?.totalCount ?? 0)}</span>
-              {checkedAt && <span>{m.watch.snapshotAt(checkedAt)}</span>}
-            </div>
-          </div>
-          <div
-            className="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5 text-xs"
-            role="group"
-            aria-label={m.watch.filterLabel}
-          >
-            <button
-              type="button"
-              aria-pressed={unreadOnly}
-              onClick={() => onUnreadOnlyChange(true)}
-              className={cn('h-7 rounded px-2.5 font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
-                'bg-background text-foreground shadow-sm': unreadOnly,
-              })}
-            >
-              {m.watch.unread}
-            </button>
-            <button
-              type="button"
-              aria-pressed={!unreadOnly}
-              onClick={() => onUnreadOnlyChange(false)}
-              className={cn('h-7 rounded px-2.5 font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
-                'bg-background text-foreground shadow-sm': !unreadOnly,
-              })}
-            >
-              {m.watch.all}
-            </button>
-          </div>
-          <Button
-            variant="outline"
-            size="icon"
-            className="size-8"
-            disabled={refreshDisabled}
-            onClick={onRefresh}
-            aria-label={refreshing ? m.watch.refreshing : m.watch.refresh}
-            title={refreshing ? m.watch.refreshing : m.watch.refresh}
-          >
-            {refreshing ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}
-          </Button>
-          <Button asChild variant="ghost" size="icon" className="size-8">
-            <a
-              href="https://github.com/watching"
-              target="_blank"
-              rel="noreferrer"
-              aria-label={m.watch.manageOnGitHub}
-              title={m.watch.manageOnGitHub}
-            >
-              <Settings2 className="size-4" />
-            </a>
-          </Button>
-        </div>
-        <div className="mt-3 flex min-w-0 items-center gap-2">
-          <div className="relative min-w-0 flex-1 sm:max-w-md">
+      <div
+        className="gsm-z-sticky sticky top-0 border-b border-border bg-background"
+        data-surface-command-bar="watch"
+      >
+        <SurfaceWorkCanvas
+          variant="watch"
+          className="flex min-h-10 min-w-0 flex-wrap items-center gap-2 px-4 py-1.5 max-sm:px-3"
+        >
+          <div className="relative min-w-0 flex-1 basis-72 max-[720px]:basis-full sm:max-w-md">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
               aria-hidden="true"
@@ -621,8 +1374,10 @@ export function WatchInbox({
             <Input
               {...searchInput.inputProps}
               type="search"
+              name="watch-search"
+              autoComplete="off"
               aria-label={m.watch.searchPlaceholder}
-              placeholder={m.watch.searchPlaceholder}
+              placeholder={`${m.watch.searchPlaceholder}…`}
               className="h-8 pl-8 pr-8 text-xs"
             />
             {searchInput.value.length > 0 && (
@@ -642,136 +1397,44 @@ export function WatchInbox({
             selectedReasons={selectedReasons}
             onSelectedReasonsChange={setSelectedReasons}
           />
-        </div>
-      </header>
-
-      {(error === 'refresh' || status.scopeStatus === 'stale' || status.inboxStatus === 'stale') && (
-        <div role="status" className="flex items-start gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <span className="break-words">
-            {credentialStale
-              ? m.watch.credentialStaleSnapshot
-              : status.scopeStatus === 'stale' || status.inboxStatus === 'stale'
-                ? m.watch.staleSnapshot
-                : m.watch.refreshFailed}
-          </span>
-          {credentialStale && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="ml-auto shrink-0"
-              onClick={onOpenOptions}
+          <span className="min-w-0 flex-1 max-[720px]:hidden" />
+          <WatchSurfaceActions
+            unreadOnly={unreadOnly}
+            refreshing={refreshing}
+            refreshDisabled={refreshDisabled}
+            onUnreadOnlyChange={onUnreadOnlyChange}
+            onRefresh={onRefresh}
+          />
+          <Button asChild variant="ghost" size="icon" className="size-8 shrink-0">
+            <a
+              href="https://github.com/watching"
+              target="_blank"
+              rel="noreferrer"
+              aria-label={m.watch.manageOnGitHub}
+              title={m.watch.manageOnGitHub}
             >
-              {m.watch.openOptions}
-            </Button>
-          )}
-        </div>
-      )}
-      {error === 'query' && (
-        <div role="status" className="flex items-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning">
-          <AlertTriangle className="size-4 shrink-0" />
-          <span>{m.watch.queryFailed}</span>
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={onRetryQuery}>
-            {m.watch.retry}
+              <Settings2 className="size-4" />
+            </a>
           </Button>
-        </div>
-      )}
-      {status.scopeStatus === 'error' && (
-        <div role="alert" className="flex items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
-          <AlertTriangle className="size-4 shrink-0" />
-          <span>{m.watch.scopeFailed}</span>
-        </div>
-      )}
-      {status.inboxStatus === 'error' && (
-        <div role="alert" className="flex items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
-          <AlertTriangle className="size-4 shrink-0" />
-          <span>{m.watch.inboxFailed}</span>
-        </div>
-      )}
-      {state?.inbox.truncated && (
-        <div role="status" className="flex items-center gap-2 border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
-          <Inbox className="size-4 shrink-0" />
-          <span>{m.watch.truncated}</span>
-        </div>
-      )}
-      {status.inboxStatus === 'cooldown' && cooldownUntil && (
-        <div role="status" className="flex items-center gap-2 border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
-          <Clock3 className="size-4 shrink-0" />
-          <span>{m.watch.cooldownUntil(cooldownUntil)}</span>
-        </div>
-      )}
-
-      {status.scopeStatus === 'error' ? (
-        <EmptyState
-          icon={<AlertTriangle className="size-5" />}
-          text={scopeCredentialFailure
-            ? m.watch.scopePermissionDenied
-            : m.watch.scopeFailed}
-          action={scopeCredentialFailure
-            ? <Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>
-            : <Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.retry}</Button>}
-        />
-      ) : scopeNeverLoaded ? (
-        <EmptyState
-          icon={<RefreshCw className="size-5" />}
-          text={m.watch.scopeNeverLoaded}
-          action={<Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.refresh}</Button>}
-        />
-      ) : state.scope.repositoryCount === 0 ? (
-        <EmptyState icon={<Inbox className="size-5" />} text={m.watch.noWatchedRepositories} />
-      ) : !status.hasNotificationsToken ? (
-        <EmptyState
-          icon={<Settings2 className="size-5" />}
-          text={m.watch.configureNotificationsToken}
-          action={<Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>}
-        />
-      ) : status.inboxStatus === 'scope_unavailable' ? (
-        <EmptyState
-          icon={<AlertTriangle className="size-5" />}
-          text={m.watch.scopeUnavailable}
-          action={<Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.retry}</Button>}
-        />
-      ) : status.inboxStatus === 'error' ? (
-        <EmptyState
-          icon={<AlertTriangle className="size-5" />}
-          text={inboxCredentialFailure
-            ? m.watch.inboxPermissionDenied
-            : m.watch.inboxFailed}
-          action={inboxCredentialFailure
-            ? <Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>
-            : <Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.retry}</Button>}
-        />
-      ) : inboxNeverLoaded ? (
-        <EmptyState
-          icon={<RefreshCw className="size-5" />}
-          text={m.watch.inboxNeverLoaded}
-          action={<Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.refresh}</Button>}
-        />
-      ) : groups.length === 0 ? (
-        <EmptyState
-          icon={<Inbox className="size-5" />}
-          text={result.threads.length > 0 && hasPresentationFilters
-            ? m.watch.noMatchingThreads
-            : unreadOnly ? m.watch.noUnreadThreads : m.watch.noThreads}
-        />
-      ) : (
-        <div
-          className="divide-y divide-border/60"
-          data-watch-thread-list
-          onKeyDown={handleThreadListKeyDown}
-        >
-          {groups.map((group, index) => (
-            <WatchGroup
-              key={group.repositoryFullName}
-              group={group}
-              locale={locale}
-              defaultOpen={index < 8}
-              revealMatches={hasPresentationFilters}
-              onSelectRepository={onSelectRepository}
-            />
-          ))}
-        </div>
-      )}
+        </SurfaceWorkCanvas>
+      </div>
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className={cn('border-b border-border bg-destructive/[0.07] text-xs text-destructive', {
+          hidden: actionError === null,
+        })}
+      >
+        <SurfaceWorkCanvas variant="watch" className="flex min-h-7 items-center gap-2 px-4 py-1 max-sm:px-3">
+          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+          <span>
+            {actionError === 'read'
+              ? m.watch.actionReadFailed
+              : actionError === 'done' ? m.watch.actionDoneFailed : ''}
+          </span>
+        </SurfaceWorkCanvas>
+      </div>
+      {content}
     </section>
   );
 }

@@ -14,8 +14,12 @@ const REPO_URL = 'https://github.com/smoke-user/smoke-repo';
 const WATCH_DESKTOP_SCREENSHOT = '/tmp/github-stars-watch-desktop.png';
 const WATCH_NARROW_SCREENSHOT = '/tmp/github-stars-watch-narrow.png';
 const WATCH_SETUP_PRIMARY_SCREENSHOT = '/tmp/github-stars-watch-setup-primary.png';
+const WATCH_SUBJECT_DETAIL_SCREENSHOT = '/tmp/github-stars-watch-subject-detail.png';
+const WATCH_SUBJECT_PERMISSION_SCREENSHOT = '/tmp/github-stars-watch-subject-permission.png';
 const WATCH_SETUP_FALLBACK_SCREENSHOT = '/tmp/github-stars-watch-setup-fallback.png';
 const DOM_POLLING_MS = 100;
+const RADAR_SOURCES_SCREENSHOT = '/tmp/github-stars-radar-sources.png';
+const RADAR_UNSEEN_SCREENSHOT = '/tmp/github-stars-radar-unseen.png';
 
 if (!existsSync(path.join(DIST, 'manifest.json'))) {
   console.error(`No dist/manifest.json found at ${DIST}. Run "pnpm build" first.`);
@@ -55,6 +59,8 @@ try {
   const optionsFromPopup = await openedOptions;
   await optionsFromPopup.waitForSelector('textarea', { timeout: 10_000 });
   await waitForBodyText(optionsFromPopup, 'GitHub connection');
+  await assertScheduledRefreshAlarms(optionsFromPopup);
+  ok('Watch and Radar periodic alarms were installed with the expected periods');
   ok('popup rendered no-token state and Add PAT opened Options');
 
   step('2) Options rejects invalid token without persisting auth');
@@ -75,6 +81,7 @@ try {
 
   step('4) Stars page fixture does not inject panel without owner proof');
   const noTokenStars = await browser.newPage();
+  await useDeterministicMotion(noTokenStars);
   hookPageDiagnostics(noTokenStars, 'stars-no-token');
   await interceptGitHubPages(noTokenStars);
   await noTokenStars.goto(STARS_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
@@ -91,6 +98,7 @@ try {
     watchCredentialSource: null,
   });
   const ownStars = await browser.newPage();
+  await useDeterministicMotion(ownStars);
   hookPageDiagnostics(ownStars, 'stars-own');
   await interceptGitHubPages(ownStars);
   await ownStars.goto(STARS_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
@@ -105,7 +113,17 @@ try {
   await waitForManagerRoot(ownStars);
   ok('manager injected, first Auto Tags click offered Cubby, drawer opened accessibly, and panel toggle worked');
 
-  step('6) Turbo-style navigation does not duplicate extension hosts');
+  step('6) Radar source filters and persisted seen state stay synchronized');
+  const seededWatch = await seedWatchAndRadarFixture(extId);
+  await ownStars.bringToFront();
+  await ownStars.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
+  await waitForManagerRoot(ownStars);
+  await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+  await assertRadarSourceFilters(ownStars);
+  await ownStars.screenshot({ path: RADAR_SOURCES_SCREENSHOT });
+  ok(`Radar seen state, Following/Me, and Feed/Projects controls responded (${RADAR_SOURCES_SCREENSHOT})`);
+
+  step('7) Turbo-style navigation does not duplicate extension hosts');
   await ownStars.evaluate(() => {
     history.pushState({}, '', '/smoke-user?tab=stars&smoke=turbo');
     document.dispatchEvent(new Event('turbo:load'));
@@ -122,8 +140,9 @@ try {
   assert.deepEqual(counts, { panels: 1, fabs: 0 });
   ok('turbo events kept a single manager host and no duplicate FAB');
 
-  step('7) Repo page fixture gets tag-chip host only on repo-shaped path');
+  step('8) Repo page fixture gets tag-chip host only on repo-shaped path');
   const repoPage = await browser.newPage();
+  await useDeterministicMotion(repoPage);
   hookPageDiagnostics(repoPage, 'repo');
   await interceptGitHubPages(repoPage);
   await repoPage.goto(REPO_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
@@ -140,21 +159,26 @@ try {
   ok('repo fixture received a shadow-root tag chip');
 
   await waitForBackgroundIdle(optionsFromPopup);
-  resetBackgroundGitHubApiCalls(browser, extId);
   await optionsFromPopup.close();
+  resetBackgroundGitHubApiCalls(browser, extId);
+  const subjectDetailFixture = installBackgroundWatchSubjectDetailFixture(extId);
 
-  step('8) Watch renders the bounded stored snapshot without GitHub API calls');
-  const seededWatch = await seedWatchFixture(extId);
+  step('9) Watch renders the bounded stored snapshot without GitHub API calls');
   assert.deepEqual(seededWatch, {
-    databaseVersion: 4,
+    databaseVersion: 5,
     credentialSource: 'dedicated',
     hasMainToken: true,
     hasNotificationsToken: true,
     allThreadCount: 3,
     allGroupCount: 2,
     outOfScopeVisible: false,
+    radarActivityCount: 1,
+    radarUnseenCount: 1,
   });
   await ownStars.bringToFront();
+  await ownStars.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
+  await waitForManagerRoot(ownStars);
+  await waitForStarsRows(ownStars, 'seeded Stars fixture');
   await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
   await openWatchSurface(ownStars, 'Unread issue thread');
   const unreadSnapshot = await readWatchSnapshot(ownStars);
@@ -167,8 +191,9 @@ try {
     unknownTypeVisible: true,
     unknownFallbackHref: 'https://github.com/smoke-user/secondary-repo',
     outOfScopeVisible: false,
-    staleBannerVisible: true,
-    truncatedBannerVisible: true,
+    statusKind: 'stale',
+    listEndTone: 'info',
+    listEndText: 'End of current window · older threads may exist',
   });
 
   await clickWatchFilter(ownStars, 'All');
@@ -178,8 +203,21 @@ try {
   assert.equal(allSnapshot.readTitleVisible, true);
   assert.equal(allSnapshot.outOfScopeVisible, false);
   ok('Unread/All changed the stored projection and unknown subjects fell back safely');
+  await openWatchSubjectDetail(ownStars, 'Unread issue thread');
+  await assertWatchSubjectDetail(ownStars, subjectDetailFixture);
+  await ownStars.screenshot({ path: WATCH_SUBJECT_DETAIL_SCREENSHOT });
+  ok(`Watch Issue details loaded on demand through the main credential (${WATCH_SUBJECT_DETAIL_SCREENSHOT})`);
+  subjectDetailFixture.setMode('forbidden');
+  await openWatchSubjectDetail(ownStars, 'Read pull request thread', 'error');
+  await ownStars.screenshot({ path: WATCH_SUBJECT_PERMISSION_SCREENSHOT });
+  const detailRecoveryOptionsOpened = waitForExtensionPage(`${OPTIONS_PATH}`);
+  await assertWatchSubjectPermissionRecovery(ownStars);
+  const detailRecoveryOptions = await detailRecoveryOptionsOpened;
+  await assertGitHubOptionsIntent(detailRecoveryOptions);
+  await detailRecoveryOptions.close();
+  ok(`Watch permission failure offered focused GitHub authorization recovery while preserving row actions (${WATCH_SUBJECT_PERMISSION_SCREENSHOT})`);
 
-  step('9) Watch repository headers open local detail and remain coherent responsively');
+  step('10) Watch repository headers open local detail and remain coherent responsively');
   await openWatchRepositoryDetail(ownStars, 'smoke-user/smoke-repo');
   await assertWatchRepositoryDetail(ownStars, 'smoke-user/smoke-repo');
   await assertWatchLayout(ownStars, 'desktop');
@@ -192,7 +230,13 @@ try {
   await ownStars.screenshot({ path: WATCH_NARROW_SCREENSHOT });
   ok(`Watch detail and responsive layout verified (${WATCH_DESKTOP_SCREENSHOT}, ${WATCH_NARROW_SCREENSHOT})`);
 
-  step('10) Watch recovery opens focused setup, reuses a capable main credential, then reveals fallback on 403');
+  step('11) Returning from Watch or Following restores the Stars repository list');
+  await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+  await assertStarsRowsAfterSurfaceReturn(ownStars, 'watch');
+  await assertStarsRowsAfterSurfaceReturn(ownStars, 'radar');
+  ok('Stars rows rendered after returning from both Watch and Following');
+
+  step('12) Watch recovery opens focused setup, reuses a capable main credential, then reveals fallback on 403');
   await markManagerMount(ownStars);
   const disconnected = await clearWatchNotificationsCredential(extId);
   assert.deepEqual(disconnected, {
@@ -229,16 +273,19 @@ try {
     watchSourceCleared: true,
     watchChangeDelivered: true,
   });
-  watchCapabilityFixture.setMode('forbidden');
+  await watchOptions.close();
+  const fallbackOptions = await openExtensionPage(extId, OPTIONS_PATH, 'watch-fallback');
+  const fallbackCapabilityFixture = await interceptWatchCapabilityFixture(fallbackOptions);
+  fallbackCapabilityFixture.setMode('forbidden');
   await openWatchSurface(ownStars, 'Open options');
   await assertWatchSetupState(ownStars);
-  await clickWatchRecoveryOptions(ownStars, watchOptions);
-  await assertWatchOptionsIntent(watchOptions);
-  await assertWatchDedicatedFieldCollapsed(watchOptions);
-  await enableWatchWithMainCredential(watchOptions, { expectFallback: true });
-  await assertWatchFallbackState(watchOptions);
-  assertWatchCapabilityRequests(watchCapabilityFixture.snapshot(), 'forbidden');
-  assert.deepEqual(await readWatchCredentialState(watchOptions), {
+  await clickWatchRecoveryOptions(ownStars, fallbackOptions);
+  await assertWatchOptionsIntent(fallbackOptions);
+  await assertWatchDedicatedFieldCollapsed(fallbackOptions);
+  await enableWatchWithMainCredential(fallbackOptions, { expectFallback: true });
+  await assertWatchFallbackState(fallbackOptions);
+  assertWatchCapabilityRequests(fallbackCapabilityFixture.snapshot(), 'forbidden');
+  assert.deepEqual(await readWatchCredentialState(fallbackOptions), {
     configSource: null,
     credentialRecordSource: null,
     statusSource: null,
@@ -246,7 +293,7 @@ try {
     dedicatedCipherPresent: false,
     dedicatedMetaPresent: false,
   });
-  await watchOptions.screenshot({ path: WATCH_SETUP_FALLBACK_SCREENSHOT });
+  await fallbackOptions.screenshot({ path: WATCH_SETUP_FALLBACK_SCREENSHOT });
   await assertNoBackgroundGitHubApiCalls(browser, extId);
   ok('Watch recovery revealed the classic-token fallback after a fixture-only forbidden probe');
   if (pageIssues.length) {
@@ -323,6 +370,7 @@ async function detectExtensionId(browser) {
 
 async function openExtensionPage(extId, pagePath, label) {
   const page = await browser.newPage();
+  await useDeterministicMotion(page);
   hookPageDiagnostics(page, label);
   const expectedUrl = `chrome-extension://${extId}${pagePath}`;
   await page.goto(expectedUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -338,6 +386,33 @@ async function openExtensionPage(extId, pagePath, label) {
   return page;
 }
 
+async function assertScheduledRefreshAlarms(page) {
+  const expected = [
+    { name: 'bgsm-radar-auto-refresh-v1', periodInMinutes: 60 },
+    { name: 'bgsm-watch-inbox-auto-refresh-v1', periodInMinutes: 1 },
+    { name: 'bgsm-watch-scope-auto-refresh-v1', periodInMinutes: 60 },
+  ];
+  try {
+    await page.waitForFunction(
+      async (schedules) => {
+        const alarms = await chrome.alarms.getAll();
+        return schedules.every((schedule) => alarms.some((alarm) => (
+          alarm.name === schedule.name && alarm.periodInMinutes === schedule.periodInMinutes
+        )));
+      },
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+      expected,
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'scheduled refresh alarms were not installed', error);
+  }
+  const actual = await page.evaluate(async () => (await chrome.alarms.getAll())
+    .filter((alarm) => alarm.name.startsWith('bgsm-') && alarm.name.includes('auto-refresh'))
+    .map((alarm) => ({ name: alarm.name, periodInMinutes: alarm.periodInMinutes }))
+    .sort((left, right) => left.name.localeCompare(right.name)));
+  assert.deepEqual(actual, expected);
+}
+
 async function waitForExtensionPage(pagePath) {
   const target = await browser.waitForTarget(
     (candidate) => candidate.url().startsWith('chrome-extension://') && candidate.url().endsWith(pagePath),
@@ -345,8 +420,15 @@ async function waitForExtensionPage(pagePath) {
   );
   const page = await target.page();
   if (!page) throw new Error(`extension page opened without page handle: ${pagePath}`);
+  await useDeterministicMotion(page);
   hookPageDiagnostics(page, pagePath);
   return page;
+}
+
+async function useDeterministicMotion(page) {
+  await page.emulateMediaFeatures([
+    { name: 'prefers-reduced-motion', value: 'reduce' },
+  ]);
 }
 
 async function seedConfig(extId, patch) {
@@ -359,16 +441,18 @@ async function seedConfig(extId, patch) {
   await page.close();
 }
 
-async function seedWatchFixture(extId) {
+async function seedWatchAndRadarFixture(extId) {
   const page = await openExtensionPage(extId, OPTIONS_PATH, 'seed-watch');
   const seeded = await page.evaluate(async () => {
     const APP_SECRET = 'better-github-stars-manager/v1/static-derivation-secret';
     const DB_NAME = 'better-github-stars-manager';
-    const DEXIE_VERSION = 4;
+    const DEXIE_VERSION = 5;
     const IDB_VERSION = DEXIE_VERSION * 10;
     const CONFIG_KEY = 'gsm_config';
     const CREDENTIALS_KEY = 'gsm_github_credentials_v1';
     const fetchedAt = '2026-08-05T12:35:00.000Z';
+    const radarFetchedAt = new Date().toISOString();
+    const radarActivityAt = new Date(Date.now() - 60_000).toISOString();
 
     const b64encode = (value) => {
       const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
@@ -413,9 +497,9 @@ async function seedWatchFixture(extId) {
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(new Error(unexpectedUpgrade
-        ? 'the extension did not initialize its Dexie v4 schema before Watch fixture setup'
+        ? 'the extension did not initialize its Dexie v5 schema before Watch fixture setup'
         : `failed to open extension IndexedDB: ${request.error?.message ?? 'unknown error'}`));
-      request.onblocked = () => reject(new Error('extension IndexedDB v4 fixture open was blocked'));
+      request.onblocked = () => reject(new Error('extension IndexedDB v5 fixture open was blocked'));
     });
     const transactionDone = (transaction) => new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve();
@@ -481,11 +565,13 @@ async function seedWatchFixture(extId) {
       'watchRepositories',
       'watchNotificationThreads',
       'watchState',
+      'radarActivities',
+      'radarState',
     ];
     for (const storeName of requiredStores) {
       if (!database.objectStoreNames.contains(storeName)) {
         database.close();
-        throw new Error(`Dexie v4 is missing required store ${storeName}`);
+        throw new Error(`Dexie v5 is missing required store ${storeName}`);
       }
     }
 
@@ -511,7 +597,11 @@ async function seedWatchFixture(extId) {
       reason: unread ? 'subscribed' : 'comment',
       subjectType: type,
       subjectTitle: title,
-      subjectApiUrl: null,
+      subjectApiUrl: type === 'Issue'
+        ? `https://api.github.com/repos/${repository}/issues/17`
+        : type === 'PullRequest'
+          ? `https://api.github.com/repos/${repository}/pulls/9`
+          : null,
       subjectHtmlUrl,
       unread,
       updatedAt,
@@ -523,10 +613,14 @@ async function seedWatchFixture(extId) {
     const repositories = transaction.objectStore('watchRepositories');
     const threads = transaction.objectStore('watchNotificationThreads');
     const state = transaction.objectStore('watchState');
+    const radarActivities = transaction.objectStore('radarActivities');
+    const radarState = transaction.objectStore('radarState');
     stars.clear();
     repositories.clear();
     threads.clear();
     state.clear();
+    radarActivities.clear();
+    radarState.clear();
     stars.put(star(
       'smoke-user/smoke-repo',
       'Primary repository detail loaded from the live local Star row.',
@@ -548,7 +642,7 @@ async function seedWatchFixture(extId) {
     repositories.put({ full_name: 'smoke-user/smoke-repo' });
     repositories.put({ full_name: 'smoke-user/secondary-repo' });
     threads.put(thread({
-      id: 'watch-unread-issue',
+      id: '1017',
       repository: 'smoke-user/smoke-repo',
       title: 'Unread issue thread',
       type: 'Issue',
@@ -557,7 +651,7 @@ async function seedWatchFixture(extId) {
       subjectHtmlUrl: 'https://github.com/smoke-user/smoke-repo/issues/17',
     }));
     threads.put(thread({
-      id: 'watch-read-pull',
+      id: '1009',
       repository: 'smoke-user/smoke-repo',
       title: 'Read pull request thread',
       type: 'PullRequest',
@@ -566,7 +660,7 @@ async function seedWatchFixture(extId) {
       subjectHtmlUrl: 'https://github.com/smoke-user/smoke-repo/pull/9',
     }));
     threads.put(thread({
-      id: 'watch-unknown-subject',
+      id: '1008',
       repository: 'smoke-user/secondary-repo',
       title: 'Future event thread',
       type: 'FutureEvent',
@@ -575,7 +669,7 @@ async function seedWatchFixture(extId) {
       subjectHtmlUrl: null,
     }));
     threads.put(thread({
-      id: 'watch-out-of-scope',
+      id: '1001',
       repository: 'smoke-user/out-of-scope',
       title: 'OUT OF SCOPE MUST NOT RENDER',
       type: 'Issue',
@@ -603,6 +697,39 @@ async function seedWatchFixture(extId) {
         truncated: true,
       },
     });
+    radarActivities.put({
+      id: 'runtime-radar-unseen',
+      accountLogin: 'smoke-user',
+      actorLogin: 'octo-friend',
+      actorAvatarUrl: null,
+      repositoryKey: 'example/radar-repo',
+      repositoryFullName: 'example/radar-repo',
+      repositoryDisplayName: 'example/radar-repo',
+      repositoryHtmlUrl: 'https://github.com/example/radar-repo',
+      repositoryDescription: 'Public repository activity used by the Radar seen-state smoke.',
+      repositoryLanguage: 'TypeScript',
+      repositoryLanguageColor: '#3178c6',
+      repositoryStargazerCount: 42,
+      viewerHadStarred: false,
+      starredAt: radarActivityAt,
+      dismissedAt: null,
+      seenAt: null,
+    });
+    radarState.put({
+      id: 'singleton',
+      accountLogin: 'smoke-user',
+      lastAttemptAt: radarFetchedAt,
+      lastSuccessfulAt: radarFetchedAt,
+      errorCode: null,
+      nextAllowedAt: null,
+      activityCount: 1,
+      followingCount: 1,
+      scannedFollowingCount: 1,
+      batchCount: 1,
+      partialReasons: [],
+      rateLimitRemaining: 4_000,
+      rateLimitResetAt: null,
+    });
     await transactionDone(transaction);
     const databaseVersion = database.version / 10;
     database.close();
@@ -622,6 +749,17 @@ async function seedWatchFixture(extId) {
       },
       [CREDENTIALS_KEY]: finalizedCredentials,
     });
+    const resetTags = await chrome.runtime.sendMessage({ type: 'deleteAllTags' });
+    if (!resetTags?.ok) throw new Error(resetTags?.error ?? 'failed to publish seeded Stars fixture');
+    const radarQuery = await chrome.runtime.sendMessage({ type: 'queryRadar' });
+    if (
+      !radarQuery?.ok
+      || radarQuery.data?.activities?.[0]?.id !== 'runtime-radar-unseen'
+      || radarQuery.data?.unseenCount !== 1
+    ) {
+      throw new Error(radarQuery?.error ?? `seeded Radar query was unavailable: ${JSON.stringify(radarQuery?.data ?? null)}`);
+    }
+
 
     const allInbox = await chrome.runtime.sendMessage({
       type: 'queryWatchInbox',
@@ -645,7 +783,9 @@ async function seedWatchFixture(extId) {
       hasNotificationsToken: allInbox.data.status.hasNotificationsToken,
       allThreadCount: allInbox.data.totalCount,
       allGroupCount: allInbox.data.groups.length,
-      outOfScopeVisible: allInbox.data.threads.some((item) => item.id === 'watch-out-of-scope'),
+      outOfScopeVisible: allInbox.data.threads.some((item) => item.id === '1001'),
+      radarActivityCount: radarQuery.data.activities.length,
+      radarUnseenCount: radarQuery.data.unseenCount,
     };
   });
   await page.close();
@@ -705,6 +845,78 @@ async function clearWatchNotificationsCredential(extId) {
   await page.close();
   return result;
 }
+
+function installBackgroundWatchSubjectDetailFixture(extId) {
+  const guard = backgroundGitHubApiGuard;
+  assert.ok(guard, `GitHub API guard was not installed for ${extId}`);
+  let mode = 'success';
+  const requestedUrls = [];
+  guard.handle = async (client, event) => {
+    const url = new URL(event.request.url);
+    const subjectRoutes = new Set([
+      'https://api.github.com/repos/smoke-user/smoke-repo/issues/17',
+      'https://api.github.com/repos/smoke-user/smoke-repo/issues/9',
+    ]);
+    if (event.request.method !== 'GET' || !subjectRoutes.has(url.href)) return false;
+    requestedUrls.push({
+      url: url.href,
+      authorization: event.request.headers.Authorization ?? event.request.headers.authorization ?? null,
+      accept: event.request.headers.Accept ?? event.request.headers.accept ?? null,
+      apiVersion: event.request.headers['X-GitHub-Api-Version'] ?? event.request.headers['x-github-api-version'] ?? null,
+    });
+    if (mode === 'forbidden') {
+      const body = JSON.stringify({ message: 'forbidden' });
+      await client.send('Fetch.fulfillRequest', {
+        requestId: event.requestId,
+        responseCode: 403,
+        responseHeaders: [
+          { name: 'content-type', value: 'application/json; charset=utf-8' },
+          { name: 'content-length', value: String(Buffer.byteLength(body)) },
+        ],
+        body: Buffer.from(body).toString('base64'),
+      });
+      return true;
+    }
+    const body = JSON.stringify({
+      number: 17,
+      title: 'Unread issue thread',
+      state: 'open',
+      state_reason: null,
+      html_url: 'https://github.com/smoke-user/smoke-repo/issues/17',
+      repository_url: 'https://api.github.com/repos/smoke-user/smoke-repo',
+      user: {
+        login: 'smoke-user',
+        avatar_url: 'https://avatars.githubusercontent.com/u/1',
+        html_url: 'https://github.com/smoke-user',
+      },
+      created_at: '2026-08-01T10:00:00.000Z',
+      updated_at: '2026-08-05T12:30:00.000Z',
+      labels: [{ name: 'runtime-detail', color: '1f6feb' }],
+      assignees: [],
+      milestone: null,
+      comments: 2,
+      body: '**Runtime** Issue detail loaded only after this thread was expanded.\n\n![blocked](https://attacker.example/image.png)',
+    });
+    await client.send('Fetch.fulfillRequest', {
+      requestId: event.requestId,
+      responseCode: 200,
+      responseHeaders: [
+        { name: 'content-type', value: 'application/json; charset=utf-8' },
+        { name: 'content-length', value: String(Buffer.byteLength(body)) },
+      ],
+      body: Buffer.from(body).toString('base64'),
+    });
+    return true;
+  };
+  return {
+    requestedUrls,
+    setMode(nextMode) {
+      assert.ok(nextMode === 'success' || nextMode === 'forbidden');
+      mode = nextMode;
+    },
+  };
+}
+
 async function installBackgroundGitHubApiGuard(browser, extId) {
   const unexpectedUrls = [];
   const clients = new Set();
@@ -719,11 +931,14 @@ async function installBackgroundGitHubApiGuard(browser, extId) {
       patterns: [{ urlPattern: 'https://api.github.com/*', requestStage: 'Request' }],
     });
     client.on('Fetch.requestPaused', (event) => {
-      unexpectedUrls.push(event.request.url);
-      void client.send('Fetch.failRequest', {
-        requestId: event.requestId,
-        errorReason: 'BlockedByClient',
-      }).catch(() => {});
+      void (async () => {
+        if (await backgroundGitHubApiGuard?.handle?.(client, event)) return;
+        unexpectedUrls.push(event.request.url);
+        await client.send('Fetch.failRequest', {
+          requestId: event.requestId,
+          errorReason: 'BlockedByClient',
+        });
+      })().catch((error) => recordPageIssue('background-network-guard', formatError(error)));
     });
   };
   const targetListener = (target) => {
@@ -733,7 +948,7 @@ async function installBackgroundGitHubApiGuard(browser, extId) {
   };
   browser.on('targetcreated', targetListener);
   await Promise.all(browser.targets().map(attach));
-  backgroundGitHubApiGuard = { browser, targetListener, clients, unexpectedUrls };
+  backgroundGitHubApiGuard = { browser, targetListener, clients, unexpectedUrls, handle: null };
 }
 
 async function assertNoBackgroundGitHubApiCalls(browser, extId) {
@@ -922,6 +1137,20 @@ async function assertWatchOptionsIntent(page) {
   assert.equal(state.dedicatedFormPresent, false, 'primary Watch setup unexpectedly rendered dedicated form');
 }
 
+async function assertGitHubOptionsIntent(page) {
+  await page.bringToFront();
+  await page.waitForFunction(
+    () => document.activeElement?.id === 'github-connection-heading',
+    { polling: DOM_POLLING_MS, timeout: 20_000 },
+  );
+  const state = await page.evaluate(() => ({
+    focusedHeading: document.activeElement?.id === 'github-connection-heading',
+    tokenInputPresent: !!document.querySelector('textarea[placeholder="github_pat_..."]'),
+  }));
+  assert.equal(state.focusedHeading, true, 'GitHub Options intent did not focus #github-connection-heading');
+  assert.equal(state.tokenInputPresent, true, 'main GitHub token input was not available');
+}
+
 async function clickWatchRecoveryOptions(page) {
   const clicked = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
@@ -936,8 +1165,17 @@ async function clickWatchRecoveryOptions(page) {
 
 async function enableWatchWithMainCredential(page, options = {}) {
   const expectFallback = options.expectFallback === true;
-  await page.waitForSelector('[data-testid="watch-setup-enable"]', { timeout: 10_000 });
-  await page.click('[data-testid="watch-setup-enable"]');
+  await page.waitForFunction(() => {
+    const button = document.querySelector('[data-testid="watch-setup-enable"]');
+    return button instanceof HTMLButtonElement && !button.disabled;
+  }, { polling: DOM_POLLING_MS, timeout: 20_000 });
+  const clicked = await page.evaluate(() => {
+    const button = document.querySelector('[data-testid="watch-setup-enable"]');
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+    button.click();
+    return true;
+  });
+  assert.equal(clicked, true, 'Watch setup CTA was not clickable');
   await page.waitForFunction(() => {
     const notice = document.querySelector('[data-testid="watch-main-checking"]');
     if (!notice) return false;
@@ -1196,6 +1434,283 @@ async function waitForManagerRoot(page) {
   );
 }
 
+async function waitForStarsRows(page, label) {
+  try {
+    await page.waitForFunction(
+      () => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+        const rows = [...(root?.querySelectorAll('[data-layout-row-grid]') ?? [])];
+        return root?.querySelector('#gsm-stars-surface-tab')?.getAttribute('aria-selected') === 'true' &&
+          rows.length > 0 && rows.some((row) => row.textContent?.trim());
+      },
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+    );
+  } catch (error) {
+    const state = await page.evaluate(() => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      const scroller = root?.querySelector('[data-surface="stars"].no-scrollbar');
+      const shell = root?.querySelector('.gsm-layout-table-shell');
+      return {
+        active: root?.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim() ?? null,
+        rows: root?.querySelectorAll('[data-layout-row-grid]').length ?? -1,
+        headers: root?.querySelectorAll('[data-table-head] [data-header-col]').length ?? -1,
+        shellHeight: shell?.getBoundingClientRect().height ?? -1,
+        scrollerHeight: scroller?.clientHeight ?? -1,
+        text: root?.textContent?.slice(-300) ?? null,
+      };
+    });
+    throw await pageWaitError(page, `${label} did not render repository rows: ${JSON.stringify(state)}`, error);
+  }
+}
+
+async function assertStarsRowsAfterSurfaceReturn(page, source) {
+  const sourceTabId = `#gsm-${source}-surface-tab`;
+  const sourceActivated = await page.evaluate((selector) => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const button = root?.querySelector(selector);
+    button?.click();
+    return !!button;
+  }, sourceTabId);
+  assert.equal(sourceActivated, true, `could not activate ${source} before returning to Stars`);
+  await page.waitForFunction(
+    (selector) => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      return root?.querySelector(selector)?.getAttribute('aria-selected') === 'true';
+    },
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+    sourceTabId,
+  );
+
+  const starsActivated = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const button = root?.querySelector('#gsm-stars-surface-tab');
+    button?.click();
+    return !!button;
+  });
+  assert.equal(starsActivated, true, `could not return to Stars from ${source}`);
+  await waitForStarsRows(page, `Stars after returning from ${source}`);
+}
+
+async function assertRadarSourceFilters(page) {
+  try {
+    await page.waitForFunction(
+      () => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+        const button = root?.querySelector('#gsm-radar-surface-tab');
+        return !!button && !button.disabled;
+      },
+      { polling: DOM_POLLING_MS, timeout: 20_000 },
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'Radar Manager surface switch did not become interactive', error);
+  }
+
+  const activated = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const button = root?.querySelector('#gsm-radar-surface-tab');
+    button?.click();
+    return !!button;
+  });
+  assert.equal(activated, true, 'could not activate the Radar Manager surface');
+
+  try {
+    await page.waitForFunction(
+      () => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+        const panel = root?.querySelector('[aria-labelledby="gsm-radar-surface-tab"]');
+        const following = root?.querySelector('button[aria-label="Stars from people you follow"]');
+        const self = root?.querySelector('button[aria-label="Your own stars"]');
+        return !!panel && !!following && !!self;
+      },
+      { polling: DOM_POLLING_MS, timeout: 20_000 },
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'Radar source controls did not finish rendering', error);
+  }
+
+  try {
+    await page.waitForFunction(
+      () => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+        const row = root?.querySelector('[data-radar-row="runtime-radar-unseen"]');
+        const badge = root?.querySelector('[data-radar-unseen-badge]');
+        return row?.getAttribute('data-radar-unseen') === 'true'
+          && badge?.textContent?.trim() === '1';
+      },
+      { polling: DOM_POLLING_MS, timeout: 20_000 },
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'Radar unseen activity and surface badge did not render', error);
+  }
+  const surfaceBadgeStyles = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const watchBadge = root?.querySelector('#gsm-watch-surface-tab > span[aria-hidden="true"]');
+    const followingBadge = root?.querySelector('[data-radar-unseen-badge]');
+    if (!(watchBadge instanceof HTMLElement) || !(followingBadge instanceof HTMLElement)) return null;
+    const readStyle = (badge) => {
+      const style = getComputedStyle(badge);
+      return {
+        backgroundColor: style.backgroundColor,
+        borderRadius: style.borderRadius,
+        borderWidth: style.borderWidth,
+        color: style.color,
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        height: style.height,
+        minWidth: style.minWidth,
+        paddingLeft: style.paddingLeft,
+        paddingRight: style.paddingRight,
+      };
+    };
+    return {
+      following: readStyle(followingBadge),
+      watch: readStyle(watchBadge),
+    };
+  });
+  assert.ok(surfaceBadgeStyles, 'could not compare Watch and Following count badges');
+  assert.deepEqual(
+    surfaceBadgeStyles.following,
+    surfaceBadgeStyles.watch,
+    'Following count badge did not match the Watch count badge',
+  );
+  const hoverProbe = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const row = root?.querySelector('[data-radar-row="runtime-radar-unseen"]');
+    if (!row) return null;
+    const rect = row.getBoundingClientRect();
+    const style = getComputedStyle(row);
+    return {
+      x: rect.left + Math.min(180, Math.max(12, rect.width / 2)),
+      y: rect.top + rect.height / 2,
+      backgroundColor: style.backgroundColor,
+      boxShadow: style.boxShadow,
+    };
+  });
+  assert.ok(hoverProbe, 'could not locate Radar row for hover probe');
+  await page.mouse.move(hoverProbe.x, hoverProbe.y);
+  await delay(60);
+  const hoveredStyle = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const row = root?.querySelector('[data-radar-row="runtime-radar-unseen"]');
+    if (!row) return null;
+    const style = getComputedStyle(row);
+    return { backgroundColor: style.backgroundColor, boxShadow: style.boxShadow };
+  });
+  assert.ok(hoveredStyle, 'could not read Radar row hover style');
+  assert.equal(hoverProbe.boxShadow, 'none', 'Radar row rendered a pre-hover inset edge');
+  assert.equal(hoveredStyle.boxShadow, 'none', 'Radar row rendered a hover inset edge');
+  assert.notEqual(
+    hoveredStyle.backgroundColor,
+    hoverProbe.backgroundColor,
+    'Radar row hover did not change the immediate row background',
+  );
+  await page.screenshot({ path: RADAR_UNSEEN_SCREENSHOT });
+  const unseen = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const tab = root?.querySelector('#gsm-radar-surface-tab');
+    const row = root?.querySelector('[data-radar-row="runtime-radar-unseen"]');
+    return {
+      tabLabel: tab?.getAttribute('aria-label') ?? null,
+      rowState: row?.getAttribute('data-radar-unseen') ?? null,
+      unseenCopyVisible: row?.textContent?.includes('Unseen activity') ?? false,
+    };
+  });
+  assert.deepEqual(unseen, {
+    tabLabel: 'Following, 1 unseen activity',
+    rowState: 'true',
+    unseenCopyVisible: true,
+  });
+
+  const seenIntentDispatched = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const row = root?.querySelector('[data-radar-row="runtime-radar-unseen"]');
+    row?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    return !!row;
+  });
+  assert.equal(seenIntentDispatched, true, 'could not dispatch Radar seen intent');
+  try {
+    await page.waitForFunction(
+      () => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+        const row = root?.querySelector('[data-radar-row="runtime-radar-unseen"]');
+        return row?.getAttribute('data-radar-unseen') === 'false'
+          && !root?.querySelector('[data-radar-unseen-badge]');
+      },
+      { polling: DOM_POLLING_MS, timeout: 20_000 },
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'Radar seen intent did not clear the row and surface badge', error);
+  }
+
+  const initial = await readRadarControls(page);
+  assert.deepEqual(initial, {
+    followingPressed: 'true',
+    selfPressed: 'false',
+    feedPressed: 'true',
+    projectsPressed: 'false',
+    legacyThirtyRowCopyVisible: false,
+  });
+
+  await clickRadarControl(page, 'button[aria-label="Your own stars"]');
+  await waitForRadarPressed(page, 'button[aria-label="Your own stars"]', 'true');
+  await clickRadarControl(page, 'button[aria-label="Stars from people you follow"]');
+  await waitForRadarPressed(page, 'button[aria-label="Stars from people you follow"]', 'false');
+  const selfOnly = await readRadarControls(page);
+  assert.equal(selfOnly.followingPressed, 'false');
+  assert.equal(selfOnly.selfPressed, 'true');
+
+  await clickRadarControl(page, '[role="group"][aria-label="Following view"] button:last-child');
+  await waitForRadarPressed(page, '[role="group"][aria-label="Following view"] button:last-child', 'true');
+  await delay(250);
+  const projects = await readRadarControls(page);
+  assert.deepEqual(projects, {
+    followingPressed: 'false',
+    selfPressed: 'true',
+    feedPressed: 'false',
+    projectsPressed: 'true',
+    legacyThirtyRowCopyVisible: false,
+  });
+}
+
+async function readRadarControls(page) {
+  return page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const following = root?.querySelector('button[aria-label="Stars from people you follow"]');
+    const self = root?.querySelector('button[aria-label="Your own stars"]');
+    const view = root?.querySelector('[role="group"][aria-label="Following view"]');
+    const viewButtons = [...(view?.querySelectorAll('button') ?? [])];
+    return {
+      followingPressed: following?.getAttribute('aria-pressed') ?? null,
+      selfPressed: self?.getAttribute('aria-pressed') ?? null,
+      feedPressed: viewButtons[0]?.getAttribute('aria-pressed') ?? null,
+      projectsPressed: viewButtons[1]?.getAttribute('aria-pressed') ?? null,
+      legacyThirtyRowCopyVisible: root?.textContent?.includes('up to 30 activities') ?? false,
+    };
+  });
+}
+
+async function clickRadarControl(page, selector) {
+  const clicked = await page.evaluate((targetSelector) => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const button = root?.querySelector(targetSelector);
+    button?.click();
+    return !!button;
+  }, selector);
+  assert.equal(clicked, true, `could not activate Radar control ${selector}`);
+}
+
+async function waitForRadarPressed(page, selector, expected) {
+  await page.waitForFunction(
+    (targetSelector, pressed) => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      return root?.querySelector(targetSelector)?.getAttribute('aria-pressed') === pressed;
+    },
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+    selector,
+    expected,
+  );
+}
+
 async function markManagerMount(page) {
   const marked = await page.evaluate(() => {
     const host = document.getElementById('gsm-manager-host');
@@ -1211,10 +1726,7 @@ async function openWatchSurface(page, expectedText) {
     await page.waitForFunction(
       () => {
         const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-        const surfaceGroup = [...(root?.querySelectorAll('[role="group"]') ?? [])]
-          .find((candidate) => candidate.getAttribute('aria-label') === 'Watched stars inbox');
-        const button = [...(surfaceGroup?.querySelectorAll('button') ?? [])]
-          .find((candidate) => candidate.textContent?.trim().startsWith('Watch'));
+        const button = root?.querySelector('#gsm-watch-surface-tab');
         return !!button && !button.disabled;
       },
       { polling: DOM_POLLING_MS, timeout: 20_000 },
@@ -1224,10 +1736,7 @@ async function openWatchSurface(page, expectedText) {
   }
   const clicked = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-    const surfaceGroup = [...(root?.querySelectorAll('[role="group"]') ?? [])]
-      .find((candidate) => candidate.getAttribute('aria-label') === 'Watched stars inbox');
-    const button = [...(surfaceGroup?.querySelectorAll('button') ?? [])]
-      .find((candidate) => candidate.textContent?.trim().startsWith('Watch'));
+    const button = root?.querySelector('#gsm-watch-surface-tab');
     button?.click();
     return !!button;
   });
@@ -1239,7 +1748,7 @@ async function openWatchSurface(page, expectedText) {
         const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
         const watchButton = [...(root?.querySelectorAll('button') ?? [])]
           .find((candidate) => candidate.textContent?.trim().startsWith('Watch'));
-        return !!section && watchButton?.getAttribute('aria-pressed') === 'true' &&
+        return !!section && watchButton?.getAttribute('aria-selected') === 'true' &&
           !section.textContent?.includes('Loading') && section.textContent?.includes(text);
       },
       { polling: DOM_POLLING_MS, timeout: 20_000 },
@@ -1284,14 +1793,15 @@ async function readWatchSnapshot(page) {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
     const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
     const text = section?.textContent ?? '';
-    const filterGroup = section?.querySelector('[role="group"][aria-label="Inbox thread filter"]');
+    const filterGroup = root?.querySelector('[role="group"][aria-label="Inbox thread filter"]');
     const buttonPressed = (label) => [...(filterGroup?.querySelectorAll('button') ?? [])]
       .find((candidate) => candidate.textContent?.trim() === label)
       ?.getAttribute('aria-pressed') === 'true';
-    const unknownLink = [...(section?.querySelectorAll('a') ?? [])]
-      .find((candidate) => candidate.getAttribute('aria-label') === 'Open on GitHub: Future event thread');
-    const statuses = [...(section?.querySelectorAll('[role="status"]') ?? [])]
-      .map((candidate) => candidate.textContent ?? '');
+    const unknownRegion = section?.querySelector('[data-watch-thread-row="1008"] [role="region"]');
+    const unknownLink = [...(unknownRegion?.querySelectorAll('a') ?? [])]
+      .find((candidate) => candidate.href === 'https://github.com/smoke-user/secondary-repo');
+    const status = root?.querySelector('[data-watch-status]');
+    const listEnd = section?.querySelector('[data-surface-list-end="timeline"]');
     return {
       unreadPressed: buttonPressed('Unread'),
       allPressed: buttonPressed('All'),
@@ -1301,14 +1811,99 @@ async function readWatchSnapshot(page) {
       unknownTypeVisible: text.includes('FutureEvent'),
       unknownFallbackHref: unknownLink?.href ?? null,
       outOfScopeVisible: text.includes('OUT OF SCOPE MUST NOT RENDER'),
-      staleBannerVisible: statuses.some((value) => value.includes(
-        'Showing the last successful snapshot because the latest refresh failed.',
-      )),
-      truncatedBannerVisible: statuses.some((value) => value.includes(
-        'This is the newest bounded window; more GitHub threads exist beyond it.',
-      )),
+      statusKind: status?.getAttribute('data-watch-status') ?? null,
+      listEndTone: listEnd?.getAttribute('data-surface-list-end-tone') ?? null,
+      listEndText: listEnd?.textContent?.trim() ?? null,
     };
   });
+}
+
+async function openWatchSubjectDetail(page, title, terminalState = 'success') {
+  const clicked = await page.evaluate((subjectTitle) => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const disclosure = [...(root?.querySelectorAll('button[data-watch-thread]') ?? [])]
+      .find((candidate) => candidate.getAttribute('aria-label') === `Notification details: ${subjectTitle}`);
+    disclosure?.click();
+    return !!disclosure;
+  }, title);
+  assert.equal(clicked, true, `could not expand Watch subject ${title}`);
+  try {
+    await page.waitForFunction(
+      (expectedState) => !!document
+        .getElementById('gsm-manager-host')
+        ?.shadowRoot
+        ?.querySelector(`[data-watch-subject-detail="${expectedState}"]`),
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+      terminalState,
+    );
+  } catch (error) {
+    const state = await page.evaluate(() => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      const row = root?.querySelector('[data-watch-thread-row="1017"]');
+      return {
+        row: row?.textContent ?? null,
+        detailState: row?.querySelector('[data-watch-subject-detail]')?.getAttribute('data-watch-subject-detail') ?? null,
+        detailText: row?.querySelector('[data-watch-subject-detail]')?.textContent ?? null,
+      };
+    });
+    throw new Error(`Watch subject detail did not reach ${terminalState}: ${JSON.stringify(state)}; requests=${JSON.stringify(backgroundGitHubApiGuard?.unexpectedUrls)}; ${formatError(error)}`);
+  }
+}
+
+async function assertWatchSubjectDetail(page, fixture) {
+  const detail = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const slot = root?.querySelector('[data-watch-subject-detail="success"]');
+    const details = slot?.closest('[role="region"]');
+    return {
+      text: slot?.textContent ?? '',
+      markReadEnabled: [...(details?.querySelectorAll('button') ?? [])]
+        .some((button) => button.textContent?.trim() === 'Mark as read' && !button.disabled),
+      openHref: [...(details?.querySelectorAll('a') ?? [])]
+        .find((link) => link.textContent?.includes('Open Issue in GitHub'))?.href ?? null,
+    };
+  });
+  assert.equal(detail.text.includes('runtime-detail'), true);
+  assert.equal(detail.text.includes('2 comments'), true);
+  assert.equal(detail.text.includes('Runtime Issue detail loaded only after this thread was expanded.'), true);
+  assert.equal(detail.markReadEnabled, true);
+  assert.equal(detail.openHref, 'https://github.com/smoke-user/smoke-repo/issues/17');
+  assert.deepEqual(fixture.requestedUrls, [{
+    url: 'https://api.github.com/repos/smoke-user/smoke-repo/issues/17',
+    authorization: 'Bearer github_pat_runtime_smoke_main',
+    accept: 'application/vnd.github.raw+json',
+    apiVersion: '2026-03-10',
+  }]);
+}
+async function assertWatchSubjectPermissionRecovery(page) {
+  const state = await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    const slot = root?.querySelector('[data-watch-subject-detail="error"]');
+    const details = slot?.closest('[role="region"]');
+    const button = (label) => [...(slot?.querySelectorAll('button') ?? [])]
+      .find((candidate) => candidate.textContent?.trim() === label);
+    const openOptions = button('Open options');
+    const state = {
+      text: slot?.textContent ?? '',
+      optionsPresent: !!openOptions,
+      retryPresent: !!button('Retry'),
+      markDoneEnabled: [...(details?.querySelectorAll('button') ?? [])]
+        .some((candidate) => candidate.textContent?.trim() === 'Mark as done' && !candidate.disabled),
+      openHref: [...(details?.querySelectorAll('a') ?? [])]
+        .find((link) => link.textContent?.includes('Open Pull Request in GitHub'))?.href ?? null,
+    };
+    openOptions?.click();
+    return state;
+  });
+  assert.equal(
+    state.text.includes('The main GitHub token needs Issues: read'),
+    true,
+    `unexpected Watch permission detail state: ${JSON.stringify(state)}`,
+  );
+  assert.equal(state.optionsPresent, true);
+  assert.equal(state.retryPresent, true);
+  assert.equal(state.markDoneEnabled, true);
+  assert.equal(state.openHref, 'https://github.com/smoke-user/smoke-repo/pull/9');
 }
 
 async function openWatchRepositoryDetail(page, fullName) {
@@ -1396,13 +1991,10 @@ async function closeWatchRepositoryDetail(page) {
 }
 
 async function waitForStableLayout(page) {
-  await page.evaluate(async () => {
-    const fontsReady = document.fonts?.ready ?? Promise.resolve();
-    await Promise.race([
-      fontsReady,
-      new Promise((resolve) => setTimeout(resolve, 500)),
-    ]);
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  await delay(DOM_POLLING_MS);
+  await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    root?.getBoundingClientRect();
   });
 }
 
@@ -1412,7 +2004,9 @@ async function assertWatchLayout(page, label) {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
     const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
     const scrollPane = section?.parentElement;
-    const headerRow = section?.querySelector('header > div');
+    const headerRow = section?.querySelector(
+      '[data-surface-command-bar="watch"] [data-surface-work-canvas="watch"]',
+    );
     const rootRect = root?.getBoundingClientRect();
     const sectionRect = section?.getBoundingClientRect();
     const headerChildren = [...(headerRow?.children ?? [])]
@@ -1461,7 +2055,7 @@ async function assertWatchLayout(page, label) {
   assert.equal(layout.sectionOverflow <= 1, true, `${label} Watch section has horizontal overflow`);
   assert.equal(layout.sectionLeft >= -1, true, `${label} Watch section extended left of its viewport`);
   assert.equal(layout.sectionRight <= layout.viewportWidth + 1, true, `${label} Watch section extended right of its viewport`);
-  assert.equal(layout.headerChildren >= 4, true, `${label} Watch header controls were incomplete`);
+  assert.equal(layout.headerChildren >= 3, true, `${label} Watch query controls were incomplete`);
   assert.equal(layout.overlappingHeaderPairs, 0, `${label} Watch header controls overlapped`);
   assert.equal(layout.controlsOutsideSection, 0, `${label} Watch controls were clipped outside the section`);
 }
@@ -1485,15 +2079,13 @@ async function assertWatchSetupState(page) {
   }
   const state = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-    const surfaceGroup = [...(root?.querySelectorAll('[role="group"]') ?? [])]
-      .find((candidate) => candidate.getAttribute('aria-label') === 'Watched stars inbox');
-    const buttons = [...(surfaceGroup?.querySelectorAll('button') ?? [])];
+    const buttons = [...(root?.querySelectorAll('#gsm-stars-surface-tab, #gsm-watch-surface-tab, #gsm-radar-surface-tab') ?? [])];
     return {
       managerMounted: !!root,
       managerMountPreserved: root?.getRootNode()?.host?.dataset?.watchSmokeMount === 'preserved',
       starsControlPresent: buttons.some((candidate) => candidate.textContent?.trim() === 'Stars'),
       watchPressed: buttons.some((candidate) => (
-        candidate.textContent?.trim().startsWith('Watch') && candidate.getAttribute('aria-pressed') === 'true'
+        candidate.textContent?.trim().startsWith('Watch') && candidate.getAttribute('aria-selected') === 'true'
       )),
     };
   });
@@ -1670,10 +2262,9 @@ async function assertAgentDrawerA11y(page) {
     height: '32px',
     backgroundSize: '256px 288px',
     imageRendering: 'pixelated',
-    animationName: 'gsm-agent-mascot-cycle',
+    animationName: 'none',
     resourceOk: true,
   });
-  assert.match(mascot.animationTimingFunction ?? '', /^steps\(8(?:, end)?\)$/u);
   assert.match(mascot.assetUrl ?? '', /^chrome-extension:\/\/[^/]+\/assets\/index-agent-atlas-[^/]+\.png$/u);
   assert.equal(mascot.bytes > 0, true);
   await clickShadowButton(page, 'button[aria-label="Suggested actions"]');
@@ -1766,7 +2357,7 @@ function hookPageDiagnostics(page, label) {
     if (label === OPTIONS_PATH && text.includes('api.github.com') && text.includes('401')) return;
     if (label === OPTIONS_PATH && text.includes('Failed to load resource') && text.includes('401')) return;
     if (
-      label === OPTIONS_PATH &&
+      (label === OPTIONS_PATH || label === 'watch-fallback') &&
       text.includes('Failed to load resource') &&
       text.includes('403') &&
       location.url === 'https://api.github.com/notifications?all=true&per_page=1'

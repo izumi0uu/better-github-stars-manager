@@ -75,7 +75,7 @@ export async function reconcileWatchLiveStars(
         db.watchNotificationThreads.toArray(),
       ]);
       const liveNames = new Set(stars.flatMap((star) => {
-        if (star.tombstone) return [];
+        if (star.tombstone || star.viewer_has_starred === false) return [];
         const fullName = canonicalRepositoryFullName(star.full_name);
         return fullName ? [fullName] : [];
       }));
@@ -210,6 +210,20 @@ export async function getWatchRepositories(
   });
 }
 
+/** Read one cached thread only when it belongs to the current Watch account. */
+export async function getWatchNotificationThread(input: {
+  accountLogin: string | null | undefined;
+  threadId: string;
+}): Promise<GitHubNotificationThread | null> {
+  if (!input.accountLogin?.trim() || !/^\d{1,32}$/u.test(input.threadId.trim())) return null;
+  const normalizedLogin = normalizeAccountLogin(input.accountLogin);
+  return db.transaction('r', db.watchNotificationThreads, db.watchState, async () => {
+    const state = await db.watchState.get(WATCH_STATE_ID);
+    if (state?.accountLogin !== normalizedLogin) return null;
+    return (await db.watchNotificationThreads.get(input.threadId.trim())) ?? null;
+  });
+}
+
 export async function queryStoredWatchInbox(input: {
   accountLogin: string | null | undefined;
   unreadOnly?: boolean;
@@ -242,6 +256,47 @@ export async function queryStoredWatchInbox(input: {
       };
     },
   );
+}
+
+export async function applyWatchThreadMutation(input: {
+  accountLogin: string;
+  threadIds: readonly string[];
+  action: 'read' | 'done';
+}): Promise<number> {
+  const accountLogin = normalizeAccountLogin(input.accountLogin);
+  const threadIds = [...new Set(input.threadIds.map((id) => id.trim()))];
+  if (threadIds.length === 0 || threadIds.some((id) => !/^\d{1,32}$/u.test(id))) {
+    throw new TypeError('Watch thread mutation contains an invalid thread id.');
+  }
+  return db.transaction('rw', db.watchNotificationThreads, db.watchState, async () => {
+    const state = await db.watchState.get(WATCH_STATE_ID);
+    if (state?.accountLogin !== accountLogin) return 0;
+    const rows = (await db.watchNotificationThreads.bulkGet(threadIds))
+      .filter((row): row is GitHubNotificationThread => row !== undefined);
+    if (input.action === 'done') {
+      if (rows.length) await db.watchNotificationThreads.bulkDelete(rows.map((row) => row.id));
+    } else {
+      const unreadRows = rows.filter((row) => row.unread);
+      if (unreadRows.length) {
+        await db.watchNotificationThreads.bulkPut(unreadRows.map((row) => ({
+          ...row,
+          unread: false,
+        })));
+      }
+      if (unreadRows.length === 0) return 0;
+      return unreadRows.length;
+    }
+    if (rows.length) {
+      await db.watchState.put({
+        ...state,
+        inbox: {
+          ...state.inbox,
+          matchedCount: await db.watchNotificationThreads.count(),
+        },
+      });
+    }
+    return rows.length;
+  });
 }
 
 export async function replaceWatchScope(input: {
@@ -330,6 +385,7 @@ export async function replaceWatchInbox(input: {
   nextAllowedAt: string | null;
   candidateCount: number;
   truncated: boolean;
+  mode: 'replace' | 'merge';
 }): Promise<GitHubWatchStateRecord> {
   const normalizedThreads = normalizeThreads(input.threads);
   return db.transaction(
@@ -341,8 +397,9 @@ export async function replaceWatchInbox(input: {
       const current = await replaceAccountIfNeeded(input.accountLogin);
       const scope = new Set(await db.watchRepositories.toCollection().primaryKeys());
       const threads = normalizedThreads.filter((thread) => scope.has(thread.repositoryFullName));
-      await db.watchNotificationThreads.clear();
+      if (input.mode === 'replace') await db.watchNotificationThreads.clear();
       if (threads.length) await db.watchNotificationThreads.bulkPut(threads);
+      const matchedCount = await db.watchNotificationThreads.count();
       const next: GitHubWatchStateRecord = {
         ...current,
         inbox: {
@@ -352,7 +409,7 @@ export async function replaceWatchInbox(input: {
           lastModified: input.lastModified,
           nextAllowedAt: input.nextAllowedAt,
           candidateCount: input.candidateCount,
-          matchedCount: threads.length,
+          matchedCount,
           truncated: input.truncated,
         },
       };

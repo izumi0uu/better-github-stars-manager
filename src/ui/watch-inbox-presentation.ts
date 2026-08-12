@@ -3,12 +3,17 @@ import {
   type GitHubNotificationThread,
   type WatchInboxProjection,
 } from '@/watch/watch-model';
+import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const MONTH_MS = 30 * DAY_MS;
 const YEAR_MS = 365 * DAY_MS;
+const WATCH_CREDENTIAL_ERROR_CODES: Record<string, true> = {
+  authentication_required: true,
+  permission_denied: true,
+};
 
 /** Compact, locale-neutral age used for Watch's machine-data column. */
 export function formatWatchRelativeTime(
@@ -102,4 +107,123 @@ export function filterWatchInboxProjection(
     ].some((value) => value.toLowerCase().includes(query));
   });
   return projectWatchInbox(threads);
+}
+export function watchGroupContentSignature(
+  threads: Iterable<GitHubNotificationThread>,
+): string {
+  const markers = Array.from(threads, (thread) => [thread.id, thread.updatedAt] as const);
+  markers.sort(([leftId, leftUpdatedAt], [rightId, rightUpdatedAt]) => (
+    leftId.localeCompare(rightId) || leftUpdatedAt.localeCompare(rightUpdatedAt)
+  ));
+  return JSON.stringify(markers);
+}
+
+export function hasNewWatchGroupContent(
+  previousSignature: string,
+  threads: Iterable<GitHubNotificationThread>,
+): boolean {
+  let previousMarkers: Set<string>;
+  try {
+    const parsed = JSON.parse(previousSignature) as unknown;
+    if (!Array.isArray(parsed)) return true;
+    previousMarkers = new Set(parsed.map((marker) => JSON.stringify(marker)));
+  } catch {
+    return true;
+  }
+  return Array.from(threads).some((thread) => (
+    !previousMarkers.has(JSON.stringify([thread.id, thread.updatedAt]))
+  ));
+}
+
+export type WatchStatusPresentationKind =
+  | 'loading'
+  | 'refreshing'
+  | 'credential_error'
+  | 'query_error'
+  | 'refresh_error'
+  | 'cooldown'
+  | 'scope_error'
+  | 'inbox_error'
+  | 'stale'
+  | 'truncated'
+  | 'never_loaded'
+  | 'fresh';
+
+export interface WatchStatusPresentation {
+  kind: WatchStatusPresentationKind;
+  tone: 'muted' | 'success' | 'warning' | 'destructive';
+  code: string | null;
+  snapshotAt: string | null;
+}
+
+export function deriveWatchStatusPresentation(input: {
+  result: WatchInboxQueryResponse | null;
+  loading: boolean;
+  refreshing: boolean;
+  error: 'query' | 'refresh' | null;
+}): WatchStatusPresentation {
+  const { result, loading, refreshing, error } = input;
+  if (loading && !result) {
+    return { kind: 'loading', tone: 'muted', code: null, snapshotAt: null };
+  }
+
+  const state = result?.status.state;
+  const code = state?.inbox.errorCode ?? state?.scope.errorCode ?? null;
+  const snapshotAt = state?.inbox.lastSuccessfulAt ?? state?.scope.lastSuccessfulAt ?? null;
+  const hasSnapshot = snapshotAt !== null;
+  if (code && WATCH_CREDENTIAL_ERROR_CODES[code]) {
+    return {
+      kind: 'credential_error',
+      tone: hasSnapshot ? 'warning' : 'destructive',
+      code,
+      snapshotAt,
+    };
+  }
+  if (error === 'query') {
+    return {
+      kind: 'query_error',
+      tone: hasSnapshot ? 'warning' : 'destructive',
+      code,
+      snapshotAt,
+    };
+  }
+  if (error === 'refresh') {
+    return { kind: 'refresh_error', tone: 'warning', code, snapshotAt };
+  }
+  if (result?.status.inboxStatus === 'cooldown') {
+    return { kind: 'cooldown', tone: 'warning', code: 'cooldown', snapshotAt };
+  }
+  if (result?.status.scopeStatus === 'error') {
+    return {
+      kind: 'scope_error',
+      tone: hasSnapshot ? 'warning' : 'destructive',
+      code,
+      snapshotAt,
+    };
+  }
+  if (result?.status.inboxStatus === 'error') {
+    return {
+      kind: 'inbox_error',
+      tone: hasSnapshot ? 'warning' : 'destructive',
+      code,
+      snapshotAt,
+    };
+  }
+  if (result?.status.scopeStatus === 'stale' || result?.status.inboxStatus === 'stale') {
+    return { kind: 'stale', tone: 'warning', code, snapshotAt };
+  }
+  if (state?.inbox.truncated) {
+    return { kind: 'truncated', tone: 'warning', code: 'truncated', snapshotAt };
+  }
+  if (refreshing || result?.status.refreshing) {
+    return { kind: 'refreshing', tone: 'muted', code: null, snapshotAt };
+  }
+  if (!result || result.status.scopeStatus === 'not_configured'
+    || result.status.scopeStatus === 'never_loaded'
+    || result.status.inboxStatus === 'not_configured'
+    || result.status.inboxStatus === 'never_loaded'
+    || result.status.inboxStatus === 'scope_unavailable') {
+    return { kind: 'never_loaded', tone: 'muted', code: null, snapshotAt };
+  }
+  return { kind: 'fresh', tone: 'success', code: null, snapshotAt };
 }

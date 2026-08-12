@@ -56,7 +56,7 @@ describe('Watch background integration contract', () => {
     assert.match(backgroundSource, /runSerialized: \(operation\) => jobQueue\.run\(operation\)/);
     assert.match(
       backgroundSource,
-      /loadLiveRepositoryNames: async \(\) => \(await db\.stars\.toArray\(\)\)\s*\.filter\(\(star\) => !star\.tombstone\)\s*\.map\(\(star\) => star\.full_name\)/,
+      /loadLiveRepositoryNames: async \(\) => \(await db\.stars\.toArray\(\)\)\s*\.filter\(\(star\) => !star\.tombstone && star\.viewer_has_starred !== false\)\s*\.map\(\(star\) => star\.full_name\)/,
     );
 
     const broadcast = extract(
@@ -67,13 +67,13 @@ describe('Watch background integration contract', () => {
     assert.doesNotMatch(broadcast, /invalidateCache|dataChanged/);
   });
 
-  it('includes the classic Notifications PAT in development capture redaction', () => {
+  it('scrubs the main GitHub credential from configured secrets', () => {
     const configuredSecrets = extract(
       backgroundSource,
       /getConfiguredSecrets: async \(\) => Promise\.all\(\[([\s\S]*?)\]\)/,
     );
     assert.match(configuredSecrets, /authStore\.getToken\(\)/);
-    assert.match(configuredSecrets, /authStore\.getWatchNotificationsToken\(\)/);
+    assert.doesNotMatch(configuredSecrets, /getWatchNotificationsToken/);
     assert.match(configuredSecrets, /authStore\.getAgentApiKey\(\)/);
   });
 
@@ -98,6 +98,18 @@ describe('Watch background integration contract', () => {
       assert.match(block, new RegExp(`error: m\\.background\\.${message}`));
       assert.doesNotMatch(block, /setProgress|translateError/);
     }
+  });
+
+  it('validates Watch notification mutations and keeps them inside the Watch queue', () => {
+    assert.match(backgroundSource, /type: ["']markWatchThreadsRead["']; threadIds\?: unknown/);
+    assert.match(backgroundSource, /type: ["']markWatchThreadsDone["']; threadIds\?: unknown/);
+    const block = caseBlock('markWatchThreadsDone', 'disconnectWatchInbox');
+    assert.match(block, /const threadIds = parseWatchThreadIds\(req\.threadIds\)/);
+    assert.match(block, /watchRefreshCoordinator\.markThreadsRead\(threadIds\)/);
+    assert.match(block, /watchRefreshCoordinator\.markThreadsDone\(threadIds\)/);
+    assert.match(block, /watchThreadActionInvalid/);
+    assert.match(block, /watchThreadActionFailed/);
+    assert.doesNotMatch(block, /setProgress|invalidateCache|broadcastDataChanged/);
   });
 
   it('reconciles an account boundary without polling or nested queue work', () => {
@@ -138,21 +150,36 @@ describe('Watch background integration contract', () => {
     assert.doesNotMatch(detail, /queryStars|invalidateCache|broadcastDataChanged/);
   });
 
-  it('keeps Watch credential source explicit in every status projection', () => {
-    assert.match(watchContractSource, /credentialSource:\s*WatchCredentialSource/);
-    assert.match(watchRefreshSource, /const credentialSource = auth\.watchCredentialSource/);
-    assert.match(watchRefreshSource, /return \{\s*accountLogin: auth\.accountLogin,\s*credentialSource,/);
+  it('validates Watch subject-detail requests and preserves stable error codes', () => {
+    const detail = caseBlock('getWatchSubjectDetail', 'getWatchRepositoryDetail');
+    assert.match(detail, /const threadId = parseWatchThreadId\(req\.threadId\)/);
+    assert.match(detail, /error: m\.background\.watchSubjectDetailInvalid/);
+    assert.match(detail, /watchRefreshCoordinator\.getSubjectDetail\(threadId\)/);
+    assert.match(detail, /error instanceof GitHubWatchError \? error\.code : 'invalid_response'/);
+    assert.match(detail, /error: m\.background\.watchSubjectDetailError\(code\)/);
+    assert.match(detail, /code,/);
+    assert.match(detail, /details: error instanceof GitHubWatchError && error\.status !== undefined/);
+    assert.match(detail, /\{ status: error\.status \}/);
+    assert.doesNotMatch(detail, /setProgress|invalidateCache|broadcastDataChanged/);
   });
 
-  it('accepts ordinary and Watch-targeted openOptions without broadening the request', () => {
+  it('keeps Watch status based on main and Notifications availability', () => {
+    assert.match(watchContractSource, /hasMainToken: boolean/);
+    assert.match(watchContractSource, /hasNotificationsToken: boolean/);
+    assert.doesNotMatch(watchContractSource, /credentialSource/);
+    assert.match(watchRefreshSource, /const hasNotificationsToken = !!auth\.notificationsToken/);
+  });
+
+  it('accepts ordinary and targeted openOptions without broadening the request', () => {
     assert.match(
       backgroundSource,
-      /\|\s*\{\s*type:\s*["']openOptions["'];\s*section\?:\s*["']watch["']\s*\}/,
+      /\|\s*\{\s*type:\s*["']openOptions["'];\s*section\?:\s*["']github["']\s*\|\s*["']watch["']\s*\}/,
     );
     assert.doesNotMatch(backgroundSource, /type:\s*["']openOptions["'];\s*section\?:\s*(?:string|unknown)/);
 
     const block = caseBlock('openOptions', 'devClearLocalData');
-    assert.match(block, /if \(req\.section !== undefined && req\.section !== ['"]watch['"]\)/);
+    assert.match(block, /req\.section !== ['"]github['"]/);
+    assert.match(block, /req\.section !== ['"]watch['"]/);
     assert.match(block, /return \{ ok: false, error: ['"]Unsupported Options section\.['"] \}/);
     assert.match(
       block,
@@ -161,24 +188,24 @@ describe('Watch background integration contract', () => {
     assert.doesNotMatch(block, /storage\.local/);
   });
 
-  it('stores and consumes only the transient Watch intent under session storage', async () => {
+  it.each(['github', 'watch'] as const)('stores and consumes the transient %s intent', async (section) => {
     vi.spyOn(Date, 'now').mockReturnValue(1_786_225_645_000);
     const { session, values } = installOptionsSessionMock({
       unrelatedSessionState: { keep: true },
     });
     expect(OPTIONS_INTENT_STORAGE_KEY).toBe('gsm_options_intent_v1');
 
-    await writeOptionsIntent('watch');
+    await writeOptionsIntent(section);
     expect(session.set).toHaveBeenCalledWith({
       [OPTIONS_INTENT_STORAGE_KEY]: {
-        section: 'watch',
+        section,
         requestedAt: 1_786_225_645_000,
       },
     });
     expect(values.get('unrelatedSessionState')).toEqual({ keep: true });
 
     await expect(consumeOptionsIntent()).resolves.toEqual({
-      section: 'watch',
+      section,
       requestedAt: 1_786_225_645_000,
     });
     expect(session.remove).toHaveBeenCalledWith(OPTIONS_INTENT_STORAGE_KEY);
@@ -190,12 +217,12 @@ describe('Watch background integration contract', () => {
     const { session } = installOptionsSessionMock();
 
     expect(parseOptionsIntent({ section: 'stars', requestedAt: 1 })).toBeNull();
-    expect(parseOptionsIntent({ section: 'watch', requestedAt: Number.NaN })).toBeNull();
+    expect(parseOptionsIntent({ section: 'github', requestedAt: Number.NaN })).toBeNull();
     await expect(writeOptionsIntent('stars' as 'watch')).rejects.toThrow('Invalid Options intent section.');
     expect(session.set).not.toHaveBeenCalled();
 
     const block = caseBlock('openOptions', 'devClearLocalData');
-    const rejectAt = block.indexOf("req.section !== 'watch'");
+    const rejectAt = block.indexOf("req.section !== 'github'");
     const writeAt = block.indexOf('writeOptionsIntent(req.section)');
     const openAt = block.indexOf('chrome.runtime.openOptionsPage()');
     assert.ok(rejectAt >= 0 && rejectAt < writeAt && writeAt < openAt);

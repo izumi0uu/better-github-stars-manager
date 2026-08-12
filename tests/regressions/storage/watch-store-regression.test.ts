@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, it, vi } from 'vitest';
 import { db } from '@/storage/db';
 import { createChromeMock } from '../../helpers/chrome-mock';
 import {
+  applyWatchThreadMutation,
   clearWatchData,
   disconnectWatchInbox,
   getWatchRepositories,
@@ -160,6 +161,7 @@ describe('Watch snapshot storage', () => {
       nextAllowedAt: SECOND,
       candidateCount: 2,
       truncated: false,
+      mode: 'replace',
     });
     const before = {
       repositories: await db.watchRepositories.orderBy('full_name').toArray(),
@@ -206,6 +208,7 @@ describe('Watch snapshot storage', () => {
       nextAllowedAt: SECOND,
       candidateCount: 2,
       truncated: false,
+      mode: 'replace',
     });
     const before = {
       threads: await db.watchNotificationThreads.orderBy('id').toArray(),
@@ -224,6 +227,7 @@ describe('Watch snapshot storage', () => {
           nextAllowedAt: '2026-08-05T03:00:00.000Z',
           candidateCount: 1,
           truncated: true,
+          mode: 'replace',
         }),
         /Inbox state checkpoint failed/u,
       );
@@ -258,6 +262,7 @@ describe('Watch snapshot storage', () => {
       nextAllowedAt: SECOND,
       candidateCount: 3,
       truncated: false,
+      mode: 'replace',
     });
 
     const initial = await queryStoredWatchInbox({ accountLogin: 'idah', unreadOnly: false });
@@ -293,6 +298,7 @@ describe('Watch snapshot storage', () => {
       nextAllowedAt: SECOND,
       candidateCount: 2,
       truncated: true,
+      mode: 'replace',
     });
     await recordWatchInboxFailure({
       accountLogin: ACCOUNT,
@@ -315,6 +321,84 @@ describe('Watch snapshot storage', () => {
     assert.equal(result.state?.inbox.truncated, true);
   });
 
+  it('merges conditional Inbox deltas without dropping older cached threads', async () => {
+    await replaceWatchScope({
+      accountLogin: ACCOUNT,
+      repositories: [{ full_name: 'owner/repo' }],
+      attemptedAt: FIRST,
+    });
+    await replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread('older')],
+      attemptedAt: FIRST,
+      lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
+      nextAllowedAt: null,
+      candidateCount: 1,
+      truncated: false,
+      mode: 'replace',
+    });
+
+    await replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread('newer')],
+      attemptedAt: SECOND,
+      lastModified: 'Wed, 05 Aug 2026 02:00:00 GMT',
+      nextAllowedAt: null,
+      candidateCount: 1,
+      truncated: false,
+      mode: 'merge',
+    });
+
+    const result = await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false });
+    assert.deepEqual(result.threads.map((row) => row.id), ['newer', 'older']);
+    assert.equal(result.state?.inbox.matchedCount, 2);
+  });
+
+  it('commits read and done notification mutations only for the bound account', async () => {
+    await replaceWatchScope({
+      accountLogin: ACCOUNT,
+      repositories: [{ full_name: 'owner/repo' }],
+      attemptedAt: FIRST,
+    });
+    await replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread('1'), thread('2')],
+      attemptedAt: FIRST,
+      lastModified: null,
+      nextAllowedAt: null,
+      candidateCount: 2,
+      truncated: false,
+      mode: 'replace',
+    });
+
+    assert.equal(await applyWatchThreadMutation({
+      accountLogin: ACCOUNT,
+      threadIds: ['1'],
+      action: 'read',
+    }), 1);
+    let stored = await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false });
+    assert.deepEqual(stored.threads.map((row) => [row.id, row.unread]), [
+      ['1', false],
+      ['2', true],
+    ]);
+    assert.equal(stored.state?.inbox.matchedCount, 2);
+
+    assert.equal(await applyWatchThreadMutation({
+      accountLogin: ACCOUNT,
+      threadIds: ['1', '2'],
+      action: 'done',
+    }), 2);
+    stored = await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false });
+    assert.equal(stored.totalCount, 0);
+    assert.equal(stored.state?.inbox.matchedCount, 0);
+
+    assert.equal(await applyWatchThreadMutation({
+      accountLogin: 'another-user',
+      threadIds: ['1'],
+      action: 'done',
+    }), 0);
+  });
+
   it('isolates account changes and lets disconnect clear only private Inbox data', async () => {
     await replaceWatchScope({
       accountLogin: ACCOUNT,
@@ -329,6 +413,7 @@ describe('Watch snapshot storage', () => {
       nextAllowedAt: SECOND,
       candidateCount: 1,
       truncated: false,
+      mode: 'replace',
     });
 
     await disconnectWatchInbox('IDAH');
@@ -358,6 +443,7 @@ describe('Watch snapshot storage', () => {
       nextAllowedAt: null,
       candidateCount: 1,
       truncated: false,
+      mode: 'replace',
     });
 
     await disconnectWatchInbox('bob');
@@ -548,6 +634,7 @@ describe('Watch snapshot storage', () => {
       nextAllowedAt: SECOND,
       candidateCount: 1,
       truncated: false,
+      mode: 'replace',
     });
     const before = await snapshotNonWatchData();
 
@@ -594,6 +681,7 @@ describe('Watch snapshot storage', () => {
       nextAllowedAt: null,
       candidateCount: 2,
       truncated: false,
+      mode: 'replace',
     });
     await db.stars.put(star('owner/other', true));
 
@@ -608,5 +696,20 @@ describe('Watch snapshot storage', () => {
     assert.equal(state?.scope.repositoryCount, 1);
     assert.equal(state?.inbox.matchedCount, 1);
     assert.equal(await reconcileWatchLiveStars(ACCOUNT), false);
+  });
+
+  it('prunes owned public repositories that are not starred from Watch scope', async () => {
+    await db.stars.bulkPut([
+      star('owner/starred'),
+      { ...star('owner/not-starred'), viewer_has_starred: false },
+    ]);
+    await replaceWatchScope({
+      accountLogin: ACCOUNT,
+      repositories: [{ full_name: 'owner/starred' }, { full_name: 'owner/not-starred' }],
+      attemptedAt: FIRST,
+    });
+
+    assert.equal(await reconcileWatchLiveStars(ACCOUNT), true);
+    assert.deepEqual(await getWatchRepositories(ACCOUNT), [{ full_name: 'owner/starred' }]);
   });
 });

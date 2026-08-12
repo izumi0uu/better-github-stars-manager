@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deriveWatchStatusPresentation,
   countWatchReasons,
   filterWatchInboxProjection,
   formatWatchRelativeTime,
+  hasNewWatchGroupContent,
+  watchGroupContentSignature,
   watchReasonPresetValues,
 } from '@/ui/watch-inbox-presentation';
 import {
@@ -10,6 +13,7 @@ import {
   type GitHubNotificationThread,
   type WatchInboxProjection,
 } from '@/watch/watch-model';
+import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
 
 const NOW = Date.parse('2026-08-05T12:00:00Z');
 
@@ -70,6 +74,41 @@ const projection: WatchInboxProjection = {
   totalCount: threads.length,
 };
 
+function queryResponse(): WatchInboxQueryResponse {
+  return {
+    ...projection,
+    status: {
+      accountLogin: 'idah',
+      credentialSource: 'main',
+      hasMainToken: true,
+      hasNotificationsToken: true,
+      refreshing: false,
+      scopeStatus: 'fresh',
+      inboxStatus: 'fresh',
+      state: {
+        id: 'singleton',
+        accountLogin: 'idah',
+        scope: {
+          lastAttemptAt: '2026-08-05T12:00:00Z',
+          lastSuccessfulAt: '2026-08-05T12:00:00Z',
+          errorCode: null,
+          repositoryCount: 2,
+        },
+        inbox: {
+          lastAttemptAt: '2026-08-05T12:00:00Z',
+          lastSuccessfulAt: '2026-08-05T12:00:00Z',
+          errorCode: null,
+          lastModified: null,
+          nextAllowedAt: null,
+          candidateCount: 4,
+          matchedCount: 4,
+          truncated: false,
+        },
+      },
+    },
+  };
+}
+
 describe('Watch inbox presentation filters', () => {
   it('counts raw reasons and keeps unknown values', () => {
     expect(countWatchReasons(threads)).toEqual([
@@ -126,5 +165,71 @@ describe('Watch inbox presentation filters', () => {
       ...KNOWN_NOTIFICATION_REASONS,
       'future_reason',
     ])).toEqual(['future_reason']);
+  });
+});
+
+describe('Watch repository collapse signatures', () => {
+  it('detects newly added or updated threads without treating removals as new content', () => {
+    const original = [threads[0], threads[1]];
+    const signature = watchGroupContentSignature(original);
+
+    expect(hasNewWatchGroupContent(signature, original)).toBe(false);
+    expect(hasNewWatchGroupContent(signature, [threads[0]])).toBe(false);
+    expect(hasNewWatchGroupContent(signature, [...original, threads[2]])).toBe(true);
+    expect(hasNewWatchGroupContent(signature, [{
+      ...threads[0],
+      updatedAt: '2026-08-05T12:00:00Z',
+    }])).toBe(true);
+  });
+
+  it('treats malformed persisted signatures as stale', () => {
+    expect(hasNewWatchGroupContent('not-json', threads)).toBe(true);
+    expect(hasNewWatchGroupContent('{}', threads)).toBe(true);
+  });
+});
+
+describe('Watch status presentation', () => {
+  it('derives fresh and initial loading states without fabricated codes', () => {
+    expect(deriveWatchStatusPresentation({
+      result: queryResponse(),
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({ kind: 'fresh', tone: 'success', code: null });
+    expect(deriveWatchStatusPresentation({
+      result: null,
+      loading: true,
+      refreshing: false,
+      error: null,
+    })).toEqual({ kind: 'loading', tone: 'muted', code: null, snapshotAt: null });
+  });
+
+  it('keeps a credential failure with a successful snapshot recoverable', () => {
+    const response = queryResponse();
+    response.status.inboxStatus = 'error';
+    response.status.state!.inbox.errorCode = 'permission_denied';
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({
+      kind: 'credential_error',
+      tone: 'warning',
+      code: 'permission_denied',
+    });
+  });
+
+  it('prioritizes bounded snapshot disclosure over refresh activity', () => {
+    const response = queryResponse();
+    response.status.state!.inbox.truncated = true;
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: true,
+      error: null,
+    })).toMatchObject({ kind: 'truncated', tone: 'warning', code: 'truncated' });
   });
 });

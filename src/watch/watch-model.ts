@@ -19,7 +19,9 @@ export type WatchErrorCode =
   | 'not_modified'
   | 'page_limit_exceeded'
   | 'invalid_repository'
-  | 'invalid_thread';
+  | 'invalid_thread'
+  | 'subject_not_found'
+  | 'credential_changed';
 
 /** Stable, non-payload-bearing error surfaced by either Watch API source. */
 export class GitHubWatchError extends Error {
@@ -59,6 +61,47 @@ export interface GitHubNotificationThread {
   updatedAt: string;
   lastReadAt: string | null;
   fetchedAt: string;
+}
+
+export type WatchSubjectKind = 'issue' | 'pull_request';
+
+export interface WatchSubjectPerson {
+  login: string;
+  avatarUrl: string;
+  htmlUrl: string;
+}
+
+export interface WatchSubjectLabel {
+  name: string;
+  color: string;
+}
+
+/** Validated identity rebuilt from one account-bound cached notification. */
+export interface WatchSubjectIdentity {
+  kind: WatchSubjectKind;
+  repositoryFullName: string;
+  number: number;
+  apiUrl: string;
+  htmlUrl: string;
+}
+
+/** Ephemeral, normalized Issue/PR data safe to cross the message boundary. */
+export interface WatchSubjectDetail {
+  kind: WatchSubjectKind;
+  repositoryFullName: string;
+  number: number;
+  title: string;
+  state: 'open' | 'closed';
+  stateReason: 'completed' | 'reopened' | 'not_planned' | 'duplicate' | null;
+  htmlUrl: string;
+  author: WatchSubjectPerson;
+  createdAt: string;
+  updatedAt: string;
+  labels: WatchSubjectLabel[];
+  assignees: WatchSubjectPerson[];
+  milestoneTitle: string | null;
+  commentCount: number;
+  bodyMarkdown: string | null;
 }
 
 export interface WatchNotificationGroup {
@@ -237,6 +280,56 @@ function apiPathSegments(value: string): string[] | null {
   } catch {
     return null;
   }
+}
+
+function normalizedSubjectType(value: string): WatchSubjectKind | null {
+  switch (value.trim().toLowerCase().replace(/[\s_-]+/gu, '')) {
+    case 'issue':
+      return 'issue';
+    case 'pullrequest':
+      return 'pull_request';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Validate one cached Issue/PR subject and rebuild every URL used with the main
+ * credential. The cached remote URL selects no host, query, or route directly.
+ */
+export function watchSubjectIdentity(
+  thread: GitHubNotificationThread,
+): WatchSubjectIdentity | null {
+  const kind = normalizedSubjectType(thread.subjectType);
+  if (!kind || !thread.subjectApiUrl) return null;
+  const parts = apiPathSegments(thread.subjectApiUrl);
+  if (!parts || parts.length !== 5 || parts[0] !== 'repos') return null;
+
+  let repositoryFullName: string;
+  try {
+    repositoryFullName = normalizeRepositoryFullName(`${parts[1]}/${parts[2]}`);
+  } catch {
+    return null;
+  }
+  if (repositoryFullName !== canonicalRepositoryFullName(thread.repositoryFullName)) return null;
+
+  const expectedRoute = kind === 'issue' ? 'issues' : 'pulls';
+  if (parts[3]!.toLowerCase() !== expectedRoute || !/^[1-9]\d*$/u.test(parts[4]!)) return null;
+  const number = Number(parts[4]);
+  if (!Number.isSafeInteger(number) || number <= 0) return null;
+
+  const [owner, repository] = repositoryFullName.split('/');
+  const encodedOwner = encodeURIComponent(owner!);
+  const encodedRepository = encodeURIComponent(repository!);
+  return {
+    kind,
+    repositoryFullName,
+    number,
+    apiUrl: `${API_ORIGIN}/repos/${encodedOwner}/${encodedRepository}/issues/${number}`,
+    htmlUrl: kind === 'issue'
+      ? `${WEB_ORIGIN}/${repositoryFullName}/issues/${number}`
+      : `${WEB_ORIGIN}/${repositoryFullName}/pull/${number}`,
+  };
 }
 
 /**

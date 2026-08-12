@@ -51,6 +51,7 @@ test('page diagnostics retain extension and HTTP failures but ignore lifecycle-o
   }));
   page.emit('requestfailed', failedRequest('https://api.github.com/user/subscriptions?per_page=1&page=1'));
   page.emit('requestfailed', failedRequest('https://api.github.com/notifications?all=true&per_page=1'));
+  page.emit('requestfailed', failedRequest('https://api.github.com/repos/octo/project/issues/17'));
   page.emit('requestfailed', failedRequest('data:image/png;base64,AA=='));
   page.emit('requestfailed', failedRequest('blob:https://github.com/runtime-blob'));
   page.emit('requestfailed', failedRequest('about:blank'));
@@ -65,9 +66,10 @@ test('page diagnostics retain extension and HTTP failures but ignore lifecycle-o
     { label: 'runtime-target', kind: 'request-failed', value: 'GET github-user' },
     { label: 'runtime-target', kind: 'request-failed', value: 'GET github-watch-scope' },
     { label: 'runtime-target', kind: 'request-failed', value: 'GET github-notifications' },
+    { label: 'runtime-target', kind: 'request-failed', value: 'GET github-watch-subject' },
   ]);
 
   diagnostics.cleanup();
   page.emit('requestfailed', failedRequest('https://api.github.com/user'));
-  assert.equal(issues.length, 5);
+  assert.equal(issues.length, 6);
 });
