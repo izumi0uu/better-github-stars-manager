@@ -46,6 +46,7 @@ export interface LibraryViewPrefs {
     onlyFavorite: boolean;
     onlyUntagged: boolean;
     onlyArchived: boolean;
+    onlyOwned: boolean;
   };
   sort: {
     sortKey: LibraryViewSortKey;
@@ -53,7 +54,7 @@ export interface LibraryViewPrefs {
   };
 }
 
-/** Star metadata stored locally. */
+/** Repository metadata stored locally for a GitHub star or an owned public repository. */
 export interface Star {
   full_name: string;
   html_url: string;
@@ -65,6 +66,8 @@ export interface Star {
   created_at: string | null; // ISO, repo creation time
   fork: boolean;
   archived: boolean;
+  /** Whether the authenticated account currently stars this repository. Missing on legacy rows means starred. */
+  viewer_has_starred?: boolean;
   starred_at: string;
   /** True once a full rescan no longer sees this repo in /user/starred. */
   tombstone: boolean;
@@ -321,15 +324,22 @@ export interface AgentProviderConfig {
   credentialRevision: string | null;
   capability: AgentProviderCapabilityRecord | null;
 }
-export type WatchCredentialSource = 'main' | 'dedicated' | null;
+export type GitHubCredentialStatus = 'ready' | 'reauthorization_required' | null;
+export type WatchCollapsedRepositorySignatures = Record<string, string>;
 
 /** Light config kept in chrome.storage.local. */
 export interface Config {
   tokenEncrypted: string | null;
   tokenCryptoMeta: CryptoMeta | null;
-  watchNotificationsTokenEncrypted: string | null;
-  watchNotificationsTokenCryptoMeta: CryptoMeta | null;
-  watchCredentialSource: WatchCredentialSource;
+  githubCredentialStatus: GitHubCredentialStatus;
+  /** @deprecated Legacy persisted fields are ignored by runtime normalization. */
+  watchNotificationsTokenEncrypted?: string | null;
+  /** Legacy persisted Watch fields retained only for fixture decoding. */
+  watchNotificationsTokenCryptoMeta?: CryptoMeta | null;
+  watchCredentialSource?: 'main' | 'dedicated' | null;
+  watchCollapsedRepositories: WatchCollapsedRepositorySignatures;
+  /** Whether the single Classic PAT has proven optional Notifications access. */
+  watchNotificationsEnabled: boolean;
   agentProvider: AgentProviderConfig;
   /** Explicit Agent data-sharing acknowledgement for one disclosure/provider/origin tuple. */
   agentDataDisclosureAcceptance: AgentDataDisclosureAcceptance | null;

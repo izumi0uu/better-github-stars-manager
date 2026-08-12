@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Archive, Star as StarIcon, StickyNote } from 'lucide-react';
 import type { Star } from '@/types';
 import { Badge } from '@/ui/shadcn/badge';
@@ -10,10 +10,8 @@ import { useI18n } from '@/i18n';
 import { getLockedRegionProps } from '@/ui/interaction-lock';
 import type { ColumnId } from '@/ui/column-layout';
 import { fitInlineTags } from '@/ui/inline-tag-fit';
-import {
-  createRepositorySearchMatcher,
-  type SearchTextRange,
-} from '@/search/repository-search';
+import { createRepositorySearchMatcher } from '@/search/repository-search';
+import { SearchMatchText } from '@/ui/components/SearchMatchText';
 
 /**
  * virtualized-list row. Fixed h-16 (64px) MUST match the virtualizer
@@ -90,6 +88,10 @@ export const StarRow = memo(function StarRow({
     () => createRepositorySearchMatcher(searchQuery).matchName(star.full_name),
     [searchQuery, star.full_name],
   );
+  const repositorySourceOffset = showRepositoryOwner
+    ? 0
+    : Math.max(0, star.full_name.lastIndexOf('/') + 1);
+  const repositoryLabel = star.full_name.slice(repositorySourceOffset);
   const { m } = useI18n();
 
   useIsomorphicLayoutEffect(() => {
@@ -165,10 +167,10 @@ export const StarRow = memo(function StarRow({
                   title={showRepositoryOwner ? undefined : star.full_name}
                   aria-label={showRepositoryOwner ? undefined : star.full_name}
                 >
-                  <HighlightedRepositoryName
-                    fullName={star.full_name}
+                  <SearchMatchText
+                    text={repositoryLabel}
                     ranges={repositoryNameMatch.nameRanges}
-                    showOwner={showRepositoryOwner}
+                    sourceOffset={repositorySourceOffset}
                   />
                 </span>
                 {star.archived && <Archive className="size-3 shrink-0 text-warning" aria-label={m.starRow.archived} />}
@@ -287,13 +289,24 @@ export const StarRow = memo(function StarRow({
           case 'starAction':
             return (
               <div key={column} data-row-col={column} className={cn('flex justify-center rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
-                {star.tombstone || !onConfirmUnstar ? (
+                {!onConfirmUnstar ? (
                   <button
                     type="button"
                     disabled
                     className="grid size-8 place-items-center rounded-md text-muted-foreground/45"
                     title={m.starRow.alreadyUnstarred}
                     aria-label={m.starRow.alreadyUnstarred}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <StarIcon className="size-4" />
+                  </button>
+                ) : star.tombstone || star.viewer_has_starred === false ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="grid size-8 place-items-center rounded-md text-muted-foreground/45"
+                    title={star.tombstone ? m.starRow.alreadyUnstarred : m.starRow.notStarred}
+                    aria-label={star.tombstone ? m.starRow.alreadyUnstarred : m.starRow.notStarred}
                     onClick={(e) => e.stopPropagation()}
                   >
                     <StarIcon className="size-4" />
@@ -386,41 +399,6 @@ export const StarRow = memo(function StarRow({
   );
 });
 
-function HighlightedRepositoryName({
-  fullName,
-  ranges,
-  showOwner,
-}: {
-  fullName: string;
-  ranges: readonly SearchTextRange[];
-  showOwner: boolean;
-}) {
-  const sourceOffset = showOwner ? 0 : Math.max(0, fullName.lastIndexOf('/') + 1);
-  const label = fullName.slice(sourceOffset);
-  if (ranges.length === 0) return label;
-
-  const content: ReactNode[] = [];
-  let cursor = 0;
-  for (const range of ranges) {
-    const start = Math.max(cursor, Math.min(label.length, range.start - sourceOffset));
-    const end = Math.max(start, Math.min(label.length, range.end - sourceOffset));
-    if (start > cursor) content.push(label.slice(cursor, start));
-    if (end > start) {
-      content.push(
-        <mark
-          key={`${start}:${end}`}
-          data-search-match=""
-          className="rounded-[2px] bg-search-match/70 text-search-match-foreground"
-        >
-          {label.slice(start, end)}
-        </mark>,
-      );
-    }
-    cursor = end;
-  }
-  if (cursor < label.length) content.push(label.slice(cursor));
-  return <>{content}</>;
-}
 
 function fmt(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;

@@ -45,6 +45,7 @@ export type CurrentViewCandidateFilter = Readonly<{
   onlyFavorite: boolean;
   onlyUntagged: boolean;
   onlyArchived: boolean;
+  onlyOwned: boolean;
   sortKey: CurrentViewSortKey;
   sortDir: 'asc' | 'desc';
 }>;
@@ -275,6 +276,7 @@ function validateCurrentViewFilter(value: unknown): asserts value is CurrentView
     'onlyFavorite',
     'onlyUntagged',
     'onlyArchived',
+    'onlyOwned',
     'sortKey',
     'sortDir',
   ]);
@@ -284,7 +286,13 @@ function validateCurrentViewFilter(value: unknown): asserts value is CurrentView
   if (value.tagMode !== 'any' && value.tagMode !== 'all') {
     throw new TypeError('Current-view tagMode is invalid.');
   }
-  for (const field of ['showTombstone', 'onlyFavorite', 'onlyUntagged', 'onlyArchived'] as const) {
+  for (const field of [
+    'showTombstone',
+    'onlyFavorite',
+    'onlyUntagged',
+    'onlyArchived',
+    'onlyOwned',
+  ] as const) {
     if (typeof value[field] !== 'boolean') throw new TypeError(`Current-view ${field} must be boolean.`);
   }
   if (!CURRENT_VIEW_SORT_KEYS.includes(value.sortKey as CurrentViewSortKey)) {

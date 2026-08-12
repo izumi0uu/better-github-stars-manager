@@ -35,6 +35,7 @@ export function useStars() {
     onlyFavorite: f.onlyFavorite,
     onlyUntagged: f.onlyUntagged,
     onlyArchived: f.onlyArchived,
+    onlyOwned: f.onlyOwned,
     sortKey: f.sortKey,
     sortDir: f.sortDir,
   };

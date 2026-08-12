@@ -57,6 +57,7 @@ export function StarsTable({
   layoutEdit,
   layoutResize,
   scrollRef,
+  scrollElement,
   rootRef,
   headerRef,
   layoutResizeLiveAdapterRef,
@@ -87,6 +88,7 @@ export function StarsTable({
   layoutEdit: StarsTableLayoutEdit;
   layoutResize?: LayoutResizeLiveState | null;
   scrollRef: RefObject<HTMLElement>;
+  scrollElement?: HTMLElement | null;
   rootRef?: RefObject<HTMLElement>;
   headerRef: RefObject<HTMLDivElement>;
   layoutResizeLiveAdapterRef?: MutableRefObject<LayoutResizeLiveAdapter | null>;
@@ -118,7 +120,7 @@ export function StarsTable({
   const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => scrollElement ?? scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });

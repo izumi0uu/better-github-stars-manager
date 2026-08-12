@@ -221,3 +221,29 @@ describe('star row column rendering', () => {
   });
 
 });
+
+describe('owned public repository star state', () => {
+  it('shows an honest disabled state instead of an Unstar action', () => {
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={{ ...fakeStar('2024-01-01T00:00:00Z'), viewer_has_starred: false }}
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={() => {}}
+        onToggleFavorite={async () => {}}
+        selected={false}
+        onSelect={() => {}}
+        columns={['starAction']}
+        gridTemplateColumns="32px"
+        flashedColumn={null}
+        onConfirmUnstar={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('Owned public repository · not starred');
+    expect(markup).not.toContain('Unstar owner/repo');
+  });
+});

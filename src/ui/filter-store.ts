@@ -17,6 +17,7 @@ export interface FilterState {
   onlyFavorite: boolean;
   onlyUntagged: boolean;
   onlyArchived: boolean;
+  onlyOwned: boolean;
   sortKey: SortKey;
   sortDir: SortDir;
   libraryViewHydrated: boolean;
@@ -29,6 +30,7 @@ export interface FilterState {
   setOnlyFavorite: (v: boolean) => void;
   setOnlyUntagged: (v: boolean) => void;
   setOnlyArchived: (v: boolean) => void;
+  setOnlyOwned: (v: boolean) => void;
   setSort: (k: SortKey, d?: SortDir) => void;
   applyLibraryViewPrefs: (prefs: LibraryViewPrefs, tagOverride?: string | null) => void;
   resetFilters: () => void;
@@ -43,6 +45,7 @@ export function libraryViewPrefsFromFilterState(state: Pick<
   | 'onlyFavorite'
   | 'onlyUntagged'
   | 'onlyArchived'
+  | 'onlyOwned'
   | 'sortKey'
   | 'sortDir'
 >): LibraryViewPrefs {
@@ -56,6 +59,7 @@ export function libraryViewPrefsFromFilterState(state: Pick<
       onlyFavorite: state.onlyFavorite,
       onlyUntagged: state.onlyUntagged,
       onlyArchived: state.onlyArchived,
+      onlyOwned: state.onlyOwned,
     },
     sort: {
       sortKey: state.sortKey,
@@ -77,6 +81,7 @@ export const useFilterStore = create<FilterState>((set) => ({
   onlyFavorite: false,
   onlyUntagged: false,
   onlyArchived: false,
+  onlyOwned: false,
   sortKey: 'starred_at',
   sortDir: 'desc',
   libraryViewHydrated: false,
@@ -97,6 +102,7 @@ export const useFilterStore = create<FilterState>((set) => ({
   setOnlyFavorite: (onlyFavorite) => set({ onlyFavorite }),
   setOnlyUntagged: (onlyUntagged) => set({ onlyUntagged }),
   setOnlyArchived: (onlyArchived) => set({ onlyArchived }),
+  setOnlyOwned: (onlyOwned) => set({ onlyOwned }),
   setSort: (sortKey, sortDir) => set((s) => ({ sortKey, sortDir: sortDir ?? s.sortDir })),
   applyLibraryViewPrefs: (prefs, tagOverride) => {
     const normalized = normalizeLibraryViewPrefs(prefs ?? DEFAULT_LIBRARY_VIEW_PREFS);
@@ -108,11 +114,21 @@ export const useFilterStore = create<FilterState>((set) => ({
       onlyFavorite: normalized.filters.onlyFavorite,
       onlyUntagged: normalized.filters.onlyUntagged,
       onlyArchived: normalized.filters.onlyArchived,
+      onlyOwned: normalized.filters.onlyOwned,
       sortKey: normalized.sort.sortKey,
       sortDir: normalized.sort.sortDir,
       libraryViewHydrated: true,
     });
   },
   resetFilters: () =>
-    set({ query: '', languages: [], tags: [], showTombstone: false, onlyFavorite: false, onlyUntagged: false, onlyArchived: false }),
+    set({
+      query: '',
+      languages: [],
+      tags: [],
+      showTombstone: false,
+      onlyFavorite: false,
+      onlyUntagged: false,
+      onlyArchived: false,
+      onlyOwned: false,
+    }),
 }));

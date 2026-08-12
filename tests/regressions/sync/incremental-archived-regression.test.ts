@@ -127,6 +127,7 @@ describe('Incremental archived regressions', () => {
           onlyFavorite: false,
           onlyUntagged: false,
           onlyArchived: true,
+          onlyOwned: false,
           sortKey: 'starred_at',
           sortDir: 'desc',
         },

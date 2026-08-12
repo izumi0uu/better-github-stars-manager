@@ -63,6 +63,7 @@ function filter() {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'name' as const,
     sortDir: 'asc' as const,
   };

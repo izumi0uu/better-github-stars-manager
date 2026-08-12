@@ -20,6 +20,7 @@ export function FilterSidebar({
   f,
   languages,
   tagTree,
+  accountLogin = null,
   interactionLocked = false,
   onTagMutationMessage,
   onTagMutationSuccess,
@@ -27,6 +28,7 @@ export function FilterSidebar({
   f: FilterState;
   languages: [string, number][];
   tagTree: { tags: { name: string; count: number }[]; total: number };
+  accountLogin?: string | null;
   interactionLocked?: boolean;
   /** Called after a tag mutation to surface a manager info/error banner. */
   onTagMutationMessage?: (message: string | null) => void;
@@ -45,6 +47,15 @@ export function FilterSidebar({
     >
       {/* Special filters */}
       <Section title={m.filterSidebar.specialFilters}>
+        <FilterToggle
+          checked={f.onlyOwned}
+          disabled={!accountLogin}
+          onChange={() => f.setOnlyOwned(!f.onlyOwned)}
+          label={m.filterSidebar.onlyOwnedLabel}
+          hint={accountLogin
+            ? m.filterSidebar.onlyOwnedHint(accountLogin)
+            : m.filterSidebar.onlyOwnedUnavailableHint}
+        />
         <FilterToggle
           checked={f.onlyFavorite}
           onChange={() => f.setOnlyFavorite(!f.onlyFavorite)}
@@ -463,18 +474,37 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function FilterToggle({ checked, onChange, label, hint }: { checked: boolean; onChange: () => void; label: string; hint: string }) {
+function FilterToggle({
+  checked,
+  disabled = false,
+  onChange,
+  label,
+  hint,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+  label: string;
+  hint: string;
+}) {
   return (
     <label
-      className={cn('gsm-sidebar-row flex cursor-pointer items-center gap-1.5 px-1 py-0.5 hover:bg-muted/40', {
-        'text-foreground': checked,
-        'bg-muted/30': checked,
-        'text-muted-foreground': !checked,
+      className={cn('gsm-sidebar-row flex items-center gap-1.5 px-1 py-0.5', {
+        'cursor-pointer hover:bg-muted/40': !disabled,
+        'cursor-not-allowed text-muted-foreground/55': disabled,
+        'text-foreground bg-muted/30': checked && !disabled,
+        'text-muted-foreground': !checked && !disabled,
       })}
     >
-      <Checkbox checked={checked} onCheckedChange={onChange} />
+      <Checkbox
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={() => {
+          if (!disabled) onChange();
+        }}
+      />
       <span className="whitespace-nowrap">{label}</span>
-      {hint && <span className="gsm-muted-count-soft ml-auto whitespace-nowrap">{hint}</span>}
+      {hint && <span className="gsm-muted-count-soft ml-auto truncate">{hint}</span>}
     </label>
   );
 }

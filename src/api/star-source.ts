@@ -1,4 +1,4 @@
-import type { SyncProgress } from '@/types';
+import type { Star, SyncProgress } from '@/types';
 
 /**
  * Abstraction over where starred repos come from, so storage/query surfaces
@@ -17,6 +17,8 @@ export interface StarSource {
 
   /** Remote unstar: DELETE the GitHub star, then callers may tombstone local annotations-preserving rows. */
   unstar(fullName: string): Promise<void>;
+  /** Remote star followed by a canonical local metadata row for annotations. */
+  star(fullName: string): Promise<Star>;
 
   /** GitHub username backing this source (from the token's /user). */
   getUsername(): Promise<string>;

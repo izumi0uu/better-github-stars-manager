@@ -21,8 +21,19 @@ import { createRepositorySearchMatcher } from '@/search/repository-search';
 export interface QueryParams {
   filter: Pick<
     FilterState,
-    'query' | 'languages' | 'tags' | 'tagMode' | 'showTombstone' | 'onlyFavorite' | 'onlyUntagged' | 'onlyArchived' | 'sortKey' | 'sortDir'
+    | 'query'
+    | 'languages'
+    | 'tags'
+    | 'tagMode'
+    | 'showTombstone'
+    | 'onlyFavorite'
+    | 'onlyUntagged'
+    | 'onlyArchived'
+    | 'onlyOwned'
+    | 'sortKey'
+    | 'sortDir'
   >;
+  accountLogin?: string | null;
   offset: number;
   limit: number;
 }
@@ -135,10 +146,16 @@ function sortRows(
   });
 }
 
+/** Legacy rows predate the source marker and therefore remain starred. */
+export function viewerHasStarred(star: Pick<Star, 'viewer_has_starred'>): boolean {
+  return star.viewer_has_starred !== false;
+}
+
 function filterAndSortRows(
   stars: readonly Star[],
   tags: ReadonlyMap<string, Tag>,
   filter: QueryFilter,
+  accountLogin: string | null = null,
 ): Star[] {
   const search = createRepositorySearchMatcher(filter.query);
   const relevance = new Map<Star, number>();
@@ -146,10 +163,12 @@ function filterAndSortRows(
   const tagSet = filter.tags.length
     ? new Set(filter.tags.map((tag) => canonicalTagKey(tag)))
     : null;
+  const ownedPrefix = accountLogin?.trim().normalize('NFKC').toLocaleLowerCase('en-US');
 
   const filtered = stars.filter((s) => {
     if (!filter.showTombstone && s.tombstone) return false;
     if (filter.onlyArchived && !s.archived) return false;
+    if (filter.onlyOwned && (!ownedPrefix || !s.full_name.normalize('NFKC').toLocaleLowerCase('en-US').startsWith(`${ownedPrefix}/`))) return false;
     if (langSet && (s.language === null || !langSet.has(s.language))) return false;
     const tagRecord = tags.get(s.full_name);
     const myTags = visibleTagNames(tagRecord);
@@ -184,14 +203,18 @@ function filterAndSortRows(
 }
 
 /** Resolves every matching repository ID using the same authoritative filter/sort semantics as queryStars. */
-export async function queryAllMatchingStarIds(filter: QueryParams['filter']): Promise<string[]> {
+export async function queryAllMatchingStarIds(
+  filter: QueryParams['filter'],
+  accountLogin: string | null = null,
+): Promise<string[]> {
   const { stars, tags } = await ensureCache();
-  return filterAndSortRows(stars, tags, filter).map((star) => star.full_name);
+  return filterAndSortRows(stars, tags, filter, accountLogin).map((star) => star.full_name);
 }
 
 export async function resolveLaunchCandidate(
   contract: LaunchCandidateContract,
   resolveResultSubset?: ResultSubsetResolver,
+  accountLogin: string | null = null,
 ): Promise<ResolvedLaunchCandidate> {
   validateLaunchCandidateContract(contract);
   const { stars, tags } = await ensureCache();
@@ -200,26 +223,31 @@ export async function resolveLaunchCandidate(
   let filterSnapshot: string;
 
   if (contract.kind === 'current_view') {
-    repositoryIds = filterAndSortRows(stars, tags, contract.filter).map((star) => star.full_name);
+    repositoryIds = filterAndSortRows(stars, tags, contract.filter, accountLogin).map((star) => star.full_name);
     label = 'Current view';
     filterSnapshot = JSON.stringify(contract.filter);
   } else if (contract.kind === 'selected_repository') {
     const selected = stars.find((star) => (
-      star.full_name === contract.selectedRepositoryIdHint && !star.tombstone
+      star.full_name === contract.selectedRepositoryIdHint
+      && !star.tombstone
     ));
     repositoryIds = selected ? [selected.full_name] : [];
     label = selected?.full_name ?? contract.selectedRepositoryIdHint;
     filterSnapshot = `Selected repository: ${contract.selectedRepositoryIdHint}`;
   } else if (contract.kind === 'all_live_stars') {
     repositoryIds = stars
-      .filter((star) => !star.tombstone)
+      .filter((star) => !star.tombstone && viewerHasStarred(star))
       .sort((a, b) => a.full_name.localeCompare(b.full_name))
       .map((star) => star.full_name);
     label = 'All starred repositories';
     filterSnapshot = 'All live stars';
   } else if (contract.kind === 'still_untagged_after_auto_tags') {
     repositoryIds = stars
-      .filter((star) => !star.tombstone && visibleTagNames(tags.get(star.full_name)).length === 0)
+      .filter((star) => (
+        !star.tombstone
+        && viewerHasStarred(star)
+        && visibleTagNames(tags.get(star.full_name)).length === 0
+      ))
       .sort((a, b) => a.full_name.localeCompare(b.full_name))
       .map((star) => star.full_name);
     label = 'Still untagged';
@@ -241,8 +269,9 @@ export async function resolveLaunchCandidate(
 export async function resolveLiveLaunchCandidate(
   contract: LaunchCandidateContract,
   resolveResultSubset?: ResultSubsetResolver,
+  accountLogin: string | null = null,
 ): Promise<ResolvedLaunchCandidate> {
-  const resolved = await resolveLaunchCandidate(contract, resolveResultSubset);
+  const resolved = await resolveLaunchCandidate(contract, resolveResultSubset, accountLogin);
   const { stars } = await ensureCache();
   const liveRepositoryIds = new Set(
     stars.filter((star) => !star.tombstone).map((star) => star.full_name),
@@ -256,9 +285,9 @@ export async function resolveLiveLaunchCandidate(
 }
 
 export async function queryStars(params: QueryParams): Promise<QueryResult> {
-  const { filter, offset, limit } = params;
+  const { filter, accountLogin = null, offset, limit } = params;
   const { stars, tags, excluded } = await ensureCache();
-  const filtered = filterAndSortRows(stars, tags, filter);
+  const filtered = filterAndSortRows(stars, tags, filter, accountLogin);
 
   // Languages facet over ALL stars (stable sidebar regardless of filter).
   const langCounts = new Map<string, number>();

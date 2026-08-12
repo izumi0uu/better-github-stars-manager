@@ -14,6 +14,7 @@ const managerMocks = vi.hoisted(() => ({
   setInfo: vi.fn(),
   refreshStars: vi.fn(),
   resetFilters: vi.fn(),
+  radarSetView: vi.fn(),
   row: {
     full_name: 'owner/repo',
     html_url: 'https://github.com/owner/repo',
@@ -56,6 +57,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
     libraryViewHydrated: true,
@@ -68,6 +70,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     setOnlyFavorite: vi.fn(),
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
+    setOnlyOwned: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: managerMocks.resetFilters,
@@ -122,7 +125,9 @@ vi.mock('@/ui/hooks/use-watch-inbox', () => ({
   useWatchInbox: () => ({
     unreadOnly: true,
     setUnreadOnly: vi.fn(),
-    result: { unreadCount: 3 },
+    collapsedRepositories: {},
+    updateRepositoryCollapse: vi.fn(),
+    result: { unreadCount: 3, status: { inboxStatus: 'fresh' } },
     loading: false,
     refreshing: false,
     error: null,
@@ -130,6 +135,26 @@ vi.mock('@/ui/hooks/use-watch-inbox', () => ({
     reload: vi.fn(),
   }),
 }));
+vi.mock('@/ui/hooks/use-radar', () => {
+  const radar = {
+    result: null,
+    view: 'feed' as const,
+    setView: managerMocks.radarSetView,
+    loading: false,
+    refreshing: false,
+    error: null,
+    actionError: null,
+    pendingAction: null,
+    refresh: vi.fn(),
+    reload: vi.fn(),
+    star: vi.fn(),
+    setFavorite: vi.fn(),
+    addTag: vi.fn(),
+    dismiss: vi.fn(),
+  };
+  return { useRadar: () => radar };
+});
+
 
 vi.mock('@/ui/hooks/use-column-layout-editor', () => ({
   useColumnLayoutEditor: () => ({
@@ -197,8 +222,8 @@ vi.mock('@/ui/components/Toolbar', () => ({
     onSurfaceChange,
     watchUnreadCount,
   }: {
-    surface: 'stars' | 'watch';
-    onSurfaceChange: (surface: 'stars' | 'watch') => void;
+    surface: 'stars' | 'watch' | 'radar';
+    onSurfaceChange: (surface: 'stars' | 'watch' | 'radar') => void;
     watchUnreadCount: number;
   }) => (
     <div data-testid="toolbar" data-watch-unread={watchUnreadCount}>
@@ -208,22 +233,35 @@ vi.mock('@/ui/components/Toolbar', () => ({
       <button type="button" data-testid="watch-surface" onClick={() => onSurfaceChange('watch')}>
         Watch
       </button>
+      <button type="button" data-testid="radar-surface" onClick={() => onSurfaceChange('radar')}>
+        Following
+      </button>
       <span data-testid="active-surface">{surface}</span>
     </div>
   ),
+}));
+vi.mock('@/ui/components/RadarSurface', () => ({
+  RadarSurface: () => <div data-testid="radar-surface-content" />,
+  RadarSurfaceActions: () => null,
+  RadarStatusRibbon: () => <div data-testid="radar-status-ribbon" />,
 }));
 
 vi.mock('@/ui/components/WatchInbox', () => ({
   WatchInbox: ({
     onOpenOptions,
+    onOpenMainTokenOptions,
     onSelectRepository,
   }: {
-    onOpenOptions?: () => void;
+    onOpenOptions: () => void;
+    onOpenMainTokenOptions: () => void;
     onSelectRepository?: (fullName: string) => void;
   }) => (
     <div data-testid="watch-inbox">
       <button type="button" aria-label="Open Watch options" onClick={onOpenOptions}>
         Open options
+      </button>
+      <button type="button" aria-label="Open main GitHub options" onClick={onOpenMainTokenOptions}>
+        Open GitHub options
       </button>
       <button
         type="button"
@@ -234,6 +272,8 @@ vi.mock('@/ui/components/WatchInbox', () => ({
       </button>
     </div>
   ),
+  WatchSurfaceActions: () => null,
+  WatchStatusRibbon: () => <div data-testid="watch-status-ribbon" />,
 }));
 
 vi.mock('@/ui/components/FilterSidebar', () => ({
@@ -304,7 +344,7 @@ beforeEach(() => {
   managerMocks.bgCall.mockReturnValue(new Promise(() => {}));
   managerMocks.setInfo.mockReset();
   managerMocks.refreshStars.mockReset();
-  managerMocks.resetFilters.mockReset();
+  managerMocks.radarSetView.mockReset();
 });
 
 afterEach(() => {
@@ -372,6 +412,19 @@ describe('ManagerPanel unstar flow', () => {
     });
 
     expect(managerMocks.bgCall).toHaveBeenCalledWith('openOptions', { section: 'watch' });
+  });
+
+  it('routes Watch subject authorization recovery to the main GitHub connection', () => {
+    const { container } = mountPanel();
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-surface"]')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open main GitHub options"]')?.click();
+    });
+
+    expect(managerMocks.bgCall).toHaveBeenCalledWith('openOptions', { section: 'github' });
   });
 
   it('discards a late Watch detail response after returning to Stars', async () => {
@@ -460,5 +513,26 @@ describe('ManagerPanel unstar flow', () => {
     const tokenLink = container.querySelector<HTMLAnchorElement>('a[href="https://github.com/settings/tokens"]');
     expect(tokenLink?.textContent).toBe('github.com/settings/tokens');
     expect(container.querySelector('[data-testid="confirm-unstar"]')).not.toBeNull();
+  });
+  it('switches to Following without resetting Stars filters and maps its view shortcut V', () => {
+    const { container } = mountPanel();
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="radar-surface"]')?.click();
+    });
+
+    expect(container.querySelector('[data-testid="active-surface"]')?.textContent).toBe('radar');
+    expect(container.querySelector('[data-testid="radar-surface-content"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="filter-sidebar"]')).toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v' }));
+    });
+    expect(managerMocks.radarSetView).toHaveBeenCalledWith('projects');
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
+    });
+    expect(container.querySelector('[data-testid="active-surface"]')?.textContent).toBe('stars');
   });
 });

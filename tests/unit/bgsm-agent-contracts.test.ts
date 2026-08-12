@@ -328,6 +328,7 @@ describe('FrozenScope and transport token identities', () => {
         onlyFavorite: false,
         onlyUntagged: false,
         onlyArchived: false,
+        onlyOwned: false,
         sortKey: 'starred_at',
         sortDir: 'desc',
       },

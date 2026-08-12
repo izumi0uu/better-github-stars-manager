@@ -54,6 +54,7 @@ describe('preferences persistence', () => {
           onlyFavorite: true,
           onlyUntagged: false,
           onlyArchived: true,
+          onlyOwned: false,
         },
         sort: {
           sortKey: 'created_at',
@@ -85,6 +86,36 @@ describe('preferences persistence', () => {
     assert.deepEqual(storedConfig.libraryView, hydratedPrefs);
   });
 
+  it('normalizes and updates bounded Watch collapse memory', async () => {
+    const { authStore, CONFIG_STORAGE_KEY } = await import('../src/auth/auth-store');
+    storageBacking[CONFIG_STORAGE_KEY] = {
+      watchCollapsedRepositories: {
+        ' Owner/Repo ': ' [["1","2026-08-05T00:00:00Z"]] ',
+        '': 'ignored',
+        'owner/invalid': 42,
+      },
+    };
+
+    const config = await authStore.getConfig();
+    assert.deepEqual(config.watchCollapsedRepositories, {
+      'owner/repo': '[["1","2026-08-05T00:00:00Z"]]',
+    });
+
+    await authStore.updateWatchRepositoryCollapse(
+      'OWNER/NEW',
+      '[["2","2026-08-06T00:00:00Z"]]',
+    );
+    let storedConfig = storageBacking[CONFIG_STORAGE_KEY] as Config;
+    assert.equal(
+      storedConfig.watchCollapsedRepositories['owner/new'],
+      '[["2","2026-08-06T00:00:00Z"]]',
+    );
+
+    await authStore.updateWatchRepositoryCollapse('owner/repo', null);
+    storedConfig = storageBacking[CONFIG_STORAGE_KEY] as Config;
+    assert.equal(storedConfig.watchCollapsedRepositories['owner/repo'], undefined);
+  });
+
   it('merges library view updates with the latest stored config', async () => {
     const { authStore, CONFIG_STORAGE_KEY } = await import('../src/auth/auth-store');
 
@@ -100,6 +131,7 @@ describe('preferences persistence', () => {
           onlyFavorite: false,
           onlyUntagged: false,
           onlyArchived: false,
+          onlyOwned: false,
         },
         sort: {
           sortKey: 'starred_at',
@@ -125,6 +157,7 @@ describe('preferences persistence', () => {
         onlyFavorite: true,
         onlyUntagged: true,
         onlyArchived: true,
+        onlyOwned: true,
       },
       sort: {
         sortKey: 'name',

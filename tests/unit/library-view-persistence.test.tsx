@@ -37,10 +37,10 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 function baseConfig(): Config {
   return {
     tokenEncrypted: null,
+    githubCredentialStatus: null,
+    watchNotificationsEnabled: false,
     tokenCryptoMeta: null,
-    watchNotificationsTokenEncrypted: null,
-    watchNotificationsTokenCryptoMeta: null,
-    watchCredentialSource: null,
+    watchCollapsedRepositories: {},
     agentProvider: {
       provider: 'openai',
       protocol: null,
@@ -79,6 +79,7 @@ function baseConfig(): Config {
         onlyFavorite: true,
         onlyUntagged: false,
         onlyArchived: true,
+        onlyOwned: true,
       },
       sort: {
         sortKey: 'created_at',
@@ -104,6 +105,7 @@ function resetFilterStore() {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at',
     sortDir: 'desc',
     libraryViewHydrated: false,
@@ -192,6 +194,7 @@ describe('library view preference persistence', () => {
           onlyFavorite: true,
           onlyUntagged: false,
           onlyArchived: true,
+          onlyOwned: true,
           sortKey: 'created_at',
           sortDir: 'asc',
         },
@@ -223,6 +226,7 @@ describe('library view preference persistence', () => {
         onlyFavorite: false,
         onlyUntagged: false,
         onlyArchived: false,
+        onlyOwned: false,
       },
       sort: {
         sortKey: 'created_at',
@@ -290,6 +294,7 @@ describe('library view preference persistence', () => {
                 onlyFavorite: false,
                 onlyUntagged: true,
                 onlyArchived: false,
+                onlyOwned: false,
               },
               sort: {
                 sortKey: 'name',
@@ -334,6 +339,7 @@ describe('library view preference persistence', () => {
                 onlyFavorite: false,
                 onlyUntagged: true,
                 onlyArchived: false,
+                onlyOwned: false,
               },
               sort: {
                 sortKey: 'name',
@@ -382,6 +388,7 @@ describe('library view preference persistence', () => {
                 onlyFavorite: false,
                 onlyUntagged: true,
                 onlyArchived: false,
+                onlyOwned: false,
               },
               sort: {
                 sortKey: 'name',

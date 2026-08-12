@@ -145,11 +145,13 @@ function generateQueryCase(rng: SeededRng, options: { forceStars?: number } = {}
       onlyFavorite: rng.bool(0.2),
       onlyUntagged: rng.bool(0.2),
       onlyArchived: rng.bool(0.2),
+      onlyOwned: rng.bool(0.2),
       sortKey: rng.pick(sortKeys),
       sortDir: rng.pick(['asc', 'desc'] as const),
     },
     offset: rng.int(0, Math.max(0, starCount + 5)),
     limit: rng.int(1, 25),
+    accountLogin: rng.bool(0.8) ? `owner${rng.int(0, 6)}` : null,
   };
   return { stars, tags, tagMeta, params };
 }
@@ -214,6 +216,11 @@ function referenceQuery(input: GeneratedQueryCase): QueryResult {
   const filtered = indexedStars.filter((star) => {
     if (!input.params.filter.showTombstone && star.tombstone) return false;
     if (input.params.filter.onlyArchived && !star.archived) return false;
+    if (input.params.filter.onlyOwned) {
+      const owner = input.params.accountLogin?.trim().normalize('NFKC').toLocaleLowerCase('en-US');
+      const fullName = star.full_name.normalize('NFKC').toLocaleLowerCase('en-US');
+      if (!owner || !fullName.startsWith(`${owner}/`)) return false;
+    }
     if (langSet && (star.language === null || !langSet.has(star.language))) return false;
     const tagRecord = tagMap.get(star.full_name);
     const myTags = visibleTagNames(tagRecord);

@@ -81,6 +81,12 @@ describe('Full sync repo-created-time regressions', () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       seenUrls.push(url);
+      if (url.includes('/users/idah/repos?')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       if (url === 'https://api.github.com/user/starred?per_page=100&page=1') {
         return new Response(JSON.stringify([
           {
@@ -127,14 +133,17 @@ describe('Full sync repo-created-time regressions', () => {
       throw new Error(`unexpected fetch: ${url} ${(init?.method ?? 'GET')}`);
     }) as typeof fetch;
 
+    const originalGetUsername = authStore.getUsername;
     const originalGetToken = authStore.getToken;
     authStore.getToken = async () => 'github_pat_test';
+    authStore.getUsername = async () => 'idah';
 
     try {
       const result = await githubStarSource.syncFull();
       assert.deepEqual(result, { added: 2, updated: 2 });
       assert.deepEqual(seenUrls, [
         'https://api.github.com/user/starred?per_page=100&page=1',
+        'https://api.github.com/users/idah/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',
         'https://api.github.com/user/starred?per_page=100&page=2',
       ]);
 
@@ -148,6 +157,7 @@ describe('Full sync repo-created-time regressions', () => {
       assert.equal(archivedRepo?.archived, true);
       assert.equal((await authStore.getConfig()).lastSyncStarredAt, '2026-06-28T10:00:00Z');
     } finally {
+      authStore.getUsername = originalGetUsername;
       authStore.getToken = originalGetToken;
     }
   });

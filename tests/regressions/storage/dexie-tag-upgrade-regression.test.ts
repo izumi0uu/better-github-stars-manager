@@ -83,6 +83,8 @@ describe('Dexie tag schema upgrades', () => {
             'tagDirtyOutbox',
             'tagMeta',
             'tags',
+            'radarActivities',
+            'radarState',
             'watchNotificationThreads',
             'watchRepositories',
             'watchState',

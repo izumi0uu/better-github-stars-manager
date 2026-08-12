@@ -262,7 +262,7 @@ export async function addBgsmAgentManualTags(
     if (!star) {
       return { manualTags: [], changed: false, reason: 'missing' as const };
     }
-    if (star.tombstone) {
+    if (star.tombstone || star.viewer_has_starred === false) {
       return { manualTags: [], changed: false, reason: 'tombstoned' as const };
     }
 

@@ -1505,7 +1505,7 @@ export async function settleOrganizeApplyChunk(input: Readonly<{
           settled.push({ ...base, state: 'skipped', outcomeReason: 'missing' });
           continue;
         }
-        if (star.tombstone) {
+        if (star.tombstone || star.viewer_has_starred === false) {
           settled.push({ ...base, state: 'skipped', outcomeReason: 'tombstoned' });
           continue;
         }

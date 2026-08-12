@@ -231,7 +231,7 @@ export function RepoDetailPanel({
   return (
     <div
       className={cn(
-        "gsm-scrollbar-stable flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card",
+        "gsm-scrollbar-stable flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card max-[640px]:w-full",
         {
           "opacity-55": interactionLocked,
         },
@@ -317,8 +317,10 @@ export function RepoDetailPanel({
             value={star.pushed_at ? star.pushed_at.slice(0, 10) : m.common.none}
           />
           <Meta
-            label={m.repoDetail.starred}
-            value={star.starred_at.slice(0, 10)}
+            label={star.viewer_has_starred === false ? m.repoDetail.librarySource : m.repoDetail.starred}
+            value={star.viewer_has_starred === false
+              ? m.repoDetail.ownedPublicRepository
+              : star.starred_at.slice(0, 10)}
           />
         </div>
 
