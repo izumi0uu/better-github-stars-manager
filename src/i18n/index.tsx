@@ -2472,7 +2472,7 @@ const messages: Record<Locale, MessageCatalog> = {
       subjectStateOpen: "Open",
       subjectStateClosed: "Closed",
       subjectStateReason: (reason) => `状态：${reason.replace(/_/g, " ")}`,
-      subjectAuthor: (login) => `作者 @${login}`,∂
+      subjectAuthor: (login) => `作者 @${login}`,
       subjectCreated: (time) => `创建于 ${time}`,
       subjectComments: (count) => `${count} 条评论`,
       subjectLabels: "标签",

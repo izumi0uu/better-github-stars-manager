@@ -20,6 +20,27 @@ describe('Agent release conformance', () => {
     expect(source).toContain('agentDisclosureKeyException');
     expect(source).toContain('agentDisclosureCustomAccess');
   });
+  it('records the context v2 Pi comparison and removes stale no-compaction claims', () => {
+    const piReference = read('docs/plans/agent-provider/pi-source-reference.md');
+    const normalizedPiReference = piReference.replace(/\s+/gu, ' ');
+    for (const phrase of [
+      '6d5ede31c8b8584b422bd0fa2ce10a39b2a0cdce',
+      '1,050,000',
+      '128,000',
+      '272K',
+      'dynamic tool-result allowance',
+      'does not reuse `16384` as a byte result cap',
+      'completed assistant-tool envelope',
+    ]) expect(normalizedPiReference).toContain(phrase);
+
+    const review = read('docs/bgsm-agent-implementation-review.md');
+    expect(review).toContain('Automatic context compaction is now implemented');
+    expect(review).not.toContain('- automatic context compaction;');
+
+    const plan = read('docs/bgsm-agent-tag-assistant-plan.md');
+    expect(plan).toContain('compacts before a turn and after a complete tool');
+    expect(plan).not.toContain('MVP does not need full chat memory compaction yet');
+  });
 
   it('states the complete Provider privacy boundary without forcing identical prose', () => {
     const privacy = read('docs/en/privacy-policy.md').toLowerCase();
@@ -237,7 +258,6 @@ describe('Agent release conformance', () => {
     ]) expect(normalizedReference).toContain(phrase);
     expect(technicalReference).not.toContain('MVP does not need full chat memory compaction yet');
   });
-
   it('delegates Agent background authority through the worker runtime graph', () => {
     const background = read('src/background/index.ts');
     const runtime = read('src/background/bgsm-agent-runtime.ts');
