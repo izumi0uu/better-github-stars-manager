@@ -177,7 +177,7 @@ export const StarRow = memo(function StarRow({
                   <Badge
                     data-row-badge="fork"
                     variant="outline"
-                    className="h-4 shrink-0 gap-1 border-info/35 bg-info/10 px-1.5 text-[10px] font-medium text-info"
+                    className="h-4 shrink-0 gap-1 border-info/35 bg-info/10 px-1.5 text-[10px] font-medium leading-none text-info"
                   >
                     <GitFork className="size-2.5" aria-hidden="true" />
                     {m.starRow.fork}
