@@ -10,7 +10,6 @@ vi.mock('@/auth/auth-store', () => ({
   authStore: {
     getConfig: vi.fn(),
     getToken: vi.fn(),
-    getWatchNotificationsToken: vi.fn(),
     getAgentApiKey: vi.fn(),
   },
 }));
@@ -219,63 +218,46 @@ describe('Provider diagnostics runtime probe scrubbing', () => {
     vi.clearAllMocks();
   });
 
-  it.each([
-    ['main', 'configured-main-watch-token-value', 'configured-main-watch-token-value'],
-    ['dedicated', 'configured-main-token-value', 'configured-dedicated-watch-token-value'],
-    [null, 'configured-main-token-value', null],
-  ] as const)(
-    'scrubs configured secrets and credential patterns with Watch source %s',
-    async (watchCredentialSource, mainToken, watchToken) => {
-      const stored = new Map<string, unknown>();
-      const posts: string[] = [];
-      const agentApiKey = 'agent-key-value-123';
-      const echoedSecrets = [mainToken, watchToken, agentApiKey].filter(
-        (secret): secret is string => secret !== null,
-      );
-      vi.mocked(authStore.getToken).mockResolvedValue(mainToken);
-      vi.mocked(authStore.getWatchNotificationsToken).mockResolvedValue(watchToken);
-      vi.mocked(authStore.getAgentApiKey).mockResolvedValue(agentApiKey);
-      vi.mocked(authStore.getConfig).mockResolvedValue({
-        agentProvider: providerConfig,
-        watchCredentialSource,
-      } as Partial<Config> as Config);
-      vi.stubGlobal('chrome', {
-        storage: { session: storage(stored) },
-        permissions: { contains: vi.fn(async () => true) },
-      });
-      vi.stubGlobal('fetch', vi.fn(async (_input: unknown, init?: RequestInit) => {
-        if (init?.body !== undefined) posts.push(String(init.body));
-        return new Response('{}', { status: 202 });
-      }));
-
-      const runtime = createProviderDiagnosticsRuntime();
-      await runtime.monitor.start({
-        sessionId: 'provider-monitor:scrub',
-        startedAt: Date.now(),
-        expiresAt: Date.now() + 60_000,
-      });
-      posts.length = 0;
-
-      runtime.recordProbeFailure('probe:scrub', Date.now(), new AgentProviderError(
-        'http_error',
-        `HTTP 401: keys ${echoedSecrets.join(' and ')} rejected; header Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456`,
-        401,
-      ));
-
-      await vi.waitFor(() => {
-        expect(posts.some((body) => body.includes('probe_failed'))).toBe(true);
-      });
-      await runtime.monitor.flush();
-
-      const serialized = posts.join('\n');
-      expect(serialized).toContain('[REDACTED]');
-      for (const secret of new Set(echoedSecrets)) {
-        expect(serialized).not.toContain(secret);
-      }
-      expect(serialized).not.toContain('abcdefghijklmnopqrstuvwxyz123456');
-      expect(serialized).not.toContain('watchCredentialSource');
-    },
-  );
+  it('scrubs the configured main GitHub token and agent key', async () => {
+    const stored = new Map<string, unknown>();
+    const posts: string[] = [];
+    const mainToken = 'configured-main-token-value';
+    const agentApiKey = 'agent-key-value-123';
+    vi.mocked(authStore.getToken).mockResolvedValue(mainToken);
+    vi.mocked(authStore.getAgentApiKey).mockResolvedValue(agentApiKey);
+    vi.mocked(authStore.getConfig).mockResolvedValue({
+      agentProvider: providerConfig,
+    } as Partial<Config> as Config);
+    vi.stubGlobal('chrome', {
+      storage: { session: storage(stored) },
+      permissions: { contains: vi.fn(async () => true) },
+    });
+    vi.stubGlobal('fetch', vi.fn(async (_input: unknown, init?: RequestInit) => {
+      if (init?.body !== undefined) posts.push(String(init.body));
+      return new Response('{}', { status: 202 });
+    }));
+    const runtime = createProviderDiagnosticsRuntime();
+    await runtime.monitor.start({
+      sessionId: 'provider-monitor:scrub',
+      startedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    });
+    posts.length = 0;
+    runtime.recordProbeFailure('probe:scrub', Date.now(), new AgentProviderError(
+      'http_error',
+      `HTTP 401: keys ${mainToken} and ${agentApiKey} rejected; header Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456`,
+      401,
+    ));
+    await vi.waitFor(() => {
+      expect(posts.some((body) => body.includes('probe_failed'))).toBe(true);
+    });
+    await runtime.monitor.flush();
+    const serialized = posts.join('\n');
+    expect(serialized).toContain('[REDACTED]');
+    expect(serialized).not.toContain(mainToken);
+    expect(serialized).not.toContain(agentApiKey);
+    expect(serialized).not.toContain('abcdefghijklmnopqrstuvwxyz123456');
+  });
 });
 
 function storage(values: Map<string, unknown>) {
