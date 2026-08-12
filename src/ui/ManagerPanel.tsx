@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
@@ -9,12 +9,20 @@ import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { StarsTable } from '@/ui/components/StarsTable';
-import { WatchInbox } from '@/ui/components/WatchInbox';
+import {
+  WatchInbox,
+  WatchStatusRibbon,
+} from '@/ui/components/WatchInbox';
+import {
+  RadarStatusRibbon,
+  RadarSurface,
+} from '@/ui/components/RadarSurface';
 import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
 import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
 import { useAutoTagAgentPrompt } from '@/ui/hooks/use-auto-tag-agent-prompt';
 import { useWatchInbox } from '@/ui/hooks/use-watch-inbox';
+import { useRadar } from '@/ui/hooks/use-radar';
 import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
@@ -22,6 +30,7 @@ import { PortalProvider } from '@/ui/shadcn/portal-context';
 import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import { useTheme } from '@/ui/hooks/use-theme';
 import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut } from '@/ui/interaction-lock';
+import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { bgCall, type SyncStatus } from '@/utils/messaging';
 import { hidePanel } from '@/content/stars-page/panel-toggle';
 import { cn } from '@/lib/utils';
@@ -32,6 +41,12 @@ import { layoutViewportFromMeasurements, type LayoutViewportState } from '@/ui/l
 import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
 import { nextOpenUnstarFullName } from '@/ui/unstar-popover-state';
 import type { AgentHostPresentation } from '@/ui/components/AgentHost';
+import {
+  managerSurfaceDirection,
+  managerSurfaceFromShortcut,
+  type ManagerSurface,
+  type ManagerSurfaceDirection,
+} from '@/ui/manager-surface';
 
 const LazyAgentHost = lazy(() => import('@/ui/components/AgentHost').then(({ AgentHost }) => ({
   default: AgentHost,
@@ -44,8 +59,13 @@ type UnstarFeedback =
   | { kind: 'done'; fullName: string }
   | { kind: 'failed'; fullName: string; error: string };
 
-type ManagerSurface = 'stars' | 'watch';
 type WatchRepositoryDetail = { star: Star | null; tag: Tag | null };
+type Account = {
+  username: string | null;
+  avatarUrl: string | null;
+  displayName: string | null;
+  gistId: string | null;
+};
 
 const REPO_MARKER = '__GSM_REPO__';
 const TOKEN_SETTINGS_LABEL = 'github.com/settings/tokens';
@@ -109,6 +129,7 @@ function helperInfoKey(info: string | null, unstarFeedback: UnstarFeedback | nul
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
   const watchInbox = useWatchInbox();
+  const radar = useRadar();
   const f = useFilterStore();
   const {
     status,
@@ -127,6 +148,8 @@ export function ManagerPanel() {
     isOnboardingCardStage,
   } = useManagerSyncActions({ refreshStars });
   const [surface, setSurface] = useState<ManagerSurface>('stars');
+  const [account, setAccount] = useState<Account | null>(null);
+  const [surfaceDirection, setSurfaceDirection] = useState<ManagerSurfaceDirection>('forward');
   const [selected, setSelected] = useState<string | null>(null);
   const [watchDetail, setWatchDetail] = useState<WatchRepositoryDetail | null>(null);
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
@@ -140,7 +163,12 @@ export function ManagerPanel() {
   const [unstarFeedback, setUnstarFeedback] = useState<UnstarFeedback | null>(null);
   const [openUnstarFullName, setOpenUnstarFullName] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
+  const bindListRef = useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node;
+    setListElement(node);
+  }, []);
   const rootRef = useRef<HTMLDivElement>(null);
   const layoutResizeLiveAdapterRef = useRef<LayoutResizeLiveAdapter | null>(null);
   const watchDetailGeneration = useRef(0);
@@ -200,7 +228,52 @@ export function ManagerPanel() {
   const visibleTotal = total;
   const visibleGrandTotal = grandTotal;
   const starsSurface = surface === 'stars';
+  const watchSurface = surface === 'watch';
+  const radarSurface = surface === 'radar';
 
+  useEffect(() => {
+    let cancelled = false;
+    const refreshAccount = async () => {
+      const next = typeof authStore.getAccount === 'function'
+        ? await authStore.getAccount().catch(() => null)
+        : null;
+      if (cancelled || !next) return null;
+      setAccount(next);
+      if (!next.username) useFilterStore.getState().setOnlyOwned(false);
+      return next;
+    };
+    void refreshAccount().then((current) => {
+      if (!current?.username || current.avatarUrl) return;
+      void bgCall<Account>('fetchAccount')
+        .then((next) => {
+          if (!cancelled) setAccount(next);
+        })
+        .catch(() => {});
+    });
+    if (typeof chrome === 'undefined' || !chrome.storage?.onChanged) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const listener = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      const configChange = changes[CONFIG_STORAGE_KEY];
+      if (areaName !== 'local' || !configChange) return;
+      const nextUsername = (configChange.newValue as { username?: unknown } | undefined)?.username;
+      if (typeof nextUsername !== 'string' || !nextUsername.trim()) {
+        useFilterStore.getState().setOnlyOwned(false);
+      }
+      void refreshAccount();
+    };
+    chrome.storage.onChanged.addListener(listener);
+    return () => {
+      cancelled = true;
+      chrome.storage.onChanged.removeListener(listener);
+    };
+  }, []);
   useEffect(() => () => {
     watchDetailGeneration.current++;
   }, []);
@@ -222,14 +295,26 @@ export function ManagerPanel() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (shouldIgnorePanelShortcut(interactionLocked, e.target)) return;
-      if (e.key === '/') {
+      const unmodified = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+      if (unmodified && e.key === '/' && starsSurface) {
         e.preventDefault();
         searchRef.current?.focus();
+        return;
+      }
+      if (unmodified && e.key.toLocaleLowerCase('en-US') === 'v' && radarSurface) {
+        e.preventDefault();
+        radar.setView(radar.view === 'feed' ? 'projects' : 'feed');
+        return;
+      }
+      const shortcutSurface = managerSurfaceFromShortcut(e.key);
+      if (shortcutSurface && !e.altKey && !e.ctrlKey && !e.shiftKey) {
+        e.preventDefault();
+        handleSurfaceChange(shortcutSurface);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [interactionLocked]);
+  }, [interactionLocked, radar, radarSurface, starsSurface]);
 
   const dismissOnboarding = async () => {
     setCoachStep(null);
@@ -292,7 +377,7 @@ export function ManagerPanel() {
 
   const handleDetailDataChanged = () => {
     refreshStars();
-    if (!starsSurface && selectedStar) {
+    if (watchSurface && selectedStar) {
       void handleWatchRepositorySelect(selectedStar.full_name);
     }
   };
@@ -320,6 +405,7 @@ export function ManagerPanel() {
     setUnstarFeedback(null);
     setAgentPanelOpen(false);
     autoTagAgentPrompt.dismiss();
+    setSurfaceDirection(managerSurfaceDirection(surface, next));
     setSurface(next);
   };
 
@@ -339,12 +425,14 @@ export function ManagerPanel() {
           onlyFavorite: f.onlyFavorite,
           onlyUntagged: f.onlyUntagged,
           onlyArchived: f.onlyArchived,
+          onlyOwned: f.onlyOwned,
           sortKey: f.sortKey,
           sortDir: f.sortDir,
         },
       }, [
     f.languages,
     f.onlyArchived,
+    f.onlyOwned,
     f.onlyFavorite,
     f.onlyUntagged,
     f.query,
@@ -409,7 +497,8 @@ export function ManagerPanel() {
   };
 
   const hasActiveFilter =
-    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged || f.onlyArchived;
+    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged
+    || f.onlyArchived || f.onlyOwned;
   const activeBackfillId = status?.activeBackfillId ?? null;
   const activeBackfillState = activeBackfillId ? status?.backfills[activeBackfillId] ?? null : null;
 
@@ -460,6 +549,7 @@ export function ManagerPanel() {
       >
         <Toolbar
           f={f}
+          account={account}
           status={status}
           loading={loading}
           listPhase={phase}
@@ -492,7 +582,26 @@ export function ManagerPanel() {
           surface={surface}
           onSurfaceChange={handleSurfaceChange}
           watchUnreadCount={watchInbox.result?.unreadCount ?? 0}
+          radarUnseenCount={radar.result?.unseenCount ?? 0}
         />
+        {watchSurface && (
+          <WatchStatusRibbon
+            result={watchInbox.result}
+            loading={watchInbox.loading}
+            refreshing={watchInbox.refreshing}
+            error={watchInbox.error}
+            onOpenOptions={() => bgCall('openOptions', { section: 'watch' }).catch(() => {})}
+          />
+        )}
+        {radarSurface && (
+          <RadarStatusRibbon
+            result={radar.result}
+            loading={radar.loading}
+            refreshing={radar.refreshing}
+            error={radar.error}
+            onOpenOptions={() => bgCall('openOptions').catch(() => {})}
+          />
+        )}
         {starsSurface && layoutColumnMenu}
 
         {starsSurface && statusLoaded && status && !status.hasToken && status.onboardingStage === 'done' && (
@@ -530,11 +639,20 @@ export function ManagerPanel() {
           </div>
         )}
 
-        <div className="flex min-h-0 flex-1">
+        <div
+          key={surface}
+          id={`gsm-${surface}-surface-panel`}
+          role="tabpanel"
+          data-surface={surface}
+          data-surface-direction={surfaceDirection}
+          aria-labelledby={`gsm-${surface}-surface-tab`}
+          className="gsm-surface-panel relative flex min-h-0 flex-1"
+        >
           {starsSurface && <FilterSidebar
             f={f}
             languages={languages}
             tagTree={tagTree}
+            accountLogin={account?.username ?? null}
             interactionLocked={interactionLocked}
             onTagMutationMessage={(message) => {
               if (message) setInfo(message);
@@ -544,11 +662,12 @@ export function ManagerPanel() {
           />}
 
           <div
-            ref={listRef}
+            ref={bindListRef}
             data-coach-target={starsSurface ? 'repo' : undefined}
+            data-surface={surface}
             className="no-scrollbar flex-1 overflow-auto"
           >
-            {!starsSurface ? (
+            {watchSurface ? (
               <WatchInbox
                 result={watchInbox.result}
                 loading={watchInbox.loading}
@@ -558,8 +677,36 @@ export function ManagerPanel() {
                 onUnreadOnlyChange={watchInbox.setUnreadOnly}
                 onRefresh={() => { void watchInbox.refresh(); }}
                 onRetryQuery={() => { void watchInbox.reload(); }}
+                actionPending={watchInbox.actionPending}
+                actionError={watchInbox.actionError}
+                onMarkThreadsRead={(threadIds) => { void watchInbox.markThreadsRead(threadIds); }}
+                onMarkThreadsDone={(threadIds) => { void watchInbox.markThreadsDone(threadIds); }}
                 onOpenOptions={() => bgCall('openOptions', { section: 'watch' }).catch(() => {})}
+                onOpenMainTokenOptions={() => bgCall('openOptions', { section: 'github' }).catch(() => {})}
+                collapsedRepositories={watchInbox.collapsedRepositories}
+                onRepositoryCollapseChange={watchInbox.updateRepositoryCollapse}
                 onSelectRepository={(fullName) => { void handleWatchRepositorySelect(fullName); }}
+              />
+            ) : radarSurface ? (
+              <RadarSurface
+                result={radar.result}
+                loading={radar.loading}
+                refreshing={radar.refreshing}
+                error={radar.error}
+                actionError={radar.actionError}
+                pendingAction={radar.pendingAction}
+                view={radar.view}
+                onViewChange={radar.setView}
+                onSourceEnabledChange={radar.setSourceEnabled}
+                sources={radar.sources}
+                onRefresh={() => { void radar.refresh(); }}
+                onRetryQuery={() => { void radar.reload(); }}
+                onOpenOptions={() => bgCall('openOptions').catch(() => {})}
+                onStar={radar.star}
+                onSetFavorite={radar.setFavorite}
+                onAddTag={radar.addTag}
+                onDismiss={radar.dismiss}
+                onMarkSeen={radar.markSeen}
               />
             ) : !statusLoaded || !status ? (
               <div className="p-10 text-center text-sm text-muted-foreground">
@@ -584,6 +731,7 @@ export function ManagerPanel() {
               />
             ) : (
               <StarsTable
+                scrollElement={listElement}
                 rows={visibleRows}
                 searchQuery={f.query}
                 showRepositoryOwner={showRepositoryOwner}
@@ -627,8 +775,20 @@ export function ManagerPanel() {
               />
             )}
           </div>
+          {selectedStar && (
+            <button
+              type="button"
+              className="absolute inset-0 z-20 hidden bg-background/60 backdrop-blur-[1px] max-[899px]:block"
+              aria-label={m.common.close}
+              onClick={() => {
+                watchDetailGeneration.current++;
+                setSelected(null);
+                setWatchDetail(null);
+              }}
+            />
+          )}
 
-          <div className={cn('drawer-anim border-l border-border', {
+          <div className={cn('drawer-anim z-30 border-l border-border max-[899px]:absolute max-[899px]:inset-y-0 max-[899px]:right-0 max-[899px]:shadow-xl max-[640px]:left-0', {
             'drawer-enter': selectedStar,
             'drawer-exit': !selectedStar,
           })}>
@@ -730,7 +890,7 @@ function OnboardingCard({
               <li>
                 <a
                   className="text-primary hover:underline"
-                  href="https://github.com/settings/personal-access-tokens/new"
+                  href="https://github.com/settings/tokens/new?scopes=repo,gist,notifications&description=Better%20GitHub%20Stars%20Manager"
                   target="_blank"
                   rel="noreferrer"
                   {...getLockedAnchorProps(interactionLocked)}

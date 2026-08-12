@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Sun, Moon, Search, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow, X,
   Tags, Upload, Download, AlertTriangle, ExternalLink, Home, EyeOff, Star, RefreshCcw,
   Pencil, ChevronDown,
 } from 'lucide-react';
-import { CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { REPO_URL } from '@/lib/links';
 import type { FilterState } from '@/ui/filter-store';
 import type { SyncStatus } from '@/utils/messaging';
@@ -25,6 +24,12 @@ import { getLockedAnchorProps } from '@/ui/interaction-lock';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { LAYOUT_PREVIEW_HOVER_DELAY_MS } from '@/ui/layout-edit-constants';
+import {
+  managerSurfaceFromNavigation,
+  type ManagerSurface,
+} from '@/ui/manager-surface';
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+const SURFACE_COUNT_BADGE_CLASS = 'inline-grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none tabular-nums text-primary-foreground';
 
 /** Top toolbar for the stars page. */
 type Account = { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null };
@@ -163,6 +168,7 @@ function ActionPhaseIcon({
 }
 
 export function Toolbar({
+  account,
   f,
   status,
   loading,
@@ -196,7 +202,9 @@ export function Toolbar({
   surface = 'stars',
   onSurfaceChange,
   watchUnreadCount = 0,
+  radarUnseenCount = 0,
 }: {
+  account: Account | null;
   f: FilterState;
   status: SyncStatus | null;
   loading: boolean;
@@ -228,15 +236,20 @@ export function Toolbar({
   onStartLayoutEdit: () => void;
   onPreviewCustomChange: (previewing: boolean) => void;
   layoutEditChrome?: ReactNode;
-  surface?: 'stars' | 'watch';
-  onSurfaceChange?: (surface: 'stars' | 'watch') => void;
+  surface?: ManagerSurface;
+  onSurfaceChange?: (surface: ManagerSurface) => void;
   watchUnreadCount?: number;
+  radarUnseenCount?: number;
 }) {
   const { m } = useI18n();
-  const [account, setAccount] = useState<Account | null>(null);
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [gistMenuOpen, setGistMenuOpen] = useState(false);
+  const starsTabRef = useRef<HTMLButtonElement | null>(null);
+  const watchTabRef = useRef<HTMLButtonElement | null>(null);
+  const radarTabRef = useRef<HTMLButtonElement | null>(null);
+  const [surfaceIndicator, setSurfaceIndicator] = useState({ left: 0, width: 0 });
   const starsSurface = surface === 'stars';
+  const watchSurface = surface === 'watch';
   const syncing = !!status?.inFlight && status.progress.phase !== 'idle';
   const phase = syncing ? status!.progress : null;
   const actionBusy = busy || syncing || pendingAction !== null;
@@ -269,48 +282,11 @@ export function Toolbar({
       ? m.toolbar.gistPulling
       : m.toolbar.gistButton;
 
-  useEffect(() => {
-    let cancelled = false;
-    const refreshAccount = async () => {
-      const acc = await bgCall<Account>('getAccount').catch(() => null);
-      if (cancelled || !acc) return null;
-      setAccount(acc);
-      return acc;
-    };
-
-    (async () => {
-      const acc = await refreshAccount();
-      if (acc && !acc.avatarUrl && acc.username) {
-        const backfilled = await bgCall<Account>('fetchAccount').catch(() => null);
-        if (!cancelled && backfilled) setAccount(backfilled);
-      }
-    })();
-
-    const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
-      if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]) return;
-      const oldCfg = changes[CONFIG_STORAGE_KEY].oldValue as Account | undefined;
-      const newCfg = changes[CONFIG_STORAGE_KEY].newValue as Account | undefined;
-      if (
-        oldCfg?.username === newCfg?.username &&
-        oldCfg?.avatarUrl === newCfg?.avatarUrl &&
-        oldCfg?.displayName === newCfg?.displayName &&
-        oldCfg?.gistId === newCfg?.gistId
-      ) return;
-      void refreshAccount();
-    };
-
-    chrome.storage.onChanged.addListener(listener);
-
-    return () => {
-      cancelled = true;
-      chrome.storage.onChanged.removeListener(listener);
-    };
-  }, []);
 
   const prevPending = useRef<string | null>(null);
   useEffect(() => {
     if ((prevPending.current === 'gistPush' || prevPending.current === 'gistPull') && pendingAction === null) {
-      bgCall<Account>('getAccount').then((acc) => setAccount(acc)).catch(() => {});
+      void bgCall<Account>('fetchAccount').catch(() => {});
     }
     prevPending.current = pendingAction;
   }, [pendingAction]);
@@ -329,6 +305,46 @@ export function Toolbar({
     customPreviewIntent.clear();
   }, [customPreviewIntent.clear, starsSurface]);
 
+  useIsomorphicLayoutEffect(() => {
+    if (!onSurfaceChange) return;
+    const tabRefs: Record<ManagerSurface, React.RefObject<HTMLButtonElement | null>> = {
+      stars: starsTabRef,
+      watch: watchTabRef,
+      radar: radarTabRef,
+    };
+    const activeTab = tabRefs[surface].current;
+    if (!activeTab) return;
+    const updateIndicator = () => {
+      setSurfaceIndicator({ left: activeTab.offsetLeft, width: activeTab.offsetWidth });
+    };
+    updateIndicator();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(updateIndicator);
+    for (const tabRef of Object.values(tabRefs)) {
+      if (tabRef.current) observer.observe(tabRef.current);
+    }
+    return () => observer.disconnect();
+  }, [onSurfaceChange, radarUnseenCount, surface, watchUnreadCount]);
+
+  const handleSurfaceKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    current: ManagerSurface,
+  ) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const next = managerSurfaceFromNavigation(
+      current,
+      event.key as 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End',
+    );
+    onSurfaceChange?.(next);
+    const target: Record<ManagerSurface, HTMLButtonElement | null> = {
+      stars: starsTabRef.current,
+      watch: watchTabRef.current,
+      radar: radarTabRef.current,
+    };
+    target[next]?.focus();
+  };
+
   const seenTooltips = status?.seenTooltips ?? 0;
 
   const runSync = (type: string, label: string) => {
@@ -342,68 +358,122 @@ export function Toolbar({
 
   return (
     <div className="border-b border-border bg-card">
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-        {/* Star the project — links to the repo (leftmost, top-left of the
-            panel). Opens in a new tab so the manager panel stays mounted. */}
+      <div className="flex min-h-[52px] flex-wrap items-center gap-2 px-2.5 pl-3.5">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn('h-9 gap-1 px-2', { 'pointer-events-none opacity-50': layoutEditing })}
-              asChild
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={m.toolbar.starRepoTitle}
+              title={m.toolbar.starRepoTitle}
+              className={cn('group/product grid size-9 shrink-0 place-items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring', {
+                'pointer-events-none opacity-50': layoutEditing,
+              })}
+              {...getLockedAnchorProps(layoutEditing)}
             >
-              <a
-                href={REPO_URL}
-                target="_blank"
-                rel="noreferrer"
-                title={m.toolbar.starRepoTitle}
-                {...getLockedAnchorProps(layoutEditing)}
+              <span
+                className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground transition-[background-color,color,transform] duration-150 ease-out group-hover/product:bg-primary-foreground group-hover/product:text-primary group-active/product:scale-95 group-active/product:bg-primary-foreground group-active/product:text-primary motion-reduce:transform-none motion-reduce:transition-none"
+                aria-hidden="true"
               >
-                <Star className="size-4" data-icon="inline-start" />
-                <span className="text-xs">Star</span>
-              </a>
-            </Button>
+                <Star className="size-4" />
+              </span>
+            </a>
           </TooltipTrigger>
           <TooltipContent>{m.toolbar.starRepoTitle}</TooltipContent>
         </Tooltip>
 
-        {onSurfaceChange && <div
-          className="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5 text-xs"
-          role="group"
-          aria-label={m.watch.title}
-        >
-          <button
-            type="button"
-            aria-pressed={starsSurface}
-            disabled={layoutEditing}
-            onClick={() => onSurfaceChange('stars')}
-            className={cn('h-7 rounded px-2.5 font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
-              'bg-background text-foreground shadow-sm': starsSurface,
-            })}
+        {onSurfaceChange && (
+          <div
+            className="relative flex h-[52px] self-stretch"
+            role="tablist"
+            aria-label={m.manager.surfaceNavigation}
           >
-            {m.watch.starsSurface}
-          </button>
-          <button
-            type="button"
-            aria-pressed={!starsSurface}
-            aria-label={watchUnreadCount > 0
-              ? m.watch.watchSurfaceUnread(watchUnreadCount)
-              : m.watch.watchSurface}
-            disabled={layoutEditing}
-            onClick={() => onSurfaceChange('watch')}
-            className={cn('inline-flex h-7 items-center gap-1.5 rounded px-2.5 font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
-              'bg-background text-foreground shadow-sm': !starsSurface,
-            })}
-          >
-            {m.watch.watchSurface}
-            {watchUnreadCount > 0 && (
-              <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground tabular-nums">
-                {watchUnreadCount > 99 ? '99+' : watchUnreadCount}
-              </span>
-            )}
-          </button>
-        </div>}
+            <button
+              ref={starsTabRef}
+              id="gsm-stars-surface-tab"
+              type="button"
+              role="tab"
+              aria-selected={starsSurface}
+              aria-controls="gsm-stars-surface-panel"
+              tabIndex={starsSurface ? 0 : -1}
+              disabled={layoutEditing}
+              onKeyDown={(event) => handleSurfaceKeyDown(event, 'stars')}
+              onClick={() => onSurfaceChange('stars')}
+              className={cn('relative inline-flex h-full items-center gap-1.5 px-3 text-[13px] font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', {
+                'text-foreground': starsSurface,
+              })}
+            >
+              {m.watch.starsSurface}
+            </button>
+            <button
+              ref={watchTabRef}
+              id="gsm-watch-surface-tab"
+              type="button"
+              role="tab"
+              aria-selected={watchSurface}
+              aria-controls="gsm-watch-surface-panel"
+              aria-label={watchUnreadCount > 0
+                ? m.watch.watchSurfaceUnread(watchUnreadCount)
+                : m.watch.watchSurface}
+              tabIndex={watchSurface ? 0 : -1}
+              disabled={layoutEditing}
+              onKeyDown={(event) => handleSurfaceKeyDown(event, 'watch')}
+              onClick={() => onSurfaceChange('watch')}
+              className={cn('relative inline-flex h-full items-center gap-1.5 px-3 text-[13px] font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', {
+                'text-foreground': watchSurface,
+              })}
+            >
+              {m.watch.watchSurface}
+              {watchUnreadCount > 0 && (
+                <span
+                  aria-hidden="true"
+                  className={SURFACE_COUNT_BADGE_CLASS}
+                >
+                  {watchUnreadCount > 99 ? '99+' : watchUnreadCount}
+                </span>
+              )}
+            </button>
+            <button
+              ref={radarTabRef}
+              id="gsm-radar-surface-tab"
+              type="button"
+              role="tab"
+              aria-selected={surface === 'radar'}
+              aria-controls="gsm-radar-surface-panel"
+              aria-label={radarUnseenCount > 0
+                ? m.radar.surfaceUnseen(radarUnseenCount)
+                : m.radar.surface}
+              tabIndex={surface === 'radar' ? 0 : -1}
+              disabled={layoutEditing}
+              onKeyDown={(event) => handleSurfaceKeyDown(event, 'radar')}
+              onClick={() => onSurfaceChange('radar')}
+              className={cn('relative inline-flex h-full items-center gap-1.5 px-3 text-[13px] font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', {
+                'text-foreground': surface === 'radar',
+              })}
+            >
+              {m.radar.surface}
+              {radarUnseenCount > 0 && (
+                <span
+                  aria-hidden="true"
+                  data-radar-unseen-badge
+                  className={SURFACE_COUNT_BADGE_CLASS}
+                >
+                  {radarUnseenCount > 99 ? '99+' : radarUnseenCount}
+                </span>
+              )}
+            </button>
+            <span
+              className="gsm-surface-indicator pointer-events-none absolute -bottom-px h-0.5 rounded-full bg-foreground"
+              style={{
+                width: surfaceIndicator.width,
+                transform: `translateX(${surfaceIndicator.left}px)`,
+                opacity: surfaceIndicator.width > 0 ? 1 : 0,
+              }}
+              aria-hidden="true"
+            />
+          </div>
+        )}
 
         {starsSurface && (
           <>
@@ -565,6 +635,7 @@ export function Toolbar({
 
         <span className="flex-1" />
 
+
         {/* Optional AI workbench entry — post-spacer, independent of Auto Tags. */}
         {starsSurface && onOpenAgent && (
           <TButton
@@ -707,7 +778,7 @@ export function Toolbar({
             <Button
               variant="ghost"
               size="icon"
-              className={cn('h-9 w-9', { 'pointer-events-none opacity-50': layoutEditing })}
+              className={cn('h-9 w-9 max-[720px]:hidden', { 'pointer-events-none opacity-50': layoutEditing })}
               asChild
             >
               <a href="https://github.com" title={m.toolbar.githubHomeTitle} {...getLockedAnchorProps(layoutEditing)}>
@@ -721,7 +792,7 @@ export function Toolbar({
         {account?.username && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background py-0.5 pl-0.5 pr-2.5">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background py-0.5 pl-0.5 pr-2.5 max-[720px]:hidden">
                 {account.avatarUrl ? (
                   <img
                     src={account.avatarUrl}
@@ -734,7 +805,7 @@ export function Toolbar({
                     {account.username.slice(0, 2).toUpperCase()}
                   </span>
                 )}
-                <span className="max-w-[100px] truncate text-xs font-medium">@{account.username}</span>
+                <span className="max-w-[100px] truncate text-xs font-medium max-[940px]:hidden">@{account.username}</span>
               </div>
             </TooltipTrigger>
             <TooltipContent>{m.toolbar.accountTitle(account.username)}</TooltipContent>
@@ -742,6 +813,7 @@ export function Toolbar({
         )}
       </div>
 
+      {starsSurface && (
       <div className="flex flex-col gap-1 border-t border-border/50 px-3 py-1 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-4">
           {starsSurface && <span
@@ -850,6 +922,7 @@ export function Toolbar({
           </div>
         )}
       </div>
+      )}
       {starsSurface && (
         <>
           {layoutEditChrome}

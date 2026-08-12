@@ -9,6 +9,7 @@ import { Toolbar } from '@/ui/components/Toolbar';
 import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import { DEFAULT_COLUMN_LAYOUT } from '@/ui/column-layout';
 import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut } from '@/ui/interaction-lock';
+import { REPO_URL } from '@/lib/links';
 import type { FilterState } from '@/ui/filter-store';
 import { fakeStar, fakeTag } from './test-utils';
 
@@ -22,6 +23,7 @@ function fakeFilterState(): FilterState {
     onlyFavorite: true,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at',
     sortDir: 'desc',
     libraryViewHydrated: true,
@@ -34,6 +36,7 @@ function fakeFilterState(): FilterState {
     setOnlyFavorite: vi.fn(),
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
+    setOnlyOwned: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
@@ -46,16 +49,21 @@ function renderToolbarViewTabs({
   layoutConfigReady = true,
   layoutEditReady = true,
   agentActive,
+  watchUnreadCount = 7,
+  radarUnseenCount = 0,
 }: {
   layoutMode: 'default' | 'custom';
   customPreviewing: boolean;
   layoutConfigReady?: boolean;
   layoutEditReady?: boolean;
   agentActive?: boolean;
+  watchUnreadCount?: number;
+  radarUnseenCount?: number;
 }) {
   return renderToStaticMarkup(
     <TooltipProvider>
       <Toolbar
+        account={null}
         f={fakeFilterState()}
         status={null}
         loading={false}
@@ -82,12 +90,116 @@ function renderToolbarViewTabs({
         onLayoutModeChange={vi.fn()}
         onStartLayoutEdit={vi.fn()}
         onPreviewCustomChange={vi.fn()}
+        surface="stars"
+        onSurfaceChange={vi.fn()}
+        watchUnreadCount={watchUnreadCount}
+        radarUnseenCount={radarUnseenCount}
       />
     </TooltipProvider>,
   );
 }
 
+function findSurfaceTabMarkup(markup: string, id: string): string {
+  const tab = markup.match(new RegExp(`<button[^>]*id="${id}"[^>]*>[\\s\\S]*?</button>`))?.[0];
+  if (!tab) throw new Error(`Expected surface tab ${id} to render`);
+  return tab;
+}
+
 describe('layout edit interaction lock render behavior', () => {
+  it('renders Stars, Watch, and Following surface tabs with the selected underline', () => {
+    const markup = renderToolbarViewTabs({ layoutMode: 'default', customPreviewing: false });
+
+    expect(markup).toContain('role="tablist"');
+    expect(markup).toContain('id="gsm-stars-surface-tab"');
+    expect(markup).toContain('aria-controls="gsm-watch-surface-panel"');
+    expect(markup).toContain('aria-controls="gsm-radar-surface-panel"');
+    expect(markup).toContain('aria-selected="true"');
+    expect(markup).toContain('>Following</button>');
+    expect(markup).toContain('gsm-surface-indicator');
+  });
+
+  it('suppresses the Watch unread badge when the count is zero', () => {
+    const markup = renderToolbarViewTabs({
+      layoutMode: 'default',
+      customPreviewing: false,
+      watchUnreadCount: 0,
+    });
+    const watchTab = findSurfaceTabMarkup(markup, 'gsm-watch-surface-tab');
+
+    expect(watchTab).toContain('aria-label="Watch"');
+    expect(watchTab).not.toContain('aria-hidden="true"');
+  });
+
+  it('renders a normal Watch unread count with exact accessible semantics', () => {
+    const markup = renderToolbarViewTabs({
+      layoutMode: 'default',
+      customPreviewing: false,
+      watchUnreadCount: 6,
+    });
+    const watchTab = findSurfaceTabMarkup(markup, 'gsm-watch-surface-tab');
+
+    expect(watchTab).toContain('aria-label="Watch, 6 unread threads"');
+    expect(watchTab).toContain('aria-hidden="true"');
+    expect(watchTab).toContain('>6</span>');
+  });
+
+  it('caps only the displayed Watch unread count at 99+', () => {
+    const markup = renderToolbarViewTabs({
+      layoutMode: 'default',
+      customPreviewing: false,
+      watchUnreadCount: 128,
+    });
+    const watchTab = findSurfaceTabMarkup(markup, 'gsm-watch-surface-tab');
+
+    expect(watchTab).toContain('aria-label="Watch, 128 unread threads"');
+    expect(watchTab).toContain('>99+</span>');
+    expect(watchTab).not.toContain('>128</span>');
+  });
+
+  it('renders the Radar unseen count with exact accessible semantics and a 99+ visual cap', () => {
+    const empty = findSurfaceTabMarkup(renderToolbarViewTabs({
+      layoutMode: 'default',
+      customPreviewing: false,
+      radarUnseenCount: 0,
+    }), 'gsm-radar-surface-tab');
+    expect(empty).toContain('aria-label="Following"');
+    expect(empty).not.toContain('data-radar-unseen-badge');
+
+    const normal = findSurfaceTabMarkup(renderToolbarViewTabs({
+      layoutMode: 'default',
+      customPreviewing: false,
+      radarUnseenCount: 6,
+    }), 'gsm-radar-surface-tab');
+    expect(normal).toContain('aria-label="Following, 6 unseen activities"');
+    expect(normal).toContain('data-radar-unseen-badge');
+    expect(normal).toContain('>6</span>');
+
+    const capped = findSurfaceTabMarkup(renderToolbarViewTabs({
+      layoutMode: 'default',
+      customPreviewing: false,
+      radarUnseenCount: 128,
+    }), 'gsm-radar-surface-tab');
+    expect(capped).toContain('aria-label="Following, 128 unseen activities"');
+    expect(capped).toContain('>99+</span>');
+    expect(capped).not.toContain('>128</span>');
+  });
+
+  it('keeps the project repository link on the product icon', () => {
+    const markup = renderToolbarViewTabs({ layoutMode: 'default', customPreviewing: false });
+    const projectLinks = [...markup.matchAll(/<a\b[\s\S]*?<\/a>/g)]
+      .map((match) => match[0])
+      .filter((link) => link.includes(`href="${REPO_URL}"`));
+
+    expect(projectLinks).toHaveLength(1);
+    expect(projectLinks[0]).toContain('aria-label="Open the project repository"');
+    expect(projectLinks[0]).toContain('group-hover/product:bg-primary-foreground');
+    expect(projectLinks[0]).toContain('group-hover/product:text-primary');
+    expect(projectLinks[0]).toContain('group-active/product:scale-95');
+    expect(projectLinks[0]).toContain('motion-reduce:transition-none');
+    expect(markup).not.toContain('Stars Manager');
+    expect(projectLinks[0]).not.toContain('>Star</span>');
+  });
+
   it('switches the Agent toolbar icon from the static mascot to the working GIF', () => {
     const idle = renderToolbarViewTabs({
       layoutMode: 'default',
@@ -162,6 +274,7 @@ describe('layout edit interaction lock render behavior', () => {
     const markup = renderToStaticMarkup(
       <TooltipProvider>
         <Toolbar
+          account={null}
           f={fakeFilterState()}
           status={null}
           loading={false}

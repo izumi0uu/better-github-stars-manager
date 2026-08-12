@@ -33,6 +33,7 @@
     --favorite-muted-hover: 352 96% 71%;
     --success: 142 71% 45%;
     --warning: 38 92% 50%;
+    --info: 215 24% 38%;
     --search-match: 48 96% 72%;
     --search-match-foreground: 0 0% 9%;
     --border: 0 0% 90%;
@@ -45,6 +46,7 @@
     --gsm-duration-table: 160ms;
     --gsm-duration-layout: 180ms;
     --gsm-duration-control: 200ms;
+    --gsm-duration-surface: 240ms;
     --gsm-duration-emphasis: 280ms;
     --gsm-duration-check: 320ms;
     --gsm-duration-flash: 1000ms;
@@ -53,6 +55,16 @@
     --gsm-delay-check: 60ms;
     --gsm-delay-flash: 50ms;
     --gsm-column-menu-width: 208px;
+    --gsm-surface-canvas-watch: 1440px;
+    --gsm-surface-canvas-following: 1600px;
+    --gsm-surface-canvas-following-feed: 1520px;
+    --gsm-radar-unseen-bg: 210 16% 97%;
+    --gsm-radar-row-hover-bg: 210 14% 93%;
+    --gsm-radar-project-avatar-size: 22px;
+    --gsm-radar-project-avatar-overlap: 6px;
+    --gsm-radar-project-avatar-expanded-gap: 3px;
+    --gsm-radar-project-avatar-lift: 2px;
+    --gsm-radar-project-avatar-hover-scale: 1.1;
     --gsm-z-sticky: 10;
     --gsm-z-floating: 20;
     --gsm-z-preview: 30;
@@ -84,6 +96,8 @@
     --muted-foreground: 0 0% 64%;
     --accent: 0 0% 14%;
     --accent-foreground: 0 0% 98%;
+    --gsm-radar-unseen-bg: 220 13% 14%;
+    --gsm-radar-row-hover-bg: 220 10% 19%;
     --layout-edit: 220 13% 15%;
     --layout-edit-foreground: 210 20% 96%;
     --layout-edit-border: 220 11% 28%;
@@ -95,6 +109,7 @@
     --favorite-muted-hover: 352 96% 71%;
     --success: 142 71% 45%;
     --warning: 38 92% 50%;
+    --info: 210 24% 72%;
     --search-match: 45 80% 40%;
     --search-match-foreground: 0 0% 4%;
     --border: 0 0% 20%;

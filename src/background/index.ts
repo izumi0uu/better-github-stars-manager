@@ -5,8 +5,13 @@ import {
 } from "@/auth/auth-store";
 import { canonicalJson, sha256Base64Url } from '@/agent-harness/canonical-json';
 import { githubStarSource } from "@/api/github-star-source";
-import { fetchGitHubNotifications } from '@/api/github-notifications-source';
+import {
+  fetchGitHubNotifications,
+  mutateGitHubNotificationThread,
+} from '@/api/github-notifications-source';
 import { fetchGitHubWatchScope } from '@/api/github-watch-scope-source';
+import { fetchGitHubWatchSubjectDetail } from '@/api/github-watch-subject-source';
+import { fetchGitHubRadar } from '@/api/github-radar-source';
 import { getMessages } from "@/i18n";
 import {
   addBgsmAgentManualTags,
@@ -15,6 +20,7 @@ import {
 } from "@/storage/idb-tag-store";
 import { db } from "@/storage/db";
 import * as watchStore from '@/storage/watch-store';
+import * as radarStore from '@/storage/radar-store';
 import { DEV } from "@/dev";
 import { attachDevTracePort } from '@/agent-observability/dev-port';
 import { createDevAgentTurnTraceFactory } from '@/agent-observability/agent-turn-trace';
@@ -54,7 +60,14 @@ import {
 } from "./agent-manual-tag-writer";
 import { createSerializedRunner } from "./serialized-runner";
 import { createWatchRefreshCoordinator } from './watch-refresh';
-import { canonicalRepositoryFullName } from '@/watch/watch-model';
+import { createRadarRefreshCoordinator } from './radar-refresh';
+import {
+  createScheduledRefreshController,
+  type ScheduledRefreshKind,
+} from './scheduled-refresh';
+import { GitHubWatchError, canonicalRepositoryFullName } from '@/watch/watch-model';
+import { parseWatchThreadId, parseWatchThreadIds } from '@/watch/watch-contract';
+import { RADAR_MAX_FOLLOWING } from '@/radar/radar-model';
 import {
   createOrganizeApplyPump,
   type OrganizeApplyPumpLifecycleEvent,
@@ -83,6 +96,7 @@ import type {
   OrganizeItemRecord,
   OrganizeJobRecord,
   OnboardingStage,
+  Star,
   SyncProgress,
 } from "@/types";
 import {
@@ -235,10 +249,20 @@ type Req = BgsmAgentSessionRequest
   | { type: "getStatus" }
   | { type: "getWatchStatus" }
   | { type: "queryWatchInbox"; unreadOnly?: unknown }
+  | { type: "getWatchSubjectDetail"; threadId?: unknown }
   | { type: "getWatchRepositoryDetail"; fullName?: unknown }
   | { type: "refreshWatchInbox" }
+  | { type: "markWatchThreadsRead"; threadIds?: unknown }
+  | { type: "markWatchThreadsDone"; threadIds?: unknown }
   | { type: "disconnectWatchInbox" }
   | { type: "clearWatchData" }
+  | { type: "getRadarStatus" }
+  | { type: "queryRadar" }
+  | { type: "refreshRadar" }
+  | { type: "dismissRadarActivities"; activityIds?: unknown }
+  | { type: "markRadarActivitiesSeen"; activityIds?: unknown }
+  | { type: "radarStarRepository"; fullName?: unknown }
+  | { type: "radarAddTag"; fullName?: unknown; tag?: unknown }
   | { type: "getUsername" }
   | { type: "getAccount" }
   | { type: "fetchAccount" }
@@ -272,7 +296,7 @@ type Req = BgsmAgentSessionRequest
       workingContextWindow?: number | null;
       apiKey?: string;
     }
-  | { type: "openOptions"; section?: 'watch' }
+  | { type: "openOptions"; section?: 'github' | 'watch' }
   | { type: "devClearLocalData" }
   | { type: "runBackfill"; id: string }
   | { type: "deferBackfill"; id: string };
@@ -290,13 +314,16 @@ const watchRefreshCoordinator = createWatchRefreshCoordinator({
   auth: authStore,
   fetchScope: fetchGitHubWatchScope,
   fetchNotifications: fetchGitHubNotifications,
+  mutateNotification: mutateGitHubNotificationThread,
+  fetchSubjectDetail: fetchGitHubWatchSubjectDetail,
   loadLiveRepositoryNames: async () => (await db.stars.toArray())
-    .filter((star) => !star.tombstone)
+    .filter((star) => !star.tombstone && star.viewer_has_starred !== false)
     .map((star) => star.full_name),
   store: {
     getState: watchStore.getWatchState,
     getRepositories: watchStore.getWatchRepositories,
     queryInbox: watchStore.queryStoredWatchInbox,
+    getNotificationThread: watchStore.getWatchNotificationThread,
     reconcileAccount: watchStore.reconcileWatchAccount,
     reconcileLiveStars: watchStore.reconcileWatchLiveStars,
     replaceScope: watchStore.replaceWatchScope,
@@ -304,11 +331,61 @@ const watchRefreshCoordinator = createWatchRefreshCoordinator({
     replaceInbox: watchStore.replaceWatchInbox,
     revalidateInbox: watchStore.revalidateWatchInbox,
     recordInboxFailure: watchStore.recordWatchInboxFailure,
+    applyThreadMutation: watchStore.applyWatchThreadMutation,
     disconnectInbox: watchStore.disconnectWatchInbox,
     clearData: watchStore.clearWatchData,
   },
   broadcastChanged: broadcastWatchChanged,
 });
+const radarRefreshCoordinator = createRadarRefreshCoordinator({
+  runSerialized: (operation) => jobQueue.run(operation),
+  auth: authStore,
+  fetchRadar: fetchGitHubRadar,
+  store: {
+    clearData: radarStore.clearRadarData,
+    prepareAccount: radarStore.prepareRadarAccount,
+    getState: radarStore.getRadarState,
+    commitSnapshot: radarStore.commitRadarSnapshot,
+    recordFailure: radarStore.recordRadarFailure,
+    listActivities: radarStore.listRadarActivities,
+    listSuggestedTags: radarStore.listRadarSuggestedTags,
+    dismissActivities: radarStore.dismissRadarActivities,
+    markActivitiesSeen: radarStore.markRadarActivitiesSeen,
+  },
+  broadcastChanged: broadcastRadarChanged,
+});
+function reportScheduledRefreshError(
+  kind: ScheduledRefreshKind | 'schedule',
+  error: unknown,
+): void {
+  console.error(
+    `[GSM] scheduled ${kind} refresh failed:`,
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+const scheduledRefreshController = createScheduledRefreshController({
+  getAlarm: (name) => chrome.alarms.get(name),
+  createAlarm: (name, info) => chrome.alarms.create(name, info),
+  clearAlarm: (name) => chrome.alarms.clear(name),
+  addAlarmListener: (listener) => {
+    chrome.alarms.onAlarm.addListener((alarm) => listener(alarm.name));
+  },
+  refreshWatchInbox: () => watchRefreshCoordinator.refreshInbox(),
+  refreshWatchScope: () => watchRefreshCoordinator.refresh(),
+  refreshRadar: () => radarRefreshCoordinator.refresh(),
+  onError: reportScheduledRefreshError,
+});
+scheduledRefreshController.install();
+
+function ensureScheduledRefreshes(): void {
+  void scheduledRefreshController.ensure().catch((error) => {
+    reportScheduledRefreshError('schedule', error);
+  });
+}
+
+ensureScheduledRefreshes();
+chrome.runtime.onStartup.addListener(ensureScheduledRefreshes);
 const agentManualTagWriter = createQueuedAgentManualTagWriter({
   runSerialized: (operation, runOptions) => jobQueue.run(operation, runOptions),
   isBlocked: async () => organizeApplyBlocksAgentWrites(await getActiveOrganizeJob()),
@@ -418,16 +495,17 @@ if (DEV) {
 }
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
-  // Both keys can change atomically; the dedicated credential record owns identity.
+  // The dedicated credential record owns the single Classic PAT identity.
   const credentialsChange = changes[GITHUB_CREDENTIALS_STORAGE_KEY];
   const accountChange = credentialsChange ?? changes[CONFIG_STORAGE_KEY];
   if (!accountChange || !watchMainAccountChanged(accountChange)) return;
 
-  // The coordinator clears the account-bound token and IDB stores through the
-  // shared queue. Wrapping it in another queued operation would deadlock it.
-  void watchRefreshCoordinator.reconcileAccount({
-    invalidateNotificationsIdentity: watchNotificationsIdentity(accountChange.oldValue),
-  }).catch(() => {});
+  // The coordinator clears account-bound Watch data through the shared queue.
+  void watchRefreshCoordinator.reconcileAccount().catch(() => {});
+  broadcastDataChanged();
+  void radarRefreshCoordinator.reconcileAccount()
+    .then(broadcastRadarChanged)
+    .catch(() => {});
 });
 const organizeJobRunConnections = createBgsmOrganizeJobConnectionRegistry<chrome.runtime.Port>();
 let organizeJobRunMutationTail: Promise<void> = Promise.resolve();
@@ -438,8 +516,6 @@ const devRawCaptureCoordinator = DEV
   ? createDevRawCaptureCoordinator({
       getConfiguredSecrets: async () => Promise.all([
         authStore.getToken(),
-        authStore.getWatchNotificationsToken(),
-        authStore.getAgentApiKey(),
       ]),
     })
   : null;
@@ -1094,6 +1170,19 @@ function broadcastDataChanged() {
 function broadcastWatchChanged() {
   chrome.runtime.sendMessage({ type: 'watchChanged' }).catch(() => {});
 }
+function broadcastRadarChanged() {
+  chrome.runtime.sendMessage({ type: 'radarChanged' }).catch(() => {});
+}
+
+async function findLiveStarByCanonicalName(repository: string): Promise<Star | null> {
+  return (await db.stars
+    .filter((star) => (
+      !star.tombstone
+      && star.viewer_has_starred !== false
+      && canonicalRepositoryFullName(star.full_name) === repository
+    ))
+    .first()) ?? null;
+}
 
 async function reconcileWatchScopeAfterStarsChange(): Promise<void> {
   try {
@@ -1119,22 +1208,6 @@ function watchMainAccountChanged(change: { oldValue?: unknown; newValue?: unknow
   return previous !== next && (previous !== null || next !== null);
 }
 
-function watchNotificationsIdentity(config: unknown): string | null {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
-  const value = config as {
-    watchNotificationsTokenEncrypted?: unknown;
-    watchNotificationsTokenCryptoMeta?: unknown;
-  };
-  if (
-    typeof value.watchNotificationsTokenEncrypted !== 'string' ||
-    !value.watchNotificationsTokenEncrypted ||
-    !value.watchNotificationsTokenCryptoMeta
-  ) return null;
-  return JSON.stringify([
-    value.watchNotificationsTokenEncrypted,
-    value.watchNotificationsTokenCryptoMeta,
-  ]);
-}
 async function clearLocalDataForDev() {
   if (!DEV) throw new Error("DEV_ONLY");
   if (persistTimer) {
@@ -1168,7 +1241,9 @@ async function autoTagAll(
   phase: SyncProgress['phase'] = 'incremental',
 ): Promise<{ tagged: number; remainingUntagged: number }> {
   const cfg = await authStore.getConfig();
-  const stars = await db.stars.toArray();
+  const stars = (await db.stars.toArray()).filter((star) => (
+    !star.tombstone && star.viewer_has_starred !== false
+  ));
   const excluded = new Set(await idbTagStore.listExcluded());
   const existingTags = await idbTagStore.getMany(stars.map((star) => star.full_name));
   const topicRepoCounts = countTopicRepoFrequency(stars);
@@ -1575,6 +1650,24 @@ async function handle(req: Req): Promise<Res> {
           return { ok: false, error: m.background.watchInboxUnavailable };
         }
       }
+      case 'getWatchSubjectDetail': {
+        const m = await getLocaleMessages();
+        const threadId = parseWatchThreadId(req.threadId);
+        if (!threadId) return { ok: false, error: m.background.watchSubjectDetailInvalid };
+        try {
+          return { ok: true, data: await watchRefreshCoordinator.getSubjectDetail(threadId) };
+        } catch (error) {
+          const code = error instanceof GitHubWatchError ? error.code : 'invalid_response';
+          return {
+            ok: false,
+            error: m.background.watchSubjectDetailError(code),
+            code,
+            details: error instanceof GitHubWatchError && error.status !== undefined
+              ? { status: error.status }
+              : undefined,
+          };
+        }
+      }
       case 'getWatchRepositoryDetail': {
         const m = await getLocaleMessages();
         const fullName = canonicalRepositoryFullName(req.fullName);
@@ -1602,6 +1695,22 @@ async function handle(req: Req): Promise<Res> {
           return { ok: false, error: m.background.watchRefreshFailed };
         }
       }
+      case 'markWatchThreadsRead':
+      case 'markWatchThreadsDone': {
+        const m = await getLocaleMessages();
+        const threadIds = parseWatchThreadIds(req.threadIds);
+        if (!threadIds) return { ok: false, error: m.background.watchThreadActionInvalid };
+        try {
+          return {
+            ok: true,
+            data: req.type === 'markWatchThreadsRead'
+              ? await watchRefreshCoordinator.markThreadsRead(threadIds)
+              : await watchRefreshCoordinator.markThreadsDone(threadIds),
+          };
+        } catch {
+          return { ok: false, error: m.background.watchThreadActionFailed };
+        }
+      }
       case 'disconnectWatchInbox': {
         const m = await getLocaleMessages();
         try {
@@ -1617,6 +1726,69 @@ async function handle(req: Req): Promise<Res> {
         } catch {
           return { ok: false, error: m.background.watchDataClearFailed };
         }
+      }
+      case 'getRadarStatus':
+        return { ok: true, data: await radarRefreshCoordinator.getStatus() };
+      case 'queryRadar':
+        return { ok: true, data: await radarRefreshCoordinator.query() };
+      case 'refreshRadar':
+        return { ok: true, data: await radarRefreshCoordinator.refresh() };
+      case 'dismissRadarActivities': {
+        if (
+          !Array.isArray(req.activityIds)
+          || req.activityIds.length === 0
+          || req.activityIds.length > RADAR_MAX_FOLLOWING
+          || req.activityIds.some((id) => typeof id !== 'string' || !id || id.length > 512)
+        ) return { ok: false, error: 'Invalid Radar dismissal request.' };
+        return {
+          ok: true,
+          data: await radarRefreshCoordinator.dismiss(req.activityIds as string[]),
+        };
+      }
+      case 'markRadarActivitiesSeen': {
+        if (
+          !Array.isArray(req.activityIds)
+          || req.activityIds.length === 0
+          || req.activityIds.length > RADAR_MAX_FOLLOWING
+          || req.activityIds.some((id) => typeof id !== 'string' || !id || id.length > 512)
+        ) return { ok: false, error: 'Invalid Radar seen request.' };
+        return {
+          ok: true,
+          data: await radarRefreshCoordinator.markSeen(req.activityIds as string[]),
+        };
+      }
+      case 'radarStarRepository': {
+        const repository = canonicalRepositoryFullName(req.fullName);
+        if (!repository) return { ok: false, error: 'Invalid Radar repository.' };
+        const star = await run(async () => {
+          const existing = await findLiveStarByCanonicalName(repository);
+          if (existing) return existing;
+          const created = await githubStarSource.star(repository);
+          await reconcileWatchScopeAfterStarsChange();
+          return created;
+        });
+        broadcastDataChanged();
+        broadcastRadarChanged();
+        return { ok: true, data: star };
+      }
+      case 'radarAddTag': {
+        const repository = canonicalRepositoryFullName(req.fullName);
+        const additions = typeof req.tag === 'string' ? addTagNames([], [req.tag]) : [];
+        if (!repository || additions.length !== 1) {
+          return { ok: false, error: 'Invalid Radar tag request.' };
+        }
+        const result = await run(async () => {
+          const existingStar = await findLiveStarByCanonicalName(repository);
+          const star = existingStar ?? await githubStarSource.star(repository);
+          if (!existingStar) await reconcileWatchScopeAfterStarsChange();
+          const existing = manualTagNames(await idbTagStore.get(star.full_name));
+          const tags = addTagNames(existing, additions);
+          await idbTagStore.setTags(star.full_name, tags);
+          return { star, tags };
+        });
+        broadcastDataChanged();
+        broadcastRadarChanged();
+        return { ok: true, data: result };
       }
       case "getUsername":
         return { ok: true, data: { username: await authStore.getUsername() } };
@@ -1653,7 +1825,10 @@ async function handle(req: Req): Promise<Res> {
       case "query":
         return {
           ok: true,
-          data: (await queryStars(req.params)) as QueryResult,
+          data: (await queryStars({
+            ...req.params,
+            accountLogin: await authStore.getUsername(),
+          })) as QueryResult,
         };
       case "runBackfill": {
         const m = await getLocaleMessages();
@@ -1703,7 +1878,7 @@ async function handle(req: Req): Promise<Res> {
       case "markUnstarred": {
         const result = await run(async () => {
           const star = await db.stars.get(req.full_name);
-          if (!star) return null;
+          if (!star || star.viewer_has_starred === false) return null;
           await githubStarSource.unstar(req.full_name);
           await db.stars.put({ ...star, tombstone: true });
           await reconcileWatchScopeAfterStarsChange();
@@ -1823,9 +1998,11 @@ async function handle(req: Req): Promise<Res> {
       }
       case "openOptions": {
         // Content scripts have a restricted chrome.runtime without openOptionsPage, so they ask the background.
-        if (req.section !== undefined && req.section !== 'watch') {
-          return { ok: false, error: 'Unsupported Options section.' };
-        }
+        if (
+          req.section !== undefined
+          && req.section !== 'github'
+          && req.section !== 'watch'
+        ) return { ok: false, error: 'Unsupported Options section.' };
         if (req.section !== undefined) {
           await writeOptionsIntent(req.section);
         }
@@ -2436,7 +2613,8 @@ chrome.runtime.onConnect.addListener((port) => {
 const bgsmAgentRuntime = createBgsmAgentRuntime({
   prepareRuntimeProvider: () => agentProviderGate.prepareRuntimeProvider(),
   invalidateProviderCapability: (fingerprint) => authStore.invalidateAgentProviderCapability(fingerprint),
-  resolveLiveCandidate: resolveLiveLaunchCandidate,
+  resolveLiveCandidate: (contract) => authStore.getUsername()
+    .then((accountLogin) => resolveLiveLaunchCandidate(contract, undefined, accountLogin)),
   getActiveOrganizeJob,
   isOrganizeApplyBlockingWrites: organizeApplyBlocksAgentWrites,
   createTagAssignmentPolicy: async () => createBgsmAgentTagAssignmentPolicy(
@@ -3367,6 +3545,7 @@ organizeApplyRecovery.install();
 chrome.runtime.onInstalled.addListener(() => {
   setProgress({ phase: "idle", done: 0, total: null, message: "" });
   void backfillConfig.reconcileStoredBackfills().catch(() => {});
+  ensureScheduledRefreshes();
 });
 
 /**

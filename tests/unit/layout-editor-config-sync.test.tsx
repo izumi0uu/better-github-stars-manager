@@ -33,6 +33,7 @@ const managerPanelMocks = vi.hoisted(() => ({
   setOnlyFavorite: vi.fn(),
   setOnlyUntagged: vi.fn(),
   setOnlyArchived: vi.fn(),
+  setOnlyOwned: vi.fn(),
   setSort: vi.fn(),
   resetFilters: vi.fn(),
   bgCall: vi.fn(async (method: string) => {
@@ -101,6 +102,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
     libraryViewHydrated: true,
@@ -113,6 +115,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     setOnlyFavorite: managerPanelMocks.setOnlyFavorite,
     setOnlyUntagged: managerPanelMocks.setOnlyUntagged,
     setOnlyArchived: managerPanelMocks.setOnlyArchived,
+    setOnlyOwned: managerPanelMocks.setOnlyOwned,
     setSort: managerPanelMocks.setSort,
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: managerPanelMocks.resetFilters,
@@ -206,6 +209,7 @@ function fakeFilterState(): FilterState {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at',
     sortDir: 'desc',
     libraryViewHydrated: true,
@@ -218,6 +222,7 @@ function fakeFilterState(): FilterState {
     setOnlyFavorite: vi.fn(),
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
+    setOnlyOwned: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
@@ -286,6 +291,7 @@ function LayoutToolbarHarness() {
     <div ref={rootRef}>
       <TooltipProvider>
         <Toolbar
+          account={null}
           f={fakeFilterState()}
           status={null}
           loading={false}
