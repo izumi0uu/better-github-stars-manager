@@ -140,6 +140,30 @@ describe('star row column rendering', () => {
     expect(markup).not.toContain('data-search-match');
     expect(markup).toContain('aria-label="owner/repo">repo</span>');
   });
+  it('renders a non-filtering personal fork row badge from repository metadata', () => {
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={{ ...fakeStar('2020-01-02T12:00:00Z'), fork: true }}
+        tags={['topic']}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['repository', 'tags']}
+        gridTemplateColumns="180px 140px"
+        flashedColumn={null}
+      />,
+    );
+
+    expect(markup).toContain('data-row-badge="fork"');
+    expect(markup).toContain('Personal fork');
+    expect(markup).toContain('data-inline-tag-measure="tag"');
+    expect(markup).not.toMatch(/<button[^>]*>[\s\S]*Personal fork[\s\S]*<\/button>/);
+  });
 
   it('uses the edit-layout star alignment in the default browse layout', () => {
     const markup = renderToStaticMarkup(

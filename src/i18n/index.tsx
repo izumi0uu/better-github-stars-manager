@@ -706,6 +706,7 @@ export interface MessageCatalog {
   };
   starRow: {
     archived: string;
+    fork: string;
     filterByTag: (tag: string) => string;
     clearTagFilter: (tag: string) => string;
     moreHidden: (count: number) => string;
@@ -1895,6 +1896,7 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     starRow: {
       archived: "archived",
+      fork: "Personal fork",
       filterByTag: (tag) => `Filter by "${tag}"`,
       clearTagFilter: (tag) => `Filtering by "${tag}" — click to remove`,
       moreHidden: (count) => `${count} more — see the detail panel`,
@@ -3153,6 +3155,7 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     starRow: {
       archived: "已归档",
+      fork: "个人 Fork",
       filterByTag: (tag) => `按 "${tag}" 筛选`,
       clearTagFilter: (tag) => `正在按 "${tag}" 筛选，点击移除`,
       moreHidden: (count) => `还有 ${count} 个，在详情中查看`,

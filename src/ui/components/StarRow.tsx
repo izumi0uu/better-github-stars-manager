@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Archive, Star as StarIcon, StickyNote } from 'lucide-react';
+import { Archive, GitFork, Star as StarIcon, StickyNote } from 'lucide-react';
 import type { Star } from '@/types';
 import { Badge } from '@/ui/shadcn/badge';
 import { Button } from '@/ui/shadcn/button';
@@ -161,9 +161,9 @@ export const StarRow = memo(function StarRow({
         switch (column) {
           case 'repository':
             return (
-              <div key={column} data-row-col={column} className={cn('flex items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+              <div key={column} data-row-col={column} className={cn('flex min-w-0 items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
                 <span
-                  className="truncate text-primary"
+                  className="min-w-0 flex-1 truncate text-primary"
                   title={showRepositoryOwner ? undefined : star.full_name}
                   aria-label={showRepositoryOwner ? undefined : star.full_name}
                 >
@@ -173,6 +173,17 @@ export const StarRow = memo(function StarRow({
                     sourceOffset={repositorySourceOffset}
                   />
                 </span>
+                {star.fork && (
+                  <Badge
+                    data-row-badge="fork"
+                    variant="outline"
+                    className="h-4 shrink-0 gap-1 border-info/35 bg-info/10 px-1.5 text-[10px] font-medium text-info"
+                    title={m.starRow.fork}
+                  >
+                    <GitFork className="size-2.5" aria-hidden="true" />
+                    {m.starRow.fork}
+                  </Badge>
+                )}
                 {star.archived && <Archive className="size-3 shrink-0 text-warning" aria-label={m.starRow.archived} />}
               </div>
             );
