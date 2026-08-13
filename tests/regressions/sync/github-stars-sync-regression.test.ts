@@ -45,7 +45,7 @@ function configWithCursor(lastSyncStarredAt: string | null): Config {
     lastSyncStarredAt,
     gistId: null,
     gistSyncCursor: null,
-    username: 'idah',
+    username: 'octocat',
     avatarUrl: null,
     displayName: null,
     onboardingStage: 'awaiting_sync',
@@ -71,7 +71,7 @@ async function resetState(lastSyncStarredAt: string | null) {
   await chrome.storage.local.clear();
   await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: configWithCursor(lastSyncStarredAt) });
   authStore.getToken = async () => 'github_pat_synthetic';
-  authStore.getUsername = async () => 'idah';
+  authStore.getUsername = async () => 'octocat';
 }
 
 function starredRepo(
@@ -139,7 +139,7 @@ describe('GitHub stars sync regressions', () => {
     const fetchMock: typeof fetch = async (input) => {
       const url = urlFrom(input);
       fetchStarts.push(url);
-      if (url.includes('/users/idah/repos?')) return pageResponse([]);
+      if (url.includes('/users/octocat/repos?')) return pageResponse([]);
       if (url.endsWith('page=1')) {
         return pageResponse(
           [starredRepo('newest/repo', '2026-07-03T00:00:00Z')],
@@ -178,7 +178,7 @@ describe('GitHub stars sync regressions', () => {
     assert.deepEqual(result, { added: 3, updated: 3 });
     assert.deepEqual(fetchStarts, [
       'https://api.github.com/user/starred?per_page=100&page=1',
-      'https://api.github.com/users/idah/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',
+      'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',
       'https://api.github.com/user/starred?per_page=100&page=2',
       'https://api.github.com/user/starred?per_page=100&page=3',
     ]);
@@ -196,21 +196,21 @@ describe('GitHub stars sync regressions', () => {
       requests.push(url);
       if (url === 'https://api.github.com/user/starred?per_page=100&page=1') {
         return pageResponse([
-          starredRepo('idah/starred-owned', '2026-07-03T00:00:00Z', {
+          starredRepo('octocat/starred-owned', '2026-07-03T00:00:00Z', {
             description: 'authoritative starred payload',
           }),
           starredRepo('elsewhere/starred', '2026-07-02T00:00:00Z'),
         ]);
       }
-      if (url === 'https://api.github.com/users/idah/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1') {
+      if (url === 'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1') {
         return pageResponse([
           {
-            ...starredRepo('idah/not-starred', '2020-01-01T00:00:00Z').repo,
+            ...starredRepo('octocat/not-starred', '2020-01-01T00:00:00Z').repo,
             private: false,
             description: 'owned but not starred',
           },
           {
-            ...starredRepo('idah/starred-owned', '2020-01-01T00:00:00Z').repo,
+            ...starredRepo('octocat/starred-owned', '2020-01-01T00:00:00Z').repo,
             private: false,
             description: 'owned endpoint must not overwrite starred metadata',
           },
@@ -224,16 +224,16 @@ describe('GitHub stars sync regressions', () => {
     assert.deepEqual(result, { added: 3, updated: 3 });
     assert.deepEqual(requests, [
       'https://api.github.com/user/starred?per_page=100&page=1',
-      'https://api.github.com/users/idah/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',
+      'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',
     ]);
     assert.deepEqual(
       (await db.stars.toArray()).map((row) => row.full_name).sort(),
-      ['elsewhere/starred', 'idah/not-starred', 'idah/starred-owned'],
+      ['elsewhere/starred', 'octocat/not-starred', 'octocat/starred-owned'],
     );
-    assert.equal((await db.stars.get('idah/not-starred'))?.viewer_has_starred, false);
-    assert.equal((await db.stars.get('idah/not-starred'))?.tombstone, false);
-    assert.equal((await db.stars.get('idah/starred-owned'))?.viewer_has_starred, true);
-    assert.equal((await db.stars.get('idah/starred-owned'))?.description, 'authoritative starred payload');
+    assert.equal((await db.stars.get('octocat/not-starred'))?.viewer_has_starred, false);
+    assert.equal((await db.stars.get('octocat/not-starred'))?.tombstone, false);
+    assert.equal((await db.stars.get('octocat/starred-owned'))?.viewer_has_starred, true);
+    assert.equal((await db.stars.get('octocat/starred-owned'))?.description, 'authoritative starred payload');
   });
 
   it('syncIncremental refreshes touched older rows but counts only fresh stars as added', async () => {
@@ -312,7 +312,7 @@ describe('GitHub stars sync regressions', () => {
     const progress: Array<{ phase: string; done: number; total: number | null }> = [];
     const fetchMock: typeof fetch = async (input) => {
       const url = urlFrom(input);
-      if (url.includes('/users/idah/repos?')) return pageResponse([]);
+      if (url.includes('/users/octocat/repos?')) return pageResponse([]);
       if (!url.endsWith('page=1')) throw new Error(`unexpected fetch: ${url}`);
       return pageResponse([]);
     };

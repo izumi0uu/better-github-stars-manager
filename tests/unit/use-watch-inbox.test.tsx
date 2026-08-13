@@ -55,7 +55,7 @@ function queryResponse(totalCount: number): WatchInboxQueryResponse {
     unreadCount: totalCount,
     totalCount,
     status: {
-      accountLogin: 'idah',
+      accountLogin: 'octocat',
       credentialSource: 'main',
       hasMainToken: true,
       hasNotificationsToken: true,
@@ -75,7 +75,7 @@ function cooldownResponse(
   response.status.inboxStatus = 'cooldown';
   response.status.state = {
     id: 'singleton',
-    accountLogin: 'idah',
+    accountLogin: 'octocat',
     scope: {
       lastAttemptAt: '2026-08-05T11:59:00Z',
       lastSuccessfulAt: '2026-08-05T11:59:00Z',

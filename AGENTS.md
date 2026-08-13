@@ -60,6 +60,12 @@ Keep this file short and practical. Add rules here only when they are core to th
 - REST starring endpoints: `https://docs.github.com/v3/activity/starring`
 - REST repositories endpoints: `https://docs.github.com/rest/repos/repos`
 
+## Privacy And External Context
+
+- Never put personal information in tracked files, including real usernames, names, email addresses, local home-directory paths, account data, tokens, or screenshots and fixtures derived from a personal account. Use synthetic values such as `octocat`, `user@example.com`, and repository-relative paths.
+- Never copy issue, pull-request, Jira, support-ticket, chat, or other external-work-item content into product code, tests, fixtures, comments, logs, screenshots, generated artifacts, or documentation. Translate only the necessary requirement into generic product behavior and terminology; keep external identifiers, URLs, customer data, reporter details, and verbatim text out of the repository.
+- Before committing, scan every changed tracked artifact, including binary assets and metadata, for personal information and external-work-item residue.
+
 ## Testing And Done Criteria
 
 - Always run `pnpm typecheck` after code changes.

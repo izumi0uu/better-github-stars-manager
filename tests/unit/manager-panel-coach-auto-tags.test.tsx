@@ -168,7 +168,7 @@ function mountPanel(initialStage: SyncStatus['onboardingStage']) {
     if (message.type === 'getStatus') return ok(status(initialStage));
     if (message.type === 'query') return ok({ grandTotal: 3 });
     if (message.type === 'getAccount') {
-      return ok({ username: 'idah', avatarUrl: 'avatar.png', displayName: 'Idah', gistId: null });
+      return ok({ username: 'octocat', avatarUrl: 'avatar.png', displayName: 'Octo Cat', gistId: null });
     }
     throw new Error(`Unexpected message: ${message.type}`);
   });

@@ -30,7 +30,7 @@ const {
   snapshotDirty,
 } = await import('@/storage/idb-tag-store');
 
-const ACCOUNT = 'Idah';
+const ACCOUNT = 'OctoCat';
 const FIRST = '2026-08-05T01:00:00.000Z';
 const SECOND = '2026-08-05T02:00:00.000Z';
 
@@ -133,7 +133,7 @@ describe('Watch snapshot storage', () => {
       attemptedAt: SECOND,
     });
 
-    assert.deepEqual(await getWatchRepositories('idah'), [{ full_name: 'owner/two' }]);
+    assert.deepEqual(await getWatchRepositories('octocat'), [{ full_name: 'owner/two' }]);
 
     await recordWatchScopeFailure({
       accountLogin: ACCOUNT,
@@ -141,8 +141,8 @@ describe('Watch snapshot storage', () => {
       errorCode: 'network_error',
     });
 
-    assert.deepEqual(await getWatchRepositories('IDAH'), [{ full_name: 'owner/two' }]);
-    const state = await getWatchState('idah');
+    assert.deepEqual(await getWatchRepositories('OCTOCAT'), [{ full_name: 'owner/two' }]);
+    const state = await getWatchState('octocat');
     assert.equal(state?.scope.lastSuccessfulAt, SECOND);
     assert.equal(state?.scope.errorCode, 'network_error');
   });
@@ -265,7 +265,7 @@ describe('Watch snapshot storage', () => {
       mode: 'replace',
     });
 
-    const initial = await queryStoredWatchInbox({ accountLogin: 'idah', unreadOnly: false });
+    const initial = await queryStoredWatchInbox({ accountLogin: 'octocat', unreadOnly: false });
     assert.deepEqual(initial.threads.map((row) => row.id), ['1', '2']);
     assert.equal(initial.state?.inbox.matchedCount, 2);
 
@@ -275,7 +275,7 @@ describe('Watch snapshot storage', () => {
       attemptedAt: SECOND,
     });
 
-    const result = await queryStoredWatchInbox({ accountLogin: 'idah', unreadOnly: false });
+    const result = await queryStoredWatchInbox({ accountLogin: 'octocat', unreadOnly: false });
     assert.deepEqual(result.threads.map((row) => row.id), ['2']);
     assert.equal(result.state?.inbox.matchedCount, 1);
     assert.equal(result.state?.inbox.lastModified, null);
@@ -306,7 +306,7 @@ describe('Watch snapshot storage', () => {
       errorCode: 'github_unavailable',
     });
 
-    assert.deepEqual((await queryStoredWatchInbox({ accountLogin: 'idah' })).threads.map((row) => row.id), ['1']);
+    assert.deepEqual((await queryStoredWatchInbox({ accountLogin: 'octocat' })).threads.map((row) => row.id), ['1']);
 
     await revalidateWatchInbox({
       accountLogin: ACCOUNT,
@@ -314,7 +314,7 @@ describe('Watch snapshot storage', () => {
       nextAllowedAt: '2026-08-05T03:01:00.000Z',
     });
 
-    const result = await queryStoredWatchInbox({ accountLogin: 'idah' });
+    const result = await queryStoredWatchInbox({ accountLogin: 'octocat' });
     assert.deepEqual(result.threads.map((row) => row.id), ['1']);
     assert.equal(result.state?.inbox.errorCode, null);
     assert.equal(result.state?.inbox.candidateCount, 2);
@@ -416,16 +416,16 @@ describe('Watch snapshot storage', () => {
       mode: 'replace',
     });
 
-    await disconnectWatchInbox('IDAH');
-    assert.deepEqual(await getWatchRepositories('idah'), [{ full_name: 'owner/repo' }]);
-    assert.equal((await queryStoredWatchInbox({ accountLogin: 'idah' })).threads.length, 0);
+    await disconnectWatchInbox('OCTOCAT');
+    assert.deepEqual(await getWatchRepositories('octocat'), [{ full_name: 'owner/repo' }]);
+    assert.equal((await queryStoredWatchInbox({ accountLogin: 'octocat' })).threads.length, 0);
 
     await replaceWatchScope({
       accountLogin: 'another-user',
       repositories: [{ full_name: 'other/repo' }],
       attemptedAt: SECOND,
     });
-    assert.equal(await getWatchState('idah'), null);
+    assert.equal(await getWatchState('octocat'), null);
     assert.deepEqual(await getWatchRepositories('another-user'), [{ full_name: 'other/repo' }]);
   });
 

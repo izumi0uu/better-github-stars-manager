@@ -24,7 +24,7 @@ function classicPatFetch(input: {
   gists?: ProbeMode;
   onRequest?: (url: string, token: string, method: string) => void;
 } = {}): typeof fetch {
-  const login = input.login ?? 'idah';
+  const login = input.login ?? 'octocat';
   return (async (request: string | URL | Request, init?: RequestInit) => {
     const url = String(request);
     const method = init?.method ?? 'GET';
@@ -71,7 +71,7 @@ describe('single Classic PAT credential contract', () => {
     const config = await authStore.getConfig();
     const snapshot = await authStore.getGitHubCredentialSnapshot();
 
-    assert.equal(result.username, 'idah');
+    assert.equal(result.username, 'octocat');
     assert.deepEqual(result.notifications, { available: true });
     assert.equal(config.githubCredentialStatus, 'ready');
     assert.equal(config.watchNotificationsEnabled, true);

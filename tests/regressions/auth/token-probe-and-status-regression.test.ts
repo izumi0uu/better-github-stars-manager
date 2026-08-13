@@ -58,7 +58,7 @@ async function storeReadableToken(token: string, probeId: string) {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const method = init?.method ?? 'GET';
     if (url.endsWith('/user') && method === 'GET') {
-      return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+      return response(200, { login: 'octocat', avatar_url: 'https://example.com/a.png', name: 'OctoCat' }, { 'x-oauth-scopes': '' });
     }
     if (url.includes('/user/starred') && method === 'GET') return response(200, []);
     if (url.endsWith('/gists') && method === 'POST') return response(201, { id: probeId });
@@ -151,7 +151,7 @@ describe('Status/token regressions', () => {
       const method = init?.method ?? 'GET';
       calls.push(`${method} ${url}`);
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'octocat', avatar_url: null, name: 'OctoCat' }, { 'x-oauth-scopes': '' });
       }
       if (url.includes('/user/starred?per_page=1&page=1') && method === 'GET') return response(200, []);
       if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-1' });
@@ -176,7 +176,7 @@ describe('Status/token regressions', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'octocat', avatar_url: 'https://example.com/a.png', name: 'OctoCat' }, { 'x-oauth-scopes': '' });
       }
       if (url.includes('/user/starred') && method === 'GET') return response(200, []);
       if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-2' });
@@ -211,7 +211,7 @@ describe('Status/token regressions', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'octocat', avatar_url: null, name: 'OctoCat' }, { 'x-oauth-scopes': '' });
       }
       if (url.includes('/user/starred') && method === 'GET') return response(200, []);
       if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'notifications-optional' });
@@ -229,7 +229,7 @@ describe('Status/token regressions', () => {
     });
     const cfg = await authStore.getConfig();
     assert.ok(cfg.tokenEncrypted);
-    assert.equal(cfg.username, 'idah');
+    assert.equal(cfg.username, 'octocat');
     assert.equal(await authStore.getToken(), 'github_pat_without_notifications');
   });
 
@@ -251,7 +251,7 @@ describe('Status/token regressions', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'octocat', avatar_url: 'https://example.com/a.png', name: 'OctoCat' }, { 'x-oauth-scopes': '' });
       }
       if (url.includes('/user/starred') && method === 'GET') return response(200, []);
       if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-3' });
@@ -386,7 +386,7 @@ describe('Status/token regressions', () => {
     const cfg = await authStore.getConfig();
     assert.equal(cfg.tokenEncrypted, previousConfig.tokenEncrypted);
     assert.deepEqual(cfg.tokenCryptoMeta, previousConfig.tokenCryptoMeta);
-    assert.equal(cfg.username, 'idah');
+    assert.equal(cfg.username, 'octocat');
     assert.equal(await authStore.getToken(), 'github_pat_existing_cleanup_guard');
   });
 
@@ -403,7 +403,7 @@ describe('Status/token regressions', () => {
     const cfg = await authStore.getConfig();
     assert.equal(cfg.tokenEncrypted, previousConfig.tokenEncrypted);
     assert.deepEqual(cfg.tokenCryptoMeta, previousConfig.tokenCryptoMeta);
-    assert.equal(cfg.username, 'idah');
+    assert.equal(cfg.username, 'octocat');
     assert.equal(await authStore.getToken(), 'github_pat_existing_write_guard');
   });
 

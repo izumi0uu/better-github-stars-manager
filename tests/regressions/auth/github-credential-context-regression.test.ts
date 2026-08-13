@@ -34,12 +34,12 @@ afterEach(() => {
 describe('GitHub credential context isolation', () => {
   it('publishes the single Classic PAT across auth contexts', async () => {
     const first = await import('@/auth/auth-store');
-    globalThis.fetch = classicPatFetch('idah', 'probe-context-main');
+    globalThis.fetch = classicPatFetch('octocat', 'probe-context-main');
     await first.authStore.setToken('github_pat_context_main');
 
     const second = await import('@/auth/auth-store');
     const snapshot = await second.authStore.getGitHubCredentialSnapshot();
-    assert.equal(snapshot.accountLogin, 'idah');
+    assert.equal(snapshot.accountLogin, 'octocat');
     assert.equal(snapshot.mainToken, 'github_pat_context_main');
     assert.equal(snapshot.notificationsToken, 'github_pat_context_main');
     assert.equal(snapshot.notificationsConfigured, true);
@@ -47,7 +47,7 @@ describe('GitHub credential context isolation', () => {
 
   it('clears both main and optional Watch capability on logout', async () => {
     const { authStore } = await import('@/auth/auth-store');
-    globalThis.fetch = classicPatFetch('idah', 'probe-context-clear');
+    globalThis.fetch = classicPatFetch('octocat', 'probe-context-clear');
     await authStore.setToken('github_pat_context_clear');
     await authStore.clearToken();
 
@@ -62,7 +62,7 @@ describe('GitHub credential context isolation', () => {
 
   it('does not expose a credential while a legacy record needs reauthorization', async () => {
     const { authStore, CONFIG_STORAGE_KEY, GITHUB_CREDENTIALS_STORAGE_KEY } = await import('@/auth/auth-store');
-    globalThis.fetch = classicPatFetch('idah', 'probe-context-legacy');
+    globalThis.fetch = classicPatFetch('octocat', 'probe-context-legacy');
     await authStore.setToken('github_pat_context_legacy');
     const stored = await chromeMock.api.storage.local.get([CONFIG_STORAGE_KEY, GITHUB_CREDENTIALS_STORAGE_KEY]);
     const config = { ...(stored[CONFIG_STORAGE_KEY] as Record<string, unknown>) };

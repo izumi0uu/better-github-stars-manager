@@ -81,7 +81,7 @@ describe('Rescan regressions', () => {
         lastSyncStarredAt: null,
         gistId: null,
         gistSyncCursor: null,
-        username: 'idah',
+        username: 'octocat',
         avatarUrl: null,
         displayName: null,
         seenOnboarding: false,

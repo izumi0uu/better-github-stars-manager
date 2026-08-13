@@ -118,7 +118,7 @@ function config(overrides: Partial<Config> = {}): Config {
     lastSyncStarredAt: overrides.lastSyncStarredAt ?? null,
     gistId: overrides.gistId ?? null,
     gistSyncCursor: overrides.gistSyncCursor ?? null,
-    username: overrides.username ?? 'idah',
+    username: overrides.username ?? 'octocat',
     avatarUrl: overrides.avatarUrl ?? null,
     displayName: overrides.displayName ?? null,
     onboardingStage: overrides.onboardingStage ?? 'done',
@@ -312,7 +312,7 @@ describe('Options preferences', () => {
 
     await renderOptions();
 
-    const link = document.querySelector<HTMLAnchorElement>('a[href="https://github.com/idah?tab=stars"]');
+    const link = document.querySelector<HTMLAnchorElement>('a[href="https://github.com/octocat?tab=stars"]');
     expect(link).not.toBeNull();
     expect(link?.target).toBe('_blank');
     expect(link?.rel).toContain('noreferrer');
@@ -325,8 +325,8 @@ describe('Options preferences', () => {
 
     await renderOptions();
 
-    expect(document.querySelector('a[href="https://github.com/idah?tab=stars"]')).toBeNull();
-    expect(document.body.textContent).toContain(watchCopy.cachedAccountWarning('idah'));
+    expect(document.querySelector('a[href="https://github.com/octocat?tab=stars"]')).toBeNull();
+    expect(document.body.textContent).toContain(watchCopy.cachedAccountWarning('octocat'));
   });
 
   it('loads Agent storage independently and clears only the re-fetchable tool cache', async () => {
@@ -426,14 +426,14 @@ describe('Options preferences', () => {
       await Promise.resolve();
     });
 
-    expect(document.querySelector('a[href="https://github.com/idah?tab=stars"]')).toBeNull();
+    expect(document.querySelector('a[href="https://github.com/octocat?tab=stars"]')).toBeNull();
   });
 
   it('shows a saved token warning when optional Notifications access is unavailable', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
     authMocks.setToken.mockResolvedValue({
-      username: 'idah',
+      username: 'octocat',
       notifications: { available: false, errorCode: TOKEN_WATCHING_FORBIDDEN },
     });
     await renderOptions();
@@ -444,7 +444,7 @@ describe('Options preferences', () => {
     await click(save!);
     expect(authMocks.setToken).toHaveBeenCalledWith('github_pat_without_notifications');
     expect(document.querySelector('[data-testid="main-token-status"]')?.textContent)
-      .toContain(watchCopy.tokenVerifiedWatchForbidden('idah'));
+      .toContain(watchCopy.tokenVerifiedWatchForbidden('octocat'));
   });
   it('consumes an initial Watch intent, renders the setup block, and focuses its heading', async () => {
     authMocks.getConfig.mockResolvedValue(config());

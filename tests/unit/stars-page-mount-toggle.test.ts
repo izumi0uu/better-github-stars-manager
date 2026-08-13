@@ -33,7 +33,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 function setStarsUrl(): void {
-  window.history.replaceState(null, '', '/idah?tab=stars');
+  window.history.replaceState(null, '', '/octocat?tab=stars');
 }
 
 function clearInjectedChrome(): void {
@@ -96,7 +96,7 @@ async function loadContentScript({
   });
   let currentConfig = config ?? { starsPanelDefaultEnabled: true };
   const getConfigFn = vi.fn(getConfig ?? (() => Promise.resolve(currentConfig)));
-  const getUsernameMock = vi.fn(() => Promise.resolve('idah'));
+  const getUsernameMock = vi.fn(() => Promise.resolve('octocat'));
   const getLocaleMock = vi.fn(getLocale ?? (() => Promise.resolve('en')));
 
   vi.doMock('@/auth/auth-store', () => ({
@@ -156,11 +156,11 @@ describe('stars-page mount and toggle invariants', () => {
   });
 
   it('derives owner only from supported stars profile paths', () => {
-    assert.equal(pageOwner('/idah'), 'idah');
-    assert.equal(pageOwner('/users/Idah'), 'idah');
+    assert.equal(pageOwner('/octocat'), 'octocat');
+    assert.equal(pageOwner('/users/OctoCat'), 'octocat');
     assert.equal(pageOwner('/stars'), null);
     assert.equal(pageOwner('/orgs/github'), null);
-    assert.equal(pageOwner('/idah/repo'), null);
+    assert.equal(pageOwner('/octocat/repo'), null);
   });
 
   it('maps ownership and effective enabled state to panel, fab, or none', () => {
@@ -204,7 +204,7 @@ describe('stars-page mount and toggle invariants', () => {
     assert.ok(secondWindow);
 
     for (const target of [firstWindow, secondWindow]) {
-      target.history.replaceState(null, '', '/idah?tab=stars');
+      target.history.replaceState(null, '', '/octocat?tab=stars');
       target.document.body.innerHTML = '<main data-pjax-container><h1>Stars</h1></main>';
       loaded.installStarsPageRuntime(target);
     }
@@ -240,7 +240,7 @@ describe('stars-page mount and toggle invariants', () => {
     assert.ok(secondWindow);
 
     for (const target of [firstWindow, secondWindow]) {
-      target.history.replaceState(null, '', '/idah?tab=stars');
+      target.history.replaceState(null, '', '/octocat?tab=stars');
       target.document.body.innerHTML = '<main data-pjax-container><h1>Stars</h1></main>';
     }
 

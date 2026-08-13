@@ -15,7 +15,7 @@ import {
   type WatchScopeSnapshot,
 } from '@/watch/watch-model';
 
-const ACCOUNT = 'idah';
+const ACCOUNT = 'octocat';
 const NOW = Date.parse('2026-08-05T03:04:05.000Z');
 
 function config(): Config {

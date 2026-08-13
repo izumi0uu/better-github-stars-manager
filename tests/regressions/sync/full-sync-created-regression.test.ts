@@ -67,7 +67,7 @@ describe('Full sync repo-created-time regressions', () => {
         lastSyncStarredAt: null,
         gistId: null,
         gistSyncCursor: null,
-        username: 'idah',
+        username: 'octocat',
         avatarUrl: null,
         displayName: null,
         seenOnboarding: false,
@@ -81,7 +81,7 @@ describe('Full sync repo-created-time regressions', () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       seenUrls.push(url);
-      if (url.includes('/users/idah/repos?')) {
+      if (url.includes('/users/octocat/repos?')) {
         return new Response(JSON.stringify([]), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -136,14 +136,14 @@ describe('Full sync repo-created-time regressions', () => {
     const originalGetUsername = authStore.getUsername;
     const originalGetToken = authStore.getToken;
     authStore.getToken = async () => 'github_pat_test';
-    authStore.getUsername = async () => 'idah';
+    authStore.getUsername = async () => 'octocat';
 
     try {
       const result = await githubStarSource.syncFull();
       assert.deepEqual(result, { added: 2, updated: 2 });
       assert.deepEqual(seenUrls, [
         'https://api.github.com/user/starred?per_page=100&page=1',
-        'https://api.github.com/users/idah/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',
+        'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',
         'https://api.github.com/user/starred?per_page=100&page=2',
       ]);
 

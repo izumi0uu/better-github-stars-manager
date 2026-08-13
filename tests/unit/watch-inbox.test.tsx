@@ -53,7 +53,7 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
     unreadCount: overrides.unreadCount ?? threads.length,
     totalCount: overrides.totalCount ?? threads.length,
     status: overrides.status ?? {
-      accountLogin: 'idah',
+      accountLogin: 'octocat',
       hasMainToken: true,
       hasNotificationsToken: true,
       credentialSource: 'main',
@@ -62,7 +62,7 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
       inboxStatus: 'fresh',
       state: {
         id: 'singleton',
-        accountLogin: 'idah',
+        accountLogin: 'octocat',
         scope: {
           lastAttemptAt: '2026-08-05T00:00:00Z',
           lastSuccessfulAt: '2026-08-05T00:00:00Z',

@@ -48,7 +48,7 @@ describe('Incremental archived regressions', () => {
         lastSyncStarredAt: '2026-06-20T00:00:00Z',
         gistId: null,
         gistSyncCursor: null,
-        username: 'idah',
+        username: 'octocat',
         avatarUrl: null,
         displayName: null,
         seenOnboarding: false,

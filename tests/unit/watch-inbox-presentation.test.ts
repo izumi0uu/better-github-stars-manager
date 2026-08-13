@@ -78,7 +78,7 @@ function queryResponse(): WatchInboxQueryResponse {
   return {
     ...projection,
     status: {
-      accountLogin: 'idah',
+      accountLogin: 'octocat',
       credentialSource: 'main',
       hasMainToken: true,
       hasNotificationsToken: true,
@@ -87,7 +87,7 @@ function queryResponse(): WatchInboxQueryResponse {
       inboxStatus: 'fresh',
       state: {
         id: 'singleton',
-        accountLogin: 'idah',
+        accountLogin: 'octocat',
         scope: {
           lastAttemptAt: '2026-08-05T12:00:00Z',
           lastSuccessfulAt: '2026-08-05T12:00:00Z',
