@@ -25,6 +25,7 @@ vi.mock('@/i18n', () => ({
         columnNotes: 'Notes',
         lockedColumn: 'Locked',
         showRepositoryOwner: 'Show repository owner',
+        showRepositoryAvatar: 'Show repository avatar',
       },
     },
   }),
@@ -44,6 +45,7 @@ describe('layout edit chrome interactions', () => {
     const { LayoutColumnMenu } = await import('@/ui/components/LayoutEditChrome');
     const onSetColumnHidden = vi.fn();
     const onSetRepositoryOwnerVisible = vi.fn();
+    const onSetRepositoryAvatarVisible = vi.fn();
 
     const menu = LayoutColumnMenu({
       container: {} as HTMLElement,
@@ -53,6 +55,7 @@ describe('layout edit chrome interactions', () => {
       draftLayout: DEFAULT_COLUMN_LAYOUT,
       onSetColumnHidden,
       onSetRepositoryOwnerVisible,
+      onSetRepositoryAvatarVisible,
     });
     const buttons = elementChildren(menu);
 
@@ -62,8 +65,10 @@ describe('layout edit chrome interactions', () => {
     expect(onSetColumnHidden).toHaveBeenCalledWith('description', true);
     expect(Object.keys(buttons[1].props)).not.toContain('onClose');
 
-    buttons.at(-1)?.props.onClick();
+    buttons.at(-2)?.props.onClick();
     expect(onSetRepositoryOwnerVisible).toHaveBeenCalledWith(false);
+    buttons.at(-1)?.props.onClick();
+    expect(onSetRepositoryAvatarVisible).toHaveBeenCalledWith(false);
   });
 
   it('keeps outside-click detection scoped to layout column menu islands', () => {

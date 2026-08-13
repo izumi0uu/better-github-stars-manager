@@ -116,6 +116,7 @@ describe('Rescan regressions', () => {
             pushed_at: '2026-06-22T00:00:00Z',
             fork: false,
             archived: false,
+            owner: { avatar_url: 'https://avatars.githubusercontent.com/u/10?v=4' },
           },
         },
         {
@@ -130,6 +131,7 @@ describe('Rescan regressions', () => {
             pushed_at: '2026-06-23T00:00:00Z',
             fork: false,
             archived: false,
+            owner: { avatar_url: 'https://avatars.githubusercontent.com/u/7?v=4' },
           },
         },
       ]), {
@@ -147,6 +149,8 @@ describe('Rescan regressions', () => {
       assert.equal((await db.stars.get('a/live'))?.tombstone, false);
       assert.equal((await db.stars.get('b/old'))?.tombstone, true);
       assert.equal((await db.stars.get('c/revived'))?.tombstone, false);
+      assert.equal((await db.stars.get('a/live'))?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/10?v=4');
+      assert.equal((await db.stars.get('c/revived'))?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/7?v=4');
     } finally {
       authStore.getToken = originalGetToken;
     }

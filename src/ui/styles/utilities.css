@@ -27,6 +27,24 @@
 }
 
 @layer utilities {
+  [data-avatar-color='0'] { --gsm-repository-avatar-hue: 16; }
+  [data-avatar-color='1'] { --gsm-repository-avatar-hue: 55; }
+  [data-avatar-color='2'] { --gsm-repository-avatar-hue: 95; }
+  [data-avatar-color='3'] { --gsm-repository-avatar-hue: 150; }
+  [data-avatar-color='4'] { --gsm-repository-avatar-hue: 190; }
+  [data-avatar-color='5'] { --gsm-repository-avatar-hue: 210; }
+  [data-avatar-color='6'] { --gsm-repository-avatar-hue: 262; }
+  [data-avatar-color='7'] { --gsm-repository-avatar-hue: 300; }
+  [data-avatar-color='8'] { --gsm-repository-avatar-hue: 340; }
+
+  .gsm-repository-avatar-fallback {
+    background: hsl(var(--gsm-repository-avatar-hue) 42% 30%);
+  }
+
+  .dark .gsm-repository-avatar-fallback {
+    background: hsl(var(--gsm-repository-avatar-hue) 45% 66%);
+  }
+
   .gsm-agent-mascot {
     display: block;
     width: 32px;

@@ -36,10 +36,13 @@ describe('Backfill config regressions', () => {
   });
 
   it('exposes task metadata only for valid backfill ids', () => {
-    const task = getBackfillTask('repo_data_sync_v1');
+    const repoDataTask = getBackfillTask('repo_data_sync_v1');
+    const avatarTask = getBackfillTask('repo_owner_avatar_v1');
 
-    assert.equal(task?.id, 'repo_data_sync_v1');
-    assert.equal(task?.kind, 'full_sync');
+    assert.equal(repoDataTask?.id, 'repo_data_sync_v1');
+    assert.equal(repoDataTask?.kind, 'full_sync');
+    assert.equal(avatarTask?.id, 'repo_owner_avatar_v1');
+    assert.equal(avatarTask?.kind, 'full_sync');
     assert.equal(getBackfillTask('missing'), null);
   });
 
@@ -114,16 +117,24 @@ describe('Backfill config regressions', () => {
   });
 
   it('does not write when reconciliation produces a normalized-equal backfill map', async () => {
-    const currentState = {
+    const repoDataState = {
       status: 'done' as const,
       queuedAt: '2026-06-22T00:00:00Z',
       lastAttemptAt: '2026-06-22T00:01:00Z',
       completedAt: '2026-06-22T00:05:00Z',
       error: null,
     };
+    const avatarState = {
+      status: 'done' as const,
+      queuedAt: '2026-08-13T00:00:00Z',
+      lastAttemptAt: '2026-08-13T00:01:00Z',
+      completedAt: '2026-08-13T00:05:00Z',
+      error: null,
+    };
+    const current = { repo_data_sync_v1: repoDataState, repo_owner_avatar_v1: avatarState };
     const store = createBackfillConfigStore({
       async getConfig() {
-        return makeConfig({ repo_data_sync_v1: currentState });
+        return makeConfig(current);
       },
       async update() {
         throw new Error('normalized-equal reconciliation should not write');
@@ -132,7 +143,7 @@ describe('Backfill config regressions', () => {
 
     const next = await store.reconcileStoredBackfills();
 
-    assert.deepEqual(next, { repo_data_sync_v1: currentState });
+    assert.deepEqual(next, current);
   });
 
   it('does not write when a state mutation returns the existing state', async () => {

@@ -44,6 +44,7 @@ export function StarsTable({
   rows,
   searchQuery = '',
   showRepositoryOwner = true,
+  showRepositoryAvatar = true,
   loading,
   phase,
   tagsByFullName,
@@ -75,6 +76,7 @@ export function StarsTable({
   rows: Star[];
   searchQuery?: string;
   showRepositoryOwner?: boolean;
+  showRepositoryAvatar?: boolean;
   loading: boolean;
   phase: StarsTablePhase;
   tagsByFullName: Map<string, Tag>;
@@ -392,6 +394,7 @@ export function StarsTable({
                   star={star}
                   searchQuery={searchQuery}
                   showRepositoryOwner={showRepositoryOwner}
+                  showRepositoryAvatar={showRepositoryAvatar}
                   tags={visibleTagNames(tag)}
                   hasNotes={!!(tag?.notes && tag.notes.trim())}
                   favorite={favorite}

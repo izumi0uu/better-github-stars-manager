@@ -64,6 +64,7 @@ export function LayoutColumnMenu({
   draftLayout,
   onSetColumnHidden,
   onSetRepositoryOwnerVisible,
+  onSetRepositoryAvatarVisible,
 }: {
   container: HTMLElement | null;
   editing: boolean;
@@ -72,6 +73,7 @@ export function LayoutColumnMenu({
   draftLayout: ColumnLayout;
   onSetColumnHidden: (id: ColumnId, hidden: boolean) => void;
   onSetRepositoryOwnerVisible: (visible: boolean) => void;
+  onSetRepositoryAvatarVisible: (visible: boolean) => void;
 }) {
   const { m } = useI18n();
   if (!editing || !open || !position || !container) return null;
@@ -129,6 +131,21 @@ export function LayoutColumnMenu({
           {draftLayout.showRepositoryOwner !== false && <Check className="size-3" />}
         </span>
         <span className="flex-1 truncate">{m.toolbar.showRepositoryOwner}</span>
+      </button>
+      <button
+        type="button"
+        role="menuitemcheckbox"
+        aria-checked={draftLayout.showRepositoryAvatar !== false}
+        onClick={() => onSetRepositoryAvatarVisible(draftLayout.showRepositoryAvatar === false)}
+        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-accent"
+      >
+        <span className={cn(
+          'grid size-3.5 place-items-center rounded border border-border',
+          { 'bg-primary text-primary-foreground': draftLayout.showRepositoryAvatar !== false },
+        )}>
+          {draftLayout.showRepositoryAvatar !== false && <Check className="size-3" />}
+        </span>
+        <span className="flex-1 truncate">{m.toolbar.showRepositoryAvatar}</span>
       </button>
     </div>,
     container,

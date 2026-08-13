@@ -30,7 +30,7 @@ afterAll(async () => {
 });
 
 describe('Backfill regressions', () => {
-  it('marks repo data sync backfill pending when legacy live rows are missing sync metadata', async () => {
+  it('prioritizes repo data sync when a legacy live row lacks creation time', async () => {
     await db.stars.put({
       ...base,
       full_name: 'legacy/repo',
@@ -40,7 +40,37 @@ describe('Backfill regressions', () => {
 
     const next = await reconcileBackfillMap({});
     assert.equal(next.repo_data_sync_v1?.status, 'pending');
+    assert.equal(next.repo_owner_avatar_v1?.status, 'pending');
     assert.equal(selectActiveBackfillId(next), 'repo_data_sync_v1');
+  });
+
+  it('marks owner-avatar backfill pending when live rows are missing owner avatars', async () => {
+    await db.stars.put({
+      ...base,
+      full_name: 'legacy/avatar-missing',
+      starred_at: '2026-06-20T00:00:00Z',
+      created_at: '2020-01-01T00:00:00Z',
+    } as Star);
+
+    const next = await reconcileBackfillMap({});
+    assert.equal(next.repo_data_sync_v1?.status, 'done');
+    assert.equal(next.repo_owner_avatar_v1?.status, 'pending');
+    assert.equal(selectActiveBackfillId(next), 'repo_owner_avatar_v1');
+  });
+
+  it('marks both repo metadata backfills done when live rows are complete', async () => {
+    await db.stars.put({
+      ...base,
+      full_name: 'complete/repo',
+      starred_at: '2026-06-20T00:00:00Z',
+      created_at: '2020-01-01T00:00:00Z',
+      owner_avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4',
+    } as Star);
+
+    const next = await reconcileBackfillMap({});
+    assert.equal(next.repo_data_sync_v1?.status, 'done');
+    assert.equal(next.repo_owner_avatar_v1?.status, 'done');
+    assert.equal(selectActiveBackfillId(next), null);
   });
 
   it('keeps repo data sync backfill done after later rows arrive without creation metadata', async () => {
@@ -58,10 +88,36 @@ describe('Backfill regressions', () => {
       completedAt: '2026-06-22T00:05:00Z',
       error: null,
     };
-    const next = await reconcileBackfillMap({ repo_data_sync_v1: existing });
+    const next = await reconcileBackfillMap({
+      repo_data_sync_v1: existing,
+      repo_owner_avatar_v1: existing,
+    });
 
     assert.deepEqual(next.repo_data_sync_v1, existing);
+    assert.deepEqual(next.repo_owner_avatar_v1, existing);
     assert.equal(selectActiveBackfillId(next), null);
+  });
+
+  it('surfaces the owner-avatar backfill even when the shipped repo-data backfill is done', async () => {
+    await db.stars.put({
+      ...base,
+      full_name: 'legacy/avatar-after-repo-data',
+      starred_at: '2026-06-21T00:00:00Z',
+      created_at: '2020-01-01T00:00:00Z',
+    } as Star);
+
+    const repoDataState = {
+      status: 'done' as const,
+      queuedAt: '2026-06-22T00:00:00Z',
+      lastAttemptAt: '2026-06-22T00:01:00Z',
+      completedAt: '2026-06-22T00:05:00Z',
+      error: null,
+    };
+    const next = await reconcileBackfillMap({ repo_data_sync_v1: repoDataState });
+
+    assert.deepEqual(next.repo_data_sync_v1, repoDataState);
+    assert.equal(next.repo_owner_avatar_v1?.status, 'pending');
+    assert.equal(selectActiveBackfillId(next), 'repo_owner_avatar_v1');
   });
 
   it('does not scan local data when an existing backfill is already done', async () => {
@@ -78,6 +134,13 @@ describe('Backfill regressions', () => {
           queuedAt: '2026-06-22T00:00:00Z',
           lastAttemptAt: '2026-06-22T00:00:00Z',
           completedAt: '2026-06-22T00:05:00Z',
+          error: null,
+        },
+        repo_owner_avatar_v1: {
+          status: 'done',
+          queuedAt: '2026-08-13T00:00:00Z',
+          lastAttemptAt: '2026-08-13T00:00:00Z',
+          completedAt: '2026-08-13T00:05:00Z',
           error: null,
         },
       });
@@ -103,7 +166,16 @@ describe('Backfill regressions', () => {
       completedAt: null,
       error: 'GitHub metadata refresh failed',
     };
-    const next = await reconcileBackfillMap({ repo_data_sync_v1: existing });
+    const next = await reconcileBackfillMap({
+      repo_data_sync_v1: existing,
+      repo_owner_avatar_v1: {
+        status: 'done',
+        queuedAt: '2026-08-13T00:00:00Z',
+        lastAttemptAt: '2026-08-13T00:00:00Z',
+        completedAt: '2026-08-13T00:05:00Z',
+        error: null,
+      },
+    });
 
     assert.deepEqual(next.repo_data_sync_v1, existing);
     assert.equal(selectActiveBackfillId(next), 'repo_data_sync_v1');
@@ -124,7 +196,16 @@ describe('Backfill regressions', () => {
       completedAt: null,
       error: 'User postponed after previous failure',
     };
-    const next = await reconcileBackfillMap({ repo_data_sync_v1: existing });
+    const next = await reconcileBackfillMap({
+      repo_data_sync_v1: existing,
+      repo_owner_avatar_v1: {
+        status: 'done',
+        queuedAt: '2026-08-13T00:00:00Z',
+        lastAttemptAt: '2026-08-13T00:00:00Z',
+        completedAt: '2026-08-13T00:05:00Z',
+        error: null,
+      },
+    });
 
     assert.deepEqual(next.repo_data_sync_v1, existing);
     assert.equal(selectActiveBackfillId(next), null);
@@ -133,8 +214,15 @@ describe('Backfill regressions', () => {
   it('does not surface deferred backfills as active cards', async () => {
     const active = selectActiveBackfillId({
       repo_data_sync_v1: {
-        status: 'deferred',
+        status: 'done',
         queuedAt: '2026-06-22T00:00:00Z',
+        lastAttemptAt: '2026-06-22T00:00:00Z',
+        completedAt: '2026-06-22T00:05:00Z',
+        error: null,
+      },
+      repo_owner_avatar_v1: {
+        status: 'deferred',
+        queuedAt: '2026-08-13T00:00:00Z',
         lastAttemptAt: null,
         completedAt: null,
         error: null,

@@ -14,7 +14,7 @@ export type OnboardingStage =
   | 'coach'
   | 'done';
 
-export type BackfillId = 'repo_data_sync_v1';
+export type BackfillId = 'repo_data_sync_v1' | 'repo_owner_avatar_v1';
 
 export type BackfillStatus =
   | 'pending'
@@ -66,6 +66,8 @@ export interface Star {
   created_at: string | null; // ISO, repo creation time
   fork: boolean;
   archived: boolean;
+  /** Canonical GitHub repository-owner avatar URL. Missing on legacy or unavailable rows. */
+  owner_avatar_url?: string;
   /** Whether the authenticated account currently stars this repository. Missing on legacy rows means starred. */
   viewer_has_starred?: boolean;
   starred_at: string;
@@ -378,6 +380,7 @@ export interface Config {
     hidden: string[];
     widths?: Partial<Record<ColumnId, number>>;
     showRepositoryOwner?: boolean;
+    showRepositoryAvatar?: boolean;
   } | null;
   /** One-shot migration flag: clear auto-derived `language` tags (now that
    *  language is a first-class filter, not a tag). Set true after the migration

@@ -133,6 +133,39 @@ describe('star row inline tag fitting', () => {
     vi.unstubAllGlobals();
   });
 
+  it('reveals the repository initial when an avatar image fails', () => {
+    const star = {
+      ...fakeStar('owner/network-fallback'),
+      owner_avatar_url: 'https://avatars.githubusercontent.com/u/broken?v=4',
+    };
+    const { container } = mount(
+      <StarRow
+        star={star}
+        showRepositoryAvatar
+        tags={[]}
+        hasNotes={false}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['repository']}
+        gridTemplateColumns="220px"
+        flashedColumn={null}
+      />,
+    );
+    const image = container.querySelector<HTMLImageElement>('[data-repository-avatar]');
+    const fallback = container.querySelector('[data-repository-avatar-fallback]');
+
+    expect(fallback?.textContent).toBe('N');
+    expect(image?.hidden).toBe(false);
+    act(() => image?.dispatchEvent(new Event('error')));
+    expect(image?.hidden).toBe(true);
+    expect(fallback?.textContent).toBe('N');
+  });
+
   it('expands beyond the initial two tags when the measured column width allows it', () => {
     const { container } = mount(rowWithColumns(['tags']));
 

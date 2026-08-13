@@ -23,10 +23,63 @@ const INLINE_TAG_GAP_PX = 4;
 const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
+const REPOSITORY_AVATAR_COLOR_COUNT = 9;
+const REPOSITORY_INITIAL_PATTERN = /[\p{L}\p{N}]/u;
+
+function repositoryAvatarFallback(fullName: string) {
+  const repositoryName = fullName.slice(fullName.lastIndexOf('/') + 1).trim();
+  let initial = '#';
+  for (const character of repositoryName) {
+    if (!REPOSITORY_INITIAL_PATTERN.test(character)) continue;
+    initial = character.toUpperCase();
+    break;
+  }
+  let hash = 2166136261;
+  for (let index = 0; index < fullName.length; index++) {
+    hash ^= fullName.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return { color: (hash >>> 0) % REPOSITORY_AVATAR_COLOR_COUNT, initial };
+}
+
+function RepositoryOwnerAvatar({ fullName, url }: { fullName: string; url: string | undefined }) {
+  const fallback = repositoryAvatarFallback(fullName);
+  return (
+    <span
+      data-repository-avatar-slot
+      data-avatar-color={fallback.color}
+      aria-hidden="true"
+      className="relative grid size-5 shrink-0 place-items-center overflow-hidden rounded-full border border-border"
+    >
+      <span
+        data-repository-avatar-fallback
+        className="gsm-repository-avatar-fallback absolute inset-0 grid place-items-center text-[10px] font-semibold leading-none text-primary-foreground dark:text-background"
+      >
+        {fallback.initial}
+      </span>
+      {url ? (
+        <img
+          key={url}
+          data-repository-avatar
+          src={url}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="absolute inset-0 size-full object-cover"
+          onError={(event) => {
+            event.currentTarget.hidden = true;
+          }}
+        />
+      ) : null}
+    </span>
+  );
+}
+
 export const StarRow = memo(function StarRow({
   star,
   searchQuery = '',
   showRepositoryOwner = true,
+  showRepositoryAvatar = true,
   tags,
   hasNotes,
   favorite,
@@ -48,6 +101,7 @@ export const StarRow = memo(function StarRow({
   star: Star;
   searchQuery?: string;
   showRepositoryOwner?: boolean;
+  showRepositoryAvatar?: boolean;
   tags: string[];
   hasNotes: boolean;
   favorite: boolean;
@@ -162,6 +216,7 @@ export const StarRow = memo(function StarRow({
           case 'repository':
             return (
               <div key={column} data-row-col={column} className={cn('flex min-w-0 items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+                {showRepositoryAvatar ? <RepositoryOwnerAvatar fullName={star.full_name} url={star.owner_avatar_url} /> : null}
                 <span
                   className="min-w-0 flex-1 truncate text-primary"
                   title={showRepositoryOwner ? undefined : star.full_name}

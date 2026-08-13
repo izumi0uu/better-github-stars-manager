@@ -348,6 +348,7 @@ describe('Status/token regressions', () => {
             language: 20,
             tags: Number.NaN,
           },
+          showRepositoryAvatar: false,
         },
       },
     });
@@ -361,6 +362,7 @@ describe('Status/token regressions', () => {
         repository: 260,
         language: 64,
       },
+      showRepositoryAvatar: false,
     });
   });
 

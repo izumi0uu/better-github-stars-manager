@@ -34,11 +34,37 @@ interface RepositoryPayload {
   fork: boolean;
   archived: boolean;
   private?: boolean;
+  owner?: { avatar_url?: unknown };
 }
 
 
 function nullableString(value: unknown): string | null {
   return value === null || typeof value === 'string' ? value : null;
+}
+
+function normalizeOwnerAvatarUrl(value: unknown): string | undefined {
+  const owner = typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  const raw = typeof owner?.avatar_url === 'string' ? owner.avatar_url.trim() : '';
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    if (
+      url.protocol !== 'https:'
+      || url.username
+      || url.password
+      || url.port
+      || url.hash
+      || url.hostname.toLowerCase() !== 'avatars.githubusercontent.com'
+      || [...url.searchParams.keys()].some((key) => key !== 'v')
+      || url.searchParams.getAll('v').length > 1
+      || (url.searchParams.has('v') && !/^\d+$/u.test(url.searchParams.get('v') ?? ''))
+    ) return undefined;
+    return url.href;
+  } catch {
+    return undefined;
+  }
 }
 
 
@@ -52,6 +78,7 @@ function parseRepositoryPayload(value: unknown, requestedFullName: string): Repo
   const language = nullableString(input?.language);
   const pushedAt = nullableString(input?.pushed_at);
   const createdAt = nullableString(input?.created_at);
+  const ownerAvatarUrl = normalizeOwnerAvatarUrl(input?.owner);
   const topics = input?.topics === undefined
     ? []
     : Array.isArray(input.topics) && input.topics.every((topic) => typeof topic === 'string')
@@ -96,6 +123,7 @@ function parseRepositoryPayload(value: unknown, requestedFullName: string): Repo
     created_at: createdAt,
     fork: input.fork,
     archived: input.archived,
+    ...(ownerAvatarUrl ? { owner: { avatar_url: ownerAvatarUrl } } : {}),
     ...(input?.private === undefined ? {} : { private: input.private }),
   };
 }
@@ -346,6 +374,7 @@ async function fetchPageWithRetry(
 
 export function toStar(it: StarredRepoPayload): Star {
   const r = it.repo;
+  const ownerAvatarUrl = normalizeOwnerAvatarUrl(r.owner);
   return {
     full_name: r.full_name,
     html_url: r.html_url,
@@ -357,6 +386,7 @@ export function toStar(it: StarredRepoPayload): Star {
     created_at: r.created_at ?? null,
     fork: r.fork,
     archived: r.archived,
+    ...(ownerAvatarUrl ? { owner_avatar_url: ownerAvatarUrl } : {}),
     viewer_has_starred: true,
     starred_at: it.starred_at,
     tombstone: false,
@@ -369,6 +399,7 @@ function toOwnedPublicRepository(
   existing: Star | undefined,
 ): Star {
   const now = new Date().toISOString();
+  const ownerAvatarUrl = normalizeOwnerAvatarUrl(repository.owner);
   return {
     full_name: repository.full_name,
     html_url: repository.html_url,
@@ -380,6 +411,7 @@ function toOwnedPublicRepository(
     created_at: repository.created_at,
     fork: repository.fork,
     archived: repository.archived,
+    ...(ownerAvatarUrl ? { owner_avatar_url: ownerAvatarUrl } : {}),
     viewer_has_starred: false,
     // Non-starred rows have no GitHub star timestamp. Creation time keeps the
     // existing non-null sort contract without pretending the user starred it.

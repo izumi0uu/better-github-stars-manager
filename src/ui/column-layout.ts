@@ -26,6 +26,8 @@ export type ColumnLayout = {
   widths?: Partial<Record<ColumnId, number>>;
   /** Omitted is the default: render repository names as owner/repo. */
   showRepositoryOwner?: boolean;
+  /** Omitted is the default: render repository-owner avatars. */
+  showRepositoryAvatar?: boolean;
 };
 
 export type ColumnLayoutMode = 'default' | 'custom';
@@ -184,6 +186,7 @@ export function normalizeColumnLayout(layout: ColumnLayout): ColumnLayout {
     order: moveLockedColumnsToEnd(order),
     hidden,
     ...(layout.showRepositoryOwner === false ? { showRepositoryOwner: false } : {}),
+    ...(layout.showRepositoryAvatar === false ? { showRepositoryAvatar: false } : {}),
   };
   const widths = normalizeColumnWidths(layout.widths);
   return Object.keys(widths).length > 0 ? { ...normalized, widths } : normalized;
@@ -200,6 +203,7 @@ export function normalizeStoredColumnLayoutPreference(value: unknown): ColumnLay
     hidden?: unknown;
     widths?: unknown;
     showRepositoryOwner?: unknown;
+    showRepositoryAvatar?: unknown;
   };
   if (!Array.isArray(layout.order) || !Array.isArray(layout.hidden)) return null;
   const normalized = normalizeColumnLayout({
@@ -207,6 +211,7 @@ export function normalizeStoredColumnLayoutPreference(value: unknown): ColumnLay
     hidden: layout.hidden as ColumnId[],
     widths: layout.widths as Partial<Record<ColumnId, number>> | undefined,
     showRepositoryOwner: layout.showRepositoryOwner === false ? false : undefined,
+    showRepositoryAvatar: layout.showRepositoryAvatar === false ? false : undefined,
   });
   return layoutsEqual(normalized, DEFAULT_COLUMN_LAYOUT) ? null : normalized;
 }
@@ -217,6 +222,7 @@ export function cloneColumnLayout(layout: ColumnLayout): ColumnLayout {
     hidden: [...layout.hidden],
     ...(layout.widths ? { widths: { ...layout.widths } } : {}),
     ...(layout.showRepositoryOwner === false ? { showRepositoryOwner: false } : {}),
+    ...(layout.showRepositoryAvatar === false ? { showRepositoryAvatar: false } : {}),
   };
 }
 
@@ -225,7 +231,8 @@ export function layoutsEqual(a: ColumnLayout, b: ColumnLayout): boolean {
     a.order.join('|') === b.order.join('|') &&
     a.hidden.join('|') === b.hidden.join('|') &&
     widthSignature(a.widths) === widthSignature(b.widths) &&
-    (a.showRepositoryOwner !== false) === (b.showRepositoryOwner !== false)
+    (a.showRepositoryOwner !== false) === (b.showRepositoryOwner !== false) &&
+    (a.showRepositoryAvatar !== false) === (b.showRepositoryAvatar !== false)
   );
 }
 
@@ -264,6 +271,7 @@ export function restoreColumn(layout: ColumnLayout, id: ColumnId, insertIndex?: 
     hidden,
     widths: layout.widths,
     showRepositoryOwner: layout.showRepositoryOwner,
+    showRepositoryAvatar: layout.showRepositoryAvatar,
   });
 }
 

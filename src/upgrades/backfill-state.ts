@@ -1,6 +1,6 @@
 import type { BackfillId, BackfillMap, BackfillState, BackfillStatus } from '@/types';
 
-export const BACKFILL_IDS: BackfillId[] = ['repo_data_sync_v1'];
+export const BACKFILL_IDS: BackfillId[] = ['repo_data_sync_v1', 'repo_owner_avatar_v1'];
 
 const BACKFILL_STATUSES: readonly BackfillStatus[] = ['pending', 'running', 'done', 'failed', 'deferred'];
 

@@ -723,6 +723,47 @@ describe('layout editor config sync', () => {
     expect(editor.current.showRepositoryOwner).toBe(false);
   });
 
+  it('previews, saves, cancels, and resets repository avatar visibility', async () => {
+    authMocks.getConfig.mockResolvedValue(defaultConfig());
+    const editor = mountLayoutEditor();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(editor.current.showRepositoryAvatar).toBe(true);
+    act(() => {
+      editor.current.beginCustomLayoutEdit();
+      editor.current.setRepositoryAvatarVisible(false);
+    });
+    expect(editor.current.showRepositoryAvatar).toBe(false);
+    expect(editor.current.draftLayout.showRepositoryAvatar).toBe(false);
+
+    act(() => {
+      editor.current.cancelLayoutEdit();
+      editor.current.beginCustomLayoutEdit();
+    });
+    expect(editor.current.showRepositoryAvatar).toBe(true);
+
+    act(() => {
+      editor.current.setRepositoryAvatarVisible(false);
+    });
+    await act(async () => {
+      await editor.current.saveLayoutEdit();
+    });
+    expect(authMocks.update).toHaveBeenCalledWith({
+      columnLayoutMode: 'custom',
+      customColumnLayout: expect.objectContaining({ showRepositoryAvatar: false }),
+    });
+
+    act(() => {
+      editor.current.beginCustomLayoutEdit();
+      editor.current.resetLayoutEdit();
+    });
+    expect(editor.current.draftLayout.showRepositoryAvatar).toBeUndefined();
+    expect(editor.current.showRepositoryAvatar).toBe(true);
+  });
+
   it('refreshes cancel target when config changes while layout edit is open', async () => {
     authMocks.getConfig.mockResolvedValue(configFor('default'));
     const editor = mountLayoutEditor();

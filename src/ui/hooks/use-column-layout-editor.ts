@@ -148,6 +148,7 @@ export function useColumnLayoutEditor(
     : DEFAULT_COLUMN_LAYOUT;
   const activeLayout = editingLayout ? draftLayout : renderedBrowseLayout;
   const showRepositoryOwner = activeLayout.showRepositoryOwner !== false;
+  const showRepositoryAvatar = activeLayout.showRepositoryAvatar !== false;
   const displayLayout = layoutResize
     ? normalizeColumnLayout({ ...draftLayout, widths: { ...draftLayout.widths, ...layoutResize.liveWidths } })
     : activeLayout;
@@ -432,6 +433,14 @@ export function useColumnLayoutEditor(
     setDraftLayout((current) => normalizeColumnLayout({
       ...current,
       showRepositoryOwner: visible ? undefined : false,
+    }));
+  };
+
+  const setRepositoryAvatarVisible = (visible: boolean) => {
+    if (blockLayoutMutationDuringResize()) return;
+    setDraftLayout((current) => normalizeColumnLayout({
+      ...current,
+      showRepositoryAvatar: visible ? undefined : false,
     }));
   };
 
@@ -830,6 +839,7 @@ export function useColumnLayoutEditor(
     previewingCustomLayout,
     draftLayout,
     showRepositoryOwner,
+    showRepositoryAvatar,
     visibleColumns,
     gridTemplateColumns,
     tableMinWidth,
@@ -860,6 +870,7 @@ export function useColumnLayoutEditor(
     resetLayoutWidths,
     setColumnHidden,
     setRepositoryOwnerVisible,
+    setRepositoryAvatarVisible,
     beginColumnDrag,
     beginColumnResize,
     moveColumnByKeyboard,

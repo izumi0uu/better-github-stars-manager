@@ -87,6 +87,7 @@ function starredRepo(
     created_at: string | null;
     fork: boolean;
     archived: boolean;
+    owner: unknown;
   }> = {},
 ) {
   return {
@@ -102,6 +103,7 @@ function starredRepo(
       created_at: overrides.created_at ?? '2020-01-01T00:00:00Z',
       fork: overrides.fork ?? false,
       archived: overrides.archived ?? false,
+      owner: overrides.owner ?? { avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4' },
     },
   };
 }
@@ -198,6 +200,7 @@ describe('GitHub stars sync regressions', () => {
         return pageResponse([
           starredRepo('octocat/starred-owned', '2026-07-03T00:00:00Z', {
             description: 'authoritative starred payload',
+            owner: { avatar_url: 'https://avatars.githubusercontent.com/u/101?v=4' },
           }),
           starredRepo('elsewhere/starred', '2026-07-02T00:00:00Z'),
         ]);
@@ -208,6 +211,7 @@ describe('GitHub stars sync regressions', () => {
             ...starredRepo('octocat/not-starred', '2020-01-01T00:00:00Z').repo,
             private: false,
             description: 'owned but not starred',
+            owner: { avatar_url: 'https://avatars.githubusercontent.com/u/102?v=4' },
           },
           {
             ...starredRepo('octocat/starred-owned', '2020-01-01T00:00:00Z').repo,
@@ -234,6 +238,8 @@ describe('GitHub stars sync regressions', () => {
     assert.equal((await db.stars.get('octocat/not-starred'))?.tombstone, false);
     assert.equal((await db.stars.get('octocat/starred-owned'))?.viewer_has_starred, true);
     assert.equal((await db.stars.get('octocat/starred-owned'))?.description, 'authoritative starred payload');
+    assert.equal((await db.stars.get('octocat/not-starred'))?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/102?v=4');
+    assert.equal((await db.stars.get('octocat/starred-owned'))?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/101?v=4');
   });
 
   it('syncIncremental refreshes touched older rows but counts only fresh stars as added', async () => {
@@ -267,6 +273,7 @@ describe('GitHub stars sync regressions', () => {
           stargazers_count: 11,
           pushed_at: '2026-06-21T00:00:00Z',
           archived: true,
+          owner: { avatar_url: 'https://avatars.githubusercontent.com/u/11?v=4' },
         }),
       ]);
     };
@@ -280,6 +287,7 @@ describe('GitHub stars sync regressions', () => {
     assert.equal(oldRepo?.stargazers_count, 11);
     assert.equal(oldRepo?.pushed_at, '2026-06-21T00:00:00Z');
     assert.equal(oldRepo?.archived, true);
+    assert.equal(oldRepo?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/11?v=4');
     assert.equal((await db.stars.get('fresh/repo'))?.tombstone, false);
     assert.equal((await authStore.getConfig()).lastSyncStarredAt, '2026-06-22T00:00:00Z');
   });
@@ -350,6 +358,7 @@ describe('GitHub stars sync regressions', () => {
           created_at: '2020-01-01T00:00:00Z',
           fork: false,
           archived: true,
+          owner: { avatar_url: 'https://avatars.githubusercontent.com/u/77?v=4' },
         }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -363,6 +372,7 @@ describe('GitHub stars sync regressions', () => {
     assert.equal(created.full_name, 'Owner/radar-repo');
     assert.equal(created.archived, true);
     assert.equal((await db.stars.get('Owner/radar-repo'))?.stargazers_count, 77);
+    assert.equal(created.owner_avatar_url, 'https://avatars.githubusercontent.com/u/77?v=4');
     assert.deepEqual(requests.map(({ url, method }) => [method, url]), [
       ['PUT', 'https://api.github.com/user/starred/owner/radar-repo'],
       ['GET', 'https://api.github.com/repos/owner/radar-repo'],
