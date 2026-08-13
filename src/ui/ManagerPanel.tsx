@@ -182,6 +182,7 @@ export function ManagerPanel() {
     previewingCustomLayout,
     draftLayout,
     showRepositoryOwner,
+    showRepositoryAvatar,
     visibleColumns,
     gridTemplateColumns,
     tableMinWidth,
@@ -212,6 +213,7 @@ export function ManagerPanel() {
     resetLayoutWidths,
     setColumnHidden,
     setRepositoryOwnerVisible,
+    setRepositoryAvatarVisible,
     beginColumnDrag,
     beginColumnResize,
     moveColumnByKeyboard,
@@ -511,6 +513,7 @@ export function ManagerPanel() {
       draftLayout={draftLayout}
       onSetColumnHidden={setColumnHidden}
       onSetRepositoryOwnerVisible={setRepositoryOwnerVisible}
+      onSetRepositoryAvatarVisible={setRepositoryAvatarVisible}
     />
   );
 
@@ -690,17 +693,25 @@ export function ManagerPanel() {
             ) : radarSurface ? (
               <RadarSurface
                 result={radar.result}
+                recommendations={radar.recommendations}
+                discoverView={radar.discoverView}
                 loading={radar.loading}
+                recommendationLoading={radar.recommendationLoading}
                 refreshing={radar.refreshing}
+                recommendationRefreshing={radar.recommendationRefreshing}
                 error={radar.error}
+                recommendationError={radar.recommendationError}
                 actionError={radar.actionError}
                 pendingAction={radar.pendingAction}
                 view={radar.view}
+                onDiscoverViewChange={radar.setDiscoverView}
                 onViewChange={radar.setView}
                 onSourceEnabledChange={radar.setSourceEnabled}
                 sources={radar.sources}
                 onRefresh={() => { void radar.refresh(); }}
+                onRefreshRecommendations={() => { void radar.refreshRecommendations(); }}
                 onRetryQuery={() => { void radar.reload(); }}
+                onRetryRecommendations={() => { void radar.reloadRecommendations(); }}
                 onOpenOptions={() => bgCall('openOptions').catch(() => {})}
                 onStar={radar.star}
                 onSetFavorite={radar.setFavorite}
@@ -735,6 +746,7 @@ export function ManagerPanel() {
                 rows={visibleRows}
                 searchQuery={f.query}
                 showRepositoryOwner={showRepositoryOwner}
+                showRepositoryAvatar={showRepositoryAvatar}
                 loading={loading}
                 phase={phase}
                 tagsByFullName={tagsByFullName}
@@ -890,7 +902,7 @@ function OnboardingCard({
               <li>
                 <a
                   className="text-primary hover:underline"
-                  href="https://github.com/settings/tokens/new?scopes=repo,gist,notifications&description=Better%20GitHub%20Stars%20Manager"
+                  href="https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager"
                   target="_blank"
                   rel="noreferrer"
                   {...getLockedAnchorProps(interactionLocked)}

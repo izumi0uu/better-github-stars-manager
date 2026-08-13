@@ -61,6 +61,9 @@ import {
 import { createSerializedRunner } from "./serialized-runner";
 import { createWatchRefreshCoordinator } from './watch-refresh';
 import { createRadarRefreshCoordinator } from './radar-refresh';
+import { createRecommendationRefreshCoordinator, createProductionRecommendationLoaders } from './recommendation-refresh';
+import { fetchGitHubRecommendations } from '@/api/github-recommendation-source';
+import * as recommendationStore from '@/storage/recommendation-store';
 import {
   createScheduledRefreshController,
   type ScheduledRefreshKind,
@@ -256,6 +259,11 @@ type Req = BgsmAgentSessionRequest
   | { type: "markWatchThreadsDone"; threadIds?: unknown }
   | { type: "disconnectWatchInbox" }
   | { type: "clearWatchData" }
+  | { type: 'getRecommendationStatus' }
+  | { type: 'queryRecommendations' }
+  | { type: 'refreshRecommendations' }
+  | { type: 'refreshRecommendationsOnEntry' }
+  | { type: 'clearRecommendations' }
   | { type: "getRadarStatus" }
   | { type: "queryRadar" }
   | { type: "refreshRadar" }
@@ -354,6 +362,21 @@ const radarRefreshCoordinator = createRadarRefreshCoordinator({
   },
   broadcastChanged: broadcastRadarChanged,
 });
+const recommendationRefreshCoordinator = createRecommendationRefreshCoordinator({
+  runSerialized: (operation) => jobQueue.run(operation),
+  auth: authStore,
+  fetchRecommendations: fetchGitHubRecommendations,
+  ...createProductionRecommendationLoaders(),
+  store: {
+    clearData: recommendationStore.clearRecommendationData,
+    prepareAccount: recommendationStore.prepareRecommendationAccount,
+    getState: recommendationStore.getRecommendationState,
+    commitSnapshot: recommendationStore.commitRecommendationSnapshot,
+    recordFailure: recommendationStore.recordRecommendationFailure,
+    listRecommendations: recommendationStore.listRecommendations,
+  },
+  broadcastChanged: broadcastRecommendationChanged,
+});
 function reportScheduledRefreshError(
   kind: ScheduledRefreshKind | 'schedule',
   error: unknown,
@@ -374,18 +397,32 @@ const scheduledRefreshController = createScheduledRefreshController({
   refreshWatchInbox: () => watchRefreshCoordinator.refreshInbox(),
   refreshWatchScope: () => watchRefreshCoordinator.refresh(),
   refreshRadar: () => radarRefreshCoordinator.refresh(),
+  refreshRecommendationsIfDue: () => recommendationRefreshCoordinator.refreshAtScheduledBoundary(),
+  nextRecommendationRefreshAt: (nowMillis) => recommendationRefreshCoordinator.nextDailyRefreshAt(nowMillis),
   onError: reportScheduledRefreshError,
 });
 scheduledRefreshController.install();
 
-function ensureScheduledRefreshes(): void {
-  void scheduledRefreshController.ensure().catch((error) => {
+function ensureScheduledRefreshes(): Promise<void> {
+  return scheduledRefreshController.ensure().catch((error) => {
     reportScheduledRefreshError('schedule', error);
   });
 }
 
-ensureScheduledRefreshes();
-chrome.runtime.onStartup.addListener(ensureScheduledRefreshes);
+async function reconcileScheduledRefreshes(): Promise<void> {
+  await ensureScheduledRefreshes();
+  try {
+    await recommendationRefreshCoordinator.refreshIfDue();
+  } catch (error) {
+    reportScheduledRefreshError('recommendations', error);
+  }
+  await ensureScheduledRefreshes();
+}
+
+void reconcileScheduledRefreshes();
+chrome.runtime.onStartup.addListener(() => {
+  void reconcileScheduledRefreshes();
+});
 const agentManualTagWriter = createQueuedAgentManualTagWriter({
   runSerialized: (operation, runOptions) => jobQueue.run(operation, runOptions),
   isBlocked: async () => organizeApplyBlocksAgentWrites(await getActiveOrganizeJob()),
@@ -505,6 +542,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   broadcastDataChanged();
   void radarRefreshCoordinator.reconcileAccount()
     .then(broadcastRadarChanged)
+    .catch(() => {});
+  void recommendationRefreshCoordinator.reconcileAccount()
+    .then(reconcileScheduledRefreshes)
     .catch(() => {});
 });
 const organizeJobRunConnections = createBgsmOrganizeJobConnectionRegistry<chrome.runtime.Port>();
@@ -1170,6 +1210,14 @@ function broadcastDataChanged() {
 function broadcastWatchChanged() {
   chrome.runtime.sendMessage({ type: 'watchChanged' }).catch(() => {});
 }
+function broadcastRecommendationChanged() {
+  chrome.runtime.sendMessage({ type: 'recommendationsChanged' }).catch(() => {});
+}
+
+function broadcastDataAndRecommendationsChanged() {
+  broadcastDataChanged();
+  broadcastRecommendationChanged();
+}
 function broadcastRadarChanged() {
   chrome.runtime.sendMessage({ type: 'radarChanged' }).catch(() => {});
 }
@@ -1402,7 +1450,7 @@ async function performFullSyncJob() {
   });
   const result = await githubStarSource.syncFull((p) => setProgress(p));
   await reconcileWatchScopeAfterStarsChange();
-  broadcastDataChanged();
+  broadcastDataAndRecommendationsChanged();
   setIdleMessage(m.background.fullDone(result.added));
   return result;
 }
@@ -1528,7 +1576,7 @@ async function handle(req: Req): Promise<Res> {
           await reconcileWatchScopeAfterStarsChange();
           return syncResult;
         });
-        broadcastDataChanged();
+        broadcastDataAndRecommendationsChanged();
         setIdleMessage(m.background.incrementalDone(result.added));
         return { ok: true, data: { ...result, tagged: 0 } };
       }
@@ -1554,7 +1602,7 @@ async function handle(req: Req): Promise<Res> {
           await reconcileWatchScopeAfterStarsChange();
           return syncResult;
         });
-        broadcastDataChanged();
+        broadcastDataAndRecommendationsChanged();
         setIdleMessage(
           m.background.rescanDone(result.tombstoned, result.revived),
         );
@@ -1727,6 +1775,26 @@ async function handle(req: Req): Promise<Res> {
           return { ok: false, error: m.background.watchDataClearFailed };
         }
       }
+      case 'getRecommendationStatus':
+        return { ok: true, data: await recommendationRefreshCoordinator.getStatus() };
+      case 'queryRecommendations':
+        return { ok: true, data: await recommendationRefreshCoordinator.query() };
+      case 'refreshRecommendations': {
+        const result = await recommendationRefreshCoordinator.refresh();
+        await ensureScheduledRefreshes();
+        return { ok: true, data: result };
+      }
+      case 'refreshRecommendationsOnEntry': {
+        const first = await recommendationRefreshCoordinator.refreshFirstEligible();
+        const result = first ?? await recommendationRefreshCoordinator.refreshIfDue();
+        if (result?.published) await ensureScheduledRefreshes();
+        return { ok: true, data: result };
+      }
+      case 'clearRecommendations': {
+        const result = await recommendationRefreshCoordinator.clear();
+        await ensureScheduledRefreshes();
+        return { ok: true, data: result };
+      }
       case 'getRadarStatus':
         return { ok: true, data: await radarRefreshCoordinator.getStatus() };
       case 'queryRadar':
@@ -1767,7 +1835,7 @@ async function handle(req: Req): Promise<Res> {
           await reconcileWatchScopeAfterStarsChange();
           return created;
         });
-        broadcastDataChanged();
+        broadcastDataAndRecommendationsChanged();
         broadcastRadarChanged();
         return { ok: true, data: star };
       }
@@ -1886,7 +1954,7 @@ async function handle(req: Req): Promise<Res> {
         });
         if (!result)
           return { ok: false, error: `Unknown repo: ${req.full_name}` };
-        broadcastDataChanged();
+        broadcastDataAndRecommendationsChanged();
         return { ok: true, data: result };
       }
       case "removeVisibleTag": {
@@ -3545,7 +3613,7 @@ organizeApplyRecovery.install();
 chrome.runtime.onInstalled.addListener(() => {
   setProgress({ phase: "idle", done: 0, total: null, message: "" });
   void backfillConfig.reconcileStoredBackfills().catch(() => {});
-  ensureScheduledRefreshes();
+  void reconcileScheduledRefreshes();
 });
 
 /**

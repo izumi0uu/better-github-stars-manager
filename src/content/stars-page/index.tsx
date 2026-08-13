@@ -11,6 +11,7 @@ import {
   resetPanelToggle,
   showPanel,
 } from '@/content/stars-page/panel-toggle';
+import { signalRecommendationEntry } from '@/utils/recommendation-entry';
 import cssText from '@/ui/styles/index.css?inline';
 
 /**
@@ -278,5 +279,6 @@ export function installStarsPageRuntime(pageWindow: Window): void {
 }
 
 export function onExecute(): void {
+  signalRecommendationEntry();
   installStarsPageRuntime(window);
 }

@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRadar } from '@/ui/hooks/use-radar';
 import type { RadarQueryResponse, RadarRefreshResult, RadarStatus } from '@/radar/radar-contract';
 import type { RadarActivityPresentation } from '@/radar/radar-model';
+import type {
+  RecommendationQueryResponse,
+  RecommendationRefreshResult,
+} from '@/recommendations/recommendation-model';
 import { cleanupMountedRootsAndBody, mountReact, type MountedRoot } from './test-utils';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -40,6 +44,24 @@ function refreshResponse(overrides: Partial<RadarRefreshResult> = {}): RadarRefr
     ...overrides,
   };
 }
+
+function recommendationResponse(
+  overrides: Partial<RecommendationQueryResponse['status']> = {},
+): RecommendationQueryResponse {
+  return {
+    recommendations: [],
+    status: {
+      accountLogin: 'viewer',
+      hasMainToken: true,
+      refreshing: false,
+      snapshotStatus: 'fresh',
+      errorCode: null,
+      state: null,
+      ...overrides,
+    },
+  };
+}
+
 const unseenActivity = {
   id: 'activity-1',
   accountLogin: 'viewer',
@@ -65,12 +87,18 @@ const unseenActivity = {
   displayedStargazerCount: 1,
 } satisfies RadarActivityPresentation;
 
-
 function Harness() {
   const radar = useRadar();
   return (
     <div>
       <button type="button" data-testid="refresh" onClick={() => void radar.refresh()}>Refresh</button>
+      <button
+        type="button"
+        data-testid="refresh-recommendations"
+        onClick={() => void radar.refreshRecommendations()}
+      >
+        Refresh recommendations
+      </button>
       <button
         type="button"
         data-testid="show-self"
@@ -92,6 +120,16 @@ function Harness() {
         {radar.sources.following ? 'following:on' : 'following:off'}·
         {radar.sources.self ? 'self:on' : 'self:off'}
       </span>
+      <span data-testid="recommendation-loading">
+        {radar.recommendationLoading ? 'loading' : 'ready'}
+      </span>
+      <span data-testid="recommendation-refreshing">
+        {radar.recommendationRefreshing ? 'refreshing' : 'idle'}
+      </span>
+      <span data-testid="recommendation-error">{radar.recommendationError ?? 'none'}</span>
+      <span data-testid="recommendation-status">
+        {radar.recommendations?.status.snapshotStatus ?? 'none'}
+      </span>
     </div>
   );
 }
@@ -100,6 +138,11 @@ const mountedRoots: MountedRoot[] = [];
 
 beforeEach(() => {
   radarMocks.bgCall.mockReset();
+  radarMocks.bgCall.mockImplementation((type: string) => {
+    if (type === 'queryRadar') return Promise.resolve(response());
+    if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+    throw new Error(`Unexpected request: ${type}`);
+  });
   runtimeListeners.length = 0;
   vi.stubGlobal('chrome', {
     runtime: {
@@ -129,10 +172,6 @@ async function settle() {
 
 describe('useRadar', () => {
   it('defaults to Following and enables Me without a background request', async () => {
-    radarMocks.bgCall.mockImplementation((type: string) => {
-      if (type === 'queryRadar') return Promise.resolve(response());
-      throw new Error(`Unexpected request: ${type}`);
-    });
     const container = mountReact(<Harness />, mountedRoots);
     await settle();
 
@@ -143,22 +182,23 @@ describe('useRadar', () => {
     });
     expect(container.querySelector('[data-testid="sources"]')?.textContent)
       .toBe('following:on·self:on');
-    expect(radarMocks.bgCall).toHaveBeenCalledTimes(1);
+    expect(radarMocks.bgCall).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps old data and exposes a refresh error when the coordinator cannot publish', async () => {
+  it('keeps old Following data and exposes a refresh error when publication fails', async () => {
     const loaded = response();
     const failed = response({ snapshotStatus: 'stale', errorCode: 'network_error' });
     radarMocks.bgCall.mockImplementation((type: string) => {
       if (type === 'queryRadar') return Promise.resolve(loaded);
-      if (type === 'refreshRadar') return Promise.resolve(refreshResponse({ published: false, status: failed.status }));
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      if (type === 'refreshRadar') {
+        return Promise.resolve(refreshResponse({ published: false, status: failed.status }));
+      }
       throw new Error(`Unexpected request: ${type}`);
     });
 
     const container = mountReact(<Harness />, mountedRoots);
     await settle();
-    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
-
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="refresh"]')?.click();
       await Promise.resolve();
@@ -171,28 +211,72 @@ describe('useRadar', () => {
     expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('idle');
   });
 
-  it('reloads only after an authoritative Radar message and suppresses stale responses', async () => {
-    const first = response();
-    const second = response({ snapshotStatus: 'partial' });
-    let queries = 0;
+  it('keeps saved recommendations when refresh cannot publish', async () => {
+    const loaded = recommendationResponse();
+    const failed = recommendationResponse({ snapshotStatus: 'stale', errorCode: 'network_error' });
     radarMocks.bgCall.mockImplementation((type: string) => {
-      if (type !== 'queryRadar') throw new Error(`Unexpected request: ${type}`);
-      queries += 1;
-      return Promise.resolve(queries === 1 ? first : second);
+      if (type === 'queryRadar') return Promise.resolve(response());
+      if (type === 'queryRecommendations') return Promise.resolve(loaded);
+      if (type === 'refreshRecommendations') {
+        return Promise.resolve({ published: false, status: failed.status } satisfies RecommendationRefreshResult);
+      }
+      throw new Error(`Unexpected request: ${type}`);
     });
 
     const container = mountReact(<Harness />, mountedRoots);
     await settle();
-    expect(queries).toBe(1);
-
     await act(async () => {
-      runtimeListeners[0]?.({ type: 'dataChanged' });
-      runtimeListeners[0]?.({ type: 'unrelated' });
+      container.querySelector<HTMLButtonElement>('[data-testid="refresh-recommendations"]')?.click();
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(queries).toBe(2);
-    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('partial');
+
+    expect(container.querySelector('[data-testid="recommendation-error"]')?.textContent)
+      .toBe('refresh');
+    expect(container.querySelector('[data-testid="recommendation-status"]')?.textContent)
+      .toBe('fresh');
+    expect(container.querySelector('[data-testid="recommendation-refreshing"]')?.textContent)
+      .toBe('idle');
+  });
+
+  it('reloads authoritative projections for their broadcasts and cleans listeners', async () => {
+    let radarQueries = 0;
+    let recommendationQueries = 0;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        radarQueries += 1;
+        return Promise.resolve(response({ snapshotStatus: radarQueries === 1 ? 'fresh' : 'partial' }));
+      }
+      if (type === 'queryRecommendations') {
+        recommendationQueries += 1;
+        return Promise.resolve(recommendationResponse({
+          snapshotStatus: recommendationQueries === 1 ? 'fresh' : 'stale',
+        }));
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+    expect(runtimeListeners).toHaveLength(1);
+
+    await act(async () => {
+      runtimeListeners[0]?.({ type: 'recommendationsChanged' });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(radarQueries).toBe(1);
+    expect(recommendationQueries).toBe(2);
+    expect(container.querySelector('[data-testid="recommendation-status"]')?.textContent)
+      .toBe('stale');
+
+    await act(async () => {
+      runtimeListeners[0]?.({ type: 'dataChanged' });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(radarQueries).toBe(2);
+    expect(recommendationQueries).toBe(3);
   });
 
   it('projects seen immediately and reconciles with the authoritative query', async () => {
@@ -209,6 +293,7 @@ describe('useRadar', () => {
         queries += 1;
         return Promise.resolve(queries === 1 ? initial : authoritative);
       }
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
       if (type === 'markRadarActivitiesSeen') {
         return new Promise<RadarStatus>((resolve) => { resolveMark = resolve; });
       }

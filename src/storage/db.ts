@@ -30,6 +30,10 @@ import type {
   RadarActivityRecord,
   RadarStateRecord,
 } from '@/radar/radar-model';
+import type {
+  RecommendationRecord,
+  RecommendationStateRecord,
+} from '@/recommendations/recommendation-model';
 import { normalizeStoredTag, type LegacyTagRow } from './tag-shape';
 
 /**
@@ -59,6 +63,8 @@ export class StarsDB extends Dexie {
   watchState!: Table<GitHubWatchStateRecord, 'singleton'>;
   radarActivities!: Table<RadarActivityRecord, string>;
   radarState!: Table<RadarStateRecord, 'singleton'>;
+  recommendations!: Table<RecommendationRecord, string>;
+  recommendationState!: Table<RecommendationStateRecord, 'singleton'>;
 
   constructor() {
     super('better-github-stars-manager');
@@ -114,9 +120,10 @@ export class StarsDB extends Dexie {
       watchNotificationThreads: 'id, repositoryFullName, updatedAt, [repositoryFullName+updatedAt]',
       watchState: 'id',
     });
-    // v5 adds account-bound Radar activity plus the optional
-    // `Star.viewer_has_starred` source marker. The marker is not queried by an
-    // index; legacy rows remain starred when it is undefined.
+    // v5 adds account-bound Radar activity, the optional
+    // `Star.viewer_has_starred` source marker and owner avatar URL, and the
+    // derived For You cache. Neither Star field nor recommendation score is
+    // queried by an index; legacy Star rows remain valid when either is absent.
     this.version(5).stores({
       stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
       tags: 'full_name, mtime',
@@ -139,6 +146,8 @@ export class StarsDB extends Dexie {
       watchState: 'id',
       radarActivities: '&id, accountLogin, repositoryKey, starredAt, dismissedAt, [accountLogin+starredAt], [accountLogin+repositoryKey]',
       radarState: '&id, accountLogin, lastSuccessfulAt',
+      recommendations: '&id, accountLogin',
+      recommendationState: '&id, accountLogin',
     });
   }
 }

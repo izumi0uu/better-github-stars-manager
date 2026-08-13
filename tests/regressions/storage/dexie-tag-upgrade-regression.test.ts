@@ -85,6 +85,8 @@ describe('Dexie tag schema upgrades', () => {
             'tags',
             'radarActivities',
             'radarState',
+            'recommendationState',
+            'recommendations',
             'watchNotificationThreads',
             'watchRepositories',
             'watchState',
