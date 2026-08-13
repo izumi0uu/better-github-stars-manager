@@ -56,7 +56,6 @@ function queryResponse(totalCount: number): WatchInboxQueryResponse {
     totalCount,
     status: {
       accountLogin: 'octocat',
-      credentialSource: 'main',
       hasMainToken: true,
       hasNotificationsToken: true,
       refreshing: false,

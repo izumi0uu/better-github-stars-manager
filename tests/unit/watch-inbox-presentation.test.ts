@@ -79,7 +79,6 @@ function queryResponse(): WatchInboxQueryResponse {
     ...projection,
     status: {
       accountLogin: 'octocat',
-      credentialSource: 'main',
       hasMainToken: true,
       hasNotificationsToken: true,
       refreshing: false,

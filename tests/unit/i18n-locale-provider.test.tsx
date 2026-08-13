@@ -165,7 +165,7 @@ describe('i18n catalog and locale propagation invariants', () => {
         english.agentPanel.agentSettings,
         english.options.agentHeading,
       ],
-      ['Cubby', 'Cubby', 'Cubby settings', '3. Cubby'],
+      ['Cubby', 'Cubby', 'Cubby settings', '2. Cubby'],
     );
     assert.deepEqual(
       [
@@ -174,7 +174,7 @@ describe('i18n catalog and locale propagation invariants', () => {
         chinese.agentPanel.agentSettings,
         chinese.options.agentHeading,
       ],
-      ['Cubby', 'Cubby', 'Cubby 设置', '3. Cubby'],
+      ['Cubby', 'Cubby', 'Cubby 设置', '2. Cubby'],
     );
   });
 
@@ -185,33 +185,29 @@ describe('i18n catalog and locale propagation invariants', () => {
     assert.deepEqual(
       [
         english.tokenHeading,
-        english.watchTokenHeading,
         english.agentHeading,
         english.gistHeading,
         english.behaviorHeading,
       ],
       [
-        '1. GitHub connection',
-        '2. Watch Inbox (optional)',
-        '3. Cubby',
-        '4. Gist sync',
-        '5. Preferences',
+        '1. GitHub Classic PAT',
+        '2. Cubby',
+        '3. Gist sync',
+        '4. Preferences',
       ],
     );
     assert.deepEqual(
       [
         chinese.tokenHeading,
-        chinese.watchTokenHeading,
         chinese.agentHeading,
         chinese.gistHeading,
         chinese.behaviorHeading,
       ],
       [
-        '1. GitHub 连接',
-        '2. Watch 收件箱（可选）',
-        '3. Cubby',
-        '4. Gist 同步',
-        '5. 偏好设置',
+        '1. GitHub Classic PAT',
+        '2. Cubby',
+        '3. Gist 同步',
+        '4. 偏好设置',
       ],
     );
   });
@@ -291,6 +287,22 @@ describe('i18n catalog and locale propagation invariants', () => {
     assert.equal(chinese.watchDisconnectFailed, '断开 Watch 收件箱失败。');
     assert.equal(english.watchInboxQueryInvalid, 'Invalid Watch inbox query.');
     assert.equal(chinese.watchInboxQueryInvalid, 'Watch 收件箱查询无效。');
+  });
+
+  it('keeps Classic PAT authorization explicit across recovery surfaces', () => {
+    const english = getMessages('en');
+    const chinese = getMessages('zh-CN');
+
+    assert.match(english.manager.noTokenBanner, /GitHub Classic PAT/u);
+    assert.match(chinese.manager.noTokenBanner, /GitHub Classic PAT/u);
+    assert.match(english.watch.inboxPermissionDenied, /GitHub Classic PAT/u);
+    assert.match(chinese.watch.inboxPermissionDenied, /GitHub Classic PAT/u);
+    assert.match(english.radar.permissionBody, /GitHub Classic PAT/u);
+    assert.match(chinese.radar.permissionBody, /GitHub Classic PAT/u);
+    assert.equal(english.popup.connectionRejected, '401 — Classic PAT rejected or expired');
+    assert.equal(chinese.popup.connectionRejected, '401 — Classic PAT 被拒绝或已过期');
+    assert.match(english.onboarding.noTokenBody, /GitHub Classic PAT/u);
+    assert.match(chinese.onboarding.noTokenBody, /GitHub Classic PAT/u);
   });
 
   it('localizes the development Cubby diagnostics surface while preserving raw evidence identifiers', () => {

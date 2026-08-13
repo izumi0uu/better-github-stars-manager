@@ -67,14 +67,13 @@ describe('Watch background integration contract', () => {
     assert.doesNotMatch(broadcast, /invalidateCache|dataChanged/);
   });
 
-  it('scrubs the main GitHub credential from configured secrets', () => {
+  it('scrubs only configured GitHub secrets from diagnostics', () => {
     const configuredSecrets = extract(
       backgroundSource,
       /getConfiguredSecrets: async \(\) => Promise\.all\(\[([\s\S]*?)\]\)/,
     );
     assert.match(configuredSecrets, /authStore\.getToken\(\)/);
-    assert.doesNotMatch(configuredSecrets, /getWatchNotificationsToken/);
-    assert.match(configuredSecrets, /authStore\.getAgentApiKey\(\)/);
+    assert.doesNotMatch(configuredSecrets, /getWatchNotificationsToken|getAgentApiKey/);
   });
 
   it('keeps Watch request validation and failures out of Stars progress handling', () => {
@@ -120,8 +119,7 @@ describe('Watch background integration contract', () => {
     assert.match(listener, /const credentialsChange = changes\[GITHUB_CREDENTIALS_STORAGE_KEY\]/);
     assert.match(listener, /const accountChange = credentialsChange \?\? changes\[CONFIG_STORAGE_KEY\]/);
     assert.match(listener, /watchMainAccountChanged\(accountChange\)/);
-    assert.match(listener, /void watchRefreshCoordinator\.reconcileAccount\(\{/);
-    assert.match(listener, /invalidateNotificationsIdentity: watchNotificationsIdentity\(accountChange\.oldValue\)/);
+    assert.match(listener, /void watchRefreshCoordinator\.reconcileAccount\(\)/);
     assert.doesNotMatch(listener, /jobQueue\.run/);
     assert.doesNotMatch(listener, /watchStore\.clearWatchData/);
     assert.doesNotMatch(listener, /watchRefreshCoordinator\.refresh|fetchGitHub/);
@@ -166,7 +164,7 @@ describe('Watch background integration contract', () => {
   it('keeps Watch status based on main and Notifications availability', () => {
     assert.match(watchContractSource, /hasMainToken: boolean/);
     assert.match(watchContractSource, /hasNotificationsToken: boolean/);
-    assert.doesNotMatch(watchContractSource, /credentialSource/);
+    assert.doesNotMatch(watchContractSource, /credentialSource\?:/);
     assert.match(watchRefreshSource, /const hasNotificationsToken = !!auth\.notificationsToken/);
   });
 

@@ -418,7 +418,7 @@ describe('Options preferences', () => {
     await renderOptions();
 
     const remove = [...document.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Remove token'));
+      .find((button) => button.textContent?.includes('Remove Classic PAT'));
     expect(remove).toBeInstanceOf(HTMLButtonElement);
     await act(async () => {
       (remove as HTMLButtonElement).click();
@@ -427,6 +427,22 @@ describe('Options preferences', () => {
     });
 
     expect(document.querySelector('a[href="https://github.com/octocat?tab=stars"]')).toBeNull();
+  });
+
+  it('shows one unified GitHub token section', async () => {
+    authMocks.getConfig.mockResolvedValue(config());
+    authMocks.hasToken.mockResolvedValue(true);
+
+    await renderOptions();
+
+    const githubSettings = document.querySelector<HTMLElement>(
+      '[data-testid="github-connection-settings"]',
+    );
+    expect(githubSettings?.textContent).toContain('Open the prefilled classic-token form above');
+    expect(githubSettings?.textContent).toContain('read:user');
+    expect(githubSettings?.textContent).toContain('Following Radar');
+    expect(githubSettings?.querySelectorAll('ol > li')).toHaveLength(3);
+    expect(document.querySelector('[data-testid="watch-inbox-settings"]')).toBeNull();
   });
 
   it('shows a saved token warning when optional Notifications access is unavailable', async () => {
@@ -446,7 +462,7 @@ describe('Options preferences', () => {
     expect(document.querySelector('[data-testid="main-token-status"]')?.textContent)
       .toContain(watchCopy.tokenVerifiedWatchForbidden('octocat'));
   });
-  it('consumes an initial Watch intent, renders the setup block, and focuses its heading', async () => {
+  it('routes an initial Watch recovery intent to the single GitHub connection', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
     sessionStorageValues[OPTIONS_INTENT_STORAGE_KEY] = {
@@ -460,32 +476,31 @@ describe('Options preferences', () => {
       await Promise.resolve();
     });
 
-    const watchSettings = document.querySelector<HTMLElement>(
-      '[data-testid="watch-inbox-settings"]',
+    const githubSettings = document.querySelector<HTMLElement>(
+      '[data-testid="github-connection-settings"]',
     );
-    const heading = watchSettings?.querySelector<HTMLElement>(
-      'h2[tabindex="-1"], h3[tabindex="-1"]',
+    const heading = githubSettings?.querySelector<HTMLElement>(
+      'h2[tabindex="-1"]',
     );
-    expect(watchSettings).not.toBeNull();
-    expect(heading?.textContent?.trim()).not.toBe('');
+    expect(githubSettings).not.toBeNull();
     expect(document.activeElement).toBe(heading);
-    expect(document.querySelector('[data-testid="watch-dedicated-form"]')).toBeNull();
+    expect(document.querySelector('[data-testid="watch-inbox-settings"]')).toBeNull();
     expect(chrome.storage.session.remove).toHaveBeenCalledWith(OPTIONS_INTENT_STORAGE_KEY);
   });
 
-  it('consumes a new Watch intent in an already-open Options page and moves focus to setup', async () => {
+  it('routes a new Watch recovery intent to the GitHub connection in an open Options page', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
 
     await renderOptions();
 
-    const watchSettings = document.querySelector<HTMLElement>(
-      '[data-testid="watch-inbox-settings"]',
+    const githubSettings = document.querySelector<HTMLElement>(
+      '[data-testid="github-connection-settings"]',
     );
-    const heading = watchSettings?.querySelector<HTMLElement>(
-      'h2[tabindex="-1"], h3[tabindex="-1"]',
+    const heading = githubSettings?.querySelector<HTMLElement>(
+      'h2[tabindex="-1"]',
     );
-    expect(watchSettings).not.toBeNull();
+    expect(githubSettings).not.toBeNull();
     expect(document.activeElement).not.toBe(heading);
 
     const intent = { section: 'watch', requestedAt: 2 };
@@ -502,7 +517,7 @@ describe('Options preferences', () => {
     });
 
     expect(document.activeElement).toBe(heading);
-    expect(document.querySelector('[data-testid="watch-dedicated-form"]')).toBeNull();
+    expect(document.querySelector('[data-testid="watch-inbox-settings"]')).toBeNull();
     expect(chrome.storage.session.remove).toHaveBeenCalledWith(OPTIONS_INTENT_STORAGE_KEY);
   });
 

@@ -106,7 +106,7 @@ These justifications derive from the current Manifest V3 source. The final clean
 
 ### `storage`
 
-Provides `chrome.storage.local` for lightweight configuration, encrypted GitHub and AI-service credentials, the selected Watch credential source, and query or UI state. Star and annotation data, Watch snapshots, Cubby's bounded conversation/recovery/artifact ledger, and separately bounded Organize records use extension-local IndexedDB. A transient `chrome.storage.session` value routes Watch recovery to the relevant Options section and is consumed immediately.
+Provides `chrome.storage.local` for lightweight configuration and the encrypted GitHub Classic PAT and AI-service credentials, plus query or UI state. Star and annotation data, Watch snapshots, Cubby's bounded conversation/recovery/artifact ledger, and separately bounded Organize records use extension-local IndexedDB. A transient `chrome.storage.session` value routes Watch recovery to the relevant Options section and is consumed immediately.
 
 ### `alarms`
 
@@ -147,8 +147,8 @@ Use this source-backed mapping while completing the dashboard. The dashboard ans
 - User data supports the extension's disclosed purpose and requested user-facing features
 - Data is not sold or used for personalized advertising, credit, or lending decisions
 - No analytics or advertising software development kit receives extension data
-- GitHub and Gist receive only data needed for requested GitHub, search, and sync features
-- Watch Inbox processes watched-repository membership and bounded GitHub notification metadata only after explicit setup; it reuses the main credential after a successful capability check or stores a separate encrypted Notifications token when required
+- Watch Inbox processes watched-repository membership and bounded GitHub notification metadata only after explicit setup; it reuses the single Classic PAT after checking its `notifications` capability
+- Following Radar uses the same Classic PAT only after checking its `read:user` capability; missing optional capabilities disable only the dependent feature
 - Watch scope, notification threads, and refresh state stay in local IndexedDB and are never synced through Gist or sent to an AI service by default
 - The selected AI service receives task data only when Cubby is used
 - No developer-operated proxy or backend receives GitHub, Gist, or Provider traffic
@@ -175,21 +175,26 @@ The dashboard must include an accurate single-purpose description, permission ju
 
 Store credentials only in the Chrome Web Store Dashboard **Test instructions** tab. Never commit reviewer credentials to source, Markdown, screenshots, logs, ZIP files, or release evidence. Google documents this private reviewer channel in [Provide test instructions](https://developer.chrome.com/docs/webstore/cws-dashboard-test-instructions).
 
-The dashboard should distinguish two paths:
+- **Credential-required path**: use a dedicated, least-privilege, revocable GitHub **Classic PAT** and AI-service credentials supplied only in Dashboard Test Instructions
 
-- **Credential-free path**: install, open Options, inspect disclosures, theme and locale controls, and verify that no private credential is bundled
-- **Credential-required path**: use dedicated, least-privilege, revocable GitHub and AI-service credentials supplied only in Dashboard Test Instructions; include a same-account classic `notifications` PAT only when the main review credential cannot access Notifications
+The GitHub review PAT should use the current product scope set:
+
+```text
+repo,gist,notifications,read:user
+```
+
+`repo` and `gist` are required for the full core experience. `notifications` enables Watch Inbox and `read:user` enables Following Radar; omitting either must leave unrelated features usable. Do not use a fine-grained PAT for this review because the current product's Notifications API contract requires a Classic PAT.
 
 Use these reviewer steps after private credentials are available:
 
-1. Open Options and enter the dedicated GitHub fine-grained personal access token from Dashboard Test Instructions.
-2. Confirm the token has public-repository access plus `Starring: Read and write` and `Gists: Read and write` for full-feature review.
+1. Open Options and enter the dedicated GitHub Classic PAT from Dashboard Test Instructions.
+2. Confirm the token uses `repo`, `gist`, `notifications`, and `read:user`; do not grant organization administration, workflow, repository deletion, key, audit-log, enterprise, package, or Webhook administration scopes.
 3. Click **Save & verify** and confirm the authenticated account appears.
 4. Open `https://github.com/your_username_here?tab=stars`, then run **Full Sync**.
 5. Verify that stars appear and that search, filters, notes, and manual tags work locally.
-6. Open **Watch**, choose **Set up Watch Inbox**, and confirm the extension checks the existing GitHub connection before requesting another credential.
-7. If that credential can read Notifications, confirm Watch connects without storing a separate token. Otherwise use the same-account classic `notifications` PAT supplied only in Dashboard Test Instructions and confirm the fallback appears only after the failed capability check.
-8. Refresh Watch and confirm only notifications for repositories that are both currently starred and watched are displayed. Turn Watch off and confirm cached threads and any separate token are removed while Stars remains usable.
+6. Open **Watch** and confirm the existing Classic PAT is checked without requesting a second credential.
+7. Refresh Watch and confirm only notifications for repositories that are both currently starred and watched are displayed. Turn Watch off and confirm cached threads are removed while Stars remains usable.
+8. Open **Following Radar** and confirm it loads when `read:user` is present; remove that capability only in a separate negative test if needed.
 9. Use **Push** and **Pull** to verify the dedicated secret Gist sync path.
 10. In Options, select the AI service and confirm the collapsed notice shows the selected service and exact origin.
 11. Enter the model and dedicated AI-service key from Dashboard Test Instructions, then run **Test connection**.

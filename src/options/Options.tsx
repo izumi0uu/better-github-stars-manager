@@ -83,9 +83,6 @@ import {
   formatStorageBytes,
 } from "./AgentStoragePanel";
 
-const tutorialNewToken = "/tutorial/img_01.png";
-const tutorialRepoAccess = "/tutorial/img_02.png";
-const tutorialPermissions = "/tutorial/img_03.png";
 const agentProviders = getAgentProviders();
 const DEFAULT_CUSTOM_AGENT_PROTOCOL: AgentCustomProviderProtocol = "chat-completions";
 const MIN_AGENT_CONTEXT_WINDOW = 4_096;
@@ -163,13 +160,11 @@ export function Options() {
   const [agentStorageNotice, setAgentStorageNotice] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [msg, setMsg] = useState<OptionsMessage | null>(null);
-  const [watchMsg, setWatchMsg] = useState<OptionsMessage | null>(null);
   const [agentMsg, setAgentMsg] = useState<OptionsMessage | null>(null);
   const { locale, setLocale, m } = useI18n();
   const tokenInput = useImeBufferedInput("");
   const refreshGeneration = useRef(0);
   const tokenHeadingRef = useRef<HTMLHeadingElement>(null);
-  const watchHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const loadAgentStorageUsage = async () => {
     setAgentStorageLoading(true);
@@ -248,9 +243,7 @@ export function Options() {
     const applyOptionsIntent = async () => {
       const intent = await consumeOptionsIntent();
       if (cancelled || !intent) return;
-      const heading = intent.section === "github"
-        ? tokenHeadingRef.current
-        : watchHeadingRef.current;
+      const heading = tokenHeadingRef.current;
       if (!heading) return;
       heading.scrollIntoView?.({ block: "start" });
       heading.focus({ preventScroll: true });
@@ -300,16 +293,6 @@ export function Options() {
     setMsg({ kind: "ok", text: m.options.tokenRemoved });
   };
 
-  const disconnectWatchNotifications = async () => {
-    setWatchMsg(null);
-    try {
-      await bgCall("disconnectWatchInbox");
-      await refresh();
-      setWatchMsg({ kind: "ok", text: m.options.watchTokenDisconnected });
-    } catch (error) {
-      setWatchMsg({ kind: "err", text: translateError(error, m) });
-    }
-  };
 
   const requestAgentConnectionTest = (apiKey?: string) => bgCall<AgentConnectionResult>(
     "testAgentProviderConnection",
@@ -704,8 +687,8 @@ export function Options() {
         {m.options.starRepoButton}
       </a>
 
-      {/* 1. Token */}
-      <section className="mt-6">
+      {/* 1. GitHub connection */}
+      <section className="mt-6" data-testid="github-connection-settings">
         <h2
           id="github-connection-heading"
           ref={tokenHeadingRef}
@@ -718,7 +701,7 @@ export function Options() {
           {m.options.tokenIntroPrefix}{" "}
           <a
             className="text-primary hover:underline"
-            href="https://github.com/settings/tokens/new?scopes=repo,gist,notifications&description=Better%20GitHub%20Stars%20Manager"
+            href="https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager"
             target="_blank"
             rel="noreferrer"
           >
@@ -727,7 +710,6 @@ export function Options() {
           . {m.options.tokenIntroSuffix}
         </p>
 
-        {/* Detailed PAT walkthrough with tutorial screenshots. Captions live in i18n. */}
         <details className="gsm-status-note mt-3 rounded-md border border-border bg-muted/20 p-3 text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">
             {m.options.tokenStepsTitle}
@@ -736,23 +718,7 @@ export function Options() {
             <li>{m.options.tokenStep1}</li>
             <li>{m.options.tokenStep2}</li>
             <li>{m.options.tokenStep3}</li>
-            <li>{m.options.tokenStep4}</li>
-            <li>{m.options.tokenStep5}</li>
           </ol>
-          <div className="mt-3 grid gap-2">
-            <ScreenshotCard
-              src={tutorialNewToken}
-              caption={m.options.shotNewToken}
-            />
-            <ScreenshotCard
-              src={tutorialRepoAccess}
-              caption={m.options.shotRepoAccess}
-            />
-            <ScreenshotCard
-              src={tutorialPermissions}
-              caption={m.options.shotPermissions}
-            />
-          </div>
         </details>
 
         <ul className="gsm-body-note mt-2">
@@ -821,42 +787,9 @@ export function Options() {
         )}
       </section>
 
-      {/* Watch uses the optional Notifications capability on the single PAT. */}
-      <section className="mt-6" data-testid="watch-inbox-settings">
-        <h2
-          id="watch-inbox-heading"
-          ref={watchHeadingRef}
-          tabIndex={-1}
-          className="text-base font-medium"
-        >
-          {m.options.watchTokenHeading}
-        </h2>
-        <p className="gsm-body-note mt-1">{m.options.watchSetupDescription}</p>
-        <p className="gsm-body-note mt-2">{m.options.watchSetupOtherFeaturesSafe}</p>
-        {hasUsableToken && (
-          <Button
-            data-testid="watch-token-disconnect"
-            variant="ghost"
-            size="sm"
-            className="mt-2"
-            onClick={() => void disconnectWatchNotifications()}
-          >
-            {m.options.watchTokenDisconnect}
-          </Button>
-        )}
-        {!hasUsableToken && (
-          <p className="mt-2 text-xs text-warning">{m.options.watchTokenMainRequired}</p>
-        )}
-        {watchMsg && (
-          <StatusNotice
-            message={watchMsg}
-            className="mt-3"
-            testId="watch-token-status"
-          />
-        )}
-      </section>
+      <Separator className="my-6" />
 
-      <section className="mt-6">
+      <section>
         <h2 className="text-base font-medium">{m.options.agentHeading}</h2>
         <p className="gsm-body-note mt-1">{m.options.agentIntro}</p>
         <div className="mt-3 grid gap-4 rounded-lg border border-border bg-muted/20 p-4">
@@ -1159,7 +1092,7 @@ export function Options() {
 
       <Separator className="my-6" />
 
-      {/* 4. Gist */}
+      {/* 3. Gist */}
       <section>
         <h2 className="text-base font-medium">{m.options.gistHeading}</h2>
         <p className="gsm-status-note mt-1 text-muted-foreground">
@@ -1201,7 +1134,7 @@ export function Options() {
         </div>
       </section>
 
-      {/* 5. Preference */}
+      {/* 4. Preferences */}
       <section className="mt-6">
         <h2 className="text-base font-medium">{m.options.behaviorHeading}</h2>
         <div className="mt-3 grid gap-4 rounded-lg border border-border bg-muted/20 p-4">
@@ -1331,22 +1264,5 @@ function NumericPrefField({
         </span>
       </div>
     </div>
-  );
-}
-
-function ScreenshotCard({ src, caption }: { src: string; caption: string }) {
-  return (
-    <figure className="overflow-hidden rounded-md border border-border bg-muted/30">
-      <img
-        src={src}
-        alt={caption}
-        loading="lazy"
-        decoding="async"
-        className="block w-full"
-      />
-      <figcaption className="gsm-helper-text border-t border-border px-3 py-2">
-        {caption}
-      </figcaption>
-    </figure>
   );
 }

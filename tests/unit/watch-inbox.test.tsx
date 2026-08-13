@@ -56,7 +56,6 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
       accountLogin: 'octocat',
       hasMainToken: true,
       hasNotificationsToken: true,
-      credentialSource: 'main',
       refreshing: false,
       scopeStatus: 'fresh',
       inboxStatus: 'fresh',
@@ -236,7 +235,6 @@ describe('WatchInbox', () => {
     const setupResult = result();
     setupResult.status.hasMainToken = false;
     setupResult.status.hasNotificationsToken = false;
-    setupResult.status.credentialSource = null;
 
     const container = renderInbox({ result: setupResult, onOpenOptions });
     const settings = findButtonByText(container, 'Open options');
@@ -282,7 +280,7 @@ describe('WatchInbox', () => {
       mountedRoots,
     );
     expect(inbox.textContent).toContain('Thread 0');
-    expect(ribbon.textContent).toContain('Watch needs Notifications access');
+    expect(ribbon.textContent).toContain('Classic PAT authorization required');
     expect(ribbon.textContent).not.toContain('permission_denied');
 
     await click(findButtonByText(ribbon, 'Open options'));
@@ -493,11 +491,11 @@ describe('WatchInbox', () => {
   it.each([
     {
       code: 'authentication_required',
-      expected: 'saved main GitHub token was rejected',
+      expected: 'saved GitHub Classic PAT was rejected',
     },
     {
       code: 'permission_denied',
-      expected: 'main GitHub token needs Issues: read',
+      expected: 'GitHub Classic PAT needs the repo scope',
     },
   ])('offers focused Options recovery for $code detail failures', async ({ code, expected }) => {
     const { promise: request, resolve: resolveRequest } = Promise.withResolvers<void>();

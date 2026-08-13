@@ -159,6 +159,35 @@ export interface MessageCatalog {
     feed: string;
     projects: string;
     toggleView: string;
+    discoverViewLabel: string;
+    following: string;
+    forYou: string;
+    openTrending: string;
+    forYouSearchPlaceholder: string;
+    clearForYouSearch: string;
+    forYouSearchResultCount: (count: number) => string;
+    forYouSearchEmpty: (query: string) => string;
+    recommendationsOnly: string;
+    recommendationsRefreshing: string;
+    recommendationsRefreshingSaved: string;
+    recommendationsNewBatch: string;
+    recommendationsQueryFailed: string;
+    recommendationsRefreshFailed: string;
+    recommendationsNeverLoadedTitle: string;
+    recommendationsNeverLoadedBody: string;
+    recommendationsRunFirstScan: string;
+    recommendationsEmptyTitle: string;
+    recommendationsEmptyBody: string;
+    recommendationsStale: string;
+    recommendationsCooldownUntil: (time: string) => string;
+    recommendationsFreshSummary: (count: number) => string;
+    recommendationsSnapshotAt: (time: string) => string;
+    recommendationsListEnd: (count: number) => string;
+    recommendationsListEndSaved: (count: number) => string;
+    becauseYouStarred: (repository: string) => string;
+    recommendationReason: (kind: string, value: string) => string;
+    recommendationStarAction: string;
+    starRecommendation: (repository: string) => string;
     sourceLabel: string;
     sourceFollowing: string;
     sourceSelf: string;
@@ -287,6 +316,7 @@ export interface MessageCatalog {
     columnsButton: string;
     columnsButtonTitle: string;
     showRepositoryOwner: string;
+    showRepositoryAvatar: string;
     hiddenColumns: (count: number) => string;
     hiddenColumnsTip: string;
     hideColumn: (label: string) => string;
@@ -889,38 +919,11 @@ export interface MessageCatalog {
     tokenVerifiedWatchForbidden: (username: string) => string;
     tokenVerifiedWatchUnverified: (username: string) => string;
     tokenRemoved: string;
-    watchSetupDescription: string;
-    watchSetupEnable: string;
-    watchSetupChecking: string;
-    watchSetupMainConnected: (username: string) => string;
-    watchSetupDedicatedConnected: (username: string) => string;
-    watchSetupMainUnavailable: string;
-    watchSetupCheckFailed: string;
-    watchSetupOtherFeaturesSafe: string;
-    watchTokenHeading: string;
-    watchTokenIntroPrefix: string;
-    watchTokenLinkLabel: string;
-    watchTokenIntroSuffix: string;
-    watchTokenAccountHint: string;
-    watchTokenLabel: string;
-    watchTokenMainRequired: string;
-    watchTokenConnect: string;
-    watchTokenReplace: string;
-    watchTokenDisconnect: string;
-    watchTokenVerifying: string;
-    watchTokenConnected: (username: string) => string;
-    watchTokenDisconnected: string;
-    /** Detailed PAT-creation walkthrough (numbered steps + screenshot captions). */
+    /** Compact PAT walkthrough. */
     tokenStepsTitle: string;
     tokenStep1: string;
     tokenStep2: string;
     tokenStep3: string;
-    tokenStep4: string;
-    tokenStep5: string;
-    /** Screenshot placeholders (alt/caption text) — user will supply images later. */
-    shotNewToken: string;
-    shotRepoAccess: string;
-    shotPermissions: string;
     languageLabel: string;
     gistHeading: string;
     gistBoundPrefix: string;
@@ -1110,8 +1113,8 @@ const messages: Record<Locale, MessageCatalog> = {
       autoTagAgentPromptNo: "Use Auto Tags",
       deleteTagFailed: (error) => `delete tag: ${error}`,
       deleteAllTagsFailed: (error) => `delete all tags: ${error}`,
-      noTokenBanner: "Connect GitHub to load your data.",
-      addPat: "Open options and connect GitHub",
+      noTokenBanner: "A GitHub Classic PAT is required to load your data.",
+      addPat: "Open options and add a Classic PAT",
       emptyState: "No results. Adjust filters, or click Sync in the toolbar.",
       backfillSyncTitle: "Sync your data",
       backfillSyncBody:
@@ -1146,30 +1149,30 @@ const messages: Record<Locale, MessageCatalog> = {
       refresh: "Refresh Watch inbox",
       refreshing: "Refreshing…",
       openOptions: "Open options",
-      configureMainToken: "Update your GitHub connection to load watched repositories.",
-      configureNotificationsToken: "Open Watch setup to check Notifications access.",
+      configureMainToken: "Update the GitHub Classic PAT to load watched repositories.",
+      configureNotificationsToken: "Open Options and verify the Classic PAT has the notifications scope.",
       scopeNeverLoaded: "Refresh to load watched repositories from GitHub.",
       inboxNeverLoaded: "Refresh to load the latest bounded Inbox snapshot.",
       queryFailed: "The Watch snapshot could not be loaded.",
       refreshFailed: "The latest Watch refresh failed; the previous snapshot remains available.",
       retry: "Retry",
       scopePermissionDenied:
-        "Watch cannot load watched repositories from the current GitHub connection. Other features still work.",
+        "The GitHub Classic PAT cannot load watched repositories. Verify its repo and notifications scopes.",
       inboxPermissionDenied:
-        "Watch cannot read Notifications from the current GitHub connection. Other features still work.",
+        "The GitHub Classic PAT cannot read Notifications. Add the notifications scope; other features still work.",
       scopeUnavailable: "The watched-repository scope is not available yet, so Inbox threads cannot be matched.",
       noWatchedRepositories: "None of the currently starred repositories are watched on GitHub.",
       noUnreadThreads: "No unread threads in the latest Watch snapshot.",
       noThreads: "No Inbox threads matched the watched starred repositories in this snapshot.",
       credentialStaleSnapshot:
-        "Watch cannot reach GitHub with the current connection, so the last successful snapshot is shown.",
+        "The GitHub Classic PAT was rejected or is unavailable, so the last successful Watch snapshot is shown.",
       noMatchingThreads: "No threads match the current Watch search and reason filters.",
       statusFresh: (unread, watched) => `${unread} unread · ${watched} watched starred repos`,
       statusRefreshingSaved: "Refreshing · showing saved rows",
       statusRefreshFailedSaved: "Couldn’t refresh · showing saved rows",
       statusCooldown: (time) => `Refresh available at ${time}`,
       statusTruncated: (count) => `Showing the newest ${count} threads`,
-      statusCredential: "Notifications access needed",
+      statusCredential: "Classic PAT authorization required",
       statusNeverLoaded: "Ready to load Watch",
       listEndSnapshot: (count) => `End of current snapshot · ${count} ${count === 1 ? "thread" : "threads"}`,
       listEndMatches: (count) => `End of matching results · ${count} ${count === 1 ? "thread" : "threads"}`,
@@ -1206,8 +1209,8 @@ const messages: Record<Locale, MessageCatalog> = {
       subjectDetails: "Issue details",
       subjectDetailsLoading: "Loading issue details…",
       subjectDetailsUnavailable: "Issue details could not be loaded. Notification data is still available.",
-      subjectDetailsAuthentication: "The saved main GitHub token was rejected. Reconnect it in Options, then retry.",
-      subjectDetailsPermission: "The main GitHub token needs Issues: read and access to this repository. Public repositories normally need no extra Issues permission.",
+      subjectDetailsAuthentication: "The saved GitHub Classic PAT was rejected or expired. Replace it in Options, then retry.",
+      subjectDetailsPermission: "The GitHub Classic PAT needs the repo scope and access to this repository.",
       subjectStateOpen: "Open",
       subjectStateClosed: "Closed",
       subjectStateReason: (reason) => `State: ${reason.replace(/_/g, " ")}`,
@@ -1231,6 +1234,42 @@ const messages: Record<Locale, MessageCatalog> = {
       feed: "Feed",
       projects: "Projects",
       toggleView: "Switch Following view (V)",
+      discoverViewLabel: "Discover view",
+      following: "Following",
+      forYou: "For You",
+      openTrending: "Open GitHub Trending",
+      forYouSearchPlaceholder: "Search recommendations",
+      clearForYouSearch: "Clear For You search",
+      forYouSearchResultCount: (count) => `${count} matching ${count === 1 ? "recommendation" : "recommendations"}`,
+      forYouSearchEmpty: (query) => `No recommendations match “${query}”.`,
+      recommendationsOnly: "Public repositories · based on your stars",
+      recommendationsRefreshing: "Refreshing recommendations…",
+      recommendationsRefreshingSaved: "Refreshing · showing saved recommendations",
+      recommendationsNewBatch: "New batch",
+      recommendationsQueryFailed: "Recommendations could not be loaded.",
+      recommendationsRefreshFailed: "The latest refresh failed; saved recommendations remain available.",
+      recommendationsNeverLoadedTitle: "For You hasn’t been generated yet",
+      recommendationsNeverLoadedBody:
+        "Generate a private recommendation list from your current stars and public GitHub Search results.",
+      recommendationsRunFirstScan: "Generate recommendations",
+      recommendationsEmptyTitle: "No recommendations yet",
+      recommendationsEmptyBody:
+        "Your current stars did not produce a strong public match. Star more repositories or refresh later.",
+      recommendationsStale: "Showing saved recommendations because the latest refresh failed or is stale.",
+      recommendationsCooldownUntil: (time) => `GitHub Search rate limit reached. Refresh unlocks at ${time}.`,
+      recommendationsFreshSummary: (count) => `${count} ${count === 1 ? "recommendation" : "recommendations"}`,
+      recommendationsSnapshotAt: (time) => `Recommendations checked ${time}`,
+      recommendationsListEnd: (count) => `End of recommendations · ${count}`,
+      recommendationsListEndSaved: (count) => `End of saved recommendations · ${count}`,
+      becauseYouStarred: (repository) => `Because you starred ${repository}`,
+      recommendationReason: (kind, value) => ({
+        topic: `shared topic · ${value}`,
+        language: `same language · ${value}`,
+        owner: `same owner · ${value}`,
+        name: `related repository name · ${value}`,
+      } as Record<string, string>)[kind] ?? value,
+      recommendationStarAction: "Star",
+      starRecommendation: (repository) => `Star ${repository} on GitHub`,
       sourceLabel: "Activity sources",
       sourceFollowing: "Following",
       sourceSelf: "Me",
@@ -1247,16 +1286,16 @@ const messages: Record<Locale, MessageCatalog> = {
       openOptions: "Open options",
       retry: "Retry",
       configureMainToken:
-        "Add Followers: read to the main GitHub token so this view can read the accounts you follow.",
+        "Add the read:user scope to the GitHub Classic PAT so Following can read the accounts you follow.",
       neverLoadedTitle: "Following hasn’t been scanned yet",
       neverLoadedBody:
         "Scan recent public stars from accounts you follow. Nothing has been scanned so far.",
       runFirstScan: "Run first scan",
       queryFailed: "Following activity could not be loaded.",
       refreshFailed: "The latest scan failed; the previous snapshot remains available.",
-      permissionTitle: "Can’t read your following graph",
+      permissionTitle: "GitHub Classic PAT authorization required",
       permissionBody:
-        "This view needs Followers: read on a fine-grained token (or read:user on a classic token). Stars, tags, Gist, and sync are unaffected.",
+        "Following Radar needs the read:user scope on the GitHub Classic PAT. Stars, tags, Gist, and sync are unaffected.",
       emptyTitle: "No recent stars",
       emptyBody: "No star activity was found in the last 30 days.",
       filteredEmptyTitle: "No activity from selected sources",
@@ -1371,6 +1410,7 @@ const messages: Record<Locale, MessageCatalog> = {
       columnsButton: "Columns",
       columnsButtonTitle: "Show or hide columns",
       showRepositoryOwner: "Show repository owner",
+      showRepositoryAvatar: "Show repository avatar",
       hiddenColumns: (count) => `${count} hidden`,
       hiddenColumnsTip: "Click to restore · drag into the header to place",
       hideColumn: (label) => `Hide ${label}`,
@@ -1896,7 +1936,7 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     starRow: {
       archived: "archived",
-      fork: "Personal fork",
+      fork: "Fork",
       filterByTag: (tag) => `Filter by "${tag}"`,
       clearTagFilter: (tag) => `Filtering by "${tag}" — click to remove`,
       moreHidden: (count) => `${count} more — see the detail panel`,
@@ -1947,35 +1987,35 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     popup: {
       title: "Better GitHub Stars Manager",
-      noToken: "GitHub is not connected.",
-      addPat: "Connect GitHub",
+      noToken: "A GitHub Classic PAT is required.",
+      addPat: "Add Classic PAT",
       idle: "Idle",
       syncIncremental: "Sync new stars (incremental)",
       syncFull: "Full re-pull all stars",
       reconcile: "Reconcile stars",
       gistPull: "Pull tags from Gist",
       gistPush: "Push tags to Gist",
-      testConnection: "Test GitHub connection",
+      testConnection: "Test Classic PAT",
       debugState: "Debug extension state",
       openStars: "Open my stars page",
       options: "Options…",
       starRepoTitle: "Like the project? Leave a star:)",
-      testing: "testing…",
+      testing: "Testing Classic PAT…",
       rate: (remaining, limit) => `rate: ${remaining}/${limit} remaining`,
-      scopes: (scopes) => `scopes: ${scopes ?? "(fine-grained: none shown)"}`,
+      scopes: (scopes) => `scopes: ${scopes ?? "not reported — use a Classic PAT"}`,
       itemsOnPage: (count) => `items on page 1: ${count}`,
       sample: (sample) => `sample: ${sample ?? "—"}`,
-      connectionOk: "OK — connection works",
+      connectionOk: "OK — Classic PAT verified",
       connectionNoContent:
-        "204 No Content — token may lack /user/starred access",
-      connectionRejected: "401 — token rejected",
-      connectionForbidden: "403 — forbidden (check scopes / repository access)",
+        "204 No Content — the Classic PAT may lack starred-repository access",
+      connectionRejected: "401 — Classic PAT rejected or expired",
+      connectionForbidden: "403 — Classic PAT lacks required scopes or repository access",
       failed: (label, error) => `${label} failed: ${error}`,
     },
     options: {
       title: "Better GitHub Stars Manager — Options",
       starRepoButton: "Like the project? Leave a star:)",
-      agentHeading: "3. Cubby",
+      agentHeading: "2. Cubby",
       agentIntro:
         "Connect an AI service. Cubby sends requests directly to it and shows the results in the extension.",
       agentServiceLabel: "AI service",
@@ -2074,7 +2114,7 @@ const messages: Record<Locale, MessageCatalog> = {
       agentStorageUnavailable: (error) => `Cubby ledger usage is unavailable: ${error}`,
       agentStorageClearFailed: (error) => `Tool cache could not be cleared: ${error}`,
       agentStorageRetry: "Try again",
-      behaviorHeading: "5. Preferences",
+      behaviorHeading: "4. Preferences",
       maxTagsPerRepoLabel: "Max automatic tags per repo",
       maxTagsPerRepoHint:
         "Auto Tags uses this limit. In Chat, Cubby may add at most this many tags to a repository per turn; Organize uses the lower of this value and its 5-tag safety cap.",
@@ -2084,67 +2124,38 @@ const messages: Record<Locale, MessageCatalog> = {
       starsPanelDefaultLabel: "Open my stars page with the manager panel by default",
       starsPanelDefaultHint:
         "Turn this off to show GitHub's native stars list first; the floating button can reopen the manager.",
-      tokenHeading: "1. GitHub connection",
-      tokenIntroPrefix: "Create a GitHub token at",
-      tokenLinkLabel: "github.com/settings/tokens",
-      tokenIntroSuffix: "Permissions:",
+      tokenHeading: "1. GitHub Classic PAT",
+      tokenIntroPrefix: "Create the single GitHub token used by Stars, Gist, Watch, and Following:",
+      tokenLinkLabel: "open the prefilled classic token form",
+      tokenIntroSuffix: "Review the scopes before generating it.",
       tokenPublicRepos: "Required · repo · Stars, repository access, and Issue/PR details",
       tokenGists: "Required · gist · cross-device annotation sync",
       tokenWatchingOptional: "Optional · notifications · Watch Inbox reads and actions",
       tokenIssuesOptional: "repo also covers private Issue/PR details you can access.",
-      tokenFollowersOptional: "Following Radar uses this GitHub account.",
+      tokenFollowersOptional: "Optional · read:user · Following Radar",
       tokenGistNote:
         "gist applies to the whole account. The extension creates a private Gist for annotation sync.",
-      authenticatedAs: (username) => `Authenticated as @${username}.`,
+      authenticatedAs: (username) => `Classic PAT authenticated as @${username}.`,
       openVerifiedStars: "Open my stars",
-      removeToken: "Remove token",
+      removeToken: "Remove Classic PAT",
       cachedAccountWarning: (username) =>
-        `Local data for @${username} is still here. Connect GitHub again to restore access.`,
+        `This app requires a GitHub Classic PAT. Add and verify one below; local data for @${username} is preserved.`,
       clearCachedAuth: "Clear saved account",
       saveVerify: "Save & verify",
       verifying: "Verifying…",
-      tokenVerified: (username) => `Connected as @${username}. Stars, Gist, and Watch are ready.`,
-      tokenVerifiedWatchForbidden: (username) => `Connected as @${username}. Stars and Gist are ready. Add notifications permission to use Watch.`,
-      tokenVerifiedWatchUnverified: (username) => `Connected as @${username}. Stars and Gist are ready, but Notifications access could not be checked.`,
-      tokenRemoved: "GitHub connection removed.",
-      watchSetupDescription:
-        "Watch Inbox needs notifications permission on your GitHub token.",
-      watchSetupEnable: "Update GitHub connection",
-      watchSetupChecking: "Checking Notifications access…",
-      watchSetupMainConnected: (username) => `Watch Inbox is connected as @${username}.`,
-      watchSetupDedicatedConnected: (username) => `Watch Inbox is connected as @${username}.`,
-      watchSetupMainUnavailable:
-        "Notifications access is not enabled.",
-      watchSetupCheckFailed: "Watch could not check Notifications access. Save the GitHub connection again.",
-      watchSetupOtherFeaturesSafe:
-        "Stars, tags, Gist, and sync work without notifications permission.",
-      watchTokenHeading: "2. Watch Inbox (optional)",
-      watchTokenIntroPrefix: "Update the GitHub token at",
-      watchTokenLinkLabel: "GitHub token settings",
-      watchTokenIntroSuffix: "Add notifications permission.",
-      watchTokenAccountHint: "Watch uses the GitHub connection above.",
-      watchTokenLabel: "GitHub token",
-      watchTokenMainRequired: "Connect GitHub first.",
-      watchTokenConnect: "Save token",
-      watchTokenReplace: "Replace token",
-      watchTokenDisconnect: "Disable Watch Inbox",
-      watchTokenVerifying: "Checking token…",
-      watchTokenConnected: (username) => `Watch Inbox is connected as @${username}.`,
-      watchTokenDisconnected: "Watch Inbox is off and its cached notifications were removed. GitHub stays connected.",
+      tokenVerified: (username) => `Classic PAT verified for @${username}. Stars, Gist, and Watch are ready.`,
+      tokenVerifiedWatchForbidden: (username) => `Classic PAT verified for @${username}. Stars and Gist are ready; add notifications to use Watch.`,
+      tokenVerifiedWatchUnverified: (username) => `Classic PAT verified for @${username}. Stars and Gist are ready, but Notifications access could not be checked.`,
+      tokenRemoved: "GitHub Classic PAT removed.",
       tokenStepsTitle: "How to create a GitHub token",
       tokenStep1:
-        "Open GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic).",
+        "Open the prefilled classic-token form above, choose a name and expiration, then review the selected scopes: repo → Stars, repository access, and Issue/PR details; gist → cross-device annotation sync; notifications → Watch Inbox; read:user → Following Radar.",
       tokenStep2:
-        'Token name: anything (e.g. "stars-manager"). Expiration: pick whatever you like.',
-      tokenStep3: "Select the required repo and gist scopes.",
-      tokenStep4: "Optionally select notifications to enable Watch Inbox.",
-      tokenStep5:
-        "Generate → copy the complete token → paste it above → Save & verify.",
-      shotNewToken: 'Screenshot: the "Generate new token (classic)" form',
-      shotRepoAccess: "Screenshot: select the repo scope",
-      shotPermissions: "Screenshot: select gist and optional notifications",
+        "Generate the token, copy it immediately, paste it above, then choose Save & verify.",
+      tokenStep3:
+        "If GitHub rejects a feature later, update this same token's scopes and save it here again.",
       languageLabel: "Language",
-      gistHeading: "4. Gist sync",
+      gistHeading: "3. Gist sync",
       gistBoundPrefix: "Bound to gist",
       gistBoundSuffix:
         "Tags sync to and from this gist. If the same repo is edited in two places, the newer change wins.",
@@ -2211,13 +2222,13 @@ const messages: Record<Locale, MessageCatalog> = {
       },
     },
     errors: {
-      tokenEmpty: "Please paste a token first.",
+      tokenEmpty: "Paste a GitHub Classic PAT first.",
       tokenRejected:
-        "GitHub rejected this token. Check that you copied the whole value.",
+        "GitHub rejected this Classic PAT. It may be expired, revoked, or incomplete; create or paste a valid Classic PAT.",
       tokenStarsForbidden:
-        'This token can read your profile but lacks "Starring (read/write)". Re-create it with that permission.',
+        "This Classic PAT cannot access Stars. Re-create it with the repo scope.",
       tokenGistsForbidden:
-        'This token can read your profile but lacks "Gists (read/write)". Re-create it with that permission.',
+        "This Classic PAT cannot write Gists. Re-create it with the gist scope.",
       tokenProfileStatus: (status) =>
         `GitHub responded with ${status} when checking your profile. Try again in a moment.`,
       tokenProfileBadShape:
@@ -2242,24 +2253,24 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenWatchingStatus: (status) => `GitHub returned ${status} while checking Notifications access.`,
       tokenWatchingNetwork: "The token was saved, but Notifications access could not be checked.",
       tokenWatchingBadShape: "GitHub returned an unexpected Notifications response.",
-      ghTokenRejected: "GitHub rejected the saved token. Re-add it in Options.",
+      ghTokenRejected: "The saved GitHub Classic PAT was rejected or expired. Replace it in Options.",
       ghRateLimit: "GitHub rate limit reached. Wait a minute and retry.",
       ghForbidden:
-        "GitHub refused the request (403). The token may lack permissions (for unstar, Starring read/write) or repository access. Token settings: github.com/settings/tokens.",
+        "GitHub refused the request (403). Check the Classic PAT scopes and repository access in Options.",
       ghTimeout: (page) =>
         `GitHub took too long to respond (page ${page}). Retry shortly.`,
       ghNetwork: (detail) =>
         `Could not reach GitHub (${detail}). Check your connection.`,
       ghPageStatus: (status) =>
-        `GitHub returned ${status}. Retry, or re-add the token in Options.`,
-      ghNoToken: "No GitHub token configured. Add one in Options.",
+        `GitHub returned ${status}. Retry, or replace the Classic PAT in Options.`,
+      ghNoToken: "A GitHub Classic PAT is required. Add one in Options.",
       ghBadShape:
         "GitHub returned an unexpected data shape. Pull may need a full re-sync.",
-      gistNoToken: "No token configured for Gist sync. Add one in Options.",
+      gistNoToken: "A GitHub Classic PAT with the gist scope is required for Gist sync.",
       gistCreateFailed:
-        "Could not create the sync Gist. Check the token has Gists (read/write).",
+        "Could not create the sync Gist. Check that the Classic PAT has the gist scope.",
       gistPushFailed:
-        "Could not write to the sync Gist. Check the token has Gists (read/write).",
+        "Could not write to the sync Gist. Check that the Classic PAT has the gist scope.",
       gistPullFailed:
         "Could not read the sync Gist. It may have been deleted, or the token lacks Gists (read).",
       agentApiKeyEmpty: "Add an API key before testing the connection.",
@@ -2288,9 +2299,9 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     onboarding: {
       title: "Welcome to Better GitHub Stars Manager",
-      noTokenBody: "Connect GitHub to manage your stars:",
-      createPatLabel: "Create a GitHub token",
-      openOptions: "Open Options",
+      noTokenBody: "This app requires a GitHub Classic PAT to manage your stars:",
+      createPatLabel: "Create a GitHub Classic PAT",
+      openOptions: "Add Classic PAT in Options",
       syncingBody:
         "Fetching your stars… the list will fill in as the first sync completes.",
       syncFailedBody: "The first sync failed:",
@@ -2373,8 +2384,8 @@ const messages: Record<Locale, MessageCatalog> = {
       autoTagAgentPromptNo: "直接用 Auto Tags",
       deleteTagFailed: (error) => `删除标签失败: ${error}`,
       deleteAllTagsFailed: (error) => `删除全部标签失败: ${error}`,
-      noTokenBanner: "连接 GitHub 后即可加载数据。",
-      addPat: "打开选项页连接 GitHub",
+      noTokenBanner: "应用需要 GitHub Classic PAT 鉴权才能加载数据。",
+      addPat: "打开选项页添加 Classic PAT",
       emptyState: "无结果。调整筛选，或点击工具栏中的 Sync。",
       backfillSyncTitle: "需要同步数据",
       backfillSyncBody:
@@ -2409,22 +2420,22 @@ const messages: Record<Locale, MessageCatalog> = {
       refresh: "刷新 Watch 收件箱",
       refreshing: "刷新中…",
       openOptions: "打开选项页",
-      configureMainToken: "请更新 GitHub 连接，以读取已 Watch 的仓库。",
-      configureNotificationsToken: "打开 Watch 设置，检查通知权限。",
+      configureMainToken: "请更新 GitHub Classic PAT，以读取已 Watch 的仓库。",
+      configureNotificationsToken: "请在选项页确认 Classic PAT 已包含 notifications scope。",
       scopeNeverLoaded: "刷新后可从 GitHub 加载已 Watch 的仓库。",
       inboxNeverLoaded: "刷新后可加载最新的有界 Inbox 快照。",
       queryFailed: "无法加载 Watch 快照。",
       refreshFailed: "最近一次 Watch 刷新失败，仍可查看之前的快照。",
       retry: "重试",
       scopePermissionDenied:
-        "当前 GitHub 连接无法读取已 Watch 的仓库，其他功能仍可使用。",
+        "GitHub Classic PAT 无法读取已 Watch 的仓库，请确认 repo 和 notifications scopes。",
       inboxPermissionDenied:
-        "当前 GitHub 连接无法读取通知，其他功能仍可使用。",
+        "GitHub Classic PAT 无法读取通知，请添加 notifications scope；其他功能仍可使用。",
       scopeUnavailable: "已 Watch 的仓库范围尚未可用，因此无法匹配 Inbox threads。",
       noWatchedRepositories: "当前已 Star 的仓库中，没有在 GitHub 上处于 Watch 状态的仓库。",
       noUnreadThreads: "最近一次 Watch 快照中没有未读 thread。",
       credentialStaleSnapshot:
-        "Watch 暂时无法通过当前连接访问 GitHub，现显示上一次成功快照。",
+        "GitHub Classic PAT 已被拒绝或暂时不可用，现显示上一次成功的 Watch 快照。",
       noThreads: "这次快照中没有 Inbox thread 匹配已 Watch 且已 Star 的仓库。",
       noMatchingThreads: "没有 thread 匹配当前 Watch 搜索和通知原因筛选。",
       statusFresh: (unread, watched) => `未读 ${unread} · 已 Watch 且已 Star 的仓库 ${watched} 个`,
@@ -2432,7 +2443,7 @@ const messages: Record<Locale, MessageCatalog> = {
       statusRefreshFailedSaved: "刷新失败 · 显示已保存数据",
       statusCooldown: (time) => `可在 ${time} 后刷新`,
       statusTruncated: (count) => `显示最新 ${count} 个 thread`,
-      statusCredential: "需要通知权限",
+      statusCredential: "需要 GitHub Classic PAT 鉴权",
       statusNeverLoaded: "Watch 等待首次加载",
       listEndSnapshot: (count) => `当前快照末尾 · 共 ${count} 个 thread`,
       listEndMatches: (count) => `匹配结果末尾 · 共 ${count} 个 thread`,
@@ -2469,8 +2480,8 @@ const messages: Record<Locale, MessageCatalog> = {
       subjectDetails: "Issue 详情",
       subjectDetailsLoading: "正在加载 Issue 详情…",
       subjectDetailsUnavailable: "无法加载 Issue 详情，通知信息仍可使用。",
-      subjectDetailsAuthentication: "已保存的主 GitHub token 被拒绝。请在设置中重新连接，然后重试。",
-      subjectDetailsPermission: "主 GitHub token 需要 Issues: read 权限以及该仓库的访问权限。公开仓库通常不需要额外的 Issues 权限。",
+      subjectDetailsAuthentication: "已保存的 GitHub Classic PAT 被拒绝或已过期。请在选项页更换后重试。",
+      subjectDetailsPermission: "GitHub Classic PAT 需要 repo scope 和该仓库的访问权限。",
       subjectStateOpen: "Open",
       subjectStateClosed: "Closed",
       subjectStateReason: (reason) => `状态：${reason.replace(/_/g, " ")}`,
@@ -2493,6 +2504,40 @@ const messages: Record<Locale, MessageCatalog> = {
       viewLabel: "关注动态视图",
       feed: "动态",
       projects: "项目",
+      discoverViewLabel: "发现视图",
+      following: "关注动态",
+      forYou: "为你推荐",
+      openTrending: "打开 GitHub Trending",
+      forYouSearchPlaceholder: "搜索推荐仓库",
+      clearForYouSearch: "清除为你推荐搜索",
+      forYouSearchResultCount: (count) => `匹配 ${count} 个推荐仓库`,
+      forYouSearchEmpty: (query) => `没有推荐仓库匹配“${query}”。`,
+      recommendationsOnly: "公开仓库 · 基于你的 Stars",
+      recommendationsRefreshing: "正在刷新推荐…",
+      recommendationsRefreshingSaved: "刷新中 · 显示已保存推荐",
+      recommendationsNewBatch: "换一批",
+      recommendationsQueryFailed: "无法加载推荐仓库。",
+      recommendationsRefreshFailed: "最近一次刷新失败，仍可查看已保存推荐。",
+      recommendationsNeverLoadedTitle: "尚未生成“为你推荐”",
+      recommendationsNeverLoadedBody: "根据你当前的 Stars 和 GitHub 公开搜索结果生成私有推荐列表。",
+      recommendationsRunFirstScan: "生成推荐",
+      recommendationsEmptyTitle: "暂无推荐",
+      recommendationsEmptyBody: "当前 Stars 未产生足够相关的公开仓库。可继续 Star 仓库或稍后刷新。",
+      recommendationsStale: "最近一次刷新失败或结果已过期，当前显示已保存推荐。",
+      recommendationsCooldownUntil: (time) => `已触发 GitHub Search 速率限制，${time} 后可再次刷新。`,
+      recommendationsFreshSummary: (count) => `${count} 个推荐仓库`,
+      recommendationsSnapshotAt: (time) => `推荐检查于 ${time}`,
+      recommendationsListEnd: (count) => `推荐末尾 · 共 ${count} 项`,
+      recommendationsListEndSaved: (count) => `已保存推荐末尾 · 共 ${count} 项`,
+      becauseYouStarred: (repository) => `因为你 Star 了 ${repository}`,
+      recommendationReason: (kind, value) => ({
+        topic: `共同 topic · ${value}`,
+        language: `相同语言 · ${value}`,
+        owner: `相同所有者 · ${value}`,
+        name: `相关仓库名称 · ${value}`,
+      } as Record<string, string>)[kind] ?? value,
+      recommendationStarAction: "Star",
+      starRecommendation: (repository) => `在 GitHub Star ${repository}`,
       toggleView: "切换关注动态视图（V）",
       sourceLabel: "动态来源",
       sourceFollowing: "关注的人",
@@ -2509,15 +2554,15 @@ const messages: Record<Locale, MessageCatalog> = {
       } as Record<string, string>)[status] ?? status,
       openOptions: "打开选项页",
       retry: "重试",
-      configureMainToken: "请为主 GitHub token 添加 Followers: read 权限，以读取你关注的账号。",
+      configureMainToken: "请为 GitHub Classic PAT 添加 read:user scope，以读取你关注的账号。",
       neverLoadedTitle: "尚未扫描关注动态",
       neverLoadedBody: "扫描你所关注账号最近公开 Star 的仓库。目前还没有执行过扫描。",
       runFirstScan: "开始首次扫描",
       queryFailed: "无法加载关注动态。",
       refreshFailed: "最近一次扫描失败，仍可查看之前的快照。",
-      permissionTitle: "无法读取你的关注关系",
+      permissionTitle: "需要 GitHub Classic PAT 鉴权",
       permissionBody:
-        "此视图的细粒度 token 需要 Followers: read；classic token 需要 read:user。Stars、标签、Gist 和同步不受影响。",
+        "Following Radar 需要 GitHub Classic PAT 的 read:user scope。Stars、标签、Gist 和同步不受影响。",
       emptyTitle: "暂无近期 Star",
       emptyBody: "最近 30 天未发现 Star 动态。",
       filteredEmptyTitle: "所选来源没有动态",
@@ -2630,6 +2675,7 @@ const messages: Record<Locale, MessageCatalog> = {
       columnsButton: "列",
       columnsButtonTitle: "显示或隐藏列",
       showRepositoryOwner: "显示仓库所有者",
+      showRepositoryAvatar: "显示仓库头像",
       hiddenColumns: (count) => `已隐藏 ${count}`,
       hiddenColumnsTip: "点击恢复 · 拖回表头可插入位置",
       hideColumn: (label) => `隐藏「${label}」`,
@@ -3155,7 +3201,7 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     starRow: {
       archived: "已归档",
-      fork: "个人 Fork",
+      fork: "Fork",
       filterByTag: (tag) => `按 "${tag}" 筛选`,
       clearTagFilter: (tag) => `正在按 "${tag}" 筛选，点击移除`,
       moreHidden: (count) => `还有 ${count} 个，在详情中查看`,
@@ -3206,38 +3252,38 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     popup: {
       title: "Better GitHub Stars Manager",
-      noToken: "尚未连接 GitHub。",
-      addPat: "连接 GitHub",
+      noToken: "应用需要 GitHub Classic PAT 鉴权。",
+      addPat: "添加 Classic PAT",
       idle: "空闲",
       syncIncremental: "同步新 stars（增量）",
       syncFull: "全量重新拉取所有 stars",
       reconcile: "校正 stars 状态",
       gistPull: "从 Gist 拉取标签",
       gistPush: "推送标签到 Gist",
-      testConnection: "测试 GitHub 连接",
+      testConnection: "测试 Classic PAT",
       debugState: "调试扩展状态",
       openStars: "打开我的 stars 页面",
       options: "选项…",
       starRepoTitle: "点个Star~",
-      testing: "测试中…",
+      testing: "正在测试 Classic PAT…",
       rate: (remaining, limit) => `限额: ${remaining}/${limit} 剩余`,
-      scopes: (scopes) => `权限: ${scopes ?? "（细粒度 token 不显示 scope）"}`,
+      scopes: (scopes) => `权限: ${scopes ?? "未返回，请使用 Classic PAT"}`,
       itemsOnPage: (count) => `第 1 页条目数: ${count}`,
       sample: (sample) => `示例: ${sample ?? "—"}`,
-      connectionOk: "正常 — 连接可用",
-      connectionNoContent: "204 No Content — token 可能缺少 /user/starred 权限",
-      connectionRejected: "401 — token 被拒绝",
-      connectionForbidden: "403 — 无权限（检查 scopes / repo access）",
+      connectionOk: "正常 — Classic PAT 已验证",
+      connectionNoContent: "204 No Content — Classic PAT 可能缺少 starred 仓库访问权限",
+      connectionRejected: "401 — Classic PAT 被拒绝或已过期",
+      connectionForbidden: "403 — Classic PAT 缺少所需 scopes 或仓库访问权限",
       failed: (label, error) => `${label} 失败: ${error}`,
     },
     options: {
       title: "Better GitHub Stars Manager — 选项",
       starRepoButton: "点个Star~",
-      tokenHeading: "1. GitHub 连接",
-      tokenIntroPrefix: "在这里创建 GitHub token：",
-      tokenLinkLabel: "github.com/settings/tokens",
-      tokenIntroSuffix: "所需权限：",
-      agentHeading: "3. Cubby",
+      tokenHeading: "1. GitHub Classic PAT",
+      tokenIntroPrefix: "创建 Stars、Gist、Watch 和 Following 共用的唯一 GitHub token：",
+      tokenLinkLabel: "打开已预填的 classic token 表单",
+      tokenIntroSuffix: "生成前请确认 scopes。",
+      agentHeading: "2. Cubby",
       agentIntro:
         "连接 AI 服务后，Cubby 会直接向该服务发送请求，并在扩展内显示结果。",
       agentServiceLabel: "AI 服务",
@@ -3335,7 +3381,7 @@ const messages: Record<Locale, MessageCatalog> = {
       agentStorageUnavailable: (error) => `无法获取 Cubby 账本用量：${error}`,
       agentStorageClearFailed: (error) => `无法清理工具缓存：${error}`,
       agentStorageRetry: "重试",
-      behaviorHeading: "5. 偏好设置",
+      behaviorHeading: "4. 偏好设置",
       maxTagsPerRepoLabel: "每个仓库最多自动标签数",
       maxTagsPerRepoHint:
         "Auto Tags 使用此上限；聊天中 Cubby 每轮最多为单个仓库新增这么多个标签；整理功能取此值与 5 个标签安全上限中的较小值。",
@@ -3347,58 +3393,30 @@ const messages: Record<Locale, MessageCatalog> = {
         "关闭后会优先显示 GitHub 原生 stars 列表，需要时再手动打开悬浮面板。",
       tokenPublicRepos: "必需 · repo · Stars、仓库访问和 Issue/PR 详情",
       tokenGists: "必需 · gist · 跨设备同步标签和笔记",
-      tokenWatchingOptional: "可选 · notifications · 读取和处理 Watch 收件箱",
+      tokenWatchingOptional: "可选 · notifications · Watch 收件箱",
       tokenIssuesOptional: "repo 也包含你有权访问的私有 Issue/PR 详情。",
-      tokenFollowersOptional: "Following Radar 使用这个 GitHub 账号。",
+      tokenFollowersOptional: "可选 · read:user · Following Radar",
       tokenGistNote:
         "gist 是账号级权限。扩展会创建一个私有 Gist，用于同步标签和笔记。",
-      authenticatedAs: (username) => `已认证为 @${username}。`,
+      authenticatedAs: (username) => `Classic PAT 已鉴权为 @${username}。`,
       openVerifiedStars: "打开我的 stars",
-      removeToken: "移除 token",
+      removeToken: "移除 Classic PAT",
       cachedAccountWarning: (username) =>
-        `@${username} 的本地数据还在。重新连接 GitHub 后即可继续使用。`,
+        `应用需要 GitHub Classic PAT 鉴权。请在下方添加并验证；@${username} 的本地数据会保留。`,
       clearCachedAuth: "清除已保存账号",
       saveVerify: "保存并验证",
       verifying: "验证中…",
-      tokenVerified: (username) => `已连接 @${username}，Stars、Gist 和 Watch 均可使用。`,
-      tokenVerifiedWatchForbidden: (username) => `已连接 @${username}。Stars 和 Gist 可用；如需 Watch，请添加 notifications 权限。`,
-      tokenVerifiedWatchUnverified: (username) => `已连接 @${username}。Stars 和 Gist 可用，但暂时无法检查通知权限。`,
-      tokenRemoved: "已断开 GitHub 连接。",
-      watchSetupDescription:
-        "Watch 收件箱需要 GitHub token 的 notifications 权限。",
-      watchSetupEnable: "更新 GitHub 连接",
-      watchSetupChecking: "正在检查通知权限…",
-      watchSetupMainConnected: (username) => `Watch 收件箱已连接 @${username}。`,
-      watchSetupDedicatedConnected: (username) => `Watch 收件箱已连接 @${username}。`,
-      watchSetupMainUnavailable: "尚未启用通知权限。",
-      watchSetupCheckFailed: "无法检查通知权限，请重新保存 GitHub 连接。",
-      watchSetupOtherFeaturesSafe:
-        "没有 notifications 权限时，Stars、标签、Gist 和同步仍可使用。",
-      watchTokenHeading: "2. Watch 收件箱（可选）",
-      watchTokenIntroPrefix: "在这里更新 GitHub token：",
-      watchTokenLinkLabel: "GitHub token 设置",
-      watchTokenIntroSuffix: "添加 notifications 权限。",
-      watchTokenAccountHint: "Watch 使用上方的 GitHub 连接。",
-      watchTokenLabel: "GitHub token",
-      watchTokenMainRequired: "请先连接 GitHub。",
-      watchTokenConnect: "保存 token",
-      watchTokenReplace: "替换 token",
-      watchTokenDisconnect: "停用 Watch 收件箱",
-      watchTokenVerifying: "正在检查 token…",
-      watchTokenConnected: (username) => `Watch 收件箱已连接 @${username}。`,
-      watchTokenDisconnected: "Watch 收件箱已停用，缓存通知也已删除。GitHub 仍保持连接。",
+      tokenVerified: (username) => `@${username} 的 Classic PAT 已验证，Stars、Gist 和 Watch 均可使用。`,
+      tokenVerifiedWatchForbidden: (username) => `@${username} 的 Classic PAT 已验证。Stars 和 Gist 可用；如需 Watch，请添加 notifications。`,
+      tokenVerifiedWatchUnverified: (username) => `@${username} 的 Classic PAT 已验证。Stars 和 Gist 可用，但暂时无法检查 Notifications。`,
+      tokenRemoved: "GitHub Classic PAT 已移除。",
       tokenStepsTitle: "如何创建 GitHub token",
       tokenStep1:
-        "打开 GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic)。",
-      tokenStep2: "Token 名称可自定义，建议选择有限的过期时间。",
-      tokenStep3: "勾选必需的 repo 和 gist scopes。",
-      tokenStep4: "需要 Watch 收件箱时，再勾选可选的 notifications scope。",
-      tokenStep5: "Generate → 复制完整 token → 粘贴到上面 → 保存并验证。",
-      shotNewToken: "截图：Generate new token (classic) 表单",
-      shotRepoAccess: "截图：勾选 repo scope",
-      shotPermissions: "截图：勾选 gist 和可选 notifications",
+        "打开上方已经预填的 classic token 表单，设置名称和有效期，并确认 scopes：repo → Stars、仓库访问和 Issue/PR 详情；gist → 跨设备同步标签和笔记；notifications → Watch 收件箱；read:user → Following Radar。",
+      tokenStep2: "生成 token 后立即复制，粘贴到上方，然后点击保存并验证。",
+      tokenStep3: "如果后续某项功能被 GitHub 拒绝，请更新同一个 token 的 scopes，再回到这里重新保存。",
       languageLabel: "语言",
-      gistHeading: "4. Gist 同步",
+      gistHeading: "3. Gist 同步",
       gistBoundPrefix: "已绑定 gist",
       gistBoundSuffix:
         "标签会与该 gist 双向同步；如果同一仓库在两处被改动，较新的改动会生效。",
@@ -3463,12 +3481,13 @@ const messages: Record<Locale, MessageCatalog> = {
       },
     },
     errors: {
-      tokenEmpty: "请先粘贴 token。",
-      tokenRejected: "GitHub 拒绝了该 token,请确认是否完整复制。",
+      tokenEmpty: "请先粘贴 GitHub Classic PAT。",
+      tokenRejected:
+        "GitHub 拒绝了该 Classic PAT。它可能已过期、被撤销或复制不完整；请创建或粘贴有效的 Classic PAT。",
       tokenStarsForbidden:
-        "该 token 能读取个人资料,但缺少「Starring (read/write)」权限,请重新创建并勾选该权限。",
+        "该 Classic PAT 无法访问 Stars，请重新创建并添加 repo scope。",
       tokenGistsForbidden:
-        "该 token 能读取个人资料,但缺少「Gists (read/write)」权限,请重新创建并勾选该权限。",
+        "该 Classic PAT 无法写入 Gist，请重新创建并添加 gist scope。",
       tokenProfileStatus: (status) =>
         `GitHub 在校验你的资料时返回 ${status},请稍后重试。`,
       tokenProfileBadShape:
@@ -3487,25 +3506,25 @@ const messages: Record<Locale, MessageCatalog> = {
         `GitHub 已创建探针 Gist,但清理失败(${status})。未保存 token,请重试。`,
       tokenGistCleanupNetwork:
         "GitHub 已创建探针 Gist,但无法确认清理是否完成。未保存 token,请重试。",
-      ghTokenRejected: "GitHub 拒绝了已保存的 token,请在选项页重新添加。",
+      ghTokenRejected: "已保存的 GitHub Classic PAT 被拒绝或已过期，请在选项页更换。",
       ghRateLimit: "已达到 GitHub 速率限制,请稍候重试。",
-      ghNoToken: "未配置 GitHub token,请在选项页添加。",
+      ghNoToken: "应用需要 GitHub Classic PAT 鉴权，请在选项页添加。",
       ghForbidden:
-        "GitHub 拒绝了请求 (403)。token 可能缺少权限（取消 Star 需要 Starring read/write）或仓库访问权限。设置链接：github.com/settings/tokens。",
+        "GitHub 拒绝了请求 (403)。请在选项页检查 Classic PAT scopes 和仓库访问权限。",
       ghTimeout: (page) => `GitHub 响应超时(第 ${page} 页),请稍后重试。`,
       ghNetwork: (detail) => `无法连接 GitHub(${detail}),请检查网络。`,
       ghPageStatus: (status) =>
-        `GitHub 返回 ${status}。请重试,或在选项页重新添加 token。`,
-      tokenWatchingForbidden: "Token 已保存，但 Watch 收件箱需要 notifications scope。",
+        `GitHub 返回 ${status}。请重试，或在选项页更换 Classic PAT。`,
+      tokenWatchingForbidden: "Classic PAT 已保存，但 Watch 收件箱需要 notifications scope。",
       tokenWatchingStatus: (status) => `检查 Notifications 访问权限时 GitHub 返回 ${status}。`,
-      tokenWatchingNetwork: "Token 已保存，但暂时无法检查 Notifications 访问权限。",
+      tokenWatchingNetwork: "Classic PAT 已保存，但暂时无法检查 Notifications 访问权限。",
       tokenWatchingBadShape: "GitHub 返回了非预期的 Notifications 响应。",
       ghBadShape: "GitHub 返回了非预期的数据结构,可能需要全量重新同步。",
-      gistNoToken: "未配置 Gist 同步所需的 token,请在选项页添加。",
+      gistNoToken: "Gist 同步需要带 gist scope 的 GitHub Classic PAT。",
       gistCreateFailed:
-        "无法创建同步用 Gist,请确认 token 具有「Gists (read/write)」权限。",
+        "无法创建同步用 Gist，请确认 Classic PAT 具有 gist scope。",
       gistPushFailed:
-        "无法写入同步用 Gist,请确认 token 具有「Gists (read/write)」权限。",
+        "无法写入同步用 Gist，请确认 Classic PAT 具有 gist scope。",
       gistPullFailed:
         "无法读取同步用 Gist。它可能已被删除,或 token 缺少「Gists (read)」权限。",
       agentApiKeyEmpty: "测试连接前请先填写 API 密钥。",
@@ -3534,9 +3553,9 @@ const messages: Record<Locale, MessageCatalog> = {
     },
     onboarding: {
       title: "欢迎使用 Better GitHub Stars Manager",
-      noTokenBody: "连接 GitHub 后即可管理你的 stars：",
-      createPatLabel: "创建 GitHub token",
-      openOptions: "打开选项页",
+      noTokenBody: "应用需要 GitHub Classic PAT 鉴权才能管理你的 stars：",
+      createPatLabel: "创建 GitHub Classic PAT",
+      openOptions: "在选项页添加 Classic PAT",
       syncingBody: "正在拉取你的 stars…首次同步完成后列表会自动填充。",
       syncFailedBody: "首次同步失败:",
       retry: "重试同步",

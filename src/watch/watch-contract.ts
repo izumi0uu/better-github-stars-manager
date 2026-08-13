@@ -48,8 +48,6 @@ export type WatchInboxStatus =
   | 'cooldown';
 
 export interface WatchStatus {
-  /** Legacy status projections may still include this only in archived test fixtures. */
-  credentialSource?: 'main' | 'dedicated' | null;
   accountLogin: string | null;
   hasMainToken: boolean;
   hasNotificationsToken: boolean;

@@ -2,7 +2,7 @@
 
 [简体中文](../zh/privacy-policy.md)
 
-Effective date: 2026-08-09
+Effective date: 2026-08-12
 
 Better GitHub Stars Manager is a Chrome extension for organizing GitHub starred repositories. This policy describes the data the extension processes, where it goes, how long local records remain, and how you can delete them.
 
@@ -21,17 +21,16 @@ The extension does not:
 
 The extension processes data only to:
 
-- authenticate the GitHub token you provide
+- authenticate the GitHub **Classic PAT** token you provide
 - fetch and display your starred repositories
 - store and optionally sync your tags and notes through your own secret GitHub Gist
 - test or run Cubby through the AI service and exact origin you select
-- show the optional Watch Inbox after you request it, using your selected GitHub credential
+- show the optional Watch Inbox after you request it, using the same GitHub credential after its Notifications capability is checked
 
 ## Data the extension processes
 
 The extension processes these data categories:
-
-- the main GitHub personal access token you paste into Options and, only when needed for Watch Inbox, an optional dedicated Notifications token
+- the single GitHub **Classic PAT** you paste into Options; its optional `notifications` and `read:user` capabilities control Watch Inbox and Following Radar
 - GitHub account identity from `GET /user`, such as username, display name, and avatar URL
 - star metadata from `GET /user/starred`, such as repository name, URL, description, language, topics, star count, and dates
 - watched-repository membership from `GET /user/subscriptions`
@@ -60,9 +59,7 @@ The extension does not run ads, sell data, or send data to a developer-operated 
 
 ## Local and optional Gist storage
 
-The extension stores data in the following places:
-
-- GitHub credentials are stored in `chrome.storage.local` after Advanced Encryption Standard Galois/Counter Mode (AES-GCM) encryption; Watch reuses the main credential after an explicit capability check or stores a separate encrypted Notifications token when required
+- GitHub credentials are stored in `chrome.storage.local` after Advanced Encryption Standard Galois/Counter Mode (AES-GCM) encryption; the single Classic PAT is reused for Stars, Gist, Watch, and Following after capability checks
 - AI-service API keys are stored in `chrome.storage.local` after AES-GCM encryption and are bound to the selected provider and canonical origin
 - Lightweight configuration, including the bound Gist ID, is stored in `chrome.storage.local`
 - Star metadata, tags, and notes are stored locally in IndexedDB for fast querying
@@ -146,10 +143,8 @@ An unpacked development build can expose an explicitly enabled one-shot raw capt
 
 ## Retention and deletion
 
-You can remove data in these ways:
-
-- clear the saved GitHub token in Options
-- turn off Watch Inbox to remove its selected binding, any separate Notifications token, and cached notification threads; same-account watched-repository scope may remain locally until the main GitHub account is cleared or the extension is uninstalled
+- clear the saved GitHub Classic PAT in Options
+- turn off Watch Inbox to remove its capability binding and cached notification threads; Stars remains usable
 - remove the saved AI-service key or change the provider or origin, which invalidates the prior credential binding
 - delete a Cubby conversation after cancelling or completing any linked active Organize workflow
 - dismiss the retained completed or cancelled Organize result from the workbench
