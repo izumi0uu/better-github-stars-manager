@@ -1,159 +1,169 @@
-[English](./README.md) · [简体中文](./README.zh-CN.md)
+简体中文 · [English](./README.en.md)
 
 # Better GitHub Stars Manager
 
-[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Install%20Now-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
+[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-立即安装-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Latest release](https://img.shields.io/github/v/release/izumi0uu/better-github-stars-manager?logo=github&label=release)](https://github.com/izumi0uu/better-github-stars-manager/releases)
 [![License: MIT](https://img.shields.io/github/license/izumi0uu/better-github-stars-manager?logo=opensourceinitiative&logoColor=white)](./LICENSE)
 
-> A Chrome extension for heavy GitHub users — local-first, zero-server, personal. It turns `https://github.com/{user}?tab=stars` into a fast, searchable, taggable, filterable, annotatable workspace so you can manage thousands of stars without leaving GitHub.
+> 一个为重度 GitHub 用户打造的 Chrome 扩展 —— 本地优先、零服务端、个人专属。它把 `https://github.com/{user}?tab=stars` 变成一个可搜索、可打标签、可筛选、可批注的快速工作台,管理成千上万个 star，而不必离开 GitHub。
 
-Install from the Chrome Web Store:
-[Get it on the Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
+Chrome 商店安装地址:
+[前往 Chrome 商店下载](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 
 ![Better GitHub Stars Manager](store-assets/poster/img_01.png)
 
-## Table of Contents
+## 目录
 
-- [Why Better GitHub Stars Manager?](#why-better-github-stars-manager)
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [How to Use](#how-to-use)
-- [Install](#install)
-- [Privacy and Storage](#privacy-and-storage)
-- [Development](#development)
-- [License](#license)
-- [Contributing](#contributing)
+- [为什么需要 Better GitHub Stars Manager?](#为什么需要-better-github-stars-manager)
+- [功能特性](#功能特性)
+- [截图](#截图)
+- [如何使用](#如何使用)
+- [安装](#安装)
+- [隐私与存储](#隐私与存储)
+- [开发](#开发)
+- [许可证](#许可证)
+- [参与贡献](#参与贡献)
 
-## Why Better GitHub Stars Manager?
+## 为什么需要 Better GitHub Stars Manager?
 
-GitHub Stars is good for bookmarking, but it does not hold up for long-term organization.
+GitHub Stars 适合收藏,但做不了长期管理。
 
-Once your stars grow into the hundreds or thousands, the native list becomes hard to manage. In the AI era, GitHub projects multiply exponentially — you star all kinds of things, then forget where you saved them or what they were called. The real pain points:
+当你的star项目收藏到几百几千个的时候，通过原生list功能难以管理，ai时代，github项目指数级增长，而你又想收藏各种各样的项目，过后又忘记在哪，叫什么名字了，所以有很多难解决的问题:
 
-- pagination hides the full picture of your stars
-- no personal tagging system
-- no real notes layer
-- hard to revisit what you saved and why
+- 分页看不到全部stars仓库
+- 没有个人打标签系统
+- 没有真正的笔记层
+- 很难回看当时存了什么、为什么存
 
-Better GitHub Stars Manager makes GitHub Stars genuinely manageable for heavy users.
+Better GitHub Stars Manager 让 GitHub Stars 对重度用户真正可管理。
 
-## Features
+## 功能特性
 
-- **All stars in one place**
-  Load your starred repositories into a virtualized table that stays usable even with very large collections.
+- **一次管理所有已star项目**
+  把你 star 的仓库加载进虚拟化表格。
 
-- **Fast search and filtering**
-  Search across repository name, description, topics, and notes. Filter by language, tags, and untagged items.
+- **快速搜索与筛选**
+  在仓库名、描述、topics、笔记中全文搜索;按语言、标签、未打标签筛选。
 
-- **Floating toggle button**
-  On your own GitHub stars page, a floating button switches to the management panel with one click.
+- **悬浮按钮一键切换**
+  在你自己的Github star页， 提供悬浮按钮一键切换到管理面板。
 
-- **Custom tags and notes**
-  Add your own labels and notes so your stars become a working library instead of a passive list.
+- **自定义标签与笔记**
+  加你自己的标签和笔记,让 star 从被动列表变成一个可用的资料库。
 
-- **Auto-suggested tags**
-  Turn repository topics and language into suggested tags with one click or in bulk.
+- **自动推荐标签**
+  一键或批量把仓库的 topics 与语言转成推荐标签。
 
-- **Incremental sync and full rescan**
-  Pull in newly starred repositories quickly, and run a full rescan when you want to reconcile unstars while keeping your annotations.
+- **增量同步与全量重扫**
+  快速拉取新 star 的仓库;需要时可全量重扫来对账 unstar,同时保留你的批注。
 
-- **Repo-page tag chip**
-  See and edit your tags directly on individual GitHub repository pages.
+- **repo 页 tag chip**
+  直接在单个 GitHub 仓库页查看和编辑你的标签。
 
-- **Cross-device annotation sync**
-  Push and pull your tags and notes through your own private GitHub Gist.
+- **Watch 收件箱**
+  按仓库整理当前 Stars 中的 GitHub 通知，支持搜索、原因筛选、标记已读和标记完成。
 
-- **Gist-backed storage layer**
-  Keep your annotation layer in a dedicated secret Gist so it is portable, recoverable, and easy to sync across devices without a backend.
+- **跨设备批注同步**
+  通过你自己的私有 GitHub Gist 推送/拉取标签与笔记。
 
-## Screenshots
+- **Gist 支撑的存储层**
+  把批注层放在一个专用 secret Gist 里,可移植、可恢复、跨设备同步,无需后端。
+
+## 截图
 
 <p align="center">
-  <img src="store-assets/poster/img_02.png" alt="Better GitHub Stars Manager running on GitHub Stars" width="920">
+  <img src="store-assets/poster/img_02.png" alt="Better GitHub Stars Manager 在 GitHub Stars Main page" width="920">
   <img src="store-assets/screenshots/screenshot-plugin.png" alt="Better GitHub Stars Manager Plugin" width="300">
 </p>
 
-## How to Use
+## 如何使用
 
-1. Install the extension from the Chrome Web Store.
-2. Open the extension, jump to the Options page, and paste a GitHub personal access token.
-3. Visit your GitHub stars page: `https://github.com/{you}?tab=stars`.
-4. Run **Sync** to import your stars.
-5. Search, filter, tag, and add notes as you review repositories.
-6. Use **Push** and **Pull** if you want your annotations to travel across devices.
+1. 先从 Chrome Web Store 安装扩展。
+2. 打开扩展的 Options 页，创建一个 GitHub **Classic PAT**。
+3. 访问你的 GitHub stars 页：`https://github.com/{you}?tab=stars`。
+4. 运行 **Sync** 导入你的 star。
+5. 边浏览仓库边搜索、筛选、打标签、加笔记。
+6. 想让批注跨设备流转时使用 **Push** 和 **Pull**。
 
-## Install
+## 安装
 
-Install Better GitHub Stars Manager from the Chrome Web Store:
+Chrome 商店安装地址:
 
-[Get it on the Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
+[前往 Chrome 商店下载](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 
-Then:
+然后:
 
-1. Click **Add to Chrome**
-2. Open the extension **Options** page
-3. Create a GitHub token with the permissions below
-4. Paste the token into Options and click **Save & verify**
-5. Visit `https://github.com/{you}?tab=stars`
-6. Run **Sync** to import your stars
+1. 点击 **添加至 Chrome**
+2. 打开扩展的 **Options** 页
+3. 按下方权限创建一个 GitHub **Classic PAT**
+4. 把 token 粘贴到 Options 并点 **Save & verify**
+5. 访问 `https://github.com/{you}?tab=stars`
+6. 运行 **Sync** 导入你的 star
 
-Chrome will handle updates automatically after installation from the store.
+通过商店安装后，Chrome 会自动处理后续更新。
 
-### Token setup
+### Token 配置
 
-Create a **classic personal access token** and click **Generate new token**.
+打开已预填的 [Classic PAT 表单](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager)。设置名称和有限有效期，确认 scopes，生成 token，然后粘贴到 Options 并点击 **Save & verify**。
 
-![Create a classic token](public/tutorial/img_01.png)
+Scopes：
 
-Recommended permissions:
+- **`repo`**（必需）：Stars 同步、Star/Unstar、仓库元数据、私有仓库访问，以及你有权访问的 Issue/Pull Request 详情。
+- **`gist`**（必需）：通过扩展创建的私有 Gist 跨设备同步标签、笔记和收藏信息。
+- **`notifications`**（可选）：Watch 收件箱读取和通知操作。没有它时，Stars 和 Gist 仍可用。
+- **`read:user`**（可选）：Following Radar。没有它时，Stars、Gist 和 Watch 仍可用。
 
-- **`repo`**: Stars, private-repository access, and repository Issue/Pull Request details.
-- **`gist`**: cross-device annotation sync through a private Gist created by the extension.
-- **`notifications`** (optional): Watch Inbox, including reading notifications and marking them as read or done.
+不要授予 `user`、`user:email`、`user:follow`、`admin:org`、`workflow`、`delete_repo`、密钥、审计日志、enterprise、package 或 Webhook 管理权限；扩展不会使用这些权限。
 
-If an older saved token needs authorization again, the extension keeps local Stars, tags, notes, and settings until the replacement passes verification.
+如果旧 token 需要重新授权，本地的 Stars、标签、笔记和设置都会保留。新 token 验证成功后才会替换旧凭据。
 
-The `gist` permission applies to the whole account. The extension creates a private Gist for annotation sync.
+`gist` 是账号级权限。扩展会创建一个私有 Gist 来同步标签、笔记和收藏信息。
 
-### Another way --> Local development install
+完整的权限—功能对应关系和未来功能建议见 [.trellis/spec/data/github-token-scopes.md](.trellis/spec/data/github-token-scopes.md)。
+
+Watch 的仓库范围、通知刷新、操作边界，以及 GitHub 2026 Watching API 风险见 [Watch 如何工作](docs/watch-strategy.zh-CN.md)，英文版见 [How Watch works](docs/watch-strategy.md)。
+
+### 另一种方式 --> 本地开发安装
 
 ```bash
 pnpm install
 pnpm build
 ```
 
-Then in Chrome:
+然后在 Chrome 中:
 
-1. Open `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked**
-4. Select the `dist/` folder
-5. Open the extension **Options** page and continue with the token setup above
+1. 打开 `chrome://extensions`
+2. 开启 **开发者模式**
+3. 点 **加载已解压的扩展程序**
+4. 选择 `dist/` 文件夹
+5. 打开扩展的 **Options** 页，并继续按上方 Token 配置完成设置
 
-## Privacy and Storage
+## 隐私与存储
 
-The extension is designed to keep the heavy data local and sync only the personal annotation layer.
+扩展的设计是:重数据本地保存,只同步个人批注层。
 
-- Star metadata is stored locally in IndexedDB.
-- Lightweight config lives in `chrome.storage.local`.
-- Tags, notes, and tag metadata can be stored in a dedicated secret Gist under your own GitHub account.
+- star 元数据本地存在 IndexedDB。
+- 轻量配置在 `chrome.storage.local`。
+- 标签、笔记与标签元数据可存在你自己 GitHub 账号下的一个专用 secret Gist。
 
-Push / Pull only sync your annotation layer:
+Push / Pull 只同步批注层:
 
-- `Push` uploads tags, notes, and tag metadata to your private Gist.
-- `Pull` merges the latest tags, notes, and tag metadata back into the local database.
-- Star metadata itself stays local and is always reconstructed from GitHub.
+- `Push` 把标签、笔记、标签元数据上传到你的私有 Gist。
+- `Pull` 把最新的标签、笔记、标签元数据合并回本地数据库。
+- star 元数据本身留在本地,始终从 GitHub 重建。
 
-There is no custom backend and no separate app account.
+没有自建后端,也没有独立的应用账号。
 
-For a store-ready privacy statement, see [docs/en/privacy-policy.md](docs/en/privacy-policy.md).
+面向商店的隐私声明见 [docs/zh/privacy-policy.md](docs/zh/privacy-policy.md)。
 
-## License
+推荐系统的候选来源、评分公式和刷新策略见 [For You 推荐策略](docs/for-you-recommendation-strategy.zh-CN.md)，英文版见 [How For You recommendations work](docs/for-you-recommendation-strategy.md)。
 
-MIT — see [LICENSE](./LICENSE).
+## 许可证
+
+MIT 许可证 —— 见 [LICENSE](./LICENSE)。
 
 Copyright (c) 2026 izumi0uu.
 
@@ -162,6 +172,6 @@ Copyright (c) 2026 izumi0uu.
 - [Linux.do](https://linux.do/) [nodeseek](https://www.nodeseek.com/)
 - [xiaoheihe](https://xiaoheihe.cn) [v2ex](https://www.v2ex.com/)
 
-## Contributing
+## 参与贡献
 
-Issues and PRs are welcome at [the repository](https://github.com/izumi0uu/better-github-stars-manager/issues).
+欢迎在[仓库](https://github.com/izumi0uu/better-github-stars-manager/issues)提 issue 和 PR。
