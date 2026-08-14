@@ -39,11 +39,19 @@ function boundedString(value: unknown, maxCodeUnits: number): string | null {
   return normalized && normalized.length <= maxCodeUnits ? normalized : null;
 }
 
+/**
+ * GitHub owner/repo path segments are case-insensitive; the API returns the
+ * canonical casing while local identities normalize to lowercase. Compare
+ * normalized so repositories with uppercase names (e.g. mindfold-ai/Trellis)
+ * still validate.
+ */
 function exactGitHubUrl(value: unknown, expected: string): string | null {
   if (typeof value !== 'string') return null;
   try {
     const parsed = new URL(value);
-    return parsed.href === expected ? expected : null;
+    return parsed.href.toLocaleLowerCase('en-US') === expected.toLocaleLowerCase('en-US')
+      ? expected
+      : null;
   } catch {
     return null;
   }

@@ -51,8 +51,8 @@ export async function reconcileWatchAccount(
 
 /**
  * Remove cached Watch rows that no longer belong to the current live-star
- * library. Running this on reads also repairs a service-worker interruption
- * between a star tombstone commit and the normal post-sync reconciliation.
+ * library. Native watched membership and Inbox threads are independent
+ * projections, so each is pruned directly against live Stars.
  */
 export async function reconcileWatchLiveStars(
   accountLogin: string | null | undefined,
@@ -79,17 +79,13 @@ export async function reconcileWatchLiveStars(
         const fullName = canonicalRepositoryFullName(star.full_name);
         return fullName ? [fullName] : [];
       }));
-      const retainedScope = new Set(repositories.flatMap((repository) => {
-        const fullName = canonicalRepositoryFullName(repository.full_name);
-        return fullName && liveNames.has(fullName) ? [fullName] : [];
-      }));
       const removedRepositoryNames = repositories
-        .filter((repository) => !retainedScope.has(repository.full_name))
+        .filter((repository) => !liveNames.has(repository.full_name))
         .map((repository) => repository.full_name);
       const removedThreadIds = threads
-        .filter((thread) => !retainedScope.has(thread.repositoryFullName))
+        .filter((thread) => !liveNames.has(thread.repositoryFullName))
         .map((thread) => thread.id);
-      const repositoryCount = retainedScope.size;
+      const repositoryCount = repositories.length - removedRepositoryNames.length;
       const matchedCount = threads.length - removedThreadIds.length;
       const stateChanged = state.scope.repositoryCount !== repositoryCount ||
         state.inbox.matchedCount !== matchedCount;
@@ -189,6 +185,14 @@ function normalizeThreads(
   return [...byId.values()];
 }
 
+function liveRepositoryNames(stars: readonly { full_name: string; tombstone: boolean; viewer_has_starred?: boolean }[]): Set<string> {
+  return new Set(stars.flatMap((star) => {
+    if (star.tombstone || star.viewer_has_starred === false) return [];
+    const fullName = canonicalRepositoryFullName(star.full_name);
+    return fullName ? [fullName] : [];
+  }));
+}
+
 export async function getWatchState(
   accountLogin: string | null | undefined,
 ): Promise<GitHubWatchStateRecord | null> {
@@ -234,7 +238,6 @@ export async function queryStoredWatchInbox(input: {
   const normalizedLogin = normalizeAccountLogin(input.accountLogin);
   return db.transaction(
     'r',
-    db.watchRepositories,
     db.watchNotificationThreads,
     db.watchState,
     async () => {
@@ -242,14 +245,9 @@ export async function queryStoredWatchInbox(input: {
       if (state?.accountLogin !== normalizedLogin) {
         return { ...projectWatchInbox([], { unreadOnly: input.unreadOnly }), state: null };
       }
-      const [repositories, threads] = await Promise.all([
-        db.watchRepositories.toArray(),
-        db.watchNotificationThreads.toArray(),
-      ]);
-      const scope = new Set(repositories.map((repository) => repository.full_name));
       return {
         ...projectWatchInbox(
-          threads.filter((thread) => scope.has(thread.repositoryFullName)),
+          await db.watchNotificationThreads.toArray(),
           { unreadOnly: input.unreadOnly },
         ),
         state,
@@ -313,17 +311,8 @@ export async function replaceWatchScope(input: {
     db.watchState,
     async () => {
       const current = await replaceAccountIfNeeded(input.accountLogin);
-      const previousScope = new Set(await db.watchRepositories.toCollection().primaryKeys());
-      const nextScope = new Set(repositories.map((repository) => repository.full_name));
-      const scopeChanged = previousScope.size !== nextScope.size ||
-        [...nextScope].some((fullName) => !previousScope.has(fullName));
       await db.watchRepositories.clear();
       if (repositories.length) await db.watchRepositories.bulkPut(repositories);
-      const staleThreadIds = await db.watchNotificationThreads
-        .filter((thread) => !nextScope.has(thread.repositoryFullName))
-        .primaryKeys();
-      if (staleThreadIds.length) await db.watchNotificationThreads.bulkDelete(staleThreadIds);
-      const matchedCount = await db.watchNotificationThreads.count();
       const next: GitHubWatchStateRecord = {
         ...current,
         scope: {
@@ -331,17 +320,6 @@ export async function replaceWatchScope(input: {
           lastSuccessfulAt: input.successfulAt ?? input.attemptedAt,
           errorCode: null,
           repositoryCount: repositories.length,
-        },
-        inbox: {
-          ...current.inbox,
-          matchedCount,
-          ...(scopeChanged ? {
-            errorCode: current.inbox.errorCode ?? (
-              current.inbox.lastSuccessfulAt ? 'scope_changed' : null
-            ),
-            lastModified: null,
-            nextAllowedAt: null,
-          } : {}),
         },
       };
       await db.watchState.put(next);
@@ -386,19 +364,31 @@ export async function replaceWatchInbox(input: {
   candidateCount: number;
   truncated: boolean;
   mode: 'replace' | 'merge';
+  requireLiveStars?: boolean;
 }): Promise<GitHubWatchStateRecord> {
   const normalizedThreads = normalizeThreads(input.threads);
   return db.transaction(
     'rw',
+    db.stars,
     db.watchRepositories,
     db.watchNotificationThreads,
     db.watchState,
     async () => {
       const current = await replaceAccountIfNeeded(input.accountLogin);
-      const scope = new Set(await db.watchRepositories.toCollection().primaryKeys());
-      const threads = normalizedThreads.filter((thread) => scope.has(thread.repositoryFullName));
-      if (input.mode === 'replace') await db.watchNotificationThreads.clear();
-      if (threads.length) await db.watchNotificationThreads.bulkPut(threads);
+      const liveNames = input.requireLiveStars
+        ? liveRepositoryNames(await db.stars.toArray())
+        : null;
+      const publishedThreads = liveNames
+        ? normalizedThreads.filter((thread) => liveNames.has(thread.repositoryFullName))
+        : normalizedThreads;
+      if (input.mode === 'replace') {
+        await db.watchNotificationThreads.clear();
+      } else if (liveNames) {
+        const staleThreadIds = (await db.watchNotificationThreads.toArray())
+          .flatMap((thread) => liveNames.has(thread.repositoryFullName) ? [] : [thread.id]);
+        if (staleThreadIds.length) await db.watchNotificationThreads.bulkDelete(staleThreadIds);
+      }
+      if (publishedThreads.length) await db.watchNotificationThreads.bulkPut(publishedThreads);
       const matchedCount = await db.watchNotificationThreads.count();
       const next: GitHubWatchStateRecord = {
         ...current,
@@ -408,9 +398,13 @@ export async function replaceWatchInbox(input: {
           errorCode: null,
           lastModified: input.lastModified,
           nextAllowedAt: input.nextAllowedAt,
-          candidateCount: input.candidateCount,
+          candidateCount: input.mode === 'merge'
+            ? current.inbox.candidateCount + input.candidateCount
+            : input.candidateCount,
           matchedCount,
-          truncated: input.truncated,
+          truncated: input.mode === 'merge'
+            ? current.inbox.truncated || input.truncated
+            : input.truncated,
         },
       };
       await db.watchState.put(next);
@@ -425,14 +419,22 @@ export async function revalidateWatchInbox(input: {
   successfulAt?: string;
   nextAllowedAt: string | null;
   lastModified?: string | null;
+  requireLiveStars?: boolean;
 }): Promise<GitHubWatchStateRecord> {
   return db.transaction(
     'rw',
+    db.stars,
     db.watchRepositories,
     db.watchNotificationThreads,
     db.watchState,
     async () => {
       const current = await replaceAccountIfNeeded(input.accountLogin);
+      if (input.requireLiveStars) {
+        const liveNames = liveRepositoryNames(await db.stars.toArray());
+        const staleThreadIds = (await db.watchNotificationThreads.toArray())
+          .flatMap((thread) => liveNames.has(thread.repositoryFullName) ? [] : [thread.id]);
+        if (staleThreadIds.length) await db.watchNotificationThreads.bulkDelete(staleThreadIds);
+      }
       const next: GitHubWatchStateRecord = {
         ...current,
         inbox: {
@@ -444,6 +446,7 @@ export async function revalidateWatchInbox(input: {
             ? current.inbox.lastModified
             : input.lastModified,
           nextAllowedAt: input.nextAllowedAt,
+          matchedCount: await db.watchNotificationThreads.count(),
         },
       };
       await db.watchState.put(next);

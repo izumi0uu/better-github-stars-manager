@@ -40,7 +40,6 @@ export type WatchScopeStatus =
 
 export type WatchInboxStatus =
   | 'not_configured'
-  | 'scope_unavailable'
   | 'never_loaded'
   | 'fresh'
   | 'stale'

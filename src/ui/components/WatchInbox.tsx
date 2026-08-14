@@ -33,8 +33,10 @@ import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { usePrefersReducedMotion } from '@/ui/hooks/use-prefers-reduced-motion';
+import { useDismissableNotice } from '@/ui/hooks/use-dismissable-notice';
 import { useWatchSubjectDetails } from '@/ui/hooks/use-watch-subject-details';
 import { SurfaceWorkCanvas } from '@/ui/components/SurfaceWorkCanvas';
+import { RepositoryOwnerAvatar } from '@/ui/components/RepositoryOwnerAvatar';
 import { SurfaceListEndMarker } from '@/ui/components/SurfaceListEndMarker';
 import { Button } from '@/ui/shadcn/button';
 import { Checkbox } from '@/ui/shadcn/checkbox';
@@ -419,6 +421,12 @@ export function WatchStatusRibbon({
 }) {
   const { m, locale } = useI18n();
   const presentation = deriveWatchStatusPresentation({ result, loading, refreshing, error });
+  const dismissable = (presentation.tone === 'warning' || presentation.tone === 'destructive')
+    && !loading && !refreshing;
+  const { dismissed, dismiss } = useDismissableNotice(
+    dismissable,
+    `${presentation.kind}:${presentation.code ?? ''}`,
+  );
   const status = result?.status;
   const state = status?.state;
   const snapshotAt = formatTime(presentation.snapshotAt, locale);
@@ -452,6 +460,8 @@ export function WatchStatusRibbon({
     }
   })();
 
+
+  if (dismissed) return null;
   return (
     <div
       role="status"
@@ -495,6 +505,16 @@ export function WatchStatusRibbon({
           <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground max-[640px]:hidden">
             {snapshotAt}
           </span>
+        )}
+        {dismissable && (
+          <button
+            type="button"
+            aria-label={m.common.close}
+            onClick={dismiss}
+            className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <X className="size-3" aria-hidden="true" />
+          </button>
         )}
         {refreshing && <span className="gsm-watch-refresh-bar" aria-hidden="true" />}
       </SurfaceWorkCanvas>
@@ -1037,6 +1057,11 @@ function WatchGroup({
           />
         </button>
         <BookOpen className="size-[15px] shrink-0 text-muted-foreground" aria-hidden="true" />
+        <RepositoryOwnerAvatar
+          fullName={group.repositoryFullName}
+          url={group.repositoryOwnerAvatarUrl}
+          className="size-4"
+        />
         {onSelectRepository ? (
           <button
             type="button"
@@ -1216,58 +1241,17 @@ export function WatchInbox({
     );
   }
 
-  const scopeNeverLoaded = !state?.scope.lastSuccessfulAt;
   const inboxNeverLoaded = !state?.inbox.lastSuccessfulAt;
-  const scopeCredentialFailure = isWatchCredentialError(state?.scope.errorCode);
   const inboxCredentialFailure = isWatchCredentialError(state?.inbox.errorCode);
 
   let content: React.ReactNode;
-  if (status.scopeStatus === 'error' && scopeNeverLoaded) {
-    content = (
-      <EmptyState
-        icon={<AlertTriangle className="size-4" />}
-        title={m.watch.title}
-        text={scopeCredentialFailure ? m.watch.scopePermissionDenied : m.watch.scopeFailed}
-        tone="destructive"
-        action={scopeCredentialFailure
-          ? <Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>
-          : <Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.retry}</Button>}
-      />
-    );
-  } else if (scopeNeverLoaded) {
-    content = (
-      <EmptyState
-        icon={<RefreshCw className="size-4" />}
-        title={m.watch.title}
-        text={m.watch.scopeNeverLoaded}
-        action={<Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.refresh}</Button>}
-      />
-    );
-  } else if (state.scope.repositoryCount === 0) {
-    content = (
-      <EmptyState
-        icon={<Inbox className="size-4" />}
-        title={m.watch.watchSurface}
-        text={m.watch.noWatchedRepositories}
-        tone="success"
-      />
-    );
-  } else if (!status.hasNotificationsToken) {
+  if (!status.hasNotificationsToken) {
     content = (
       <EmptyState
         icon={<Settings2 className="size-4" />}
         title={m.watch.title}
         text={m.watch.configureNotificationsToken}
         action={<Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>}
-      />
-    );
-  } else if (status.inboxStatus === 'scope_unavailable' && inboxNeverLoaded) {
-    content = (
-      <EmptyState
-        icon={<AlertTriangle className="size-4" />}
-        title={m.watch.title}
-        text={m.watch.scopeUnavailable}
-        action={<Button onClick={onRefresh} disabled={refreshDisabled}>{m.watch.retry}</Button>}
       />
     );
   } else if (status.inboxStatus === 'error' && inboxNeverLoaded) {

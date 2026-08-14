@@ -28,7 +28,6 @@ import {
   canonicalRepositoryFullName,
   projectWatchInbox,
   watchSubjectIdentity,
-  type GitHubNotificationThread,
   type WatchSubjectDetail,
   type WatchSubjectIdentity,
 } from '@/watch/watch-model';
@@ -148,6 +147,13 @@ export function createWatchRefreshCoordinator(
         latest.notificationsToken === snapshot.notificationsToken &&
         latest.notificationsIdentity === snapshot.notificationsIdentity
       ));
+  }
+
+  async function loadLiveNames(): Promise<Set<string>> {
+    return new Set((await dependencies.loadLiveRepositoryNames()).flatMap((name) => {
+      const canonical = canonicalRepositoryFullName(name);
+      return canonical ? [canonical] : [];
+    }));
   }
 
   function refreshIdentity(auth: AuthSnapshot): string {
@@ -271,10 +277,8 @@ export function createWatchRefreshCoordinator(
     let inboxStatus: WatchStatus['inboxStatus'];
     if (!hasNotificationsToken) {
       inboxStatus = 'not_configured';
-    } else if (!state?.scope.lastSuccessfulAt) {
-      inboxStatus = 'scope_unavailable';
-    } else if (!state.inbox.lastSuccessfulAt) {
-      inboxStatus = state.inbox.errorCode ? 'error' : 'never_loaded';
+    } else if (!state?.inbox.lastSuccessfulAt) {
+      inboxStatus = state?.inbox.errorCode ? 'error' : 'never_loaded';
     } else if (state.inbox.errorCode) {
       inboxStatus = 'stale';
     } else if (
@@ -341,7 +345,6 @@ export function createWatchRefreshCoordinator(
     auth: AuthSnapshot,
     refreshStartedAt: number,
     attemptedAt: string,
-    scopeNames: ReadonlySet<string>,
   ): Promise<{
     inboxPublished: boolean;
     notModified: boolean;
@@ -365,9 +368,6 @@ export function createWatchRefreshCoordinator(
           credentialsChanged: true,
         };
       }
-      const allowedThreads: GitHubNotificationThread[] = snapshot.threads.filter((thread) => (
-        scopeNames.has(thread.repositoryFullName)
-      ));
       const allowedAt = nextAllowedAt(now(), snapshot.pollIntervalSeconds);
       if (snapshot.notModified) {
         await dependencies.store.revalidateInbox({
@@ -376,6 +376,7 @@ export function createWatchRefreshCoordinator(
           successfulAt: snapshot.fetchedAt,
           nextAllowedAt: allowedAt,
           lastModified: snapshot.lastModified,
+          requireLiveStars: true,
         });
         return {
           inboxPublished: false,
@@ -386,7 +387,7 @@ export function createWatchRefreshCoordinator(
       }
       await dependencies.store.replaceInbox({
         accountLogin: auth.accountLogin!,
-        threads: allowedThreads,
+        threads: snapshot.threads,
         attemptedAt,
         successfulAt: snapshot.fetchedAt,
         lastModified: snapshot.lastModified,
@@ -394,6 +395,7 @@ export function createWatchRefreshCoordinator(
         candidateCount: snapshot.candidateCount,
         truncated: snapshot.truncated,
         mode: state?.inbox.lastModified ? 'merge' : 'replace',
+        requireLiveStars: true,
       });
       return {
         inboxPublished: true,
@@ -431,36 +433,27 @@ export function createWatchRefreshCoordinator(
     }
     const refreshStartedAt = now();
     const attemptedAt = new Date(refreshStartedAt).toISOString();
-    const previousState = await dependencies.store.getState(auth.accountLogin);
-    if (
-      auth.notificationsToken &&
-      previousState?.inbox.nextAllowedAt &&
-      Date.parse(previousState.inbox.nextAllowedAt) > refreshStartedAt
-    ) return empty;
 
     let changed = false;
-    let scopeAvailable = false;
-    let scopeNames = new Set<string>();
+    if (!await sameCredentials(auth, false)) return empty;
     let scopePublished = false;
     try {
-      const [remoteScope, liveNames] = await Promise.all([
-        dependencies.fetchScope({ token: auth.mainToken, now: () => refreshStartedAt }),
-        dependencies.loadLiveRepositoryNames(),
-      ]);
+      const remoteScope = await dependencies.fetchScope({
+        token: auth.mainToken,
+        now: () => refreshStartedAt,
+      });
       if (!await sameCredentials(auth, false)) return empty;
-      const live = new Set(liveNames.flatMap((name) => {
-        const canonical = canonicalRepositoryFullName(name);
-        return canonical ? [canonical] : [];
-      }));
-      const repositories = remoteScope.repositories.filter((repository) => live.has(repository.full_name));
+      const currentLiveNames = await loadLiveNames();
+      if (!await sameCredentials(auth, false)) return empty;
+      const repositories = remoteScope.repositories.filter((repository) => (
+        currentLiveNames.has(repository.full_name)
+      ));
       await dependencies.store.replaceScope({
         accountLogin: auth.accountLogin,
         repositories,
         attemptedAt,
         successfulAt: remoteScope.fetchedAt,
       });
-      scopeNames = new Set(repositories.map((repository) => repository.full_name));
-      scopeAvailable = true;
       scopePublished = true;
       changed = true;
     } catch (error) {
@@ -471,29 +464,29 @@ export function createWatchRefreshCoordinator(
         errorCode: stableErrorCode(error),
       });
       changed = true;
-      const state = await dependencies.store.getState(auth.accountLogin);
-      if (state?.scope.lastSuccessfulAt) {
-        const repositories = await dependencies.store.getRepositories(auth.accountLogin);
-        scopeNames = new Set(repositories.map((repository) => repository.full_name));
-        scopeAvailable = true;
-      }
     }
 
     let inboxPublished = false;
     let notModified = false;
     if (
       auth.notificationsToken &&
-      scopeAvailable &&
       await sameCredentials(auth, true)
     ) {
-      const inbox = await publishInbox(auth, refreshStartedAt, attemptedAt, scopeNames);
-      if (inbox.credentialsChanged) {
-        if (changed) dependencies.broadcastChanged();
-        return { ...empty, scopePublished };
+      const state = await dependencies.store.getState(auth.accountLogin);
+      const inboxCoolingDown = !!(
+        state?.inbox.nextAllowedAt &&
+        Date.parse(state.inbox.nextAllowedAt) > refreshStartedAt
+      );
+      if (!inboxCoolingDown) {
+        const inbox = await publishInbox(auth, refreshStartedAt, attemptedAt);
+        if (inbox.credentialsChanged) {
+          if (changed) dependencies.broadcastChanged();
+          return { ...empty, scopePublished };
+        }
+        inboxPublished = inbox.inboxPublished;
+        notModified = inbox.notModified;
+        changed ||= inbox.changed;
       }
-      inboxPublished = inbox.inboxPublished;
-      notModified = inbox.notModified;
-      changed ||= inbox.changed;
     }
     if (changed) dependencies.broadcastChanged();
     return { scopePublished, inboxPublished, notModified };
@@ -515,11 +508,7 @@ export function createWatchRefreshCoordinator(
       state?.inbox.nextAllowedAt &&
       Date.parse(state.inbox.nextAllowedAt) > refreshStartedAt
     ) return empty;
-    if (!state?.scope.lastSuccessfulAt) return performRefresh(auth);
-
-    const repositories = await dependencies.store.getRepositories(auth.accountLogin);
-    const scopeNames = new Set(repositories.map((repository) => repository.full_name));
-    const inbox = await publishInbox(auth, refreshStartedAt, attemptedAt, scopeNames);
+    const inbox = await publishInbox(auth, refreshStartedAt, attemptedAt);
     if (inbox.changed) dependencies.broadcastChanged();
     return {
       scopePublished: false,

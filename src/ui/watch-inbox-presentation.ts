@@ -170,12 +170,15 @@ export function deriveWatchStatusPresentation(input: {
   const state = result?.status.state;
   const code = state?.inbox.errorCode ?? state?.scope.errorCode ?? null;
   const snapshotAt = state?.inbox.lastSuccessfulAt ?? state?.scope.lastSuccessfulAt ?? null;
+  const hasInboxSnapshot = state?.inbox.lastSuccessfulAt !== null &&
+    state?.inbox.lastSuccessfulAt !== undefined;
   const hasSnapshot = snapshotAt !== null;
-  if (code && WATCH_CREDENTIAL_ERROR_CODES[code]) {
+  const credentialCode = state?.inbox.errorCode ?? null;
+  if (credentialCode && WATCH_CREDENTIAL_ERROR_CODES[credentialCode]) {
     return {
       kind: 'credential_error',
       tone: hasSnapshot ? 'warning' : 'destructive',
-      code,
+      code: credentialCode,
       snapshotAt,
     };
   }
@@ -190,17 +193,6 @@ export function deriveWatchStatusPresentation(input: {
   if (error === 'refresh') {
     return { kind: 'refresh_error', tone: 'warning', code, snapshotAt };
   }
-  if (result?.status.inboxStatus === 'cooldown') {
-    return { kind: 'cooldown', tone: 'warning', code: 'cooldown', snapshotAt };
-  }
-  if (result?.status.scopeStatus === 'error') {
-    return {
-      kind: 'scope_error',
-      tone: hasSnapshot ? 'warning' : 'destructive',
-      code,
-      snapshotAt,
-    };
-  }
   if (result?.status.inboxStatus === 'error') {
     return {
       kind: 'inbox_error',
@@ -209,8 +201,27 @@ export function deriveWatchStatusPresentation(input: {
       snapshotAt,
     };
   }
-  if (result?.status.scopeStatus === 'stale' || result?.status.inboxStatus === 'stale') {
+  if (result?.status.inboxStatus === 'stale') {
     return { kind: 'stale', tone: 'warning', code, snapshotAt };
+  }
+  if (result?.status.scopeStatus === 'error') {
+    return {
+      kind: 'scope_error',
+      tone: hasInboxSnapshot ? 'warning' : 'destructive',
+      code: state?.scope.errorCode ?? null,
+      snapshotAt,
+    };
+  }
+  if (result?.status.scopeStatus === 'stale') {
+    return {
+      kind: 'scope_error',
+      tone: 'warning',
+      code: state?.scope.errorCode ?? null,
+      snapshotAt,
+    };
+  }
+  if (result?.status.inboxStatus === 'cooldown') {
+    return { kind: 'cooldown', tone: 'warning', code: 'cooldown', snapshotAt };
   }
   if (state?.inbox.truncated) {
     return { kind: 'truncated', tone: 'warning', code: 'truncated', snapshotAt };
@@ -219,10 +230,8 @@ export function deriveWatchStatusPresentation(input: {
     return { kind: 'refreshing', tone: 'muted', code: null, snapshotAt };
   }
   if (!result || result.status.scopeStatus === 'not_configured'
-    || result.status.scopeStatus === 'never_loaded'
     || result.status.inboxStatus === 'not_configured'
-    || result.status.inboxStatus === 'never_loaded'
-    || result.status.inboxStatus === 'scope_unavailable') {
+    || result.status.inboxStatus === 'never_loaded') {
     return { kind: 'never_loaded', tone: 'muted', code: null, snapshotAt };
   }
   return { kind: 'fresh', tone: 'success', code: null, snapshotAt };

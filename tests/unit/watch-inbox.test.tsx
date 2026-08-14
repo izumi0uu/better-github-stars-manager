@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   WatchInbox,
@@ -47,6 +48,8 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
     groups: overrides.groups ?? threads.map((item) => ({
       repositoryFullName: item.repositoryFullName,
       repositoryHtmlUrl: item.repositoryHtmlUrl,
+      repositoryOwnerLogin: item.repositoryOwnerLogin ?? null,
+      repositoryOwnerAvatarUrl: item.repositoryOwnerAvatarUrl ?? null,
       latestUpdatedAt: item.updatedAt,
       threads: [item],
     })),
@@ -244,22 +247,23 @@ describe('WatchInbox', () => {
     expect(onOpenOptions).toHaveBeenCalledOnce();
   });
 
-  it('routes a terminal permission failure to the supplied recovery callback', async () => {
-    const onOpenOptions = vi.fn();
+  it('keeps Inbox setup available when watched-membership enumeration fails', async () => {
+    const onRefresh = vi.fn();
     const permissionResult = result();
     permissionResult.groups = [];
     permissionResult.threads = [];
     permissionResult.status.scopeStatus = 'error';
-    permissionResult.status.inboxStatus = 'scope_unavailable';
+    permissionResult.status.inboxStatus = 'never_loaded';
     permissionResult.status.state!.scope.lastSuccessfulAt = null;
     permissionResult.status.state!.scope.errorCode = 'permission_denied';
+    permissionResult.status.state!.inbox.lastSuccessfulAt = null;
 
-    const container = renderInbox({ result: permissionResult, onOpenOptions });
-    const settings = findButtonByText(container, 'Open options');
-    expect(settings).not.toBeNull();
+    const container = renderInbox({ result: permissionResult, onRefresh });
+    const refresh = findButtonByText(container, 'Refresh Watch inbox');
 
-    await click(settings!);
-    expect(onOpenOptions).toHaveBeenCalledOnce();
+    await click(refresh);
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain('Refresh to load the latest bounded Inbox snapshot');
   });
 
   it('keeps stale rows visible and exposes credential recovery in the status ribbon', async () => {
@@ -289,9 +293,7 @@ describe('WatchInbox', () => {
 
   it('keeps the last successful rows visible while the status ribbon reports staleness', () => {
     const staleResult = result();
-    staleResult.status.scopeStatus = 'stale';
     staleResult.status.inboxStatus = 'stale';
-    staleResult.status.state!.scope.errorCode = 'network';
     staleResult.status.state!.inbox.errorCode = 'network';
 
     const inbox = renderInbox({ result: staleResult });
@@ -310,6 +312,69 @@ describe('WatchInbox', () => {
     expect(ribbon.textContent).toContain('Couldn’t refresh · showing saved rows');
   });
 
+  it('dismisses a warning status ribbon with the close control', async () => {
+    const staleResult = result();
+    staleResult.status.inboxStatus = 'stale';
+
+    const ribbon = mountReact(
+      <WatchStatusRibbon
+        result={staleResult}
+        loading={false}
+        refreshing={false}
+        error={null}
+      />,
+      mountedRoots,
+    );
+    expect(ribbon.textContent).toContain('Couldn’t refresh · showing saved rows');
+    const dismiss = ribbon.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
+    expect(dismiss).not.toBeNull();
+
+    await act(async () => { dismiss?.click(); });
+    expect(ribbon.querySelector('[data-watch-status]')).toBeNull();
+  });
+
+  it('shows a new warning after a previously dismissed warning changes identity', async () => {
+    const staleResult = result();
+    staleResult.status.scopeStatus = 'stale';
+    staleResult.status.inboxStatus = 'stale';
+    const onOpenOptions = vi.fn();
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const render = (next: WatchInboxQueryResponse) => act(() => root.render(
+      <WatchStatusRibbon
+        result={next}
+        loading={false}
+        refreshing={false}
+        error={null}
+        onOpenOptions={onOpenOptions}
+      />,
+    ));
+
+    render(staleResult);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!);
+    expect(container.querySelector('[data-watch-status]')).toBeNull();
+
+    const credentialResult = result();
+    credentialResult.status.inboxStatus = 'error';
+    credentialResult.status.state!.inbox.errorCode = 'permission_denied';
+    render(credentialResult);
+
+    expect(container.textContent).toContain('Classic PAT authorization required');
+    await click(findButtonByText(container, 'Open options'));
+    expect(onOpenOptions).toHaveBeenCalledOnce();
+  });
+
+  it('renders the repository owner avatar in group headers', () => {
+    const withAvatar = thread(0, {
+      repositoryOwnerAvatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
+    });
+    const container = renderInbox({ result: result({ threads: [withAvatar] }) });
+    const avatar = container.querySelector('img[data-repository-avatar]');
+    expect(avatar?.getAttribute('src')).toBe('https://avatars.githubusercontent.com/u/1?v=4');
+  });
+
   it('renders raw reason metadata, the repository unread count, and a safe GitHub link', () => {
     const unreadThread = thread(0);
     const readThread = thread(0, {
@@ -325,6 +390,8 @@ describe('WatchInbox', () => {
         groups: [{
           repositoryFullName: unreadThread.repositoryFullName,
           repositoryHtmlUrl: unreadThread.repositoryHtmlUrl,
+          repositoryOwnerLogin: unreadThread.repositoryOwnerLogin ?? null,
+          repositoryOwnerAvatarUrl: unreadThread.repositoryOwnerAvatarUrl ?? null,
           latestUpdatedAt: unreadThread.updatedAt,
           threads: [unreadThread, readThread],
         }],
@@ -590,11 +657,15 @@ describe('WatchInbox', () => {
         groups: [{
           repositoryFullName: 'owner/repository-a',
           repositoryHtmlUrl: 'https://github.com/owner/repository-a',
+          repositoryOwnerLogin: 'owner',
+          repositoryOwnerAvatarUrl: null,
           latestUpdatedAt: repositoryUnread.updatedAt,
           threads: [repositoryUnread, repositoryRead],
         }, {
           repositoryFullName: 'owner/repository-b',
           repositoryHtmlUrl: 'https://github.com/owner/repository-b',
+          repositoryOwnerLogin: 'owner',
+          repositoryOwnerAvatarUrl: null,
           latestUpdatedAt: otherRepository.updatedAt,
           threads: [otherRepository],
         }],

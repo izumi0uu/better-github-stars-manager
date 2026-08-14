@@ -220,6 +220,61 @@ describe('Watch status presentation', () => {
     });
   });
 
+  it('surfaces native membership failure while keeping a published Inbox usable', () => {
+    const response = queryResponse();
+    response.status.scopeStatus = 'error';
+    response.status.inboxStatus = 'cooldown';
+    response.status.state!.scope.lastSuccessfulAt = null;
+    response.status.state!.scope.errorCode = 'permission_denied';
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({
+      kind: 'scope_error',
+      tone: 'warning',
+      code: 'permission_denied',
+    });
+  });
+
+  it('prioritizes an Inbox failure over a separate native membership failure', () => {
+    const response = queryResponse();
+    response.status.scopeStatus = 'stale';
+    response.status.inboxStatus = 'stale';
+    response.status.state!.scope.errorCode = 'network_error';
+    response.status.state!.inbox.errorCode = 'github_unavailable';
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({
+      kind: 'stale',
+      tone: 'warning',
+      code: 'github_unavailable',
+    });
+  });
+
+  it('surfaces stale native membership instead of a fresh Inbox ribbon', () => {
+    const response = queryResponse();
+    response.status.scopeStatus = 'stale';
+    response.status.state!.scope.errorCode = 'network_error';
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({
+      kind: 'scope_error',
+      tone: 'warning',
+      code: 'network_error',
+    });
+  });
+
   it('prioritizes bounded snapshot disclosure over refresh activity', () => {
     const response = queryResponse();
     response.status.state!.inbox.truncated = true;

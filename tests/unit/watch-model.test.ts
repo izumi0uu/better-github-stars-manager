@@ -100,6 +100,45 @@ describe('Watch domain model', () => {
     expect(normalized.subjectHtmlUrl).toBeNull();
   });
 
+  it('accepts only canonical GitHub avatar URLs from notification owners', () => {
+    const normalizeWithAvatar = (avatarUrl: string) => normalizeNotificationThread({
+      id: `avatar-${avatarUrl}`,
+      unread: true,
+      reason: 'mention',
+      updated_at: '2026-08-05T02:00:00Z',
+      last_read_at: null,
+      repository: {
+        full_name: 'Owner/Repo',
+        html_url: 'https://github.com/Owner/Repo',
+        owner: { login: 'Owner', avatar_url: avatarUrl },
+      },
+      subject: {
+        title: 'Avatar validation',
+        type: 'Issue',
+        url: 'https://api.github.com/repos/owner/repo/issues/1',
+      },
+    }, { fetchedAt: '2026-08-05T04:00:00Z' });
+
+    expect(normalizeWithAvatar('https://avatars.githubusercontent.com/u/1?v=4').repositoryOwnerAvatarUrl)
+      .toBe('https://avatars.githubusercontent.com/u/1?v=4');
+    expect(normalizeWithAvatar('https://tracker.example/pixel.png').repositoryOwnerAvatarUrl).toBeNull();
+    expect(normalizeWithAvatar('javascript:alert(1)').repositoryOwnerAvatarUrl).toBeNull();
+  });
+
+  it('fills missing group owner metadata from another cached thread', () => {
+    const newestLegacy = thread('newest', 'Owner/Repo', '2026-08-05T03:00:00Z');
+    const olderHydrated = {
+      ...thread('older', 'owner/repo', '2026-08-05T02:00:00Z'),
+      repositoryOwnerLogin: 'owner',
+      repositoryOwnerAvatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
+    };
+
+    const [group] = groupNotificationThreads([newestLegacy, olderHydrated]);
+
+    expect(group?.repositoryOwnerLogin).toBe('owner');
+    expect(group?.repositoryOwnerAvatarUrl).toBe('https://avatars.githubusercontent.com/u/1?v=4');
+  });
+
   it('groups newest first with deterministic repository and thread ties', () => {
     const groups = groupNotificationThreads([
       thread('b', 'Beta/Repo', '2026-08-05T02:00:00Z'),

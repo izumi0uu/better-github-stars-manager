@@ -52,6 +52,8 @@ export interface GitHubNotificationThread {
   id: string;
   repositoryFullName: string;
   repositoryHtmlUrl: string;
+  repositoryOwnerLogin?: string | null;
+  repositoryOwnerAvatarUrl?: string | null;
   reason: string;
   subjectType: string;
   subjectTitle: string;
@@ -107,6 +109,8 @@ export interface WatchSubjectDetail {
 export interface WatchNotificationGroup {
   repositoryFullName: string;
   repositoryHtmlUrl: string;
+  repositoryOwnerLogin: string | null;
+  repositoryOwnerAvatarUrl: string | null;
   latestUpdatedAt: string;
   threads: GitHubNotificationThread[];
 }
@@ -151,9 +155,9 @@ export interface WatchScopeSnapshot {
 
 export interface WatchNotificationSnapshot {
   threads: GitHubNotificationThread[];
-  /** Number of valid candidate threads received before scope intersection. */
+  /** Number of valid candidate threads received before live-Star filtering. */
   candidateCount: number;
-  /** Number of threads remaining after optional watched-scope intersection. */
+  /** Number of threads remaining after live-Star filtering. */
   matchedCount: number;
   pageCount: number;
   truncated: boolean;
@@ -413,6 +417,29 @@ export const mapSubjectHtmlUrl = deriveSubjectHtmlUrl;
 
 export interface NotificationPayloadValidationOptions extends NormalizeNotificationOptions {}
 
+function normalizeNotificationAvatarUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (
+      url.protocol !== 'https:'
+      || url.username
+      || url.password
+      || url.port
+      || url.hash
+      || url.hostname.toLocaleLowerCase('en-US') !== 'avatars.githubusercontent.com'
+      || [...url.searchParams.keys()].some((key) => key !== 'v')
+      || url.searchParams.getAll('v').length > 1
+      || (url.searchParams.has('v') && !/^\d+$/u.test(url.searchParams.get('v') ?? ''))
+    ) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 /** Normalize one raw `/notifications` row. */
 export function normalizeNotificationThread(
   value: unknown,
@@ -454,10 +481,15 @@ export function normalizeNotificationThread(
   // Rebuild from the validated repository name instead of trusting a remote URL.
   const repositoryUrl = repositoryHtmlUrl(repositoryFullName);
   const subjectType = subject.type.trim();
+  const repositoryOwner = record(repository.owner);
   return {
     id: input.id.trim(),
     repositoryFullName,
     repositoryHtmlUrl: repositoryUrl,
+    repositoryOwnerLogin: typeof repositoryOwner?.login === 'string'
+      ? repositoryOwner.login.toLocaleLowerCase('en-US')
+      : null,
+    repositoryOwnerAvatarUrl: normalizeNotificationAvatarUrl(repositoryOwner?.avatar_url),
     reason: input.reason.trim(),
     subjectType,
     subjectTitle: subject.title.trim(),
@@ -536,10 +568,14 @@ export function groupNotificationThreads(
       if (timestampValue(thread.updatedAt) > timestampValue(group.latestUpdatedAt)) {
         group.latestUpdatedAt = thread.updatedAt;
       }
+      group.repositoryOwnerLogin ??= thread.repositoryOwnerLogin ?? null;
+      group.repositoryOwnerAvatarUrl ??= thread.repositoryOwnerAvatarUrl ?? null;
     } else {
       groups.set(thread.repositoryFullName, {
         repositoryFullName: thread.repositoryFullName,
         repositoryHtmlUrl: thread.repositoryHtmlUrl,
+        repositoryOwnerLogin: thread.repositoryOwnerLogin ?? null,
+        repositoryOwnerAvatarUrl: thread.repositoryOwnerAvatarUrl ?? null,
         latestUpdatedAt: thread.updatedAt,
         threads: [thread],
       });
