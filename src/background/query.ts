@@ -91,8 +91,30 @@ async function ensureCache() {
       autoTags: normalized.autoTags.filter((name) => !excluded.has(canonicalTagKey(name))),
     });
   }
-  cache = { stars, tags: tagMap, excluded, version: cacheVersion };
+  cache = { stars: stars.map(normalizeStarRow), tags: tagMap, excluded, version: cacheVersion };
   return cache;
+}
+
+/**
+ * Rows written by older extension versions can miss fields added later
+ * (topics, description, created_at, …). Coerce them at the read boundary so
+ * every consumer — the detail drawer included — receives a complete Star.
+ */
+function normalizeStarRow(star: Star): Star {
+  return {
+    ...star,
+    html_url: star.html_url || `https://github.com/${star.full_name}`,
+    description: star.description ?? '',
+    language: star.language ?? null,
+    topics: Array.isArray(star.topics) ? star.topics : [],
+    stargazers_count: typeof star.stargazers_count === 'number' ? star.stargazers_count : 0,
+    starred_at: star.starred_at || star.created_at || new Date(0).toISOString(),
+    pushed_at: star.pushed_at ?? null,
+    created_at: star.created_at ?? null,
+    fork: star.fork ?? false,
+    archived: star.archived ?? false,
+    tombstone: star.tombstone ?? false,
+  };
 }
 
 export function compareNullableDate(

@@ -130,6 +130,31 @@ describe('Query cache and semantics regressions', () => {
     assert.equal(afterInvalidation.grandTotal, 2);
   });
 
+  it('coerces legacy rows missing later-added fields at the read boundary', async () => {
+    await db.stars.put({
+      full_name: 'legacy/repo',
+      starred_at: '2026-01-01T00:00:00Z',
+      language: 'TypeScript',
+    } as unknown as Star);
+    invalidateCache();
+
+    const result = await queryStars({ filter: filter(), offset: 0, limit: 20 });
+    assert.equal(result.rows.length, 1);
+    const row = result.rows[0]!;
+    assert.equal(row.full_name, 'legacy/repo');
+    assert.deepEqual(row.topics, []);
+    assert.equal(row.description, '');
+    assert.equal(row.language, 'TypeScript');
+    assert.equal(row.stargazers_count, 0);
+    assert.equal(row.archived, false);
+    assert.equal(row.fork, false);
+    assert.equal(row.tombstone, false);
+    assert.equal(row.html_url, 'https://github.com/legacy/repo');
+    assert.equal(row.starred_at, '2026-01-01T00:00:00Z');
+    assert.equal(row.pushed_at, null);
+    assert.equal(row.created_at, null);
+  });
+
   it('hydrates tags only for rows in the returned pagination window', async () => {
     await putFixtures({
       stars: [
