@@ -12,8 +12,8 @@ const FILE = 'tests/regressions/fuzz/backfill-config-fuzz.test.ts';
 const PREFIX = 'BACKFILL_CONFIG_FUZZ';
 const SUITE = 'backfill/config fuzz';
 const CASES = fuzzCases(PREFIX, '20260705-backfill', 100);
-const backfillId = 'repo_data_sync_v1' as const;
-const avatarBackfillId = 'repo_owner_avatar_v1' as const;
+const backfillId = 'repo_data_sync' as const;
+const avatarBackfillId = 'repo_owner_avatar' as const;
 
 beforeEach(async () => {
   await db.delete();

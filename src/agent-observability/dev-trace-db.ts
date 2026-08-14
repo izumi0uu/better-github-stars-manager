@@ -5,12 +5,12 @@ import {
   type DevTraceEventDataByKind,
   type DevTraceOperationKind,
   type DevTraceTerminalState,
-  type TraceArtifactV1,
-  type TraceSequenceGapV1,
+  type TraceArtifact,
+  type TraceSequenceGap,
   validateTraceArtifact,
 } from './contracts';
 
-export const DEV_TRACE_DATABASE_NAME = 'bgsm-agent-dev-traces-v1';
+export const DEV_TRACE_DATABASE_NAME = 'bgsm-agent-dev-traces';
 export const DEV_TRACE_ROOT_LIMIT = 20;
 export const DEV_TRACE_RETENTION_MS = 24 * 60 * 60 * 1_000;
 export const DEV_TRACE_TOTAL_BYTES_LIMIT = 100 * 1024 * 1024;
@@ -35,7 +35,7 @@ export type DevTraceRootRecord = Readonly<{
   droppedEventCount: number;
   truncatedFieldCount: number;
   activeBeforeTracing: boolean;
-  sequenceGaps: readonly TraceSequenceGapV1[];
+  sequenceGaps: readonly TraceSequenceGap[];
 }>;
 
 export type DevTraceSpanRecord = Readonly<{
@@ -79,8 +79,8 @@ export type DevTraceRetentionPolicy = Readonly<{
 }>;
 
 export type DevTraceArtifactReadInput = Readonly<{
-  scope: TraceArtifactV1['scope'];
-  build: TraceArtifactV1['build'];
+  scope: TraceArtifact['scope'];
+  build: TraceArtifact['build'];
   exporterVersion: string;
   exportedAt?: number;
 }>;
@@ -629,7 +629,7 @@ export class DevTraceDB extends Dexie {
     }
   }
 
-  async readArtifact(input: DevTraceArtifactReadInput): Promise<TraceArtifactV1> {
+  async readArtifact(input: DevTraceArtifactReadInput): Promise<TraceArtifact> {
     const segments: string[] = [];
     for await (const segment of this.streamArtifactJson(input)) segments.push(segment);
     return validateTraceArtifact(JSON.parse(segments.join('')));
@@ -650,7 +650,7 @@ export class DevTraceDB extends Dexie {
     return root;
   }
 
-  private async selectedRoots(scope: TraceArtifactV1['scope']): Promise<DevTraceRootRecord[]> {
+  private async selectedRoots(scope: TraceArtifact['scope']): Promise<DevTraceRootRecord[]> {
     if (scope.kind === 'all_retained') return this.roots.orderBy('startedAt').toArray();
     if (scope.kind === 'root') {
       const root = await this.roots.get(scope.id!);
@@ -660,7 +660,7 @@ export class DevTraceDB extends Dexie {
   }
 
   private async beginArtifactSnapshot(
-    scope: TraceArtifactV1['scope'],
+    scope: TraceArtifact['scope'],
     exportedAt: number,
   ): Promise<Readonly<{
     fences: readonly DevTraceArtifactRootFence[];
@@ -832,7 +832,7 @@ function artifactCompleteness(
   accounting: DevTraceMetaRecord,
   omittedUnsupportedRootCount = 0,
   omittedUnsupportedEventCount = 0,
-): TraceArtifactV1['completeness'] {
+): TraceArtifact['completeness'] {
   return {
     retainedFromMs: selectedRoots[0]?.startedAt ?? null,
     retainedToMs: selectedRoots.at(-1)?.endedAt ?? selectedRoots.at(-1)?.startedAt ?? null,

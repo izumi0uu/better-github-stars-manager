@@ -32,7 +32,7 @@ import {
   type AnalyzerBatchProposal,
 } from './proposal';
 import type { RunId } from './identity';
-import type { ScopeFingerprintV1 } from './scope';
+import type { ScopeFingerprint } from './scope';
 import type { SemanticRepositoryDto, SemanticTaxonomyDto } from './semantic-dto';
 import type { BudgetExhaustionReason, ProviderActualTokenTelemetry } from './policy';
 import type { OrganizeTagPolicySnapshot } from '@/types';
@@ -69,7 +69,7 @@ export type SemanticAnalyzerBatch = Readonly<{
   version: 1;
   runId: RunId;
   generation: number;
-  scopeFingerprint: ScopeFingerprintV1;
+  scopeFingerprint: ScopeFingerprint;
   taskInstruction: string;
   tagPolicy: OrganizeTagPolicySnapshot;
   repositories: readonly SemanticRepositoryDto[];

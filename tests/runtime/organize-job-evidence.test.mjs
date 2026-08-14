@@ -26,8 +26,8 @@ for (const recovery of [false, true]) {
       assert.equal(result.stdout, '');
       assert.equal(result.stderr, '');
       const filename = recovery
-        ? 'organize-job-recovery.schema-v1.json'
-        : 'organize-job.schema-v1.json';
+        ? 'organize-job-recovery.schema.json'
+        : 'organize-job.schema.json';
       const output = path.join(directory, filename);
       const bytes = readFileSync(output);
       assert.equal(bytes.byteLength <= 32 * 1024, true);

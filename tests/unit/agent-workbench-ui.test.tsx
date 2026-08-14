@@ -18,7 +18,7 @@ import {
   createFrozenScope,
   parseContinuationCursorToken,
   parsePreflightToken,
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
   projectFrozenScope,
 } from '@/bgsm-agent/scope';
 import {
@@ -310,7 +310,7 @@ describe('Agent organize-job workbench UI', () => {
       presentation: presentationFor(review, { status: 'completed' }),
     });
 
-    expect(presentations.at(-1)).toEqual({ status: 'Completed', active: false });
+    expect(presentations.at(-1)).toEqual({ status: 'Completed', statusKind: 'completed', active: false });
   });
 
   it('stops toolbar activity when a newer child snapshot fails before the durable presentation advances', async () => {
@@ -379,7 +379,7 @@ describe('Agent organize-job workbench UI', () => {
         reason: 'requested_output_tokens',
         budget: parent.budget,
         usage: parent.usage,
-        continuationCursor: parseContinuationCursorToken('cursor:v1:toolbar-child'),
+        continuationCursor: parseContinuationCursorToken('cursor:toolbar-child'),
       },
     });
 
@@ -402,7 +402,7 @@ describe('Agent organize-job workbench UI', () => {
       },
     });
 
-    expect(presentations.at(-1)).toEqual({ status: 'Failed', active: false });
+    expect(presentations.at(-1)).toEqual({ status: 'Failed', statusKind: 'failed', active: false });
   });
 
   it('renders a same-generation runtime failure over a durable analyzing phase', async () => {
@@ -463,7 +463,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(currentPhase(container)).toBeUndefined();
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
-    expect(presentations.at(-1)).toEqual({ status: 'Failed', active: false });
+    expect(presentations.at(-1)).toEqual({ status: 'Failed', statusKind: 'failed', active: false });
   });
 
   it('handles empty and confirmed preflight without exposing protocol details', async () => {
@@ -490,7 +490,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: readyRequest.sessionId,
       requestId: readyRequest.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:ui-confirm'),
+      preflightToken: parsePreflightToken('preflight:ui-confirm'),
       label: 'All live stars',
       count: 290,
     });
@@ -503,11 +503,11 @@ describe('Agent organize-job workbench UI', () => {
     expect(container.textContent?.match(/Pending confirmation · 290 repositories/gu))
       .toHaveLength(1);
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
-    expect(container.innerHTML).not.toContain('preflight:v1:ui-confirm');
+    expect(container.innerHTML).not.toContain('preflight:ui-confirm');
     await click(buttonWithText(container, 'Start analysis'));
     expect(activeOrganizePort().posted).toContainEqual(expect.objectContaining({
       type: 'startBgsmOrganizeJob',
-      preflightToken: 'preflight:v1:ui-confirm',
+      preflightToken: 'preflight:ui-confirm',
     }));
     expect(container.textContent).toContain('Starting analysis');
     await emitMessage({
@@ -533,7 +533,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: request.sessionId,
       requestId: request.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:agent-confirm'),
+      preflightToken: parsePreflightToken('preflight:agent-confirm'),
       label: 'All live stars',
       count: 303,
     });
@@ -551,7 +551,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(starts).toHaveLength(1);
     expect(starts[0]).toEqual(expect.objectContaining({
       requestId: request.requestId,
-      preflightToken: 'preflight:v1:agent-confirm',
+      preflightToken: 'preflight:agent-confirm',
     }));
     expect(container.textContent).toContain('Starting analysis');
     expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent)
@@ -569,7 +569,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: request.sessionId,
       requestId: request.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:deferred-start'),
+      preflightToken: parsePreflightToken('preflight:deferred-start'),
       label: 'All live stars',
       count: 303,
     });
@@ -594,7 +594,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(replacementPort.posted).toContainEqual(expect.objectContaining({
       type: 'startBgsmOrganizeJob',
       requestId: request.requestId,
-      preflightToken: 'preflight:v1:deferred-start',
+      preflightToken: 'preflight:deferred-start',
     }));
   });
 
@@ -668,7 +668,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: request.sessionId,
       requestId: request.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:cancel-before-handoff'),
+      preflightToken: parsePreflightToken('preflight:cancel-before-handoff'),
       label: 'All live stars',
       count: 303,
     });
@@ -693,7 +693,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: request.sessionId,
       requestId: request.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:ordered-confirmation'),
+      preflightToken: parsePreflightToken('preflight:ordered-confirmation'),
       label: 'All live stars',
       count: 303,
     });
@@ -727,7 +727,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: request!.sessionId,
       requestId: request!.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:agent-direct-start'),
+      preflightToken: parsePreflightToken('preflight:agent-direct-start'),
       label: 'All live stars',
       count: 303,
     });
@@ -736,7 +736,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(starts).toHaveLength(1);
     expect(starts[0]).toEqual(expect.objectContaining({
       requestId: request!.requestId,
-      preflightToken: 'preflight:v1:agent-direct-start',
+      preflightToken: 'preflight:agent-direct-start',
       taskInstruction: prompt,
     }));
     expect(container.textContent).toContain('Starting analysis');
@@ -745,7 +745,7 @@ describe('Agent organize-job workbench UI', () => {
   it('keeps analysis failures review-free and resumes only the failed suffix', async () => {
     const container = await mountHarness();
     const request = await requestOrganizePreflight(container);
-    const continuationCursor = parseContinuationCursorToken('cursor:v1:analysis-blocked');
+    const continuationCursor = parseContinuationCursorToken('cursor:analysis-blocked');
     const snapshot = analysisSnapshot(request.controllerId, request.sessionId, 'analysis_blocked');
     const coverage: OrganizeJobRunCoverageSummary = {
       total: 3,
@@ -1023,7 +1023,7 @@ describe('Agent organize-job workbench UI', () => {
     const blocked: OrganizeJobRunSnapshot = {
       ...base,
       terminalReason: 'analysis_failed',
-      continuationCursor: parseContinuationCursorToken('cursor:v1:mixed-authority-discard'),
+      continuationCursor: parseContinuationCursorToken('cursor:mixed-authority-discard'),
       coverage,
     };
     await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: blocked });
@@ -1058,7 +1058,7 @@ describe('Agent organize-job workbench UI', () => {
     const request = await requestOrganizePreflight(container);
     const total = 319;
     const retryFrom = 300;
-    const continuationCursor = parseContinuationCursorToken('cursor:v1:failed-suffix-progress');
+    const continuationCursor = parseContinuationCursorToken('cursor:failed-suffix-progress');
     const parentBase = analysisSnapshot(
       request.controllerId,
       request.sessionId,
@@ -1221,7 +1221,7 @@ describe('Agent organize-job workbench UI', () => {
     expect([...container.querySelectorAll('button')].some((button) => button.textContent?.includes('Continue remaining')))
       .toBe(false);
 
-    const continuationCursor = parseContinuationCursorToken('cursor:v1:ui-blocked-child');
+    const continuationCursor = parseContinuationCursorToken('cursor:ui-blocked-child');
     const childSnapshot: OrganizeJobRunSnapshot = {
       ...parent,
       runId: childRunId,
@@ -1271,7 +1271,7 @@ describe('Agent organize-job workbench UI', () => {
         reason: 'requested_output_tokens',
         budget: parent.budget,
         usage: parent.usage,
-        continuationCursor: parseContinuationCursorToken('cursor:v1:auto-continuation'),
+        continuationCursor: parseContinuationCursorToken('cursor:auto-continuation'),
       },
     });
 
@@ -1331,7 +1331,7 @@ describe('Agent organize-job workbench UI', () => {
         unchanged: 74,
         analysisFailed: 1,
       },
-      continuationCursor: parseContinuationCursorToken('cursor:v1:ui-durable-generation'),
+      continuationCursor: parseContinuationCursorToken('cursor:ui-durable-generation'),
     };
     const parentPresentation = presentationFor(parent, {
       revision: 20,
@@ -2078,7 +2078,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: preflight.sessionId,
       requestId: preflight.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:durable-review'),
+      preflightToken: parsePreflightToken('preflight:durable-review'),
       label: 'All live stars',
       count: 102,
     });
@@ -2858,7 +2858,7 @@ function analysisSnapshot(
       filterSnapshot: '{}',
       repositoryIds: Array.from({ length: count }, (_, index) => `owner/repo-${index}`),
       capturedAt: 1,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${'a'.repeat(43)}`),
+      fingerprint: parseScopeFingerprint(`fs:${'a'.repeat(43)}`),
     })),
     budget: createProductionRunBudget(),
     usage: createEmptyRunBudgetUsage(),
@@ -2870,7 +2870,7 @@ function analysisSnapshot(
 
 async function enterBlockedAnalysis(container: HTMLElement, suffix: string) {
   const request = await requestOrganizePreflight(container);
-  const continuationCursor = parseContinuationCursorToken(`cursor:v1:${suffix}`);
+  const continuationCursor = parseContinuationCursorToken(`cursor:${suffix}`);
   const base = analysisSnapshot(request.controllerId, request.sessionId, 'analysis_blocked');
   const coverage: OrganizeJobRunCoverageSummary = {
     total: 3,

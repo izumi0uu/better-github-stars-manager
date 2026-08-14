@@ -121,7 +121,7 @@ import {
   createFrozenScope,
   createFrozenScopeCursor,
   parsePreflightToken,
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
 } from "@/bgsm-agent/scope";
 import {
   createOrganizeJobId,
@@ -132,8 +132,8 @@ import {
   type OrganizeJobId,
 } from "@/bgsm-agent/identity";
 import {
-  parseSourceFingerprintV1,
-  parseTaxonomyFingerprintV1,
+  parseSourceFingerprint,
+  parseTaxonomyFingerprint,
   type ActionableProposalRow,
   type NonActionableAnalysisOutcome,
 } from "@/bgsm-agent/proposal";
@@ -562,8 +562,8 @@ const devRawCaptureCoordinator = DEV
 if (DEV) {
   chrome.runtime.onConnect.addListener((port) => {
     if (
-      port.name !== 'bgsm-agent-dev-evidence-v1' &&
-      port.name !== 'bgsm-agent-dev-control-v1'
+      port.name !== 'bgsm-agent-dev-evidence' &&
+      port.name !== 'bgsm-agent-dev-control'
     ) return;
     attachDevTracePort(port, {
       rawCapture: devRawCaptureCoordinator ?? undefined,
@@ -3546,7 +3546,7 @@ function buildRestoredOrganizeAnalysisState(
   const runId = parseRunId(job.runId);
   const proposalId = parseProposalId(job.proposalId);
   const taxonomyFingerprint = items.find((row) => row.analysisState === 'actionable')
-    ? parseTaxonomyFingerprintV1(taxonomyFingerprintValue)
+    ? parseTaxonomyFingerprint(taxonomyFingerprintValue)
     : null;
   const analyzed = items
     .filter((row) => row.analysisState !== 'pending' && row.analysisState !== 'leased')
@@ -3574,7 +3574,7 @@ function buildRestoredOrganizeAnalysisState(
       proposalRowId: `${proposalId}:row:${row.position}`,
       frozenIndex: row.position,
       repositoryId: row.fullName,
-      sourceFingerprint: parseSourceFingerprintV1(row.sourceFingerprint),
+      sourceFingerprint: parseSourceFingerprint(row.sourceFingerprint),
       taxonomyFingerprint,
       actions: row.proposedActions,
     }];
@@ -3589,7 +3589,7 @@ function buildRestoredOrganizeAnalysisState(
       filterSnapshot: job.frozenScope.filterSnapshot,
       repositoryIds: job.frozenScope.repositoryIds,
       capturedAt: job.frozenScope.capturedAt,
-      fingerprint: parseScopeFingerprintV1(job.frozenScope.fingerprint),
+      fingerprint: parseScopeFingerprint(job.frozenScope.fingerprint),
     }),
     tagPolicy: createOrganizeTagPolicySnapshot(job.tagPolicy),
     budget: job.budget as RunBudget,

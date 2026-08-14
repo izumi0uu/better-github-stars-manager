@@ -16,7 +16,7 @@ import type {
 } from '@/types';
 import {
   parseProviderDiagnosticsShare,
-  type ProviderDiagnosticsShareV1,
+  type ProviderDiagnosticsShare,
 } from './provider-diagnostics-bridge';
 
 export type ProviderDebugHostAccess = 'checking' | 'built-in' | 'granted' | 'required';
@@ -97,7 +97,7 @@ export function createProviderDiagnosticsShare(input: Readonly<{
   probe: ProviderDebugProbeState;
   versionHash: string;
   generatedAt?: number;
-}>): ProviderDiagnosticsShareV1 {
+}>): ProviderDiagnosticsShare {
   const generatedAt = input.generatedAt ?? Date.now();
   const probe = input.probe;
   const report = parseProviderDiagnosticsShare({

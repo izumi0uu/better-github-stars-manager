@@ -1,8 +1,8 @@
-import type { TraceArtifactV1 } from './contracts';
+import type { TraceArtifact } from './contracts';
 import type { RawCaptureField } from './redaction';
 
-export const DEV_TRACE_EVIDENCE_PORT = 'bgsm-agent-dev-evidence-v1';
-export const DEV_TRACE_CONTROL_PORT = 'bgsm-agent-dev-control-v1';
+export const DEV_TRACE_EVIDENCE_PORT = 'bgsm-agent-dev-evidence';
+export const DEV_TRACE_CONTROL_PORT = 'bgsm-agent-dev-control';
 export const DEV_TRACE_PROTOCOL_VERSION = 1 as const;
 export const DEV_TRACE_SNAPSHOT_CHUNK_MIN_BYTES = 4 * 1024;
 export const DEV_TRACE_SNAPSHOT_CHUNK_MAX_BYTES = 256 * 1024;
@@ -20,7 +20,7 @@ export const DEV_TRACE_SCENARIO_IDS = [
 ] as const;
 
 export type DevTraceScenarioId = typeof DEV_TRACE_SCENARIO_IDS[number];
-export type DevTraceScope = TraceArtifactV1['scope'];
+export type DevTraceScope = TraceArtifact['scope'];
 export type DevProviderMonitorState = Readonly<{
   sessionId: string;
   startedAt: number;

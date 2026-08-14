@@ -19,7 +19,7 @@ import {
   DEV_TRACE_EVIDENCE_PORT,
   parseTraceArtifactJson,
   type DevTracePortResponse,
-  type TraceArtifactV1,
+  type TraceArtifact,
 } from '@/agent-observability';
 import { AgentDiagnostics } from '@/dev-agent/AgentDiagnostics';
 import type {
@@ -118,7 +118,7 @@ let workers: FakeArtifactWorker[] = [];
 let requestSequence = 0;
 let deferFileParse = false;
 
-function sampleArtifact(): TraceArtifactV1 {
+function sampleArtifact(): TraceArtifact {
   const activeRoot = 'agent_turn:active';
   const failedRoot = 'agent_turn:failed';
   return {
@@ -228,11 +228,11 @@ function sampleArtifact(): TraceArtifactV1 {
   };
 }
 
-function diagnosticArtifact(): TraceArtifactV1 {
+function diagnosticArtifact(): TraceArtifact {
   const base = sampleArtifact();
   const rootOperationId = 'agent_turn:active';
   const spanId = `${rootOperationId}:root`;
-  const providerEvents: TraceArtifactV1['events'] = [
+  const providerEvents: TraceArtifact['events'] = [
     {
       schemaVersion: 1,
       eventId: 'active-provider-preflight',
@@ -398,7 +398,7 @@ afterEach(() => {
   cleanupMountedRootsAndBody(mountedRoots);
 });
 
-async function deliverArtifact(port: FakeDiagnosticsPort, artifact: TraceArtifactV1): Promise<void> {
+async function deliverArtifact(port: FakeDiagnosticsPort, artifact: TraceArtifact): Promise<void> {
   await act(async () => {
     port.emit({ version: 1, type: 'ready', port: 'evidence' });
     await Promise.resolve();
@@ -802,7 +802,7 @@ describe('Agent diagnostics page', () => {
     });
 
     const report = container.querySelector<HTMLElement>('[data-testid="agent-diagnostics-machine-report"]')!;
-    expect(report.dataset.agentReadable).toBe('bgsm-diagnostics-v1');
+    expect(report.dataset.agentReadable).toBe('bgsm-diagnostics');
     expect(report.dataset.reportStatus).toBe('failed');
     expect(report.textContent).toContain('context_length_exceeded');
     expect(report.textContent).toContain('"credentialsIncluded": false');

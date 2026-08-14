@@ -25,7 +25,7 @@ export type ProviderDiagnosticsProbe = Readonly<{
   failure: AgentProviderConnectionFailureDetails | null;
 }>;
 
-export type ProviderDiagnosticsShareV1 = Readonly<{
+export type ProviderDiagnosticsShare = Readonly<{
   schemaVersion: 1;
   generatedAt: number;
   source: Readonly<{
@@ -80,7 +80,7 @@ export type ProviderDiagnosticsEventData = Readonly<Record<
   string | number | boolean | null
 >>;
 
-export type ProviderDiagnosticsMonitorEventV1 = Readonly<{
+export type ProviderDiagnosticsMonitorEvent = Readonly<{
   schemaVersion: 1;
   sessionId: string;
   emittedAt: number;
@@ -90,22 +90,22 @@ export type ProviderDiagnosticsMonitorEventV1 = Readonly<{
   data: ProviderDiagnosticsEventData;
 }>;
 
-export type ProviderDiagnosticsEventPostV1 = Readonly<{
+export type ProviderDiagnosticsEventPost = Readonly<{
   schemaVersion: 1;
   sessionId: string;
   startedAt: number;
   expiresAt: number;
-  event: ProviderDiagnosticsMonitorEventV1;
-  report?: ProviderDiagnosticsShareV1;
+  event: ProviderDiagnosticsMonitorEvent;
+  report?: ProviderDiagnosticsShare;
 }>;
 
-export type ProviderDiagnosticsStoredEventV1 = Readonly<{
+export type ProviderDiagnosticsStoredEvent = Readonly<{
   sequence: number;
   receivedAt: number;
-  event: ProviderDiagnosticsMonitorEventV1;
+  event: ProviderDiagnosticsMonitorEvent;
 }>;
 
-export type ProviderDiagnosticsBridgeRecordV1 = Readonly<{
+export type ProviderDiagnosticsBridgeRecord = Readonly<{
   bridgeVersion: 2;
   sessionId: string;
   startedAt: number;
@@ -114,11 +114,11 @@ export type ProviderDiagnosticsBridgeRecordV1 = Readonly<{
   expiresAt: number;
   eventCount: number;
   droppedEventCount: number;
-  report: ProviderDiagnosticsShareV1;
-  latestEvent: ProviderDiagnosticsStoredEventV1;
+  report: ProviderDiagnosticsShare;
+  latestEvent: ProviderDiagnosticsStoredEvent;
 }>;
 
-export type ProviderDiagnosticsEventsRecordV1 = Readonly<{
+export type ProviderDiagnosticsEventsRecord = Readonly<{
   bridgeVersion: 2;
   sessionId: string;
   startedAt: number;
@@ -126,10 +126,10 @@ export type ProviderDiagnosticsEventsRecordV1 = Readonly<{
   expiresAt: number;
   eventCount: number;
   droppedEventCount: number;
-  events: readonly ProviderDiagnosticsStoredEventV1[];
+  events: readonly ProviderDiagnosticsStoredEvent[];
 }>;
 
-export type ProviderDiagnosticsHealthV1 = Readonly<{
+export type ProviderDiagnosticsHealth = Readonly<{
   bridgeVersion: 2;
   state: 'idle' | 'monitoring';
   serverTime: number;
@@ -239,7 +239,7 @@ const EVENT_DATA_FIELDS: Readonly<Record<ProviderDiagnosticsEventKind, Readonly<
 
 export function parseProviderDiagnosticsShare(
   value: unknown,
-): ProviderDiagnosticsShareV1 | null {
+): ProviderDiagnosticsShare | null {
   if (!isRecord(value) || value.schemaVersion !== 1) return null;
   const source = value.source;
   const privacy = value.privacy;
@@ -293,7 +293,7 @@ export function parseProviderDiagnosticsShare(
       completionEndpoint: provider.completionEndpoint,
       model: provider.model,
       credentialState: provider.credentialState,
-      hostAccess: provider.hostAccess as ProviderDiagnosticsShareV1['provider']['hostAccess'],
+      hostAccess: provider.hostAccess as ProviderDiagnosticsShare['provider']['hostAccess'],
       declaredContextWindow: provider.declaredContextWindow,
       workingContextWindow: provider.workingContextWindow,
       capability: provider.capability === null ? null : Object.freeze({
@@ -309,7 +309,7 @@ export function parseProviderDiagnosticsShare(
 
 export function parseProviderDiagnosticsMonitorEvent(
   value: unknown,
-): ProviderDiagnosticsMonitorEventV1 | null {
+): ProviderDiagnosticsMonitorEvent | null {
   if (
     !isRecord(value)
     || value.schemaVersion !== 1
@@ -336,7 +336,7 @@ export function parseProviderDiagnosticsMonitorEvent(
 
 export function parseProviderDiagnosticsEventPost(
   value: unknown,
-): ProviderDiagnosticsEventPostV1 | null {
+): ProviderDiagnosticsEventPost | null {
   if (
     !isRecord(value)
     || value.schemaVersion !== 1
@@ -363,7 +363,7 @@ export function parseProviderDiagnosticsEventPost(
 
 export function parseProviderDiagnosticsBridgeRecord(
   value: unknown,
-): ProviderDiagnosticsBridgeRecordV1 | null {
+): ProviderDiagnosticsBridgeRecord | null {
   if (
     !isRecord(value)
     || value.bridgeVersion !== 2
@@ -395,7 +395,7 @@ export function parseProviderDiagnosticsBridgeRecord(
 
 export function parseProviderDiagnosticsEventsRecord(
   value: unknown,
-): ProviderDiagnosticsEventsRecordV1 | null {
+): ProviderDiagnosticsEventsRecord | null {
   if (
     !isRecord(value)
     || value.bridgeVersion !== 2
@@ -418,11 +418,11 @@ export function parseProviderDiagnosticsEventsRecord(
     expiresAt: value.expiresAt,
     eventCount: value.eventCount,
     droppedEventCount: value.droppedEventCount,
-    events: Object.freeze(events as ProviderDiagnosticsStoredEventV1[]),
+    events: Object.freeze(events as ProviderDiagnosticsStoredEvent[]),
   });
 }
 
-export function parseProviderDiagnosticsHealth(value: unknown): ProviderDiagnosticsHealthV1 | null {
+export function parseProviderDiagnosticsHealth(value: unknown): ProviderDiagnosticsHealth | null {
   if (
     !isRecord(value)
     || value.bridgeVersion !== 2
@@ -454,10 +454,10 @@ export function parseProviderDiagnosticsHealth(value: unknown): ProviderDiagnost
     expiresAt: value.expiresAt,
     eventCount: value.eventCount,
     droppedEventCount: value.droppedEventCount,
-  }) as ProviderDiagnosticsHealthV1;
+  }) as ProviderDiagnosticsHealth;
 }
 
-function parseStoredEvent(value: unknown): ProviderDiagnosticsStoredEventV1 | null {
+function parseStoredEvent(value: unknown): ProviderDiagnosticsStoredEvent | null {
   if (
     !isRecord(value)
     || !isPositiveInteger(value.sequence)
@@ -494,7 +494,7 @@ function isEventField(value: unknown, kind: EventFieldKind): value is string | n
   return typeof value === 'boolean';
 }
 
-function isCapability(value: unknown): value is NonNullable<ProviderDiagnosticsShareV1['provider']['capability']> | null {
+function isCapability(value: unknown): value is NonNullable<ProviderDiagnosticsShare['provider']['capability']> | null {
   if (value === null) return true;
   return isRecord(value)
     && isNullablePositiveInteger(value.contextWindow)

@@ -2,7 +2,7 @@ import type {
   DevTraceEvent,
   DevTraceEventDataByKind,
   DevTraceEventKind,
-  TraceArtifactV1,
+  TraceArtifact,
 } from '@/agent-observability';
 
 export const AGENT_DIAGNOSTIC_REPORT_VERSION = 1 as const;
@@ -168,7 +168,7 @@ export type AgentDiagnosticReport = Readonly<{
     toolCallCount: number;
     findingCounts: Readonly<Record<FindingSeverity, number>>;
   }>;
-  completeness: TraceArtifactV1['completeness'];
+  completeness: TraceArtifact['completeness'];
   findings: readonly AgentDiagnosticFinding[];
   providerRequests: readonly AgentDiagnosticProviderRequest[];
   contextActivity: readonly AgentDiagnosticContextEvent[];
@@ -241,7 +241,7 @@ type MutableToolCall = {
 };
 
 export function createAgentDiagnosticReport(
-  artifact: TraceArtifactV1,
+  artifact: TraceArtifact,
   rootOperationId: string | null = null,
 ): AgentDiagnosticReport {
   const roots = rootOperationId
@@ -324,7 +324,7 @@ export function createAgentDiagnosticReport(
 
 function collectProviderRequests(
   events: readonly DevTraceEvent[],
-  roots: TraceArtifactV1['roots'],
+  roots: TraceArtifact['roots'],
 ): AgentDiagnosticProviderRequest[] {
   const requests = new Map<string, MutableProviderRequest>();
   const terminalRoots = new Set(roots.filter((root) => root.terminalState !== null).map((root) => root.rootOperationId));
@@ -585,8 +585,8 @@ function newToolCall(
 }
 
 function collectFindings(
-  artifact: TraceArtifactV1,
-  roots: TraceArtifactV1['roots'],
+  artifact: TraceArtifact,
+  roots: TraceArtifact['roots'],
   events: readonly DevTraceEvent[],
   requests: readonly AgentDiagnosticProviderRequest[],
 ): AgentDiagnosticFinding[] {
@@ -657,7 +657,7 @@ function collectFindings(
   ));
 }
 
-function addCompletenessFindings(findings: AgentDiagnosticFinding[], artifact: TraceArtifactV1): void {
+function addCompletenessFindings(findings: AgentDiagnosticFinding[], artifact: TraceArtifact): void {
   const { completeness } = artifact;
   const entries: Array<[number, string, string]> = [
     [completeness.evictedRootCount, 'trace_roots_evicted', 'retained operation(s) were evicted'],

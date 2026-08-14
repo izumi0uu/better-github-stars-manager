@@ -33,6 +33,16 @@ export function createChromeMock() {
             }
             for (const listener of listeners) listener(changes, 'local');
           },
+          async remove(key: string | string[]) {
+            const keys = Array.isArray(key) ? key : [key];
+            const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
+            for (const item of keys) {
+              if (!Object.prototype.hasOwnProperty.call(state, item)) continue;
+              changes[item] = { oldValue: state[item], newValue: undefined };
+              delete state[item];
+            }
+            for (const listener of listeners) listener(changes, 'local');
+          },
           async clear() {
             const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
             for (const key of Object.keys(state)) {

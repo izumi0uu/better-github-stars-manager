@@ -191,7 +191,7 @@ describe('Watch background integration contract', () => {
     const { session, values } = installOptionsSessionMock({
       unrelatedSessionState: { keep: true },
     });
-    expect(OPTIONS_INTENT_STORAGE_KEY).toBe('gsm_options_intent_v1');
+    expect(OPTIONS_INTENT_STORAGE_KEY).toBe('gsm_options_intent');
 
     await writeOptionsIntent(section);
     expect(session.set).toHaveBeenCalledWith({

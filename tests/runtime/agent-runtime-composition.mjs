@@ -25,7 +25,7 @@ import {
   serializeRuntimeEvidence,
 } from '../../scripts/agent-runtime-evidence-contract.mjs';
 
-const OUTPUT_FILENAME = 'agent-runtime-composition.schema-v1.json';
+const OUTPUT_FILENAME = 'agent-runtime-composition.schema.json';
 const HEX_SHA256 = /^[0-9a-f]{64}$/u;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9._:/-]{1,160}$/u;
 const SAFE_RELATIVE_JAVASCRIPT = /^[A-Za-z0-9._/-]+\.js$/u;
@@ -47,12 +47,12 @@ const WORKER_SCENARIO_IDS = Object.freeze([
 ]);
 
 const PRODUCERS = Object.freeze([
-  Object.freeze({ key: 'artifact', filename: 'agent-artifact.schema-v1.json', scope: 'packaged_durable_artifact', factsKey: 'artifactFlow' }),
-  Object.freeze({ key: 'workerRecovery', filename: 'agent-worker-recovery.schema-v1.json', scope: 'packaged_worker_recovery', factsKey: 'workerRecovery' }),
-  Object.freeze({ key: 'uiHistory', filename: 'agent-ui-history.schema-v1.json', scope: 'packaged_ui_history', factsKey: 'uiHistory' }),
-  Object.freeze({ key: 'organize', filename: 'organize-job.schema-v1.json', scope: 'packaged_organize_job', factsKey: 'organize' }),
-  Object.freeze({ key: 'organizeRecovery', filename: 'organize-job-recovery.schema-v1.json', scope: 'packaged_organize_recovery', factsKey: 'organizeRecovery' }),
-  Object.freeze({ key: 'scenarioLab', filename: 'agent-scenarios.schema-v1.json', scope: 'development_scenario_lab', factsKey: 'scenarioLab', scenario: true }),
+  Object.freeze({ key: 'artifact', filename: 'agent-artifact.schema.json', scope: 'packaged_durable_artifact', factsKey: 'artifactFlow' }),
+  Object.freeze({ key: 'workerRecovery', filename: 'agent-worker-recovery.schema.json', scope: 'packaged_worker_recovery', factsKey: 'workerRecovery' }),
+  Object.freeze({ key: 'uiHistory', filename: 'agent-ui-history.schema.json', scope: 'packaged_ui_history', factsKey: 'uiHistory' }),
+  Object.freeze({ key: 'organize', filename: 'organize-job.schema.json', scope: 'packaged_organize_job', factsKey: 'organize' }),
+  Object.freeze({ key: 'organizeRecovery', filename: 'organize-job-recovery.schema.json', scope: 'packaged_organize_recovery', factsKey: 'organizeRecovery' }),
+  Object.freeze({ key: 'scenarioLab', filename: 'agent-scenarios.schema.json', scope: 'development_scenario_lab', factsKey: 'scenarioLab', scenario: true }),
 ]);
 
 const RULE = Symbol('runtime-composition-rule');
@@ -917,7 +917,7 @@ async function runSelfTests() {
       assertCompositionCode(() => composeAgentRuntimeEvidence({ directory: root }), 'input_schema_invalid');
     })],
     ['extra stale file is rejected', () => withFixtureDirectory((root) => {
-      writeFileSync(path.join(root, 'stale.schema-v1.json'), '{}\n');
+      writeFileSync(path.join(root, 'stale.schema.json'), '{}\n');
       assertCompositionCode(() => composeAgentRuntimeEvidence({ directory: root }), 'input_set_invalid');
     })],
     ['stale production identity is rejected', () => withFixtureDirectory((root, fixtures) => {

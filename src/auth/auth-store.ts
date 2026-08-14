@@ -31,7 +31,7 @@ import {
   isSavedAgentCredentialEligible,
   normalizeAgentModel,
   normalizeAgentProviderConfig,
-  providerCapabilityFingerprintV1,
+  providerCapabilityFingerprint,
   resolveAgentModelContextCapability,
   resolveAgentProviderEndpoint,
 } from "@/agent-harness/models";
@@ -53,7 +53,8 @@ import {
  */
 
 export const CONFIG_STORAGE_KEY = "gsm_config";
-export const GITHUB_CREDENTIALS_STORAGE_KEY = 'gsm_github_credentials_v1';
+export const GITHUB_CREDENTIALS_STORAGE_KEY = 'gsm_github_credentials';
+const LEGACY_GITHUB_CREDENTIALS_STORAGE_KEY = 'gsm_github_credentials_v1';
 
 type StoredGitHubCredentials = Readonly<{
   version: 1;
@@ -310,10 +311,18 @@ async function read(): Promise<Config> {
 }
 
 async function readStoredConfig(): Promise<Config> {
-  const raw = await chrome.storage.local.get([CONFIG_STORAGE_KEY, GITHUB_CREDENTIALS_STORAGE_KEY]);
+  const raw = await chrome.storage.local.get([
+    CONFIG_STORAGE_KEY,
+    GITHUB_CREDENTIALS_STORAGE_KEY,
+    LEGACY_GITHUB_CREDENTIALS_STORAGE_KEY,
+  ]);
   const stored = (raw[CONFIG_STORAGE_KEY] ?? {}) as Partial<Config>;
-  const hasCredentialRecord = Object.prototype.hasOwnProperty.call(raw, GITHUB_CREDENTIALS_STORAGE_KEY);
-  const credentials = normalizeStoredGitHubCredentials(hasCredentialRecord ? raw[GITHUB_CREDENTIALS_STORAGE_KEY] : { version: 1, ...stored });
+  const credentialsInput = Object.prototype.hasOwnProperty.call(raw, GITHUB_CREDENTIALS_STORAGE_KEY)
+    ? raw[GITHUB_CREDENTIALS_STORAGE_KEY]
+    : Object.prototype.hasOwnProperty.call(raw, LEGACY_GITHUB_CREDENTIALS_STORAGE_KEY)
+      ? raw[LEGACY_GITHUB_CREDENTIALS_STORAGE_KEY]
+      : { version: 1, ...stored };
+  const credentials = normalizeStoredGitHubCredentials(credentialsInput);
   return withNormalizedConfig(withGitHubCredentials(mergeStoredConfig(stored), credentials));
 }
 
@@ -382,6 +391,7 @@ async function persistGitHubCredentialsUnlocked(
     [CONFIG_STORAGE_KEY]: next,
     [GITHUB_CREDENTIALS_STORAGE_KEY]: credentials,
   });
+  await chrome.storage.local.remove(LEGACY_GITHUB_CREDENTIALS_STORAGE_KEY);
   updateCredentialCaches(previous, next);
   return next;
 }
@@ -695,7 +705,7 @@ export const authStore = {
       model,
       declaredContextWindow,
     }) ?? null;
-    const fingerprint = await providerCapabilityFingerprintV1({
+    const fingerprint = await providerCapabilityFingerprint({
       provider: endpoint.provider,
       protocol: target.protocol ?? null,
       baseUrl: endpoint.canonicalBaseUrl,
@@ -809,7 +819,7 @@ export const authStore = {
     if (!credentialEligible || !config.credentialRevision) {
       return { config, credentialEligible, capabilityReady: false, fingerprint: null };
     }
-    const fingerprint = await providerCapabilityFingerprintV1({
+    const fingerprint = await providerCapabilityFingerprint({
       provider: target.provider,
       protocol: target.protocol ?? null,
       baseUrl: target.baseUrl,
@@ -897,7 +907,7 @@ export const authStore = {
       declaredContextWindow: input.declaredContextWindow,
     });
     if (!contextCapability) return false;
-    const fingerprint = await providerCapabilityFingerprintV1({
+    const fingerprint = await providerCapabilityFingerprint({
       provider: input.provider,
       protocol: input.protocol ?? null,
       baseUrl: input.baseUrl,

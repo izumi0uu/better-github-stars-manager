@@ -23,7 +23,7 @@ import type {
 import type { BgsmAgentConversationCandidate } from '@/bgsm-agent/conversation-binding';
 import {
   createFrozenScope,
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
   projectFrozenScope,
   type LaunchCandidateContract,
 } from '@/bgsm-agent/scope';
@@ -156,7 +156,7 @@ function selectedRepositoryBinding(): Record<string, unknown> {
       kind: 'selected_repository',
       selectedRepositoryIdHint: 'owner/repo',
     },
-    scopeFingerprint: `fs:v1:${'a'.repeat(43)}`,
+    scopeFingerprint: `fs:${'a'.repeat(43)}`,
     label: 'owner/repo',
     count: 1,
     providerFingerprint: `pcf:v1:${'b'.repeat(43)}`,
@@ -1120,7 +1120,7 @@ describe('AgentPanel', () => {
         kind: 'selected_repository' as const,
         selectedRepositoryIdHint: 'owner/repo',
       },
-      scopeFingerprint: parseScopeFingerprintV1(`fs:v1:${'a'.repeat(43)}`),
+      scopeFingerprint: parseScopeFingerprint(`fs:${'a'.repeat(43)}`),
       label: 'owner/repo',
       count: 1,
       providerFingerprint: `pcf:v1:${'b'.repeat(43)}`,
@@ -4194,7 +4194,7 @@ function workbenchSnapshot(state: OrganizeJobRunSnapshot['state']): OrganizeJobR
       filterSnapshot: '{}',
       repositoryIds: ['owner/repo'],
       capturedAt: 1,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${'w'.repeat(43)}`),
+      fingerprint: parseScopeFingerprint(`fs:${'w'.repeat(43)}`),
     })),
     budget: createProductionRunBudget(),
     usage: createEmptyRunBudgetUsage(),

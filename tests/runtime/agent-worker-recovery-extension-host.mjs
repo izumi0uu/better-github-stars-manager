@@ -95,7 +95,7 @@ if (failure || teardownFailure) {
     try {
       publishRuntimeEvidence({
         directory: process.env.GSM_RUNTIME_EVIDENCE_DIR,
-        filename: 'agent-worker-recovery.schema-v1.json',
+        filename: 'agent-worker-recovery.schema.json',
         evidence: buildWorkerRecoveryEvidence(),
         validateEvidence: validateWorkerRecoveryEvidence,
         privateMarkers: sensitiveEvidenceMarkers(),

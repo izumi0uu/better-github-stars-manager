@@ -9,9 +9,9 @@ import {
   parseOrganizeJobId,
   parseProposalId,
   parseRunId,
-  parseScopeFingerprintV1,
-  parseSourceFingerprintV1,
-  parseTaxonomyFingerprintV1,
+  parseScopeFingerprint,
+  parseSourceFingerprint,
+  parseTaxonomyFingerprint,
   projectFrozenScope,
   type BudgetExhaustionReason,
   type OrganizeJobRunSnapshot,
@@ -103,7 +103,7 @@ function createHarness(input: Readonly<{
     filterSnapshot: 'all',
     repositoryIds,
     capturedAt: 1,
-    fingerprint: parseScopeFingerprintV1(`fs:v1:${'A'.repeat(43)}`),
+    fingerprint: parseScopeFingerprint(`fs:${'A'.repeat(43)}`),
   });
   const counters = {
     reads: 0,
@@ -372,7 +372,7 @@ function createHarness(input: Readonly<{
     issueContinuationCursor: async (_identity, index) => {
       nextFrozenIndex = index;
       if (input.issueContinuationCursorError) throw input.issueContinuationCursorError;
-      return parseContinuationCursorToken(`cursor:v1:${runId}-${index}`);
+      return parseContinuationCursorToken(`cursor:${runId}-${index}`);
     },
     automaticContinuationFailed: (_identity, error) => {
       return input.automaticContinuationFailed?.(error);
@@ -458,7 +458,7 @@ function createHarness(input: Readonly<{
             repository: {
               frozenIndex,
               repositoryId,
-              sourceFingerprint: parseSourceFingerprintV1(`sf:v1:${'B'.repeat(43)}`),
+              sourceFingerprint: parseSourceFingerprint(`sf:v1:${'B'.repeat(43)}`),
               fullName: repositoryId,
               description: '',
               language: null,
@@ -477,7 +477,7 @@ function createHarness(input: Readonly<{
         positions,
         taxonomy: { version: 1, entries: [] },
         policyTaxonomy: { version: 1, entries: [] },
-        taxonomyFingerprint: parseTaxonomyFingerprintV1(`tf:v1:${'C'.repeat(43)}`),
+        taxonomyFingerprint: parseTaxonomyFingerprint(`tf:v1:${'C'.repeat(43)}`),
       };
     },
   });
@@ -1037,7 +1037,7 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
               repository: {
                 frozenIndex,
                 repositoryId,
-                sourceFingerprint: parseSourceFingerprintV1(`sf:v1:${'D'.repeat(43)}`),
+                sourceFingerprint: parseSourceFingerprint(`sf:v1:${'D'.repeat(43)}`),
                 fullName: repositoryId,
                 description: '',
                 language: null,
@@ -1056,7 +1056,7 @@ describe('production BGSM OrganizeJobRun scheduler call boundaries', () => {
           positions,
           taxonomy: { version: 1, entries: [] },
           policyTaxonomy: { version: 1, entries: [] },
-          taxonomyFingerprint: parseTaxonomyFingerprintV1(`tf:v1:${'E'.repeat(43)}`),
+          taxonomyFingerprint: parseTaxonomyFingerprint(`tf:v1:${'E'.repeat(43)}`),
         };
       },
     });

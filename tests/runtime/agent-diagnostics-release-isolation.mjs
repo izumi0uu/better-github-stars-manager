@@ -9,15 +9,16 @@ import { launchExtensionBrowser } from './puppeteer-runtime.mjs';
 const root = process.cwd();
 const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'bgsm-agent-diagnostics-isolation-'));
 const devDir = path.join(tempRoot, 'development');
+const hiddenUiDevDir = path.join(tempRoot, 'development-hidden-ui');
 const releaseDir = path.join(tempRoot, 'release');
 const releaseZip = path.join(tempRoot, 'release.zip');
 const releaseProfile = path.join(tempRoot, 'release-profile');
 const diagnosticsPath = '/src/dev-agent/index.html';
 const extensionPagePath = '/src/options/index.html';
-const devTraceDatabase = 'bgsm-agent-dev-traces-v1';
+const devTraceDatabase = 'bgsm-agent-dev-traces';
 const devPorts = [
-  'bgsm-agent-dev-evidence-v1',
-  'bgsm-agent-dev-control-v1',
+  'bgsm-agent-dev-evidence',
+  'bgsm-agent-dev-control',
 ];
 const markers = [
   ...devPorts,
@@ -28,19 +29,19 @@ const markers = [
   'raw_capture_event',
   'toolNameTruncated',
   'One-shot raw capture',
-  'bgsm-diagnostics-v1',
+  'bgsm-diagnostics',
   'Agent-readable report',
   'Standalone read-only artifact viewer',
   'Provider Debug',
   '__bgsm/diagnostics/provider',
   'bgsm-provider-monitor-v2',
-  'bgsm_provider_diagnostics_monitor_v1',
+  'bgsm_provider_diagnostics_monitor',
   'provider_stream_activity',
   'start_provider_monitor',
   'provider_monitor_status',
   'Start monitoring',
   'Local Agent bridge',
-  'bgsm-agent-artifact-worker-v1',
+  'bgsm-agent-artifact-worker',
   'SCENARIO_PRIVATE_CURRENT_PROMPT_CANARY',
 ];
 let browser;
@@ -53,6 +54,22 @@ try {
   for (const marker of markers) {
     assert.ok(devBundle.includes(marker), `Development bundle is missing diagnostics marker: ${marker}`);
   }
+
+  build(hiddenUiDevDir, {
+    GSM_DEV: 'true',
+    GSM_RELEASE: 'false',
+    GSM_HIDE_DEV_UI: 'true',
+    GSM_VERSION_HASH: 'hidden-ui-proof',
+  });
+  assert.ok(existsSync(path.join(hiddenUiDevDir, 'src', 'dev-agent', 'index.html')),
+    'Hidden-UI development build must retain the dedicated Agent diagnostics page.');
+  const hiddenUiDevBundle = readInspectableSurface(hiddenUiDevDir);
+  for (const marker of markers) {
+    assert.ok(hiddenUiDevBundle.includes(marker),
+      `Hidden-UI development bundle is missing diagnostics marker: ${marker}`);
+  }
+  assert.match(hiddenUiDevBundle, /const \w+=!1,\w+="hidden-ui-proof"/u,
+    'Hidden-UI development build did not compile its UI visibility constant to false.');
 
   build(releaseDir, { GSM_DEV: 'false', GSM_RELEASE: 'true' });
   assert.equal(existsSync(path.join(releaseDir, 'src', 'dev-agent', 'index.html')), false,

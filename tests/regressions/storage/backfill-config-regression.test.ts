@@ -36,19 +36,20 @@ describe('Backfill config regressions', () => {
   });
 
   it('exposes task metadata only for valid backfill ids', () => {
-    const repoDataTask = getBackfillTask('repo_data_sync_v1');
-    const avatarTask = getBackfillTask('repo_owner_avatar_v1');
+    const repoDataTask = getBackfillTask('repo_data_sync');
+    const avatarTask = getBackfillTask('repo_owner_avatar');
 
-    assert.equal(repoDataTask?.id, 'repo_data_sync_v1');
+    assert.equal(repoDataTask?.id, 'repo_data_sync');
     assert.equal(repoDataTask?.kind, 'full_sync');
-    assert.equal(avatarTask?.id, 'repo_owner_avatar_v1');
+    assert.equal(avatarTask?.id, 'repo_owner_avatar');
     assert.equal(avatarTask?.kind, 'full_sync');
     assert.equal(getBackfillTask('missing'), null);
   });
 
+
   it('normalizes malformed stored backfill states before mutation', async () => {
     let current = makeConfig({
-      repo_data_sync_v1: {
+      repo_data_sync: {
         status: 'bogus',
         queuedAt: '2026-06-22T00:00:00Z',
       } as never,
@@ -62,7 +63,7 @@ describe('Backfill config regressions', () => {
       },
     });
 
-    const next = await store.setBackfillState('repo_data_sync_v1', (state, now) => {
+    const next = await store.setBackfillState('repo_data_sync', (state, now) => {
       assert.equal(state?.status, 'pending');
       assert.equal(state?.queuedAt, '2026-06-22T00:00:00Z');
       assert.equal(state?.lastAttemptAt, null);
@@ -76,7 +77,7 @@ describe('Backfill config regressions', () => {
     });
 
     assert.equal(next.status, 'failed');
-    assert.equal(current.backfills.repo_data_sync_v1?.error, 'manual retry failed after malformed storage');
+    assert.equal(current.backfills.repo_data_sync?.error, 'manual retry failed after malformed storage');
   });
 
   it('serializes queued mutations against a fresh config snapshot', async () => {
@@ -92,14 +93,14 @@ describe('Backfill config regressions', () => {
       },
     });
 
-    const first = store.setBackfillState('repo_data_sync_v1', (_state, now) => ({
+    const first = store.setBackfillState('repo_data_sync', (_state, now) => ({
       status: 'running',
       queuedAt: now,
       lastAttemptAt: now,
       completedAt: null,
       error: null,
     }));
-    const second = store.setBackfillState('repo_data_sync_v1', (state, now) => {
+    const second = store.setBackfillState('repo_data_sync', (state, now) => {
       assert.equal(state?.status, 'running');
       return {
         status: 'failed',
@@ -112,8 +113,8 @@ describe('Backfill config regressions', () => {
 
     await Promise.all([first, second]);
     assert.equal(written.length, 2);
-    assert.equal(current.backfills.repo_data_sync_v1?.status, 'failed');
-    assert.equal(current.backfills.repo_data_sync_v1?.queuedAt, written[0].repo_data_sync_v1?.queuedAt);
+    assert.equal(current.backfills.repo_data_sync?.status, 'failed');
+    assert.equal(current.backfills.repo_data_sync?.queuedAt, written[0].repo_data_sync?.queuedAt);
   });
 
   it('does not write when reconciliation produces a normalized-equal backfill map', async () => {
@@ -131,7 +132,7 @@ describe('Backfill config regressions', () => {
       completedAt: '2026-08-13T00:05:00Z',
       error: null,
     };
-    const current = { repo_data_sync_v1: repoDataState, repo_owner_avatar_v1: avatarState };
+    const current = { repo_data_sync: repoDataState, repo_owner_avatar: avatarState };
     const store = createBackfillConfigStore({
       async getConfig() {
         return makeConfig(current);
@@ -157,7 +158,7 @@ describe('Backfill config regressions', () => {
     let updateCalls = 0;
     const store = createBackfillConfigStore({
       async getConfig() {
-        return makeConfig({ repo_data_sync_v1: currentState });
+        return makeConfig({ repo_data_sync: currentState });
       },
       async update() {
         updateCalls++;
@@ -165,7 +166,7 @@ describe('Backfill config regressions', () => {
       },
     });
 
-    const next = await store.setBackfillState('repo_data_sync_v1', (state) => {
+    const next = await store.setBackfillState('repo_data_sync', (state) => {
       assert.deepEqual(state, currentState);
       return state!;
     });
@@ -191,14 +192,14 @@ describe('Backfill config regressions', () => {
       },
     });
 
-    const rejected = store.setBackfillState('repo_data_sync_v1', (_state, now) => ({
+    const rejected = store.setBackfillState('repo_data_sync', (_state, now) => ({
       status: 'running',
       queuedAt: now,
       lastAttemptAt: now,
       completedAt: null,
       error: null,
     }));
-    const recovered = store.setBackfillState('repo_data_sync_v1', (_state, now) => ({
+    const recovered = store.setBackfillState('repo_data_sync', (_state, now) => ({
       status: 'deferred',
       queuedAt: '2026-06-22T00:00:00Z',
       lastAttemptAt: now,
@@ -212,14 +213,14 @@ describe('Backfill config regressions', () => {
     assert.deepEqual(writeAttempts, ['reject', 'resolve']);
     assert.equal(finalState.status, 'deferred');
     assert.equal(finalState.error, 'preserved failure reason');
-    assert.equal(current.backfills.repo_data_sync_v1?.status, 'deferred');
+    assert.equal(current.backfills.repo_data_sync?.status, 'deferred');
   });
 
   it('serializes a rejected reconciliation before the next queued mutation', async () => {
-    const originalDetectNeed = backfillTasks.repo_data_sync_v1.detectNeed;
+    const originalDetectNeed = backfillTasks.repo_data_sync.detectNeed;
     let current = makeConfig({});
     const events: string[] = [];
-    backfillTasks.repo_data_sync_v1.detectNeed = async () => {
+    backfillTasks.repo_data_sync.detectNeed = async () => {
       events.push('detect rejected');
       throw new Error('detect failed');
     };
@@ -236,7 +237,7 @@ describe('Backfill config regressions', () => {
 
     try {
       const rejected = store.reconcileStoredBackfills();
-      const recovered = store.setBackfillState('repo_data_sync_v1', (_state, now) => ({
+      const recovered = store.setBackfillState('repo_data_sync', (_state, now) => ({
         status: 'failed',
         queuedAt: now,
         lastAttemptAt: now,
@@ -249,9 +250,9 @@ describe('Backfill config regressions', () => {
 
       assert.deepEqual(events, ['get', 'detect rejected', 'get', 'update']);
       assert.equal(finalState.status, 'failed');
-      assert.equal(current.backfills.repo_data_sync_v1?.error, 'manual retry failed');
+      assert.equal(current.backfills.repo_data_sync?.error, 'manual retry failed');
     } finally {
-      backfillTasks.repo_data_sync_v1.detectNeed = originalDetectNeed;
+      backfillTasks.repo_data_sync.detectNeed = originalDetectNeed;
     }
   });
 });

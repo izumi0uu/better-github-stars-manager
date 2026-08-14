@@ -3,7 +3,7 @@ import type {
   DevTraceEvent,
   DevTraceEventDataByKind,
   DevTraceEventKind,
-  TraceArtifactV1,
+  TraceArtifact,
 } from '@/agent-observability';
 import { createAgentDiagnosticReport } from '@/dev-agent/diagnostic-report';
 
@@ -28,7 +28,7 @@ function event<K extends DevTraceEventKind>(
   };
 }
 
-function reportArtifact(): TraceArtifactV1 {
+function reportArtifact(): TraceArtifact {
   const events: DevTraceEvent[] = [
     event(1, 'root_started', {
       executionEpochId: 'epoch-report',

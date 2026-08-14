@@ -12,7 +12,7 @@ import { parseControllerId, parseProposalId, parseRunId } from '@/bgsm-agent/ide
 import {
   createFrozenScope,
   parseContinuationCursorToken,
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
   projectFrozenScope,
 } from '@/bgsm-agent/scope';
 import { createEmptyRunBudgetUsage, createProductionRunBudget } from '@/bgsm-agent/policy';
@@ -320,7 +320,7 @@ function snapshot(state: OrganizeJobRunSnapshot['state']): OrganizeJobRunSnapsho
       filterSnapshot: '{}',
       repositoryIds: Array.from({ length: 10 }, (_, index) => `repo-${index}`),
       capturedAt: 1,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${'p'.repeat(43)}`),
+      fingerprint: parseScopeFingerprint(`fs:${'p'.repeat(43)}`),
     })),
     budget: createProductionRunBudget(),
     usage: createEmptyRunBudgetUsage(),
@@ -336,7 +336,7 @@ function snapshot(state: OrganizeJobRunSnapshot['state']): OrganizeJobRunSnapsho
     },
     proposalId: state === 'review' ? proposalId : null,
     continuationCursor: ['analysis_blocked', 'failed'].includes(state)
-      ? parseContinuationCursorToken('cursor:v1:presentation-test')
+      ? parseContinuationCursorToken('cursor:presentation-test')
       : null,
   };
 }

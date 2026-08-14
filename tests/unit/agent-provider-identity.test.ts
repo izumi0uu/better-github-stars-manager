@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   isSavedAgentCredentialEligible,
   normalizeAgentProviderConfig,
-  providerCapabilityFingerprintV1,
+  providerCapabilityFingerprint,
   resolveAgentProviderContextIdentity,
   resolveAgentProviderEndpoint,
   UNRESOLVED_AGENT_CONTEXT_CAPABILITY_REVISION,
@@ -154,34 +154,34 @@ describe('agent provider endpoint and credential identities', () => {
 
   it('fingerprints endpoint path, model, profile, and saved revision separately from key eligibility', async () => {
     const base = savedConfig();
-    const original = await providerCapabilityFingerprintV1(base);
-    const equivalent = await providerCapabilityFingerprintV1({
+    const original = await providerCapabilityFingerprint(base);
+    const equivalent = await providerCapabilityFingerprint({
       ...base,
       baseUrl: 'https://relay.example.com/v1/chat/completions?ignored=1',
     });
-    const pathChanged = await providerCapabilityFingerprintV1({
+    const pathChanged = await providerCapabilityFingerprint({
       ...base,
       baseUrl: 'https://relay.example.com/gateway/v2',
     });
-    const modelChanged = await providerCapabilityFingerprintV1({
+    const modelChanged = await providerCapabilityFingerprint({
       ...base,
       model: 'other-model',
     });
-    const revisionChanged = await providerCapabilityFingerprintV1({
+    const revisionChanged = await providerCapabilityFingerprint({
       ...base,
       credentialRevision: 'cr:v1:replacement',
     });
-    const originChanged = await providerCapabilityFingerprintV1({
+    const originChanged = await providerCapabilityFingerprint({
       ...base,
       baseUrl: 'https://other.example/v1',
     });
-    const providerAndProfileChanged = await providerCapabilityFingerprintV1({
+    const providerAndProfileChanged = await providerCapabilityFingerprint({
       ...base,
       provider: 'openai',
       protocol: null,
       baseUrl: null,
     });
-    const protocolChanged = await providerCapabilityFingerprintV1({
+    const protocolChanged = await providerCapabilityFingerprint({
       ...base,
       protocol: 'responses',
     });
@@ -205,17 +205,17 @@ describe('agent provider endpoint and credential identities', () => {
       declaredContextWindow: null,
       workingContextWindow: null,
     });
-    const unresolved = await providerCapabilityFingerprintV1(custom);
-    const declared = await providerCapabilityFingerprintV1({
+    const unresolved = await providerCapabilityFingerprint(custom);
+    const declared = await providerCapabilityFingerprint({
       ...custom,
       declaredContextWindow: 32_768,
     });
-    const capped = await providerCapabilityFingerprintV1({
+    const capped = await providerCapabilityFingerprint({
       ...custom,
       declaredContextWindow: 32_768,
       workingContextWindow: 16_384,
     });
-    const redundantCap = await providerCapabilityFingerprintV1({
+    const redundantCap = await providerCapabilityFingerprint({
       ...custom,
       declaredContextWindow: 32_768,
       workingContextWindow: 64_000,
@@ -263,8 +263,8 @@ describe('agent provider endpoint and credential identities', () => {
       ...automatic,
       model: 'GPT-5.4',
     }).capabilityRevision).toBe(UNRESOLVED_AGENT_CONTEXT_CAPABILITY_REVISION);
-    expect(await providerCapabilityFingerprintV1(automatic))
-      .not.toBe(await providerCapabilityFingerprintV1(explicit));
+    expect(await providerCapabilityFingerprint(automatic))
+      .not.toBe(await providerCapabilityFingerprint(explicit));
   });
 
   it('ignores declarations that cannot override a trusted built-in capability', async () => {
@@ -276,8 +276,8 @@ describe('agent provider endpoint and credential identities', () => {
       declaredContextWindow: null,
       workingContextWindow: null,
     });
-    const original = await providerCapabilityFingerprintV1(native);
-    const ignoredDeclaration = await providerCapabilityFingerprintV1({
+    const original = await providerCapabilityFingerprint(native);
+    const ignoredDeclaration = await providerCapabilityFingerprint({
       ...native,
       declaredContextWindow: 32_768,
     });

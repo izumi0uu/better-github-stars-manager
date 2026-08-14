@@ -1,4 +1,4 @@
-export const OPTIONS_INTENT_STORAGE_KEY = 'gsm_options_intent_v1';
+export const OPTIONS_INTENT_STORAGE_KEY = 'gsm_options_intent';
 
 export type OptionsIntentSection = 'github' | 'watch';
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Copy, Download, Search } from 'lucide-react';
-import type { TraceArtifactV1 } from '@/agent-observability';
+import type { TraceArtifact } from '@/agent-observability';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/shadcn/button';
@@ -17,7 +17,7 @@ import {
 type AnalysisScope = 'all' | 'selected';
 
 type DiagnosticsAnalysisPanelProps = Readonly<{
-  artifact: TraceArtifactV1 | null;
+  artifact: TraceArtifact | null;
   selectedRootId: string | null;
   onInspectEvidence(rootOperationId: string, eventId: string | null): void;
 }>;
@@ -289,7 +289,7 @@ export function DiagnosticsAnalysisPanel({
               className="m-0 mt-3 max-h-[480px] overflow-auto whitespace-pre-wrap break-all border border-border p-3 text-xs"
               aria-label={d.agentReadableReport}
               data-testid="agent-diagnostics-machine-report"
-              data-agent-readable="bgsm-diagnostics-v1"
+              data-agent-readable="bgsm-diagnostics"
               data-report-status={report.summary.status}
               tabIndex={0}
             >

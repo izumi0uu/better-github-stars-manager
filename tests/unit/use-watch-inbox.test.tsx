@@ -33,7 +33,7 @@ vi.mock('@/utils/messaging', () => ({
 
 vi.mock('@/auth/auth-store', () => ({
   CONFIG_STORAGE_KEY: 'gsm_config',
-  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials_v1',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
   authStore: {
     getConfig: watchMocks.getConfig,
     updateWatchRepositoryCollapse: watchMocks.updateWatchRepositoryCollapse,
@@ -264,7 +264,7 @@ describe('useWatchInbox', () => {
 
     await act(async () => {
       storageListeners[0]?.({
-        gsm_github_credentials_v1: { newValue: {} },
+        gsm_github_credentials: { newValue: {} },
       }, 'sync');
       storageListeners[0]?.({
         gsm_config: { newValue: { watchCollapsedRepositories: { 'owner/repo': 'signature' } } },
@@ -275,7 +275,7 @@ describe('useWatchInbox', () => {
 
     await act(async () => {
       storageListeners[0]?.({
-        gsm_github_credentials_v1: {
+        gsm_github_credentials: {
           oldValue: { watchNotificationsTokenEncrypted: null },
           newValue: { watchNotificationsTokenEncrypted: 'ciphertext' },
         },

@@ -3,10 +3,10 @@ import {
   createAsyncTraceArtifactJsonReader,
   createTraceArtifactJsonReader,
   validateTraceArtifact,
-  type TraceArtifactV1,
+  type TraceArtifact,
 } from '@/agent-observability';
 
-function artifact(): TraceArtifactV1 {
+function artifact(): TraceArtifact {
   return {
     schemaVersion: 1,
     exporterVersion: 'diagnostics-猫',

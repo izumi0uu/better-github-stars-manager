@@ -28,8 +28,8 @@ import {
   type RunId,
 } from '@/bgsm-agent/identity';
 import { isPreflightToken } from '@/bgsm-agent/scope';
-import { sourceFingerprintV1 } from '@/bgsm-agent/source-fingerprint';
-import { isTaxonomyFingerprintV1 } from '@/bgsm-agent/proposal';
+import { sourceFingerprint } from '@/bgsm-agent/source-fingerprint';
+import { isTaxonomyFingerprint } from '@/bgsm-agent/proposal';
 import {
   buildSemanticPolicyTaxonomyFromStorage,
   fingerprintSemanticTaxonomy,
@@ -1483,15 +1483,15 @@ export async function settleOrganizeApplyChunk(input: Readonly<{
         ),
       ));
       const validatesTaxonomy =
-        isTaxonomyFingerprintV1(frozenTaxonomy.fingerprint) &&
-        isTaxonomyFingerprintV1(apply.expectedTaxonomyFingerprint);
+        isTaxonomyFingerprint(frozenTaxonomy.fingerprint) &&
+        isTaxonomyFingerprint(apply.expectedTaxonomyFingerprint);
       const taxonomyChangedOutsideApply = validatesTaxonomy &&
         currentTaxonomyFingerprint !== apply.expectedTaxonomyFingerprint;
       const settled: OrganizeApplyRowRecord[] = [];
       for (const row of claimed) {
         const base = clearApplyLease(row, nowMs);
         if (
-          isTaxonomyFingerprintV1(row.taxonomyFingerprint) &&
+          isTaxonomyFingerprint(row.taxonomyFingerprint) &&
           (
             row.taxonomyFingerprint !== frozenTaxonomy.fingerprint ||
             taxonomyChangedOutsideApply
@@ -1511,7 +1511,7 @@ export async function settleOrganizeApplyChunk(input: Readonly<{
         }
         const stored = await db.tags.get(row.fullName) as LegacyTagRow | undefined;
         const existing = stored ? normalizeStoredTag(stored) : emptyTag(row.fullName, timestamp);
-        const fingerprint = await Dexie.waitFor(sourceFingerprintV1(star, stored ? existing : undefined));
+        const fingerprint = await Dexie.waitFor(sourceFingerprint(star, stored ? existing : undefined));
         if (fingerprint !== row.sourceFingerprint) {
           settled.push({ ...base, state: 'skipped', outcomeReason: 'stale_source' });
           continue;

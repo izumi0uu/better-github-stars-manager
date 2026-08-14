@@ -302,7 +302,7 @@ test('rejects wrong runtime schema, status, hash, private fields, and stale comp
 test('rejects reordered producer keys, path substitution, and diagnostics version drift', () => {
   const fixture = runtimeRecords();
   expectCode(() => validateRuntimeEvidenceFile('artifact', serializeProducer(rotateKeys(clone(fixture.documents.artifact)))), 'schema_invalid');
-  expectCode(() => validateRuntimeEvidenceFile('artifact', fixture.raws.artifact, { relativePath: 'substitute.schema-v1.json' }), 'runtime_evidence_path_mismatch');
+  expectCode(() => validateRuntimeEvidenceFile('artifact', fixture.raws.artifact, { relativePath: 'substitute.schema.json' }), 'runtime_evidence_path_mismatch');
   const scenario = clone(fixture.documents.scenarioLab);
   scenario.diagnosticsBuild.manifest.extensionVersion = '1.0.8';
   expectCode(() => validateRuntimeEvidenceFile('scenarioLab', serializeProducer(scenario)), 'diagnostics_build_version_mismatch');

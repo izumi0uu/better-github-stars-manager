@@ -145,7 +145,7 @@ describe('useManagerSyncActions', () => {
     expect(storageListeners).toHaveLength(1);
 
     await act(async () => {
-      storageListeners[0]?.({ gsm_github_credentials_v1: { newValue: {} } }, 'sync');
+      storageListeners[0]?.({ gsm_github_credentials: { newValue: {} } }, 'sync');
       storageListeners[0]?.({ gsm_config: { newValue: {} } }, 'local');
       await Promise.resolve();
     });
@@ -154,7 +154,7 @@ describe('useManagerSyncActions', () => {
     hasToken = true;
     await act(async () => {
       storageListeners[0]?.({
-        gsm_github_credentials_v1: {
+        gsm_github_credentials: {
           oldValue: { tokenEncrypted: null },
           newValue: { tokenEncrypted: 'ciphertext' },
         },
@@ -250,8 +250,8 @@ describe('useManagerSyncActions', () => {
     const status = baseStatus({
       hasToken: false,
       onboardingStage: 'done',
-      backfills: { repo_data_sync_v1: backfillState() },
-      activeBackfillId: 'repo_data_sync_v1',
+      backfills: { repo_data_sync: backfillState() },
+      activeBackfillId: 'repo_data_sync',
     });
     sendMessage.mockImplementation((message: { type: string }) => {
       if (message.type === 'getStatus') return ok(status);
@@ -263,12 +263,12 @@ describe('useManagerSyncActions', () => {
     await waitFor(() => expect(hook.current.statusLoaded).toBe(true));
 
     await act(async () => {
-      await hook.current.runBackfill('repo_data_sync_v1');
+      await hook.current.runBackfill('repo_data_sync');
     });
 
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'runBackfill', id: 'repo_data_sync_v1' });
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'runBackfill', id: 'repo_data_sync' });
     expect(refreshStars).toHaveBeenCalledTimes(1);
-    expect(hook.current.successAction).toBe('backfill:repo_data_sync_v1');
+    expect(hook.current.successAction).toBe('backfill:repo_data_sync');
     expect(hook.current.pendingAction).toBeNull();
     expect(hook.current.busy).toBe(false);
   });
@@ -319,8 +319,8 @@ describe('useManagerSyncActions', () => {
     const status = baseStatus({
       hasToken: false,
       onboardingStage: 'done',
-      backfills: { repo_data_sync_v1: backfillState() },
-      activeBackfillId: 'repo_data_sync_v1',
+      backfills: { repo_data_sync: backfillState() },
+      activeBackfillId: 'repo_data_sync',
     });
     sendMessage.mockImplementation((message: { type: string }) => {
       if (message.type === 'getStatus') return ok(status);
@@ -332,7 +332,7 @@ describe('useManagerSyncActions', () => {
     await waitFor(() => expect(hook.current.statusLoaded).toBe(true));
 
     await act(async () => {
-      await hook.current.runBackfill('repo_data_sync_v1');
+      await hook.current.runBackfill('repo_data_sync');
     });
 
     expect(hook.current.info).toBe('Run Full Sync: backfill-down');

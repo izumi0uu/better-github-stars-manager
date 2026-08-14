@@ -81,13 +81,13 @@ export const FINAL_CHECK_SPECS = deepFreeze([
 ]);
 
 const RUNTIME_CONTRACT_LIST = [
-  ['artifact', 'agent-artifact.schema-v1.json', 'packaged_durable_artifact', 'agentArtifactExtensionHost', true, 'artifactFlow'],
-  ['workerRecovery', 'agent-worker-recovery.schema-v1.json', 'packaged_worker_recovery', 'agentWorkerRecoveryExtensionHost', true, 'workerRecovery'],
-  ['uiHistory', 'agent-ui-history.schema-v1.json', 'packaged_ui_history', 'agentUiHistoryExtensionHost', true, 'uiHistory'],
-  ['organize', 'organize-job.schema-v1.json', 'packaged_organize_job', 'organizeJobExtensionHost', true, 'organize'],
-  ['organizeRecovery', 'organize-job-recovery.schema-v1.json', 'packaged_organize_recovery', 'organizeJobRecovery', true, 'organizeRecovery'],
-  ['scenarioLab', 'agent-scenarios.schema-v1.json', 'development_scenario_lab', 'agentScenariosExtensionHost', false, 'scenarioLab'],
-  ['runtimeComposition', 'agent-runtime-composition.schema-v1.json', 'runtime_composition', 'agentRuntimeComposition', true, null],
+  ['artifact', 'agent-artifact.schema.json', 'packaged_durable_artifact', 'agentArtifactExtensionHost', true, 'artifactFlow'],
+  ['workerRecovery', 'agent-worker-recovery.schema.json', 'packaged_worker_recovery', 'agentWorkerRecoveryExtensionHost', true, 'workerRecovery'],
+  ['uiHistory', 'agent-ui-history.schema.json', 'packaged_ui_history', 'agentUiHistoryExtensionHost', true, 'uiHistory'],
+  ['organize', 'organize-job.schema.json', 'packaged_organize_job', 'organizeJobExtensionHost', true, 'organize'],
+  ['organizeRecovery', 'organize-job-recovery.schema.json', 'packaged_organize_recovery', 'organizeJobRecovery', true, 'organizeRecovery'],
+  ['scenarioLab', 'agent-scenarios.schema.json', 'development_scenario_lab', 'agentScenariosExtensionHost', false, 'scenarioLab'],
+  ['runtimeComposition', 'agent-runtime-composition.schema.json', 'runtime_composition', 'agentRuntimeComposition', true, null],
 ];
 
 export const RUNTIME_EVIDENCE_CONTRACTS = deepFreeze(Object.fromEntries(

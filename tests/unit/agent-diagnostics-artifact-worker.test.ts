@@ -2,13 +2,13 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TraceArtifactV1 } from '@/agent-observability';
+import type { TraceArtifact } from '@/agent-observability';
 import type {
   ArtifactWorkerRequest,
   ArtifactWorkerResponse,
 } from '@/dev-agent/artifact-worker-protocol';
 
-function artifact(): TraceArtifactV1 {
+function artifact(): TraceArtifact {
   return {
     schemaVersion: 1,
     exporterVersion: 'worker-test',

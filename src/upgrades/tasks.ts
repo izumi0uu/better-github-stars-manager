@@ -32,14 +32,14 @@ async function needsRepoOwnerAvatarBackfill(): Promise<boolean> {
 }
 
 export const backfillTasks: Record<BackfillId, BackfillTaskDef> = {
-  repo_data_sync_v1: {
-    id: 'repo_data_sync_v1',
+  repo_data_sync: {
+    id: 'repo_data_sync',
     kind: 'full_sync',
     severity: 'notice',
     detectNeed: needsRepoDataSyncBackfill,
   },
-  repo_owner_avatar_v1: {
-    id: 'repo_owner_avatar_v1',
+  repo_owner_avatar: {
+    id: 'repo_owner_avatar',
     kind: 'full_sync',
     severity: 'notice',
     detectNeed: needsRepoOwnerAvatarBackfill,

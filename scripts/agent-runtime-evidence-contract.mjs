@@ -24,7 +24,7 @@ import {
 export const MAX_RUNTIME_EVIDENCE_BYTES = 32 * 1024;
 
 const HEX_SHA256 = /^[0-9a-f]{64}$/u;
-const SAFE_FILENAME = /^[a-z0-9]+(?:-[a-z0-9]+)*\.schema-v1\.json$/u;
+const SAFE_FILENAME = /^[a-z0-9]+(?:-[a-z0-9]+)*\.schema\.json$/u;
 const MAX_COLLECTION_ITEMS = 128;
 const MAX_DEPTH = 16;
 const MAX_NODES = 2_048;

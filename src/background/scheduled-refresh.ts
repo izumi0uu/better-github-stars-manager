@@ -1,7 +1,7 @@
-export const WATCH_INBOX_AUTO_REFRESH_ALARM = 'bgsm-watch-inbox-auto-refresh-v1';
-export const WATCH_SCOPE_AUTO_REFRESH_ALARM = 'bgsm-watch-scope-auto-refresh-v1';
-export const RADAR_AUTO_REFRESH_ALARM = 'bgsm-radar-auto-refresh-v1';
-export const RECOMMENDATION_DAILY_REFRESH_ALARM = 'bgsm-recommendations-daily-refresh-v1';
+export const WATCH_INBOX_AUTO_REFRESH_ALARM = 'bgsm-watch-inbox-auto-refresh';
+export const WATCH_SCOPE_AUTO_REFRESH_ALARM = 'bgsm-watch-scope-auto-refresh';
+export const RADAR_AUTO_REFRESH_ALARM = 'bgsm-radar-auto-refresh';
+export const RECOMMENDATION_DAILY_REFRESH_ALARM = 'bgsm-recommendations-daily-refresh';
 
 export type ScheduledRefreshKind = 'watch_inbox' | 'watch_scope' | 'radar' | 'recommendations';
 

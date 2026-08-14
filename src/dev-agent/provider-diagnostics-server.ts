@@ -9,13 +9,13 @@ import {
   PROVIDER_DIAGNOSTICS_HEALTH_PATH,
   PROVIDER_DIAGNOSTICS_MAX_BYTES,
   PROVIDER_DIAGNOSTICS_TTL_MS,
-  type ProviderDiagnosticsBridgeRecordV1,
-  type ProviderDiagnosticsEventPostV1,
-  type ProviderDiagnosticsEventsRecordV1,
-  type ProviderDiagnosticsHealthV1,
-  type ProviderDiagnosticsMonitorEventV1,
-  type ProviderDiagnosticsShareV1,
-  type ProviderDiagnosticsStoredEventV1,
+  type ProviderDiagnosticsBridgeRecord,
+  type ProviderDiagnosticsEventPost,
+  type ProviderDiagnosticsEventsRecord,
+  type ProviderDiagnosticsHealth,
+  type ProviderDiagnosticsMonitorEvent,
+  type ProviderDiagnosticsShare,
+  type ProviderDiagnosticsStoredEvent,
 } from './provider-diagnostics-bridge';
 
 const EXTENSION_ORIGIN = /^chrome-extension:\/\/[a-p]{32}$/u;
@@ -33,8 +33,8 @@ type MonitorSession = {
   expiresAt: number;
   nextSequence: number;
   droppedEventCount: number;
-  report: ProviderDiagnosticsShareV1;
-  events: ProviderDiagnosticsStoredEventV1[];
+  report: ProviderDiagnosticsShare;
+  events: ProviderDiagnosticsStoredEvent[];
 };
 
 export function providerDiagnosticsBridgePlugin(): Plugin {
@@ -156,10 +156,10 @@ export function providerDiagnosticsBridgePlugin(): Plugin {
   };
 }
 
-function startSession(report: ProviderDiagnosticsShareV1): MonitorSession {
+function startSession(report: ProviderDiagnosticsShare): MonitorSession {
   const now = Date.now();
   const sessionId = `provider-monitor:${crypto.randomUUID()}`;
-  const event: ProviderDiagnosticsMonitorEventV1 = Object.freeze({
+  const event: ProviderDiagnosticsMonitorEvent = Object.freeze({
     schemaVersion: 1,
     sessionId,
     emittedAt: now,
@@ -183,7 +183,7 @@ function startSession(report: ProviderDiagnosticsShareV1): MonitorSession {
 
 function acceptEvent(
   current: MonitorSession | null,
-  post: ProviderDiagnosticsEventPostV1,
+  post: ProviderDiagnosticsEventPost,
 ): MonitorSession | null {
   const now = Date.now();
   let session = activeSession(current);
@@ -232,7 +232,7 @@ function activeSession(session: MonitorSession | null): MonitorSession | null {
   return session && session.expiresAt > Date.now() ? session : null;
 }
 
-function latestRecord(session: MonitorSession): ProviderDiagnosticsBridgeRecordV1 {
+function latestRecord(session: MonitorSession): ProviderDiagnosticsBridgeRecord {
   return Object.freeze({
     bridgeVersion: 2,
     sessionId: session.sessionId,
@@ -251,7 +251,7 @@ function eventsRecord(
   session: MonitorSession,
   after: number,
   limit: number,
-): ProviderDiagnosticsEventsRecordV1 {
+): ProviderDiagnosticsEventsRecord {
   return Object.freeze({
     bridgeVersion: 2,
     sessionId: session.sessionId,
@@ -264,7 +264,7 @@ function eventsRecord(
   });
 }
 
-function healthRecord(session: MonitorSession | null): ProviderDiagnosticsHealthV1 {
+function healthRecord(session: MonitorSession | null): ProviderDiagnosticsHealth {
   const serverTime = Date.now();
   if (!session) {
     return Object.freeze({

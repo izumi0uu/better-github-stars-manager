@@ -126,7 +126,7 @@ if (primaryFailure || teardownFailure) {
     try {
       publishRuntimeEvidence({
         directory: process.env.GSM_RUNTIME_EVIDENCE_DIR,
-        filename: 'agent-artifact.schema-v1.json',
+        filename: 'agent-artifact.schema.json',
         evidence: buildArtifactEvidence(),
         validateEvidence: validateArtifactEvidence,
         privateMarkers: [

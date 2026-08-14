@@ -3,7 +3,7 @@ import { createProviderDiagnosticsMonitor } from '@/agent-observability/provider
 import { createProviderDiagnosticsRuntime } from '@/agent-observability/provider-monitor-runtime';
 import { AgentProviderError, type AgentExecutionTraceEvent } from '@/agent-harness';
 import { authStore } from '@/auth/auth-store';
-import type { ProviderDiagnosticsShareV1 } from '@/dev-agent/provider-diagnostics-bridge';
+import type { ProviderDiagnosticsShare } from '@/dev-agent/provider-diagnostics-bridge';
 import type { AgentProviderConfig, Config } from '@/types';
 
 vi.mock('@/auth/auth-store', () => ({
@@ -42,7 +42,7 @@ describe('Provider diagnostics monitor', () => {
     monitor.observeExecutionEvent('agent-turn:test', finishedEvent());
     await monitor.flush();
 
-    expect(stored.has('bgsm_provider_diagnostics_monitor_v1')).toBe(true);
+    expect(stored.has('bgsm_provider_diagnostics_monitor')).toBe(true);
     expect(posts.map((value) => (value as { event: { kind: string } }).event.kind)).toEqual([
       'probe_started',
       'provider_request_prepared',
@@ -110,7 +110,7 @@ describe('Provider diagnostics monitor', () => {
 
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(await monitor.status()).toBeNull();
-    expect(stored.has('bgsm_provider_diagnostics_monitor_v1')).toBe(false);
+    expect(stored.has('bgsm_provider_diagnostics_monitor')).toBe(false);
   });
 
   it('recovers a restarted localhost bridge once with a fresh bounded report', async () => {
@@ -180,7 +180,7 @@ describe('Provider diagnostics monitor', () => {
       startedAt: 100,
       expiresAt: 10_000,
     });
-    expect(stored.get('bgsm_provider_diagnostics_monitor_v1')).toEqual({
+    expect(stored.get('bgsm_provider_diagnostics_monitor')).toEqual({
       sessionId: 'provider-monitor:new',
       startedAt: 100,
       expiresAt: 10_000,
@@ -274,7 +274,7 @@ function storage(values: Map<string, unknown>) {
   };
 }
 
-function report(): ProviderDiagnosticsShareV1 {
+function report(): ProviderDiagnosticsShare {
   return {
     schemaVersion: 1,
     generatedAt: 100,

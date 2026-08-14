@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it } from 'vitest';
 import { db } from '../../../src/storage/db';
 import { backfillTasks, reconcileBackfillMap } from '../../../src/upgrades/tasks';
-import { selectActiveBackfillId } from '../../../src/upgrades/backfill-state';
+import { normalizeBackfillMap, selectActiveBackfillId } from '../../../src/upgrades/backfill-state';
 import type { Star } from '../../../src/types';
 
 const base = {
@@ -28,8 +28,32 @@ beforeEach(async () => {
 afterAll(async () => {
   await db.close();
 });
-
 describe('Backfill regressions', () => {
+  it('migrates legacy ids without losing completion or deferral evidence', () => {
+    const completed = {
+      status: 'done' as const,
+      queuedAt: '2026-06-22T00:00:00Z',
+      lastAttemptAt: '2026-06-22T00:01:00Z',
+      completedAt: '2026-06-22T00:05:00Z',
+      error: null,
+    };
+    const deferred = {
+      status: 'deferred' as const,
+      queuedAt: '2026-08-13T00:00:00Z',
+      lastAttemptAt: '2026-08-13T00:01:00Z',
+      completedAt: null,
+      error: 'User postponed the refresh',
+    };
+    const legacyMap: Record<string, typeof completed | typeof deferred> = {
+      repo_data_sync_v1: completed,
+      repo_owner_avatar_v1: deferred,
+    };
+
+    const next = normalizeBackfillMap(legacyMap);
+
+    assert.deepEqual(next.repo_data_sync, completed);
+    assert.deepEqual(next.repo_owner_avatar, deferred);
+  });
   it('prioritizes repo data sync when a legacy live row lacks creation time', async () => {
     await db.stars.put({
       ...base,
@@ -39,9 +63,9 @@ describe('Backfill regressions', () => {
     } as unknown as Star);
 
     const next = await reconcileBackfillMap({});
-    assert.equal(next.repo_data_sync_v1?.status, 'pending');
-    assert.equal(next.repo_owner_avatar_v1?.status, 'pending');
-    assert.equal(selectActiveBackfillId(next), 'repo_data_sync_v1');
+    assert.equal(next.repo_data_sync?.status, 'pending');
+    assert.equal(next.repo_owner_avatar?.status, 'pending');
+    assert.equal(selectActiveBackfillId(next), 'repo_data_sync');
   });
 
   it('marks owner-avatar backfill pending when live rows are missing owner avatars', async () => {
@@ -53,9 +77,9 @@ describe('Backfill regressions', () => {
     } as Star);
 
     const next = await reconcileBackfillMap({});
-    assert.equal(next.repo_data_sync_v1?.status, 'done');
-    assert.equal(next.repo_owner_avatar_v1?.status, 'pending');
-    assert.equal(selectActiveBackfillId(next), 'repo_owner_avatar_v1');
+    assert.equal(next.repo_data_sync?.status, 'done');
+    assert.equal(next.repo_owner_avatar?.status, 'pending');
+    assert.equal(selectActiveBackfillId(next), 'repo_owner_avatar');
   });
 
   it('marks both repo metadata backfills done when live rows are complete', async () => {
@@ -68,8 +92,8 @@ describe('Backfill regressions', () => {
     } as Star);
 
     const next = await reconcileBackfillMap({});
-    assert.equal(next.repo_data_sync_v1?.status, 'done');
-    assert.equal(next.repo_owner_avatar_v1?.status, 'done');
+    assert.equal(next.repo_data_sync?.status, 'done');
+    assert.equal(next.repo_owner_avatar?.status, 'done');
     assert.equal(selectActiveBackfillId(next), null);
   });
 
@@ -89,12 +113,12 @@ describe('Backfill regressions', () => {
       error: null,
     };
     const next = await reconcileBackfillMap({
-      repo_data_sync_v1: existing,
-      repo_owner_avatar_v1: existing,
+      repo_data_sync: existing,
+      repo_owner_avatar: existing,
     });
 
-    assert.deepEqual(next.repo_data_sync_v1, existing);
-    assert.deepEqual(next.repo_owner_avatar_v1, existing);
+    assert.deepEqual(next.repo_data_sync, existing);
+    assert.deepEqual(next.repo_owner_avatar, existing);
     assert.equal(selectActiveBackfillId(next), null);
   });
 
@@ -113,30 +137,30 @@ describe('Backfill regressions', () => {
       completedAt: '2026-06-22T00:05:00Z',
       error: null,
     };
-    const next = await reconcileBackfillMap({ repo_data_sync_v1: repoDataState });
+    const next = await reconcileBackfillMap({ repo_data_sync: repoDataState });
 
-    assert.deepEqual(next.repo_data_sync_v1, repoDataState);
-    assert.equal(next.repo_owner_avatar_v1?.status, 'pending');
-    assert.equal(selectActiveBackfillId(next), 'repo_owner_avatar_v1');
+    assert.deepEqual(next.repo_data_sync, repoDataState);
+    assert.equal(next.repo_owner_avatar?.status, 'pending');
+    assert.equal(selectActiveBackfillId(next), 'repo_owner_avatar');
   });
 
   it('does not scan local data when an existing backfill is already done', async () => {
-    const originalDetectNeed = backfillTasks.repo_data_sync_v1.detectNeed;
+    const originalDetectNeed = backfillTasks.repo_data_sync.detectNeed;
     let detectCalls = 0;
-    backfillTasks.repo_data_sync_v1.detectNeed = async () => {
+    backfillTasks.repo_data_sync.detectNeed = async () => {
       detectCalls++;
       throw new Error('done backfills should not detect need');
     };
     try {
       const next = await reconcileBackfillMap({
-        repo_data_sync_v1: {
+        repo_data_sync: {
           status: 'done',
           queuedAt: '2026-06-22T00:00:00Z',
           lastAttemptAt: '2026-06-22T00:00:00Z',
           completedAt: '2026-06-22T00:05:00Z',
           error: null,
         },
-        repo_owner_avatar_v1: {
+        repo_owner_avatar: {
           status: 'done',
           queuedAt: '2026-08-13T00:00:00Z',
           lastAttemptAt: '2026-08-13T00:00:00Z',
@@ -144,10 +168,10 @@ describe('Backfill regressions', () => {
           error: null,
         },
       });
-      assert.equal(next.repo_data_sync_v1?.status, 'done');
+      assert.equal(next.repo_data_sync?.status, 'done');
       assert.equal(detectCalls, 0);
     } finally {
-      backfillTasks.repo_data_sync_v1.detectNeed = originalDetectNeed;
+      backfillTasks.repo_data_sync.detectNeed = originalDetectNeed;
     }
   });
 
@@ -167,8 +191,8 @@ describe('Backfill regressions', () => {
       error: 'GitHub metadata refresh failed',
     };
     const next = await reconcileBackfillMap({
-      repo_data_sync_v1: existing,
-      repo_owner_avatar_v1: {
+      repo_data_sync: existing,
+      repo_owner_avatar: {
         status: 'done',
         queuedAt: '2026-08-13T00:00:00Z',
         lastAttemptAt: '2026-08-13T00:00:00Z',
@@ -177,8 +201,8 @@ describe('Backfill regressions', () => {
       },
     });
 
-    assert.deepEqual(next.repo_data_sync_v1, existing);
-    assert.equal(selectActiveBackfillId(next), 'repo_data_sync_v1');
+    assert.deepEqual(next.repo_data_sync, existing);
+    assert.equal(selectActiveBackfillId(next), 'repo_data_sync');
   });
 
   it('keeps deferred repo data sync backfills inactive and preserves deferral evidence', async () => {
@@ -197,8 +221,8 @@ describe('Backfill regressions', () => {
       error: 'User postponed after previous failure',
     };
     const next = await reconcileBackfillMap({
-      repo_data_sync_v1: existing,
-      repo_owner_avatar_v1: {
+      repo_data_sync: existing,
+      repo_owner_avatar: {
         status: 'done',
         queuedAt: '2026-08-13T00:00:00Z',
         lastAttemptAt: '2026-08-13T00:00:00Z',
@@ -207,20 +231,20 @@ describe('Backfill regressions', () => {
       },
     });
 
-    assert.deepEqual(next.repo_data_sync_v1, existing);
+    assert.deepEqual(next.repo_data_sync, existing);
     assert.equal(selectActiveBackfillId(next), null);
   });
 
   it('does not surface deferred backfills as active cards', async () => {
     const active = selectActiveBackfillId({
-      repo_data_sync_v1: {
+      repo_data_sync: {
         status: 'done',
         queuedAt: '2026-06-22T00:00:00Z',
         lastAttemptAt: '2026-06-22T00:00:00Z',
         completedAt: '2026-06-22T00:05:00Z',
         error: null,
       },
-      repo_owner_avatar_v1: {
+      repo_owner_avatar: {
         status: 'deferred',
         queuedAt: '2026-08-13T00:00:00Z',
         lastAttemptAt: null,

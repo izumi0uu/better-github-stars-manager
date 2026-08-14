@@ -126,7 +126,7 @@ async function main() {
       runtime.stage = 'evidence-publish';
       publishRuntimeEvidence({
         directory: process.env.GSM_RUNTIME_EVIDENCE_DIR,
-        filename: 'agent-scenarios.schema-v1.json',
+        filename: 'agent-scenarios.schema.json',
         evidence: buildScenarioEvidence(runtime),
         validateEvidence: validateScenarioEvidence,
         privateMarkers: PRIVATE_MARKERS,
@@ -634,7 +634,7 @@ async function exportArtifact(page) {
     let snapshotId = null;
     let nextChunkIndex = 0;
     let totalBytes = 0;
-    const port = chrome.runtime.connect({ name: 'bgsm-agent-dev-evidence-v1' });
+    const port = chrome.runtime.connect({ name: 'bgsm-agent-dev-evidence' });
     const timer = setTimeout(() => {
       port.disconnect();
       reject(new Error('trace_export_timeout'));

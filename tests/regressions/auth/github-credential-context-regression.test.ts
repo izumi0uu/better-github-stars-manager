@@ -60,6 +60,34 @@ describe('GitHub credential context isolation', () => {
     assert.equal(snapshot.notificationsToken, null);
   });
 
+  it('migrates and removes the legacy credential record before logout completes', async () => {
+    const { authStore, CONFIG_STORAGE_KEY, GITHUB_CREDENTIALS_STORAGE_KEY } = await import('@/auth/auth-store');
+    globalThis.fetch = classicPatFetch('octocat', 'probe-context-legacy-key');
+    await authStore.setToken('github_pat_context_legacy_key');
+    const stored = await chromeMock.api.storage.local.get([CONFIG_STORAGE_KEY, GITHUB_CREDENTIALS_STORAGE_KEY]);
+    const credentials = stored[GITHUB_CREDENTIALS_STORAGE_KEY];
+    await chromeMock.api.storage.local.set({
+      [CONFIG_STORAGE_KEY]: stored[CONFIG_STORAGE_KEY],
+      gsm_github_credentials_v1: credentials,
+    });
+    await chromeMock.api.storage.local.remove(GITHUB_CREDENTIALS_STORAGE_KEY);
+
+    await authStore.clearToken();
+
+    const after = await chromeMock.api.storage.local.get([
+      CONFIG_STORAGE_KEY,
+      GITHUB_CREDENTIALS_STORAGE_KEY,
+      'gsm_github_credentials_v1',
+    ]);
+    assert.equal(after.gsm_github_credentials_v1, undefined);
+    const currentCredentials = after[GITHUB_CREDENTIALS_STORAGE_KEY];
+    const currentConfig = after[CONFIG_STORAGE_KEY];
+    assert.ok(currentCredentials && typeof currentCredentials === 'object' && 'tokenEncrypted' in currentCredentials);
+    assert.ok(currentConfig && typeof currentConfig === 'object' && 'tokenEncrypted' in currentConfig);
+    assert.equal(currentCredentials.tokenEncrypted, null);
+    assert.equal(currentConfig.tokenEncrypted, null);
+  });
+
   it('does not expose a credential while a legacy record needs reauthorization', async () => {
     const { authStore, CONFIG_STORAGE_KEY, GITHUB_CREDENTIALS_STORAGE_KEY } = await import('@/auth/auth-store');
     globalThis.fetch = classicPatFetch('octocat', 'probe-context-legacy');

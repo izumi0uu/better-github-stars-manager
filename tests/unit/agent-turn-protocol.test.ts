@@ -125,7 +125,7 @@ const VALID_EVENT_PAYLOADS: readonly Record<string, unknown>[] = [
         kind: 'selected_repository',
         selectedRepositoryIdHint: 'owner/repository',
       },
-      scopeFingerprint: `fs:v1:${'a'.repeat(43)}`,
+      scopeFingerprint: `fs:${'a'.repeat(43)}`,
       label: 'owner/repository',
       count: 1,
       providerFingerprint: `pcf:v1:${'b'.repeat(43)}`,

@@ -38,9 +38,9 @@ import {
   parseProposalId,
   projectFrozenScope,
   parseRunId,
-  parseScopeFingerprintV1,
-  parseSourceFingerprintV1,
-  parseTaxonomyFingerprintV1,
+  parseScopeFingerprint,
+  parseSourceFingerprint,
+  parseTaxonomyFingerprint,
   selectBudgetExhaustionReason,
   validateAgentDataDisclosureAcceptance,
   validateAnalyzerBatchProposal,
@@ -78,8 +78,8 @@ const DIGEST = 'A'.repeat(43);
 const runId = parseRunId('run:v1:run-1');
 const proposalId = parseProposalId('proposal:v1:proposal-1');
 const controllerId = parseControllerId('controller:v1:controller-1');
-const sourceFingerprint = parseSourceFingerprintV1(`sf:v1:${DIGEST}`);
-const taxonomyFingerprint = parseTaxonomyFingerprintV1(`tf:v1:${DIGEST}`);
+const sourceFingerprint = parseSourceFingerprint(`sf:v1:${DIGEST}`);
+const taxonomyFingerprint = parseTaxonomyFingerprint(`tf:v1:${DIGEST}`);
 
 describe('Cubby response completeness contract', () => {
   it('keeps the Cubby persona warm, precise, and restrained', () => {
@@ -276,13 +276,13 @@ describe('Cubby frozen RunBudget contract', () => {
 
 describe('FrozenScope and transport token identities', () => {
   it('keeps the active public transport tokens noninterchangeable', () => {
-    const preflight = parsePreflightToken('preflight:v1:opaque');
-    const cursor = parseContinuationCursorToken('cursor:v1:opaque');
+    const preflight = parsePreflightToken('preflight:opaque');
+    const cursor = parseContinuationCursorToken('cursor:opaque');
     assert.doesNotThrow(() => parsePreflightToken(preflight));
     assert.doesNotThrow(() => parseContinuationCursorToken(cursor));
     assert.throws(() => parsePreflightToken(cursor));
     assert.throws(() => parseContinuationCursorToken(preflight));
-    assert.equal(cursor, 'cursor:v1:opaque');
+    assert.equal(cursor, 'cursor:opaque');
     assertPreflightType(preflight);
     if (false) {
       // @ts-expect-error ContinuationCursorToken is nominally distinct from PreflightToken.
@@ -299,7 +299,7 @@ describe('FrozenScope and transport token identities', () => {
       filterSnapshot: 'language:TypeScript',
       repositoryIds: ['a/one', 'b/two', 'a/one'],
       capturedAt: 100,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${DIGEST}`),
+      fingerprint: parseScopeFingerprint(`fs:${DIGEST}`),
     });
     assert.deepEqual(scope.repositoryIds, ['a/one', 'b/two']);
     assert.equal(scope.count, 2);
@@ -468,7 +468,7 @@ describe('five semantic-tag row universes', () => {
       version: 1,
       runId,
       generation: 2,
-      scopeFingerprint: parseScopeFingerprintV1(`fs:v1:${DIGEST}`),
+      scopeFingerprint: parseScopeFingerprint(`fs:${DIGEST}`),
       rows: [{
         frozenIndex: 0,
         repositoryId: 'owner/repo-0',
@@ -492,7 +492,7 @@ describe('five semantic-tag row universes', () => {
       version: 1,
       runId,
       generation: 2,
-      scopeFingerprint: parseScopeFingerprintV1(`fs:v1:${DIGEST}`),
+      scopeFingerprint: parseScopeFingerprint(`fs:${DIGEST}`),
       rows: [{
         frozenIndex: 0,
         repositoryId: 'owner/repo-0',
@@ -649,7 +649,7 @@ describe('first-use disclosure and messaging identities', () => {
       controllerId,
       sessionId: 'session-1',
       requestId: 'request-1',
-      preflightToken: parsePreflightToken('preflight:v1:opaque'),
+      preflightToken: parsePreflightToken('preflight:opaque'),
       label: 'Current view',
       count: 4,
     };
@@ -941,7 +941,7 @@ describe('first-use disclosure and messaging identities', () => {
       filterSnapshot: '',
       repositoryIds: ['owner/repo-0'],
       capturedAt: 10,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${DIGEST}`),
+      fingerprint: parseScopeFingerprint(`fs:${DIGEST}`),
     });
     const baseSnapshot = {
       controllerId,
@@ -1028,7 +1028,7 @@ describe('first-use disclosure and messaging identities', () => {
       ...baseSnapshot,
       state: 'budget_exhausted',
       terminalReason: 'provider_attempts',
-      continuationCursor: parseContinuationCursorToken('cursor:v1:remaining'),
+      continuationCursor: parseContinuationCursorToken('cursor:remaining'),
     });
     assert.throws(() => validateOrganizeJobRunSnapshot({
       ...baseSnapshot,

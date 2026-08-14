@@ -176,7 +176,7 @@ describe('useWatchSubjectDetails', () => {
 
     act(() => {
       storageListeners[0]?.({
-        gsm_github_credentials_v1: { oldValue: {}, newValue: {} },
+        gsm_github_credentials: { oldValue: {}, newValue: {} },
       }, 'local');
     });
 

@@ -482,7 +482,7 @@ export function isSavedAgentCredentialEligible(
   }
 }
 
-export async function providerCapabilityFingerprintV1(
+export async function providerCapabilityFingerprint(
   config: Pick<
     AgentProviderConfig,
     | 'provider'

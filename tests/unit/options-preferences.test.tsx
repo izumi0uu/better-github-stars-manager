@@ -34,7 +34,7 @@ const authMocks = vi.hoisted(() => ({
 
 vi.mock('@/auth/auth-store', () => ({
   CONFIG_STORAGE_KEY: 'gsm_config',
-  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials_v1',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
   authStore: authMocks,
 }));
 

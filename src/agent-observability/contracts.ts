@@ -417,7 +417,7 @@ export type DevTraceEvent = Readonly<{
   data: DevTraceEventData;
 }>;
 
-export type TraceRootSummaryV1 = Readonly<{
+export type TraceRootSummary = Readonly<{
   rootOperationId: string;
   operationKind: DevTraceOperationKind;
   sessionId: string | null;
@@ -429,7 +429,7 @@ export type TraceRootSummaryV1 = Readonly<{
   eventCount: number;
 }>;
 
-export type TraceSpanSummaryV1 = Readonly<{
+export type TraceSpanSummary = Readonly<{
   spanId: string;
   rootOperationId: string;
   parentSpanId: string | null;
@@ -438,14 +438,14 @@ export type TraceSpanSummaryV1 = Readonly<{
   endedAt: number | null;
 }>;
 
-export type TraceSequenceGapV1 = Readonly<{
+export type TraceSequenceGap = Readonly<{
   rootOperationId: string;
   firstMissingSequence: number;
   lastMissingSequence: number;
   reason: 'reservation_lost' | 'persistence_failure' | 'capacity' | 'unknown';
 }>;
 
-export type TraceArtifactV1 = Readonly<{
+export type TraceArtifact = Readonly<{
   schemaVersion: typeof TRACE_ARTIFACT_SCHEMA_VERSION;
   exporterVersion: string;
   exportedAt: number;
@@ -469,10 +469,10 @@ export type TraceArtifactV1 = Readonly<{
     omittedUnsupportedRootCount?: number;
     omittedUnsupportedEventCount?: number;
     activeBeforeTracing: boolean;
-    sequenceGaps: readonly TraceSequenceGapV1[];
+    sequenceGaps: readonly TraceSequenceGap[];
   }>;
-  roots: readonly TraceRootSummaryV1[];
-  spans: readonly TraceSpanSummaryV1[];
+  roots: readonly TraceRootSummary[];
+  spans: readonly TraceSpanSummary[];
   events: readonly DevTraceEvent[];
   aggregates: Readonly<{
     rootCount: number;
@@ -489,7 +489,7 @@ export type TraceArtifactV1 = Readonly<{
 export function parseTraceArtifactJson(
   serialized: string,
   maxBytes = MAX_TRACE_ARTIFACT_BYTES,
-): TraceArtifactV1 {
+): TraceArtifact {
   if (utf8Bytes(serialized) > maxBytes) throw new TypeError('Trace artifact exceeds the size limit.');
   let value: unknown;
   try {
@@ -500,7 +500,7 @@ export function parseTraceArtifactJson(
   return validateTraceArtifact(value);
 }
 
-export function validateTraceArtifact(value: unknown): TraceArtifactV1 {
+export function validateTraceArtifact(value: unknown): TraceArtifact {
   const artifact = record(value, 'Trace artifact');
   integer(artifact.schemaVersion, 'Trace artifact schemaVersion', 1);
   if (artifact.schemaVersion !== TRACE_ARTIFACT_SCHEMA_VERSION) {
@@ -564,7 +564,7 @@ export function validateTraceArtifact(value: unknown): TraceArtifactV1 {
       throw new TypeError('Trace root event count does not match its events.');
     }
   }
-  return value as TraceArtifactV1;
+  return value as TraceArtifact;
 }
 
 export function validateDevTraceEvent(value: unknown): DevTraceEvent {

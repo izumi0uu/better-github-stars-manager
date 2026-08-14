@@ -14,7 +14,7 @@ export type OnboardingStage =
   | 'coach'
   | 'done';
 
-export type BackfillId = 'repo_data_sync_v1' | 'repo_owner_avatar_v1';
+export type BackfillId = 'repo_data_sync' | 'repo_owner_avatar';
 
 export type BackfillStatus =
   | 'pending'

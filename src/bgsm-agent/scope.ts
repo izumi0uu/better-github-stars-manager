@@ -9,13 +9,13 @@ export type PreflightToken = string & {
 export type ContinuationCursorToken = string & {
   readonly [scopeTokenBrand]: 'ContinuationCursorToken';
 };
-export type ScopeFingerprintV1 = string & {
-  readonly [scopeFingerprintBrand]: 'ScopeFingerprintV1';
+export type ScopeFingerprint = string & {
+  readonly [scopeFingerprintBrand]: 'ScopeFingerprint';
 };
 
-export const PREFLIGHT_TOKEN_PREFIX = 'preflight:v1:';
-export const CONTINUATION_CURSOR_TOKEN_PREFIX = 'cursor:v1:';
-export const SCOPE_FINGERPRINT_PREFIX = 'fs:v1:';
+export const PREFLIGHT_TOKEN_PREFIX = 'preflight:';
+export const CONTINUATION_CURSOR_TOKEN_PREFIX = 'cursor:';
+export const SCOPE_FINGERPRINT_PREFIX = 'fs:';
 
 export const FROZEN_SCOPE_KINDS = Object.freeze([
   'selected_repository',
@@ -65,7 +65,7 @@ export type FrozenScope = Readonly<{
   repositoryIds: readonly string[];
   count: number;
   capturedAt: number;
-  fingerprint: ScopeFingerprintV1;
+  fingerprint: ScopeFingerprint;
 }>;
 
 export type FrozenScopeProjection = Readonly<{
@@ -74,7 +74,7 @@ export type FrozenScopeProjection = Readonly<{
   label: string;
   count: number;
   capturedAt: number;
-  fingerprint: ScopeFingerprintV1;
+  fingerprint: ScopeFingerprint;
 }>;
 
 export type FrozenScopeCursor = Readonly<{
@@ -91,9 +91,9 @@ export function parseContinuationCursorToken(value: string): ContinuationCursorT
   return parseToken(value, CONTINUATION_CURSOR_TOKEN_PREFIX, 'continuationCursorToken');
 }
 
-export function parseScopeFingerprintV1(value: string): ScopeFingerprintV1 {
-  if (!isScopeFingerprintV1(value)) {
-    throw new TypeError('FrozenScope fingerprint must be fs:v1:<base64url SHA-256>.');
+export function parseScopeFingerprint(value: string): ScopeFingerprint {
+  if (!isScopeFingerprint(value)) {
+    throw new TypeError('FrozenScope fingerprint must be fs:<base64url SHA-256> or legacy fs:v1:<base64url SHA-256>.');
   }
   return value;
 }
@@ -106,8 +106,8 @@ export function isContinuationCursorToken(value: unknown): value is Continuation
   return isPrefixedToken(value, CONTINUATION_CURSOR_TOKEN_PREFIX);
 }
 
-export function isScopeFingerprintV1(value: unknown): value is ScopeFingerprintV1 {
-  return typeof value === 'string' && /^fs:v1:[A-Za-z0-9_-]{43}$/u.test(value);
+export function isScopeFingerprint(value: unknown): value is ScopeFingerprint {
+  return typeof value === 'string' && /^fs:(?:v1:)?[A-Za-z0-9_-]{43}$/u.test(value);
 }
 
 export function createFrozenScope(input: Readonly<{
@@ -116,7 +116,7 @@ export function createFrozenScope(input: Readonly<{
   filterSnapshot: string;
   repositoryIds: readonly string[];
   capturedAt: number;
-  fingerprint: ScopeFingerprintV1;
+  fingerprint: ScopeFingerprint;
 }>): FrozenScope {
   if (!FROZEN_SCOPE_KINDS.includes(input.kind)) throw new TypeError('Unsupported FrozenScope kind.');
   assertTrimmedNonempty(input.label, 'FrozenScope label');
@@ -124,7 +124,7 @@ export function createFrozenScope(input: Readonly<{
     throw new TypeError('FrozenScope filterSnapshot must be a string.');
   }
   assertNonnegativeSafeInteger(input.capturedAt, 'FrozenScope capturedAt');
-  if (!isScopeFingerprintV1(input.fingerprint)) {
+  if (!isScopeFingerprint(input.fingerprint)) {
     throw new TypeError('FrozenScope fingerprint is malformed.');
   }
   const repositoryIds = deduplicateRepositoryIds(input.repositoryIds);
@@ -173,7 +173,7 @@ export function validateFrozenScope(value: unknown): asserts value is FrozenScop
     throw new TypeError('FrozenScope count must be derived from repositoryIds.');
   }
   assertNonnegativeSafeInteger(value.capturedAt, 'FrozenScope capturedAt');
-  if (!isScopeFingerprintV1(value.fingerprint)) {
+  if (!isScopeFingerprint(value.fingerprint)) {
     throw new TypeError('FrozenScope fingerprint is malformed.');
   }
 }
@@ -203,7 +203,7 @@ export function validateFrozenScopeProjection(
   assertNonnegativeSafeInteger(value.count, 'FrozenScope projection count');
   if (value.count === 0) throw new TypeError('FrozenScope projection cannot be empty.');
   assertNonnegativeSafeInteger(value.capturedAt, 'FrozenScope projection capturedAt');
-  if (!isScopeFingerprintV1(value.fingerprint)) {
+  if (!isScopeFingerprint(value.fingerprint)) {
     throw new TypeError('FrozenScope projection fingerprint is malformed.');
   }
 }

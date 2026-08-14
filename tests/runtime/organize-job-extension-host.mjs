@@ -879,7 +879,7 @@ try {
     await page.evaluate(pauseWorkerRecoveryWakeups);
     const expiredLease = await page.evaluate(expireActiveAnalysisLeaseForRuntime);
     assert.equal(expiredLease.jobId, recoveryStart.jobId);
-    assert.equal(expiredLease.alarmName, 'bgsm-organize-analysis-recovery-v1');
+    assert.equal(expiredLease.alarmName, 'bgsm-organize-analysis-recovery');
     runtimeStage = 'worker_recovery_pause_after_expiry';
     await page.evaluate(pauseWorkerRecoveryWakeups);
     runtimeStage = 'worker_recovery_detach_port';
@@ -2892,7 +2892,7 @@ function installCorruptOrganizeJobSeeder() {
           filterSnapshot: 'All live stars',
           repositoryIds: ['runtime/repo-000', 'runtime/repo-001'],
           capturedAt: now,
-          fingerprint: `fs:v1:${'A'.repeat(43)}`,
+          fingerprint: `fs:${'A'.repeat(43)}`,
         },
         taskInstruction: 'This corrupt checkpoint must never be resumed.',
         budget: {
@@ -4163,7 +4163,7 @@ async function pauseWorkerRecoveryWakeups() {
   const state = globalThis.__runtimeWorkerRecoveryReconnect;
   if (!state?.reconnectArmed) throw new Error('Worker recovery reconnect is not armed.');
   state.reconnectPaused = true;
-  const alarmName = 'bgsm-organize-analysis-recovery-v1';
+  const alarmName = 'bgsm-organize-analysis-recovery';
   const deadline = Date.now() + 2_000;
   let quietSince = Date.now();
   while (Date.now() < deadline) {
@@ -4202,7 +4202,7 @@ async function detachWorkerRecoveryPortForReplacement() {
 async function resumeWorkerRecoveryWakeups() {
   const state = globalThis.__runtimeWorkerRecoveryReconnect;
   if (!state?.reconnectArmed) throw new Error('Worker recovery reconnect is not armed.');
-  await chrome.alarms.create('bgsm-organize-analysis-recovery-v1', {
+  await chrome.alarms.create('bgsm-organize-analysis-recovery', {
     when: Math.max(Date.now() + 25, state.pausedAlarmScheduledTime ?? 0),
   });
   state.reconnectPaused = false;
@@ -4293,7 +4293,7 @@ async function expireActiveAnalysisLeaseForRuntime() {
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error);
     });
-    const alarmName = 'bgsm-organize-analysis-recovery-v1';
+    const alarmName = 'bgsm-organize-analysis-recovery';
     await chrome.alarms.create(alarmName, { when: Date.now() + 1_000 });
     const alarm = await chrome.alarms.get(alarmName);
     if (!alarm) throw new Error('Organize analysis recovery alarm is unavailable.');
@@ -4816,8 +4816,8 @@ function publishOrganizeEvidence(evidenceOverride = null, releaseDistOverride = 
     publishRuntimeEvidence({
       directory,
       filename: RUN_WORKER_RECOVERY
-        ? 'organize-job-recovery.schema-v1.json'
-        : 'organize-job.schema-v1.json',
+        ? 'organize-job-recovery.schema.json'
+        : 'organize-job.schema.json',
       evidence,
       validateEvidence,
       privateMarkers: PRIVATE_MARKERS,
