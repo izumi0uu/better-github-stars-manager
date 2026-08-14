@@ -47,13 +47,14 @@ try {
   await waitForPopupNoTokenState(popup);
 
   const openedOptions = waitForExtensionPage(`${OPTIONS_PATH}`);
-  await clickButtonByText(popup, /^(Add PAT|Connect GitHub|Add Classic PAT)$/i);
+  await clickButtonByText(popup, /^添加 Classic PAT$/);
   const optionsFromPopup = await openedOptions;
   await optionsFromPopup.waitForSelector('textarea', { timeout: 10_000 });
   await waitForBodyText(optionsFromPopup, 'GitHub Classic PAT');
+  await assertOptionsDefaultChineseAndUseEnglish(optionsFromPopup);
   await assertScheduledRefreshAlarms(optionsFromPopup, false);
   ok('Watch and Radar periodic alarms were installed; ineligible recommendation alarm stayed absent');
-  ok('popup rendered no-token state and Add PAT opened Options');
+  ok('popup and Options defaulted to Chinese, then Options switched to English for the remaining smoke flow');
 
   step('2) Options rejects invalid token without persisting auth');
   await interceptGitHubApi(optionsFromPopup, invalidTokenApiResponse);
@@ -105,6 +106,10 @@ try {
   await clickFab(ownStars);
   await waitForManagerRoot(ownStars);
   ok('manager injected, first Auto Tags click offered Cubby, drawer opened accessibly, and panel toggle worked');
+
+  step('5b) Manager toolbar keeps one row across responsive widths');
+  await assertToolbarResponsiveLayout(ownStars);
+  ok('toolbar kept one row, compressed search/sort controls, synchronized action labels, and a circular compact account trigger');
 
   step('6) Discover switches from Following to deterministic For You recommendations');
   const seededWatch = await seedWatchAndRadarFixture(extId);
@@ -163,7 +168,8 @@ try {
     hasNotificationsToken: true,
     allThreadCount: 3,
     allGroupCount: 2,
-    outOfScopeVisible: false,
+    customThreadOutsideNativeScopeVisible: true,
+    notificationOutsideLiveStarsVisible: false,
     radarActivityCount: 1,
     radarUnseenCount: 1,
     recommendationCount: 1,
@@ -184,8 +190,8 @@ try {
     readTitleVisible: false,
     unknownTitleVisible: true,
     unknownTypeVisible: true,
-    unknownFallbackHref: 'https://github.com/smoke-user/secondary-repo',
-    outOfScopeVisible: false,
+    unknownFallbackHref: 'https://github.com/smoke-user/custom-repo',
+    notificationOutsideLiveStarsVisible: false,
     statusKind: 'stale',
     listEndTone: 'info',
     listEndText: 'End of current window · older threads may exist',
@@ -196,8 +202,8 @@ try {
   assert.equal(allSnapshot.unreadPressed, false);
   assert.equal(allSnapshot.allPressed, true);
   assert.equal(allSnapshot.readTitleVisible, true);
-  assert.equal(allSnapshot.outOfScopeVisible, false);
-  ok('Unread/All changed the stored projection and unknown subjects fell back safely');
+  assert.equal(allSnapshot.notificationOutsideLiveStarsVisible, false);
+  ok('Unread/All changed the stored projection, Custom threads bypassed native scope, and unknown subjects fell back safely');
   await openWatchSubjectDetail(ownStars, 'Unread issue thread');
   await assertWatchSubjectDetail(ownStars, subjectDetailFixture);
   ok('Watch Issue details loaded on demand through the main credential');
@@ -338,11 +344,11 @@ async function openExtensionPage(extId, pagePath, label) {
 }
 async function assertScheduledRefreshAlarms(page, expectRecommendationAlarm) {
   const expectedPeriodic = [
-    { name: 'bgsm-radar-auto-refresh-v1', periodInMinutes: 60 },
-    { name: 'bgsm-watch-inbox-auto-refresh-v1', periodInMinutes: 1 },
-    { name: 'bgsm-watch-scope-auto-refresh-v1', periodInMinutes: 60 },
+    { name: 'bgsm-radar-auto-refresh', periodInMinutes: 60 },
+    { name: 'bgsm-watch-inbox-auto-refresh', periodInMinutes: 1 },
+    { name: 'bgsm-watch-scope-auto-refresh', periodInMinutes: 60 },
   ];
-  const recommendationAlarm = 'bgsm-recommendations-daily-refresh-v1';
+  const recommendationAlarm = 'bgsm-recommendations-daily-refresh';
   try {
     await page.waitForFunction(
       async ({ periodic, recommendation, expectedRecommendation }) => {
@@ -376,12 +382,12 @@ async function assertScheduledRefreshAlarms(page, expectRecommendationAlarm) {
     }))
     .sort((left, right) => left.name.localeCompare(right.name)), recommendationAlarm);
   const expected = [
-    { name: 'bgsm-radar-auto-refresh-v1', periodInMinutes: 60, localHour: null },
+    { name: 'bgsm-radar-auto-refresh', periodInMinutes: 60, localHour: null },
     ...(expectRecommendationAlarm
       ? [{ name: recommendationAlarm, periodInMinutes: null, localHour: 8 }]
       : []),
-    { name: 'bgsm-watch-inbox-auto-refresh-v1', periodInMinutes: 1, localHour: null },
-    { name: 'bgsm-watch-scope-auto-refresh-v1', periodInMinutes: 60, localHour: null },
+    { name: 'bgsm-watch-inbox-auto-refresh', periodInMinutes: 1, localHour: null },
+    { name: 'bgsm-watch-scope-auto-refresh', periodInMinutes: 60, localHour: null },
   ];
   assert.deepEqual(actual, expected);
 }
@@ -428,7 +434,7 @@ async function seedWatchAndRadarFixture(extId) {
     const DEXIE_VERSION = 5;
     const IDB_VERSION = DEXIE_VERSION * 10;
     const CONFIG_KEY = 'gsm_config';
-    const CREDENTIALS_KEY = 'gsm_github_credentials_v1';
+    const CREDENTIALS_KEY = 'gsm_github_credentials';
     const fetchedAt = '2026-08-05T12:35:00.000Z';
     const radarFetchedAt = new Date().toISOString();
     const radarActivityAt = new Date(Date.now() - 60_000).toISOString();
@@ -609,17 +615,10 @@ async function seedWatchAndRadarFixture(extId) {
       avatarUrl,
     ));
     stars.put(star(
-      'smoke-user/secondary-repo',
-      'Secondary watched repository used by the unknown-subject fixture.',
+      'smoke-user/custom-repo',
+      'Live Star with a Custom notification absent from native watched membership.',
       'Rust',
       87,
-      avatarUrl,
-    ));
-    stars.put(star(
-      'smoke-user/out-of-scope',
-      'Live star intentionally excluded from the watched-repository scope.',
-      'Go',
-      14,
       avatarUrl,
     ));
     for (let index = 0; index < 240; index++) {
@@ -669,7 +668,7 @@ async function seedWatchAndRadarFixture(extId) {
     }));
     threads.put(thread({
       id: '1008',
-      repository: 'smoke-user/secondary-repo',
+      repository: 'smoke-user/custom-repo',
       title: 'Future event thread',
       type: 'FutureEvent',
       unread: true,
@@ -678,12 +677,12 @@ async function seedWatchAndRadarFixture(extId) {
     }));
     threads.put(thread({
       id: '1001',
-      repository: 'smoke-user/out-of-scope',
-      title: 'OUT OF SCOPE MUST NOT RENDER',
+      repository: 'smoke-user/not-starred',
+      title: 'OUTSIDE LIVE STARS MUST NOT RENDER',
       type: 'Issue',
       unread: true,
       updatedAt: '2026-08-05T13:30:00.000Z',
-      subjectHtmlUrl: 'https://github.com/smoke-user/out-of-scope/issues/1',
+      subjectHtmlUrl: 'https://github.com/smoke-user/not-starred/issues/1',
     }));
     state.put({
       id: 'singleton',
@@ -718,6 +717,7 @@ async function seedWatchAndRadarFixture(extId) {
       repositoryLanguage: 'TypeScript',
       repositoryLanguageColor: '#3178c6',
       repositoryStargazerCount: 42,
+      repositoryTopics: ['browser-extension', 'typescript'],
       viewerHadStarred: false,
       starredAt: radarActivityAt,
       dismissedAt: null,
@@ -843,7 +843,8 @@ async function seedWatchAndRadarFixture(extId) {
       hasNotificationsToken: allInbox.data.status.hasNotificationsToken,
       allThreadCount: allInbox.data.totalCount,
       allGroupCount: allInbox.data.groups.length,
-      outOfScopeVisible: allInbox.data.threads.some((item) => item.id === '1001'),
+      customThreadOutsideNativeScopeVisible: allInbox.data.threads.some((item) => item.id === '1008'),
+      notificationOutsideLiveStarsVisible: allInbox.data.threads.some((item) => item.id === '1001'),
       radarActivityCount: radarQuery.data.activities.length,
       radarUnseenCount: radarQuery.data.unseenCount,
       recommendationCount: recommendationQuery.data.recommendations.length,
@@ -858,7 +859,7 @@ async function clearWatchNotificationsCredential(extId) {
   const page = await openExtensionPage(extId, OPTIONS_PATH, 'clear-watch-credential');
   const result = await page.evaluate(async () => {
     const CONFIG_KEY = 'gsm_config';
-    const CREDENTIALS_KEY = 'gsm_github_credentials_v1';
+    const CREDENTIALS_KEY = 'gsm_github_credentials';
     const current = await chrome.storage.local.get([CONFIG_KEY, CREDENTIALS_KEY]);
     const beforeConfig = current[CONFIG_KEY] ?? {};
     const beforeCredentials = current[CREDENTIALS_KEY] ?? {};
@@ -1108,12 +1109,12 @@ async function clickWatchRecoveryOptions(page) {
 async function readWatchCredentialState(page) {
   return page.evaluate(async () => {
     const [stored, response] = await Promise.all([
-      chrome.storage.local.get('gsm_github_credentials_v1'),
+      chrome.storage.local.get('gsm_github_credentials'),
       chrome.runtime.sendMessage({ type: 'getWatchStatus' }),
     ]);
     return {
       watchNotificationsEnabled:
-        stored.gsm_github_credentials_v1?.watchNotificationsEnabled === true,
+        stored.gsm_github_credentials?.watchNotificationsEnabled === true,
       hasNotificationsToken: response?.data?.hasNotificationsToken === true,
     };
   });
@@ -1286,15 +1287,45 @@ async function waitForPopupNoTokenState(page, timeout = 20_000) {
     await page.waitForFunction(
       () => {
         const bodyText = document.body?.innerText ?? '';
-        const hasNoTokenText = bodyText.includes('A GitHub Classic PAT is required.');
+        const hasNoTokenText = bodyText.includes('应用需要 GitHub Classic PAT 鉴权。');
         const hasConnectButton = [...document.querySelectorAll('button')]
-          .some((node) => /^(Connect GitHub|Add PAT|Add Classic PAT)$/i.test((node.textContent || '').trim()));
+          .some((node) => (node.textContent || '').trim() === '添加 Classic PAT');
         return hasNoTokenText && hasConnectButton;
       },
       { polling: DOM_POLLING_MS, timeout },
     );
   } catch (error) {
-    throw await pageWaitError(page, 'popup did not render the no-token text and Add PAT button together', error);
+    throw await pageWaitError(page, 'popup did not render the default Chinese no-token state', error);
+  }
+}
+async function assertOptionsDefaultChineseAndUseEnglish(page) {
+  try {
+    await page.waitForFunction(
+      () => {
+        const buttons = [...document.querySelectorAll('button')];
+        const chinese = buttons.find((node) => (node.textContent || '').trim() === '中文');
+        return chinese?.getAttribute('aria-pressed') === 'true'
+          && (document.body?.innerText ?? '').includes('4. 偏好设置');
+      },
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'Options did not render with Chinese selected by default', error);
+  }
+
+  await clickButtonByText(page, /^EN$/);
+  try {
+    await page.waitForFunction(
+      () => {
+        const buttons = [...document.querySelectorAll('button')];
+        const english = buttons.find((node) => (node.textContent || '').trim() === 'EN');
+        return english?.getAttribute('aria-pressed') === 'true'
+          && (document.body?.innerText ?? '').includes('4. Preferences');
+      },
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+    );
+  } catch (error) {
+    throw await pageWaitError(page, 'Options did not persist the English smoke-test override', error);
   }
 }
 
@@ -1938,7 +1969,7 @@ async function readWatchSnapshot(page) {
       ?.getAttribute('aria-pressed') === 'true';
     const unknownRegion = section?.querySelector('[data-watch-thread-row="1008"] [role="region"]');
     const unknownLink = [...(unknownRegion?.querySelectorAll('a') ?? [])]
-      .find((candidate) => candidate.href === 'https://github.com/smoke-user/secondary-repo');
+      .find((candidate) => candidate.href === 'https://github.com/smoke-user/custom-repo');
     const status = root?.querySelector('[data-watch-status]');
     const listEnd = section?.querySelector('[data-surface-list-end="timeline"]');
     return {
@@ -1949,7 +1980,7 @@ async function readWatchSnapshot(page) {
       unknownTitleVisible: text.includes('Future event thread'),
       unknownTypeVisible: text.includes('FutureEvent'),
       unknownFallbackHref: unknownLink?.href ?? null,
-      outOfScopeVisible: text.includes('OUT OF SCOPE MUST NOT RENDER'),
+      notificationOutsideLiveStarsVisible: text.includes('OUTSIDE LIVE STARS MUST NOT RENDER'),
       statusKind: status?.getAttribute('data-watch-status') ?? null,
       listEndTone: listEnd?.getAttribute('data-surface-list-end-tone') ?? null,
       listEndText: listEnd?.textContent?.trim() ?? null,
@@ -2127,6 +2158,94 @@ async function closeWatchRepositoryDetail(page) {
     },
     { polling: DOM_POLLING_MS, timeout: 10_000 },
   );
+}
+
+async function assertToolbarResponsiveLayout(page) {
+  const originalViewport = page.viewport() ?? { width: 800, height: 600, deviceScaleFactor: 1 };
+  const widths = [1440, 1280, 1024, 900, 768, 640, 480];
+  const samples = [];
+
+  for (const width of widths) {
+    await page.setViewport({ width, height: 800, deviceScaleFactor: 1 });
+    await waitForStableLayout(page);
+    samples.push(await page.evaluate(() => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      const toolbar = root?.querySelector('[data-toolbar-root]');
+      const row = root?.querySelector('[data-toolbar-row]');
+      const left = root?.querySelector('[data-toolbar-left]');
+      const right = root?.querySelector('[data-toolbar-right]');
+      const search = root?.querySelector('[data-toolbar-search]');
+      const sort = left?.querySelector('button[role="combobox"]');
+      const account = root?.querySelector('[data-toolbar-account]');
+      const labelSelectors = [
+        '[data-toolbar-action-label="sync"]',
+        '[data-toolbar-action-label="auto-tags"]',
+        '[data-toolbar-action-label="agent"]',
+        '[data-toolbar-action-label="gist"]',
+      ];
+      const rowRect = row?.getBoundingClientRect();
+      const leftRect = left?.getBoundingClientRect();
+      const rightRect = right?.getBoundingClientRect();
+      const accountRect = account?.getBoundingClientRect();
+      const controls = [...(row?.querySelectorAll('button, a, input, [role="combobox"]') ?? [])]
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return getComputedStyle(element).display !== 'none' && rect.width > 0 && rect.height > 0;
+        });
+      const rowVerticalCenters = controls.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return Math.round(rect.top + rect.height / 2);
+      });
+      const labelVisible = labelSelectors
+        .map((selector) => root?.querySelector(selector))
+        .filter((element) => element && getComputedStyle(element.parentElement ?? element).display !== 'none')
+        .map((element) => getComputedStyle(element).display !== 'none');
+
+      return {
+        viewportWidth: innerWidth,
+        toolbarOverflow: toolbar ? toolbar.scrollWidth - toolbar.clientWidth : -1,
+        rowHeight: rowRect?.height ?? -1,
+        rowCenterCount: new Set(rowVerticalCenters).size,
+        leftRightOverlap: leftRect && rightRect ? leftRect.right - rightRect.left : -1,
+        searchWidth: search?.getBoundingClientRect().width ?? -1,
+        sortWidth: sort?.getBoundingClientRect().width ?? -1,
+        labelVisible,
+        accountWidth: accountRect?.width ?? -1,
+        accountHeight: accountRect?.height ?? -1,
+        accountBorderRadius: account ? Number.parseFloat(getComputedStyle(account).borderRadius) : -1,
+      };
+    }));
+  }
+
+  for (const sample of samples) {
+    assert.equal(sample.toolbarOverflow <= 1, true, `${sample.viewportWidth}px toolbar overflowed horizontally: ${JSON.stringify(sample)}`);
+    assert.equal(sample.rowHeight <= 53, true, `${sample.viewportWidth}px toolbar wrapped to another row`);
+    assert.equal(sample.rowCenterCount, 1, `${sample.viewportWidth}px toolbar controls did not share one row`);
+    assert.equal(sample.leftRightOverlap <= 1, true, `${sample.viewportWidth}px toolbar zones overlapped`);
+    assert.equal(sample.searchWidth >= 72, true, `${sample.viewportWidth}px search collapsed below its usable minimum`);
+    assert.equal(sample.sortWidth >= (sample.viewportWidth <= 640 ? 80 : 120), true, `${sample.viewportWidth}px sort collapsed below its usable minimum`);
+    assert.equal(new Set(sample.labelVisible).size <= 1, true, `${sample.viewportWidth}px visible toolbar action labels hid inconsistently: ${JSON.stringify(sample.labelVisible)}`);
+    if (sample.viewportWidth <= 1280) {
+      assert.equal(sample.labelVisible.every((visible) => !visible), true);
+    } else {
+      assert.equal(sample.labelVisible.every(Boolean), true);
+    }
+    if (sample.viewportWidth <= 1024) {
+      assert.equal(Math.abs(sample.accountWidth - sample.accountHeight) <= 1, true, `${sample.viewportWidth}px account trigger was not square`);
+      assert.equal(sample.accountBorderRadius >= sample.accountWidth / 2 - 1, true, `${sample.viewportWidth}px account trigger was not circular`);
+    }
+  }
+
+  const desktop = samples.find((sample) => sample.viewportWidth === 1440);
+  assert.ok(desktop, 'desktop toolbar sample was missing');
+  assert.equal(desktop.searchWidth >= 240, true, `desktop search remained too short: ${desktop.searchWidth}px`);
+  assert.equal(desktop.searchWidth > desktop.sortWidth, true, 'desktop search was not wider than the sort control');
+
+  const searchWidths = new Set(samples.map((sample) => Math.round(sample.searchWidth)));
+  const sortWidths = new Set(samples.map((sample) => Math.round(sample.sortWidth)));
+  assert.equal(searchWidths.size > 1, true, 'search width did not respond to viewport changes');
+  assert.equal(sortWidths.size > 1, true, 'sort width did not respond to viewport changes');
+  await page.setViewport(originalViewport);
 }
 
 async function waitForStableLayout(page) {
