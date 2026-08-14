@@ -2,94 +2,71 @@
 
 [简体中文](../zh/github-token-permissions.md)
 
-This guide covers the GitHub credentials used by Better GitHub Stars Manager. Cubby uses a separate AI service credential, described below.
+This guide covers the single GitHub credential used by Better GitHub Stars Manager. Cubby uses a separate AI-service credential, described below.
 
 Last checked against the GitHub documentation: 2026-08-11.
 
-## Recommended setup
+## Current setup
 
-Use two credentials. This keeps the main connection fine-grained and limits the classic token to Notifications.
-
-### Main connection: fine-grained PAT
-
-Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) with these settings:
-
-| Setting | Value |
-| --- | --- |
-| Resource owner | Your personal GitHub account |
-| Repository access | Public repositories |
-| Account permission: Starring | Read and write |
-| Account permission: Gists | Read and write |
-| Account permission: Watching | Read-only |
-
-Leave every other permission at `No access`. You do not need to grant access to private repositories.
-
-GitHub grants the Gists permission at account level, so a fine-grained PAT cannot be limited to one Gist. The extension creates one dedicated secret Gist for annotation sync.
-
-The permissions map to the extension as follows:
-
-| Permission | GitHub API used by the extension | Feature |
-| --- | --- | --- |
-| Starring: read | `GET /user/starred` | Initial sync, incremental sync, and full rescan |
-| Starring: write | `DELETE /user/starred/{owner}/{repo}` | Unstar from the manager |
-| Gists: read and write | `/gists` endpoints | Push and pull tags, notes, and tag metadata |
-| Watching: read | `GET /user/subscriptions` | Find watched repositories that are also in the current starred library |
-| Public repository access | Public repository, code search, contents, and Git blob endpoints | Read public metadata and bounded public code when you ask Cubby to search code |
-
-`Save & verify` checks the account, reads one page of stars, creates a temporary secret Gist, deletes it, and checks Watching access. The Gist probe confirms both write and cleanup access. The extension does not test Unstar during setup because that would change your GitHub account, so keep Starring set to read and write.
-
-### Watch Inbox: classic PAT
-
-GitHub's Notifications REST API currently accepts personal access tokens (classic), not fine-grained PATs. Create a [classic personal access token](https://github.com/settings/tokens/new) for the same GitHub account and select only:
+Use one GitHub **Classic PAT**. The Options page links to a prefilled [Classic PAT form](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager) with this scope set:
 
 ```text
-notifications
-```
-
-Do not add `repo`, `gist`, `user`, or `workflow` to this token. The `notifications` scope is enough to read the Inbox and is narrower than `repo`.
-
-Connect the main token first. In Options, choose `Set up Watch Inbox`. The extension tests the main credential before showing the classic PAT fallback. A fine-grained main token will normally need this fallback; a compatible classic main token can be reused.
-
-The dedicated token must belong to the same GitHub account as the main connection. The extension rejects an account mismatch.
-
-## One-token alternative
-
-If you want one credential instead of the recommended two-token setup, use a classic PAT with:
-
-```text
-public_repo
+repo
 gist
 notifications
+read:user
 ```
 
-This covers the extension's GitHub features, including Unstar, Gist sync, Watching, and Notifications. It also grants more access than the extension needs. In particular, `public_repo` includes broad write access to public repositories. Do not select the wider `repo` scope unless you deliberately want the token to access private repositories.
+Choose a finite expiration, review the scopes, generate the token, then paste it into `Options > GitHub Classic PAT` and select **Save & verify**.
 
-The two-token setup is safer because the main PAT stays fine-grained and the classic PAT has only `notifications`.
+## Scope-to-feature mapping
+
+| Scope | Requirement | Feature |
+| --- | --- | --- |
+| `repo` | Required | Stars sync, Star/Unstar, repository metadata, private-repository access, watched-repository membership, and accessible Issue/Pull Request details |
+| `gist` | Required | Push and pull tags, notes, favorites, and tag metadata through the extension's private Gist |
+| `notifications` | Optional capability | Watch Inbox reads and notification actions |
+| `read:user` | Optional capability | Following Radar reads the accounts you follow and their public Star activity |
+
+`repo` is intentionally broad because the current product supports private Stars and repository actions. `public_repo` is not a drop-in replacement for that contract. GitHub grants `gist` at account level; it cannot be restricted to only the extension's Gist.
+
+Do not grant `user`, `user:email`, `user:follow`, `project`, `admin:org`, `workflow`, `delete_repo`, package, key, audit-log, enterprise, or Webhook administration scopes. The extension does not use them.
+
+## Verification behavior
+
+**Save & verify** authenticates the account, reads one page of Stars, creates and deletes a temporary secret Gist, and probes Notifications access. The Gist probe proves both write and cleanup access. Setup does not test Star or Unstar because that would mutate your GitHub account.
+
+Missing `notifications` or `read:user` must disable only Watch Inbox or Following Radar. Stars and Gist remain usable. Following Radar checks its optional capability when that surface loads.
+
+## Credential lifecycle
+
+The product stores one encrypted Classic PAT in `chrome.storage.local`; plaintext exists only in memory. It does not store a second Notifications credential or silently fall back to one.
+
+This is a deliberate credential cutover. A previously stored Fine-grained PAT may require reauthorization. The extension preserves local Stars, tags, notes, and settings and replaces the encrypted value only after the new Classic PAT passes the required checks.
 
 ## Cubby and AI features
 
-A GitHub token does not authorize Cubby with an AI provider. To use Cubby, configure the provider's API key, Base URL, and model separately in Options. The extension does not send either GitHub token to the selected AI model.
+A GitHub token does not authorize Cubby with an AI provider. To use Cubby, configure the provider's API key, Base URL, and model separately in Options. The extension never sends the GitHub token to the selected AI model.
 
 ## Verify the setup
 
-1. Paste the main token into `Options > GitHub connection`, then select `Save & verify`.
-2. Confirm that the account, Stars, Gist, and Watching checks pass.
-3. Open `Options > Watch Inbox` and run its setup.
-4. If the main token cannot read Notifications, paste the same-account classic PAT with only `notifications`.
-5. Star and Watch a repository on GitHub, open the manager's Watch tab, and refresh the Inbox.
+1. Paste the Classic PAT into `Options > GitHub Classic PAT`, then select **Save & verify**.
+2. Confirm that the authenticated account appears and the required Stars and Gist checks pass.
+3. Open the manager and run **Full Sync**.
+4. Open **Watch**. With `notifications`, refresh and confirm that the Inbox shows notifications only for currently starred repositories, with a separate informational count for watched repositories.
+5. Open **Following Radar**. With `read:user`, confirm that Following activity loads.
 
-Watch displays GitHub notification threads only for repositories that are both currently starred and watched. Refreshing Watch does not change your GitHub subscription settings.
+Refreshing Watch does not change your GitHub subscription settings.
 
 ## Security notes
 
-Treat both tokens as passwords. Give them an expiration date, paste them only into the extension's Options page, and revoke them if they are exposed. GitHub recommends fine-grained PATs when possible and recommends expiration dates for classic PATs.
+Treat the PAT as a password. Give it an expiration date, paste it only into the extension's Options page, and revoke or rotate it if it is exposed.
 
-The extension encrypts GitHub credentials before storing them in `chrome.storage.local`. See the [privacy policy](privacy-policy.md) for storage and data-flow details.
+The extension encrypts the GitHub credential before storing it in `chrome.storage.local`. See the [privacy policy](privacy-policy.md) for storage and data-flow details.
 
 ## Official GitHub references
 
 - [Managing personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
-- [Fine-grained PAT permissions and endpoint mapping](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
 - [Starring REST API](https://docs.github.com/en/rest/activity/starring)
 - [Gists REST API](https://docs.github.com/en/rest/gists/gists)
 - [Watching REST API](https://docs.github.com/en/rest/activity/watching)
@@ -97,4 +74,4 @@ The extension encrypts GitHub credentials before storing them in `chrome.storage
 - [Classic PAT and OAuth scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps)
 - [Code search REST API](https://docs.github.com/en/rest/search/search#search-code)
 
-GitHub has announced the deprecation of the public `GET /users/{username}/subscriptions` endpoint. During the transition, that endpoint remains accessible but may return empty responses; GitHub plans to remove it in a later phase. Better GitHub Stars Manager instead uses the authenticated `GET /user/subscriptions` endpoint, which GitHub's current fine-grained permission table maps to `Watching: read`. See [GitHub's access-restriction announcement](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/).
+GitHub has announced restrictions on Watching endpoints and deprecated the public `GET /users/{username}/subscriptions` endpoint. The authenticated `GET /user/subscriptions` endpoint used by the extension remains documented, but GitHub does not give this use case a durable availability guarantee. Better GitHub Stars Manager treats watched-repository membership as a best-effort snapshot and never uses it to gate Watch Inbox notifications. See the [Watch strategy](watch-strategy.md) and [GitHub's access-restriction announcement](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/).

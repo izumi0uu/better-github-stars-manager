@@ -1,177 +1,266 @@
 [简体中文](./README.md) · English
 
+<div align="center">
+  <img src="public/icons/icon-128.png" alt="Better GitHub Stars Manager" width="96" height="96">
+
 # Better GitHub Stars Manager
 
+**Turn GitHub Stars into a searchable, organized, and maintainable personal dashboard.**
+
+Search, filter, tag, and annotate repositories directly on your GitHub Stars page. Enable Watch, Following, For You, Secret Gist sync, or Cubby AI when you need them.
+
 [![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Install%20Now-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
+[![Chrome Web Store users](https://img.shields.io/chrome-web-store/users/jbiacpcceoffcnmpepifoegagjopjpfa?logo=googlechrome&label=Chrome%20Web%20Store%20users)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Latest release](https://img.shields.io/github/v/release/izumi0uu/better-github-stars-manager?logo=github&label=release)](https://github.com/izumi0uu/better-github-stars-manager/releases)
 [![License: MIT](https://img.shields.io/github/license/izumi0uu/better-github-stars-manager?logo=opensourceinitiative&logoColor=white)](./LICENSE)
 
-> A Chrome extension for heavy GitHub users — local-first, zero-server, personal. It turns `https://github.com/{user}?tab=stars` into a fast, searchable, taggable, filterable, annotatable workspace so you can manage thousands of stars without leaving GitHub.
+  <img src="store-assets/screenshots/readme-promo.png" alt="Better GitHub Stars Manager product overview" width="960" />
 
-Install from the Chrome Web Store:
-[Get it on the Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
+<sub>The product screenshot in this hero was supplied by the project maintainer and explicitly approved for public use; it shows the real interface with public GitHub data.</sub>
+</div>
 
-![Better GitHub Stars Manager](store-assets/poster/img_01.png)
+## Contents
 
-## Table of Contents
+- [Why this manager exists](#your-stars-can-be-a-personal-dashboard)
+- [Features](#what-you-can-do) — Stars organization, Watch, discovery, and Cubby
+- [Local-first data boundaries](#local-by-default-connected-when-you-choose)
+- [Get started](#get-started) — [Install](#install) · [First sync](#run-the-first-sync)
+- [Product boundaries](#what-it-does-not-do)
+- [Local development](#local-development)
+- [Related documentation](#related-documentation)
+- [Contributing](#contributing) · [License](#license)
+- [Links](#links) · [Friendly links](#friendly-links)
 
-- [Why Better GitHub Stars Manager?](#why-better-github-stars-manager)
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [How to Use](#how-to-use)
-- [Install](#install)
-- [Privacy and Storage](#privacy-and-storage)
-- [Development](#development)
-- [License](#license)
-- [Contributing](#contributing)
+## Your Stars can be a personal dashboard
 
-## Why Better GitHub Stars Manager?
+GitHub Stars makes it easy to browse saved repositories, but it is also easy to forget what you starred. Once the list grows beyond a few hundred entries, repository names alone rarely remind you why you saved them or what they do.
 
-GitHub Stars is good for bookmarking, but it does not hold up for long-term organization.
+Better GitHub Stars Manager runs directly inside the Stars page. It organizes repository data, your custom tags, and notes in the browser while keeping GitHub's native Stars list available whenever you switch back.
 
-Once your stars grow into the hundreds or thousands, the native list becomes hard to manage. In the AI era, GitHub projects multiply exponentially — you star all kinds of things, then forget where you saved them or what they were called. The real pain points:
+| What you can do | GitHub Stars | Better GitHub Stars Manager |
+|---|---|---|
+| Organize by language and lists | Basic support | Combine language, tag, state, and owner filters |
+| Review notifications from saved projects | Leave the Stars page | Optional Watch workspace |
+| See what followed accounts have starred | Visit accounts separately | Optional Following workspace |
+| Add custom tags | Not supported | Manual tags, Auto Tags, and favorites |
+| Keep personal notes | Not supported | Supported and stored locally by default |
+| Get repository recommendations | GitHub Explore | Optional For You with deterministic local ranking |
+| Organize and compare all your Stars | Not supported | Optional Cubby AI |
 
-- pagination hides the full picture of your stars
-- no personal tagging system
-- no real notes layer
-- hard to revisit what you saved and why
+## What you can do
 
-Better GitHub Stars Manager makes GitHub Stars genuinely manageable for heavy users.
+### Organize your Stars
 
-## Features
+Use the Stars workspace to search and maintain your repository collection:
 
-- **All stars in one place**
-  Load your starred repositories into a virtualized table that stays usable even with very large collections.
+- Search repository names, descriptions, GitHub topics, and private notes
+- Filter by language, tags, favorites, untagged state, archived state, or repositories you own
+- Sort by starred date, latest push, creation date, star count, or name
+- Add custom tags, private notes, and favorites
+- Generate local Auto Tags in bulk from GitHub topics
+- View and edit tags through the tag filter on GitHub repository pages
+- Reorder, resize, show, or hide table columns, owner names, and owner avatars
+- Hide the manager and return to GitHub's native Stars list
 
-- **Fast search and filtering**
-  Search across repository name, description, topics, and notes. Filter by language, tags, and untagged items.
+<div align="center">
+  <img src="store-assets/screenshots/demo-stars.webp" alt="Switch from GitHub Stars to the manager, filter repositories, and open details" width="960" />
+</div>
 
-- **Floating toggle button**
-  On your own GitHub stars page, a floating button switches to the management panel with one click.
+#### Edit Layout: customize the table
 
-- **Custom tags and notes**
-  Add your own labels and notes so your stars become a working library instead of a passive list.
+Click **Edit custom layout** in the toolbar to enter layout editing mode:
 
-- **Auto-suggested tags**
-  Turn repository topics and language into suggested tags with one click or in bulk.
+- **Drag to reorder**: Drag column headers to change column order. The insert position updates live, and sibling columns move aside
+- **Drag to resize**: Drag column edges to adjust widths with a live readout, or reset all widths in one click
+- **Show or hide columns**: Toggle visible columns from the **Columns** menu
+- **Information density**: Toggle **Show repository owner** and **Show repository avatar** independently
+- **Status and reset**: Switch freely between custom and default layouts, or use **Reset** to restore the default layout at any time
+- **Persisted locally**: The extension saves the layout in `chrome.storage.local` and restores it on your next visit
 
-- **Incremental sync and full rescan**
-  Pull in newly starred repositories quickly, and run a full rescan when you want to reconcile unstars while keeping your annotations.
+<div align="center">
+  <img src="store-assets/screenshots/demo-edit-layout.webp" alt="Drag to reorder, resize, show, or hide table columns" width="900" />
+</div>
 
-- **Repo-page tag chip**
-  See and edit your tags directly on individual GitHub repository pages.
+The virtualized list handles libraries with hundreds or thousands of rows. Incremental **Sync** fetches new Stars. **Full Sync** fetches all Stars and every public repository you own. A rescan reconciles unstarred repositories without deleting their existing tags or notes.
 
-- **Watch Inbox**
-  Group GitHub Notifications for current Stars by repository, with search, reason filters, mark-read, and mark-done actions.
+### Track project changes
 
-- **Cross-device annotation sync**
-  Push and pull your tags and notes through your own private GitHub Gist.
+Watch retrieves notifications from your GitHub inbox and organizes them in one workspace:
 
-- **Gist-backed storage layer**
-  Keep your annotation layer in a dedicated secret Gist so it is portable, recoverable, and easy to sync across devices without a backend.
+- Group unread or all notifications by repository
+- Search repository names and notification titles, and filter by notification reason
+- Fetch an Issue or Pull Request body, state, author, labels, assignees, and milestone on demand
+- Mark one notification or an entire repository group as read or done
 
-## Screenshots
+Watch Inbox requires the optional `notifications` scope on your Classic Personal Access Token (PAT). See [How Watch works](docs/en/watch-strategy.md) for its full behavior.
 
-<p align="center">
-  <img src="store-assets/poster/img_02.png" alt="Better GitHub Stars Manager running on GitHub Stars" width="920">
-  <img src="store-assets/screenshots/screenshot-plugin.png" alt="Better GitHub Stars Manager Plugin" width="300">
-</p>
+### Discover projects worth following
 
-## How to Use
+Following and For You offer two discovery paths:
 
-1. Install the extension from the Chrome Web Store.
-2. Open the extension, go to the Options page, and create a GitHub **Classic PAT**.
-3. Visit your GitHub stars page: `https://github.com/{you}?tab=stars`.
-4. Run **Sync** to import your stars.
-5. Search, filter, tag, and add notes as you review repositories.
-6. Use **Push** and **Pull** if you want your annotations to travel across devices.
+- **Following activity**: Review public Star activity from people you follow over the last 30 days, with controls to search, hide items, star repositories, add favorites, and assign tags
+- **For You**: Choose seeds from your existing Stars, fetch candidates through GitHub's public Search API, filter them, and recommend the results
 
-## Install
+For You excludes repositories you currently star, archived repositories, and forks. It uses supported GitHub APIs and does not reproduce GitHub Explore's private recommendation system. See [How For You recommendations work](docs/en/for-you-recommendation-strategy.md) for candidate sources, scoring, and daily refresh behavior.
 
-Install Better GitHub Stars Manager from the Chrome Web Store:
+Following requires the optional `read:user` scope. Without it, Stars, Gist, and Watch continue to work.
 
-[Get it on the Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
+![Following projects](store-assets/screenshots/readme-following-projects.webp)
 
-Then:
+![For You recommendations](store-assets/screenshots/readme-for-you.webp)
 
-1. Click **Add to Chrome**
-2. Open the extension **Options** page
-3. Create a GitHub **Classic PAT** with the scopes below
-4. Paste the token into Options and click **Save & verify**
-5. Visit `https://github.com/{you}?tab=stars`
-6. Run **Sync** to import your stars
+### Organize the library with Cubby <img src="src/ui/assets/index-agent-working.gif" alt="Cubby working" width="28" height="28" align="absmiddle" />
 
-Chrome will handle updates automatically after installation from the store.
+Cubby is your assistant:
 
-### Token setup
+- **Summarize the library**: identify themes, technology stacks, and patterns in what you save
+- **Compare projects**: combine repository data, topics, and public code to explain how similar repositories differ and where each fits
+- **Find evidence**: read in-scope private notes or search public repository code only when needed for your request
+- **Organize tags**: suggest tags backed by evidence; full-library **Organize** first completes read-only analysis, then hands the proposal to you for Review
 
-Use the prefilled [Classic PAT form](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager). Choose a name and finite expiration, review the scopes, generate the token, then paste it into Options and click **Save & verify**.
+Tag writes in regular conversations remain bounded by repository scope, same-turn evidence, and write limits. Organize writes only after you select suggestions and click **Apply**. Conversations, progress, and results persist in IndexedDB so work can recover after the page closes or the Manifest V3 service worker restarts.
 
-Scopes:
+![Cubby analyzing the library](store-assets/screenshots/readme-cubby-progress.webp)
 
-- **`repo`** (required): Stars sync, Star/Unstar, repository metadata, private repository access, and accessible Issue/Pull Request details.
-- **`gist`** (required): cross-device annotation sync through the extension's private Gist.
-- **`notifications`** (optional): Watch Inbox reads and notification actions. Without it, Stars and Gist continue to work.
-- **`read:user`** (optional): Following Radar. Without it, Stars, Gist, and Watch continue to work.
+![Cubby organization results](store-assets/screenshots/readme-cubby-review.webp)
 
-Do not grant `user`, `user:email`, `user:follow`, `admin:org`, `workflow`, `delete_repo`, key, audit-log, enterprise, package, or Webhook administration scopes. They are not used by this extension.
+See the [Cubby Agent technical reference](docs/en/cubby-agent.md) for data boundaries, provider protocols, and recovery behavior.
 
-If an older saved token needs authorization again, the extension keeps local Stars, tags, notes, and settings until the replacement passes verification.
+## Local by default, connected when you choose
 
-The `gist` permission applies to the whole account. The extension creates a private Gist for annotation sync.
+The core library stays in the current browser. Only GitHub synchronization, Secret Gist operations you start, and Cubby requests you make generate their corresponding network traffic.
 
-For the full scope-to-feature and future-feature guide, see [.trellis/spec/data/github-token-scopes.md](.trellis/spec/data/github-token-scopes.md).
+| Capability | Storage | Network destination | Optional? |
+|---|---|---|---|
+| Stars, repository metadata, and filter state | IndexedDB and `chrome.storage.local` | GitHub API | Core |
+| Tags, notes, favorites, and tag metadata | IndexedDB | None by default; GitHub Gist during Push or Pull | Gist transport is optional |
+| Watch snapshots and notifications | IndexedDB | GitHub API | Optional `notifications` scope |
+| Following snapshots and For You cache | IndexedDB | GitHub API | Following needs optional `read:user` scope |
+| Cubby conversations, recovery records, and artifacts | IndexedDB | Your configured AI service | Optional |
+| GitHub token and AI API key | Encrypted in `chrome.storage.local` | Sent only to their respective services | Configured per capability |
 
-For Watch scope, notification refresh, actions, and the 2026 GitHub Watching API risk, see [How Watch works](docs/watch-strategy.md). A [Chinese version](docs/watch-strategy.zh-CN.md) is also available.
+Secret Gist **Push** and **Pull** sync only the annotation layer. Repository metadata is rebuilt from GitHub. Watch, Following, For You, Cubby conversations, and Organize records never enter the Gist.
 
-### Another way --> Local development install
+The GitHub token is encrypted locally; this protection is not equivalent to an operating-system keychain. Cubby conversations, recovery records, and artifacts remain unencrypted in the extension's IndexedDB. Uninstalling the extension removes Chrome's local extension storage but does not delete the sync Gist from your GitHub account.
+
+The project operates no application backend, GitHub proxy, AI proxy, analytics SDK, ad network, or tracking service. Read the complete [privacy policy](docs/en/privacy-policy.md).
+
+## Get started
+
+### Install
+
+| | Store | Works on |
+| :---: | --- | --- |
+| [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome, Edge, Brave, Opera, and other Chromium-based browsers |
+| [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · Coming soon | Microsoft Edge |
+| [<img src="store-assets/store-badges/firefox.svg" alt="Get it on Firefox Add-ons" height="55">](https://addons.mozilla.org/firefox/) | [Firefox Add-ons](https://addons.mozilla.org/firefox/) · Coming soon | Firefox |
+| [<img src="store-assets/store-badges/opera.svg" alt="Get it on Opera Add-ons" height="55">](https://addons.opera.com/extensions/) | [Opera Add-ons](https://addons.opera.com/extensions/) · Coming soon | Opera |
+
+<!-- TODO: replace the placeholder links above with the extension listing URLs once Edge, Firefox, and Opera are published -->
+
+The extension uses Manifest V3. After installing, open `https://github.com/{you}?tab=stars`. The manager appears inside the Stars page.
+
+### Run the first sync
+
+1. Open the extension **Options** page
+2. Create a GitHub Classic PAT with the `repo` and `gist` scopes
+3. Add `notifications` for Watch and `read:user` for Following if you need those features
+4. Paste the token and click **Save & verify**
+5. Open `https://github.com/{you}?tab=stars` to start the extension automatically
+6. On the first visit, **Full Sync** starts automatically
+
+Use the prefilled [Classic PAT creation form](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager). Set a finite expiration and keep only the scopes you need.
+
+<details>
+<summary><strong>Review GitHub token permissions</strong></summary>
+
+<br>
+
+| Scope | Requirement | Purpose |
+|---|---|---|
+| `repo` | Required | Stars sync, Star/Unstar, repository metadata, private repositories, Watch scope, and accessible Issue/Pull Request details |
+| `gist` | Required | Sync tags, notes, favorites, and tag metadata through a secret Gist in your account |
+| `notifications` | Optional | Watch Inbox reads, mark-read, and mark-done actions |
+| `read:user` | Optional | Following reads followed accounts and their public Star activity |
+
+Do not grant `user`, `user:email`, `user:follow`, `project`, `admin:org`, `workflow`, `delete_repo`, package, key, audit-log, enterprise, or Webhook administration scopes. The extension does not use them.
+
+Read the [GitHub token permissions guide](docs/en/github-token-permissions.md) for verification behavior and the credential lifecycle.
+
+</details>
+
+## What it does not do
+
+Better GitHub Stars Manager enhances the Stars page rather than replacing GitHub:
+
+- **It does not change your Stars or Watch settings on its own**: it reads and organizes unless you explicitly take an action
+- **It does not reproduce GitHub Explore**: For You uses public GitHub APIs and ranks candidates deterministically in the browser
+- **It does not operate a backend or proxy**: Requests go directly to GitHub and the AI service you configure
+- **It does not collect telemetry**: The project includes no analytics SDK, ad network, or tracking service
+- **It does not read private notes automatically**: Cubby reads in-scope notes only when your request needs them
+
+## Local development
+
+This project uses pnpm. Build the extension:
 
 ```bash
 pnpm install
 pnpm build
 ```
 
-Then in Chrome:
+Build the extension with Cubby Agent development diagnostics enabled (output: `artifacts/agent-diagnostics-dev-dist/`):
+
+```bash
+pnpm build:agent-dev-diagnostics
+```
+
+Load the build in Chrome:
 
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
 3. Click **Load unpacked**
-4. Select the `dist/` folder
-5. Open the extension **Options** page and continue with the token setup above
+4. Select the project's `dist/` directory
+5. Open **Options** and configure the GitHub token described above
 
-## Privacy and Storage
+Common verification commands:
 
-The extension is designed to keep the heavy data local and sync only the personal annotation layer.
+```bash
+pnpm typecheck
+pnpm test:logic
+pnpm test:integration
+pnpm test:regressions
+pnpm test:runtime
+pnpm test:smoke
+```
 
-- Star metadata is stored locally in IndexedDB.
-- Lightweight config lives in `chrome.storage.local`.
-- Tags, notes, and tag metadata can be stored in a dedicated secret Gist under your own GitHub account.
+## Related documentation
 
-Push / Pull only sync your annotation layer:
-
-- `Push` uploads tags, notes, and tag metadata to your private Gist.
-- `Pull` merges the latest tags, notes, and tag metadata back into the local database.
-- Star metadata itself stays local and is always reconstructed from GitHub.
-
-There is no custom backend and no separate app account.
-
-For a store-ready privacy statement, see [docs/privacy-policy.md](docs/privacy-policy.md).
-
-For candidate sources, scoring, refresh policy, and the GitHub Explore boundary, see [How For You recommendations work](docs/for-you-recommendation-strategy.md). A [Chinese version](docs/for-you-recommendation-strategy.zh-CN.md) is also available.
-
-## License
-
-MIT — see [LICENSE](./LICENSE).
-
-Copyright (c) 2026 izumi0uu.
-
-## Friendly Links
-
-- [Linux.do](https://linux.do/) [nodeseek](https://www.nodeseek.com/)
-- [xiaoheihe](https://xiaoheihe.cn) [v2ex](https://www.v2ex.com/)
+- [GitHub token permissions](docs/en/github-token-permissions.md)
+- [How Watch works](docs/en/watch-strategy.md)
+- [How For You recommendations work](docs/en/for-you-recommendation-strategy.md)
+- [Cubby Agent technical reference](docs/en/cubby-agent.md)
+- [Privacy policy](docs/en/privacy-policy.md)
+- [Chrome Web Store update notes](docs/en/chrome-web-store-submission.md)
 
 ## Contributing
 
-Issues and PRs are welcome at [the repository](https://github.com/izumi0uu/better-github-stars-manager/issues).
+Report bugs and request features through [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues). Pull requests are welcome.
+
+## License
+
+MIT License. See [LICENSE](./LICENSE).
+
+Copyright (c) 2026 izumi0uu.
+
+## Links
+
+- [GitHub repository](https://github.com/izumi0uu/better-github-stars-manager)
+- [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
+- [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues)
+
+## Friendly links
+
+- [Linux.do](https://linux.do/) · [NodeSeek](https://www.nodeseek.com/)
+- [小黑盒](https://xiaoheihe.cn/app/bbs/) · [V2EX](https://www.v2ex.com/)

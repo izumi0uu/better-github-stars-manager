@@ -1,6 +1,6 @@
 # How For You recommendations work
 
-This document explains how For You selects, ranks, stores, and refreshes public repository recommendations. It also defines the supported GitHub application programming interface (API) boundary and the guarantees that future changes must preserve. Read the [Chinese version](./for-you-recommendation-strategy.zh-CN.md).
+This document explains how For You selects, ranks, stores, and refreshes public repository recommendations. It also defines the supported GitHub application programming interface (API) boundary and the guarantees that future changes must preserve. Read the [Chinese version](../zh/for-you-recommendation-strategy.md).
 
 ## Purpose and scope
 

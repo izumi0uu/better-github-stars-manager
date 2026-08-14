@@ -1,6 +1,13 @@
 简体中文 · [English](./README.en.md)
 
+<div align="center">
+  <img src="public/icons/icon-128.png" alt="Better GitHub Stars Manager" width="96" height="96">
+
 # Better GitHub Stars Manager
+
+**把 GitHub Stars 变成一个可搜索、可分类、可持续维护的个人管理面板。**
+
+直接在 GitHub Stars 页面搜索、筛选、添加标签和笔记。需要时再启用 Watch、Following、For You、Secret Gist 同步和 Cubby AI等功能。
 
 [![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-立即安装-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
@@ -8,170 +15,252 @@
 [![Latest release](https://img.shields.io/github/v/release/izumi0uu/better-github-stars-manager?logo=github&label=release)](https://github.com/izumi0uu/better-github-stars-manager/releases)
 [![License: MIT](https://img.shields.io/github/license/izumi0uu/better-github-stars-manager?logo=opensourceinitiative&logoColor=white)](./LICENSE)
 
-> 一个为重度 GitHub 用户打造的 Chrome 扩展 —— 本地优先、零服务端、个人专属。它把 `https://github.com/{user}?tab=stars` 变成一个可搜索、可打标签、可筛选、可批注的快速工作台,管理成千上万个 star，而不必离开 GitHub。
+  <img src="store-assets/screenshots/readme-promo.png" alt="Better GitHub Stars Manager 产品能力信息图" width="960" />
+<sub>主视觉中的产品截图由项目维护者提供并明确批准公开使用；截图展示真实界面和公开 GitHub 数据。</sub>
 
-Chrome 商店安装地址:
-[前往 Chrome 商店下载](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
-
-![Better GitHub Stars Manager](store-assets/poster/img_01.png)
+</div>
 
 ## 目录
 
-- [为什么需要 Better GitHub Stars Manager?](#为什么需要-better-github-stars-manager)
-- [功能特性](#功能特性)
-- [截图](#截图)
-- [如何使用](#如何使用)
-- [安装](#安装)
-- [隐私与存储](#隐私与存储)
-- [开发](#开发)
-- [许可证](#许可证)
-- [参与贡献](#参与贡献)
+- [为什么需要这个管理面板](#你的-stars-可以是一个管理面板)
+- [主要功能](#它可以干什么) — Stars 分类、Watch、发现和 Cubby
+- [本地优先的数据边界](#本地优先可选连接)
+- [开始使用](#开始使用) — [安装](#安装) · [首次同步](#首次同步)
+- [产品边界](#它不会做什么)
+- [本地开发](#本地开发)
+- [相关文档](#相关文档)
+- [参与贡献](#参与贡献) · [许可证](#许可证)
+- [链接](#链接) · [友情链接](#友情链接)
 
-## 为什么需要 Better GitHub Stars Manager?
+## 你的 Stars 可以是一个管理面板
 
-GitHub Stars 适合收藏,但做不了长期管理。
+GitHub Stars 可以浏览 star 项目，但是有时候你会忘了你 star 过什么。当 stars 超过几百个后，你难以回忆起你之前的收藏，看到仓库名字，你也忘记它是什么了。
 
-当你的star项目收藏到几百几千个的时候，通过原生list功能难以管理，ai时代，github项目指数级增长，而你又想收藏各种各样的项目，过后又忘记在哪，叫什么名字了，所以有很多难解决的问题:
+Better GitHub Stars Manager 直接挂载在 Stars 页面。它把项目的数据、你自定义的标签、笔记整理到浏览器里中，同时保留 GitHub 原生页面作为随时可切换的入口。
 
-- 分页看不到全部stars仓库
-- 没有个人打标签系统
-- 没有真正的笔记层
-- 很难回看当时存了什么、为什么存
+| 你可以做的 | GitHub Stars | Better GitHub Stars Manager |
+|---|---|---|
+| 按语言和列表整理 | 基础支持 | 可组合语言、标签、状态和 owner 筛选 |
+| 查看收藏项目的通知 | 需要离开 Stars 页面 | 可选 Watch 工作区 |
+| 看看你关注的人 star 了什么 | 需要分别查看账号 | 可选 Following 工作区 |
+| 自定义标签 | 不支持 | 支持手动标签、Auto Tags 和收藏 |
+| 记录个人笔记 | 不支持 | 支持，默认保存在浏览器本地 |
+| 仓库推荐 | GitHub Explore | 可选 For You，本地确定性排序 |
+| 整理和比较你的所有 stars | 不支持 | 可选 Cubby AI |
 
-Better GitHub Stars Manager 让 GitHub Stars 对重度用户真正可管理。
+## 它可以干什么
 
-## 功能特性
+### 分类你的 stars
 
-- **一次管理所有已star项目**
-  把你 star 的仓库加载进虚拟化表格。
+Stars 工作区用于检索和维护你的仓库收藏：
 
-- **快速搜索与筛选**
-  在仓库名、描述、topics、笔记中全文搜索;按语言、标签、未打标签筛选。
+- 搜索仓库名、描述、GitHub topics 和私人笔记
+- 按语言、标签、收藏、未标注、Archived 或本人公开仓库筛选
+- 按 Star 时间、最近更新、创建时间、Star 数量或名称排序
+- 添加自定义标签、私人笔记和添加'最爱'
+- 根据 GitHub topics 批量生成本地 Auto Tags
+- 在 GitHub 仓库页通过 tag filter 查看和编辑标签
+- 调整面板列顺序、宽度、显隐、owner 名称和头像
+- 隐藏应用，切回 GitHub 原生 Stars 列表
 
-- **悬浮按钮一键切换**
-  在你自己的Github star页， 提供悬浮按钮一键切换到管理面板。
+<div align="center">
+  <img src="store-assets/screenshots/demo-stars.webp" alt="从 GitHub Stars 切换到管理器，筛选仓库并打开详情" width="960" />
+</div>
 
-- **自定义标签与笔记**
-  加你自己的标签和笔记,让 star 从被动列表变成一个可用的资料库。
+#### 自定义面板
 
-- **自动推荐标签**
-  一键或批量把仓库的 topics 与语言转成推荐标签。
+工具栏的 **编辑自定义布局** 按钮进入布局编辑模式：
 
-- **增量同步与全量重扫**
-  快速拉取新 star 的仓库;需要时可全量重扫来对账 unstar,同时保留你的批注。
+- **拖拽排序**：拖拽列头调整列顺序，插入位置实时指示，其余列动画让位
+- **拖拽调宽**：拖拽列边调整列宽并实时显示宽度，可一键 **重置列宽**
+- **显示/隐藏列**：打开 **列** 菜单勾选可见列
+- **信息密度**：独立开关 **显示仓库所有者** 与 **显示仓库头像**
+- **状态与重置**：自定义布局与默认布局随意切换，也可随时 **重置** 回默认布局
+- **本地持久化**：布局保存在 `chrome.storage.local`，下次访问自动恢复
 
-- **repo 页 tag chip**
-  直接在单个 GitHub 仓库页查看和编辑你的标签。
+<div align="center">
+  <img src="store-assets/screenshots/demo-edit-layout.webp" alt="拖拽调整表格列顺序、宽度与显隐" width="900" />
+</div>
 
-- **Watch 收件箱**
-  按仓库整理当前 Stars 中的 GitHub 通知，支持搜索、原因筛选、标记已读和标记完成。
+仓库列表使用虚拟化渲染，可处理几百到几千条记录。增量 **Sync** 获取新 Star，**Full Sync** 重新拉取全部 Stars 和你拥有的公开仓库。重扫会对账已取消的 Star，并保留已有标签和笔记。
 
-- **跨设备批注同步**
-  通过你自己的私有 GitHub Gist 推送/拉取标签与笔记。
+### Watch 某个项目的变化
 
-- **Gist 支撑的存储层**
-  把批注层放在一个专用 secret Gist 里,可移植、可恢复、跨设备同步,无需后端。
+Watch 工作区用于获取 GitHub 信箱的通知并整理给你:
 
-## 截图
+- 按仓库分组查看未读或全部通知
+- 搜索仓库名和通知标题，可以按通知原因筛选
+- 按需读取 Issue 或 Pull Request 的正文、状态、作者、labels、assignees 和 milestone
+- 将一条通知或整个仓库组标记为已读或完成
 
-<p align="center">
-  <img src="store-assets/poster/img_02.png" alt="Better GitHub Stars Manager 在 GitHub Stars Main page" width="920">
-  <img src="store-assets/screenshots/screenshot-plugin.png" alt="Better GitHub Stars Manager Plugin" width="300">
-</p>
+Watch Inbox 需要 Classic Personal Access Token (PAT) 的可选 `notifications` scope。完整行为见 [Watch 的工作方式](docs/zh/watch-strategy.md)。
 
-## 如何使用
+### 发现你所爱
 
-1. 先从 Chrome Web Store 安装扩展。
-2. 打开扩展的 Options 页，创建一个 GitHub **Classic PAT**。
-3. 访问你的 GitHub stars 页：`https://github.com/{you}?tab=stars`。
-4. 运行 **Sync** 导入你的 star。
-5. 边浏览仓库边搜索、筛选、打标签、加笔记。
-6. 想让批注跨设备流转时使用 **Push** 和 **Pull**。
+Following 与 For You 帮助你发现更多项目：
 
-## 安装
+- **关注动态**：读取你关注的人的最近 30 天的公开 Star 活动，并支持搜索、隐藏、Star、收藏和添加标签
+- **为你推荐**：从现有 Stars 选择数据，通过 GitHub 公开 Search 获取筛选后再推送给你
 
-Chrome 商店安装地址:
+For You 会排除你已 Star 的仓库、Archived 仓库和 Fork。它使用 GitHub 支持的公开接口，不复刻 GitHub Explore 的私有推荐系统。候选来源、评分和每日刷新规则见 [For You 推荐如何工作](docs/zh/for-you-recommendation-strategy.md)。
 
-[前往 Chrome 商店下载](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
+Following 需要可选 `read:user` scope。缺少该 scope 不影响 Stars、Gist 或 Watch。
 
-然后:
+![Following 项目视图](store-assets/screenshots/readme-following-projects.webp)
 
-1. 点击 **添加至 Chrome**
-2. 打开扩展的 **Options** 页
-3. 按下方权限创建一个 GitHub **Classic PAT**
-4. 把 token 粘贴到 Options 并点 **Save & verify**
-5. 访问 `https://github.com/{you}?tab=stars`
-6. 运行 **Sync** 导入你的 star
+![For You 仓库推荐](store-assets/screenshots/readme-for-you.webp)
 
-通过商店安装后，Chrome 会自动处理后续更新。
+### 让 Cubby 帮你整理 stars 仓库 <img src="src/ui/assets/index-agent-working.gif" alt="Cubby 正在工作" width="28" height="28" align="absmiddle" />
 
-### Token 配置
+Cubby 是你的助手：
 
-打开已预填的 [Classic PAT 表单](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager)。设置名称和有限有效期，确认 scopes，生成 token，然后粘贴到 Options 并点击 **Save & verify**。
+- **总结资料库**：归纳主题、技术栈和你的收藏喜好
+- **比较项目**：结合仓库数据、topics 和公开代码，解释相似仓库的区别与适用场景
+- **查找依据**：只在请求需要时读取范围内的个人笔记或搜索公开仓库代码
+- **整理标签**：提出有依据的标签建议；全库 **Organize** 会先完成只读分析，再交给你 Review
 
-Scopes：
+普通对话中的标签写入受仓库范围、本轮证据和数量限制。Organize 只有在你选择建议并点击 **Apply** 后才会写入标签。会话、进度和结果保存在 IndexedDB 中，页面关闭或 Manifest V3 service worker 重启后仍可恢复。
 
-- **`repo`**（必需）：Stars 同步、Star/Unstar、仓库元数据、私有仓库访问，以及你有权访问的 Issue/Pull Request 详情。
-- **`gist`**（必需）：通过扩展创建的私有 Gist 跨设备同步标签、笔记和收藏信息。
-- **`notifications`**（可选）：Watch 收件箱读取和通知操作。没有它时，Stars 和 Gist 仍可用。
-- **`read:user`**（可选）：Following Radar。没有它时，Stars、Gist 和 Watch 仍可用。
+![Cubby 分析资料库](store-assets/screenshots/readme-cubby-progress.webp)
 
-不要授予 `user`、`user:email`、`user:follow`、`admin:org`、`workflow`、`delete_repo`、密钥、审计日志、enterprise、package 或 Webhook 管理权限；扩展不会使用这些权限。
+![Cubby 整理结果](store-assets/screenshots/readme-cubby-review.webp)
 
-如果旧 token 需要重新授权，本地的 Stars、标签、笔记和设置都会保留。新 token 验证成功后才会替换旧凭据。
+详细的数据边界、Provider 协议和恢复规则见 [Cubby Agent 技术参考](docs/zh/cubby-agent.md)。
 
-`gist` 是账号级权限。扩展会创建一个私有 Gist 来同步标签、笔记和收藏信息。
+## 本地优先，可选连接
 
-完整的权限—功能对应关系和未来功能建议见 [.trellis/spec/data/github-token-scopes.md](.trellis/spec/data/github-token-scopes.md)。
+核心数据默认留在当前浏览器。只有 GitHub 同步、你主动使用的 Secret Gist 同步，以及你明确调用的 Cubby 会产生对应网络请求。
 
-Watch 的仓库范围、通知刷新、操作边界，以及 GitHub 2026 Watching API 风险见 [Watch 如何工作](docs/watch-strategy.zh-CN.md)，英文版见 [How Watch works](docs/watch-strategy.md)。
+| 功能 | 数据存哪 | 网络 | 是否必须 |
+|---|---|---|---|
+| Stars、仓库元数据和筛选状态 | IndexedDB 与 `chrome.storage.local` | GitHub API | 核心能力 |
+| 标签、笔记、收藏和标签元数据 | IndexedDB | 默认无；Push 或 Pull 时连接 GitHub Gist | Gist 传输可选 |
+| Watch 快照与通知 | IndexedDB | GitHub API | 可选 `notifications` scope |
+| Following 快照与 For You 缓存 | IndexedDB | GitHub API | Following 需要可选 `read:user` scope |
+| Cubby 对话、恢复记录和产物 | IndexedDB | 你配置的 AI 服务 | 可选 |
+| GitHub Token 和 AI API Key | 加密后存入 `chrome.storage.local` | 仅发送给各自目标服务 | 按能力配置 |
 
-### 另一种方式 --> 本地开发安装
+Secret Gist 的 **Push** 与 **Pull** 只同步笔记内容。仓库元数据始终从 GitHub 重建；
+Watch、Following、For You、Cubby 对话和 Organize 记录不会写入 Gist。
+
+Github token 会进行本地加密。Cubby 对话、恢复记录和产物以未加密形式保存在扩展的 IndexedDB 中。卸载扩展会删除 Chrome 的本地扩展存储，但不会删除 GitHub 账号中的同步 Gist。
+
+项目没有其他后端服务、GitHub 代理、AI 代理、分析 SDK、广告网络或跟踪服务。完整说明见 [隐私政策](docs/zh/privacy-policy.md)。
+
+## 开始使用
+
+### 安装
+
+| | 商店 | 适用浏览器 |
+| :---: | --- | --- |
+| [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome、Edge、Brave、Opera 等 Chromium 内核浏览器 |
+| [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · 即将上架 | Microsoft Edge |
+| [<img src="store-assets/store-badges/firefox.svg" alt="Get it on Firefox Add-ons" height="55">](https://addons.mozilla.org/firefox/) | [Firefox Add-ons](https://addons.mozilla.org/firefox/) · 即将上架 | Firefox |
+| [<img src="store-assets/store-badges/opera.svg" alt="Get it on Opera Add-ons" height="55">](https://addons.opera.com/extensions/) | [Opera Add-ons](https://addons.opera.com/extensions/) · 即将上架 | Opera |
+
+<!-- TODO: Edge、Firefox、Opera 上架后，把对应的占位链接替换为扩展页地址 -->
+
+扩展基于 Manifest V3。安装后打开 `https://github.com/{you}?tab=stars`，管理器会出现在 Stars 页面中。
+
+### 首次同步
+
+1. 打开扩展 **Options** 页
+2. 创建 GitHub Classic PAT，并授予 `repo` 与 `gist` scope
+3. 按需追加 `notifications`（Watch）和 `read:user`（Following）权限
+4. 粘贴 Token，点击 **Save & verify**
+5. 打开 `https://github.com/{you}?tab=stars` 自动启动
+6. 首次进入时自动运行 **Full Sync**
+
+使用预填的 [Classic PAT 创建表单](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager)，设置有限有效期，并只保留需要的 scopes。
+
+<details>
+<summary><strong>查看 GitHub Token 权限</strong></summary>
+
+<br>
+
+| Scope | 要求 | 用途 |
+|---|---|---|
+| `repo` | 必需 | Stars 同步、Star/Unstar、仓库元数据、私有仓库、Watch 范围，以及可访问的 Issue/Pull Request 详情 |
+| `gist` | 必需 | 通过你账号下的 Secret Gist 同步标签、笔记、收藏和标签元数据 |
+| `notifications` | 可选 | Watch Inbox 读取、标记已读和标记完成 |
+| `read:user` | 可选 | Following 读取关注账号及其公开 Star 动态 |
+
+不需要授予 `user`、`user:email`、`user:follow`、`project`、`admin:org`、`workflow`、`delete_repo`、package、密钥、审计日志、enterprise 或 Webhook 管理权限。扩展不会使用这些 scopes。
+
+完整验证行为与凭据生命周期见 [GitHub Token 权限](docs/zh/github-token-permissions.md)。
+
+</details>
+
+## 它不会做什么
+
+Better GitHub Stars Manager 是 Stars 页面的增强层，不是另一个平台：
+
+- **不会擅自修改你的 Star 或 Watch 内容**：只读取和整理
+- **不会复刻 GitHub Explore**：For You 使用公开 GitHub API 然后确定性排序
+- **不会另起后端或代理**：请求直达 GitHub 与你配置的 AI 服务
+- **不会收集遥测**：项目不包含分析 SDK、广告网络或跟踪服务
+- **不会自动读取私人笔记**：Cubby 只在你的指令需要时读取范围内笔记
+
+## 本地开发
+
+项目使用 pnpm。构建扩展：
 
 ```bash
 pnpm install
 pnpm build
 ```
 
-然后在 Chrome 中:
+构建包含 Cubby Agent 开发诊断功能的扩展版本（输出至 `artifacts/agent-diagnostics-dev-dist/`）：
+
+```bash
+pnpm build:agent-dev-diagnostics
+```
+
+在 Chrome 中加载构建结果：
 
 1. 打开 `chrome://extensions`
 2. 开启 **开发者模式**
-3. 点 **加载已解压的扩展程序**
-4. 选择 `dist/` 文件夹
-5. 打开扩展的 **Options** 页，并继续按上方 Token 配置完成设置
+3. 点击 **加载已解压的扩展程序**
+4. 选择项目中的 `dist/` 目录
+5. 打开 **Options**，按上文配置 GitHub Token
 
-## 隐私与存储
+常用验证命令：
 
-扩展的设计是:重数据本地保存,只同步个人批注层。
+```bash
+pnpm typecheck
+pnpm test:logic
+pnpm test:integration
+pnpm test:regressions
+pnpm test:runtime
+pnpm test:smoke
+```
 
-- star 元数据本地存在 IndexedDB。
-- 轻量配置在 `chrome.storage.local`。
-- 标签、笔记与标签元数据可存在你自己 GitHub 账号下的一个专用 secret Gist。
+## 相关文档
 
-Push / Pull 只同步批注层:
-
-- `Push` 把标签、笔记、标签元数据上传到你的私有 Gist。
-- `Pull` 把最新的标签、笔记、标签元数据合并回本地数据库。
-- star 元数据本身留在本地,始终从 GitHub 重建。
-
-没有自建后端,也没有独立的应用账号。
-
-面向商店的隐私声明见 [docs/zh/privacy-policy.md](docs/zh/privacy-policy.md)。
-
-推荐系统的候选来源、评分公式和刷新策略见 [For You 推荐策略](docs/for-you-recommendation-strategy.zh-CN.md)，英文版见 [How For You recommendations work](docs/for-you-recommendation-strategy.md)。
-
-## 许可证
-
-MIT 许可证 —— 见 [LICENSE](./LICENSE)。
-
-Copyright (c) 2026 izumi0uu.
-
-## Friendly Links
-
-- [Linux.do](https://linux.do/) [nodeseek](https://www.nodeseek.com/)
-- [xiaoheihe](https://xiaoheihe.cn) [v2ex](https://www.v2ex.com/)
+- [GitHub Token 权限](docs/zh/github-token-permissions.md)
+- [Watch 的工作方式](docs/zh/watch-strategy.md)
+- [For You 推荐如何工作](docs/zh/for-you-recommendation-strategy.md)
+- [Cubby Agent 技术参考](docs/zh/cubby-agent.md)
+- [隐私政策](docs/zh/privacy-policy.md)
+- [Chrome Web Store 更新说明](docs/zh/chrome-web-store-submission.md)
 
 ## 参与贡献
 
-欢迎在[仓库](https://github.com/izumi0uu/better-github-stars-manager/issues)提 issue 和 PR。
+欢迎在 [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues) 报告问题或提交功能建议。Pull request 也可以直接提交到本仓库。
+
+## 许可证
+
+MIT License，见 [LICENSE](./LICENSE)。
+
+Copyright (c) 2026 izumi0uu。
+
+## 链接
+
+- [GitHub 仓库](https://github.com/izumi0uu/better-github-stars-manager)
+- [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
+- [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues)
+
+## 友情链接
+
+- [Linux.do](https://linux.do/) · [NodeSeek](https://www.nodeseek.com/)
+- [小黑盒](https://xiaoheihe.cn/app/bbs) · [V2EX](https://www.v2ex.com/)

@@ -21,7 +21,7 @@ The extension does not:
 
 The extension processes data only to:
 
-- authenticate the GitHub **Classic PAT** token you provide
+- authenticate the GitHub **Classic PAT** you provide
 - fetch and display your starred repositories
 - store and optionally sync your tags and notes through your own secret GitHub Gist
 - test or run Cubby through the AI service and exact origin you select
@@ -104,18 +104,18 @@ Cubby may send these task-data categories to your selected AI service when neede
 
 - your prompt or bounded task instruction
 - public repository metadata for the selected or frozen scope
-- bounded public code snippets and file paths when you request indexed code search
-- private notes for in-scope repositories only when your current prompt asks Cubby to use them
+- bounded public code snippets and file paths when Cubby uses indexed code search for your request
+- private notes for in-scope repositories when Cubby uses the scoped note tool; trusted instructions limit that use to requests that call for note content
 - the visible, bounded tag taxonomy
 - protocol observations, including tool definitions, bounded tool results, interaction choices, and app-authored summaries
 
 Indexed code search is not exhaustive. GitHub searches its default-branch index, which may omit files or return partial results. The extension revalidates repositories as public and non-archived, reads bounded matching Git blobs, and treats every snippet as untrusted data.
 
-Private notes are read through a scoped tool only after your current prompt asks to use them. Notes and code snippets are treated as untrusted data. A committed tool result may be stored locally and sent again or summarized only to the same bound AI provider during follow-up turns.
+The private-note and repository-code tools are available during ordinary turns. The runtime enforces repository scope, tool authorization, and result bounds, but it does not semantically classify your prompt. Cubby's trusted instructions limit these tools to requests that call for the corresponding data. Notes and code snippets are treated as untrusted data. A committed tool result may be stored locally and sent again or summarized only to the same bound AI provider during follow-up turns.
 
 Cubby does not send these categories as model-visible task data by default:
 
-- private notes you did not ask Cubby to use
+- private notes when your request does not call for note content; this is an instruction-level restriction, not a separate runtime intent classifier
 - credentials or secrets
 - your GitHub token
 - unrelated or out-of-scope stars

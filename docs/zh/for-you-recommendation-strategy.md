@@ -1,6 +1,6 @@
 # For You 推荐如何工作
 
-本文说明 For You 如何选择、排序、存储和刷新公开仓库推荐，也明确了受支持的 GitHub 应用程序接口（API）边界，以及后续改动必须保留的行为约束。另见 [English version](./for-you-recommendation-strategy.md)。
+本文说明 For You 如何选择、排序、存储和刷新公开仓库推荐，也明确了受支持的 GitHub 应用程序接口（API）边界，以及后续改动必须保留的行为约束。另见 [English version](../en/for-you-recommendation-strategy.md)。
 
 ## 目标与边界
 
