@@ -12,6 +12,7 @@ import type { ColumnId } from '@/ui/column-layout';
 import { fitInlineTags } from '@/ui/inline-tag-fit';
 import { createRepositorySearchMatcher } from '@/search/repository-search';
 import { SearchMatchText } from '@/ui/components/SearchMatchText';
+import { RepositoryOwnerAvatar } from '@/ui/components/RepositoryOwnerAvatar';
 
 /**
  * virtualized-list row. Fixed h-16 (64px) MUST match the virtualizer
@@ -23,57 +24,6 @@ const INLINE_TAG_GAP_PX = 4;
 const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
-const REPOSITORY_AVATAR_COLOR_COUNT = 9;
-const REPOSITORY_INITIAL_PATTERN = /[\p{L}\p{N}]/u;
-
-function repositoryAvatarFallback(fullName: string) {
-  const repositoryName = fullName.slice(fullName.lastIndexOf('/') + 1).trim();
-  let initial = '#';
-  for (const character of repositoryName) {
-    if (!REPOSITORY_INITIAL_PATTERN.test(character)) continue;
-    initial = character.toUpperCase();
-    break;
-  }
-  let hash = 2166136261;
-  for (let index = 0; index < fullName.length; index++) {
-    hash ^= fullName.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return { color: (hash >>> 0) % REPOSITORY_AVATAR_COLOR_COUNT, initial };
-}
-
-function RepositoryOwnerAvatar({ fullName, url }: { fullName: string; url: string | undefined }) {
-  const fallback = repositoryAvatarFallback(fullName);
-  return (
-    <span
-      data-repository-avatar-slot
-      data-avatar-color={fallback.color}
-      aria-hidden="true"
-      className="relative grid size-5 shrink-0 place-items-center overflow-hidden rounded-full border border-border"
-    >
-      <span
-        data-repository-avatar-fallback
-        className="gsm-repository-avatar-fallback absolute inset-0 grid place-items-center text-[10px] font-semibold leading-none text-primary-foreground dark:text-background"
-      >
-        {fallback.initial}
-      </span>
-      {url ? (
-        <img
-          key={url}
-          data-repository-avatar
-          src={url}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          className="absolute inset-0 size-full object-cover"
-          onError={(event) => {
-            event.currentTarget.hidden = true;
-          }}
-        />
-      ) : null}
-    </span>
-  );
-}
 
 export const StarRow = memo(function StarRow({
   star,
