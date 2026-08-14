@@ -275,7 +275,7 @@ describe('layout edit interaction lock render behavior', () => {
     expect(toolbarRow).toContain('min-w-max');
     expect(toolbarRow).not.toContain('flex-wrap');
     expect(leftZone).toContain('min-w-0');
-    expect(leftZone).toContain('flex-[0_1_auto]');
+    expect(leftZone).toContain('flex-[1_1_auto]');
     expect(rightZone).toContain('shrink-0');
     expect(rightZone).toContain('whitespace-nowrap');
     expect(markup).toContain('data-toolbar-search="true"');

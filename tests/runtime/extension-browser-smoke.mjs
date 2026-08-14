@@ -2238,7 +2238,7 @@ async function assertToolbarResponsiveLayout(page) {
 
   const desktop = samples.find((sample) => sample.viewportWidth === 1440);
   assert.ok(desktop, 'desktop toolbar sample was missing');
-  assert.equal(desktop.searchWidth >= 240, true, `desktop search remained too short: ${desktop.searchWidth}px`);
+  assert.equal(desktop.searchWidth >= 240, true, `desktop search remained too short: ${JSON.stringify(desktop)}`);
   assert.equal(desktop.searchWidth > desktop.sortWidth, true, 'desktop search was not wider than the sort control');
 
   const searchWidths = new Set(samples.map((sample) => Math.round(sample.searchWidth)));

@@ -383,8 +383,8 @@ export function Toolbar({
   return (
     <div className="border-b border-border bg-card" data-toolbar-root>
       <div className="flex min-h-[52px] min-w-max items-center gap-1 px-2 pl-2.5 min-[1281px]:gap-2 min-[1281px]:px-2.5 min-[1281px]:pl-3.5" data-toolbar-row>
-        {/* Left zone shrinks its search and sort controls before the fixed right rail. */}
-        <div className="flex min-w-0 flex-[0_1_auto] items-center gap-1 min-[1281px]:gap-2" data-toolbar-left>
+        {/* Share free width with the gutter, then shrink search and sort before the fixed right rail. */}
+        <div className="flex min-w-0 flex-[1_1_auto] items-center gap-1 min-[1281px]:gap-2" data-toolbar-left>
         <Tooltip>
           <TooltipTrigger asChild>
             <a
