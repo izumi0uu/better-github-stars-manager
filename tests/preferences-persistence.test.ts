@@ -36,6 +36,13 @@ describe('preferences persistence', () => {
     installChromeMock();
   });
 
+  it('defaults fresh configuration to Chinese', async () => {
+    const { authStore } = await import('../src/auth/auth-store');
+
+    assert.equal(await authStore.getLocale(), 'zh-CN');
+    assert.equal((await authStore.getConfig()).locale, 'zh-CN');
+  });
+
   it('normalizes and persists legacy preference fields', async () => {
     const { authStore, CONFIG_STORAGE_KEY } = await import('../src/auth/auth-store');
     const { useFilterStore, libraryViewPrefsFromFilterState } = await import(

@@ -319,14 +319,14 @@ describe('i18n catalog and locale propagation invariants', () => {
     assert.equal(chinese.openAgentDiagnostics, '打开 Cubby 诊断');
   });
 
-  it('starts with English, then updates from stored locale on mount', async () => {
-    authMock.getLocale.mockResolvedValue('zh-CN');
+  it('starts with Chinese, then honors a stored English locale on mount', async () => {
+    authMock.getLocale.mockResolvedValue('en');
     const host = mountProvider();
 
-    assert.equal(host.querySelector('[data-testid="locale"]')?.textContent, 'en');
-    await flush();
     assert.equal(host.querySelector('[data-testid="locale"]')?.textContent, 'zh-CN');
-    assert.equal(host.querySelector('[data-testid="title"]')?.textContent, getMessages('zh-CN').popup.title);
+    await flush();
+    assert.equal(host.querySelector('[data-testid="locale"]')?.textContent, 'en');
+    assert.equal(host.querySelector('[data-testid="title"]')?.textContent, getMessages('en').popup.title);
   });
 
   it('updates context from local config locale changes and ignores unrelated storage changes', async () => {

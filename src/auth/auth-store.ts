@@ -14,6 +14,7 @@ import {
 import {
   DEFAULT_AUTO_TAG_LIMIT,
   DEFAULT_LIBRARY_VIEW_PREFS,
+  DEFAULT_LOCALE,
   DEFAULT_MIN_TOPIC_REPO_COUNT,
   normalizeLibraryViewPrefs,
   normalizeAutoTagLimit,
@@ -111,7 +112,7 @@ const DEFAULT_CONFIG: Config = {
   },
   agentDataDisclosureAcceptance: null,
   theme: "dark",
-  locale: "en",
+  locale: DEFAULT_LOCALE,
   defaultView: "table",
   lastSyncStarredAt: null,
   gistId: null,

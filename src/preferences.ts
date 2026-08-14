@@ -1,10 +1,12 @@
 import type {
   LibraryViewPrefs,
   LibraryViewSortDir,
+  Locale,
   LibraryViewSortKey,
   WatchCollapsedRepositorySignatures,
 } from '@/types';
 
+export const DEFAULT_LOCALE: Locale = 'zh-CN';
 export const DEFAULT_AUTO_TAG_LIMIT = 5;
 export const MIN_AUTO_TAG_LIMIT = 1;
 export const MAX_AUTO_TAG_LIMIT = 50;

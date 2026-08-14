@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { authStore, CONFIG_STORAGE_KEY } from "@/auth/auth-store";
+import { DEFAULT_LOCALE } from "@/preferences";
 import type { Locale, SyncProgress } from "@/types";
 import type { RadarPartialReason } from '@/radar/radar-model';
 
@@ -3610,7 +3611,7 @@ export function getMessages(locale: Locale): MessageCatalog {
 export const messageFor = getMessages;
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>("en");
+  const [locale, setLocaleState] = useState<Locale>(DEFAULT_LOCALE);
 
   useEffect(() => {
     if (!hasExtensionStorage()) {
