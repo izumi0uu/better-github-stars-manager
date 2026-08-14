@@ -4,6 +4,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   define: {
     __GSM_DEV__: 'true',
+    __GSM_DEV_UI_VISIBLE__: 'true',
     __GSM_VERSION_HASH__: '"test"',
   },
   resolve: {

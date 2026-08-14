@@ -495,6 +495,28 @@ describe('ManagerPanel unstar flow', () => {
     expect(container.querySelector('[data-testid="repo-detail"]')).toBeNull();
   });
 
+  it('closes the helper notice bar with the dismiss control', async () => {
+    const unstarPromise = Promise.resolve();
+    managerMocks.bgCall.mockReturnValueOnce(unstarPromise);
+    const { container } = mountPanel();
+    const confirm = container.querySelector<HTMLButtonElement>('[data-testid="confirm-unstar"]');
+    if (!confirm) throw new Error('Expected mocked unstar control');
+
+    await act(async () => {
+      confirm.click();
+      await unstarPromise;
+      await Promise.resolve();
+    });
+
+    const helper = container.querySelector<HTMLDivElement>('.gsm-helper-text');
+    expect(helper?.textContent).toContain('removed from the current list');
+    const dismiss = helper?.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
+    expect(dismiss).not.toBeNull();
+
+    await act(async () => { dismiss?.click(); });
+    expect(container.querySelector('.gsm-helper-text')).toBeNull();
+  });
+
   it('renders failed unstar repo names as a helper badge without optimistic removal', async () => {
     managerMocks.bgCall.mockRejectedValueOnce(new Error('GitHub rejected the request (403). Token settings: github.com/settings/tokens.'));
     const { container } = mountPanel();

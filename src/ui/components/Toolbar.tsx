@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import {
   Sun, Moon, Search, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow, X,
   Tags, Upload, Download, AlertTriangle, ExternalLink, Home, EyeOff, Star, RefreshCcw,
-  Pencil, ChevronDown,
+  Pencil, ChevronDown, Check, Pause, ClipboardCheck, Loader2,
 } from 'lucide-react';
 import { REPO_URL } from '@/lib/links';
 import type { FilterState } from '@/ui/filter-store';
@@ -15,6 +15,7 @@ import { Spinner } from '@/ui/shadcn/spinner';
 import { SuccessCheck } from '@/ui/shadcn/success-check';
 import { ActionIcon } from '@/ui/shadcn/action-icon';
 import { AgentMascotIcon } from '@/ui/components/AgentMascot';
+import type { AgentToolbarStatusKind } from '@/ui/components/AgentHost';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/ui/shadcn/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/shadcn/select';
@@ -30,6 +31,29 @@ import {
 } from '@/ui/manager-surface';
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 const SURFACE_COUNT_BADGE_CLASS = 'inline-grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none tabular-nums text-primary-foreground';
+const AGENT_STATUS_ICONS: Record<AgentToolbarStatusKind, typeof Check> = {
+  working: Loader2,
+  analyzing: Loader2,
+  applying: Loader2,
+  review: ClipboardCheck,
+  paused: Pause,
+  completed: Check,
+  cancelled: X,
+  failed: AlertTriangle,
+  blocked: AlertTriangle,
+  interrupted: AlertTriangle,
+};
+
+function AgentStatusIcon({ kind }: { kind: AgentToolbarStatusKind }) {
+  const Icon = AGENT_STATUS_ICONS[kind];
+  const spinning = kind === 'working' || kind === 'analyzing' || kind === 'applying';
+  return (
+    <Icon
+      className={cn('size-3.5 shrink-0 text-muted-foreground', spinning && 'animate-spin')}
+      aria-hidden="true"
+    />
+  );
+}
 
 /** Top toolbar for the stars page. */
 type Account = { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null };
@@ -182,6 +206,7 @@ export function Toolbar({
   onAutoAssignTags,
   onOpenAgent,
   agentStatus,
+  agentStatusKind,
   agentActive,
   onStatusPatch,
   onToggleTheme,
@@ -218,6 +243,7 @@ export function Toolbar({
   onAutoAssignTags: () => void;
   onOpenAgent?: () => void;
   agentStatus?: string | null;
+  agentStatusKind?: AgentToolbarStatusKind | null;
   agentActive?: boolean;
   onStatusPatch?: (patch: Partial<SyncStatus>) => void;
   onToggleTheme: () => void;
@@ -269,8 +295,6 @@ export function Toolbar({
     { 'bg-background text-foreground shadow-sm': active },
   );
 
-  const gistBusy = pendingAction === 'gistPush' || pendingAction === 'gistPull'
-    || successAction === 'gistPush' || successAction === 'gistPull';
   const gistPhaseAction = pendingAction === 'gistPull' || successAction === 'gistPull'
     ? 'gistPull'
     : pendingAction === 'gistPush' || successAction === 'gistPush'
@@ -357,8 +381,10 @@ export function Toolbar({
   };
 
   return (
-    <div className="border-b border-border bg-card">
-      <div className="flex min-h-[52px] flex-wrap items-center gap-2 px-2.5 pl-3.5">
+    <div className="border-b border-border bg-card" data-toolbar-root>
+      <div className="flex min-h-[52px] min-w-max items-center gap-1 px-2 pl-2.5 min-[1281px]:gap-2 min-[1281px]:px-2.5 min-[1281px]:pl-3.5" data-toolbar-row>
+        {/* Left zone shrinks its search and sort controls before the fixed right rail. */}
+        <div className="flex min-w-0 flex-[0_1_auto] items-center gap-1 min-[1281px]:gap-2" data-toolbar-left>
         <Tooltip>
           <TooltipTrigger asChild>
             <a
@@ -367,14 +393,14 @@ export function Toolbar({
               rel="noreferrer"
               aria-label={m.toolbar.starRepoTitle}
               title={m.toolbar.starRepoTitle}
-              className={cn('group/product grid size-9 shrink-0 place-items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring', {
+              className={cn('group/product grid size-8 shrink-0 place-items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring min-[1025px]:size-9', {
                 'pointer-events-none opacity-50': layoutEditing,
+                'max-[900px]:hidden': true,
               })}
               {...getLockedAnchorProps(layoutEditing)}
             >
               <span
-                className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground transition-[background-color,color,transform] duration-150 ease-out group-hover/product:bg-primary-foreground group-hover/product:text-primary group-active/product:scale-95 group-active/product:bg-primary-foreground group-active/product:text-primary motion-reduce:transform-none motion-reduce:transition-none"
-                aria-hidden="true"
+                className="grid size-6 place-items-center rounded-md bg-primary text-primary-foreground transition-[background-color,color,transform] duration-150 ease-out group-hover/product:bg-primary-foreground group-hover/product:text-primary group-active/product:scale-95 group-active/product:bg-primary-foreground group-active/product:text-primary motion-reduce:transform-none motion-reduce:transition-none min-[1025px]:size-7"
               >
                 <Star className="size-4" />
               </span>
@@ -385,9 +411,10 @@ export function Toolbar({
 
         {onSurfaceChange && (
           <div
-            className="relative flex h-[52px] self-stretch"
+            className="relative flex h-[52px] shrink-0 self-stretch max-[768px]:hidden"
             role="tablist"
             aria-label={m.manager.surfaceNavigation}
+            data-coach-target="surface-tabs"
           >
             <button
               ref={starsTabRef}
@@ -400,7 +427,7 @@ export function Toolbar({
               disabled={layoutEditing}
               onKeyDown={(event) => handleSurfaceKeyDown(event, 'stars')}
               onClick={() => onSurfaceChange('stars')}
-              className={cn('relative inline-flex h-full items-center gap-1.5 px-3 text-[13px] font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', {
+              className={cn('relative inline-flex h-full items-center gap-1 px-1 text-[12px] font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring min-[1025px]:gap-1.5 min-[1025px]:px-3 min-[1025px]:text-[13px]', {
                 'text-foreground': starsSurface,
               })}
             >
@@ -420,7 +447,7 @@ export function Toolbar({
               disabled={layoutEditing}
               onKeyDown={(event) => handleSurfaceKeyDown(event, 'watch')}
               onClick={() => onSurfaceChange('watch')}
-              className={cn('relative inline-flex h-full items-center gap-1.5 px-3 text-[13px] font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', {
+              className={cn('relative inline-flex h-full items-center gap-1 px-1 text-[12px] font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring min-[1025px]:gap-1.5 min-[1025px]:px-3 min-[1025px]:text-[13px]', {
                 'text-foreground': watchSurface,
               })}
             >
@@ -448,7 +475,7 @@ export function Toolbar({
               disabled={layoutEditing}
               onKeyDown={(event) => handleSurfaceKeyDown(event, 'radar')}
               onClick={() => onSurfaceChange('radar')}
-              className={cn('relative inline-flex h-full items-center gap-1.5 px-3 text-[13px] font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', {
+              className={cn('relative inline-flex h-full items-center gap-1 px-1 text-[12px] font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring min-[1025px]:gap-1.5 min-[1025px]:px-3 min-[1025px]:text-[13px]', {
                 'text-foreground': surface === 'radar',
               })}
             >
@@ -477,7 +504,7 @@ export function Toolbar({
 
         {starsSurface && (
           <>
-        <div className="relative min-w-[220px] flex-1">
+        <div className="relative min-w-[72px] flex-[1_1_20rem]" data-toolbar-search>
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={searchRef}
@@ -508,7 +535,7 @@ export function Toolbar({
           if (layoutEditing) return;
           f.setSort(value as typeof f.sortKey);
         }}>
-          <SelectTrigger disabled={layoutEditing} className="h-9 w-[170px]">
+          <SelectTrigger disabled={layoutEditing} className="h-9 w-[clamp(5rem,12vw,10.625rem)] shrink min-[641px]:min-w-[7.5rem]">
             <SelectValue placeholder={m.toolbar.sortName} />
           </SelectTrigger>
           <SelectContent>
@@ -522,7 +549,7 @@ export function Toolbar({
         <TButton
           variant="outline"
           size="icon"
-          className="h-9 w-9"
+          className="h-9 w-9 shrink-0 max-[900px]:hidden"
           tip={m.toolbar.toggleSortDir}
           seenTooltips={seenTooltips}
           onStatusPatch={onStatusPatch}
@@ -533,9 +560,8 @@ export function Toolbar({
             {f.sortDir === 'asc' ? <ArrowUpNarrowWide className="size-4" /> : <ArrowDownWideNarrow className="size-4" />}
           </ActionIcon>
         </TButton>
-
         {/* Sync primary (default style) + Full Sync under caret; menu right-aligns to the split. */}
-        <div className="inline-flex h-9 items-stretch overflow-hidden rounded-md">
+        <div className="inline-flex h-9 shrink-0 items-stretch overflow-hidden rounded-md max-[480px]:hidden">
           <TButton
             className="h-9 rounded-r-none border border-r-0 border-transparent hover:border-primary"
             onClick={() => runSync('syncIncremental', m.toolbar.syncButton)}
@@ -553,7 +579,7 @@ export function Toolbar({
               successAction={successAction}
               idle={<RefreshCw className="size-4" data-icon="inline-start" />}
             />
-            {m.toolbar.syncButton}
+            <span className="max-[1280px]:hidden" data-toolbar-action-label="sync">{m.toolbar.syncButton}</span>
             {pendingAction === 'syncIncremental' && progressCount && (
               <span className="gsm-inline-progress-count">{progressCount}</span>
             )}
@@ -614,9 +640,8 @@ export function Toolbar({
         <TButton
           variant="ghost"
           size="sm"
-          className="h-9"
+          className="h-9 shrink-0 max-[768px]:hidden"
           onClick={() => onAutoAssignTags()}
-          disabled={actionBusy || layoutEditing}
           tip={m.toolbar.autoAssignTitle}
           seenTooltips={seenTooltips}
           onStatusPatch={onStatusPatch}
@@ -628,12 +653,17 @@ export function Toolbar({
             successAction={successAction}
             idle={<Tags data-icon="inline-start" />}
           />
-          {m.toolbar.autoAssignButton}
+          <span className="max-[1280px]:hidden" data-toolbar-action-label="auto-tags">{m.toolbar.autoAssignButton}</span>
         </TButton>
           </>
         )}
+        </div>
 
-        <span className="flex-1" />
+        {/* Flexible gutter preserves separation only while real free width exists. */}
+        <div className="min-w-0 flex-1" aria-hidden="true" data-toolbar-spacer />
+
+        {/* Right rail stays on the same row and never wraps internally. */}
+        <div className="flex shrink-0 items-center gap-1 whitespace-nowrap min-[1281px]:gap-2" data-toolbar-right>
 
 
         {/* Optional AI workbench entry — post-spacer, independent of Auto Tags. */}
@@ -641,20 +671,17 @@ export function Toolbar({
           <TButton
             variant="outline"
             size="sm"
-            className="h-9"
+            className="h-9 shrink-0 max-[768px]:hidden"
             onClick={() => onOpenAgent()}
-            disabled={layoutEditing}
             tip={m.toolbar.agentTitle}
             seenTooltips={seenTooltips}
-            onStatusPatch={onStatusPatch}
+            aria-label={agentStatus ? `${m.toolbar.agentButton} · ${agentStatus}` : m.toolbar.agentButton}
             data-coach-target="agent"
-            aria-label={m.toolbar.agentButton}
             aria-busy={agentActive}
           >
             <AgentMascotIcon running={agentActive} />
-            <span className="max-w-36 truncate">
-              {agentStatus ? `${m.toolbar.agentButton} · ${agentStatus}` : m.toolbar.agentButton}
-            </span>
+            {agentStatusKind ? <AgentStatusIcon kind={agentStatusKind} /> : null}
+            <span className="max-w-36 truncate max-[1280px]:hidden" data-toolbar-action-label="agent">{m.toolbar.agentButton}</span>
           </TButton>
         )}
 
@@ -670,8 +697,7 @@ export function Toolbar({
               type="button"
               variant="outline"
               size="sm"
-              className={cn('h-9 gap-1.5', { 'bg-muted/60': gistMenuOpen })}
-              disabled={actionBusy || layoutEditing}
+              className={cn('h-9 shrink-0 gap-1.5 max-[640px]:hidden', { 'bg-muted/60': gistMenuOpen })}
               aria-expanded={gistMenuOpen}
               aria-label={m.toolbar.gistButton}
               title={m.toolbar.gistTitle}
@@ -686,7 +712,7 @@ export function Toolbar({
               ) : (
                 <Download className="size-4" data-icon="inline-start" />
               )}
-              <span className={cn({ 'max-sm:hidden': !gistBusy })}>{gistLabel}</span>
+              <span className="max-[1280px]:hidden" data-toolbar-action-label="gist">{gistLabel}</span>
               <ChevronDown className="size-3.5 opacity-70" />
             </Button>
           )}
@@ -778,7 +804,7 @@ export function Toolbar({
             <Button
               variant="ghost"
               size="icon"
-              className={cn('h-9 w-9 max-[720px]:hidden', { 'pointer-events-none opacity-50': layoutEditing })}
+              className={cn('h-9 w-9 max-[1024px]:hidden', { 'pointer-events-none opacity-50': layoutEditing })}
               asChild
             >
               <a href="https://github.com" title={m.toolbar.githubHomeTitle} {...getLockedAnchorProps(layoutEditing)}>
@@ -792,7 +818,7 @@ export function Toolbar({
         {account?.username && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background py-0.5 pl-0.5 pr-2.5 max-[720px]:hidden">
+              <div className="inline-grid size-8 shrink-0 place-items-center rounded-full border border-border bg-background min-[1025px]:flex min-[1025px]:h-8 min-[1025px]:w-auto min-[1025px]:gap-1.5 min-[1025px]:p-0.5" data-toolbar-account>
                 {account.avatarUrl ? (
                   <img
                     src={account.avatarUrl}
@@ -805,12 +831,13 @@ export function Toolbar({
                     {account.username.slice(0, 2).toUpperCase()}
                   </span>
                 )}
-                <span className="max-w-[100px] truncate text-xs font-medium max-[940px]:hidden">@{account.username}</span>
+                <span className="hidden max-w-[100px] truncate pr-2 text-xs font-medium min-[1025px]:inline">@{account.username}</span>
               </div>
             </TooltipTrigger>
             <TooltipContent>{m.toolbar.accountTitle(account.username)}</TooltipContent>
           </Tooltip>
         )}
+        </div>
       </div>
 
       {starsSurface && (

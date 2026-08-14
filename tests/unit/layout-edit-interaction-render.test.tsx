@@ -51,6 +51,7 @@ function renderToolbarViewTabs({
   agentActive,
   watchUnreadCount = 7,
   radarUnseenCount = 0,
+  account,
 }: {
   layoutMode: 'default' | 'custom';
   customPreviewing: boolean;
@@ -59,11 +60,12 @@ function renderToolbarViewTabs({
   agentActive?: boolean;
   watchUnreadCount?: number;
   radarUnseenCount?: number;
+  account?: { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null };
 }) {
   return renderToStaticMarkup(
     <TooltipProvider>
       <Toolbar
-        account={null}
+        account={account ?? null}
         f={fakeFilterState()}
         status={null}
         loading={false}
@@ -244,7 +246,46 @@ describe('layout edit interaction lock render behavior', () => {
     expect(syncButton).toBeDefined();
     expect(syncButton).toContain('border-transparent');
     expect(syncButton).toContain('border-r-0');
+
     expect(syncButton).toContain('hover:border-primary');
+  });
+  it('keeps one responsive toolbar row and hides all action labels at the same breakpoint', () => {
+    const markup = renderToolbarViewTabs({
+      layoutMode: 'default',
+      customPreviewing: false,
+      agentActive: false,
+      account: {
+        username: 'octocat',
+        avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
+        displayName: 'The Octocat',
+        gistId: '0123456789abcdef',
+      },
+    });
+    const toolbarRow = markup.match(/<div[^>]*data-toolbar-row="true"[^>]*>/)?.[0];
+    const leftZone = markup.match(/<div[^>]*data-toolbar-left="true"[^>]*>/)?.[0];
+    const rightZone = markup.match(/<div[^>]*data-toolbar-right="true"[^>]*>/)?.[0];
+    const accountTrigger = markup.match(/<div[^>]*data-toolbar-account="true"[^>]*>/)?.[0];
+    const hiddenActionLabels = [
+      'Sync',
+      'Auto Tags',
+      'Cubby',
+      'Gist',
+    ].map((label) => markup.match(new RegExp(`<span[^>]*max-\\[1280px\\]:hidden[^>]*>${label}</span>`))?.[0]);
+
+    expect(toolbarRow).toContain('min-w-max');
+    expect(toolbarRow).not.toContain('flex-wrap');
+    expect(leftZone).toContain('min-w-0');
+    expect(leftZone).toContain('flex-[0_1_auto]');
+    expect(rightZone).toContain('shrink-0');
+    expect(rightZone).toContain('whitespace-nowrap');
+    expect(markup).toContain('data-toolbar-search="true"');
+    expect(markup).toContain('min-w-[72px]');
+    expect(markup).toContain('w-[clamp(5rem,12vw,10.625rem)]');
+    expect(hiddenActionLabels.every(Boolean)).toBe(true);
+    expect(accountTrigger).toContain('size-8');
+    expect(accountTrigger).toContain('rounded-full');
+    expect(markup).toContain('hidden max-w-[100px]');
+    expect(markup).toContain('min-[1025px]:inline');
   });
 
   it('renders locked helper attributes and suppresses anchor activation', () => {

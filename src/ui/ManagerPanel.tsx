@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Sparkles, X } from 'lucide-react';
 import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
 import { Toolbar } from '@/ui/components/Toolbar';
@@ -156,6 +156,7 @@ export function ManagerPanel() {
   const [agentHostMounted, setAgentHostMounted] = useState(false);
   const [agentPresentation, setAgentPresentation] = useState<AgentHostPresentation>({
     status: null,
+    statusKind: null,
     active: false,
   });
   const [coachStep, setCoachStep] = useState<number | null>(null);
@@ -565,7 +566,7 @@ export function ManagerPanel() {
           onAutoAssignTags={() => { void autoTagAgentPrompt.requestAutoTags(); }}
           onOpenAgent={openAgentPanel}
           agentStatus={agentPresentation.status}
-          agentActive={agentPresentation.active}
+          agentStatusKind={agentPresentation.statusKind}
           onStatusPatch={applyStatusPatch}
           onToggleTheme={toggleTheme}
           onTogglePanel={hidePanel}
@@ -632,13 +633,21 @@ export function ManagerPanel() {
         </div>}
 
         {starsSurface && (info || unstarFeedback) && (
-          <div className="gsm-helper-text border-b border-border bg-card px-3 py-1">
+          <div className="gsm-helper-text flex items-center gap-1 border-b border-border bg-card px-3 py-1">
             <span
               key={helperInfoKey(info, unstarFeedback)}
-              className="gsm-helper-text-update inline-block rounded-sm px-1 transition-[background-color,opacity,transform] duration-150"
+              className="gsm-helper-text-update inline-block min-w-0 rounded-sm px-1 transition-[background-color,opacity,transform] duration-150"
             >
               <HelperInfoText info={info} unstarFeedback={unstarFeedback} m={m} />
             </span>
+            <button
+              type="button"
+              aria-label={m.common.close}
+              onClick={() => { setInfo(null); setUnstarFeedback(null); }}
+              className="ml-auto inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <X className="size-3" aria-hidden="true" />
+            </button>
           </div>
         )}
 
@@ -666,7 +675,6 @@ export function ManagerPanel() {
 
           <div
             ref={bindListRef}
-            data-coach-target={starsSurface ? 'repo' : undefined}
             data-surface={surface}
             className="no-scrollbar flex-1 overflow-auto"
           >
@@ -1010,12 +1018,12 @@ function BackfillCard({
   );
 }
 
-const COACH_TARGETS = ['sync', 'auto-tags', 'tags', 'repo', 'hide-panel'] as const;
+const COACH_TARGETS = ['surface-tabs', 'sync', 'auto-tags', 'agent', 'hide-panel'] as const;
 const COACH_SPOT_PADDING: Record<(typeof COACH_TARGETS)[number], number> = {
+  'surface-tabs': 6,
   sync: 4,
   'auto-tags': 4,
-  tags: 10,
-  repo: 10,
+  agent: 4,
   'hide-panel': 4,
 };
 
@@ -1048,7 +1056,11 @@ function CoachOverlay({
     if (!root || !el) return;
     const r = el.getBoundingClientRect();
     const rr = root.getBoundingClientRect();
-    setSpot({ left: r.left - rr.left, top: r.top - rr.top, w: r.width, h: r.height });
+    const left = Math.max(0, r.left - rr.left - padding);
+    const top = Math.max(0, r.top - rr.top - padding);
+    const right = Math.min(rr.width, r.right - rr.left + padding);
+    const bottom = Math.min(rr.height, r.bottom - rr.top + padding);
+    setSpot({ left, top, w: right - left, h: bottom - top });
   };
 
   useEffect(() => {
@@ -1088,18 +1100,21 @@ function CoachOverlay({
 
   return (
     // Full-screen click shield: blocks pointer events from reaching the page beneath
-    // (toolbar buttons can't be clicked OR hovered). Several highlights are destructive
-    // if clicked — step 1 would start a real sync, step 4 would unmount the panel and
-    // kill the tour. The card below opts back into pointer-events-auto.
-    <div className="gsm-z-overlay pointer-events-auto absolute inset-0">
+    // (toolbar buttons cannot be clicked or hovered). Sync would start network work,
+    // while Hide panel would unmount the manager and end the tour. The card below
+    // opts back into pointer events.
+    <div
+      className="gsm-z-overlay pointer-events-auto absolute inset-0"
+      data-coach-step-target={target}
+    >
       {spot && (
         <div
           className="gsm-coach-spotlight absolute"
           style={{
-            left: spot.left - padding,
-            top: spot.top - padding,
-            width: spot.w + padding * 2,
-            height: spot.h + padding * 2,
+            left: spot.left,
+            top: spot.top,
+            width: spot.w,
+            height: spot.h,
             borderRadius: 10,
             border: '2px solid hsl(var(--primary))',
             boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.5)',

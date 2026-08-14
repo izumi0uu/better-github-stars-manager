@@ -10,6 +10,7 @@ if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });
 runPnpm('build', {
   GSM_DEV: 'true',
   GSM_RELEASE: 'false',
+  GSM_HIDE_DEV_UI: process.env.GSM_HIDE_DEV_UI ?? 'true',
   GSM_DIST_DIR: path.relative(root, outDir),
 });
 

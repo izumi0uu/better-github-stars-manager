@@ -23,6 +23,7 @@ describe('Agent workbench ownership and repository selection', () => {
     const toolbar = readFileSync('src/ui/components/Toolbar.tsx', 'utf8');
     expect(toolbar).toContain('onClick={() => onAutoAssignTags()}');
     expect(toolbar).toContain('onClick={() => onOpenAgent()}');
+    expect(toolbar).toContain('data-coach-target="agent"');
     expect(toolbar).not.toContain('Retry failed only');
   });
 });

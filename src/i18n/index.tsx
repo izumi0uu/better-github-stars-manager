@@ -2331,21 +2331,21 @@ const messages: Record<Locale, MessageCatalog> = {
       coachTitle: "Quick tour",
       coachIntro:
         "Here are the core controls you'll use most. Follow along — this shows only once.",
-      coachStep1Title: "Sync your stars",
+      coachStep1Title: "Meet the three workspaces",
       coachStep1Body:
-        "Sync pulls in newly starred repos since your last visit. It runs automatically on first load; click it anytime to refresh. It won't create tags by itself.",
-      coachStep2Title: "Generate tags when you choose",
+        "Stars organizes your saved repositories. Watch surfaces Issue and Pull Request threads from those repositories. Following shows repositories recently starred by people you follow, plus For You recommendations.",
+      coachStep2Title: "Keep Stars in sync",
       coachStep2Body:
-        "Auto Tags adds local tags from synced GitHub topics only when you run it. Sync and Full Sync never change tags.",
-      coachStep3Title: "Filter by tags",
+        "Sync fetches stars added since your last visit. Open its menu for Full Sync when you need a complete re-pull. Neither action creates or changes tags.",
+      coachStep3Title: "Add topic-based tags",
       coachStep3Body:
-        "The Tags sidebar lists all your tags, sorted by how often they're used. Click any tag (the whole row) to filter the list. Hover a tag for the delete button.",
-      coachStep4Title: "Open a repo",
+        "Auto Tags adds local tags from synced GitHub topics only when you run it. It never runs as part of Sync.",
+      coachStep4Title: "Organize with Cubby",
       coachStep4Body:
-        "Click any row to open the detail drawer — edit tags, write notes, and accept suggested tags there.",
-      coachStep5Title: "Hide the panel",
+        "Ask Cubby about a selected repository or your current Stars view. It can also help organize your library, with library-wide changes reviewed before Apply.",
+      coachStep5Title: "Exit the panel",
       coachStep5Body:
-        "Want GitHub's native stars list for a moment? Click here to retract the overlay — a floating button stays on screen to bring the panel back.",
+        "Click here to return to GitHub's native Stars page. A floating button stays on screen so you can reopen the manager at any time.",
       coachNext: "Next",
       coachBack: "Back",
       coachSkip: "Skip tour",
@@ -3590,21 +3590,21 @@ const messages: Record<Locale, MessageCatalog> = {
         "Pull 会把 Gist 中的标签和笔记合并到本设备(按仓库、后写覆盖)。在另一台设备编辑后使用。",
       coachTitle: "快速上手",
       coachIntro: "下面是最常用的核心控件。跟着看一遍——本引导只显示一次。",
-      coachStep1Title: "同步你的 stars",
+      coachStep1Title: "认识三个工作区",
       coachStep1Body:
-        "Sync 按钮会拉取你自上次访问以来新 star 的仓库。首次加载会自动跑;想刷新随时点它。同步本身不会创建标签。",
-      coachStep2Title: "需要时再生成标签",
+        "Stars 用于整理已收藏的仓库；Watch 汇总这些仓库的 Issue 和 Pull Request 动态；Following 展示关注用户最近 Star 的仓库，并提供 For You 推荐。",
+      coachStep2Title: "保持 Stars 最新",
       coachStep2Body:
-        "Auto Tags 只会在你运行它时，根据已同步的 GitHub 主题添加本地标签。Sync 和 Full Sync 都不会改动标签。",
-      coachStep3Title: "按标签筛选",
+        "Sync 拉取自上次访问后新增的 Star；需要完整重拉时，从旁边的菜单选择 Full Sync。两者都不会创建或修改标签。",
+      coachStep3Title: "按 GitHub Topics 添加标签",
       coachStep3Body:
-        "Tags 侧栏列出所有标签，按使用频次排序。点击任意标签(整行)即可筛选列表。鼠标悬停标签会出现删除按钮。",
-      coachStep4Title: "打开某个仓库",
+        "Auto Tags 只在你主动运行时，根据已同步的 GitHub Topics 添加本地标签；它不会随 Sync 自动执行。",
+      coachStep4Title: "用 Cubby 整理仓库",
       coachStep4Body:
-        "点击任意一行打开详情抽屉——在那里编辑标签、写笔记、接受建议标签。",
-      coachStep5Title: "隐藏面板",
+        "可以让 Cubby 分析选中的仓库或当前 Stars 视图，也可以协助整理整个收藏库；全库变更会先进入 Review，再由你 Apply。",
+      coachStep5Title: "退出管理面板",
       coachStep5Body:
-        "想暂时用 GitHub 原生 stars 列表?点这里收起悬浮面板——屏幕上会留一个浮动按钮,随时能把面板调回来。",
+        "点击这里返回 GitHub 原生 Stars 页面。屏幕上会保留一个悬浮按钮，随时可以重新打开管理面板。",
       coachNext: "下一步",
       coachBack: "上一步",
       coachSkip: "跳过引导",

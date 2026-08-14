@@ -5,6 +5,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
+import { DEV_UI_VISIBLE } from '@/dev';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -55,6 +56,9 @@ afterEach(() => {
 });
 
 describe('FloatingLocaleToggle', () => {
+  it('uses the dedicated dev UI visibility constant', () => {
+    expect(DEV_UI_VISIBLE).toBe(true);
+  });
   it('surfaces dev clear failure and clears the error on retry intent', async () => {
     sendMessage.mockResolvedValueOnce({ ok: false, error: 'network-down' });
     const { container } = mountToggle();
