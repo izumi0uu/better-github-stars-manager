@@ -11,6 +11,7 @@ import {
 import type { GitHubCredentialSnapshot } from '@/auth/auth-store';
 import {
   GitHubRecommendationError,
+  type RecommendationIgnoreRecord,
   type RecommendationRecord,
   type RecommendationSourceSnapshot,
   type RecommendationStateRecord,
@@ -106,6 +107,9 @@ function makeCoordinator(input: {
       return currentState;
     }),
     listRecommendations: vi.fn(async () => [record]),
+    ignoreRepository: vi.fn(async () => { events.push('ignore'); }),
+    listIgnored: vi.fn(async (): Promise<RecommendationIgnoreRecord[]> => []),
+    restoreIgnored: vi.fn(async () => { events.push('restore'); }),
   };
   const dependencies: RecommendationRefreshCoordinatorDependencies = {
     runSerialized: async <T,>(operation: () => Promise<T>) => operation(),
@@ -159,6 +163,21 @@ describe('Recommendation refresh coordinator', () => {
     const h = makeCoordinator({
       state: state({
         errorCode: 'rate_limited',
+        nextAllowedAt: new Date(NOW + 60_000).toISOString(),
+      }),
+    });
+
+    const result = await h.coordinator.refresh();
+    expect(h.dependencies.fetchRecommendations).not.toHaveBeenCalled();
+    expect(result.published).toBe(false);
+    expect(result.status.snapshotStatus).toBe('cooldown');
+  });
+
+  it('skips Search while a successful exhausted-bucket cooldown is active', async () => {
+    const h = makeCoordinator({
+      state: state({
+        errorCode: null,
+        rateLimitRemaining: 0,
         nextAllowedAt: new Date(NOW + 60_000).toISOString(),
       }),
     });
@@ -287,5 +306,49 @@ describe('Recommendation refresh coordinator', () => {
 
     expect(h.store.prepareAccount).toHaveBeenCalledTimes(1);
     expect(h.store.listRecommendations).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads excluded repository keys for the account being refreshed', async () => {
+    const h = makeCoordinator();
+    await h.coordinator.refresh();
+    expect(h.dependencies.loadExcludedRepositoryKeys).toHaveBeenCalledWith('viewer');
+  });
+
+  it('persists an ignored repository for the authenticated account and broadcasts', async () => {
+    const h = makeCoordinator();
+    await h.coordinator.ignoreRepository('one/repo');
+    expect(h.store.ignoreRepository).toHaveBeenCalledWith('viewer', 'one/repo', undefined);
+    expect(h.events).toContain('ignore');
+    expect(h.events).toContain('broadcast');
+  });
+  it('rejects ignoring a repository without an authenticated account', async () => {
+    const h = makeCoordinator();
+    h.setAuth(authSnapshot({ accountLogin: null, mainToken: null }));
+    await expect(h.coordinator.ignoreRepository('one/repo')).rejects.toThrow(
+      GitHubRecommendationError,
+    );
+    expect(h.store.ignoreRepository).not.toHaveBeenCalled();
+  });
+
+  it('restores an ignored repository and broadcasts', async () => {
+    const h = makeCoordinator();
+    await h.coordinator.restoreIgnored('one/repo');
+    expect(h.store.restoreIgnored).toHaveBeenCalledWith('viewer', 'one/repo');
+    expect(h.events).toContain('restore');
+    expect(h.events).toContain('broadcast');
+  });
+
+  it('includes the ignored list in query responses', async () => {
+    const ignoredRow = {
+      id: 'viewer:one/repo',
+      accountLogin: 'viewer',
+      repositoryKey: 'one/repo',
+      repositoryFullName: 'One/Repo',
+      ignoredAt: new Date(NOW).toISOString(),
+    };
+    const h = makeCoordinator();
+    h.store.listIgnored.mockResolvedValueOnce([ignoredRow]);
+    const response = await h.coordinator.query();
+    expect(response.ignored).toEqual([ignoredRow]);
   });
 });

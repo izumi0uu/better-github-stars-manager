@@ -8,7 +8,6 @@ import {
   getRadarState,
   listRadarActivities,
   markRadarActivitiesSeen,
-  listRadarSuggestedTags,
   makeRadarStatus,
   prepareRadarAccount,
   radarSnapshotStatus,
@@ -57,6 +56,7 @@ function activity(
     repositoryLanguage: 'Rust',
     repositoryLanguageColor: '#dea584',
     repositoryStargazerCount: 7,
+    repositoryTopics: ['remote'],
     viewerHadStarred: false,
     starredAt,
     dismissedAt: null,
@@ -129,6 +129,8 @@ describe('Radar snapshot storage', () => {
       viewerHasStarred: true,
       favorite: true,
       displayedStargazerCount: 321,
+      repositoryTopics: ['local'],
+      suggestedTags: ['local'],
     });
     expect(joined[0]?.tags).toEqual(['infra', 'rust']);
   });
@@ -144,14 +146,23 @@ describe('Radar snapshot storage', () => {
     expect(await getRadarState('another-account')).toBeNull();
   });
 
-  it('normalizes legacy Radar rows that predate avatar and seen fields', async () => {
+  it('normalizes legacy Radar rows that predate avatar, topic, and seen fields', async () => {
     const legacy = activity('legacy', 'owner/legacy', FIRST);
     Reflect.deleteProperty(legacy, 'actorAvatarUrl');
+    Reflect.deleteProperty(legacy, 'repositoryTopics');
     Reflect.deleteProperty(legacy, 'seenAt');
     await db.radarActivities.put(legacy);
 
     expect(await followedActivities()).toMatchObject([
-      { id: 'legacy', source: 'following', actorAvatarUrl: null, seen: false, seenAt: null },
+      {
+        id: 'legacy',
+        source: 'following',
+        actorAvatarUrl: null,
+        repositoryTopics: [],
+        suggestedTags: [],
+        seen: false,
+        seenAt: null,
+      },
     ]);
   });
 
@@ -265,16 +276,56 @@ describe('Radar snapshot storage', () => {
     expect(await db.tagMeta.get('keep')).toBeDefined();
   });
 
-  it('merges default and user tag suggestions while excluding deleted names', async () => {
-    await db.tagMeta.bulkPut([
-      { name: 'Personal', dimension: null, color: null, excluded: false, mtime: FIRST },
-      { name: 'ai', dimension: null, color: null, excluded: true, mtime: SECOND },
-      { name: ' ', dimension: null, color: null, excluded: false, mtime: FIRST },
+  it('derives distinct suggestions from cached topics and only live local Star topics', async () => {
+    await db.stars.bulkPut([
+      { ...star('owner/live'), topics: ['local-live', 'excluded-topic'] },
+      { ...star('owner/tombstoned', 1, true), topics: ['local-tombstone'] },
+      {
+        ...star('owner/nonstarred'),
+        topics: ['local-nonstarred'],
+        viewer_has_starred: false,
+      },
     ]);
+    await db.tagMeta.put({
+      name: 'EXCLUDED-TOPIC',
+      dimension: null,
+      color: null,
+      excluded: true,
+      mtime: SECOND,
+    });
+    await commitRadarSnapshot(snapshot([
+      activity('live', 'owner/live', SECOND, {
+        repositoryTopics: ['remote-live', 'excluded-topic'],
+      }),
+      activity('tombstoned', 'owner/tombstoned', SECOND, {
+        repositoryTopics: ['remote-tombstone', 'excluded-topic'],
+      }),
+      activity('nonstarred', 'owner/nonstarred', SECOND, {
+        repositoryTopics: ['remote-nonstarred'],
+      }),
+      activity('remote', 'owner/remote', SECOND, {
+        repositoryTopics: ['topic-one', 'topic-two'],
+      }),
+    ]));
 
-    const suggestions = await listRadarSuggestedTags();
-    expect(suggestions).toContain('Personal');
-    expect(suggestions).toContain('infra');
-    expect(suggestions).not.toContain('ai');
+    expect((await db.radarActivities.get('remote'))?.repositoryTopics)
+      .toEqual(['topic-one', 'topic-two']);
+    const rows = new Map((await followedActivities()).map((row) => [row.repositoryKey, row]));
+    expect(rows.get('owner/live')).toMatchObject({
+      repositoryTopics: ['excluded-topic', 'local-live'],
+      suggestedTags: ['local-live'],
+    });
+    expect(rows.get('owner/tombstoned')).toMatchObject({
+      repositoryTopics: ['excluded-topic', 'remote-tombstone'],
+      suggestedTags: ['remote-tombstone'],
+    });
+    expect(rows.get('owner/nonstarred')).toMatchObject({
+      repositoryTopics: ['remote-nonstarred'],
+      suggestedTags: ['remote-nonstarred'],
+    });
+    expect(rows.get('owner/remote')).toMatchObject({
+      repositoryTopics: ['topic-one', 'topic-two'],
+      suggestedTags: ['topic-one', 'topic-two'],
+    });
   });
 });

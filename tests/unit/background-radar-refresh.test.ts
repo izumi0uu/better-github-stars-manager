@@ -53,6 +53,7 @@ const activity = {
   repositoryLanguage: 'TypeScript',
   repositoryLanguageColor: '#3178c6',
   repositoryStargazerCount: 10,
+  repositoryTopics: ['repo-topic'],
   viewerHadStarred: false,
   starredAt: '2026-08-10T11:00:00.000Z',
   dismissedAt: null,
@@ -80,6 +81,7 @@ const followingActivity = {
   viewerHasStarred: false,
   favorite: false,
   tags: [],
+  suggestedTags: ['repo-topic'],
   displayedStargazerCount: activity.repositoryStargazerCount,
 } satisfies RadarActivityPresentation;
 
@@ -103,7 +105,6 @@ function makeCoordinator(input: {
     commitSnapshot: vi.fn(async () => { events.push('commit'); return currentState ?? state(); }),
     recordFailure: vi.fn(async () => { events.push('failure'); return currentState ?? state(); }),
     listActivities: vi.fn(async () => input.activities ?? [] as RadarActivityPresentation[]),
-    listSuggestedTags: vi.fn(async () => ['ai']),
     dismissActivities: vi.fn(async () => 0),
     markActivitiesSeen: vi.fn(async () => 0),
   };
@@ -221,6 +222,7 @@ describe('Radar refresh coordinator', () => {
     const result = await h.coordinator.query();
 
     expect(result.unseenCount).toBe(1);
+    expect(result).not.toHaveProperty('suggestedTags');
   });
 
   it('serializes seen mutations and broadcasts only when storage changes', async () => {

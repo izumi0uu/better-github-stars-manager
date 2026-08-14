@@ -27,7 +27,6 @@ export interface RadarStatus {
 export interface RadarQueryResponse {
   activities: RadarActivityPresentation[];
   unseenCount: number;
-  suggestedTags: string[];
   status: RadarStatus;
 }
 

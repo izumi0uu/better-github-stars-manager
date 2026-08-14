@@ -17,7 +17,6 @@ import {
   getRadarState,
   listRadarActivities,
   markRadarActivitiesSeen,
-  listRadarSuggestedTags,
   makeRadarStatus,
   prepareRadarAccount,
   recordRadarFailure,
@@ -42,7 +41,6 @@ export interface RadarRefreshCoordinatorDependencies {
     commitSnapshot: typeof commitRadarSnapshot;
     recordFailure: typeof recordRadarFailure;
     listActivities: typeof listRadarActivities;
-    listSuggestedTags: typeof listRadarSuggestedTags;
     dismissActivities: typeof dismissRadarActivities;
     markActivitiesSeen: typeof markRadarActivitiesSeen;
   };
@@ -125,11 +123,10 @@ export function createRadarRefreshCoordinator(
     await reconcileAccount();
     const auth = await readAuth();
     const accountLogin = auth.accountLogin && auth.mainToken ? auth.accountLogin : null;
-    const [activities, suggestedTags, state] = await Promise.all([
+    const [activities, state] = await Promise.all([
       accountLogin
         ? dependencies.store.listActivities(accountLogin, now())
         : Promise.resolve([] as RadarActivityPresentation[]),
-      dependencies.store.listSuggestedTags(),
       accountLogin ? dependencies.store.getState(accountLogin) : Promise.resolve(null),
     ]);
     const latest = await readAuth();
@@ -137,14 +134,12 @@ export function createRadarRefreshCoordinator(
       return {
         activities: [],
         unseenCount: 0,
-        suggestedTags,
         status: await statusForAuth(latest, inFlight !== null),
       };
     }
     return {
       activities,
       unseenCount: activities.reduce((count, activity) => count + (activity.seen ? 0 : 1), 0),
-      suggestedTags,
       status: await statusForAuth(auth, inFlight !== null, state),
     };
   }

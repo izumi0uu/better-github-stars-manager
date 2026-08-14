@@ -24,7 +24,6 @@ function response(overrides: Partial<RadarQueryResponse['status']> = {}): RadarQ
   return {
     activities: [],
     unseenCount: 0,
-    suggestedTags: ['ai'],
     status: {
       accountLogin: 'viewer',
       hasMainToken: true,
@@ -50,6 +49,7 @@ function recommendationResponse(
 ): RecommendationQueryResponse {
   return {
     recommendations: [],
+    ignored: [],
     status: {
       accountLogin: 'viewer',
       hasMainToken: true,
@@ -76,6 +76,7 @@ const unseenActivity = {
   repositoryLanguageColor: null,
   repositoryStargazerCount: 1,
   viewerHadStarred: false,
+  repositoryTopics: [],
   starredAt: '2026-08-10T10:00:00.000Z',
   dismissedAt: null,
   seenAt: null,
@@ -84,6 +85,7 @@ const unseenActivity = {
   viewerHasStarred: false,
   favorite: false,
   tags: [],
+  suggestedTags: [],
   displayedStargazerCount: 1,
 } satisfies RadarActivityPresentation;
 
@@ -109,9 +111,24 @@ function Harness() {
       <button type="button" data-testid="mark-seen" onClick={() => radar.markSeen(['activity-1'])}>
         Mark seen
       </button>
+      <button
+        type="button"
+        data-testid="star"
+        onClick={() => void radar.star('owner/repo', 'owner/repo')}
+      >
+        Star
+      </button>
+      <button
+        type="button"
+        data-testid="unstar"
+        onClick={() => void radar.unstar('owner/repo', 'owner/repo')}
+      >
+        Unstar
+      </button>
       <span data-testid="loading">{radar.loading ? 'loading' : 'ready'}</span>
       <span data-testid="refreshing">{radar.refreshing ? 'refreshing' : 'idle'}</span>
       <span data-testid="error">{radar.error ?? 'none'}</span>
+      <span data-testid="pending-action">{radar.pendingAction?.kind ?? 'none'}</span>
       <span data-testid="status">{radar.result?.status.snapshotStatus ?? 'none'}</span>
       <span data-testid="count">{radar.result?.activities.length ?? 'none'}</span>
       <span data-testid="unseen">{radar.result?.unseenCount ?? 'none'}</span>
@@ -318,5 +335,69 @@ describe('useRadar', () => {
     await settle();
     expect(queries).toBe(2);
     expect(container.querySelector('[data-testid="first-seen"]')?.textContent).toBe('seen');
+  });
+
+  it('stars then unstars through the shared mutation boundary and reconciles both projections', async () => {
+    let radarQueries = 0;
+    let recommendationQueries = 0;
+    let resolveUnstar!: () => void;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        radarQueries += 1;
+        const snapshotStatus = radarQueries === 1 ? 'fresh' : radarQueries === 2 ? 'partial' : 'stale';
+        return Promise.resolve(response({ snapshotStatus }));
+      }
+      if (type === 'queryRecommendations') {
+        recommendationQueries += 1;
+        const snapshotStatus = recommendationQueries === 1
+          ? 'fresh'
+          : recommendationQueries === 2 ? 'error' : 'stale';
+        return Promise.resolve(recommendationResponse({ snapshotStatus }));
+      }
+      if (type === 'radarStarRepository') return Promise.resolve();
+      if (type === 'markUnstarred') {
+        return new Promise<void>((resolve) => { resolveUnstar = resolve; });
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="star"]')?.click();
+      await Promise.resolve();
+    });
+    await settle();
+    await settle();
+
+    expect(radarQueries).toBe(2);
+    expect(recommendationQueries).toBe(2);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('partial');
+    expect(container.querySelector('[data-testid="recommendation-status"]')?.textContent)
+      .toBe('error');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="unstar"]')?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="pending-action"]')?.textContent).toBe('star');
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'markUnstarred')).toEqual([
+      ['markUnstarred', { full_name: 'owner/repo' }],
+    ]);
+    expect(radarQueries).toBe(2);
+    expect(recommendationQueries).toBe(2);
+
+    resolveUnstar();
+    await settle();
+    await settle();
+
+    expect(radarQueries).toBe(3);
+    expect(recommendationQueries).toBe(3);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('stale');
+    expect(container.querySelector('[data-testid="recommendation-status"]')?.textContent)
+      .toBe('stale');
+    expect(container.querySelector('[data-testid="pending-action"]')?.textContent).toBe('none');
   });
 });

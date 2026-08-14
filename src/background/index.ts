@@ -262,6 +262,8 @@ type Req = BgsmAgentSessionRequest
   | { type: 'getRecommendationStatus' }
   | { type: 'queryRecommendations' }
   | { type: 'refreshRecommendations' }
+  | { type: 'ignoreRecommendation'; repositoryKey?: unknown; repositoryFullName?: unknown }
+  | { type: 'restoreIgnoredRecommendation'; repositoryKey?: unknown }
   | { type: 'refreshRecommendationsOnEntry' }
   | { type: 'clearRecommendations' }
   | { type: "getRadarStatus" }
@@ -356,7 +358,6 @@ const radarRefreshCoordinator = createRadarRefreshCoordinator({
     commitSnapshot: radarStore.commitRadarSnapshot,
     recordFailure: radarStore.recordRadarFailure,
     listActivities: radarStore.listRadarActivities,
-    listSuggestedTags: radarStore.listRadarSuggestedTags,
     dismissActivities: radarStore.dismissRadarActivities,
     markActivitiesSeen: radarStore.markRadarActivitiesSeen,
   },
@@ -374,6 +375,9 @@ const recommendationRefreshCoordinator = createRecommendationRefreshCoordinator(
     commitSnapshot: recommendationStore.commitRecommendationSnapshot,
     recordFailure: recommendationStore.recordRecommendationFailure,
     listRecommendations: recommendationStore.listRecommendations,
+    ignoreRepository: recommendationStore.ignoreRecommendation,
+    listIgnored: recommendationStore.listIgnoredRepositories,
+    restoreIgnored: recommendationStore.restoreIgnoredRecommendation,
   },
   broadcastChanged: broadcastRecommendationChanged,
 });
@@ -1794,6 +1798,22 @@ async function handle(req: Req): Promise<Res> {
         const result = await recommendationRefreshCoordinator.clear();
         await ensureScheduledRefreshes();
         return { ok: true, data: result };
+      }
+      case 'ignoreRecommendation': {
+        const repositoryKey = canonicalRepositoryFullName(req.repositoryKey);
+        if (!repositoryKey) return { ok: false, error: 'Invalid recommendation repository.' };
+        const repositoryFullName = typeof req.repositoryFullName === 'string'
+          && canonicalRepositoryFullName(req.repositoryFullName) === repositoryKey
+          ? req.repositoryFullName
+          : undefined;
+        await recommendationRefreshCoordinator.ignoreRepository(repositoryKey, repositoryFullName);
+        return { ok: true, data: null };
+      }
+      case 'restoreIgnoredRecommendation': {
+        const repositoryKey = canonicalRepositoryFullName(req.repositoryKey);
+        if (!repositoryKey) return { ok: false, error: 'Invalid recommendation repository.' };
+        await recommendationRefreshCoordinator.restoreIgnored(repositoryKey);
+        return { ok: true, data: null };
       }
       case 'getRadarStatus':
         return { ok: true, data: await radarRefreshCoordinator.getStatus() };

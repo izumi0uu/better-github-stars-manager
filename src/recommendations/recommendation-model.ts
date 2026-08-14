@@ -3,6 +3,18 @@ export const RECOMMENDATION_MAX_QUERIES = 6;
 export const RECOMMENDATION_RESULTS_PER_QUERY = 100;
 export const RECOMMENDATION_MAX_CANDIDATES = 60;
 
+/** Canonical `owner/repo` identity shared by candidates, seeds, and ignore entries. */
+export function canonicalRepositoryKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const parts = value.trim().split('/');
+  if (
+    parts.length !== 2
+    || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(parts[0] ?? '')
+    || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(parts[1] ?? '')
+  ) return null;
+  return parts[0]!.toLocaleLowerCase('en-US') + '/' + parts[1]!.toLocaleLowerCase('en-US');
+}
+
 export type RecommendationSignalKind = 'topic' | 'language' | 'owner' | 'name';
 
 export type RecommendationSeed = Readonly<{
@@ -53,6 +65,15 @@ export type RecommendationRecord = RecommendationCandidate & Readonly<{
   score: number;
   reason: RecommendationReason;
   fetchedAt: string;
+}>;
+
+/** A repository the account asked never to see in For You again. */
+export type RecommendationIgnoreRecord = Readonly<{
+  id: string;
+  accountLogin: string;
+  repositoryKey: string;
+  repositoryFullName: string;
+  ignoredAt: string;
 }>;
 
 export type RecommendationErrorCode =
@@ -117,6 +138,7 @@ export interface RecommendationStatus {
 
 export interface RecommendationQueryResponse {
   recommendations: RecommendationRecord[];
+  ignored: RecommendationIgnoreRecord[];
   status: RecommendationStatus;
 }
 

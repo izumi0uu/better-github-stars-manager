@@ -17,25 +17,29 @@ function activity(input: {
   stars?: number;
   favorite?: boolean;
   tags?: string[];
+  topics?: string[];
   source?: RadarActivitySource;
 }): RadarActivityPresentation {
+  const row = normalizeRadarActivity({
+    actorLogin: input.actor,
+    actorAvatarUrl: `https://avatars.example/${input.actor}.png`,
+    repositoryFullName: input.repository,
+    repositoryDescription: `${input.repository} description`,
+    repositoryLanguage: 'TypeScript',
+    repositoryLanguageColor: '#3178c6',
+    repositoryTopics: input.topics ?? [],
+    repositoryStargazerCount: input.stars ?? 10,
+    viewerHadStarred: false,
+    starredAt: input.starredAt,
+  }, { accountLogin: 'Viewer' });
   return {
-    ...normalizeRadarActivity({
-      actorLogin: input.actor,
-      actorAvatarUrl: `https://avatars.example/${input.actor}.png`,
-      repositoryFullName: input.repository,
-      repositoryDescription: `${input.repository} description`,
-      repositoryLanguage: 'TypeScript',
-      repositoryLanguageColor: '#3178c6',
-      repositoryStargazerCount: input.stars ?? 10,
-      viewerHadStarred: false,
-      starredAt: input.starredAt,
-    }, { accountLogin: 'Viewer' }),
+    ...row,
     source: input.source ?? 'following',
     seen: input.source === 'self',
     viewerHasStarred: false,
     favorite: input.favorite ?? false,
     tags: input.tags ?? [],
+    suggestedTags: row.repositoryTopics,
     displayedStargazerCount: input.stars ?? 10,
   };
 }
@@ -50,6 +54,7 @@ describe('Radar activity model', () => {
       repositoryLanguage: 'Rust',
       repositoryLanguageColor: '#DEA584',
       repositoryStargazerCount: 42,
+      repositoryTopics: [' TypeScript ', 'ai', 'typescript', '', 'AI'],
       viewerHadStarred: true,
       starredAt: '2026-08-10T03:04:05Z',
     }, { accountLogin: 'Viewer' });
@@ -61,6 +66,7 @@ describe('Radar activity model', () => {
     expect(row.repositoryHtmlUrl).toBe('https://github.com/owner/repo');
     expect(row.repositoryDescription).toBe('');
     expect(row.repositoryLanguageColor).toBe('#dea584');
+    expect(row.repositoryTopics).toEqual(['ai', 'typescript']);
     expect(row.seenAt).toBeNull();
     expect(row.starredAt).toBe('2026-08-10T03:04:05.000Z');
     expect(row.id).toBe(radarActivityId({
@@ -133,6 +139,7 @@ describe('Radar activity model', () => {
       repository: 'Owner/Repo',
       starredAt: '2026-08-10T01:00:00Z',
       stars: 10,
+      topics: ['cached-topic'],
     });
     const newer = activity({
       actor: 'bob',
@@ -141,6 +148,7 @@ describe('Radar activity model', () => {
       stars: 12,
       favorite: true,
       tags: ['infra'],
+      topics: ['local-topic'],
       source: 'self',
     });
     const other = activity({
@@ -160,6 +168,7 @@ describe('Radar activity model', () => {
       favorite: true,
       tags: ['infra'],
       displayedStargazerCount: 12,
+      suggestedTags: ['local-topic'],
     });
     expect(projects[0]?.activities).toEqual([newer, older]);
     expect(projects[0]?.activityIds).toEqual([older.id]);

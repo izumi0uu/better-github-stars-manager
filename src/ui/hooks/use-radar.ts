@@ -13,7 +13,7 @@ import type {
 
 export type RadarView = 'feed' | 'projects';
 export type RadarDiscoverView = 'following' | 'for-you';
-export type RadarActionKind = 'star' | 'favorite' | 'tag' | 'dismiss';
+export type RadarActionKind = 'star' | 'favorite' | 'tag' | 'dismiss' | 'ignore';
 export type RadarSourceFilters = Readonly<Record<RadarActivitySource, boolean>>;
 
 export type RadarPendingAction = Readonly<{
@@ -254,6 +254,14 @@ export function useRadar() {
     }),
   ), [loadRecommendations, mutate]);
 
+  const unstar = useCallback((repositoryKey: string, fullName: string) => mutate(
+    { kind: 'star', repositoryKey },
+    () => bgCall('markUnstarred', { full_name: fullName }).then(async (value) => {
+      await loadRecommendations(true);
+      return value;
+    }),
+  ), [loadRecommendations, mutate]);
+
   const setFavorite = useCallback((
     repositoryKey: string,
     fullName: string,
@@ -272,6 +280,31 @@ export function useRadar() {
     { kind: 'dismiss', repositoryKey },
     () => bgCall<RadarStatus>('dismissRadarActivities', { activityIds }),
   ), [mutate]);
+
+  const ignoreRecommendation = useCallback((
+    repositoryKey: string,
+    repositoryFullName: string,
+  ) => mutate(
+    { kind: 'ignore', repositoryKey },
+    () => bgCall('ignoreRecommendation', { repositoryKey, repositoryFullName })
+      .then(async (value) => {
+        await loadRecommendations(true);
+        return value;
+      }),
+  ), [loadRecommendations, mutate]);
+
+  const restoreIgnoredRecommendation = useCallback(async (repositoryKey: string) => {
+    try {
+      await bgCall('restoreIgnoredRecommendation', { repositoryKey });
+    } catch (restoreError) {
+      if (mountedRef.current) {
+        setActionError({
+          repositoryKey,
+          message: restoreError instanceof Error ? restoreError.message : String(restoreError),
+        });
+      }
+    }
+  }, []);
   const markSeen = useCallback((activityIds: readonly string[]) => {
     const ids = [...new Set(activityIds)];
     if (!mountedRef.current || ids.length === 0) return;
@@ -327,9 +360,12 @@ export function useRadar() {
     reload: load,
     reloadRecommendations: loadRecommendations,
     star,
+    unstar,
     setFavorite,
     addTag,
     dismiss,
+    ignoreRecommendation,
+    restoreIgnoredRecommendation,
     markSeen,
   };
 }

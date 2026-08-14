@@ -189,6 +189,11 @@ export interface MessageCatalog {
     recommendationReason: (kind: string, value: string) => string;
     recommendationStarAction: string;
     starRecommendation: (repository: string) => string;
+    ignoreRecommendation: (repository: string) => string;
+    ignoredCount: (count: number) => string;
+    recommendationIgnoreHint: string;
+    restoreIgnoredAction: string;
+    restoreIgnored: (repository: string) => string;
     sourceLabel: string;
     sourceFollowing: string;
     sourceSelf: string;
@@ -244,12 +249,14 @@ export interface MessageCatalog {
     quickActions: (repository: string) => string;
     projectActions: (repository: string) => string;
     starOnGitHub: string;
-    starred: string;
+    unstarOnGitHub: string;
     favorite: string;
     addTag: string;
     addTagAction: string;
     addingTagStars: string;
     suggestedTags: string;
+    repositoryTags: string;
+    repositoryTagScope: string;
     noTags: string;
     tagComposerHint: string;
     openRepository: string;
@@ -1271,6 +1278,11 @@ const messages: Record<Locale, MessageCatalog> = {
       } as Record<string, string>)[kind] ?? value,
       recommendationStarAction: "Star",
       starRecommendation: (repository) => `Star ${repository} on GitHub`,
+      ignoreRecommendation: (repository) => `Never recommend ${repository} again`,
+      ignoredCount: (count) => `${count} ignored ${count === 1 ? "repository" : "repositories"}`,
+      recommendationIgnoreHint: "Never show this repository in my recommendations again",
+      restoreIgnoredAction: "Restore",
+      restoreIgnored: (repository) => `Recommend ${repository} again`,
       sourceLabel: "Activity sources",
       sourceFollowing: "Following",
       sourceSelf: "Me",
@@ -1339,12 +1351,14 @@ const messages: Record<Locale, MessageCatalog> = {
       quickActions: (repository) => `Quick actions for ${repository}`,
       projectActions: (repository) => `Repository actions for ${repository}`,
       starOnGitHub: "Star on GitHub",
-      starred: "Starred",
+      unstarOnGitHub: "Unstar on GitHub",
       favorite: "Favorite",
       addTag: "Add tag…",
       addTagAction: "Add tag",
       addingTagStars: "Adding a tag stars this repository first",
       suggestedTags: "Suggested tags",
+      repositoryTags: "Tags on this repository",
+      repositoryTagScope: "Shared by every Feed entry for this repository.",
       noTags: "No tags yet.",
       tagComposerHint: "Enter to apply · Esc to close",
       openRepository: "Open repository",
@@ -2539,6 +2553,11 @@ const messages: Record<Locale, MessageCatalog> = {
       } as Record<string, string>)[kind] ?? value,
       recommendationStarAction: "Star",
       starRecommendation: (repository) => `在 GitHub Star ${repository}`,
+      ignoreRecommendation: (repository) => `不再推荐 ${repository}`,
+      ignoredCount: (count) => `已忽略 ${count} 个仓库`,
+      recommendationIgnoreHint: "这个仓库将不再出现在我的推荐中",
+      restoreIgnoredAction: "恢复",
+      restoreIgnored: (repository) => `恢复推荐 ${repository}`,
       toggleView: "切换关注动态视图（V）",
       sourceLabel: "动态来源",
       sourceFollowing: "关注的人",
@@ -2605,12 +2624,14 @@ const messages: Record<Locale, MessageCatalog> = {
       quickActions: (repository) => `${repository} 的快捷操作`,
       projectActions: (repository) => `${repository} 的仓库操作`,
       starOnGitHub: "在 GitHub Star",
-      starred: "已 Star",
+      unstarOnGitHub: "在 GitHub 取消 Star",
       favorite: "收藏",
       addTag: "添加标签…",
       addTagAction: "添加标签",
       addingTagStars: "添加标签前会先 Star 此仓库",
       suggestedTags: "推荐标签",
+      repositoryTags: "此仓库的标签",
+      repositoryTagScope: "同一仓库的所有动态共用这些标签。",
       noTags: "暂无标签。",
       tagComposerHint: "Enter 添加 · Esc 关闭",
       openRepository: "打开仓库",

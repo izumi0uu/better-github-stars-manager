@@ -1,4 +1,5 @@
 import {
+  canonicalRepositoryKey,
   GitHubRecommendationError,
   RECOMMENDATION_RESULTS_PER_QUERY,
   rankRecommendationCandidates,
@@ -96,18 +97,6 @@ function responseError(response: Response): GitHubRecommendationError {
     return new GitHubRecommendationError('github_unavailable', { status: response.status });
   }
   return new GitHubRecommendationError('invalid_response', { status: response.status });
-}
-
-function canonicalRepositoryKey(value: unknown): string | null {
-  const fullName = text(value);
-  if (!fullName) return null;
-  const parts = fullName.split('/');
-  if (
-    parts.length !== 2
-    || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(parts[0] ?? '')
-    || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(parts[1] ?? '')
-  ) return null;
-  return fullName.toLocaleLowerCase('en-US');
 }
 
 function parseCandidate(value: unknown): RecommendationCandidate {

@@ -1,12 +1,16 @@
 import {
   AlertTriangle,
+  Ban,
   Check,
+  ChevronDown,
   Clock3,
+  EyeOff,
   ExternalLink,
   Heart,
   ListFilter,
   Radar as RadarIcon,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings2,
   Sparkles,
@@ -48,8 +52,10 @@ import type {
   RadarView,
 } from '@/ui/hooks/use-radar';
 import { useDelayedHoverIntent } from '@/ui/hooks/use-delayed-hover-intent';
+import { useDismissableNotice } from '@/ui/hooks/use-dismissable-notice';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { SearchMatchText } from '@/ui/components/SearchMatchText';
+import { RepositoryOwnerAvatar, repositoryAvatarFallback } from '@/ui/components/RepositoryOwnerAvatar';
 import { SurfaceListEndMarker } from '@/ui/components/SurfaceListEndMarker';
 import {
   searchRadarActivities,
@@ -87,6 +93,9 @@ interface RadarSurfaceProps {
   onRetryRecommendations: () => void;
   onOpenOptions: () => void;
   onStar: (repositoryKey: string, fullName: string) => Promise<unknown>;
+  onUnstar: (repositoryKey: string, fullName: string) => Promise<unknown>;
+  onIgnore: (repositoryKey: string, repositoryFullName: string) => Promise<unknown>;
+  onRestoreIgnored: (repositoryKey: string) => Promise<unknown>;
   onSetFavorite: (
     repositoryKey: string,
     fullName: string,
@@ -106,6 +115,7 @@ interface RadarRepositoryTarget {
   viewerHasStarred: boolean;
   favorite: boolean;
   tags: string[];
+  suggestedTags: string[];
 }
 
 interface RadarPopoverVirtualAnchor {
@@ -510,7 +520,7 @@ function RadarSurfaceCommandBar({
   const searchInputRef = useRef<HTMLInputElement>(null);
   return (
     <div
-      className="gsm-z-sticky sticky top-0 border-b border-border bg-background"
+      className="gsm-z-sticky sticky top-0 border-b border-border bg-card"
       data-surface-command-bar="following"
     >
       <SurfaceWorkCanvas
@@ -637,17 +647,16 @@ export function RadarStatusRibbon({
     }
   }
 
+  const { dismissed, dismiss } = useDismissableNotice(
+    (tone === 'warning' || tone === 'destructive') && !loading && !refreshing,
+  );
+  if (dismissed) return null;
   return (
     <div
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      className={cn('shrink-0 overflow-hidden border-b border-border text-xs', {
-        'bg-card': tone === 'muted',
-        'bg-success/[0.07]': tone === 'success',
-        'bg-warning/[0.07]': tone === 'warning',
-        'bg-destructive/[0.07]': tone === 'destructive',
-      })}
+      className="shrink-0 overflow-hidden border-b border-border bg-card text-xs"
       data-radar-status={refreshing ? 'refreshing' : status?.snapshotStatus ?? (loading ? 'loading' : 'error')}
     >
       <SurfaceWorkCanvas variant="following" className="relative flex min-h-[30px] items-center gap-2 px-3.5 py-1">
@@ -673,6 +682,16 @@ export function RadarStatusRibbon({
             {m.radar.snapshotAt(snapshotAt)}
           </span>
         )}
+        {(tone === 'warning' || tone === 'destructive') && !loading && !refreshing && (
+          <button
+            type="button"
+            aria-label={m.common.close}
+            onClick={dismiss}
+            className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <X className="size-3" aria-hidden="true" />
+          </button>
+        )}
         {refreshing && <span className="gsm-watch-refresh-bar" aria-hidden="true" />}
       </SurfaceWorkCanvas>
     </div>
@@ -682,9 +701,8 @@ export function RadarStatusRibbon({
 function handleQuickActionKeyDown(
   event: ReactKeyboardEvent<HTMLDivElement>,
   options: {
-    starred: boolean;
     pending: boolean;
-    onStar: () => void;
+    onToggleStar: () => void;
     onFavorite: () => void;
     tagInput: HTMLInputElement | null;
   },
@@ -693,7 +711,7 @@ function handleQuickActionKeyDown(
   const inInput = event.target instanceof HTMLInputElement;
   if (!inInput && event.key.toLocaleLowerCase('en-US') === 's') {
     event.preventDefault();
-    if (!options.starred && !options.pending) options.onStar();
+    if (!options.pending) options.onToggleStar();
     return;
   }
   if (!inInput && event.key.toLocaleLowerCase('en-US') === 'f') {
@@ -726,10 +744,10 @@ function RadarQuickActions({
   target,
   open,
   onOpenChange,
-  suggestedTags,
   pendingAction,
   actionError,
   onStar,
+  onUnstar,
   onSetFavorite,
   onAddTag,
 }: {
@@ -737,10 +755,10 @@ function RadarQuickActions({
   target: RadarRepositoryTarget;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  suggestedTags: readonly string[];
   pendingAction: RadarPendingAction | null;
   actionError: RadarActionError | null;
   onStar: RadarSurfaceProps['onStar'];
+  onUnstar: RadarSurfaceProps['onUnstar'];
   onSetFavorite: RadarSurfaceProps['onSetFavorite'];
   onAddTag: RadarSurfaceProps['onAddTag'];
 }) {
@@ -756,11 +774,11 @@ function RadarQuickActions({
   const availableSuggestions = useMemo(() => {
     const applied = new Set(target.tags.map((tagName) => tagName.toLocaleLowerCase('en-US')));
     const query = tagDraft.trim().toLocaleLowerCase('en-US');
-    return suggestedTags.filter((tagName) => (
+    return target.suggestedTags.filter((tagName) => (
       !applied.has(tagName.toLocaleLowerCase('en-US'))
       && (!query || tagName.toLocaleLowerCase('en-US').includes(query))
     )).slice(0, 8);
-  }, [suggestedTags, tagDraft, target.tags]);
+  }, [tagDraft, target.suggestedTags, target.tags]);
 
   useEffect(() => {
     if (!open) setTagDraft('');
@@ -772,10 +790,10 @@ function RadarQuickActions({
     const result = await onAddTag(target.repositoryKey, target.repositoryFullName, tagName);
     if (result !== null) setTagDraft('');
   };
-  const star = () => {
-    if (!target.viewerHasStarred && !pending) {
-      void onStar(target.repositoryKey, target.repositoryFullName);
-    }
+  const toggleStar = () => {
+    if (pending) return;
+    const operation = target.viewerHasStarred ? onUnstar : onStar;
+    void operation(target.repositoryKey, target.repositoryFullName);
   };
   const favorite = () => {
     if (!pending) {
@@ -823,9 +841,8 @@ function RadarQuickActions({
           firstActionRef.current?.focus({ preventScroll: true });
         }}
         onKeyDown={(event) => handleQuickActionKeyDown(event, {
-          starred: target.viewerHasStarred,
           pending,
-          onStar: star,
+          onToggleStar: toggleStar,
           onFavorite: favorite,
           tagInput: tagInputRef.current,
         })}
@@ -851,9 +868,8 @@ function RadarQuickActions({
             ref={firstActionRef}
             type="button"
             data-radar-action-stop
-            aria-disabled={target.viewerHasStarred || undefined}
             disabled={pending}
-            onClick={star}
+            onClick={toggleStar}
             className={cn('flex h-[30px] w-full items-center gap-2 px-3 text-left text-xs text-foreground outline-none hover:bg-muted focus-visible:bg-muted disabled:opacity-60', {
               'text-favorite': target.viewerHasStarred,
             })}
@@ -865,8 +881,8 @@ function RadarQuickActions({
             ) : (
               <Star className="size-3.5" aria-hidden="true" />
             )}
-            <span className="flex-1">{target.viewerHasStarred ? m.radar.starred : m.radar.starOnGitHub}</span>
-            {!target.viewerHasStarred && <kbd className="font-mono text-[10px] text-muted-foreground">S</kbd>}
+            <span className="flex-1">{target.viewerHasStarred ? m.radar.unstarOnGitHub : m.radar.starOnGitHub}</span>
+            <kbd className="font-mono text-[10px] text-muted-foreground">S</kbd>
           </button>
           <button
             type="button"
@@ -888,12 +904,20 @@ function RadarQuickActions({
           </button>
           <div className="border-t border-border px-3 py-2.5">
             {target.tags.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-1" aria-label={m.radar.suggestedTags}>
-                {target.tags.map((tagName) => (
-                  <span key={tagName} className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-[10px] text-foreground">
-                    {tagName}
-                  </span>
-                ))}
+              <div className="mb-2">
+                <p className="mb-1 text-[10px] font-medium text-foreground">
+                  {m.radar.repositoryTags}
+                </p>
+                <div className="flex flex-wrap gap-1" aria-label={m.radar.repositoryTags}>
+                  {target.tags.map((tagName) => (
+                    <span key={tagName} className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-foreground">
+                      {tagName}
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-1 text-[9px] leading-3 text-muted-foreground">
+                  {m.radar.repositoryTagScope}
+                </p>
               </div>
             )}
             <div className="relative">
@@ -925,19 +949,24 @@ function RadarQuickActions({
               </p>
             )}
             {availableSuggestions.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1" aria-label={m.radar.suggestedTags}>
-                {availableSuggestions.map((tagName) => (
-                  <button
-                    key={tagName}
-                    type="button"
-                    data-radar-action-stop
-                    disabled={pending}
-                    onClick={() => { void addTag(tagName); }}
-                    className="rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
-                  >
-                    {tagName}
-                  </button>
-                ))}
+              <div className="mt-2">
+                <p className="mb-1 text-[10px] text-muted-foreground">
+                  {m.radar.suggestedTags}
+                </p>
+                <div className="flex flex-wrap gap-1" aria-label={m.radar.suggestedTags}>
+                  {availableSuggestions.map((tagName) => (
+                    <button
+                      key={tagName}
+                      type="button"
+                      data-radar-action-stop
+                      disabled={pending}
+                      onClick={() => { void addTag(tagName); }}
+                      className="rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+                    >
+                      {tagName}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             {actionError?.repositoryKey === target.repositoryKey && (
@@ -951,7 +980,7 @@ function RadarQuickActions({
           </div>
         </div>
         <span id={statusId} className="sr-only">
-          {target.viewerHasStarred ? m.radar.starred : m.radar.starOnGitHub}
+          {target.viewerHasStarred ? m.radar.unstarOnGitHub : m.radar.starOnGitHub}
         </span>
       </PopoverContent>
     </Popover>
@@ -1051,10 +1080,10 @@ function RadarFeedRow({
   searchResult,
   open,
   onOpenChange,
-  suggestedTags,
   pendingAction,
   actionError,
   onStar,
+  onUnstar,
   onSetFavorite,
   onAddTag,
   onDismiss,
@@ -1063,10 +1092,10 @@ function RadarFeedRow({
   searchResult: RadarActivitySearchResult;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  suggestedTags: readonly string[];
   pendingAction: RadarPendingAction | null;
   actionError: RadarActionError | null;
   onStar: RadarSurfaceProps['onStar'];
+  onUnstar: RadarSurfaceProps['onUnstar'];
   onSetFavorite: RadarSurfaceProps['onSetFavorite'];
   onAddTag: RadarSurfaceProps['onAddTag'];
   onDismiss: () => void;
@@ -1104,10 +1133,10 @@ function RadarFeedRow({
           target={target}
           open={open}
           onOpenChange={onOpenChange}
-          suggestedTags={suggestedTags}
           pendingAction={pendingAction}
           actionError={actionError}
           onStar={onStar}
+          onUnstar={onUnstar}
           onSetFavorite={onSetFavorite}
           onAddTag={onAddTag}
         />
@@ -1118,6 +1147,11 @@ function RadarFeedRow({
                 <SearchMatchText text={activity.actorLogin} ranges={actorRanges} />
               </span>
               <span className="shrink-0 text-muted-foreground">{m.radar.actorStarred}</span>
+              <RepositoryOwnerAvatar
+                fullName={activity.repositoryDisplayName}
+                url={activity.repositoryOwnerAvatarUrl ?? null}
+                className="size-4"
+              />
               <a
                 href={activity.repositoryHtmlUrl}
                 target="_blank"
@@ -1213,6 +1247,7 @@ function RadarProjectActionBar({
   tagButtonRef,
   pendingAction,
   onStar,
+  onUnstar,
   onSetFavorite,
   onToggleComposer,
 }: {
@@ -1222,6 +1257,7 @@ function RadarProjectActionBar({
   tagButtonRef: RefObject<HTMLButtonElement>;
   pendingAction: RadarPendingAction | null;
   onStar: RadarSurfaceProps['onStar'];
+  onUnstar: RadarSurfaceProps['onUnstar'];
   onSetFavorite: RadarSurfaceProps['onSetFavorite'];
   onToggleComposer: () => void;
 }) {
@@ -1229,10 +1265,10 @@ function RadarProjectActionBar({
   const pending = pendingAction?.repositoryKey === project.repositoryKey;
   const starPending = pending && pendingAction?.kind === 'star';
   const favoritePending = pending && pendingAction?.kind === 'favorite';
-  const star = () => {
-    if (!project.viewerHasStarred && !pending) {
-      void onStar(project.repositoryKey, project.repositoryFullName);
-    }
+  const toggleStar = () => {
+    if (pending) return;
+    const operation = project.viewerHasStarred ? onUnstar : onStar;
+    void operation(project.repositoryKey, project.repositoryFullName);
   };
   const favorite = () => {
     if (!pending) {
@@ -1245,20 +1281,20 @@ function RadarProjectActionBar({
       role="group"
       aria-label={m.radar.projectActions(project.repositoryDisplayName)}
       data-radar-project-actions
-      className="grid grid-cols-4 gap-1.5 border-t border-border bg-muted/30 px-3 py-2 max-[520px]:grid-cols-2 max-[520px]:px-2.5"
+      className="grid grid-cols-4 gap-1.5 border-t border-border bg-card px-3 py-2 max-[520px]:grid-cols-2 max-[520px]:px-2.5"
     >
       <button
         type="button"
         data-radar-project-action="star"
-        disabled={pending || project.viewerHasStarred}
-        aria-label={project.viewerHasStarred ? m.radar.starred : m.radar.starOnGitHub}
-        onClick={star}
-        className={cn('flex min-w-0 h-[30px] items-center justify-center gap-1.5 overflow-hidden rounded-md border border-border bg-card/80 px-2 text-[11.5px] font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-70 max-[520px]:whitespace-normal max-[520px]:leading-4', {
+        disabled={pending}
+        aria-label={project.viewerHasStarred ? m.radar.unstarOnGitHub : m.radar.starOnGitHub}
+        onClick={toggleStar}
+        className={cn('flex min-w-0 h-[30px] items-center justify-center gap-1.5 overflow-hidden rounded-md border border-border bg-background px-2 text-[11.5px] font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-70 max-[520px]:whitespace-normal max-[520px]:leading-4', {
           'border-favorite/40 text-favorite': project.viewerHasStarred,
         })}
       >
         {starPending ? <Spinner className="size-3 shrink-0" /> : <Star className={cn('size-3 shrink-0', { 'fill-current': project.viewerHasStarred })} aria-hidden="true" />}
-        <span className="min-w-0 truncate">{project.viewerHasStarred ? m.radar.starred : m.radar.starOnGitHub}</span>
+        <span className="min-w-0 truncate">{project.viewerHasStarred ? m.radar.unstarOnGitHub : m.radar.starOnGitHub}</span>
       </button>
       <button
         type="button"
@@ -1266,8 +1302,8 @@ function RadarProjectActionBar({
         aria-pressed={project.favorite}
         disabled={pending}
         onClick={favorite}
-        className={cn('flex min-w-0 h-[30px] items-center justify-center gap-1.5 overflow-hidden rounded-md border border-border bg-card/80 px-2 text-[11.5px] font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-70 max-[520px]:whitespace-normal max-[520px]:leading-4', {
-          'border-favorite/40 bg-favorite/5 text-favorite': project.favorite,
+        className={cn('flex min-w-0 h-[30px] items-center justify-center gap-1.5 overflow-hidden rounded-md border border-border bg-background px-2 text-[11.5px] font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-70 max-[520px]:whitespace-normal max-[520px]:leading-4', {
+          'border-favorite/40 bg-background text-favorite': project.favorite,
         })}
       >
         {favoritePending ? <Spinner className="size-3 shrink-0" /> : <Heart className={cn('size-3 shrink-0', { 'fill-current': project.favorite })} aria-hidden="true" />}
@@ -1280,7 +1316,7 @@ function RadarProjectActionBar({
         aria-expanded={composerOpen}
         aria-controls={composerOpen ? composerId : undefined}
         onClick={onToggleComposer}
-        className="flex min-w-0 h-[30px] items-center justify-center gap-1.5 overflow-hidden rounded-md border border-border bg-card/80 px-2 text-[11.5px] font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring max-[520px]:whitespace-normal max-[520px]:leading-4"
+        className="flex min-w-0 h-[30px] items-center justify-center gap-1.5 overflow-hidden rounded-md border border-border bg-background px-2 text-[11.5px] font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring max-[520px]:whitespace-normal max-[520px]:leading-4"
       >
         <Tag className="size-3 shrink-0" aria-hidden="true" />
         <span className="min-w-0 truncate">{m.radar.addTagAction}</span>
@@ -1290,7 +1326,7 @@ function RadarProjectActionBar({
         target="_blank"
         rel="noreferrer"
         data-radar-project-action="open"
-        className="flex min-w-0 h-[30px] items-center justify-center gap-1.5 overflow-hidden rounded-md border border-border bg-card/80 px-2 text-[11.5px] font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring max-[520px]:whitespace-normal max-[520px]:leading-4"
+        className="flex min-w-0 h-[30px] items-center justify-center gap-1.5 overflow-hidden rounded-md border border-border bg-background px-2 text-[11.5px] font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring max-[520px]:whitespace-normal max-[520px]:leading-4"
       >
         <ExternalLink className="size-3 shrink-0" aria-hidden="true" />
         <span className="min-w-0 truncate">{m.radar.openRepository}</span>
@@ -1303,10 +1339,10 @@ function RadarProjectRow({
   searchResult,
   open,
   onOpenChange,
-  suggestedTags,
   pendingAction,
   actionError,
   onStar,
+  onUnstar,
   onSetFavorite,
   onAddTag,
   onDismiss,
@@ -1315,10 +1351,10 @@ function RadarProjectRow({
   searchResult: RadarProjectSearchResult;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  suggestedTags: readonly string[];
   pendingAction: RadarPendingAction | null;
   actionError: RadarActionError | null;
   onStar: RadarSurfaceProps['onStar'];
+  onUnstar: RadarSurfaceProps['onUnstar'];
   onSetFavorite: RadarSurfaceProps['onSetFavorite'];
   onAddTag: RadarSurfaceProps['onAddTag'];
   onDismiss: () => void;
@@ -1343,11 +1379,11 @@ function RadarProjectRow({
   const availableSuggestions = useMemo(() => {
     const applied = new Set(project.tags.map((tagName) => tagName.toLocaleLowerCase('en-US')));
     const query = tagDraft.trim().toLocaleLowerCase('en-US');
-    return suggestedTags.filter((tagName) => (
+    return project.suggestedTags.filter((tagName) => (
       !applied.has(tagName.toLocaleLowerCase('en-US'))
       && (!query || tagName.toLocaleLowerCase('en-US').includes(query))
     )).slice(0, 8);
-  }, [project.tags, suggestedTags, tagDraft]);
+  }, [project.suggestedTags, project.tags, tagDraft]);
   const stackActivities = project.activities.length > 4
     ? project.activities.slice(0, 3)
     : project.activities;
@@ -1468,6 +1504,11 @@ function RadarProjectRow({
       <div className="pointer-events-none relative z-10 flex min-h-[90px] min-w-0 items-start gap-4 px-2.5 py-[13px] max-[520px]:gap-2.5">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
+            <RepositoryOwnerAvatar
+              fullName={project.repositoryDisplayName}
+              url={project.repositoryOwnerAvatarUrl}
+              className="size-4"
+            />
             <a
               href={project.repositoryHtmlUrl}
               target="_blank"
@@ -1608,6 +1649,7 @@ function RadarProjectRow({
             tagButtonRef={tagButtonRef}
             pendingAction={pendingAction}
             onStar={onStar}
+            onUnstar={onUnstar}
             onSetFavorite={onSetFavorite}
             onToggleComposer={() => setComposerOpen((current) => !current)}
           />
@@ -1706,9 +1748,17 @@ function recommendationMatchesQuery(
 function RecommendationOwnerAvatar({ owner }: { owner: string }) {
   const [failed, setFailed] = useState(false);
   const avatarUrl = `https://github.com/${encodeURIComponent(owner)}.png?size=64`;
+  const fallback = repositoryAvatarFallback(owner);
   return (
-    <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-muted text-xs font-semibold uppercase text-muted-foreground">
-      {failed ? owner.slice(0, 1) : (
+    <span
+      data-avatar-color={fallback.color}
+      className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg border border-border text-xs font-semibold uppercase"
+    >
+      {failed ? (
+        <span className="gsm-repository-avatar-fallback grid size-full place-items-center text-primary-foreground dark:text-background">
+          {fallback.initial}
+        </span>
+      ) : (
         <img
           src={avatarUrl}
           alt=""
@@ -1725,14 +1775,18 @@ function RecommendationRow({
   pendingAction,
   actionError,
   onStar,
+  onIgnore,
 }: {
   recommendation: RecommendationRecord;
   pendingAction: RadarPendingAction | null;
   actionError: RadarActionError | null;
   onStar: RadarSurfaceProps['onStar'];
+  onIgnore: RadarSurfaceProps['onIgnore'];
 }) {
   const { m, locale } = useI18n();
   const starPending = pendingAction?.kind === 'star'
+    && pendingAction.repositoryKey === recommendation.repositoryKey;
+  const ignorePending = pendingAction?.kind === 'ignore'
     && pendingAction.repositoryKey === recommendation.repositoryKey;
   const actionFailed = actionError?.repositoryKey === recommendation.repositoryKey;
   return (
@@ -1786,18 +1840,40 @@ function RecommendationRow({
           </p>
         )}
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-[30px] shrink-0 gap-1.5 px-2.5 text-[11px]"
-        disabled={starPending}
-        aria-label={m.radar.starRecommendation(recommendation.repositoryFullName)}
-        onClick={() => { void onStar(recommendation.repositoryKey, recommendation.repositoryFullName); }}
-      >
-        {starPending ? <Spinner className="size-3" /> : <Star className="size-3" aria-hidden="true" />}
-        <span className="max-[520px]:hidden">{m.radar.recommendationStarAction}</span>
-      </Button>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-[30px] gap-1.5 px-2.5 text-[11px]"
+          disabled={starPending || ignorePending}
+          aria-label={m.radar.starRecommendation(recommendation.repositoryFullName)}
+          onClick={() => { void onStar(recommendation.repositoryKey, recommendation.repositoryFullName); }}
+        >
+          {starPending ? <Spinner className="size-3" /> : <Star className="size-3" aria-hidden="true" />}
+          <span className="max-[520px]:hidden">{m.radar.recommendationStarAction}</span>
+        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-[30px] text-muted-foreground hover:text-destructive"
+              disabled={starPending || ignorePending}
+              aria-label={m.radar.ignoreRecommendation(recommendation.repositoryFullName)}
+              onClick={() => { void onIgnore(recommendation.repositoryKey, recommendation.repositoryFullName); }}
+            >
+              {ignorePending ? <Spinner className="size-3.5" /> : <Ban className="size-3.5" aria-hidden="true" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {m.radar.ignoreRecommendation(recommendation.repositoryFullName)}
+            {' · '}
+            {m.radar.recommendationIgnoreHint}
+          </TooltipContent>
+        </Tooltip>
+      </div>
     </article>
   );
 }
@@ -1815,6 +1891,8 @@ function ForYouSurface({
   onRetryQuery,
   onOpenOptions,
   onStar,
+  onIgnore,
+  onRestoreIgnored,
 }: {
   recommendations: RecommendationQueryResponse | null;
   discoverView: RadarDiscoverView;
@@ -1828,8 +1906,12 @@ function ForYouSurface({
   onRetryQuery: () => void;
   onOpenOptions: () => void;
   onStar: RadarSurfaceProps['onStar'];
+  onIgnore: RadarSurfaceProps['onIgnore'];
+  onRestoreIgnored: RadarSurfaceProps['onRestoreIgnored'];
 }) {
   const { m, locale } = useI18n();
+  const [ignoredOpen, setIgnoredOpen] = useState(false);
+  const ignored = recommendations?.ignored ?? [];
   const [query, setQuery] = useState('');
   const searchInput = useImeBufferedInput(query, setQuery);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1843,9 +1925,49 @@ function ForYouSurface({
   const snapshotAt = formatAbsoluteTime(state?.lastSuccessfulAt ?? null, locale);
   const refreshDisabled = loading || refreshing || status?.snapshotStatus === 'cooldown'
     || status?.snapshotStatus === 'not_configured';
+  const ignoredSection = ignored.length > 0 ? (
+    <div className="border-t border-border/70" data-radar-ignored-section>
+      <button
+        type="button"
+        aria-expanded={ignoredOpen}
+        onClick={() => setIgnoredOpen((current) => !current)}
+        className="flex w-full items-center gap-1.5 px-3.5 py-2 text-left text-[10.5px] text-muted-foreground outline-none hover:bg-muted/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <ChevronDown className={cn('size-3 shrink-0 transition-transform', ignoredOpen && 'rotate-180')} aria-hidden="true" />
+        <EyeOff className="size-3 shrink-0" aria-hidden="true" />
+        <span>{m.radar.ignoredCount(ignored.length)}</span>
+      </button>
+      {ignoredOpen && (
+        <ul className="divide-y divide-border/70 border-t border-border/70">
+          {ignored.map((entry) => (
+            <li key={entry.id} className="flex min-w-0 items-center justify-between gap-2 px-3.5 py-1.5">
+              <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+                {entry.repositoryFullName}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-[26px] shrink-0 gap-1 px-2 text-[10.5px]"
+                aria-label={m.radar.restoreIgnored(entry.repositoryFullName)}
+                onClick={() => { void onRestoreIgnored(entry.repositoryKey); }}
+              >
+                <RotateCcw className="size-3" aria-hidden="true" />
+                <span>{m.radar.restoreIgnoredAction}</span>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  ) : null;
+  const savedWarning = status?.snapshotStatus === 'stale' || status?.snapshotStatus === 'cooldown'
+    || status?.snapshotStatus === 'error' || error !== null;
+  const dismissableWarning = savedWarning && !refreshing;
+  const { dismissed: warningDismissed, dismiss: dismissWarning } = useDismissableNotice(dismissableWarning);
   const frame = (content: ReactNode) => (
     <section className="min-h-full bg-background" aria-label={m.radar.forYou} data-radar-surface data-radar-discover-view="for-you">
-      <div className="gsm-z-sticky sticky top-0 border-b border-border bg-background" data-surface-command-bar="for-you">
+      <div className="gsm-z-sticky sticky top-0 border-b border-border bg-card" data-surface-command-bar="for-you">
         <SurfaceWorkCanvas variant="following" className="flex min-h-10 min-w-0 flex-wrap items-center gap-2 px-3.5 py-1.5">
           <RadarDiscoverSwitcher view={discoverView} onViewChange={onDiscoverViewChange} />
           <div className="relative min-w-0 flex-1 basis-64 max-[700px]:order-3 max-[700px]:basis-full sm:max-w-sm">
@@ -1920,51 +2042,78 @@ function ForYouSurface({
     />);
   }
   if (status.snapshotStatus === 'error' && !state?.lastSuccessfulAt && recommendations.recommendations.length === 0) {
-    return frame(<RadarEmptyState
-      icon={<AlertTriangle className="size-4" />}
-      title={m.radar.forYou}
-      text={m.radar.recommendationsRefreshFailed}
-      tone="destructive"
-      action={<Button onClick={onRefresh} disabled={refreshing}>{m.radar.retry}</Button>}
-    />);
+    return frame(<>
+      <RadarEmptyState
+        icon={<AlertTriangle className="size-4" />}
+        title={m.radar.forYou}
+        text={m.radar.recommendationsRefreshFailed}
+        tone="destructive"
+        action={<Button onClick={onRefresh} disabled={refreshing}>{m.radar.retry}</Button>}
+      />
+      {ignoredSection}
+    </>);
   }
   if (status.snapshotStatus === 'never_loaded' && recommendations.recommendations.length === 0) {
-    return frame(<RadarEmptyState
-      icon={<Sparkles className="size-4" />}
-      title={m.radar.recommendationsNeverLoadedTitle}
-      text={m.radar.recommendationsNeverLoadedBody}
-      action={<Button onClick={onRefresh} disabled={refreshing}>{m.radar.recommendationsRunFirstScan}</Button>}
-    />);
+    return frame(<>
+      <RadarEmptyState
+        icon={<Sparkles className="size-4" />}
+        title={m.radar.recommendationsNeverLoadedTitle}
+        text={m.radar.recommendationsNeverLoadedBody}
+        action={<Button onClick={onRefresh} disabled={refreshing}>{m.radar.recommendationsRunFirstScan}</Button>}
+      />
+      {ignoredSection}
+    </>);
   }
   if (recommendations.recommendations.length === 0) {
     if (status.snapshotStatus === 'cooldown') {
       const allowedAt = formatAbsoluteTime(state?.nextAllowedAt ?? null, locale);
-      return frame(<RadarEmptyState
-        icon={<Clock3 className="size-4" />}
-        title={m.radar.forYou}
-        text={allowedAt ? m.radar.recommendationsCooldownUntil(allowedAt) : m.radar.recommendationsStale}
-        tone="warning"
-      />);
+      return frame(<>
+        <RadarEmptyState
+          icon={<Clock3 className="size-4" />}
+          title={m.radar.forYou}
+          text={allowedAt ? m.radar.recommendationsCooldownUntil(allowedAt) : m.radar.recommendationsStale}
+          tone="warning"
+        />
+        {ignoredSection}
+      </>);
     }
-    return frame(<RadarEmptyState
-      icon={<Check className="size-4" />}
-      title={m.radar.recommendationsEmptyTitle}
-      text={m.radar.recommendationsEmptyBody}
-      tone="success"
-    />);
+    return frame(<>
+      <RadarEmptyState
+        icon={<Check className="size-4" />}
+        title={m.radar.recommendationsEmptyTitle}
+        text={m.radar.recommendationsEmptyBody}
+        tone="success"
+      />
+      {ignoredSection}
+    </>);
   }
-  const savedWarning = status.snapshotStatus === 'stale' || status.snapshotStatus === 'cooldown'
-    || status.snapshotStatus === 'error' || error !== null;
   return frame(<>
-    <div className={cn('border-b px-3.5 py-1.5 text-[10.5px] leading-4', {
-      'border-warning/25 bg-warning/[0.07] text-foreground/90': savedWarning,
-      'border-border bg-card text-muted-foreground': !savedWarning,
-    })} role="status" aria-live="polite">
-      <span>{refreshing
-        ? m.radar.recommendationsRefreshingSaved
-        : savedWarning ? m.radar.recommendationsStale : m.radar.recommendationsFreshSummary(recommendations.recommendations.length)}</span>
-      {snapshotAt && <span className="ml-2 font-mono max-[520px]:hidden">{m.radar.recommendationsSnapshotAt(snapshotAt)}</span>}
-    </div>
+    {(dismissableWarning && warningDismissed) ? null : (
+      <div
+        className={cn('flex items-center gap-2 border-b px-3.5 py-1.5 text-[10.5px] leading-4', {
+          'border-warning/25 bg-warning/[0.07] text-foreground/90': savedWarning,
+          'border-border bg-card text-muted-foreground': !savedWarning,
+        })}
+        role="status"
+        aria-live="polite"
+        data-radar-saved-banner
+      >
+        <span className="min-w-0">{refreshing
+          ? m.radar.recommendationsRefreshingSaved
+          : savedWarning ? m.radar.recommendationsStale : m.radar.recommendationsFreshSummary(recommendations.recommendations.length)}</span>
+        {snapshotAt && <span className="shrink-0 font-mono max-[520px]:hidden">{m.radar.recommendationsSnapshotAt(snapshotAt)}</span>}
+        {dismissableWarning && (
+          <button
+            type="button"
+            aria-label={m.common.close}
+            onClick={dismissWarning}
+            className="ml-auto inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <X className="size-3" aria-hidden="true" />
+          </button>
+        )}
+      </div>
+    )}
     {rows.length === 0 && query.trim() ? (
       <RadarEmptyState icon={<Search className="size-4" />} title={m.radar.forYouSearchPlaceholder} text={m.radar.forYouSearchEmpty(query.trim())} />
     ) : (
@@ -1976,6 +2125,7 @@ function ForYouSurface({
             pendingAction={pendingAction}
             actionError={actionError}
             onStar={onStar}
+            onIgnore={onIgnore}
           />
         ))}
         <SurfaceListEndMarker
@@ -1984,6 +2134,7 @@ function ForYouSurface({
         />
       </SurfaceWorkCanvas>
     )}
+    {ignoredSection}
   </>);
 }
 
@@ -2010,6 +2161,9 @@ export function RadarSurface({
   onRetryRecommendations,
   onOpenOptions,
   onStar,
+  onUnstar,
+  onIgnore,
+  onRestoreIgnored,
   onSetFavorite,
   onAddTag,
   onDismiss,
@@ -2018,6 +2172,9 @@ export function RadarSurface({
   const { m, locale } = useI18n();
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const { dismissed: partialDismissed, dismiss: dismissPartial } = useDismissableNotice(
+    (result?.status.state?.partialReasons.length ?? 0) > 0 && !refreshing,
+  );
   const pendingFocusIndexRef = useRef<number | null>(null);
   const surfaceRef = useRef<HTMLElement>(null);
   const sourceActivities = useMemo(
@@ -2086,6 +2243,8 @@ export function RadarSurface({
         onRetryQuery={onRetryRecommendations}
         onOpenOptions={onOpenOptions}
         onStar={onStar}
+        onIgnore={onIgnore}
+        onRestoreIgnored={onRestoreIgnored}
       />
     );
   }
@@ -2229,14 +2388,22 @@ export function RadarSurface({
           : m.radar.listEndProjects(visibleResultCount);
   return renderFrame(
     <>
-      {state?.partialReasons.length ? (
-        <div className="border-b border-warning/25 bg-warning/[0.07] text-[11px] leading-4 text-foreground/90">
+      {!partialDismissed && state?.partialReasons.length ? (
+        <div className="border-b border-warning/25 bg-warning/[0.07] text-[11px] leading-4 text-foreground/90" data-radar-partial-banner>
           <SurfaceWorkCanvas variant="following" className="flex items-start gap-2 px-3.5 py-2">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
-            <span>
+            <span className="min-w-0">
               {m.radar.statusPartial}:{' '}
               {state.partialReasons.map(m.radar.partialReason).join(' ')}
             </span>
+            <button
+              type="button"
+              aria-label={m.common.close}
+              onClick={dismissPartial}
+              className="ml-auto inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <X className="size-3" aria-hidden="true" />
+            </button>
           </SurfaceWorkCanvas>
         </div>
       ) : null}
@@ -2267,10 +2434,10 @@ export function RadarSurface({
                   searchResult={searchResult}
                   open={openRowKey === activity.id}
                   onOpenChange={(open) => setOpenRowKey(open ? activity.id : null)}
-                  suggestedTags={result.suggestedTags}
                   pendingAction={pendingAction}
                   actionError={actionError}
                   onStar={onStar}
+                  onUnstar={onUnstar}
                   onSetFavorite={onSetFavorite}
                   onAddTag={onAddTag}
                   onDismiss={() => dismissAt(activity.repositoryKey, [activity.id], index)}
@@ -2286,10 +2453,10 @@ export function RadarSurface({
                   searchResult={searchResult}
                   open={openRowKey === `project:${project.repositoryKey}`}
                   onOpenChange={(open) => setOpenRowKey(open ? `project:${project.repositoryKey}` : null)}
-                  suggestedTags={result.suggestedTags}
                   pendingAction={pendingAction}
                   actionError={actionError}
                   onStar={onStar}
+                  onUnstar={onUnstar}
                   onSetFavorite={onSetFavorite}
                   onAddTag={onAddTag}
                   onDismiss={() => dismissAt(project.repositoryKey, project.activityIds, index)}

@@ -50,10 +50,16 @@ function repository(
     viewerHasStarred: boolean;
     languageName: string | null;
     languageColor: string | null;
+    ownerLogin: string | null;
+    ownerAvatarUrl: string | null;
+    topics: string[];
   }> = {},
 ) {
   const languageName = overrides.languageName === undefined ? 'TypeScript' : overrides.languageName;
   const languageColor = overrides.languageColor === undefined ? '#3178c6' : overrides.languageColor;
+  const ownerLogin = overrides.ownerLogin === undefined
+    ? nameWithOwner.split('/')[0]!
+    : overrides.ownerLogin;
   return {
     nameWithOwner,
     description: overrides.description ?? `${nameWithOwner} description`,
@@ -61,6 +67,10 @@ function repository(
     stargazerCount: overrides.stargazerCount ?? 10,
     viewerHasStarred: overrides.viewerHasStarred ?? false,
     primaryLanguage: languageName ? { name: languageName, color: languageColor } : null,
+    repositoryTopics: {
+      nodes: (overrides.topics ?? []).map((name) => ({ topic: { name } })),
+    },
+    owner: ownerLogin ? { login: ownerLogin, avatarUrl: overrides.ownerAvatarUrl ?? null } : null,
   };
 }
 
@@ -115,7 +125,11 @@ describe('GitHub Radar source', () => {
           edges: [
             {
               starredAt: '2026-08-10T10:00:00Z',
-              node: repository('Owner/One', { viewerHasStarred: true, stargazerCount: 21 }),
+              node: repository('Owner/One', {
+                viewerHasStarred: true,
+                stargazerCount: 21,
+                topics: [' TypeScript ', 'ai', 'typescript', 'AI'],
+              }),
             },
             {
               starredAt: '2026-08-10T09:00:00Z',
@@ -160,6 +174,7 @@ describe('GitHub Radar source', () => {
       viewerHadStarred: true,
       seenAt: null,
       repositoryStargazerCount: 21,
+      repositoryTopics: ['ai', 'typescript'],
     });
     expect(calls).toHaveLength(2);
     expect(calls[1]?.variables).toEqual({
@@ -170,6 +185,11 @@ describe('GitHub Radar source', () => {
     });
     expect(calls[1]?.query).toContain('avatarUrl');
     expect(calls[1]?.query).toContain('first: 30');
+    expect(calls[1]?.query).toContain('repositoryTopics(first: 20)');
+    expect(calls[1]?.query).toContain('after: $cursor0');
+    expect(calls[1]?.query).toContain('after: $cursor1');
+    expect(calls[1]?.query).toMatch(/node\s*\{\s*nameWithOwner\s*owner\s*\{\s*login\s+avatarUrl\s*\}/u);
+    expect(calls[1]?.query).not.toMatch(/starredRepositories\([^)]*owner\s*\{/u);
     expect(calls[0]?.init).toMatchObject({ method: 'POST' });
     expect(new Headers(calls[0]?.init.headers).get('authorization')).toBe('Bearer secret');
   });
@@ -243,6 +263,9 @@ describe('GitHub Radar source', () => {
     expect(new Set(snapshot.activities.map((activity) => activity.id)).size).toBe(40);
     expect(snapshot.activities[0]?.repositoryKey).toBe('owner/repo-0');
     expect(snapshot.activities.at(-1)?.repositoryKey).toBe('owner/repo-39');
+    expect(snapshot.activities[0]?.repositoryOwnerLogin).toBe('owner');
+    expect(snapshot.activities[0]?.repositoryOwnerAvatarUrl).toBeNull();
+    expect(snapshot.activities.at(-1)?.repositoryOwnerLogin).toBe('owner');
   });
 
   it('pages active accounts until their activity crosses the 30-day cutoff', async () => {

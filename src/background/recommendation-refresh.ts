@@ -14,10 +14,13 @@ import {
   clearRecommendationData,
   commitRecommendationSnapshot,
   getRecommendationState,
+  ignoreRecommendation,
+  listIgnoredRepositories,
   listRecommendations,
   makeRecommendationStatus,
   prepareRecommendationAccount,
   recordRecommendationFailure,
+  restoreIgnoredRecommendation,
 } from '../storage/recommendation-store';
 import { db } from '@/storage/db';
 import { normalizeRepositoryFullName } from '@/watch/watch-model';
@@ -31,7 +34,7 @@ export interface RecommendationRefreshCoordinatorDependencies {
   auth: RecommendationAuth;
   fetchRecommendations: typeof fetchGitHubRecommendations;
   loadSeeds(): Promise<ReturnType<typeof selectRecommendationSeeds>>;
-  loadExcludedRepositoryKeys(): Promise<Set<string>>;
+  loadExcludedRepositoryKeys(accountLogin: string): Promise<Set<string>>;
   store: {
     clearData: typeof clearRecommendationData;
     prepareAccount: typeof prepareRecommendationAccount;
@@ -39,6 +42,9 @@ export interface RecommendationRefreshCoordinatorDependencies {
     commitSnapshot: typeof commitRecommendationSnapshot;
     recordFailure: typeof recordRecommendationFailure;
     listRecommendations: typeof listRecommendations;
+    ignoreRepository: typeof ignoreRecommendation;
+    listIgnored: typeof listIgnoredRepositories;
+    restoreIgnored: typeof restoreIgnoredRecommendation;
   };
   now?: () => number;
   broadcastChanged(): void;
@@ -53,6 +59,8 @@ export interface RecommendationRefreshCoordinator {
   refreshAtScheduledBoundary(): Promise<RecommendationRefreshResult | null>;
   nextDailyRefreshAt(nowMillis?: number): Promise<number | null>;
   clear(): Promise<RecommendationStatus>;
+  ignoreRepository(repositoryKey: string, repositoryFullName?: string): Promise<void>;
+  restoreIgnored(repositoryKey: string): Promise<void>;
   reconcileAccount(): Promise<void>;
   isRefreshing(): boolean;
 }
@@ -169,21 +177,26 @@ export function createRecommendationRefreshCoordinator(
     await reconcileAccount();
     const auth = await readAuth();
     const accountLogin = auth.accountLogin && auth.mainToken ? auth.accountLogin : null;
-    const [recommendations, state] = await Promise.all([
+    const [recommendations, state, ignored] = await Promise.all([
       accountLogin
         ? dependencies.store.listRecommendations(accountLogin)
         : Promise.resolve([]),
       accountLogin ? dependencies.store.getState(accountLogin) : Promise.resolve(null),
+      accountLogin
+        ? dependencies.store.listIgnored(accountLogin)
+        : Promise.resolve([]),
     ]);
     const latest = await readAuth();
     if (identity(auth) !== identity(latest)) {
       return {
         recommendations: [],
+        ignored: [],
         status: await statusForAuth(latest, inFlight !== null),
       };
     }
     return {
       recommendations,
+      ignored,
       status: await statusForAuth(auth, inFlight !== null, state),
     };
   }
@@ -198,13 +211,12 @@ export function createRecommendationRefreshCoordinator(
     if (
       previousState?.nextAllowedAt
       && Date.parse(previousState.nextAllowedAt) > attemptedAt
-      && previousState.errorCode === 'rate_limited'
     ) return { published: false };
 
     try {
       const [seeds, excludedRepositoryKeys] = await Promise.all([
         dependencies.loadSeeds(),
-        dependencies.loadExcludedRepositoryKeys(),
+        dependencies.loadExcludedRepositoryKeys(auth.accountLogin),
       ]);
       const queryPlan = buildRecommendationQueryPlan(seeds);
       const snapshot = await dependencies.fetchRecommendations({
@@ -316,6 +328,38 @@ export function createRecommendationRefreshCoordinator(
     return statusForAuth(await readAuth(), inFlight !== null, null);
   }
 
+  async function ignoreRepository(repositoryKey: string, repositoryFullName?: string): Promise<void> {
+    await reconcileAccount();
+    const auth = await readAuth();
+    if (!auth.accountLogin || !auth.mainToken) {
+      throw new GitHubRecommendationError('authentication_required');
+    }
+    await dependencies.runSerialized(async () => {
+      const latest = await readAuth();
+      if (!latest.accountLogin || !latest.mainToken) {
+        throw new GitHubRecommendationError('authentication_required');
+      }
+      await dependencies.store.ignoreRepository(latest.accountLogin, repositoryKey, repositoryFullName);
+    });
+    dependencies.broadcastChanged();
+  }
+
+  async function restoreIgnored(repositoryKey: string): Promise<void> {
+    await reconcileAccount();
+    const auth = await readAuth();
+    if (!auth.accountLogin || !auth.mainToken) {
+      throw new GitHubRecommendationError('authentication_required');
+    }
+    await dependencies.runSerialized(async () => {
+      const latest = await readAuth();
+      if (!latest.accountLogin || !latest.mainToken) {
+        throw new GitHubRecommendationError('authentication_required');
+      }
+      await dependencies.store.restoreIgnored(latest.accountLogin, repositoryKey);
+    });
+    dependencies.broadcastChanged();
+  }
+
   return {
     getStatus,
     query,
@@ -325,6 +369,8 @@ export function createRecommendationRefreshCoordinator(
     refreshIfDue,
     nextDailyRefreshAt,
     clear,
+    ignoreRepository,
+    restoreIgnored,
     reconcileAccount,
     isRefreshing: () => inFlight !== null,
   };
@@ -333,10 +379,15 @@ export function createRecommendationRefreshCoordinator(
 export function createProductionRecommendationLoaders() {
   return {
     loadSeeds: async () => selectRecommendationSeeds(await db.stars.toArray()),
-    loadExcludedRepositoryKeys: async () => new Set(
-      (await db.stars.toArray())
+    loadExcludedRepositoryKeys: async (accountLogin: string) => new Set([
+      ...(await db.stars.toArray())
         .filter((star) => !star.tombstone && star.viewer_has_starred !== false)
         .map((star) => normalizeRepositoryFullName(star.full_name)),
-    ),
+      ...(await db.recommendationIgnores
+        .where('accountLogin')
+        .equals(accountLogin.trim().toLocaleLowerCase('en-US'))
+        .toArray())
+        .map((row) => row.repositoryKey),
+    ]),
   };
 }

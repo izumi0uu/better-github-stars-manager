@@ -31,6 +31,7 @@ import type {
   RadarStateRecord,
 } from '@/radar/radar-model';
 import type {
+  RecommendationIgnoreRecord,
   RecommendationRecord,
   RecommendationStateRecord,
 } from '@/recommendations/recommendation-model';
@@ -65,6 +66,7 @@ export class StarsDB extends Dexie {
   radarState!: Table<RadarStateRecord, 'singleton'>;
   recommendations!: Table<RecommendationRecord, string>;
   recommendationState!: Table<RecommendationStateRecord, 'singleton'>;
+  recommendationIgnores!: Table<RecommendationIgnoreRecord, string>;
 
   constructor() {
     super('better-github-stars-manager');
@@ -148,6 +150,7 @@ export class StarsDB extends Dexie {
       radarState: '&id, accountLogin, lastSuccessfulAt',
       recommendations: '&id, accountLogin',
       recommendationState: '&id, accountLogin',
+      recommendationIgnores: '&id, accountLogin',
     });
   }
 }

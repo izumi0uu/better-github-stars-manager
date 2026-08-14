@@ -9,9 +9,9 @@ import type {
 import {
   dedupeRadarActivities,
   normalizeRadarActivity,
+  normalizeRadarRepositoryTopics,
   normalizeRadarAvatarUrl,
   normalizeRadarPartialReasons,
-  RADAR_DEFAULT_TAG_SUGGESTIONS,
   RADAR_WINDOW_DAYS,
   sortRadarActivities,
 } from '@/radar/radar-model';
@@ -20,7 +20,7 @@ import type {
   RadarSourceSnapshot,
   RadarStatus,
 } from '@/radar/radar-contract';
-import { canonicalTagKey, visibleTagNames } from '@/tags/tag-model';
+import { canonicalTagKey, excludedCanonicalTagKeys, visibleTagNames } from '@/tags/tag-model';
 import { db } from './db';
 
 const RADAR_STATE_ID = 'singleton' as const;
@@ -232,6 +232,7 @@ function ownStarPresentation(
   star: Star,
   accountLogin: string,
   tag: Tag | undefined,
+  excludedTagKeys: ReadonlySet<string>,
 ): RadarActivityPresentation | null {
   try {
     const activity = normalizeRadarActivity({
@@ -241,7 +242,10 @@ function ownStarPresentation(
       repositoryDescription: star.description,
       repositoryLanguage: star.language,
       repositoryLanguageColor: null,
+      repositoryOwnerLogin: normalizeRepositoryFullName(star.full_name).split('/')[0] ?? null,
+      repositoryOwnerAvatarUrl: star.owner_avatar_url ?? null,
       repositoryStargazerCount: star.stargazers_count,
+      repositoryTopics: star.topics,
       viewerHadStarred: true,
       starredAt: star.starred_at,
     }, { accountLogin });
@@ -252,6 +256,9 @@ function ownStarPresentation(
       viewerHasStarred: true,
       favorite: tag?.favorite === true,
       tags: tag ? visibleTagNames(tag) : [],
+      suggestedTags: activity.repositoryTopics.filter(
+        (topic) => !excludedTagKeys.has(canonicalTagKey(topic)),
+      ),
       displayedStargazerCount: star.stargazers_count,
     };
   } catch {
@@ -264,9 +271,10 @@ export async function listRadarActivities(
   nowMillis = Date.now(),
 ): Promise<RadarActivityPresentation[]> {
   const key = accountKey(accountLogin);
-  const [storedActivities, allStars] = await Promise.all([
+  const [storedActivities, allStars, tagMeta] = await Promise.all([
     db.radarActivities.where('accountLogin').equals(key).toArray(),
     db.stars.toArray(),
+    db.tagMeta.toArray(),
   ]);
   const rows = storedActivities.filter((activity) => activity.dismissedAt === null);
   const cutoffMillis = nowMillis - RADAR_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
@@ -289,46 +297,42 @@ export async function listRadarActivities(
     }),
   );
   const tags = await getTagsByKey(repositoryKeys);
+  const excludedTagKeys = excludedCanonicalTagKeys(tagMeta);
 
   const following = rows.map((activity): RadarActivityPresentation => {
     const star = stars.get(activity.repositoryKey);
     const tag = tags.get(activity.repositoryKey);
     const seenAt = storedSeenAt(activity.seenAt);
+    const hasLiveStar = !!star && !star.tombstone && star.viewer_has_starred !== false;
+    const repositoryTopics = normalizeRadarRepositoryTopics(
+      hasLiveStar ? star.topics : activity.repositoryTopics,
+    );
     return {
       ...activity,
       source: 'following',
       seenAt,
       seen: seenAt !== null,
       actorAvatarUrl: normalizeRadarAvatarUrl(activity.actorAvatarUrl),
-      viewerHasStarred: star
-        ? !star.tombstone && star.viewer_has_starred !== false
-        : activity.viewerHadStarred,
+      repositoryOwnerLogin: activity.repositoryOwnerLogin ?? null,
+      repositoryOwnerAvatarUrl: normalizeRadarAvatarUrl(activity.repositoryOwnerAvatarUrl),
+      repositoryTopics,
+      viewerHasStarred: star ? hasLiveStar : activity.viewerHadStarred,
       favorite: tag?.favorite === true,
       tags: tag ? visibleTagNames(tag) : [],
+      suggestedTags: repositoryTopics.filter(
+        (topic) => !excludedTagKeys.has(canonicalTagKey(topic)),
+      ),
       displayedStargazerCount: star?.stargazers_count ?? activity.repositoryStargazerCount,
     };
   });
   const own = ownStars.flatMap((star) => {
     const repositoryKey = normalizeRepositoryFullName(star.full_name);
-    const activity = ownStarPresentation(star, key, tags.get(repositoryKey));
+    const activity = ownStarPresentation(star, key, tags.get(repositoryKey), excludedTagKeys);
     return activity ? [activity] : [];
   });
   return sortRadarActivities([...following, ...own]);
 }
 
-export async function listRadarSuggestedTags(): Promise<string[]> {
-  const meta = await db.tagMeta.toArray();
-  const excluded = new Set(
-    meta.filter((item) => item.excluded === true).map((item) => canonicalTagKey(item.name)),
-  );
-  const names = meta
-    .filter((item) => !item.excluded)
-    .map((item) => item.name.trim())
-    .filter(Boolean);
-  return [...new Set([...RADAR_DEFAULT_TAG_SUGGESTIONS, ...names])]
-    .filter((name) => !excluded.has(canonicalTagKey(name)))
-    .sort((left, right) => left.localeCompare(right));
-}
 
 export function radarSnapshotStatus(
   state: RadarStateRecord | null,

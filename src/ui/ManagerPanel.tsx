@@ -714,6 +714,9 @@ export function ManagerPanel() {
                 onRetryRecommendations={() => { void radar.reloadRecommendations(); }}
                 onOpenOptions={() => bgCall('openOptions').catch(() => {})}
                 onStar={radar.star}
+                onUnstar={radar.unstar}
+                onIgnore={radar.ignoreRecommendation}
+                onRestoreIgnored={radar.restoreIgnoredRecommendation}
                 onSetFavorite={radar.setFavorite}
                 onAddTag={radar.addTag}
                 onDismiss={radar.dismiss}

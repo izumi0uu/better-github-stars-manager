@@ -286,11 +286,13 @@ function buildActivityBatchQuery(count: number, starsPerFollower: number): strin
           starredAt
           node {
             nameWithOwner
+            owner { login avatarUrl }
             description
             isPrivate
             stargazerCount
             viewerHasStarred
             primaryLanguage { name color }
+            repositoryTopics(first: 20) { nodes { topic { name } } }
           }
         }
         pageInfo { hasNextPage endCursor }
@@ -349,6 +351,20 @@ function parseActivityBatch(
         throw new GitHubRadarError('invalid_activity', { batch: index });
       }
       const language = record(repository.primaryLanguage);
+      const repositoryOwner = record(repository.owner);
+      const repositoryTopics = record(repository.repositoryTopics);
+      const repositoryTopicNodes = repositoryTopics?.nodes;
+      if (!Array.isArray(repositoryTopicNodes)) {
+        throw new GitHubRadarError('invalid_activity', { batch: index });
+      }
+      const repositoryTopicNames = repositoryTopicNodes.map((nodeValue) => {
+        const node = record(nodeValue);
+        const topic = record(node?.topic);
+        return nonEmptyString(topic?.name);
+      });
+      if (repositoryTopicNames.some((name) => name === null)) {
+        throw new GitHubRadarError('invalid_activity', { batch: index });
+      }
       activities.push(normalizeRadarActivity({
         actorLogin,
         actorAvatarUrl,
@@ -358,6 +374,13 @@ function parseActivityBatch(
           : '',
         repositoryLanguage: language?.name ?? null,
         repositoryLanguageColor: language?.color ?? null,
+        repositoryOwnerLogin: typeof repositoryOwner?.login === 'string'
+          ? repositoryOwner.login
+          : null,
+        repositoryOwnerAvatarUrl: typeof repositoryOwner?.avatarUrl === 'string'
+          ? repositoryOwner.avatarUrl
+          : null,
+        repositoryTopics: repositoryTopicNames,
         repositoryStargazerCount: repository.stargazerCount,
         viewerHadStarred: repository.viewerHasStarred,
         starredAt,

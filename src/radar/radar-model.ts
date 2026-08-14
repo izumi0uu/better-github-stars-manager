@@ -60,6 +60,9 @@ export interface RadarActivityRecord {
   repositoryDescription: string;
   repositoryLanguage: string | null;
   repositoryLanguageColor: string | null;
+  repositoryOwnerLogin?: string | null;
+  repositoryOwnerAvatarUrl?: string | null;
+  repositoryTopics: string[];
   repositoryStargazerCount: number;
   viewerHadStarred: boolean;
   starredAt: string;
@@ -73,6 +76,7 @@ export interface RadarActivityPresentation extends RadarActivityRecord {
   viewerHasStarred: boolean;
   favorite: boolean;
   tags: string[];
+  suggestedTags: string[];
   displayedStargazerCount: number;
 }
 
@@ -84,11 +88,14 @@ export interface RadarProjectPresentation {
   repositoryDescription: string;
   repositoryLanguage: string | null;
   repositoryLanguageColor: string | null;
+  repositoryOwnerLogin: string | null;
+  repositoryOwnerAvatarUrl: string | null;
   repositoryStargazerCount: number;
   displayedStargazerCount: number;
   viewerHasStarred: boolean;
   favorite: boolean;
   tags: string[];
+  suggestedTags: string[];
   activityCount: number;
   latestStarredAt: string;
   /** The same newest-first activity references used by Feed, not a second scan. */
@@ -112,14 +119,6 @@ export interface RadarStateRecord {
   rateLimitResetAt: string | null;
 }
 
-export const RADAR_DEFAULT_TAG_SUGGESTIONS = [
-  'infra',
-  'ai',
-  'rust',
-  'tools',
-  'reading',
-  'web',
-] as const;
 
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -132,6 +131,15 @@ function nonEmptyString(value: unknown): string | null {
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
 }
+export function normalizeRadarRepositoryTopics(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const normalized = value.flatMap((item) => {
+    const topic = nonEmptyString(item);
+    return topic ? [topic.toLocaleLowerCase('en-US')] : [];
+  });
+  return [...new Set(normalized)].sort((left, right) => left.localeCompare(right));
+}
+
 
 function normalizedTimestamp(value: unknown): string {
   const text = nonEmptyString(value);
@@ -228,6 +236,9 @@ export function normalizeRadarActivity(
       : '',
     repositoryLanguage: normalizedNullableString(input.repositoryLanguage),
     repositoryLanguageColor: normalizedLanguageColor(input.repositoryLanguageColor),
+    repositoryOwnerLogin: normalizedNullableString(input.repositoryOwnerLogin),
+    repositoryOwnerAvatarUrl: normalizeRadarAvatarUrl(input.repositoryOwnerAvatarUrl),
+    repositoryTopics: normalizeRadarRepositoryTopics(input.repositoryTopics),
     repositoryStargazerCount: normalizedCount(input.repositoryStargazerCount),
     viewerHadStarred: input.viewerHadStarred === true,
     starredAt,
@@ -296,11 +307,14 @@ export function aggregateRadarProjects(
       repositoryDescription: latest.repositoryDescription,
       repositoryLanguage: latest.repositoryLanguage,
       repositoryLanguageColor: latest.repositoryLanguageColor,
+      repositoryOwnerLogin: latest.repositoryOwnerLogin ?? null,
+      repositoryOwnerAvatarUrl: latest.repositoryOwnerAvatarUrl ?? null,
       repositoryStargazerCount: latest.repositoryStargazerCount,
       displayedStargazerCount: latest.displayedStargazerCount,
       viewerHasStarred: latest.viewerHasStarred,
       favorite: latest.favorite,
       tags: latest.tags,
+      suggestedTags: latest.suggestedTags,
       activityCount: group.length,
       latestStarredAt: latest.starredAt,
       activities: group,
