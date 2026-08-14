@@ -15,7 +15,7 @@ import {
   TOKEN_WATCHING_FORBIDDEN,
   TOKEN_WATCHING_BAD_SHAPE,
   TOKEN_WATCHING_STATUS,
-  TOKEN_WATCHING_NETWORK, 
+  TOKEN_WATCHING_NETWORK,
 } from '@/api/errors';
 
 type FetchLike = typeof fetch;
@@ -143,4 +143,3 @@ export async function probeTokenCapabilities(
     notifications,
   };
 }
-
