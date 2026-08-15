@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import {
   ChevronDown,
   ChevronLeft,
@@ -28,8 +28,7 @@ type ReviewDecision = Readonly<{
   correctedTag?: string;
 }>;
 
-type EditingState = Readonly<{
-  rowId: string;
+type RowEditingState = Readonly<{
   actionIndex: number;
   value: string;
   error: string | null;
@@ -134,14 +133,10 @@ export function AgentProposalReviewCard({
   const { m } = useI18n();
   const labels = m.agentPanel.workbench;
   const rows = proposal.review.rows;
-  const [expandedRows, setExpandedRows] = useState<Readonly<Record<string, boolean>>>({});
   const [decisions, setDecisions] = useState<Readonly<Record<string, ReviewDecision>>>({});
-  const [editing, setEditing] = useState<EditingState | null>(null);
 
   useEffect(() => {
-    setExpandedRows({});
     setDecisions({});
-    setEditing(null);
   }, [proposal.proposalId]);
 
   const selectedCount = selectedRepositoryCount ?? selectedProposalRowIds.size;
@@ -152,34 +147,25 @@ export function AgentProposalReviewCard({
     return `${row.repositoryId}: ${decisionReasonText(labels, decision)}`;
   });
 
-  const reasonFor = (row: ProposalReviewRow): string => (
-    decisionReasonText(labels, decisions[row.proposalRowId])
-  );
-
-  const rejectRow = (row: ProposalReviewRow, reason: ReviewRejectReason) => {
-    if (!reviewEditable) return;
+  const rejectRow = useCallback((proposalRowId: string, reason: ReviewRejectReason) => {
     setDecisions((current) => ({
       ...current,
-      [row.proposalRowId]: { rejected: true, reason },
+      [proposalRowId]: { rejected: true, reason },
     }));
-    if (selectedProposalRowIds.has(row.proposalRowId)) onToggleRow(row.proposalRowId);
-  };
+  }, []);
 
-  const undoReject = (row: ProposalReviewRow) => {
+  const undoReject = useCallback((proposalRowId: string) => {
     setDecisions((current) => ({
       ...current,
-      [row.proposalRowId]: { rejected: false },
+      [proposalRowId]: { rejected: false },
     }));
-    setEditing(null);
-  };
+  }, []);
 
-  const saveEdit = (row: ProposalReviewRow, actionIndex: number) => {
-    if (!editing || editing.rowId !== row.proposalRowId || editing.actionIndex !== actionIndex) return;
-    const error = validateEditedTag(labels, row, actionIndex, editing.value);
-    if (error) {
-      setEditing({ ...editing, error });
-      return;
-    }
+  const commitEdit = useCallback((
+    row: ProposalReviewRow,
+    actionIndex: number,
+    correctedTag: string,
+  ) => {
     const action = row.proposedActions[actionIndex];
     if (!action) return;
     setDecisions((current) => ({
@@ -188,16 +174,13 @@ export function AgentProposalReviewCard({
         rejected: true,
         reason: 'edited',
         correctedFrom: action.tag,
-        correctedTag: editing.value,
+        correctedTag,
       },
     }));
-    if (selectedProposalRowIds.has(row.proposalRowId)) onToggleRow(row.proposalRowId);
-    setEditing(null);
-  };
+  }, []);
 
-  const askRevise = (row: ProposalReviewRow) => {
-    const decision = decisions[row.proposalRowId];
-    if (!decision?.rejected) return;
+  const askRevise = useCallback((row: ProposalReviewRow, decision: ReviewDecision) => {
+    if (!decision.rejected) return;
     if (decision.reason === 'edited' && decision.correctedFrom && decision.correctedTag) {
       onInsertCorrection(labels.reviewEditCorrectionPrompt(
         row.repositoryId,
@@ -212,7 +195,7 @@ export function AgentProposalReviewCard({
         rejectReasonLabel(labels, decision.reason),
       ));
     }
-  };
+  }, [labels, onInsertCorrection]);
 
   return (
     <div
@@ -246,37 +229,14 @@ export function AgentProposalReviewCard({
               key={row.proposalRowId}
               row={row}
               index={index}
-              expanded={!!expandedRows[row.proposalRowId]}
               decision={decisions[row.proposalRowId]}
               selected={selectedProposalRowIds.has(row.proposalRowId)}
               editable={reviewEditable}
-              editing={editing}
-              onToggleExpanded={() => setExpandedRows((current) => ({
-                ...current,
-                [row.proposalRowId]: !current[row.proposalRowId],
-              }))}
-              onToggleSelected={() => onToggleRow(row.proposalRowId)}
-              onReject={(reason) => rejectRow(row, reason)}
-              onUndoReject={() => undoReject(row)}
-              onStartEdit={(actionIndex) => {
-                const action = row.proposedActions[actionIndex];
-                if (!action) return;
-                setEditing({
-                  rowId: row.proposalRowId,
-                  actionIndex,
-                  value: action.tag,
-                  error: null,
-                });
-              }}
-              onEditChange={(value) => setEditing((current) => (
-                current && current.rowId === row.proposalRowId
-                  ? { ...current, value, error: null }
-                  : current
-              ))}
-              onSaveEdit={saveEdit}
-              onCancelEdit={() => setEditing(null)}
-              onAskRevise={() => askRevise(row)}
-              reasonFor={reasonFor}
+              onToggleSelected={onToggleRow}
+              onReject={rejectRow}
+              onUndoReject={undoReject}
+              onCommitEdit={commitEdit}
+              onAskRevise={askRevise}
             />
           ))}
         </div>
@@ -379,47 +339,66 @@ export function AgentProposalReviewCard({
   );
 }
 
-function ProposalReviewRow({
-  row,
-  index,
-  expanded,
-  decision,
-  selected,
-  editable,
-  editing,
-  onToggleExpanded,
-  onToggleSelected,
-  onReject,
-  onUndoReject,
-  onStartEdit,
-  onEditChange,
-  onSaveEdit,
-  onCancelEdit,
-  onAskRevise,
-  reasonFor,
-}: {
+type ProposalReviewRowProps = Readonly<{
   row: ProposalReviewRow;
   index: number;
-  expanded: boolean;
   decision: ReviewDecision | undefined;
   selected: boolean;
   editable: boolean;
-  editing: EditingState | null;
-  onToggleExpanded: () => void;
-  onToggleSelected: () => void;
-  onReject: (reason: ReviewRejectReason) => void;
-  onUndoReject: () => void;
-  onStartEdit: (actionIndex: number) => void;
-  onEditChange: (value: string) => void;
-  onSaveEdit: (row: ProposalReviewRow, actionIndex: number) => void;
-  onCancelEdit: () => void;
-  onAskRevise: () => void;
-  reasonFor: (row: ProposalReviewRow) => string;
-}) {
+  onToggleSelected: (proposalRowId: string) => void;
+  onReject: (proposalRowId: string, reason: ReviewRejectReason) => void;
+  onUndoReject: (proposalRowId: string) => void;
+  onCommitEdit: (row: ProposalReviewRow, actionIndex: number, correctedTag: string) => void;
+  onAskRevise: (row: ProposalReviewRow, decision: ReviewDecision) => void;
+}>;
+
+const ProposalReviewRow = memo(function ProposalReviewRow({
+  row,
+  index,
+  decision,
+  selected,
+  editable,
+  onToggleSelected,
+  onReject,
+  onUndoReject,
+  onCommitEdit,
+  onAskRevise,
+}: ProposalReviewRowProps) {
   const { m } = useI18n();
   const labels = m.agentPanel.workbench;
+  const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState<RowEditingState | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const rejected = !!decision?.rejected;
+
+  const startEdit = (actionIndex: number) => {
+    const action = row.proposedActions[actionIndex];
+    if (!action) return;
+    setEditing({ actionIndex, value: action.tag, error: null });
+  };
+
+  const saveEdit = (actionIndex: number) => {
+    if (!editing || editing.actionIndex !== actionIndex) return;
+    const error = validateEditedTag(labels, row, actionIndex, editing.value);
+    if (error) {
+      setEditing({ ...editing, error });
+      return;
+    }
+    onCommitEdit(row, actionIndex, editing.value);
+    if (selected) onToggleSelected(row.proposalRowId);
+    setEditing(null);
+  };
+
+  const reject = (reason: ReviewRejectReason) => {
+    setRejectOpen(false);
+    onReject(row.proposalRowId, reason);
+    if (selected) onToggleSelected(row.proposalRowId);
+  };
+
+  const undoReject = () => {
+    onUndoReject(row.proposalRowId);
+    setEditing(null);
+  };
 
   return (
     <article
@@ -433,7 +412,7 @@ function ProposalReviewRow({
         <Checkbox
           className="mt-0.5"
           checked={selected && !rejected}
-          onCheckedChange={onToggleSelected}
+          onCheckedChange={() => onToggleSelected(row.proposalRowId)}
           aria-label={labels.selectRepository(row.repositoryId)}
           disabled={!editable || rejected}
         />
@@ -453,7 +432,7 @@ function ProposalReviewRow({
               variant="ghost"
               size="sm"
               className="h-6 shrink-0 px-1.5 text-[11px]"
-              onClick={onToggleExpanded}
+              onClick={() => setExpanded((current) => !current)}
               aria-expanded={expanded}
             >
               {expanded
@@ -466,17 +445,22 @@ function ProposalReviewRow({
           {rejected ? (
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <span className="rounded-full border border-border px-1.5 py-0.5 text-[11px] text-foreground">
-                {labels.reviewRejectedWithReason(reasonFor(row))}
+                {labels.reviewRejectedWithReason(decisionReasonText(labels, decision))}
               </span>
               {decision?.reason === 'edited' && decision.correctedTag ? (
                 <span className="rounded-full border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
                   {labels.reviewNeedsReanalysis}
                 </span>
               ) : null}
-              <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" onClick={onUndoReject} disabled={!editable}>
+              <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" onClick={undoReject} disabled={!editable}>
                 {labels.reviewUndoReject}
               </Button>
-              <Button variant="outline" size="sm" className="h-6 px-1.5 text-[11px]" onClick={onAskRevise}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 px-1.5 text-[11px]"
+                onClick={() => decision && onAskRevise(row, decision)}
+              >
                 {labels.reviewAskRevise}
               </Button>
             </div>
@@ -484,7 +468,7 @@ function ProposalReviewRow({
 
           <ul className="mt-2 space-y-2">
             {row.proposedActions.map((action, actionIndex) => {
-              const actionEditing = editing?.rowId === row.proposalRowId && editing.actionIndex === actionIndex;
+              const actionEditing = editing?.actionIndex === actionIndex;
               return (
                 <li
                   key={`${action.kind}:${action.tag}:${actionIndex}`}
@@ -502,7 +486,7 @@ function ProposalReviewRow({
                         variant="ghost"
                         size="sm"
                         className="h-6 px-1.5 text-[11px]"
-                        onClick={() => onStartEdit(actionIndex)}
+                        onClick={() => startEdit(actionIndex)}
                       >
                         {labels.reviewEditTag}
                       </Button>
@@ -512,7 +496,11 @@ function ProposalReviewRow({
                     <div className="mt-2 space-y-1.5">
                       <input
                         value={editing.value}
-                        onChange={(event) => onEditChange(event.currentTarget.value)}
+                        onChange={(event) => setEditing({
+                          ...editing,
+                          value: event.currentTarget.value,
+                          error: null,
+                        })}
                         aria-label={labels.reviewEditTagLabel(row.repositoryId, action.tag)}
                         className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                       />
@@ -520,10 +508,10 @@ function ProposalReviewRow({
                         <p className="text-[11.5px] text-destructive" role="alert">{editing.error}</p>
                       ) : null}
                       <div className="flex flex-wrap gap-1.5">
-                        <Button size="sm" className="h-7 px-2 text-xs" onClick={() => onSaveEdit(row, actionIndex)}>
+                        <Button size="sm" className="h-7 px-2 text-xs" onClick={() => saveEdit(actionIndex)}>
                           {labels.reviewSaveEdit}
                         </Button>
-                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onCancelEdit}>
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setEditing(null)}>
                           {labels.reviewCancelEdit}
                         </Button>
                       </div>
@@ -557,10 +545,7 @@ function ProposalReviewRow({
                       variant="outline"
                       size="sm"
                       className="h-6 px-1.5 text-[11px]"
-                      onClick={() => {
-                        setRejectOpen(false);
-                        onReject(reason);
-                      }}
+                      onClick={() => reject(reason)}
                     >
                       {rejectReasonLabel(labels, reason)}
                     </Button>
@@ -579,7 +564,7 @@ function ProposalReviewRow({
       </div>
     </article>
   );
-}
+});
 
 function decisionReasonText(
   labels: AgentWorkbenchLabels,

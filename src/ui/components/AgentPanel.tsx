@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Activity,
   ArrowUp,
@@ -81,11 +81,9 @@ export function AgentPanel({
   const { m } = useI18n();
   const [input, setInput] = useState('');
   const [lastFailedPrompt, setLastFailedPrompt] = useState<string | null>(null);
-  const [reviewTranscriptOpen, setReviewTranscriptOpen] = useState(false);
   const drawerRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const reviewTranscriptMessageIdRef = useRef<string | null>(null);
   const onHideRef = useRef(onHide);
   const previousDurableRetryDraftRef = useRef(agent.durableRetryDraft);
   onHideRef.current = onHide;
@@ -100,7 +98,6 @@ export function AgentPanel({
     durableRetryDraft,
     canRetryLastTurn,
     transientSafeResendPrompt,
-    toolActivities,
     errorCategory,
     startTurn,
     stopTurn,
@@ -111,30 +108,18 @@ export function AgentPanel({
     sessionInitializationError,
     activeSessionId,
     sessions,
-    hasEarlierMessages,
-    loadingEarlierMessages,
     createSession,
     switchSession,
     deleteSession,
-    loadEarlierMessages,
     resetConversation,
-    retrySessionHydration,
   } = agent;
   const organize = workbench.state;
   const error = sessionInitializationError ?? turnError;
   const sessionIdentityReady = agentSessionReady && organize.sessionId === activeSessionId;
   const sessionReady = sessionIdentityReady && !sessionOperationPending;
-  const organizeView = selectOrganizeWorkbenchView(organize, workbench.displayedProcessed);
-  const terminalOrganizeJob = organize.organizeJob
-    && ['completed', 'cancelled'].includes(organize.organizeJob.status)
-    ? organize.organizeJob
-    : null;
-  const organizeOriginSessionDeleted = !!terminalOrganizeJob && (
-    organize.deletedSessionIds.has(terminalOrganizeJob.originAgentSessionId)
-    || (
-      agentSessionReady
-      && !sessions.some((session) => session.id === terminalOrganizeJob.originAgentSessionId)
-    )
+  const organizeView = useMemo(
+    () => selectOrganizeWorkbenchView(organize, workbench.displayedProcessed),
+    [organize, workbench.displayedProcessed],
   );
   const receiptCounts = organizeView.receiptCounts;
   const reviewFocused = organizeView.phase === 'review_ready';
@@ -192,81 +177,17 @@ export function AgentPanel({
   const contextNeedsProviderSettings = contextFailureReason === 'capability_unresolved'
     || contextFailureReason === 'provider_context_overflow_repeated'
     || contextFailureReason === 'provider_request_byte_limit_repeated';
-  const contextNeedsPromptEdit = contextFailureReason === 'current_turn_too_large';
   const contextNeedsInternalRetry = contextFailureReason === 'tool_result_memory_limit';
   const contextRecoveryTitle = contextNeedsProviderSettings
     ? m.agentPanel.contextSettingsTitle
     : contextNeedsInternalRetry
       ? m.agentPanel.contextToolMemoryTitle
       : m.agentPanel.contextPromptTooLargeTitle;
-  const contextRecoveryMessage = contextNeedsProviderSettings
-    ? m.agentPanel.contextSettingsMessage
-    : contextNeedsInternalRetry
-      ? canRetryLastTurn
-        ? m.agentPanel.contextToolMemoryMessage
-        : m.agentPanel.contextToolMemoryWriteBlockedMessage
-      : m.agentPanel.contextPromptTooLargeMessage;
-  const toolMessages = messages.filter((message) => message.role === 'tool');
-  const repositoryCodeReadOnly = toolMessages.some((message) => (
-    getBgsmAgentToolDefinition(message.toolName)?.capability === 'repository_code'
-  ));
-  const showProviderErrorCard = (!running || transientSafeResendPrompt !== null)
-    && !!error
-    && !contextLimitRecovery;
+  const repositoryCodeReadOnly = useMemo(() => messages.some((message) => (
+    message.role === 'tool'
+    && getBgsmAgentToolDefinition(message.toolName)?.capability === 'repository_code'
+  )), [messages]);
   const isSessionInitializationFailure = sessionInitializationError !== null;
-  const showDurableRetryCard = !!durableRetryDraft
-    && !running
-    && !turnError
-    && !contextLimitRecovery
-    && !sessionInitializationError;
-  const durableRetryPending = durableRetryDraft?.settlement === 'stop_pending';
-  const durableRetryTitle = durableRetryDraft?.kind === 'stopped'
-    ? m.agentPanel.retryDraftStoppedTitle
-    : durableRetryDraft?.kind === 'context_limit'
-      ? m.agentPanel.retryDraftContextTitle
-      : m.agentPanel.retryDraftFailedTitle;
-  const codeSearchMessages = toolMessages.filter((message) => (
-    message.toolName === BGSM_AGENT_TOOL_NAMES.searchRepositoryCode
-  ));
-  const transcriptMessages = messages.filter((message) => message.role !== 'tool');
-  const workbenchAnchor = organize.conversationAnchor;
-  const anchoredMessageIndex = workbenchAnchor?.messageId
-    ? messages.findIndex((message) => message.id === workbenchAnchor.messageId)
-    : -1;
-  const messagesBeforeWorkbench = anchoredMessageIndex >= 0
-    ? new Set(messages.slice(0, anchoredMessageIndex + 1).map((message) => message.id))
-    : null;
-  const isBeforeWorkbench = (message: BgsmAgentChatMessage) => messagesBeforeWorkbench
-    ? messagesBeforeWorkbench.has(message.id)
-    : workbenchAnchor
-      ? message.createdAt <= workbenchAnchor.createdAt
-      : true;
-  const transcriptMessagesBeforeWorkbench = workbenchAnchor === null
-    ? transcriptMessages
-    : transcriptMessages.filter(isBeforeWorkbench);
-  const transcriptMessagesAfterWorkbench = workbenchAnchor === null
-    ? []
-    : transcriptMessages.filter((message) => !isBeforeWorkbench(message));
-  const codeSearchMessagesBeforeWorkbench = workbenchAnchor === null
-    ? codeSearchMessages
-    : codeSearchMessages.filter(isBeforeWorkbench);
-  const codeSearchMessagesAfterWorkbench = workbenchAnchor === null
-    ? []
-    : codeSearchMessages.filter((message) => !isBeforeWorkbench(message));
-  const hasPostWorkbenchTranscript = transcriptMessagesAfterWorkbench.length > 0
-    || codeSearchMessagesAfterWorkbench.length > 0;
-  const repositoryCodeReadOnlyNoticeAfterWorkbench = codeSearchMessagesAfterWorkbench.length > 0;
-  const latestReviewTranscriptMessageId = transcriptMessagesBeforeWorkbench.at(-1)?.id ?? null;
-
-  useEffect(() => {
-    const messageChanged = latestReviewTranscriptMessageId !== reviewTranscriptMessageIdRef.current;
-    reviewTranscriptMessageIdRef.current = latestReviewTranscriptMessageId;
-    if (!reviewFocused) {
-      setReviewTranscriptOpen(false);
-      return;
-    }
-    if ((running && !hasPostWorkbenchTranscript) || messageChanged) setReviewTranscriptOpen(true);
-  }, [hasPostWorkbenchTranscript, latestReviewTranscriptMessageId, reviewFocused, running]);
 
   useEffect(() => {
     if (contextLimitRecovery) setInput(contextLimitRecovery.prompt);
@@ -297,7 +218,7 @@ export function AgentPanel({
     if (!error && !running) setLastFailedPrompt(null);
   }, [error, lastUserPrompt, running]);
 
-  const focusComposerAtEnd = () => {
+  const focusComposerAtEnd = useCallback(() => {
     queueMicrotask(() => {
       const textarea = drawerRef.current?.querySelector<HTMLTextAreaElement>('textarea');
       if (!textarea) return;
@@ -305,7 +226,7 @@ export function AgentPanel({
       const end = textarea.value.length;
       textarea.setSelectionRange(end, end);
     });
-  };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -351,7 +272,7 @@ export function AgentPanel({
     };
   }, [open]);
 
-  const runAgentPrompt = async (prompt: string, retrySourceAttemptId?: string) => {
+  const runAgentPrompt = useCallback(async (prompt: string, retrySourceAttemptId?: string) => {
     const handoffAuthority = workbench.captureAgentHandoffAuthority();
     const result = await startTurn(
       prompt,
@@ -369,20 +290,20 @@ export function AgentPanel({
       );
     }
     return result;
-  };
+  }, [startTurn, workbench]);
 
-  const handleInputChange = (nextInput: string) => {
+  const handleInputChange = useCallback((nextInput: string) => {
     if (transientSafeResendPrompt !== null && nextInput !== transientSafeResendPrompt) {
       clearTransientSafeResend();
     }
     setInput(nextInput);
-  };
+  }, [clearTransientSafeResend, transientSafeResendPrompt]);
 
-  const handlePromptSuggestion = (prompt: string) => {
+  const handlePromptSuggestion = useCallback((prompt: string) => {
     if (!prompt.trim() || chatDisabled) return;
     handleInputChange(prompt);
     focusComposerAtEnd();
-  };
+  }, [chatDisabled, focusComposerAtEnd, handleInputChange]);
 
   const handleSubmit = () => {
     if (!input.trim() || chatDisabled || unsafeReplayBlocked) return;
@@ -393,21 +314,21 @@ export function AgentPanel({
     });
   };
 
-  const handleRetry = () => {
+  const handleRetry = useCallback(() => {
     if (!retryPrompt || chatDisabled || active || !canRetryLastTurn) return;
     setInput('');
     void runAgentPrompt(retryPrompt, durableRetryDraft?.turnAttemptId).then((result) => {
       if (!result) setInput((current) => current || retryPrompt);
     });
-  };
+  }, [active, canRetryLastTurn, chatDisabled, durableRetryDraft?.turnAttemptId, retryPrompt, runAgentPrompt]);
 
-  const handleEditContextLimitedPrompt = () => {
+  const handleEditContextLimitedPrompt = useCallback(() => {
     if (!contextLimitRecovery || active) return;
     editContextLimitedPrompt();
     focusComposerAtEnd();
-  };
+  }, [active, contextLimitRecovery, editContextLimitedPrompt, focusComposerAtEnd]);
 
-  const handleRetryContextLimitedPrompt = () => {
+  const handleRetryContextLimitedPrompt = useCallback(() => {
     if (!contextLimitRecovery || active || !canRetryLastTurn || conversationSwitchBlocked) return;
     const prompt = contextLimitRecovery.prompt;
     editContextLimitedPrompt();
@@ -420,21 +341,29 @@ export function AgentPanel({
     ).then((result) => {
       if (!result) setInput((current) => current || prompt);
     });
-  };
+  }, [
+    active,
+    canRetryLastTurn,
+    contextLimitRecovery,
+    conversationSwitchBlocked,
+    durableRetryDraft,
+    editContextLimitedPrompt,
+    runAgentPrompt,
+  ]);
 
-  const handleOpenContextSettings = () => {
+  const handleOpenContextSettings = useCallback(() => {
     if (contextLimitRecovery) editContextLimitedPrompt();
     onOpenOptions?.();
     focusComposerAtEnd();
-  };
-  const handleResetConversation = async () => {
+  }, [contextLimitRecovery, editContextLimitedPrompt, focusComposerAtEnd, onOpenOptions]);
+  const handleResetConversation = useCallback(async () => {
     if (createSessionBlocked) return;
     if (await resetConversation()) {
       setLastFailedPrompt(null);
       setInput('');
       focusComposerAtEnd();
     }
-  };
+  }, [createSessionBlocked, focusComposerAtEnd, resetConversation]);
 
   const handleCreateSession = async (): Promise<boolean> => {
     if (createSessionBlocked) return false;
@@ -533,6 +462,323 @@ export function AgentPanel({
     if (action === 'stop_analysis' || action === 'pause_apply') workbench.stop();
   };
   const conversationScrollKey = uiPresentation.scrollKey;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="gsm-agent-drawer-scrim absolute inset-0 z-[var(--gsm-z-overlay)] bg-background/45"
+        data-state={motionState}
+        tabIndex={-1}
+        aria-label={m.agentPanel.closeTitle}
+        onClick={onHide}
+      />
+      <aside
+        ref={drawerRef}
+        className="gsm-agent-drawer absolute inset-y-0 right-0 z-[var(--gsm-z-overlay)] flex w-full max-w-[460px] flex-col border-l border-border bg-card shadow-xl"
+        data-state={motionState}
+        data-agent-active={active ? 'true' : 'false'}
+        role="dialog"
+        aria-modal="true"
+        aria-hidden={!open}
+        aria-labelledby="gsm-agent-dialog-title"
+        tabIndex={-1}
+        {...(!open ? { inert: '' as const } : {})}
+      >
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+          <AgentMascot key={mascotState} state={mascotState} playing={open} />
+          <div className="min-w-0 flex-1">
+            <div id="gsm-agent-dialog-title" className="text-[13.5px] font-semibold leading-tight text-foreground">{m.agentPanel.title}</div>
+            {headerStatus && (
+              <>
+                <div
+                  className="truncate text-[11.5px] text-muted-foreground"
+                  data-testid="agent-header-status"
+                >
+                  {headerStatus}
+                </div>
+                <div className="sr-only" role="status" aria-live="polite">{headerStatus}</div>
+              </>
+            )}
+          </div>
+          <AgentSessionMenu
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            disabled={sessionMenuDisabled || !open}
+            canCreateSession={uiPresentation.sessionPolicy.canCreateSession}
+            canSwitchSession={uiPresentation.sessionPolicy.canSwitchSession}
+            canDeleteSession={uiPresentation.sessionPolicy.canDeleteSession}
+            onCreate={handleCreateSession}
+            onSwitch={handleSwitchSession}
+            onDelete={handleDeleteSession}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={createSessionBlocked}
+            onClick={handleResetConversation}
+            aria-label={m.agentPanel.startNewConversation}
+            title={m.agentPanel.startNewConversation}
+          >
+            <MessageSquarePlus className="size-4" />
+          </Button>
+          <Button
+            ref={closeButtonRef}
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onHide}
+            aria-label={active ? m.agentPanel.hideAgent : m.agentPanel.closeTitle}
+            title={active ? m.agentPanel.hideAgent : m.agentPanel.closeTitle}
+          >
+            {active ? <EyeOff className="size-4" /> : <X className="size-4" />}
+          </Button>
+        </div>
+
+        <>
+            <AgentConversationBody
+              open={open}
+              agent={agent}
+              workbench={workbench}
+              organizeView={organizeView}
+              reviewFocused={reviewFocused}
+              active={active}
+              chatDisabled={chatDisabled}
+              createSessionBlocked={createSessionBlocked}
+              conversationSwitchBlocked={conversationSwitchBlocked}
+              repositoryCodeReadOnly={repositoryCodeReadOnly}
+              isReadyIdle={isReadyIdle}
+              showHandoff={showHandoff}
+              handoff={handoff}
+              onDismissHandoff={onDismissHandoff}
+              onOpenOptions={onOpenOptions}
+              retryPrompt={retryPrompt}
+              scrollKey={conversationScrollKey}
+              onPromptSuggestion={handlePromptSuggestion}
+              onResetConversation={handleResetConversation}
+              onRetry={handleRetry}
+              onEditContextLimitedPrompt={handleEditContextLimitedPrompt}
+              onRetryContextLimitedPrompt={handleRetryContextLimitedPrompt}
+              onOpenContextSettings={handleOpenContextSettings}
+            />
+
+            {showStopbar && (
+              <div
+                className="flex items-center justify-between gap-3 border-t border-border bg-muted/30 px-3 py-2"
+                data-testid="agent-stopbar"
+              >
+                <span className="text-xs text-muted-foreground">{stopbarText}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleStopbarAction}
+                >
+                  <CircleStop className="size-4" data-icon="inline-start" />
+                  {uiPresentation.stopbar?.action === 'cancel_preflight'
+                    ? m.agentPanel.cancel
+                    : uiPresentation.stopbar?.action === 'pause_apply'
+                      ? m.agentPanel.pause
+                      : m.agentPanel.stop}
+                </Button>
+              </div>
+            )}
+
+            <PromptInput
+              value={input}
+              onValueChange={handleInputChange}
+              onSubmit={handleSubmit}
+              placeholder={composerPlaceholder}
+              disabled={chatDisabled}
+              submitDisabled={unsafeReplayBlocked}
+              submitLabel={m.agentPanel.send}
+              submitVariant={reviewFocused ? 'outline' : 'default'}
+              inputLabel={m.agentPanel.chatInputLabel}
+              note={composerNote}
+              actions={(
+                <AgentFunctionMenu
+                  disabled={chatDisabled}
+                  showRepositoryFunctions={defaultCandidate.kind === 'selected_repository'}
+                  showWriteFunctions={!repositoryCodeReadOnly}
+                  onSummarizeScope={() => handlePromptSuggestion(m.agentPanel.summarizeScopePrompt)}
+                  onFindSimilar={() => handlePromptSuggestion(m.agentPanel.findSimilarPrompt)}
+                  onOrganizeUntagged={() => handlePromptSuggestion(m.agentPanel.autoAssignPrompt)}
+                  onReviewTags={() => handlePromptSuggestion(m.agentPanel.cleanupTagsPrompt)}
+                  onSearchCode={() => handlePromptSuggestion(m.agentPanel.searchCodePrompt)}
+                  onReviewNotes={() => handlePromptSuggestion(m.agentPanel.reviewNotesPrompt)}
+                />
+              )}
+            />
+        </>
+      </aside>
+    </>
+  );
+}
+
+type AgentConversationBodyProps = Readonly<{
+  open: boolean;
+  agent: ChatController;
+  workbench: WorkbenchController;
+  organizeView: OrganizeWorkbenchView;
+  reviewFocused: boolean;
+  active: boolean;
+  chatDisabled: boolean;
+  createSessionBlocked: boolean;
+  conversationSwitchBlocked: boolean;
+  repositoryCodeReadOnly: boolean;
+  isReadyIdle: boolean;
+  showHandoff: boolean;
+  handoff: { remainingUntagged: number; autoTagged: number } | null | undefined;
+  onDismissHandoff: (() => void) | undefined;
+  onOpenOptions: (() => void) | undefined;
+  retryPrompt: string | null;
+  scrollKey: string;
+  onPromptSuggestion: (prompt: string) => void;
+  onResetConversation: () => void;
+  onRetry: () => void;
+  onEditContextLimitedPrompt: () => void;
+  onRetryContextLimitedPrompt: () => void;
+  onOpenContextSettings: () => void;
+}>;
+
+const AgentConversationBody = memo(function AgentConversationBody({
+  open,
+  agent,
+  workbench,
+  organizeView,
+  reviewFocused,
+  active,
+  chatDisabled,
+  createSessionBlocked,
+  conversationSwitchBlocked,
+  repositoryCodeReadOnly,
+  isReadyIdle,
+  showHandoff,
+  handoff,
+  onDismissHandoff,
+  onOpenOptions,
+  retryPrompt,
+  scrollKey,
+  onPromptSuggestion,
+  onResetConversation,
+  onRetry,
+  onEditContextLimitedPrompt,
+  onRetryContextLimitedPrompt,
+  onOpenContextSettings,
+}: AgentConversationBodyProps) {
+  const { m } = useI18n();
+  const [reviewTranscriptOpen, setReviewTranscriptOpen] = useState(false);
+  const reviewTranscriptMessageIdRef = useRef<string | null>(null);
+  const {
+    messages,
+    running,
+    status,
+    error: turnError,
+    contextLimitRecovery,
+    durableRetryDraft,
+    canRetryLastTurn,
+    transientSafeResendPrompt,
+    toolActivities,
+    errorCategory,
+    sessionReady: agentSessionReady,
+    sessionOperationPending,
+    sessionInitializationError,
+    sessions,
+    hasEarlierMessages,
+    loadingEarlierMessages,
+    loadEarlierMessages,
+    retrySessionHydration,
+  } = agent;
+  const organize = workbench.state;
+  const error = sessionInitializationError ?? turnError;
+  const terminalOrganizeJob = organize.organizeJob
+    && ['completed', 'cancelled'].includes(organize.organizeJob.status)
+    ? organize.organizeJob
+    : null;
+  const organizeOriginSessionDeleted = !!terminalOrganizeJob && (
+    organize.deletedSessionIds.has(terminalOrganizeJob.originAgentSessionId)
+    || (
+      agentSessionReady
+      && !sessions.some((session) => session.id === terminalOrganizeJob.originAgentSessionId)
+    )
+  );
+  const contextFailureReason = contextLimitRecovery?.reason ?? null;
+  const contextNeedsProviderSettings = contextFailureReason === 'capability_unresolved'
+    || contextFailureReason === 'provider_context_overflow_repeated'
+    || contextFailureReason === 'provider_request_byte_limit_repeated';
+  const contextNeedsPromptEdit = contextFailureReason === 'current_turn_too_large';
+  const contextNeedsInternalRetry = contextFailureReason === 'tool_result_memory_limit';
+  const contextRecoveryTitle = contextNeedsProviderSettings
+    ? m.agentPanel.contextSettingsTitle
+    : contextNeedsInternalRetry
+      ? m.agentPanel.contextToolMemoryTitle
+      : m.agentPanel.contextPromptTooLargeTitle;
+  const contextRecoveryMessage = contextNeedsProviderSettings
+    ? m.agentPanel.contextSettingsMessage
+    : contextNeedsInternalRetry
+      ? canRetryLastTurn
+        ? m.agentPanel.contextToolMemoryMessage
+        : m.agentPanel.contextToolMemoryWriteBlockedMessage
+      : m.agentPanel.contextPromptTooLargeMessage;
+  const showProviderErrorCard = (!running || transientSafeResendPrompt !== null)
+    && !!error
+    && !contextLimitRecovery;
+  const isSessionInitializationFailure = sessionInitializationError !== null;
+  const isProviderSetupError = !!error && !!errorCategory && !['provider', 'other'].includes(errorCategory);
+  const showDurableRetryCard = !!durableRetryDraft
+    && !running
+    && !turnError
+    && !contextLimitRecovery
+    && !sessionInitializationError;
+  const durableRetryPending = durableRetryDraft?.settlement === 'stop_pending';
+  const durableRetryTitle = durableRetryDraft?.kind === 'stopped'
+    ? m.agentPanel.retryDraftStoppedTitle
+    : durableRetryDraft?.kind === 'context_limit'
+      ? m.agentPanel.retryDraftContextTitle
+      : m.agentPanel.retryDraftFailedTitle;
+  const toolMessages = messages.filter((message) => message.role === 'tool');
+  const codeSearchMessages = toolMessages.filter((message) => (
+    message.toolName === BGSM_AGENT_TOOL_NAMES.searchRepositoryCode
+  ));
+  const transcriptMessages = messages.filter((message) => message.role !== 'tool');
+  const workbenchAnchor = organize.conversationAnchor;
+  const anchoredMessageIndex = workbenchAnchor?.messageId
+    ? messages.findIndex((message) => message.id === workbenchAnchor.messageId)
+    : -1;
+  const messagesBeforeWorkbench = anchoredMessageIndex >= 0
+    ? new Set(messages.slice(0, anchoredMessageIndex + 1).map((message) => message.id))
+    : null;
+  const isBeforeWorkbench = (message: BgsmAgentChatMessage) => messagesBeforeWorkbench
+    ? messagesBeforeWorkbench.has(message.id)
+    : workbenchAnchor
+      ? message.createdAt <= workbenchAnchor.createdAt
+      : true;
+  const transcriptMessagesBeforeWorkbench = workbenchAnchor === null
+    ? transcriptMessages
+    : transcriptMessages.filter(isBeforeWorkbench);
+  const transcriptMessagesAfterWorkbench = workbenchAnchor === null
+    ? []
+    : transcriptMessages.filter((message) => !isBeforeWorkbench(message));
+  const codeSearchMessagesBeforeWorkbench = workbenchAnchor === null
+    ? codeSearchMessages
+    : codeSearchMessages.filter(isBeforeWorkbench);
+  const codeSearchMessagesAfterWorkbench = workbenchAnchor === null
+    ? []
+    : codeSearchMessages.filter((message) => !isBeforeWorkbench(message));
+  const hasPostWorkbenchTranscript = transcriptMessagesAfterWorkbench.length > 0
+    || codeSearchMessagesAfterWorkbench.length > 0;
+  const repositoryCodeReadOnlyNoticeAfterWorkbench = codeSearchMessagesAfterWorkbench.length > 0;
+  const latestReviewTranscriptMessageId = transcriptMessagesBeforeWorkbench.at(-1)?.id ?? null;
+
+  useEffect(() => {
+    const messageChanged = latestReviewTranscriptMessageId !== reviewTranscriptMessageIdRef.current;
+    reviewTranscriptMessageIdRef.current = latestReviewTranscriptMessageId;
+    if (!reviewFocused) {
+      setReviewTranscriptOpen(false);
+      return;
+    }
+    if ((running && !hasPostWorkbenchTranscript) || messageChanged) setReviewTranscriptOpen(true);
+  }, [hasPostWorkbenchTranscript, latestReviewTranscriptMessageId, reviewFocused, running]);
+
   const repositoryCodeReadOnlyNotice = repositoryCodeReadOnly ? (
     <Message role="system">
       <section
@@ -548,7 +794,7 @@ export function AgentPanel({
             variant="outline"
             size="sm"
             disabled={createSessionBlocked}
-            onClick={handleResetConversation}
+            onClick={onResetConversation}
           >
             <MessageSquarePlus className="size-3.5" data-icon="inline-start" />
             {m.agentPanel.startNewConversation}
@@ -641,460 +887,337 @@ export function AgentPanel({
 
   return (
     <>
-      <button
-        type="button"
-        className="gsm-agent-drawer-scrim absolute inset-0 z-[var(--gsm-z-overlay)] bg-background/45"
-        data-state={motionState}
-        tabIndex={-1}
-        aria-label={m.agentPanel.closeTitle}
-        onClick={onHide}
-      />
-      <aside
-        ref={drawerRef}
-        className="gsm-agent-drawer absolute inset-y-0 right-0 z-[var(--gsm-z-overlay)] flex w-full max-w-[460px] flex-col border-l border-border bg-card shadow-xl"
-        data-state={motionState}
-        data-agent-active={active ? 'true' : 'false'}
-        role="dialog"
-        aria-modal="true"
-        aria-hidden={!open}
-        aria-labelledby="gsm-agent-dialog-title"
-        tabIndex={-1}
-        {...(!open ? { inert: '' as const } : {})}
+      <Conversation
+        active={open}
+        scrollKey={scrollKey}
+        resumeLabel={m.agentPanel.resumeConversationFollow}
       >
-        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-          <AgentMascot key={mascotState} state={mascotState} playing={open} />
-          <div className="min-w-0 flex-1">
-            <div id="gsm-agent-dialog-title" className="text-[13.5px] font-semibold leading-tight text-foreground">{m.agentPanel.title}</div>
-            {headerStatus && (
-              <>
-                <div
-                  className="truncate text-[11.5px] text-muted-foreground"
-                  data-testid="agent-header-status"
+        {hasEarlierMessages && (
+          <Message role="system">
+            <div className="flex w-full justify-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs text-muted-foreground"
+                data-testid="agent-load-earlier-messages"
+                aria-busy={loadingEarlierMessages}
+                disabled={loadingEarlierMessages || running || !agentSessionReady}
+                onClick={() => {
+                  void loadEarlierMessages();
+                }}
+              >
+                {loadingEarlierMessages && <Spinner />}
+                {loadingEarlierMessages
+                  ? m.agentPanel.loadingEarlierMessages
+                  : m.agentPanel.loadEarlierMessages}
+              </Button>
+            </div>
+          </Message>
+        )}
+
+        {isReadyIdle && (
+          <Message role="assistant">
+            <MessageContent>{m.agentPanel.chatIntro}</MessageContent>
+            <div className="mt-3 flex flex-wrap gap-2" data-testid="agent-ready-quick-chips">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={chatDisabled}
+                onClick={() => onPromptSuggestion(m.agentPanel.findSimilarPrompt)}
+              >
+                <Search className="size-3.5" data-icon="inline-start" />
+                {m.agentPanel.quickFindSimilar}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={chatDisabled}
+                onClick={() => onPromptSuggestion(m.agentPanel.autoAssignPrompt)}
+              >
+                <Tags className="size-3.5" data-icon="inline-start" />
+                {m.agentPanel.quickOrganizeUntagged}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={chatDisabled}
+                onClick={() => onPromptSuggestion(m.agentPanel.cleanupTagsPrompt)}
+              >
+                <ListFilter className="size-3.5" data-icon="inline-start" />
+                {m.agentPanel.quickCleanupTags}
+              </Button>
+              {onOpenOptions && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={onOpenOptions}
                 >
-                  {headerStatus}
+                  <Wrench className="size-3.5" data-icon="inline-start" />
+                  {m.agentPanel.agentSettings}
+                </Button>
+              )}
+            </div>
+          </Message>
+        )}
+
+        {showHandoff && handoff && (
+          <>
+            <Message role="system">
+              <div
+                className="w-full overflow-hidden rounded-[10px] border border-border bg-card"
+                data-testid="agent-auto-tags-handoff-card"
+              >
+                <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
+                  <div className="mt-0.5 grid size-5 place-items-center text-muted-foreground">
+                    <ArrowUp className="size-3.5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[12.5px] font-semibold leading-tight text-foreground">
+                      {m.agentPanel.handoffTitle}
+                    </div>
+                    <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                      {m.agentPanel.handoffSubtitle(handoff.remainingUntagged)}
+                    </div>
+                  </div>
                 </div>
-                <div className="sr-only" role="status" aria-live="polite">{headerStatus}</div>
-              </>
-            )}
-          </div>
-          <AgentSessionMenu
-            sessions={sessions}
-            activeSessionId={activeSessionId}
-            disabled={sessionMenuDisabled || !open}
-            canCreateSession={uiPresentation.sessionPolicy.canCreateSession}
-            canSwitchSession={uiPresentation.sessionPolicy.canSwitchSession}
-            canDeleteSession={uiPresentation.sessionPolicy.canDeleteSession}
-            onCreate={handleCreateSession}
-            onSwitch={handleSwitchSession}
-            onDelete={handleDeleteSession}
-          />
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled={createSessionBlocked}
-            onClick={handleResetConversation}
-            aria-label={m.agentPanel.startNewConversation}
-            title={m.agentPanel.startNewConversation}
-          >
-            <MessageSquarePlus className="size-4" />
-          </Button>
-          <Button
-            ref={closeButtonRef}
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={onHide}
-            aria-label={active ? m.agentPanel.hideAgent : m.agentPanel.closeTitle}
-            title={active ? m.agentPanel.hideAgent : m.agentPanel.closeTitle}
-          >
-            {active ? <EyeOff className="size-4" /> : <X className="size-4" />}
-          </Button>
-        </div>
-
-        <>
-            <Conversation
-              active={open}
-              scrollKey={conversationScrollKey}
-              resumeLabel={m.agentPanel.resumeConversationFollow}
-            >
-              {hasEarlierMessages && (
-                <Message role="system">
-                  <div className="flex w-full justify-center">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-muted-foreground"
-                      data-testid="agent-load-earlier-messages"
-                      aria-busy={loadingEarlierMessages}
-                      disabled={loadingEarlierMessages || running || !agentSessionReady}
-                      onClick={() => {
-                        void loadEarlierMessages();
-                      }}
-                    >
-                      {loadingEarlierMessages && <Spinner />}
-                      {loadingEarlierMessages
-                        ? m.agentPanel.loadingEarlierMessages
-                        : m.agentPanel.loadEarlierMessages}
-                    </Button>
-                  </div>
-                </Message>
-              )}
-
-              {isReadyIdle && (
-                <Message role="assistant">
-                  <MessageContent>{m.agentPanel.chatIntro}</MessageContent>
-                  <div className="mt-3 flex flex-wrap gap-2" data-testid="agent-ready-quick-chips">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      disabled={chatDisabled}
-                      onClick={() => handlePromptSuggestion(m.agentPanel.findSimilarPrompt)}
-                    >
-                      <Search className="size-3.5" data-icon="inline-start" />
-                      {m.agentPanel.quickFindSimilar}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      disabled={chatDisabled}
-                      onClick={() => handlePromptSuggestion(m.agentPanel.autoAssignPrompt)}
-                    >
-                      <Tags className="size-3.5" data-icon="inline-start" />
-                      {m.agentPanel.quickOrganizeUntagged}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      disabled={chatDisabled}
-                      onClick={() => handlePromptSuggestion(m.agentPanel.cleanupTagsPrompt)}
-                    >
-                      <ListFilter className="size-3.5" data-icon="inline-start" />
-                      {m.agentPanel.quickCleanupTags}
-                    </Button>
-                    {onOpenOptions && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        onClick={onOpenOptions}
-                      >
-                        <Wrench className="size-3.5" data-icon="inline-start" />
-                        {m.agentPanel.agentSettings}
-                      </Button>
-                    )}
-                  </div>
-                </Message>
-              )}
-
-              {showHandoff && handoff && (
-                <>
-                  <Message role="system">
-                    <div
-                      className="w-full overflow-hidden rounded-[10px] border border-border bg-card"
-                      data-testid="agent-auto-tags-handoff-card"
-                    >
-                      <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
-                        <div className="mt-0.5 grid size-5 place-items-center text-muted-foreground">
-                          <ArrowUp className="size-3.5" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[12.5px] font-semibold leading-tight text-foreground">
-                            {m.agentPanel.handoffTitle}
-                          </div>
-                          <div className="mt-0.5 text-[11.5px] text-muted-foreground">
-                            {m.agentPanel.handoffSubtitle(handoff.remainingUntagged)}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
-                        <p className="font-medium text-foreground">{m.agentPanel.handoffAutoTagsUpdated}</p>
-                        <p>{m.agentPanel.handoffBody}</p>
-                      </div>
-                    </div>
-                  </Message>
-                  <Message role="assistant">
-                    <MessageContent>{m.agentPanel.handoffAsk(handoff.remainingUntagged)}</MessageContent>
-                    <div className="mt-3 flex flex-wrap gap-2" data-testid="agent-handoff-quick-chips">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        disabled={active}
-                        onClick={() => {
-                          onDismissHandoff?.();
-                          handlePromptSuggestion(m.agentPanel.autoAssignPrompt);
-                        }}
-                      >
-                        {m.agentPanel.quickOrganizeUntagged}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        disabled={chatDisabled}
-                        onClick={() => handlePromptSuggestion(m.agentPanel.handoffAmbiguous)}
-                      >
-                        {m.agentPanel.handoffAmbiguous}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        disabled={chatDisabled}
-                        onClick={() => handlePromptSuggestion(m.agentPanel.handoffExamples)}
-                      >
-                        {m.agentPanel.handoffExamples}
-                      </Button>
-                    </div>
-                  </Message>
-                </>
-              )}
-
-              {reviewFocused ? (
-                <details
-                  className="w-full"
-                  data-testid="agent-run-transcript-details"
-                  open={reviewTranscriptOpen}
-                  onToggle={(event) => setReviewTranscriptOpen(event.currentTarget.open)}
-                >
-                  <summary className="cursor-pointer select-none text-xs text-muted-foreground">
-                    {m.agentPanel.reviewConversationDetails}
-                  </summary>
-                  <div className="mt-3 flex flex-col gap-3">
-                    {conversationTranscriptBeforeWorkbench}
-                  </div>
-                </details>
-              ) : conversationTranscriptBeforeWorkbench}
-
-              {reviewFocused && !repositoryCodeReadOnlyNoticeAfterWorkbench && repositoryCodeReadOnlyNotice}
-
-              <OrganizeJobRunWorkbench
-                workbench={workbench}
-                view={organizeView}
-                readOnly={repositoryCodeReadOnly}
-                originSessionDeleted={organizeOriginSessionDeleted}
-                onInsertCorrection={handlePromptSuggestion}
-              />
-
-              {conversationTranscriptAfterWorkbench}
-
-              {showDurableRetryCard && durableRetryDraft && (
-                <Message role="system">
-                  <div
-                    className="w-full overflow-hidden rounded-[8px] border border-border bg-card"
-                    data-testid="agent-durable-retry-card"
-                    role="status"
-                  >
-                    <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
-                      <div className="mt-0.5 grid size-5 place-items-center text-muted-foreground">
-                        <RotateCcw className="size-3.5" aria-hidden="true" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[12.5px] font-semibold leading-tight text-foreground">
-                          {durableRetryTitle}
-                        </div>
-                        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
-                          {durableRetryPending
-                            ? m.agentPanel.retryDraftPendingSubtitle
-                            : m.agentPanel.retryDraftSubtitle}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
-                      <p>
-                        {durableRetryPending
-                          ? m.agentPanel.retryDraftPendingBody
-                          : m.agentPanel.retryDraftBody}
-                      </p>
-                      <p className="max-h-16 overflow-hidden whitespace-pre-wrap break-words font-medium text-foreground">
-                        {durableRetryDraft.prompt}
-                      </p>
-                      {!durableRetryPending && (
-                        <Button
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                          data-testid="agent-durable-retry-button"
-                          onClick={handleRetry}
-                          disabled={chatDisabled || active || !canRetryLastTurn}
-                        >
-                          <RotateCcw className="size-3.5" data-icon="inline-start" />
-                          {m.agentPanel.retry}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </Message>
-              )}
-
-              {showProviderErrorCard && (
-                <Message role="system">
-                  <div
-                    className="w-full overflow-hidden rounded-[10px] border border-border bg-card"
-                    data-testid="agent-provider-error-card"
-                    role="alert"
-                  >
-                    <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
-                      <div className="mt-0.5 grid size-5 place-items-center text-muted-foreground">
-                        <TriangleAlert className="size-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[12.5px] font-semibold leading-tight text-foreground">
-                          {isSessionInitializationFailure
-                            ? m.agentPanel.sessionLoadTitle
-                            : isProviderSetupError
-                              ? m.agentPanel.providerAuthTitle
-                              : m.agentPanel.providerErrorTitle}
-                        </div>
-                        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
-                          {isSessionInitializationFailure
-                            ? m.agentPanel.sessionLoadSubtitle
-                            : isProviderSetupError
-                              ? m.agentPanel.providerAuthSubtitle
-                              : m.agentPanel.providerErrorSubtitle}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
-                      <p className="font-medium text-foreground">{error}</p>
-                      <p>
-                        {isSessionInitializationFailure
-                          ? m.agentPanel.sessionLoadBody
-                          : isProviderSetupError
-                            ? m.agentPanel.providerAuthBody
-                            : canRetryLastTurn
-                              ? m.agentPanel.providerErrorBody
-                              : m.agentPanel.composerWriteRetryBlocked}
-                      </p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {!isSessionInitializationFailure && isProviderSetupError && onOpenOptions && (
-                          <Button
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                            onClick={onOpenOptions}
-                          >
-                            {m.agentPanel.providerAuthOpenOptions}
-                          </Button>
-                        )}
-                        {(isSessionInitializationFailure || canRetryLastTurn) && (
-                          <Button
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                            onClick={isSessionInitializationFailure
-                              ? retrySessionHydration
-                              : handleRetry}
-                            disabled={isSessionInitializationFailure
-                              ? sessionOperationPending
-                              : !retryPrompt || chatDisabled || active}
-                          >
-                            {isSessionInitializationFailure
-                              ? m.agentPanel.sessionLoadRetry
-                              : isProviderSetupError
-                                ? m.agentPanel.providerAuthRetry
-                                : m.agentPanel.retry}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </Message>
-              )}
-
-            </Conversation>
-
-            {contextLimitRecovery && (
-              <div className="border-t border-border bg-muted/40 px-3 py-3" role="status" data-testid="agent-context-recovery-banner">
-                <div className="text-sm font-medium text-foreground">{contextRecoveryTitle}</div>
-                <div className="mt-1 text-xs leading-5 text-muted-foreground">{contextRecoveryMessage}</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {contextNeedsProviderSettings && onOpenOptions && (
-                    <Button size="sm" onClick={handleOpenContextSettings}>
-                      <Wrench data-icon="inline-start" />
-                      {m.agentPanel.contextAdjustSettings}
-                    </Button>
-                  )}
-                  {contextNeedsPromptEdit && (
-                    <Button size="sm" onClick={handleEditContextLimitedPrompt}>
-                      {m.agentPanel.contextEditPrompt}
-                    </Button>
-                  )}
-                  {contextNeedsPromptEdit && onOpenOptions && (
-                    <Button variant="outline" size="sm" onClick={onOpenOptions}>
-                      <Wrench data-icon="inline-start" />
-                      {m.agentPanel.contextAdjustSettings}
-                    </Button>
-                  )}
-                  {contextNeedsInternalRetry && (
-                    <Button
-                      size="sm"
-                      onClick={handleRetryContextLimitedPrompt}
-                      disabled={!canRetryLastTurn || conversationSwitchBlocked}
-                    >
-                      {m.agentPanel.retry}
-                    </Button>
-                  )}
-                  {contextNeedsInternalRetry && !canRetryLastTurn && (
-                    <Button size="sm" onClick={handleEditContextLimitedPrompt}>
-                      {m.agentPanel.contextEditPrompt}
-                    </Button>
-                  )}
+                <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
+                  <p className="font-medium text-foreground">{m.agentPanel.handoffAutoTagsUpdated}</p>
+                  <p>{m.agentPanel.handoffBody}</p>
                 </div>
               </div>
-            )}
-
-            {showStopbar && (
-              <div
-                className="flex items-center justify-between gap-3 border-t border-border bg-muted/30 px-3 py-2"
-                data-testid="agent-stopbar"
-              >
-                <span className="text-xs text-muted-foreground">{stopbarText}</span>
+            </Message>
+            <Message role="assistant">
+              <MessageContent>{m.agentPanel.handoffAsk(handoff.remainingUntagged)}</MessageContent>
+              <div className="mt-3 flex flex-wrap gap-2" data-testid="agent-handoff-quick-chips">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleStopbarAction}
+                  className="h-7 px-2 text-xs"
+                  disabled={active}
+                  onClick={() => {
+                    onDismissHandoff?.();
+                    onPromptSuggestion(m.agentPanel.autoAssignPrompt);
+                  }}
                 >
-                  <CircleStop className="size-4" data-icon="inline-start" />
-                  {uiPresentation.stopbar?.action === 'cancel_preflight'
-                    ? m.agentPanel.cancel
-                    : uiPresentation.stopbar?.action === 'pause_apply'
-                      ? m.agentPanel.pause
-                      : m.agentPanel.stop}
+                  {m.agentPanel.quickOrganizeUntagged}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={chatDisabled}
+                  onClick={() => onPromptSuggestion(m.agentPanel.handoffAmbiguous)}
+                >
+                  {m.agentPanel.handoffAmbiguous}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={chatDisabled}
+                  onClick={() => onPromptSuggestion(m.agentPanel.handoffExamples)}
+                >
+                  {m.agentPanel.handoffExamples}
                 </Button>
               </div>
-            )}
+            </Message>
+          </>
+        )}
 
-            <PromptInput
-              value={input}
-              onValueChange={handleInputChange}
-              onSubmit={handleSubmit}
-              placeholder={composerPlaceholder}
-              disabled={chatDisabled}
-              submitDisabled={unsafeReplayBlocked}
-              submitLabel={m.agentPanel.send}
-              submitVariant={reviewFocused ? 'outline' : 'default'}
-              inputLabel={m.agentPanel.chatInputLabel}
-              note={composerNote}
-              actions={(
-                <AgentFunctionMenu
-                  disabled={chatDisabled}
-                  showRepositoryFunctions={defaultCandidate.kind === 'selected_repository'}
-                  showWriteFunctions={!repositoryCodeReadOnly}
-                  onSummarizeScope={() => handlePromptSuggestion(m.agentPanel.summarizeScopePrompt)}
-                  onFindSimilar={() => handlePromptSuggestion(m.agentPanel.findSimilarPrompt)}
-                  onOrganizeUntagged={() => handlePromptSuggestion(m.agentPanel.autoAssignPrompt)}
-                  onReviewTags={() => handlePromptSuggestion(m.agentPanel.cleanupTagsPrompt)}
-                  onSearchCode={() => handlePromptSuggestion(m.agentPanel.searchCodePrompt)}
-                  onReviewNotes={() => handlePromptSuggestion(m.agentPanel.reviewNotesPrompt)}
-                />
-              )}
-            />
-        </>
-      </aside>
+        {reviewFocused ? (
+          <details
+            className="w-full"
+            data-testid="agent-run-transcript-details"
+            open={reviewTranscriptOpen}
+            onToggle={(event) => setReviewTranscriptOpen(event.currentTarget.open)}
+          >
+            <summary className="cursor-pointer select-none text-xs text-muted-foreground">
+              {m.agentPanel.reviewConversationDetails}
+            </summary>
+            <div className="mt-3 flex flex-col gap-3">
+              {conversationTranscriptBeforeWorkbench}
+            </div>
+          </details>
+        ) : conversationTranscriptBeforeWorkbench}
+
+        {reviewFocused && !repositoryCodeReadOnlyNoticeAfterWorkbench && repositoryCodeReadOnlyNotice}
+
+        <OrganizeJobRunWorkbench
+          workbench={workbench}
+          view={organizeView}
+          readOnly={repositoryCodeReadOnly}
+          originSessionDeleted={organizeOriginSessionDeleted}
+          onInsertCorrection={onPromptSuggestion}
+        />
+
+        {conversationTranscriptAfterWorkbench}
+
+        {showDurableRetryCard && durableRetryDraft && (
+          <Message role="system">
+            <div
+              className="w-full overflow-hidden rounded-[8px] border border-border bg-card"
+              data-testid="agent-durable-retry-card"
+              role="status"
+            >
+              <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
+                <div className="mt-0.5 grid size-5 place-items-center text-muted-foreground">
+                  <RotateCcw className="size-3.5" aria-hidden="true" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[12.5px] font-semibold leading-tight text-foreground">
+                    {durableRetryTitle}
+                  </div>
+                  <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                    {durableRetryPending
+                      ? m.agentPanel.retryDraftPendingSubtitle
+                      : m.agentPanel.retryDraftSubtitle}
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
+                <p>
+                  {durableRetryPending
+                    ? m.agentPanel.retryDraftPendingBody
+                    : m.agentPanel.retryDraftBody}
+                </p>
+                <p className="max-h-16 overflow-hidden whitespace-pre-wrap break-words font-medium text-foreground">
+                  {durableRetryDraft.prompt}
+                </p>
+                {!durableRetryPending && (
+                  <Button
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    data-testid="agent-durable-retry-button"
+                    onClick={onRetry}
+                    disabled={chatDisabled || active || !canRetryLastTurn}
+                  >
+                    <RotateCcw className="size-3.5" data-icon="inline-start" />
+                    {m.agentPanel.retry}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </Message>
+        )}
+
+        {showProviderErrorCard && (
+          <Message role="system">
+            <div
+              className="w-full overflow-hidden rounded-[10px] border border-border bg-card"
+              data-testid="agent-provider-error-card"
+              role="alert"
+            >
+              <div className="flex items-start gap-2 border-b border-border/70 px-3 pb-2 pt-2.5">
+                <div className="mt-0.5 grid size-5 place-items-center text-muted-foreground">
+                  <TriangleAlert className="size-3.5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[12.5px] font-semibold leading-tight text-foreground">
+                    {isSessionInitializationFailure
+                      ? m.agentPanel.sessionLoadTitle
+                      : isProviderSetupError
+                        ? m.agentPanel.providerAuthTitle
+                        : m.agentPanel.providerErrorTitle}
+                  </div>
+                  <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                    {isSessionInitializationFailure
+                      ? m.agentPanel.sessionLoadSubtitle
+                      : isProviderSetupError
+                        ? m.agentPanel.providerAuthSubtitle
+                        : m.agentPanel.providerErrorSubtitle}
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-2 px-3 pb-3 pt-2.5 text-[12.5px] text-muted-foreground">
+                <p className="font-medium text-foreground">{error}</p>
+                <p>
+                  {isSessionInitializationFailure
+                    ? m.agentPanel.sessionLoadBody
+                    : isProviderSetupError
+                      ? m.agentPanel.providerAuthBody
+                      : canRetryLastTurn
+                        ? m.agentPanel.providerErrorBody
+                        : m.agentPanel.composerWriteRetryBlocked}
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {!isSessionInitializationFailure && isProviderSetupError && onOpenOptions && (
+                    <Button
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={onOpenOptions}
+                    >
+                      {m.agentPanel.providerAuthOpenOptions}
+                    </Button>
+                  )}
+                  {(isSessionInitializationFailure || canRetryLastTurn) && (
+                    <Button
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={isSessionInitializationFailure ? retrySessionHydration : onRetry}
+                      disabled={isSessionInitializationFailure
+                        ? sessionOperationPending
+                        : !retryPrompt || chatDisabled || active}
+                    >
+                      {isSessionInitializationFailure
+                        ? m.agentPanel.sessionLoadRetry
+                        : isProviderSetupError
+                          ? m.agentPanel.providerAuthRetry
+                          : m.agentPanel.retry}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </Message>
+        )}
+      </Conversation>
+
+      {contextLimitRecovery && (
+        <div className="border-t border-border bg-muted/40 px-3 py-3" role="status" data-testid="agent-context-recovery-banner">
+          <div className="text-sm font-medium text-foreground">{contextRecoveryTitle}</div>
+          <div className="mt-1 text-xs leading-5 text-muted-foreground">{contextRecoveryMessage}</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {contextNeedsProviderSettings && onOpenOptions && (
+              <Button size="sm" onClick={onOpenContextSettings}>
+                <Wrench data-icon="inline-start" />
+                {m.agentPanel.contextAdjustSettings}
+              </Button>
+            )}
+            {contextNeedsPromptEdit && (
+              <Button size="sm" onClick={onEditContextLimitedPrompt}>
+                {m.agentPanel.contextEditPrompt}
+              </Button>
+            )}
+            {contextNeedsPromptEdit && onOpenOptions && (
+              <Button variant="outline" size="sm" onClick={onOpenOptions}>
+                <Wrench data-icon="inline-start" />
+                {m.agentPanel.contextAdjustSettings}
+              </Button>
+            )}
+            {contextNeedsInternalRetry && (
+              <Button
+                size="sm"
+                onClick={onRetryContextLimitedPrompt}
+                disabled={!canRetryLastTurn || conversationSwitchBlocked}
+              >
+                {m.agentPanel.retry}
+              </Button>
+            )}
+            {contextNeedsInternalRetry && !canRetryLastTurn && (
+              <Button size="sm" onClick={onEditContextLimitedPrompt}>
+                {m.agentPanel.contextEditPrompt}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
-}
+});
 
 function resolvedScopeCountValue(
   scopeCount: number | undefined,

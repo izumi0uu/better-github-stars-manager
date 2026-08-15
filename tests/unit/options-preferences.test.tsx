@@ -1272,6 +1272,60 @@ describe('Options preferences', () => {
     );
   });
 
+  it('adopts refreshed persisted Agent settings while retaining the plaintext key draft', async () => {
+    const initial = config();
+    const cleanRefresh = config({
+      agentProvider: {
+        ...initial.agentProvider,
+        model: 'gpt-5-mini',
+      },
+    });
+    const dirtyRefresh = config({
+      agentProvider: {
+        ...cleanRefresh.agentProvider,
+        model: 'gpt-5-nano',
+      },
+    });
+    let currentConfig = initial;
+    authMocks.getConfig.mockImplementation(() => Promise.resolve(currentConfig));
+    authMocks.hasToken.mockResolvedValue(true);
+
+    await renderOptions();
+    const modelInput = document.querySelector<HTMLInputElement>('#agent-model');
+    const apiKeyInput = document.querySelector<HTMLInputElement>('#agent-api-key');
+    expect(modelInput?.value).toBe('gpt-5.4');
+    expect(apiKeyInput?.value).toBe('');
+
+    currentConfig = cleanRefresh;
+    await act(async () => {
+      for (const listener of storageListeners) {
+        listener({
+          gsm_config: { oldValue: initial, newValue: cleanRefresh },
+        }, 'local');
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(modelInput?.value).toBe('gpt-5-mini');
+
+    await setInputValue(modelInput!, 'draft-model-not-yet-saved');
+    await setInputValue(apiKeyInput!, 'synthetic-unsaved-key');
+    currentConfig = dirtyRefresh;
+    await act(async () => {
+      for (const listener of storageListeners) {
+        listener({
+          gsm_config: { oldValue: cleanRefresh, newValue: dirtyRefresh },
+        }, 'local');
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(modelInput?.value).toBe('gpt-5-nano');
+    expect(apiKeyInput?.value).toBe('synthetic-unsaved-key');
+  });
+
   it('ignores legacy disclosure acceptance changes without resetting provider drafts', async () => {
     const initial = config({ agentDataDisclosureAcceptance: null });
     const accepted = config({
@@ -1288,13 +1342,17 @@ describe('Options preferences', () => {
     await renderOptions();
     const modelInput = document.querySelector<HTMLInputElement>('#agent-model');
     await setInputValue(modelInput!, 'draft-model-not-yet-saved');
+    const configReadsBeforeDisclosure = authMocks.getConfig.mock.calls.length;
     await act(async () => {
-      storageListeners[0]?.({
-        gsm_config: { oldValue: initial, newValue: accepted },
-      }, 'local');
+      for (const listener of storageListeners) {
+        listener({
+          gsm_config: { oldValue: initial, newValue: accepted },
+        }, 'local');
+      }
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(authMocks.getConfig).toHaveBeenCalledTimes(configReadsBeforeDisclosure);
 
     expect(modelInput?.value).toBe('draft-model-not-yet-saved');
     expect(document.body.textContent).not.toContain('Accept disclosure');

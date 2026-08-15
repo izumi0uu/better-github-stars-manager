@@ -22,7 +22,7 @@ import { useStoreRatingPrompt } from '@/ui/hooks/use-store-rating-prompt';
 import { useWatchInbox } from '@/ui/hooks/use-watch-inbox';
 import { useRadar } from '@/ui/hooks/use-radar';
 import { useManagerSurfaceBadges } from '@/ui/hooks/use-manager-surface-badges';
-import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
+import { useManagerStarActions, type UnstarFeedback } from '@/ui/hooks/use-manager-star-actions';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { PortalProvider } from '@/ui/shadcn/portal-context';
@@ -38,7 +38,6 @@ import type { BackfillState, Star, Tag } from '@/types';
 import { COLUMN_DEFS } from '@/ui/column-layout';
 import { layoutViewportFromMeasurements, type LayoutViewportState } from '@/ui/layout-resize-surface';
 import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
-import { nextOpenUnstarFullName } from '@/ui/unstar-popover-state';
 import type { AgentHostPresentation } from '@/ui/components/AgentHost';
 import {
   managerSurfaceDirection,
@@ -54,9 +53,6 @@ const LazyAgentHost = lazy(() => import('@/ui/components/AgentHost').then(({ Age
 export { layoutViewportFromMeasurements };
 
 
-type UnstarFeedback =
-  | { kind: 'done'; fullName: string }
-  | { kind: 'failed'; fullName: string; error: string };
 
 type WatchRepositoryDetail = { star: Star | null; tag: Tag | null };
 type Account = {
@@ -164,9 +160,6 @@ export function ManagerPanel() {
     active: false,
   });
   const [coachStep, setCoachStep] = useState<number | null>(null);
-  const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
-  const [unstarFeedback, setUnstarFeedback] = useState<UnstarFeedback | null>(null);
-  const [openUnstarFullName, setOpenUnstarFullName] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
@@ -237,6 +230,28 @@ export function ManagerPanel() {
   const starsSurface = surface === 'stars';
   const watchSurface = surface === 'watch';
   const radarSurface = surface === 'radar';
+  const handleUnstarred = useCallback((fullName: string) => {
+    setSelected((current) => (current === fullName ? null : current));
+  }, []);
+  const {
+    favoriteOverrides,
+    unstarFeedback,
+    openUnstarFullName,
+    toggleFavorite: handleToggleFavorite,
+    confirmUnstar: handleConfirmUnstar,
+    changeUnstarPopover: handleOpenUnstarChange,
+    closeUnstarPopover,
+    clearUnstarFeedback,
+    resetUnstarPresentation,
+  } = useManagerStarActions({
+    rows: visibleRows,
+    tagsByFullName,
+    info,
+    interactionLocked,
+    setInfo,
+    onMeaningfulAction: reportStoreRatingMeaningfulAction,
+    onUnstarred: handleUnstarred,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -285,19 +300,12 @@ export function ManagerPanel() {
     watchDetailGeneration.current++;
   }, []);
 
-  useEffect(() => {
-    if (info) setUnstarFeedback(null);
-  }, [info]);
   useLayoutEffect(() => {
     if (!editingLayout) return;
     setSelected(null);
-    setOpenUnstarFullName(null);
-  }, [editingLayout]);
+    closeUnstarPopover();
+  }, [closeUnstarPopover, editingLayout]);
 
-  useEffect(() => {
-    const currentNames = new Set(rows.map((row) => row.full_name));
-    setOpenUnstarFullName((current) => (current && !currentNames.has(current) ? null : current));
-  }, [rows]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -356,13 +364,10 @@ export function ManagerPanel() {
   const selectedTag = starsSurface
     ? selectedStar ? tagsByFullName.get(selectedStar.full_name) : undefined
     : watchDetail?.tag ?? undefined;
-  useEffect(() => {
-    setFavoriteOverrides((current) => pruneFavoriteOverrides(current, tagsByFullName, visibleRows));
-  }, [visibleRows, tagsByFullName]);
 
-  const handleSelect = (full_name: string) => {
-    setSelected((cur) => (cur === full_name ? null : full_name));
-  };
+  const handleSelect = useCallback((fullName: string) => {
+    setSelected((current) => (current === fullName ? null : fullName));
+  }, []);
 
   const handleWatchRepositorySelect = async (fullName: string) => {
     const requestGeneration = ++watchDetailGeneration.current;
@@ -434,13 +439,12 @@ export function ManagerPanel() {
     reportStoreRatingMeaningfulAction();
   }, [refreshStars, reportStoreRatingMeaningfulAction]);
 
-  const handleSurfaceChange = (next: ManagerSurface) => {
+  const handleSurfaceChange = useCallback((next: ManagerSurface) => {
     if (next === surface || editingLayout) return;
     watchDetailGeneration.current++;
     setSelected(null);
     setWatchDetail(null);
-    setOpenUnstarFullName(null);
-    setUnstarFeedback(null);
+    resetUnstarPresentation();
     setAgentPanelOpen(false);
     autoTagAgentPrompt.dismiss();
     // One viewport owns every Surface. Reset it before changing the virtual row
@@ -448,7 +452,7 @@ export function ManagerPanel() {
     if (listRef.current) listRef.current.scrollTop = 0;
     setSurfaceDirection(managerSurfaceDirection(surface, next));
     setSurface(next);
-  };
+  }, [autoTagAgentPrompt.dismiss, editingLayout, resetUnstarPresentation, surface]);
 
   const agentCandidate = useMemo(() => starsSurface && selected
     ? {
@@ -486,57 +490,6 @@ export function ManagerPanel() {
     starsSurface,
   ]);
 
-  const handleToggleFavorite = async (full_name: string, favorite: boolean) => {
-    setFavoriteOverrides((current) => ({
-      ...current,
-      [full_name]: { value: favorite, pending: true },
-    }));
-    try {
-      await bgCall('setFavorite', { full_name, favorite });
-      setFavoriteOverrides((current) => ({
-        ...current,
-        [full_name]: { value: favorite, pending: false },
-      }));
-      setUnstarFeedback(null);
-      setInfo(null);
-      reportStoreRatingMeaningfulAction();
-    } catch (e) {
-      setFavoriteOverrides((current) => {
-        if (!(full_name in current)) return current;
-        const next = { ...current };
-        delete next[full_name];
-        return next;
-      });
-      setUnstarFeedback(null);
-      setInfo(m.manager.syncFailed(m.toolbar.columnFavorite, e instanceof Error ? e.message : String(e)));
-      throw e;
-    }
-  };
-
-  const handleConfirmUnstar = (fullName: string) => {
-    if (interactionLocked) return;
-
-    setOpenUnstarFullName(null);
-    setUnstarFeedback(null);
-    setInfo(null);
-
-    bgCall('markUnstarred', { full_name: fullName })
-      .then(() => {
-        setSelected((current) => (current === fullName ? null : current));
-        setUnstarFeedback({ kind: 'done', fullName });
-      })
-      .catch((error) => {
-        setUnstarFeedback({
-          kind: 'failed',
-          fullName,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-  };
-
-  const handleOpenUnstarChange = (fullName: string | null, sourceFullName: string) => {
-    setOpenUnstarFullName((current) => nextOpenUnstarFullName(current, fullName, sourceFullName));
-  };
 
   const hasActiveFilter =
     f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged
@@ -686,7 +639,7 @@ export function ManagerPanel() {
             <button
               type="button"
               aria-label={m.common.close}
-              onClick={() => { setInfo(null); setUnstarFeedback(null); }}
+              onClick={() => { setInfo(null); clearUnstarFeedback(); }}
               className="ml-auto inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
             >
               <X className="size-3" aria-hidden="true" />
@@ -710,7 +663,7 @@ export function ManagerPanel() {
             interactionLocked={interactionLocked}
             onTagMutationMessage={(message) => {
               if (message) setInfo(message);
-              if (message) setUnstarFeedback(null);
+              if (message) clearUnstarFeedback();
             }}
             onTagMutationSuccess={handleManualTagMutationSuccess}
           />}

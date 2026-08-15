@@ -87,6 +87,148 @@ describe('BgsmAgentClientController', () => {
     deactivate();
   });
 
+  it('shares unchanged frozen projections and replaces only mutated session, message, and tool sources', async () => {
+    const active = loadedConversation('projection-active', 1, [
+      ['Existing prompt', 'Existing answer'],
+    ]);
+    const secondarySummary = {
+      id: 'projection-secondary',
+      title: 'Secondary conversation',
+      createdAt: 2,
+      updatedAt: 2,
+    };
+    const retryDraft: AgentRetryDraft = {
+      sessionId: active.session.id,
+      turnAttemptId: 'projection-retry',
+      baseRevision: active.session.revision,
+      prompt: 'Retry with shared projections',
+      kind: 'stopped',
+      settlement: 'retryable',
+      updatedAt: 3,
+    };
+    let turn: {
+      input: Parameters<NonNullable<BgsmAgentTurnHandlers['onError']>>[0];
+      handlers: BgsmAgentTurnHandlers;
+    } | null = null;
+    messaging.inspect.mockResolvedValue({
+      summaries: [active.summary, secondarySummary],
+      corruptions: [],
+    });
+    messaging.load.mockResolvedValue(active);
+    messaging.retryDraft.mockResolvedValue(retryDraft);
+    messaging.start.mockImplementation((input, handlers) => {
+      turn = { input, handlers };
+      return { stop: vi.fn(), detach: vi.fn(), acknowledge: vi.fn() };
+    });
+    const controller = createBgsmAgentClientController({ labels: labels() });
+    const deactivate = controller.activate();
+    await waitForReady(controller);
+
+    const hydrated = controller.getSnapshot();
+    expect(hydrated.sessions.map(({ id }) => id)).toHaveLength(2);
+    expect(hydrated.sessions.map(({ id }) => id)).toEqual(expect.arrayContaining([
+      active.session.id,
+      secondarySummary.id,
+    ]));
+    expect(hydrated.messages.map(({ content }) => content)).toEqual([
+      'Existing prompt',
+      'Existing answer',
+    ]);
+    expect(hydrated.durableRetryDraft).toMatchObject(retryDraft);
+    expect(Object.isFrozen(hydrated.durableRetryDraft)).toBe(true);
+
+    controller.invalidateDeletedSessions(new Set([secondarySummary.id]));
+    await vi.waitFor(() => {
+      expect(controller.getSnapshot().sessions.map(({ id }) => id)).toEqual([active.session.id]);
+    });
+    const sessionChanged = controller.getSnapshot();
+    expect(sessionChanged).not.toBe(hydrated);
+    expect(sessionChanged.sessions).not.toBe(hydrated.sessions);
+    expect(sessionChanged.sessions[0]).not.toBe(
+      hydrated.sessions.find(({ id }) => id === active.session.id),
+    );
+    expect(sessionChanged.messages).toBe(hydrated.messages);
+    expect(sessionChanged.durableRetryDraft).toBe(hydrated.durableRetryDraft);
+    expect(sessionChanged.turnState.toolActivities).toBe(hydrated.turnState.toolActivities);
+    expect(Object.isFrozen(sessionChanged.sessions)).toBe(true);
+    expect(Object.isFrozen(sessionChanged.sessions[0])).toBe(true);
+
+    const turnResult = controller.startTurn(retryDraft.prompt, {
+      retrySourceAttemptId: retryDraft.turnAttemptId,
+    });
+    await vi.waitFor(() => expect(turn).not.toBeNull());
+    const started = controller.getSnapshot();
+    expect(started.messages).not.toBe(sessionChanged.messages);
+    expect(started.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: retryDraft.prompt,
+    });
+    expect(started.sessions).toBe(sessionChanged.sessions);
+    expect(started.durableRetryDraft).toBe(sessionChanged.durableRetryDraft);
+    expect(Object.isFrozen(started.messages)).toBe(true);
+    expect(Object.isFrozen(started.messages.at(-1))).toBe(true);
+
+    turn!.handlers.onEvent?.({
+      ...turn!.input,
+      type: 'turn_start',
+      step: 0,
+    });
+    const statusChanged = controller.getSnapshot();
+    expect(statusChanged).not.toBe(started);
+    expect(statusChanged.turnState).not.toBe(started.turnState);
+    expect(statusChanged.turnState.status).toEqual({ kind: 'working', text: 'Thinking' });
+    expect(statusChanged.sessions).toBe(started.sessions);
+    expect(statusChanged.messages).toBe(started.messages);
+    expect(statusChanged.durableRetryDraft).toBe(started.durableRetryDraft);
+    expect(statusChanged.turnState.toolActivities).toBe(started.turnState.toolActivities);
+
+    turn!.handlers.onEvent?.({
+      ...turn!.input,
+      type: 'message_update',
+      message: {
+        id: 'projection-tool-message',
+        role: 'tool',
+        toolName: 'list_tags',
+        content: '{"ok":true}',
+        createdAt: 4,
+      },
+    });
+    const messageChanged = controller.getSnapshot();
+    expect(messageChanged).not.toBe(statusChanged);
+    expect(messageChanged.messages).not.toBe(statusChanged.messages);
+    expect(messageChanged.messages.at(-1)).toMatchObject({
+      id: 'projection-tool-message',
+      role: 'tool',
+      content: '{"ok":true}',
+    });
+    expect(messageChanged.sessions).toBe(statusChanged.sessions);
+    expect(messageChanged.durableRetryDraft).toBe(statusChanged.durableRetryDraft);
+    expect(messageChanged.turnState.toolActivities).toBe(statusChanged.turnState.toolActivities);
+    expect(Object.isFrozen(messageChanged.messages)).toBe(true);
+    expect(Object.isFrozen(messageChanged.messages.at(-1))).toBe(true);
+
+    turn!.handlers.onEvent?.({
+      ...turn!.input,
+      type: 'tool_execution_queued',
+      toolName: 'list_tags',
+      callId: 'projection-tool-call',
+    });
+    const toolChanged = controller.getSnapshot();
+    expect(toolChanged).not.toBe(messageChanged);
+    expect(toolChanged.turnState.toolActivities).not.toBe(messageChanged.turnState.toolActivities);
+    expect(toolChanged.turnState.toolActivities).toEqual([
+      { callId: 'projection-tool-call', toolName: 'list_tags', state: 'queued' },
+    ]);
+    expect(toolChanged.sessions).toBe(messageChanged.sessions);
+    expect(toolChanged.messages).toBe(messageChanged.messages);
+    expect(toolChanged.durableRetryDraft).toBe(messageChanged.durableRetryDraft);
+    expect(Object.isFrozen(toolChanged.turnState.toolActivities)).toBe(true);
+    expect(Object.isFrozen(toolChanged.turnState.toolActivities[0])).toBe(true);
+
+    deactivate();
+    await expect(turnResult).resolves.toBeNull();
+  });
+
   it('does not touch Chrome/session messaging while constructed but inactive', () => {
     const controller = createBgsmAgentClientController({ labels: labels() });
 

@@ -5,6 +5,7 @@ import { act, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { AgentPanel } from '@/ui/components/AgentPanel';
+import { AgentProposalReviewCard } from '@/ui/components/AgentOrganizeReview';
 import { AgentHost, type AgentHostPresentation } from '@/ui/components/AgentHost';
 import { AgentSessionMenu } from '@/ui/components/AgentSessionMenu';
 import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
@@ -2069,6 +2070,114 @@ describe('Agent organize-job workbench UI', () => {
     expect(currentPhase(container)).toBeUndefined();
   });
 
+  it('keeps proposal-row expansion and edit drafts local while committing review decisions upward', async () => {
+    const proposalId = parseProposalId('proposal:v1:ui-row-state');
+    const firstRowId = `${proposalId}:row:0`;
+    const secondRowId = `${proposalId}:row:1`;
+    const onToggleRow = vi.fn();
+    const onInsertCorrection = vi.fn();
+    const container = mountReact(
+      <AgentProposalReviewCard
+        proposal={{
+          proposalId,
+          actionableCount: 2,
+          nonActionableCount: 0,
+          review: {
+            version: 1,
+            proposalId,
+            runId: parseRunId('run:v1:ui-row-state'),
+            generation: 1,
+            rows: [
+              {
+                proposalRowId: firstRowId,
+                frozenIndex: 0,
+                repositoryId: 'owner/repo-0',
+                proposedActions: [{ kind: 'add_existing_tag', tag: 'TypeScript', evidence: 'Topic' }],
+                preselected: true,
+              },
+              {
+                proposalRowId: secondRowId,
+                frozenIndex: 1,
+                repositoryId: 'owner/repo-1',
+                proposedActions: [{ kind: 'propose_new_tag', tag: 'CLI', evidence: 'Tooling' }],
+                preselected: true,
+              },
+            ],
+          },
+        }}
+        selectedProposalRowIds={new Set([firstRowId, secondRowId])}
+        reviewEditable
+        applyInFlight={false}
+        applySelectedTotal={2}
+        coveredRepositoryCount={2}
+        onToggleRow={onToggleRow}
+        onSelectAll={vi.fn()}
+        onClear={vi.fn()}
+        onApplySelected={vi.fn()}
+        onInsertCorrection={onInsertCorrection}
+      />,
+      mountedRoots,
+    );
+    const rows = [...container.querySelectorAll<HTMLElement>('[data-testid="organize-job-proposal-row"]')];
+    const [firstRow, secondRow] = rows;
+    if (!firstRow || !secondRow) throw new Error('Expected two proposal review rows.');
+
+    await click(buttonWithText(firstRow, 'Show review details'));
+    expect(firstRow.textContent).toContain(`proposalRowId: ${firstRowId}`);
+    expect(secondRow.textContent).not.toContain(`proposalRowId: ${secondRowId}`);
+    await click(buttonWithText(secondRow, 'Show review details'));
+    await click(buttonWithText(firstRow, 'Hide review details'));
+    expect(firstRow.textContent).not.toContain(`proposalRowId: ${firstRowId}`);
+    expect(secondRow.textContent).toContain(`proposalRowId: ${secondRowId}`);
+
+    await click(buttonWithText(firstRow, 'Edit tag'));
+    const firstInput = firstRow.querySelector<HTMLInputElement>('input[aria-label="Edit tag TypeScript for owner/repo-0"]');
+    if (!firstInput) throw new Error('First row edit input was not rendered.');
+    await setInputValue(firstInput, '');
+    await click(buttonWithText(firstRow, 'Save correction'));
+    expect(firstRow.querySelector('[role="alert"]')?.textContent).toBe('Enter a non-empty tag.');
+
+    await click(buttonWithText(secondRow, 'Edit tag'));
+    const secondInput = secondRow.querySelector<HTMLInputElement>('input[aria-label="Edit tag CLI for owner/repo-1"]');
+    if (!secondInput) throw new Error('Second row edit input was not rendered.');
+    await setInputValue(secondInput, 'Command line');
+    await click(buttonWithText(firstRow, 'Cancel edit'));
+    expect(firstRow.querySelector('input')).toBeNull();
+    expect(firstRow.querySelector('[role="alert"]')).toBeNull();
+    expect(secondRow.querySelector<HTMLInputElement>('input')?.value).toBe('Command line');
+    expect(secondRow.textContent).toContain(`proposalRowId: ${secondRowId}`);
+
+    await click(buttonWithText(secondRow, 'Save correction'));
+    expect(secondRow.textContent).toContain('Rejected · Corrected to Command line');
+    expect(onToggleRow).toHaveBeenNthCalledWith(1, secondRowId);
+    await click(buttonWithText(secondRow, 'Ask to revise'));
+    expect(onInsertCorrection).toHaveBeenLastCalledWith(
+      'For owner/repo-1, do not apply the reviewed tag "CLI". Re-analyze that repository with the corrected tag intent "Command line" and return a fresh review row before any apply.',
+    );
+    await click(buttonWithText(container, 'Ask to revise rejected (1)'));
+    expect(onInsertCorrection).toHaveBeenLastCalledWith(
+      'Revise this tag review before any apply. Keep the frozen scope unchanged, skip rejected rows, and re-analyze only the corrected intent. Rejections/corrections:\nowner/repo-1: Corrected to Command line',
+    );
+
+    await click(buttonWithText(secondRow, 'Undo reject'));
+    expect(secondRow.textContent).not.toContain('Corrected to Command line');
+    expect(container.textContent).not.toContain('Ask to revise rejected (1)');
+    expect(secondRow.textContent).toContain(`proposalRowId: ${secondRowId}`);
+
+    await click(buttonWithText(firstRow, 'Reject'));
+    await click(buttonWithText(firstRow, 'Wrong repository'));
+    expect(firstRow.textContent).toContain('Rejected · Wrong repository');
+    expect(onToggleRow).toHaveBeenNthCalledWith(2, firstRowId);
+    await click(buttonWithText(firstRow, 'Ask to revise'));
+    expect(onInsertCorrection).toHaveBeenLastCalledWith(
+      'For owner/repo-0, reject the current suggestion (Wrong repository). Re-analyze that repository with this correction in mind and return a fresh review row before any apply.',
+    );
+    await click(buttonWithText(container, 'Ask to revise rejected (1)'));
+    expect(onInsertCorrection).toHaveBeenLastCalledWith(
+      'Revise this tag review before any apply. Keep the frozen scope unchanged, skip rejected rows, and re-analyze only the corrected intent. Rejections/corrections:\nowner/repo-0: Wrong repository',
+    );
+  });
+
   it('reviews, applies, and renders receipts only from durable job pages', async () => {
     const container = await mountHarness();
     const preflight = await requestOrganizePreflight(container);
@@ -3113,6 +3222,16 @@ async function waitForProgress(container: HTMLElement, expected: number) {
       await new Promise((resolve) => window.setTimeout(resolve, 10));
     });
   }
+}
+
+async function setInputValue(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    valueSetter?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await Promise.resolve();
+  });
 }
 
 async function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {

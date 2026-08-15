@@ -4,7 +4,7 @@
 import { act, useState, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Star } from '@/types';
+import type { Star, Tag } from '@/types';
 import type { ColumnId } from '@/ui/column-layout';
 import { StarRow } from '@/ui/components/StarRow';
 
@@ -41,6 +41,20 @@ function fakeStar(fullName = 'owner/repo'): Star {
     synced_at: '2024-03-02T00:00:00Z',
   };
 }
+function fakeTag(tags: string[] = [], notes = ''): Tag {
+  return {
+    full_name: 'owner/repo',
+    manualTags: tags,
+    autoTags: [],
+    dismissedAutoTags: [],
+    manualTagsMtime: '',
+    autoTagsMtime: '',
+    dismissedAutoTagsMtime: '',
+    notes,
+    mtime: '',
+  };
+}
+
 
 function mount(element: ReactElement): { container: HTMLDivElement; root: Root } {
   const container = document.createElement('div');
@@ -63,8 +77,7 @@ function rowWithColumns(
   return (
     <StarRow
       star={fakeStar()}
-      tags={['ui', 'react', 'agent', 'tooling', 'automation']}
-      hasNotes={false}
+      tag={fakeTag(['ui', 'react', 'agent', 'tooling', 'automation'])}
       favorite={false}
       favoriteBusy={false}
       selectedTags={[]}
@@ -91,8 +104,6 @@ function ControlledUnstarRow({
   return (
     <StarRow
       star={fakeStar()}
-      tags={[]}
-      hasNotes={false}
       favorite={false}
       favoriteBusy={false}
       selectedTags={[]}
@@ -142,8 +153,6 @@ describe('star row inline tag fitting', () => {
       <StarRow
         star={star}
         showRepositoryAvatar
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}
@@ -225,8 +234,6 @@ describe('star row inline tag fitting', () => {
     mount(
       <StarRow
         star={fakeStar()}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}

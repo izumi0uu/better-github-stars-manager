@@ -2,6 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { StarRow } from '@/ui/components/StarRow';
 import type { Star } from '@/types';
+import { createRepositorySearchMatcher } from '@/search/repository-search';
+import { fakeTag } from './test-utils';
 
 function fakeStar(createdAt: string | null): Star {
   return {
@@ -31,8 +33,6 @@ function renderRepositoryAvatar(
       star={star}
       showRepositoryOwner={showRepositoryOwner}
       showRepositoryAvatar={showRepositoryAvatar}
-      tags={[]}
-      hasNotes={false}
       favorite={false}
       favoriteBusy={false}
       selectedTags={[]}
@@ -51,8 +51,6 @@ function renderCreatedColumn(createdAt: string | null): string {
   return renderToStaticMarkup(
     <StarRow
       star={fakeStar(createdAt)}
-      tags={[]}
-      hasNotes={false}
       favorite={false}
       favoriteBusy={false}
       selectedTags={[]}
@@ -71,10 +69,8 @@ function renderRepositoryColumn(searchQuery: string, showRepositoryOwner = true)
   return renderToStaticMarkup(
     <StarRow
       star={fakeStar('2020-01-02T12:00:00Z')}
-      searchQuery={searchQuery}
+      matchRepositoryName={createRepositorySearchMatcher(searchQuery).matchName}
       showRepositoryOwner={showRepositoryOwner}
-      tags={[]}
-      hasNotes={false}
       favorite={false}
       favoriteBusy={false}
       selectedTags={[]}
@@ -144,8 +140,6 @@ describe('star row column rendering', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={fakeStar('2020-01-02T12:00:00Z')}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}
@@ -220,8 +214,7 @@ describe('star row column rendering', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={{ ...fakeStar('2020-01-02T12:00:00Z'), fork: true }}
-        tags={['topic']}
-        hasNotes={false}
+        tag={fakeTag({ manualTags: ['topic'], notes: '' })}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}
@@ -245,8 +238,6 @@ describe('star row column rendering', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 }}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}
@@ -270,8 +261,6 @@ describe('star row column rendering', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234567 }}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}
@@ -299,8 +288,6 @@ describe('star row column rendering', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 }}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}
@@ -327,8 +314,6 @@ describe('owned public repository star state', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={{ ...fakeStar('2024-01-01T00:00:00Z'), viewer_has_starred: false }}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}

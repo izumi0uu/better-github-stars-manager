@@ -14,6 +14,12 @@ const managerMocks = vi.hoisted(() => ({
   setInfo: vi.fn(),
   refreshStars: vi.fn(),
   resetFilters: vi.fn(),
+  starsTableProps: [] as Array<{
+    onSelect?: (fullName: string) => void;
+    onToggleFavorite?: (fullName: string, favorite: boolean) => Promise<void>;
+    onConfirmUnstar?: (fullName: string) => void;
+    onOpenUnstarChange?: (open: boolean, fullName: string) => void;
+  }>,
   radarSetView: vi.fn(),
   row: {
     full_name: 'owner/repo',
@@ -309,26 +315,38 @@ vi.mock('@/ui/components/StarsTable', () => ({
   StarsTable: ({
     onConfirmUnstar,
     onSelect,
+    onToggleFavorite,
+    onOpenUnstarChange,
     selectedFullName,
   }: {
     onConfirmUnstar?: (fullName: string) => void;
     onSelect?: (fullName: string) => void;
+    onToggleFavorite?: (fullName: string, favorite: boolean) => Promise<void>;
+    onOpenUnstarChange?: (open: boolean, fullName: string) => void;
     selectedFullName?: string | null;
-  }) => (
-    <>
-      <button
-        type="button"
-        data-testid="select-row"
-        aria-pressed={selectedFullName === 'owner/repo'}
-        onClick={() => onSelect?.('owner/repo')}
-      >
-        select row
-      </button>
-      <button type="button" data-testid="confirm-unstar" onClick={() => onConfirmUnstar?.('owner/repo')}>
-        confirm unstar
-      </button>
-    </>
-  ),
+  }) => {
+    managerMocks.starsTableProps.push({
+      onSelect,
+      onToggleFavorite,
+      onConfirmUnstar,
+      onOpenUnstarChange,
+    });
+    return (
+      <>
+        <button
+          type="button"
+          data-testid="select-row"
+          aria-pressed={selectedFullName === 'owner/repo'}
+          onClick={() => onSelect?.('owner/repo')}
+        >
+          select row
+        </button>
+        <button type="button" data-testid="confirm-unstar" onClick={() => onConfirmUnstar?.('owner/repo')}>
+          confirm unstar
+        </button>
+      </>
+    );
+  },
 }));
 
 const mountedRoots: Root[] = [];
@@ -352,6 +370,7 @@ beforeEach(() => {
   managerMocks.setInfo.mockReset();
   managerMocks.refreshStars.mockReset();
   managerMocks.radarSetView.mockReset();
+  managerMocks.starsTableProps.length = 0;
 });
 
 afterEach(() => {
@@ -365,6 +384,26 @@ afterEach(() => {
 });
 
 describe('ManagerPanel unstar flow', () => {
+  it('keeps row action commands stable across unrelated Manager surface rerenders', () => {
+    const { container } = mountPanel();
+    const initial = managerMocks.starsTableProps.at(-1);
+    if (!initial) throw new Error('Expected StarsTable props on the initial Stars surface');
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-surface"]')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="stars-surface"]')?.click();
+    });
+
+    const returned = managerMocks.starsTableProps.at(-1);
+    if (!returned) throw new Error('Expected StarsTable props after returning to Stars');
+    expect(returned.onSelect).toBe(initial.onSelect);
+    expect(returned.onToggleFavorite).toBe(initial.onToggleFavorite);
+    expect(returned.onConfirmUnstar).toBe(initial.onConfirmUnstar);
+    expect(returned.onOpenUnstarChange).toBe(initial.onOpenUnstarChange);
+  });
+
   it('switches to Watch without resetting Stars filters and opens targeted repository detail', async () => {
     managerMocks.bgCall.mockImplementation((type: string) => {
       if (type === 'getWatchRepositoryDetail') {

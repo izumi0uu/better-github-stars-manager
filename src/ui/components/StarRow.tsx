@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Archive, GitFork, Star as StarIcon, StickyNote } from 'lucide-react';
-import type { Star } from '@/types';
+import type { Star, Tag } from '@/types';
 import { Badge } from '@/ui/shadcn/badge';
 import { Button } from '@/ui/shadcn/button';
 import { FavoriteButton } from '@/ui/components/FavoriteButton';
@@ -10,9 +10,10 @@ import { useI18n } from '@/i18n';
 import { getLockedRegionProps } from '@/ui/interaction-lock';
 import type { ColumnId } from '@/ui/column-layout';
 import { fitInlineTags } from '@/ui/inline-tag-fit';
-import { createRepositorySearchMatcher } from '@/search/repository-search';
+import type { RepositorySearchMatch } from '@/search/repository-search';
 import { SearchMatchText } from '@/ui/components/SearchMatchText';
 import { RepositoryOwnerAvatar } from '@/ui/components/RepositoryOwnerAvatar';
+import { visibleTagNames } from '@/tags/tag-model';
 
 /**
  * virtualized-list row. Fixed h-16 (64px) MUST match the virtualizer
@@ -25,13 +26,36 @@ const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 
+export type StarRowProps = {
+  star: Star;
+  matchRepositoryName?: (fullName: string) => RepositorySearchMatch;
+  showRepositoryOwner?: boolean;
+  showRepositoryAvatar?: boolean;
+  tag?: Tag;
+  favorite: boolean;
+  favoriteBusy: boolean;
+  selectedTags: string[];
+  onToggleTag: (tag: string) => void;
+  onToggleFavorite: (fullName: string, favorite: boolean) => Promise<void>;
+  selected: boolean;
+  onSelect: (fullName: string) => void;
+  columns: ColumnId[];
+  gridTemplateColumns: string;
+  flashedColumn: ColumnId | null;
+  interactionLocked?: boolean;
+  minWidth?: number;
+  onConfirmUnstar?: (fullName: string) => void;
+  unstarPopoverOpen?: boolean;
+  onUnstarPopoverOpenChange?: (open: boolean, fullName: string) => void;
+};
+
+
 export const StarRow = memo(function StarRow({
   star,
-  searchQuery = '',
+  matchRepositoryName,
   showRepositoryOwner = true,
   showRepositoryAvatar = true,
-  tags,
-  hasNotes,
+  tag,
   favorite,
   favoriteBusy,
   selectedTags,
@@ -47,29 +71,9 @@ export const StarRow = memo(function StarRow({
   onConfirmUnstar,
   unstarPopoverOpen,
   onUnstarPopoverOpenChange,
-}: {
-  star: Star;
-  searchQuery?: string;
-  showRepositoryOwner?: boolean;
-  showRepositoryAvatar?: boolean;
-  tags: string[];
-  hasNotes: boolean;
-  favorite: boolean;
-  favoriteBusy: boolean;
-  selectedTags: string[];
-  onToggleTag: (tag: string) => void;
-  onToggleFavorite: (full_name: string, favorite: boolean) => Promise<void>;
-  selected: boolean;
-  onSelect: (full_name: string) => void;
-  columns: ColumnId[];
-  gridTemplateColumns: string;
-  flashedColumn: ColumnId | null;
-  interactionLocked?: boolean;
-  minWidth?: number;
-  onConfirmUnstar?: (fullName: string) => void;
-  unstarPopoverOpen?: boolean;
-  onUnstarPopoverOpenChange?: (open: boolean) => void;
-}) {
+}: StarRowProps) {
+  const tags = useMemo(() => visibleTagNames(tag), [tag]);
+  const hasNotes = !!(tag?.notes && tag.notes.trim());
   const selectedSet = useMemo(() => new Set(selectedTags), [selectedTags]);
   const tagCellRef = useRef<HTMLDivElement | null>(null);
   const tagMeasureRef = useRef<HTMLDivElement | null>(null);
@@ -78,9 +82,12 @@ export const StarRow = memo(function StarRow({
   const [tagFit, setTagFit] = useState<{ tagsKey: string; visibleCount: number } | null>(null);
   const [uncontrolledUnstarOpen, setUncontrolledUnstarOpen] = useState(false);
   const unstarOpen = unstarPopoverOpen ?? uncontrolledUnstarOpen;
-  const setUnstarOpen = onUnstarPopoverOpenChange ?? setUncontrolledUnstarOpen;
   const handlePopoverOpenChange = (open: boolean) => {
-    setUnstarOpen(open);
+    if (onUnstarPopoverOpenChange) {
+      onUnstarPopoverOpenChange(open, star.full_name);
+      return;
+    }
+    setUncontrolledUnstarOpen(open);
   };
   const initialVisibleCount = Math.min(INITIAL_VISIBLE_TAGS, tags.length);
   const fittedVisibleCount = tagFit?.tagsKey === tagsKey ? tagFit.visibleCount : initialVisibleCount;
@@ -88,9 +95,9 @@ export const StarRow = memo(function StarRow({
   const visible = tags.slice(0, visibleCount);
   const hiddenCount = tags.length - visible.length;
   const overflow = hiddenCount > 0;
-  const repositoryNameMatch = useMemo(
-    () => createRepositorySearchMatcher(searchQuery).matchName(star.full_name),
-    [searchQuery, star.full_name],
+  const repositoryMatchRanges = useMemo(
+    () => matchRepositoryName?.(star.full_name).nameRanges ?? [],
+    [matchRepositoryName, star.full_name],
   );
   const repositorySourceOffset = showRepositoryOwner
     ? 0
@@ -174,7 +181,7 @@ export const StarRow = memo(function StarRow({
                 >
                   <SearchMatchText
                     text={repositoryLabel}
-                    ranges={repositoryNameMatch.nameRanges}
+                    ranges={repositoryMatchRanges}
                     sourceOffset={repositorySourceOffset}
                   />
                 </span>
@@ -350,7 +357,7 @@ export const StarRow = memo(function StarRow({
                       className="flex w-auto items-center gap-1 rounded-lg border-0 p-1.5 shadow-lg data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 origin-[--radix-popover-content-transform-origin]"
                       onClick={(e) => e.stopPropagation()}
                       onPointerDown={(e) => e.stopPropagation()}
-                      onInteractOutside={() => setUnstarOpen(false)}
+                      onInteractOutside={() => handlePopoverOpenChange(false)}
                     >
                       <Button
                         type="button"
@@ -358,7 +365,7 @@ export const StarRow = memo(function StarRow({
                         className="h-5 px-1.5 text-[10px]"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setUnstarOpen(false);
+                          handlePopoverOpenChange(false);
                         }}
                       >
                         {m.starRow.unstarCancel}
@@ -368,7 +375,7 @@ export const StarRow = memo(function StarRow({
                         className="h-5 px-1.5 text-[10px]"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setUnstarOpen(false);
+                          handlePopoverOpenChange(false);
                           onConfirmUnstar(star.full_name);
                         }}
                       >
