@@ -9,7 +9,7 @@ import {
   type AgentArtifactCoverageRecord,
 } from '@/bgsm-agent/artifact-coverage';
 import { createAgentAttemptCoordinator } from '@/background/agent-attempt-coordinator';
-import { parseScopeFingerprintV1 } from '@/bgsm-agent/scope';
+import { parseScopeFingerprint } from '@/bgsm-agent/scope';
 import type {
   BgsmAgentSessionMessage,
   BgsmAgentSessionTransition,
@@ -86,7 +86,7 @@ function transition(
               kind: 'selected_repository' as const,
               selectedRepositoryIdHint: 'owner/repo',
             },
-            scopeFingerprint: parseScopeFingerprintV1(`fs:v1:${'s'.repeat(43)}`),
+            scopeFingerprint: parseScopeFingerprint(`fs:${'s'.repeat(43)}`),
             label: 'owner/repo',
             count: 1,
             providerFingerprint: `pcf:v1:${'p'.repeat(43)}`,

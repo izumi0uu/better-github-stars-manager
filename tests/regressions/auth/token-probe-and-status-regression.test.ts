@@ -6,7 +6,7 @@ import {
   TOKEN_GIST_CLEANUP_STATUS,
   TOKEN_PROFILE_STATUS,
   TOKEN_STARS_STATUS,
-  TOKEN_WATCHING_FORBIDDEN,
+  TOKEN_WATCHING_NETWORK,
   translateError,
 } from '../../../src/api/errors';
 import { probeTokenCapabilities } from '../../../src/auth/token-probe';
@@ -58,7 +58,7 @@ async function storeReadableToken(token: string, probeId: string) {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const method = init?.method ?? 'GET';
     if (url.endsWith('/user') && method === 'GET') {
-      return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+      return response(200, { login: 'octocat', avatar_url: 'https://example.com/a.png', name: 'OctoCat' }, { 'x-oauth-scopes': '' });
     }
     if (url.includes('/user/starred') && method === 'GET') return response(200, []);
     if (url.endsWith('/gists') && method === 'POST') return response(201, { id: probeId });
@@ -102,12 +102,14 @@ describe('Status/token regressions', () => {
       backfills: {},
       activeBackfillId: null,
       inFlight: true,
+      organizeJobActive: true,
     };
     const next = mergeStatusPatch(current, { seenTooltips: 2 });
     assert.equal(next.seenTooltips, 2);
     assert.deepEqual(next.progress, current.progress);
     assert.equal(next.hasToken, true);
     assert.equal(next.inFlight, true);
+    assert.equal(next.organizeJobActive, true);
   });
 
   it('mergeStatusSnapshot keeps live progress when a restored snapshot is idle', () => {
@@ -120,6 +122,7 @@ describe('Status/token regressions', () => {
       backfills: {},
       activeBackfillId: null,
       inFlight: true,
+      organizeJobActive: true,
     };
     const snapshot: SyncStatus = {
       progress: { phase: 'idle', done: 0, total: null, message: 'Last sync done' },
@@ -130,11 +133,13 @@ describe('Status/token regressions', () => {
       backfills: {},
       activeBackfillId: null,
       inFlight: false,
+      organizeJobActive: false,
     };
     const merged = mergeStatusSnapshot(current, snapshot);
     assert.ok(merged);
     assert.deepEqual(merged!.progress, current.progress);
     assert.equal(merged!.inFlight, true);
+    assert.equal(merged!.organizeJobActive, false);
   });
 
   it('translateError keeps split token-probe codes distinct', () => {
@@ -151,7 +156,7 @@ describe('Status/token regressions', () => {
       const method = init?.method ?? 'GET';
       calls.push(`${method} ${url}`);
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'octocat', avatar_url: null, name: 'OctoCat' }, { 'x-oauth-scopes': '' });
       }
       if (url.includes('/user/starred?per_page=1&page=1') && method === 'GET') return response(200, []);
       if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-1' });
@@ -176,7 +181,7 @@ describe('Status/token regressions', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'octocat', avatar_url: 'https://example.com/a.png', name: 'OctoCat' }, { 'x-oauth-scopes': '' });
       }
       if (url.includes('/user/starred') && method === 'GET') return response(200, []);
       if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-2' });
@@ -206,31 +211,31 @@ describe('Status/token regressions', () => {
     assert.equal(await authStore.getToken(), null);
   });
 
-  it('persists a valid main token while reporting optional Watching permission failure', async () => {
+  it('persists a valid main token while reporting optional Notifications permission failure', async () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: null, name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'octocat', avatar_url: null, name: 'OctoCat' }, { 'x-oauth-scopes': '' });
       }
       if (url.includes('/user/starred') && method === 'GET') return response(200, []);
-      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'watching-optional' });
-      if (url.endsWith('/gists/watching-optional') && method === 'DELETE') return response(204);
-      if (url.includes('/user/subscriptions') && method === 'GET') return response(403);
+      if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'notifications-optional' });
+      if (url.endsWith('/gists/notifications-optional') && method === 'DELETE') return response(204);
+      if (url.includes('/notifications?all=true&per_page=1') && method === 'GET') throw new Error('network down');
       throw new Error(`unexpected fetch: ${method} ${url}`);
     }) as typeof fetch;
 
     await authStore.clearToken();
-    const result = await authStore.setToken('github_pat_without_watching');
+    const result = await authStore.setToken('github_pat_without_notifications');
 
-    assert.deepEqual(result.watching, {
+    assert.deepEqual(result.notifications, {
       available: false,
-      errorCode: TOKEN_WATCHING_FORBIDDEN,
+      errorCode: TOKEN_WATCHING_NETWORK,
     });
     const cfg = await authStore.getConfig();
     assert.ok(cfg.tokenEncrypted);
-    assert.equal(cfg.username, 'idah');
-    assert.equal(await authStore.getToken(), 'github_pat_without_watching');
+    assert.equal(cfg.username, 'octocat');
+    assert.equal(await authStore.getToken(), 'github_pat_without_notifications');
   });
 
   it('authStore.update keeps the previous cached config when storage write fails', async () => {
@@ -251,7 +256,7 @@ describe('Status/token regressions', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const method = init?.method ?? 'GET';
       if (url.endsWith('/user') && method === 'GET') {
-        return response(200, { login: 'idah', avatar_url: 'https://example.com/a.png', name: 'Idah' }, { 'x-oauth-scopes': '' });
+        return response(200, { login: 'octocat', avatar_url: 'https://example.com/a.png', name: 'OctoCat' }, { 'x-oauth-scopes': '' });
       }
       if (url.includes('/user/starred') && method === 'GET') return response(200, []);
       if (url.endsWith('/gists') && method === 'POST') return response(201, { id: 'probe-3' });
@@ -309,6 +314,7 @@ describe('Status/token regressions', () => {
         onlyFavorite: false,
         onlyUntagged: false,
         onlyArchived: false,
+        onlyOwned: false,
       },
       sort: {
         sortKey: 'starred_at',
@@ -347,6 +353,7 @@ describe('Status/token regressions', () => {
             language: 20,
             tags: Number.NaN,
           },
+          showRepositoryAvatar: false,
         },
       },
     });
@@ -360,6 +367,7 @@ describe('Status/token regressions', () => {
         repository: 260,
         language: 64,
       },
+      showRepositoryAvatar: false,
     });
   });
 
@@ -385,7 +393,7 @@ describe('Status/token regressions', () => {
     const cfg = await authStore.getConfig();
     assert.equal(cfg.tokenEncrypted, previousConfig.tokenEncrypted);
     assert.deepEqual(cfg.tokenCryptoMeta, previousConfig.tokenCryptoMeta);
-    assert.equal(cfg.username, 'idah');
+    assert.equal(cfg.username, 'octocat');
     assert.equal(await authStore.getToken(), 'github_pat_existing_cleanup_guard');
   });
 
@@ -402,7 +410,7 @@ describe('Status/token regressions', () => {
     const cfg = await authStore.getConfig();
     assert.equal(cfg.tokenEncrypted, previousConfig.tokenEncrypted);
     assert.deepEqual(cfg.tokenCryptoMeta, previousConfig.tokenCryptoMeta);
-    assert.equal(cfg.username, 'idah');
+    assert.equal(cfg.username, 'octocat');
     assert.equal(await authStore.getToken(), 'github_pat_existing_write_guard');
   });
 

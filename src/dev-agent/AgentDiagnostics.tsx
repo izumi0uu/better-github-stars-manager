@@ -11,7 +11,7 @@ import {
   type DevTraceEventKind,
   type DevTraceScenarioId,
   type DevTraceScope,
-  type TraceArtifactV1,
+  type TraceArtifact,
 } from '@/agent-observability';
 import { VERSION_HASH } from '@/dev';
 import { useI18n } from '@/i18n';
@@ -72,7 +72,7 @@ export function AgentDiagnostics() {
   ));
   const extensionRuntimeAvailable = hasExtensionDiagnosticsRuntime();
   const [activeTab, setActiveTab] = useState<'traces' | 'analysis' | 'scenarios' | 'provider'>('traces');
-  const [artifact, setArtifact] = useState<TraceArtifactV1 | null>(null);
+  const [artifact, setArtifact] = useState<TraceArtifact | null>(null);
   const [status, setStatus] = useState<'connecting' | 'loading' | 'ready' | 'error'>('connecting');
   const [error, setError] = useState<string | null>(null);
   const [selectedRootId, setSelectedRootId] = useState<string | null>(null);
@@ -1032,7 +1032,7 @@ export function AgentDiagnostics() {
   );
 }
 
-function selectInitialRoot(artifact: TraceArtifactV1): string | null {
+function selectInitialRoot(artifact: TraceArtifact): string | null {
   const newestFirst = [...artifact.roots].sort((left, right) => right.startedAt - left.startedAt);
   return newestFirst.find((root) => root.endedAt === null)?.rootOperationId
     ?? newestFirst.find((root) => root.terminalState === 'failed')?.rootOperationId
@@ -1042,7 +1042,7 @@ function selectInitialRoot(artifact: TraceArtifactV1): string | null {
 
 function exportScope(
   kind: DevTraceScope['kind'],
-  root: TraceArtifactV1['roots'][number] | null,
+  root: TraceArtifact['roots'][number] | null,
 ): DevTraceScope | null {
   if (kind === 'all_retained') return { kind, id: null };
   if (kind === 'root') return root ? { kind, id: root.rootOperationId } : null;

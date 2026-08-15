@@ -57,20 +57,20 @@ const scenarios = [
     title: 'first visit without a token routes from popup to Options',
     run: async ({ browser, extId }) => {
       const popup = await openPopup(browser, extId);
-      await waitForButtonByText(popup, /^Add PAT$/i);
-      await waitForBodyText(popup, 'No token configured');
+      await waitForButtonByText(popup, /^Add Classic PAT$/i);
+      await waitForBodyText(popup, 'A GitHub Classic PAT is required.');
 
       const optionsTargetPromise = browser.waitForTarget(
         (target) => target.url() === `chrome-extension://${extId}${OPTIONS_PATH}`,
         { timeout: 10_000 },
       );
 
-      await clickButtonByText(popup, /^Add PAT$/i);
+      await clickButtonByText(popup, /^Add Classic PAT$/i);
       const optionsTarget = await optionsTargetPromise;
       const optionsPage = await optionsTarget.page();
       if (!optionsPage) throw new Error('Options page target opened but no page handle was available');
       await optionsPage.waitForSelector('textarea', { timeout: 10_000 });
-      await waitForBodyText(optionsPage, 'GitHub connection');
+      await waitForBodyText(optionsPage, 'GitHub Classic PAT');
       await waitForButtonByText(optionsPage, /save|verify/i);
     },
   },
@@ -81,7 +81,7 @@ const scenarios = [
     run: async ({ browser, extId, starsUrl }) => {
       const page = await openOptions(browser, extId);
       await saveToken(page, INVALID_TOKEN);
-      await waitForBodyText(page, 'GitHub rejected this token. Check that you copied the whole value.');
+      await waitForBodyText(page, 'GitHub rejected this Classic PAT.');
       await expectNoAuthenticatedBanner(page);
       const stars = await openStars(browser, starsUrl);
       await expectManagerAbsent(stars);
@@ -95,7 +95,7 @@ const scenarios = [
     run: async ({ browser, extId, starsUrl, token }) => {
       const page = await openOptions(browser, extId);
       await saveToken(page, token);
-      await waitForBodyText(page, 'Gists (read/write)');
+      await waitForBodyText(page, 'This Classic PAT cannot write Gists.');
       await expectNoAuthenticatedBanner(page);
       const stars = await openStars(browser, starsUrl);
       await expectManagerAbsent(stars);
@@ -116,8 +116,8 @@ const scenarios = [
 
       const page = await openOptions(browser, extId);
       await saveToken(page, token);
-      await waitForBodyText(page, 'Authenticated as @');
-      await waitForBodyText(page, 'Token verified. Logged in as');
+      await waitForBodyText(page, 'Classic PAT authenticated as @');
+      await waitForBodyText(page, 'Classic PAT verified for @');
 
       const stars = await openStars(browser, starsUrl);
       await waitForManagerRoot(stars);
@@ -287,6 +287,7 @@ async function openOptions(browser, extId) {
     waitUntil: 'networkidle0',
   });
   await page.waitForSelector('textarea', { timeout: 10_000 });
+  await setEnglishLocale(page, 'Save & verify');
   return page;
 }
 
@@ -296,7 +297,17 @@ async function openPopup(browser, extId) {
   await page.goto(`chrome-extension://${extId}${POPUP_PATH}`, {
     waitUntil: 'networkidle0',
   });
+  await setEnglishLocale(page, 'Add Classic PAT');
   return page;
+}
+async function setEnglishLocale(page, expectedText) {
+  await page.evaluate(async () => {
+    const { gsm_config: config = {} } = await chrome.storage.local.get('gsm_config');
+    await chrome.storage.local.set({
+      gsm_config: { ...config, locale: 'en' },
+    });
+  });
+  await waitForBodyText(page, expectedText, 10_000);
 }
 
 async function saveToken(page, token) {
@@ -429,7 +440,7 @@ async function clickButtonByText(page, matcher) {
 
 async function expectNoAuthenticatedBanner(page) {
   const text = await page.evaluate(() => document.body.innerText);
-  if (text.includes('Authenticated as @')) {
+  if (text.includes('Classic PAT authenticated as @')) {
     throw new Error('token unexpectedly persisted after a rejected validation');
   }
 }

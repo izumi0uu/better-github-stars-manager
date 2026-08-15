@@ -126,7 +126,7 @@ async function main() {
       runtime.stage = 'evidence-publish';
       publishRuntimeEvidence({
         directory: process.env.GSM_RUNTIME_EVIDENCE_DIR,
-        filename: 'agent-scenarios.schema-v1.json',
+        filename: 'agent-scenarios.schema.json',
         evidence: buildScenarioEvidence(runtime),
         validateEvidence: validateScenarioEvidence,
         privateMarkers: PRIVATE_MARKERS,
@@ -199,6 +199,7 @@ async function run(runtime) {
       },
     },
   );
+  await useEnglishLocale(runtime.page);
 
   runtime.stage = 'raw-capture';
   runtime.rawCapture = await verifyRawCaptureLifecycle(runtime.page);
@@ -526,6 +527,20 @@ function assertScenarioArtifact(artifact, runtime) {
   });
 }
 
+async function useEnglishLocale(page) {
+  await page.evaluate(async () => {
+    const { gsm_config: config = {} } = await chrome.storage.local.get('gsm_config');
+    await chrome.storage.local.set({
+      gsm_config: { ...config, locale: 'en' },
+    });
+  });
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="agent-diagnostics-raw-capture"]')
+      ?.textContent?.includes('repository code and private notes'),
+    { timeout: TIMEOUT_MS },
+  );
+}
+
 async function verifyRawCaptureLifecycle(page) {
   const warning = await page.$eval(
     '[data-testid="agent-diagnostics-raw-capture"]',
@@ -634,7 +649,7 @@ async function exportArtifact(page) {
     let snapshotId = null;
     let nextChunkIndex = 0;
     let totalBytes = 0;
-    const port = chrome.runtime.connect({ name: 'bgsm-agent-dev-evidence-v1' });
+    const port = chrome.runtime.connect({ name: 'bgsm-agent-dev-evidence' });
     const timer = setTimeout(() => {
       port.disconnect();
       reject(new Error('trace_export_timeout'));

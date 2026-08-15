@@ -14,6 +14,13 @@ const managerMocks = vi.hoisted(() => ({
   setInfo: vi.fn(),
   refreshStars: vi.fn(),
   resetFilters: vi.fn(),
+  starsTableProps: [] as Array<{
+    onSelect?: (fullName: string) => void;
+    onToggleFavorite?: (fullName: string, favorite: boolean) => Promise<void>;
+    onConfirmUnstar?: (fullName: string) => void;
+    onOpenUnstarChange?: (open: boolean, fullName: string) => void;
+  }>,
+  radarSetView: vi.fn(),
   row: {
     full_name: 'owner/repo',
     html_url: 'https://github.com/owner/repo',
@@ -56,6 +63,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
     libraryViewHydrated: true,
@@ -68,6 +76,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     setOnlyFavorite: vi.fn(),
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
+    setOnlyOwned: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: managerMocks.resetFilters,
@@ -122,7 +131,9 @@ vi.mock('@/ui/hooks/use-watch-inbox', () => ({
   useWatchInbox: () => ({
     unreadOnly: true,
     setUnreadOnly: vi.fn(),
-    result: { unreadCount: 3 },
+    collapsedRepositories: {},
+    updateRepositoryCollapse: vi.fn(),
+    result: { unreadCount: 3, status: { inboxStatus: 'fresh' } },
     loading: false,
     refreshing: false,
     error: null,
@@ -130,6 +141,30 @@ vi.mock('@/ui/hooks/use-watch-inbox', () => ({
     reload: vi.fn(),
   }),
 }));
+vi.mock('@/ui/hooks/use-radar', () => {
+  const radar = {
+    result: null,
+    view: 'feed' as const,
+    setView: managerMocks.radarSetView,
+    loading: false,
+    refreshing: false,
+    error: null,
+    actionError: null,
+    pendingAction: null,
+    refresh: vi.fn(),
+    reload: vi.fn(),
+    star: vi.fn(),
+    setFavorite: vi.fn(),
+    addTag: vi.fn(),
+    dismiss: vi.fn(),
+  };
+  return { useRadar: () => radar };
+});
+
+vi.mock('@/ui/hooks/use-manager-surface-badges', () => ({
+  useManagerSurfaceBadges: () => ({ watchUnreadCount: 3, radarUnseenCount: 0 }),
+}));
+
 
 vi.mock('@/ui/hooks/use-column-layout-editor', () => ({
   useColumnLayoutEditor: () => ({
@@ -197,8 +232,8 @@ vi.mock('@/ui/components/Toolbar', () => ({
     onSurfaceChange,
     watchUnreadCount,
   }: {
-    surface: 'stars' | 'watch';
-    onSurfaceChange: (surface: 'stars' | 'watch') => void;
+    surface: 'stars' | 'watch' | 'radar';
+    onSurfaceChange: (surface: 'stars' | 'watch' | 'radar') => void;
     watchUnreadCount: number;
   }) => (
     <div data-testid="toolbar" data-watch-unread={watchUnreadCount}>
@@ -208,22 +243,36 @@ vi.mock('@/ui/components/Toolbar', () => ({
       <button type="button" data-testid="watch-surface" onClick={() => onSurfaceChange('watch')}>
         Watch
       </button>
+      <button type="button" data-testid="radar-surface" onClick={() => onSurfaceChange('radar')}>
+        Following
+      </button>
       <span data-testid="active-surface">{surface}</span>
     </div>
   ),
+}));
+vi.mock('@/ui/components/Radar', () => ({
+  Radar: () => <div data-testid="radar-surface-content" />,
+}));
+vi.mock('@/ui/components/RadarStatusRibbon', () => ({
+  RadarStatusRibbon: () => <div data-testid="radar-status-ribbon" />,
 }));
 
 vi.mock('@/ui/components/WatchInbox', () => ({
   WatchInbox: ({
     onOpenOptions,
+    onOpenMainTokenOptions,
     onSelectRepository,
   }: {
-    onOpenOptions?: () => void;
+    onOpenOptions: () => void;
+    onOpenMainTokenOptions: () => void;
     onSelectRepository?: (fullName: string) => void;
   }) => (
     <div data-testid="watch-inbox">
       <button type="button" aria-label="Open Watch options" onClick={onOpenOptions}>
         Open options
+      </button>
+      <button type="button" aria-label="Open main GitHub options" onClick={onOpenMainTokenOptions}>
+        Open GitHub options
       </button>
       <button
         type="button"
@@ -234,6 +283,10 @@ vi.mock('@/ui/components/WatchInbox', () => ({
       </button>
     </div>
   ),
+}));
+
+vi.mock('@/ui/components/WatchStatusRibbon', () => ({
+  WatchStatusRibbon: () => <div data-testid="watch-status-ribbon" />,
 }));
 
 vi.mock('@/ui/components/FilterSidebar', () => ({
@@ -262,26 +315,38 @@ vi.mock('@/ui/components/StarsTable', () => ({
   StarsTable: ({
     onConfirmUnstar,
     onSelect,
+    onToggleFavorite,
+    onOpenUnstarChange,
     selectedFullName,
   }: {
     onConfirmUnstar?: (fullName: string) => void;
     onSelect?: (fullName: string) => void;
+    onToggleFavorite?: (fullName: string, favorite: boolean) => Promise<void>;
+    onOpenUnstarChange?: (open: boolean, fullName: string) => void;
     selectedFullName?: string | null;
-  }) => (
-    <>
-      <button
-        type="button"
-        data-testid="select-row"
-        aria-pressed={selectedFullName === 'owner/repo'}
-        onClick={() => onSelect?.('owner/repo')}
-      >
-        select row
-      </button>
-      <button type="button" data-testid="confirm-unstar" onClick={() => onConfirmUnstar?.('owner/repo')}>
-        confirm unstar
-      </button>
-    </>
-  ),
+  }) => {
+    managerMocks.starsTableProps.push({
+      onSelect,
+      onToggleFavorite,
+      onConfirmUnstar,
+      onOpenUnstarChange,
+    });
+    return (
+      <>
+        <button
+          type="button"
+          data-testid="select-row"
+          aria-pressed={selectedFullName === 'owner/repo'}
+          onClick={() => onSelect?.('owner/repo')}
+        >
+          select row
+        </button>
+        <button type="button" data-testid="confirm-unstar" onClick={() => onConfirmUnstar?.('owner/repo')}>
+          confirm unstar
+        </button>
+      </>
+    );
+  },
 }));
 
 const mountedRoots: Root[] = [];
@@ -304,7 +369,8 @@ beforeEach(() => {
   managerMocks.bgCall.mockReturnValue(new Promise(() => {}));
   managerMocks.setInfo.mockReset();
   managerMocks.refreshStars.mockReset();
-  managerMocks.resetFilters.mockReset();
+  managerMocks.radarSetView.mockReset();
+  managerMocks.starsTableProps.length = 0;
 });
 
 afterEach(() => {
@@ -318,6 +384,26 @@ afterEach(() => {
 });
 
 describe('ManagerPanel unstar flow', () => {
+  it('keeps row action commands stable across unrelated Manager surface rerenders', () => {
+    const { container } = mountPanel();
+    const initial = managerMocks.starsTableProps.at(-1);
+    if (!initial) throw new Error('Expected StarsTable props on the initial Stars surface');
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-surface"]')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="stars-surface"]')?.click();
+    });
+
+    const returned = managerMocks.starsTableProps.at(-1);
+    if (!returned) throw new Error('Expected StarsTable props after returning to Stars');
+    expect(returned.onSelect).toBe(initial.onSelect);
+    expect(returned.onToggleFavorite).toBe(initial.onToggleFavorite);
+    expect(returned.onConfirmUnstar).toBe(initial.onConfirmUnstar);
+    expect(returned.onOpenUnstarChange).toBe(initial.onOpenUnstarChange);
+  });
+
   it('switches to Watch without resetting Stars filters and opens targeted repository detail', async () => {
     managerMocks.bgCall.mockImplementation((type: string) => {
       if (type === 'getWatchRepositoryDetail') {
@@ -372,6 +458,19 @@ describe('ManagerPanel unstar flow', () => {
     });
 
     expect(managerMocks.bgCall).toHaveBeenCalledWith('openOptions', { section: 'watch' });
+  });
+
+  it('routes Watch subject authorization recovery to the main GitHub connection', () => {
+    const { container } = mountPanel();
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-surface"]')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open main GitHub options"]')?.click();
+    });
+
+    expect(managerMocks.bgCall).toHaveBeenCalledWith('openOptions', { section: 'github' });
   });
 
   it('discards a late Watch detail response after returning to Stars', async () => {
@@ -442,6 +541,28 @@ describe('ManagerPanel unstar flow', () => {
     expect(container.querySelector('[data-testid="repo-detail"]')).toBeNull();
   });
 
+  it('closes the helper notice bar with the dismiss control', async () => {
+    const unstarPromise = Promise.resolve();
+    managerMocks.bgCall.mockReturnValueOnce(unstarPromise);
+    const { container } = mountPanel();
+    const confirm = container.querySelector<HTMLButtonElement>('[data-testid="confirm-unstar"]');
+    if (!confirm) throw new Error('Expected mocked unstar control');
+
+    await act(async () => {
+      confirm.click();
+      await unstarPromise;
+      await Promise.resolve();
+    });
+
+    const helper = container.querySelector<HTMLDivElement>('.gsm-helper-text');
+    expect(helper?.textContent).toContain('removed from the current list');
+    const dismiss = helper?.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
+    expect(dismiss).not.toBeNull();
+
+    await act(async () => { dismiss?.click(); });
+    expect(container.querySelector('.gsm-helper-text')).toBeNull();
+  });
+
   it('renders failed unstar repo names as a helper badge without optimistic removal', async () => {
     managerMocks.bgCall.mockRejectedValueOnce(new Error('GitHub rejected the request (403). Token settings: github.com/settings/tokens.'));
     const { container } = mountPanel();
@@ -460,5 +581,47 @@ describe('ManagerPanel unstar flow', () => {
     const tokenLink = container.querySelector<HTMLAnchorElement>('a[href="https://github.com/settings/tokens"]');
     expect(tokenLink?.textContent).toBe('github.com/settings/tokens');
     expect(container.querySelector('[data-testid="confirm-unstar"]')).not.toBeNull();
+  });
+  it('reuses one scroll viewport and resets it before switching surfaces', () => {
+    const { container } = mountPanel();
+    const viewport = container.querySelector<HTMLElement>('.no-scrollbar');
+    if (!viewport) throw new Error('Expected Manager Surface viewport');
+    viewport.scrollTop = 180;
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-surface"]')?.click();
+    });
+
+    expect(container.querySelector('.no-scrollbar')).toBe(viewport);
+    expect(viewport.scrollTop).toBe(0);
+
+    viewport.scrollTop = 90;
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="radar-surface"]')?.click();
+    });
+
+    expect(container.querySelector('.no-scrollbar')).toBe(viewport);
+    expect(viewport.scrollTop).toBe(0);
+  });
+  it('switches to Following without resetting Stars filters and maps its view shortcut V', () => {
+    const { container } = mountPanel();
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="radar-surface"]')?.click();
+    });
+
+    expect(container.querySelector('[data-testid="active-surface"]')?.textContent).toBe('radar');
+    expect(container.querySelector('[data-testid="radar-surface-content"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="filter-sidebar"]')).toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v' }));
+    });
+    expect(managerMocks.radarSetView).toHaveBeenCalledWith('projects');
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
+    });
+    expect(container.querySelector('[data-testid="active-surface"]')?.textContent).toBe('stars');
   });
 });

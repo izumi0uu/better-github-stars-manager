@@ -131,4 +131,35 @@ describe('Cubby conversation scope binding', () => {
       /cannot replace/i,
     );
   });
+
+  it('accepts a persisted v1 scope fingerprint during conversation recovery', async () => {
+    const currentFingerprint = await createBgsmAgentConversationScopeFingerprint({
+      candidateContract: candidate,
+      repositoryIds: ['owner/repo'],
+      label: 'owner/repo',
+    });
+    const legacyFingerprint = currentFingerprint.replace('fs:', 'fs:v1:') as typeof currentFingerprint;
+    const binding = createBgsmAgentConversationBinding({
+      candidateContract: candidate,
+      scopeFingerprint: legacyFingerprint,
+      label: 'owner/repo',
+      count: 1,
+      providerFingerprint: PROVIDER,
+    });
+
+    await assert.rejects(
+      resolveBgsmAgentConversation({
+        turnAttemptId: 'turn-attempt-legacy-scope',
+        sessionId: 'session-legacy-scope',
+        baseRevision: 1,
+        prompt: 'Follow up',
+        history: [{ id: 'old', role: 'user', content: 'old', createdAt: 1 }],
+        binding,
+      }, {
+        providerFingerprint: PROVIDER,
+        resolveCandidate: resolver(),
+      }),
+      /scope changed/i,
+    );
+  });
 });

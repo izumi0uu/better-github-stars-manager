@@ -7,7 +7,7 @@ import type {
   BgsmAgentConversationBinding,
   BgsmAgentConversationCandidate,
 } from '@/bgsm-agent/conversation-binding';
-import { parseScopeFingerprintV1 } from '@/bgsm-agent/scope';
+import { parseScopeFingerprint } from '@/bgsm-agent/scope';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';
 import { AgentHost } from '@/ui/components/AgentHost';
 import type { BgsmAgentTurnHandlers } from '@/utils/messaging';
@@ -385,8 +385,8 @@ function conversationBinding(
   return {
     version: 1,
     candidateContract,
-    scopeFingerprint: parseScopeFingerprintV1(
-      `fs:v1:${fingerprintCharacter.repeat(43)}`,
+    scopeFingerprint: parseScopeFingerprint(
+      `fs:${fingerprintCharacter.repeat(43)}`,
     ),
     label: candidateContract.kind === 'selected_repository'
       ? candidateContract.selectedRepositoryIdHint
@@ -412,6 +412,7 @@ function currentView(query: string): BgsmAgentConversationCandidate {
       onlyFavorite: false,
       onlyUntagged: false,
       onlyArchived: false,
+      onlyOwned: false,
       sortKey: 'starred_at',
       sortDir: 'desc',
     },

@@ -77,7 +77,7 @@ export function createRepositoryNotesTool(
       }
       // Recheck live rows so a deletion or tombstone cannot race the frozen scope.
       const stars = await db.stars.bulkGet(args.full_names);
-      if (stars.some((star) => !star || star.tombstone)) {
+      if (stars.some((star) => !star || star.tombstone || star.viewer_has_starred === false)) {
         throw new TypeError('A requested repository is no longer available in the authorized scope.');
       }
       const rows = await db.tags.bulkGet(args.full_names);

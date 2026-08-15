@@ -1,4 +1,4 @@
-export const ORGANIZE_APPLY_RECOVERY_ALARM = 'bgsm-organize-apply-recovery-v1';
+export const ORGANIZE_APPLY_RECOVERY_ALARM = 'bgsm-organize-apply-recovery';
 export const ORGANIZE_APPLY_RECOVERY_DELAY_MINUTES = 0.5;
 
 export type RecoverableOrganizeApply = Readonly<{

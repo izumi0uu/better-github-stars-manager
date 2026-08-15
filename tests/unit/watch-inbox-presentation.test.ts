@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adjacentWatchThreadRowIndex,
+  buildWatchInboxRows,
+  deriveWatchStatusPresentation,
   countWatchReasons,
   filterWatchInboxProjection,
   formatWatchRelativeTime,
+  hasNewWatchGroupContent,
+  watchGroupContentSignature,
   watchReasonPresetValues,
 } from '@/ui/watch-inbox-presentation';
 import {
@@ -10,6 +15,7 @@ import {
   type GitHubNotificationThread,
   type WatchInboxProjection,
 } from '@/watch/watch-model';
+import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
 
 const NOW = Date.parse('2026-08-05T12:00:00Z');
 
@@ -70,6 +76,40 @@ const projection: WatchInboxProjection = {
   totalCount: threads.length,
 };
 
+function queryResponse(): WatchInboxQueryResponse {
+  return {
+    ...projection,
+    status: {
+      accountLogin: 'octocat',
+      hasMainToken: true,
+      hasNotificationsToken: true,
+      refreshing: false,
+      scopeStatus: 'fresh',
+      inboxStatus: 'fresh',
+      state: {
+        id: 'singleton',
+        accountLogin: 'octocat',
+        scope: {
+          lastAttemptAt: '2026-08-05T12:00:00Z',
+          lastSuccessfulAt: '2026-08-05T12:00:00Z',
+          errorCode: null,
+          repositoryCount: 2,
+        },
+        inbox: {
+          lastAttemptAt: '2026-08-05T12:00:00Z',
+          lastSuccessfulAt: '2026-08-05T12:00:00Z',
+          errorCode: null,
+          lastModified: null,
+          nextAllowedAt: null,
+          candidateCount: 4,
+          matchedCount: 4,
+          truncated: false,
+        },
+      },
+    },
+  };
+}
+
 describe('Watch inbox presentation filters', () => {
   it('counts raw reasons and keeps unknown values', () => {
     expect(countWatchReasons(threads)).toEqual([
@@ -126,5 +166,168 @@ describe('Watch inbox presentation filters', () => {
       ...KNOWN_NOTIFICATION_REASONS,
       'future_reason',
     ])).toEqual(['future_reason']);
+  });
+});
+
+describe('Watch inbox flat rows', () => {
+  const groups: WatchInboxProjection['groups'] = [{
+    repositoryFullName: 'owner/alpha',
+    repositoryHtmlUrl: 'https://github.com/owner/alpha',
+    repositoryOwnerLogin: 'owner',
+    repositoryOwnerAvatarUrl: null,
+    latestUpdatedAt: threads[1].updatedAt,
+    threads: [threads[0], threads[1]],
+  }, {
+    repositoryFullName: 'owner/security',
+    repositoryHtmlUrl: 'https://github.com/owner/security',
+    repositoryOwnerLogin: 'owner',
+    repositoryOwnerAvatarUrl: null,
+    latestUpdatedAt: threads[2].updatedAt,
+    threads: [threads[2]],
+  }];
+
+  it('emits one stable header/thread stream and excludes collapsed repository threads', () => {
+    const rows = buildWatchInboxRows(groups, new Set(['owner/alpha']));
+
+    expect(rows.map((row) => row.key)).toEqual([
+      'repository:owner/alpha',
+      'thread:1',
+      'thread:2',
+      'repository:owner/security',
+    ]);
+    expect(rows.filter((row) => row.kind === 'thread').map((row) => row.thread.id))
+      .toEqual(['1', '2']);
+    expect(buildWatchInboxRows(groups, new Set()).map((row) => row.kind))
+      .toEqual(['repository', 'repository']);
+  });
+
+  it('finds adjacent logical threads across repository header boundaries', () => {
+    const rows = buildWatchInboxRows(groups, new Set(['owner/alpha', 'owner/security']));
+
+    expect(adjacentWatchThreadRowIndex(rows, '2', 'ArrowDown')).toBe(4);
+    expect(adjacentWatchThreadRowIndex(rows, '3', 'ArrowUp')).toBe(2);
+    expect(adjacentWatchThreadRowIndex(rows, '2', 'Home')).toBe(1);
+    expect(adjacentWatchThreadRowIndex(rows, '1', 'End')).toBe(4);
+  });
+});
+
+describe('Watch repository collapse signatures', () => {
+  it('detects newly added or updated threads without treating removals as new content', () => {
+    const original = [threads[0], threads[1]];
+    const signature = watchGroupContentSignature(original);
+
+    expect(hasNewWatchGroupContent(signature, original)).toBe(false);
+    expect(hasNewWatchGroupContent(signature, [threads[0]])).toBe(false);
+    expect(hasNewWatchGroupContent(signature, [...original, threads[2]])).toBe(true);
+    expect(hasNewWatchGroupContent(signature, [{
+      ...threads[0],
+      updatedAt: '2026-08-05T12:00:00Z',
+    }])).toBe(true);
+  });
+
+  it('treats malformed persisted signatures as stale', () => {
+    expect(hasNewWatchGroupContent('not-json', threads)).toBe(true);
+    expect(hasNewWatchGroupContent('{}', threads)).toBe(true);
+  });
+});
+
+describe('Watch status presentation', () => {
+  it('derives fresh and initial loading states without fabricated codes', () => {
+    expect(deriveWatchStatusPresentation({
+      result: queryResponse(),
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({ kind: 'fresh', tone: 'success', code: null });
+    expect(deriveWatchStatusPresentation({
+      result: null,
+      loading: true,
+      refreshing: false,
+      error: null,
+    })).toEqual({ kind: 'loading', tone: 'muted', code: null, snapshotAt: null });
+  });
+
+  it('keeps a credential failure with a successful snapshot recoverable', () => {
+    const response = queryResponse();
+    response.status.inboxStatus = 'error';
+    response.status.state!.inbox.errorCode = 'permission_denied';
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({
+      kind: 'credential_error',
+      tone: 'warning',
+      code: 'permission_denied',
+    });
+  });
+
+  it('surfaces native membership failure while keeping a published Inbox usable', () => {
+    const response = queryResponse();
+    response.status.scopeStatus = 'error';
+    response.status.inboxStatus = 'cooldown';
+    response.status.state!.scope.lastSuccessfulAt = null;
+    response.status.state!.scope.errorCode = 'permission_denied';
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({
+      kind: 'scope_error',
+      tone: 'warning',
+      code: 'permission_denied',
+    });
+  });
+
+  it('prioritizes an Inbox failure over a separate native membership failure', () => {
+    const response = queryResponse();
+    response.status.scopeStatus = 'stale';
+    response.status.inboxStatus = 'stale';
+    response.status.state!.scope.errorCode = 'network_error';
+    response.status.state!.inbox.errorCode = 'github_unavailable';
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({
+      kind: 'stale',
+      tone: 'warning',
+      code: 'github_unavailable',
+    });
+  });
+
+  it('surfaces stale native membership instead of a fresh Inbox ribbon', () => {
+    const response = queryResponse();
+    response.status.scopeStatus = 'stale';
+    response.status.state!.scope.errorCode = 'network_error';
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({
+      kind: 'scope_error',
+      tone: 'warning',
+      code: 'network_error',
+    });
+  });
+
+  it('prioritizes bounded snapshot disclosure over refresh activity', () => {
+    const response = queryResponse();
+    response.status.state!.inbox.truncated = true;
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: true,
+      error: null,
+    })).toMatchObject({ kind: 'truncated', tone: 'warning', code: 'truncated' });
   });
 });

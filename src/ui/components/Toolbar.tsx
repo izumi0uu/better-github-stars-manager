@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Sun, Moon, Search, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow, X,
-  Tags, Upload, Download, AlertTriangle, ExternalLink, Home, EyeOff, Star, RefreshCcw,
-  Pencil, ChevronDown,
+  Tags, Upload, Download, AlertTriangle, ExternalLink, Home, EyeOff, RefreshCcw,
+  Pencil, ChevronDown, Check, Pause, ClipboardCheck, Loader2,
 } from 'lucide-react';
-import { CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { REPO_URL } from '@/lib/links';
+import brandMarkUrl from '@/assets/bgsm-brand-mark.svg?url';
 import type { FilterState } from '@/ui/filter-store';
 import type { SyncStatus } from '@/utils/messaging';
 import { bgCall } from '@/utils/messaging';
@@ -16,6 +16,8 @@ import { Spinner } from '@/ui/shadcn/spinner';
 import { SuccessCheck } from '@/ui/shadcn/success-check';
 import { ActionIcon } from '@/ui/shadcn/action-icon';
 import { AgentMascotIcon } from '@/ui/components/AgentMascot';
+import { ManagerSurfaceTabs } from '@/ui/components/ManagerSurfaceTabs';
+import type { AgentToolbarStatusKind } from '@/ui/components/AgentHost';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/ui/shadcn/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/shadcn/select';
@@ -25,6 +27,30 @@ import { getLockedAnchorProps } from '@/ui/interaction-lock';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { LAYOUT_PREVIEW_HOVER_DELAY_MS } from '@/ui/layout-edit-constants';
+import type { ManagerSurface } from '@/ui/manager-surface';
+const AGENT_STATUS_ICONS: Record<AgentToolbarStatusKind, typeof Check> = {
+  working: Loader2,
+  analyzing: Loader2,
+  applying: Loader2,
+  review: ClipboardCheck,
+  paused: Pause,
+  completed: Check,
+  cancelled: X,
+  failed: AlertTriangle,
+  blocked: AlertTriangle,
+  interrupted: AlertTriangle,
+};
+
+function AgentStatusIcon({ kind }: { kind: AgentToolbarStatusKind }) {
+  const Icon = AGENT_STATUS_ICONS[kind];
+  const spinning = kind === 'working' || kind === 'analyzing' || kind === 'applying';
+  return (
+    <Icon
+      className={cn('size-3.5 shrink-0 text-muted-foreground', spinning && 'animate-spin')}
+      aria-hidden="true"
+    />
+  );
+}
 
 /** Top toolbar for the stars page. */
 type Account = { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null };
@@ -163,6 +189,7 @@ function ActionPhaseIcon({
 }
 
 export function Toolbar({
+  account,
   f,
   status,
   loading,
@@ -176,6 +203,7 @@ export function Toolbar({
   onAutoAssignTags,
   onOpenAgent,
   agentStatus,
+  agentStatusKind,
   agentActive,
   onStatusPatch,
   onToggleTheme,
@@ -196,7 +224,9 @@ export function Toolbar({
   surface = 'stars',
   onSurfaceChange,
   watchUnreadCount = 0,
+  radarUnseenCount = 0,
 }: {
+  account: Account | null;
   f: FilterState;
   status: SyncStatus | null;
   loading: boolean;
@@ -210,6 +240,7 @@ export function Toolbar({
   onAutoAssignTags: () => void;
   onOpenAgent?: () => void;
   agentStatus?: string | null;
+  agentStatusKind?: AgentToolbarStatusKind | null;
   agentActive?: boolean;
   onStatusPatch?: (patch: Partial<SyncStatus>) => void;
   onToggleTheme: () => void;
@@ -228,12 +259,12 @@ export function Toolbar({
   onStartLayoutEdit: () => void;
   onPreviewCustomChange: (previewing: boolean) => void;
   layoutEditChrome?: ReactNode;
-  surface?: 'stars' | 'watch';
-  onSurfaceChange?: (surface: 'stars' | 'watch') => void;
+  surface?: ManagerSurface;
+  onSurfaceChange?: (surface: ManagerSurface) => void;
   watchUnreadCount?: number;
+  radarUnseenCount?: number;
 }) {
   const { m } = useI18n();
-  const [account, setAccount] = useState<Account | null>(null);
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [gistMenuOpen, setGistMenuOpen] = useState(false);
   const starsSurface = surface === 'stars';
@@ -256,8 +287,6 @@ export function Toolbar({
     { 'bg-background text-foreground shadow-sm': active },
   );
 
-  const gistBusy = pendingAction === 'gistPush' || pendingAction === 'gistPull'
-    || successAction === 'gistPush' || successAction === 'gistPull';
   const gistPhaseAction = pendingAction === 'gistPull' || successAction === 'gistPull'
     ? 'gistPull'
     : pendingAction === 'gistPush' || successAction === 'gistPush'
@@ -269,48 +298,11 @@ export function Toolbar({
       ? m.toolbar.gistPulling
       : m.toolbar.gistButton;
 
-  useEffect(() => {
-    let cancelled = false;
-    const refreshAccount = async () => {
-      const acc = await bgCall<Account>('getAccount').catch(() => null);
-      if (cancelled || !acc) return null;
-      setAccount(acc);
-      return acc;
-    };
-
-    (async () => {
-      const acc = await refreshAccount();
-      if (acc && !acc.avatarUrl && acc.username) {
-        const backfilled = await bgCall<Account>('fetchAccount').catch(() => null);
-        if (!cancelled && backfilled) setAccount(backfilled);
-      }
-    })();
-
-    const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
-      if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]) return;
-      const oldCfg = changes[CONFIG_STORAGE_KEY].oldValue as Account | undefined;
-      const newCfg = changes[CONFIG_STORAGE_KEY].newValue as Account | undefined;
-      if (
-        oldCfg?.username === newCfg?.username &&
-        oldCfg?.avatarUrl === newCfg?.avatarUrl &&
-        oldCfg?.displayName === newCfg?.displayName &&
-        oldCfg?.gistId === newCfg?.gistId
-      ) return;
-      void refreshAccount();
-    };
-
-    chrome.storage.onChanged.addListener(listener);
-
-    return () => {
-      cancelled = true;
-      chrome.storage.onChanged.removeListener(listener);
-    };
-  }, []);
 
   const prevPending = useRef<string | null>(null);
   useEffect(() => {
     if ((prevPending.current === 'gistPush' || prevPending.current === 'gistPull') && pendingAction === null) {
-      bgCall<Account>('getAccount').then((acc) => setAccount(acc)).catch(() => {});
+      void bgCall<Account>('fetchAccount').catch(() => {});
     }
     prevPending.current = pendingAction;
   }, [pendingAction]);
@@ -329,6 +321,7 @@ export function Toolbar({
     customPreviewIntent.clear();
   }, [customPreviewIntent.clear, starsSurface]);
 
+
   const seenTooltips = status?.seenTooltips ?? 0;
 
   const runSync = (type: string, label: string) => {
@@ -341,73 +334,54 @@ export function Toolbar({
   };
 
   return (
-    <div className="border-b border-border bg-card">
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-        {/* Star the project — links to the repo (leftmost, top-left of the
-            panel). Opens in a new tab so the manager panel stays mounted. */}
+    <div className="border-b border-border bg-card" data-toolbar-root>
+      <div className="flex min-h-[52px] w-full min-w-0 items-center gap-1 px-2 pl-2.5 min-[1281px]:gap-2 min-[1281px]:px-2.5 min-[1281px]:pl-3.5" data-toolbar-row>
+        {/* Let search and sort shrink before the fixed right rail; the spacer absorbs surplus width. */}
+        <div className="flex min-w-0 flex-[1_1_auto] items-center gap-1 min-[1281px]:gap-2" data-toolbar-left>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn('h-9 gap-1 px-2', { 'pointer-events-none opacity-50': layoutEditing })}
-              asChild
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={m.toolbar.starRepoTitle}
+              title={m.toolbar.starRepoTitle}
+              className={cn('group/product grid size-8 shrink-0 place-items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring min-[1025px]:size-9', {
+                'pointer-events-none opacity-50': layoutEditing,
+                'max-[900px]:hidden': true,
+              })}
+              {...getLockedAnchorProps(layoutEditing)}
             >
-              <a
-                href={REPO_URL}
-                target="_blank"
-                rel="noreferrer"
-                title={m.toolbar.starRepoTitle}
-                {...getLockedAnchorProps(layoutEditing)}
-              >
-                <Star className="size-4" data-icon="inline-start" />
-                <span className="text-xs">Star</span>
-              </a>
-            </Button>
+              <span className="grid size-6 place-items-center transition-transform duration-150 ease-out group-hover/product:scale-105 group-active/product:scale-95 motion-reduce:transform-none motion-reduce:transition-none min-[1025px]:size-7">
+                <img
+                  src={brandMarkUrl}
+                  alt=""
+                  aria-hidden="true"
+                  width={128}
+                  height={128}
+                  draggable={false}
+                  data-product-brand-mark
+                  className="size-full object-contain"
+                />
+              </span>
+            </a>
           </TooltipTrigger>
           <TooltipContent>{m.toolbar.starRepoTitle}</TooltipContent>
         </Tooltip>
 
-        {onSurfaceChange && <div
-          className="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5 text-xs"
-          role="group"
-          aria-label={m.watch.title}
-        >
-          <button
-            type="button"
-            aria-pressed={starsSurface}
+        {onSurfaceChange && (
+          <ManagerSurfaceTabs
+            surface={surface}
+            watchUnreadCount={watchUnreadCount}
+            radarUnseenCount={radarUnseenCount}
             disabled={layoutEditing}
-            onClick={() => onSurfaceChange('stars')}
-            className={cn('h-7 rounded px-2.5 font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
-              'bg-background text-foreground shadow-sm': starsSurface,
-            })}
-          >
-            {m.watch.starsSurface}
-          </button>
-          <button
-            type="button"
-            aria-pressed={!starsSurface}
-            aria-label={watchUnreadCount > 0
-              ? m.watch.watchSurfaceUnread(watchUnreadCount)
-              : m.watch.watchSurface}
-            disabled={layoutEditing}
-            onClick={() => onSurfaceChange('watch')}
-            className={cn('inline-flex h-7 items-center gap-1.5 rounded px-2.5 font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
-              'bg-background text-foreground shadow-sm': !starsSurface,
-            })}
-          >
-            {m.watch.watchSurface}
-            {watchUnreadCount > 0 && (
-              <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground tabular-nums">
-                {watchUnreadCount > 99 ? '99+' : watchUnreadCount}
-              </span>
-            )}
-          </button>
-        </div>}
+            onSurfaceChange={onSurfaceChange}
+          />
+        )}
 
         {starsSurface && (
           <>
-        <div className="relative min-w-[220px] flex-1">
+        <div className="relative min-w-[72px] max-w-[15rem] flex-[1_1_15rem]" data-toolbar-search>
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={searchRef}
@@ -438,7 +412,7 @@ export function Toolbar({
           if (layoutEditing) return;
           f.setSort(value as typeof f.sortKey);
         }}>
-          <SelectTrigger disabled={layoutEditing} className="h-9 w-[170px]">
+          <SelectTrigger disabled={layoutEditing} className="h-9 w-[clamp(5rem,10vw,8.75rem)] shrink min-[641px]:min-w-[7.5rem]">
             <SelectValue placeholder={m.toolbar.sortName} />
           </SelectTrigger>
           <SelectContent>
@@ -452,7 +426,7 @@ export function Toolbar({
         <TButton
           variant="outline"
           size="icon"
-          className="h-9 w-9"
+          className="h-9 w-9 shrink-0 max-[900px]:hidden"
           tip={m.toolbar.toggleSortDir}
           seenTooltips={seenTooltips}
           onStatusPatch={onStatusPatch}
@@ -463,9 +437,8 @@ export function Toolbar({
             {f.sortDir === 'asc' ? <ArrowUpNarrowWide className="size-4" /> : <ArrowDownWideNarrow className="size-4" />}
           </ActionIcon>
         </TButton>
-
         {/* Sync primary (default style) + Full Sync under caret; menu right-aligns to the split. */}
-        <div className="inline-flex h-9 items-stretch overflow-hidden rounded-md">
+        <div className="inline-flex h-9 shrink-0 items-stretch overflow-hidden rounded-md max-[480px]:hidden">
           <TButton
             className="h-9 rounded-r-none border border-r-0 border-transparent hover:border-primary"
             onClick={() => runSync('syncIncremental', m.toolbar.syncButton)}
@@ -483,7 +456,7 @@ export function Toolbar({
               successAction={successAction}
               idle={<RefreshCw className="size-4" data-icon="inline-start" />}
             />
-            {m.toolbar.syncButton}
+            <span className="max-[1280px]:hidden" data-toolbar-action-label="sync">{m.toolbar.syncButton}</span>
             {pendingAction === 'syncIncremental' && progressCount && (
               <span className="gsm-inline-progress-count">{progressCount}</span>
             )}
@@ -544,9 +517,8 @@ export function Toolbar({
         <TButton
           variant="ghost"
           size="sm"
-          className="h-9"
+          className="h-9 shrink-0 max-[768px]:hidden"
           onClick={() => onAutoAssignTags()}
-          disabled={actionBusy || layoutEditing}
           tip={m.toolbar.autoAssignTitle}
           seenTooltips={seenTooltips}
           onStatusPatch={onStatusPatch}
@@ -558,32 +530,35 @@ export function Toolbar({
             successAction={successAction}
             idle={<Tags data-icon="inline-start" />}
           />
-          {m.toolbar.autoAssignButton}
+          <span className="max-[1280px]:hidden" data-toolbar-action-label="auto-tags">{m.toolbar.autoAssignButton}</span>
         </TButton>
           </>
         )}
+        </div>
 
-        <span className="flex-1" />
+        {/* Flexible gutter preserves separation only while real free width exists. */}
+        <div className="min-w-0 flex-1" aria-hidden="true" data-toolbar-spacer />
+
+        {/* Right rail stays on the same row and never wraps internally. */}
+        <div className="flex shrink-0 items-center gap-1 whitespace-nowrap min-[1281px]:gap-2" data-toolbar-right>
+
 
         {/* Optional AI workbench entry — post-spacer, independent of Auto Tags. */}
         {starsSurface && onOpenAgent && (
           <TButton
             variant="outline"
             size="sm"
-            className="h-9"
+            className="h-9 shrink-0 max-[768px]:hidden"
             onClick={() => onOpenAgent()}
-            disabled={layoutEditing}
             tip={m.toolbar.agentTitle}
             seenTooltips={seenTooltips}
-            onStatusPatch={onStatusPatch}
+            aria-label={agentStatus ? `${m.toolbar.agentButton} · ${agentStatus}` : m.toolbar.agentButton}
             data-coach-target="agent"
-            aria-label={m.toolbar.agentButton}
             aria-busy={agentActive}
           >
             <AgentMascotIcon running={agentActive} />
-            <span className="max-w-36 truncate">
-              {agentStatus ? `${m.toolbar.agentButton} · ${agentStatus}` : m.toolbar.agentButton}
-            </span>
+            {agentStatusKind ? <AgentStatusIcon kind={agentStatusKind} /> : null}
+            <span className="max-w-36 truncate max-[1280px]:hidden" data-toolbar-action-label="agent">{m.toolbar.agentButton}</span>
           </TButton>
         )}
 
@@ -599,8 +574,7 @@ export function Toolbar({
               type="button"
               variant="outline"
               size="sm"
-              className={cn('h-9 gap-1.5', { 'bg-muted/60': gistMenuOpen })}
-              disabled={actionBusy || layoutEditing}
+              className={cn('h-9 shrink-0 gap-1.5 max-[640px]:hidden', { 'bg-muted/60': gistMenuOpen })}
               aria-expanded={gistMenuOpen}
               aria-label={m.toolbar.gistButton}
               title={m.toolbar.gistTitle}
@@ -615,7 +589,7 @@ export function Toolbar({
               ) : (
                 <Download className="size-4" data-icon="inline-start" />
               )}
-              <span className={cn({ 'max-sm:hidden': !gistBusy })}>{gistLabel}</span>
+              <span className="max-[1280px]:hidden" data-toolbar-action-label="gist">{gistLabel}</span>
               <ChevronDown className="size-3.5 opacity-70" />
             </Button>
           )}
@@ -707,7 +681,7 @@ export function Toolbar({
             <Button
               variant="ghost"
               size="icon"
-              className={cn('h-9 w-9', { 'pointer-events-none opacity-50': layoutEditing })}
+              className={cn('h-9 w-9 max-[1024px]:hidden', { 'pointer-events-none opacity-50': layoutEditing })}
               asChild
             >
               <a href="https://github.com" title={m.toolbar.githubHomeTitle} {...getLockedAnchorProps(layoutEditing)}>
@@ -721,7 +695,7 @@ export function Toolbar({
         {account?.username && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background py-0.5 pl-0.5 pr-2.5">
+              <div className="inline-grid size-8 shrink-0 place-items-center rounded-full border border-border bg-background min-[1025px]:flex min-[1025px]:h-8 min-[1025px]:w-auto min-[1025px]:gap-1.5 min-[1025px]:p-0.5" data-toolbar-account>
                 {account.avatarUrl ? (
                   <img
                     src={account.avatarUrl}
@@ -734,14 +708,16 @@ export function Toolbar({
                     {account.username.slice(0, 2).toUpperCase()}
                   </span>
                 )}
-                <span className="max-w-[100px] truncate text-xs font-medium">@{account.username}</span>
+                <span className="hidden max-w-[100px] truncate pr-2 text-xs font-medium min-[1025px]:inline">@{account.username}</span>
               </div>
             </TooltipTrigger>
             <TooltipContent>{m.toolbar.accountTitle(account.username)}</TooltipContent>
           </Tooltip>
         )}
+        </div>
       </div>
 
+      {starsSurface && (
       <div className="flex flex-col gap-1 border-t border-border/50 px-3 py-1 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-4">
           {starsSurface && <span
@@ -850,6 +826,7 @@ export function Toolbar({
           </div>
         )}
       </div>
+      )}
       {starsSurface && (
         <>
           {layoutEditChrome}

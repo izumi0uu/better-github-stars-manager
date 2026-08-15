@@ -313,6 +313,7 @@ function classifySafeHttpRoute(value) {
     if (url.origin === 'https://api.github.com' && url.pathname === '/user/starred') return 'github-starred';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user/subscriptions') return 'github-watch-scope';
     if (url.origin === 'https://api.github.com' && url.pathname === '/notifications') return 'github-notifications';
+    if (url.origin === 'https://api.github.com' && /^\/repos\/[^/]+\/[^/]+\/issues\/\d+$/u.test(url.pathname)) return 'github-watch-subject';
     if (url.origin === 'https://api.github.com' && url.pathname === '/gists/runtime-probe-gist') return 'github-probe-gist';
     if (url.origin === 'https://api.github.com' && url.pathname.startsWith('/gists')) return 'github-gists';
     if (url.origin === 'https://avatars.githubusercontent.com') return 'github-avatar';

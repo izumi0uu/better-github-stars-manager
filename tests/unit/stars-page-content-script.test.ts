@@ -18,7 +18,7 @@ describe('stars-page content script invariants', () => {
   it('unmounts React before removing the host and restores page scroll', () => {
     const code = source();
     const unmountIndex = code.indexOf('panelRoot?.unmount();');
-    const removeIndex = code.indexOf("document.getElementById('gsm-manager-host')?.remove();");
+    const removeIndex = code.indexOf('panelHost?.remove();');
     const unlockIndex = code.indexOf('unlockPageScroll();');
 
     expect(code).toContain('let panelRoot: Root | null = null;');

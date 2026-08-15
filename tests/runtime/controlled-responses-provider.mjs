@@ -914,6 +914,7 @@ function classifyHttpRoute(control, value) {
     if (url.pathname === '/user/starred') return 'github-starred';
     if (url.pathname === '/user/subscriptions') return 'github-watch-scope';
     if (url.pathname === '/notifications') return 'github-notifications';
+    if (/^\/repos\/[^/]+\/[^/]+\/issues\/\d+$/u.test(url.pathname)) return 'github-watch-subject';
     if (url.pathname === '/gists') return 'github-gists';
     if (url.pathname === '/gists/runtime-probe-gist') return 'github-probe-gist';
   } catch {

@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
 import {
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
   type BgsmAgentConversationBinding,
   type BgsmAgentTurnInput,
 } from '@/bgsm-agent';
@@ -31,7 +31,7 @@ const conversationBinding: BgsmAgentConversationBinding = {
     kind: 'selected_repository',
     selectedRepositoryIdHint: 'owner/repo',
   },
-  scopeFingerprint: parseScopeFingerprintV1(`fs:v1:${'a'.repeat(43)}`),
+  scopeFingerprint: parseScopeFingerprint(`fs:${'a'.repeat(43)}`),
   label: 'owner/repo',
   count: 1,
   providerFingerprint: `pcf:v1:${'b'.repeat(43)}`,

@@ -6,9 +6,9 @@ import {
   parseOrganizeJobId,
   parseProposalId,
   parseRunId,
-  parseScopeFingerprintV1,
-  parseSourceFingerprintV1,
-  parseTaxonomyFingerprintV1,
+  parseScopeFingerprint,
+  parseSourceFingerprint,
+  parseTaxonomyFingerprint,
   validateOrganizeJobRunEvent,
   validateOrganizeJobRunSnapshot,
   type OrganizeProposal,
@@ -28,8 +28,8 @@ import {
 import type { ResolvedLaunchCandidate } from '@/background/query';
 
 const controllerId = parseControllerId('controller:v1:test-controller');
-const sourceFingerprint = parseSourceFingerprintV1(`sf:v1:${'A'.repeat(43)}`);
-const taxonomyFingerprint = parseTaxonomyFingerprintV1(`tf:v1:${'B'.repeat(43)}`);
+const sourceFingerprint = parseSourceFingerprint(`sf:v1:${'A'.repeat(43)}`);
+const taxonomyFingerprint = parseTaxonomyFingerprint(`tf:v1:${'B'.repeat(43)}`);
 const candidate: ResolvedLaunchCandidate = {
   contract: { kind: 'all_live_stars' },
   repositoryIds: ['owner/repo'],
@@ -99,7 +99,7 @@ describe('Cubby background controller', () => {
       filterSnapshot: 'All live stars',
       repositoryIds: ['owner/repo'],
       capturedAt: 1,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${'C'.repeat(43)}`),
+      fingerprint: parseScopeFingerprint(`fs:${'C'.repeat(43)}`),
     });
     const analysis = restoreOrganizeJobRunAnalysisState({
       runId: restoredRunId,
@@ -175,7 +175,7 @@ describe('Cubby background controller', () => {
       filterSnapshot: candidate.filterSnapshot,
       repositoryIds: candidate.repositoryIds,
       capturedAt: 1,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${'C'.repeat(43)}`),
+      fingerprint: parseScopeFingerprint(`fs:${'C'.repeat(43)}`),
     });
     const restore = (job: string, run: string, generation: number) => {
       const runId = parseRunId(`run:v1:${run}`);
@@ -204,7 +204,7 @@ describe('Cubby background controller', () => {
     controller.stopRun(previous);
     const parent = restore('current', 'current', 1);
     assert.equal(controller.findLatestSnapshot(identity)?.runId, parent.runId);
-    const continuationCursor = parseContinuationCursorToken('cursor:v1:current-next');
+    const continuationCursor = parseContinuationCursorToken('cursor:current-next');
     controller.exhaustBudget(parent, parent.usage, 'analyzer_batches', continuationCursor);
 
     const child = controller.continueRun(parent, 0, continuationCursor);
@@ -416,7 +416,7 @@ describe('Cubby background controller', () => {
     const frozen = controller.startRun(identity, preflight.preflightToken);
     const authoritativeProposal = proposal(frozen.runId, frozen.generation);
     const analyzed = recordActionableCoverage(controller, frozen);
-    const continuationCursor = parseContinuationCursorToken('cursor:v1:proposal-limit');
+    const continuationCursor = parseContinuationCursorToken('cursor:proposal-limit');
 
     assert.throws(() => controller.registerDurableProposal(analyzed, {
       ...authoritativeProposal,

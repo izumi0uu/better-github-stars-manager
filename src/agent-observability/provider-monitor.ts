@@ -7,15 +7,15 @@ import {
   parseProviderDiagnosticsShare,
   PROVIDER_DIAGNOSTICS_EVENTS_URL,
   PROVIDER_DIAGNOSTICS_TTL_MS,
-  type ProviderDiagnosticsBridgeRecordV1,
+  type ProviderDiagnosticsBridgeRecord,
   type ProviderDiagnosticsEventData,
   type ProviderDiagnosticsEventKind,
-  type ProviderDiagnosticsEventPostV1,
-  type ProviderDiagnosticsMonitorEventV1,
-  type ProviderDiagnosticsShareV1,
+  type ProviderDiagnosticsEventPost,
+  type ProviderDiagnosticsMonitorEvent,
+  type ProviderDiagnosticsShare,
 } from '@/dev-agent/provider-diagnostics-bridge';
 
-export const PROVIDER_DIAGNOSTICS_MONITOR_STORAGE_KEY = 'bgsm_provider_diagnostics_monitor_v1';
+export const PROVIDER_DIAGNOSTICS_MONITOR_STORAGE_KEY = 'bgsm_provider_diagnostics_monitor';
 
 export type ProviderDiagnosticsMonitorState = Readonly<{
   sessionId: string;
@@ -42,14 +42,14 @@ export type ProviderDiagnosticsMonitor = Readonly<{
   start(state: ProviderDiagnosticsMonitorState): Promise<ProviderDiagnosticsMonitorState>;
   stop(): Promise<void>;
   status(): Promise<ProviderDiagnosticsMonitorState | null>;
-  recordConfigurationChanged(report: ProviderDiagnosticsShareV1): void;
+  recordConfigurationChanged(report: ProviderDiagnosticsShare): void;
   recordProbeStarted(input: Readonly<{
     requestId: string;
-    report: ProviderDiagnosticsShareV1;
+    report: ProviderDiagnosticsShare;
   }>): void;
   recordProbeSucceeded(input: Readonly<{
     requestId: string;
-    report: ProviderDiagnosticsShareV1;
+    report: ProviderDiagnosticsShare;
     providerLabel: string;
     model: string;
     completionEndpoint: string;
@@ -57,7 +57,7 @@ export type ProviderDiagnosticsMonitor = Readonly<{
   }>): void;
   recordProbeFailed(input: Readonly<{
     requestId: string;
-    report: ProviderDiagnosticsShareV1;
+    report: ProviderDiagnosticsShare;
     latencyMs: number;
     phase: string;
     code: string;
@@ -72,7 +72,7 @@ export function createProviderDiagnosticsMonitor(input: Readonly<{
   storage: SessionStorage;
   fetchImpl?: typeof fetch;
   now?: () => number;
-  getCurrentReport?: () => Promise<ProviderDiagnosticsShareV1 | null>;
+  getCurrentReport?: () => Promise<ProviderDiagnosticsShare | null>;
 }>): ProviderDiagnosticsMonitor {
   const fetchImpl = input.fetchImpl ?? fetch;
   const now = input.now ?? Date.now;
@@ -110,12 +110,12 @@ export function createProviderDiagnosticsMonitor(input: Readonly<{
       rootOperationId?: string | null;
       requestId?: string | null;
     }> = {},
-    report?: ProviderDiagnosticsShareV1,
+    report?: ProviderDiagnosticsShare,
     expectedGeneration = stateGeneration,
   ): Promise<void> => {
     const state = await readState();
     if (!state) return;
-    const event: ProviderDiagnosticsMonitorEventV1 = Object.freeze({
+    const event: ProviderDiagnosticsMonitorEvent = Object.freeze({
       schemaVersion: 1,
       sessionId: state.sessionId,
       emittedAt: now(),
@@ -124,7 +124,7 @@ export function createProviderDiagnosticsMonitor(input: Readonly<{
       requestId: identity.requestId ?? null,
       data: Object.freeze({ ...data }),
     });
-    const post: ProviderDiagnosticsEventPostV1 = Object.freeze({
+    const post: ProviderDiagnosticsEventPost = Object.freeze({
       schemaVersion: 1,
       ...state,
       event,
@@ -272,7 +272,7 @@ export function createProviderDiagnosticsMonitor(input: Readonly<{
 
 async function postEvent(
   fetchImpl: typeof fetch,
-  post: ProviderDiagnosticsEventPostV1,
+  post: ProviderDiagnosticsEventPost,
 ): Promise<Response> {
   return fetchImpl(PROVIDER_DIAGNOSTICS_EVENTS_URL, {
     method: 'POST',
@@ -371,7 +371,7 @@ function parseMonitorState(value: unknown): ProviderDiagnosticsMonitorState | nu
 export function monitorStateFromBridgeRecord(
   value: unknown,
 ): ProviderDiagnosticsMonitorState | null {
-  const record: ProviderDiagnosticsBridgeRecordV1 | null = parseProviderDiagnosticsBridgeRecord(value);
+  const record: ProviderDiagnosticsBridgeRecord | null = parseProviderDiagnosticsBridgeRecord(value);
   return record ? Object.freeze({
     sessionId: record.sessionId,
     startedAt: record.startedAt,
@@ -379,6 +379,6 @@ export function monitorStateFromBridgeRecord(
   }) : null;
 }
 
-export function safeMonitorReport(value: unknown): ProviderDiagnosticsShareV1 | null {
+export function safeMonitorReport(value: unknown): ProviderDiagnosticsShare | null {
   return parseProviderDiagnosticsShare(value);
 }

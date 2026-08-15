@@ -32,7 +32,7 @@ function isoTimestamp(value: Date | string | number): string {
   return date.toISOString();
 }
 
-function responseError(response: Response, page: number): GitHubWatchError {
+function responseError(response: Response, page?: number): GitHubWatchError {
   if (response.status === 401) {
     return new GitHubWatchError('authentication_required', undefined, { status: response.status, page });
   }
@@ -126,10 +126,11 @@ async function requestPage(input: {
   if (input.page === 1 && input.lastModified) {
     headers['If-Modified-Since'] = input.lastModified;
   }
+  const fetchImpl = input.fetchImpl;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), input.timeoutMs);
   try {
-    const response = await input.fetchImpl(url.toString(), {
+    const response = await fetchImpl(url.toString(), {
       headers,
       cache: 'no-store',
       signal: controller.signal,
@@ -271,3 +272,59 @@ export async function fetchGitHubNotifications(
 }
 
 export const fetchNotifications = fetchGitHubNotifications;
+
+export interface MutateGitHubNotificationThreadOptions {
+  token: string;
+  threadId: string;
+  action: 'read' | 'done';
+  fetchImpl?: FetchLike;
+  timeoutMs?: number;
+}
+
+/** Apply one idempotent GitHub Inbox state transition. */
+export async function mutateGitHubNotificationThread(
+  options: MutateGitHubNotificationThreadOptions,
+): Promise<void> {
+  const token = options.token.trim();
+  const threadId = options.threadId.trim();
+  if (!token) throw new GitHubWatchError('authentication_required');
+  if (!/^\d{1,32}$/u.test(threadId)) throw new GitHubWatchError('invalid_thread');
+  const timeoutMs = Number.isFinite(options.timeoutMs)
+    ? Math.max(1, Math.floor(options.timeoutMs!))
+    : DEFAULT_TIMEOUT_MS;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const method = options.action === 'read' ? 'PATCH' : 'DELETE';
+  try {
+    const response = await fetchImpl(
+      `${API_ORIGIN}${NOTIFICATIONS_PATH}/threads/${encodeURIComponent(threadId)}`,
+      {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        cache: 'no-store',
+        signal: controller.signal,
+      },
+    );
+    const succeeded = options.action === 'read'
+      ? response.status === 205 || response.status === 304
+      : response.status === 204;
+    if (succeeded) return;
+    throw responseError(response);
+  } catch (error) {
+    if (error instanceof GitHubWatchError) throw error;
+    if (controller.signal.aborted) {
+      throw new GitHubWatchError('deadline_exceeded');
+    }
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new GitHubWatchError('request_aborted');
+    }
+    throw new GitHubWatchError('network_error');
+  } finally {
+    clearTimeout(timer);
+  }
+}

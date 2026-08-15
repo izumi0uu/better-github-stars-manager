@@ -1,14 +1,10 @@
-# Chrome Web Store 更新说明
+# Chrome Web Store 提交参考
 
 [English](../en/chrome-web-store-submission.md)
 
-这份文档记录候选商店文案、根据 manifest 整理的权限说明、审核员测试步骤以及 Chrome Web Store 的外部工作。它不表示某个安装包已经可以发布、已经上传、正在审核或已经上线。
+这份文档记录商店文案、根据 manifest 整理的权限说明、审核员测试步骤以及 Chrome Web Store 的外部工作。它不表示某个安装包已经可以发布、已经上传、正在审核或已经上线。
 
-## 当前更新状态
-
-公开项目当前已经是 `1.0.8`。这次工作是更新，不是首次提交。Google 要求每次上传的更新都包含完整安装包，并且版本号高于已发布版本。
-
-用户明确批准 `1.0.9` 作为候选版本。仓库 package 和生成的 manifest 已经使用 `1.0.9`；截至这份记录，干净运行验证、打包验证和最终检查门禁还没有全部通过。
+## 证据边界
 
 以下证据状态必须分开看：
 
@@ -20,21 +16,19 @@
 
 这些状态不会自动证明后面的状态。本地证据必须保持 `dashboardSubmissionClaimed: false`。
 
-Google 在 [Update your Chrome Web Store item](https://developer.chrome.com/docs/webstore/update) 中说明了更新流程。无论通过 Dashboard 还是已经启用的 API 工作流完成，上传、审核和发布仍然是三个独立的外部状态。
+对于更新，Google 要求安装包内容完整，且版本号高于已发布版本。Google 在 [Update your Chrome Web Store item](https://developer.chrome.com/docs/webstore/update) 中说明了这一流程。无论通过 Dashboard 还是已经启用的 API 工作流完成，上传、审核和发布仍然是三个独立的外部状态。
 
 ## 公开 URL
 
 - [项目主页](https://github.com/izumi0uu/better-github-stars-manager)
-- [候选隐私政策](https://github.com/izumi0uu/better-github-stars-manager/blob/master/docs/zh/privacy-policy.md)
+- [隐私政策](https://github.com/izumi0uu/better-github-stars-manager/blob/master/docs/zh/privacy-policy.md)
 - [支持与 issue 追踪](https://github.com/izumi0uu/better-github-stars-manager/issues)
 
 只有在审核后的政策已经公开，并且无需认证就能访问时，隐私 URL 才可使用。Dashboard 字段、公开商店文案、隐私展示、宣传素材和已安装版本都必须手动检查。
 
-Phase 8 fact sheet 的历史观察记录显示：公开项目当时是 `1.0.8`，隐私 URL 返回的是较旧的政策文本，公开隐私展示没有描述当前 Cubby、Gist 和 Provider 处理。把它当作有日期的审计证据，不要把它当作当前 Dashboard 或公开状态的证明。
+## 商店文案
 
-## 候选商店文案
-
-候选文案描述当前实现，但不代表 Dashboard 中已经填写了这些文字。
+这些文案描述当前实现，但不代表 Dashboard 中已经填写了这些文字。
 
 ### 商店名称
 
@@ -55,7 +49,7 @@ Better GitHub Stars Manager 把 GitHub Stars 页面变成本地优先的仓库�
 - 用自定义标签和笔记整理仓库；
 - 按语言、标签和未打标签状态筛选；
 - 通过自己的 Secret GitHub Gist 只同步批注层；
-- 通过可选的 Watch Inbox 查看你已经 Star 且正在 Watch 的仓库通知；
+- 通过可选的 Watch Inbox 查看当前已 Star 仓库的 GitHub 通知，并单独查看已 Watch 仓库的参考计数；
 - 使用自己的 OpenAI、OpenRouter、Anthropic 或兼容 AI 服务运行 Cubby。
 
 普通 Cubby 提示词可以授权有界的标签修改。每次写入仍受本轮本地证据、操作限制和当前写策略约束。
@@ -70,7 +64,7 @@ Developer Tools
 
 ## 本地素材清单
 
-Phase 8 源码清单记录了以下本地文件和尺寸。这不能证明素材已经上传到 Dashboard、顺序正确、审核通过或公开展示。
+仓库中包含以下本地文件和尺寸。这不能证明素材已经上传到 Dashboard、顺序正确、审核通过或公开展示。
 
 准备好的截图：
 
@@ -92,11 +86,11 @@ Phase 8 源码清单记录了以下本地文件和尺寸。这不能证明素材
 
 Google 的[图片要求](https://developer.chrome.com/docs/webstore/images)要求 128x128 图标、至少一张截图和 440x280 的小型宣传图。1400x560 的 marquee 图是可选项。截图必须展示当前产品体验。
 
-审查后的 tile 文案是“Local-first star organization.”和“Direct to GitHub and your selected AI provider. No developer-operated proxy.”。Marquee 还说明 Stars、标签和笔记留在浏览器中，而同步和 AI 请求直接发送到选定服务。它的“Yours to keep”卡片说明可通过用户自己的 Secret Gist 和 **Push**、**Pull** 进行可选同步。文案没有 JSON、CSV、Markdown、导出或备份承诺。此前的“Zero server. 100% private.”和“Private by Design”已删除。
+Tile 文案是“Local-first star organization.”和“Direct to GitHub and your selected AI provider. No developer-operated proxy.”。Marquee 还说明 Stars、标签和笔记留在浏览器中，而同步和 AI 请求直接发送到选定服务。它的“Yours to keep”卡片说明可通过用户自己的 Secret Gist 和 **Push**、**Pull** 进行可选同步。文案没有 JSON、CSV、Markdown、导出、备份或绝对隐私承诺。
 
-这些 tile 只包含字体和品牌图标，不包含截图。审查没有发现凭据、Token、账号数据、私有笔记、提示词、Provider 载荷、绝对隐私承诺或无依据的导出承诺。重新生成的小 tile 的 SHA-256 是 `10b3b09739a454c63e805fa292d969c8223fb3bf5257c04a854d399b07b82aea`。修正后的 marquee 的 SHA-256 是 `874796aa24006e023d22fdab1cd074862ec158cf2cbb71539136630ac6810258`。
+这些 tile 只包含字体和品牌图标，不包含截图。它们不包含凭据、Token、账号数据、私有笔记、提示词、Provider 载荷或无依据的导出承诺。
 
-同一台机器和同一个 Chrome 构建连续生成两次，输出字节完全一致。不同 Chrome 构建可能以不同方式栅格化相同源文件，因此这项证据不声称跨机器可复现。Dashboard 上传和公开渲染仍需单独检查。
+不同 Chrome 构建可能以不同方式栅格化相同源文件。每次上传前都应重新生成并检查输出；Dashboard 上传和公开渲染仍需单独检查。
 
 Dashboard 中的素材是否存在、顺序、locale 分配、审核状态和公开渲染都需要手动确认，目前没有验证。在应用内切换 English 和简体中文，也不能证明 Web Store listing 已经本地化。
 
@@ -106,7 +100,7 @@ Dashboard 中的素材是否存在、顺序、locale 分配、审核状态和公
 
 ### `storage`
 
-为轻量配置、加密的 GitHub 和 AI 服务凭据、选定的 Watch 凭据来源以及查询或界面状态提供 `chrome.storage.local`。Star 和批注数据、Watch 快照、Cubby 有界的对话、恢复和产物账本，以及单独设置上限的 Organize 记录，使用扩展本地 IndexedDB。一次性的 `chrome.storage.session` 值把 Watch 恢复流程路由到对应的 Options 区域，使用后立即消费。
+为轻量配置、加密的单一 GitHub Classic PAT 和 AI 服务凭据，以及查询或界面状态提供 `chrome.storage.local`。Star 和批注数据、Watch 快照、Cubby 有界的对话、恢复和产物账本，以及单独设置上限的 Organize 记录，使用扩展本地 IndexedDB。一次性的 `chrome.storage.session` 值把 Watch 恢复流程路由到对应的 Options 区域，使用后立即消费。
 
 ### `alarms`
 
@@ -148,7 +142,8 @@ Google 在 [Declare permissions](https://developer.chrome.com/docs/extensions/de
 - 数据不会出售，也不会用于个性化广告、信用或借贷决策；
 - 没有分析或广告 SDK 接收扩展数据；
 - GitHub 和 Gist 只接收用户请求的 GitHub、搜索和同步功能所需的数据；
-- Watch Inbox 只有在用户明确设置后才处理已 Watch 仓库成员关系和有界的 GitHub 通知元数据。能力检查通过后，它复用主凭据；需要时保存单独加密的 Notifications Token；
+- Watch Inbox 只有在用户明确设置后才处理已 Watch 仓库成员关系和有界的 GitHub 通知元数据；它会先检查单一 Classic PAT 的 `notifications` 能力；
+- Following Radar 使用同一个 Classic PAT，并单独检查 `read:user` 能力；缺少任一可选能力都只会禁用依赖它的功能；
 - Watch 范围、通知 thread 和刷新状态保存在本地 IndexedDB，默认不会通过 Gist 同步，也不会发送给 AI 服务；
 - 只有使用 Cubby 时，选定的 AI 服务才会接收任务数据；
 - GitHub、Gist 或 Provider 流量不会经过开发者运营的代理或后端；
@@ -160,8 +155,8 @@ Google 在 [Declare permissions](https://developer.chrome.com/docs/extensions/de
 - 逻辑账本在 256 MiB 时警告，在 512 MiB 时停止新写入。它不包括单独设置上限的 Organize 表，也不同于 Chrome 对整个扩展的浏览器级存储估算；
 - Cubby 会独立于来源对话保留最近一条已完成或取消的 Organize 工作流；
 - 删除来源对话会移除 transcript、尝试、恢复和对话产物行，但最近的终态 Organize 结果会一直保留到 Dismiss、替换或卸载；
-- 任务数据可能包含提示词、有范围限制的公开元数据、用户请求的有界公开代码片段和路径、用户请求的范围内私有笔记、可见且有界的标签以及协议观察结果；
-- 默认不把未请求的私有笔记、凭据、GitHub Token 和无关 Star 发送给模型；
+- 任务数据可能包含提示词、有范围限制的公开元数据、有界公开代码片段和路径、范围内私有笔记、可见且有界的标签以及协议观察结果；可信指令要求代码和笔记工具只在请求需要相应数据时使用；
+- 运行时会限制范围、工具授权和结果大小，但不会对提示词做语义分类；凭据、GitHub Token 和无关 Star 始终不进入模型可见的任务数据；
 - OpenAI、OpenRouter 和自定义 OpenAI 兼容服务的 Key 使用 `Authorization: Bearer`；Anthropic 使用 `x-api-key`；
 - Provider Key 只作为认证 Header 发送到精确绑定的地址，不会作为提示词、工具、产物或日志内容发送；
 - 发布诊断不包含已提交历史、尝试、恢复记录、原始 Provider 请求和响应、Key 或认证 Header；
@@ -177,18 +172,26 @@ Dashboard 必须包含准确的单一用途说明、权限理由、远程代码�
 Dashboard 应区分两条路径：
 
 - **无需凭据的路径**：安装扩展，打开 Options，查看隐私披露、主题和语言控制，并确认安装包没有包含私有凭据；
-- **需要凭据的路径**：只使用放在 Test instructions 中的专用、最小权限、可撤销 GitHub 和 AI 服务凭据。只有当主审核凭据无法读取 Notifications 时，才提供同账号的 Classic `notifications` PAT。
+- **需要凭据的路径**：只使用放在 Test instructions 中的专用、最小权限、可撤销 GitHub **Classic PAT** 和 AI 服务凭据。
+
+GitHub 审核 PAT 应使用当前产品的 scope 集合：
+
+```text
+repo,gist,notifications,read:user
+```
+
+`repo` 和 `gist` 是完整核心体验的必需权限。`notifications` 启用 Watch Inbox，`read:user` 启用 Following Radar；缺少任一可选能力都必须让无关功能继续可用。当前产品只使用一个 Classic PAT，因此审核时不要使用 Fine-grained PAT。
 
 凭据准备好后，按以下步骤审核：
 
-1. 打开 Options，输入 Test instructions 中的专用 GitHub Fine-grained Personal Access Token；
-2. 确认 Token 有公开仓库访问权限，以及 `Starring: Read and write` 和 `Gists: Read and write`，以完成全功能审核；
+1. 打开 Options，输入 Test instructions 中的专用 GitHub Classic PAT；
+2. 确认 Token 使用 `repo`、`gist`、`notifications` 和 `read:user`，不要授予组织管理、workflow、删除仓库、密钥、审计日志、enterprise、package 或 Webhook 管理权限；
 3. 点击 **Save & verify**，确认显示正确的已认证账号；
 4. 打开 `https://github.com/your_username_here?tab=stars`，运行 **Full Sync**；
 5. 确认 Star 已显示，并确认搜索、筛选、笔记和手动标签在本地可用；
-6. 打开 **Watch**，选择 **Set up Watch Inbox**，确认扩展先检查现有 GitHub 连接，再要求额外凭据；
-7. 如果当前凭据可以读取 Notifications，确认 Watch 连接成功且没有保存单独 Token。否则，只使用 Test instructions 中同账号的 Classic `notifications` PAT，并确认只有能力检查失败后才显示备用流程；
-8. 刷新 Watch，确认只显示同时处于 Star 和 Watch 状态的仓库通知。关闭 Watch，确认缓存 thread 和单独 Token 被删除，而 Stars 仍可用；
+6. 打开 **Watch**，确认扩展检查现有 Classic PAT，且不会要求第二份凭据；
+7. 刷新 Watch，确认只显示当前已 Star 仓库的通知，并单独展示已 Watch 仓库的参考计数。关闭 Watch，确认缓存 thread 被删除，而 Stars 仍可用；
+8. 打开 **Following Radar**，确认存在 `read:user` 时可以加载；如需测试缺少该能力的行为，请单独执行负向测试；
 9. 使用 **Push** 和 **Pull** 检查专用 Secret Gist 同步流程；
 10. 在 Options 中选择 AI 服务，确认折叠提示显示选定服务和精确地址；
 11. 输入 Test instructions 中的模型和专用 AI 服务 Key，运行 **Test connection**；
@@ -205,18 +208,17 @@ Dashboard 应区分两条路径：
 
 不要把凭据值或清理用 Secret 放进本文档。Dashboard 设置、凭据有效性、线上服务行为和清理状态，在被直接观察前都保持未验证。
 
-## 候选版本前置条件
+## 版本批准前置条件
 
-候选版本 `1.0.9` 已明确批准，严格高于公开版本 `1.0.8`，并已写入 package 和生成的 manifest。运行器要求 `GSM_VERSION_APPROVAL` 包含一个有效 JSON，且必须正好包含三个字段：批准的候选版本、观察到的当前公开版本和观察到的上一次上传版本。缺失、标量、额外字段或版本不匹配都会阻止运行。
+执行发布验证前，确认 package 和生成的 manifest 使用明确批准的版本，并且该版本高于直接观察到的当前公开版本和上一次上传版本。运行器要求 `GSM_VERSION_APPROVAL` 包含有效 JSON，且必须正好包含 `approvedCandidateVersion`、`observedCurrentPublicVersion` 和 `observedPriorUploadVersion` 三个字段。缺失、标量、额外字段或版本不匹配都会阻止运行。应根据本次发布填写这些字段，不要复制之前提交的值。
 
 ## 本地发布流程
 
-下面列出的 Phase 8 命令存在于当前源码中，但命令存在不代表当前候选包已经通过它们。
+下面的命令存在于当前源码中，但命令存在不代表当前发布包已经通过它们。
 
-在准确的目标源码干净提交后，用单引号 JSON 绑定批准值，确保 shell 原样传递：
+准确的目标源码干净提交后，把 `GSM_VERSION_APPROVAL` 设置为上面说明的本次发布专用 JSON，然后运行：
 
 ```sh
-export GSM_VERSION_APPROVAL='{"approvedCandidateVersion":"1.0.9","observedCurrentPublicVersion":"1.0.8","observedPriorUploadVersion":"1.0.8"}'
 pnpm verify:agent-runtime
 pnpm verify:agent-release-gates
 ```
@@ -231,14 +233,14 @@ pnpm verify:agent-release-gates
 
 ## Dashboard 与发布清单
 
-干净候选包通过本地检查后，完成或直接验证以下事项：
+干净的本地验证通过后，完成或直接验证以下事项：
 
 - 发布准确审核过的隐私政策，并确认无需认证即可获取；
 - 核对商店文案、截图、宣传图片、分类、主页和支持字段；
 - 核对单一用途、包括 `alarms` 在内的全部权限说明、远程代码回答、数据使用复选框和 Limited Use 认证；
 - 只把审核说明和凭据放在 Test instructions 中；
 - 核对分发、可见性、国家或地区、价格、分批发布和延迟发布选项；
-- 手动上传准确的干净候选包，或确认受门禁控制的 tag 工作流选择了该 ZIP；
+- 手动上传准确的已验证安装包，或确认受门禁控制的 tag 工作流选择了该 ZIP；
 - 确认 Dashboard 或 API 接受该包，并报告预期版本和权限；
 - 只有所有 Dashboard 字段都正确后才提交更新，或确认配置的工作流在满足该条件后执行了发布；
 - 把审核结果与上传结果分开记录；

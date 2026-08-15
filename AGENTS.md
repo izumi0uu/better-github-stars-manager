@@ -60,6 +60,12 @@ Keep this file short and practical. Add rules here only when they are core to th
 - REST starring endpoints: `https://docs.github.com/v3/activity/starring`
 - REST repositories endpoints: `https://docs.github.com/rest/repos/repos`
 
+## Privacy And External Context
+
+- Never put personal information in tracked files, including real usernames, names, email addresses, local home-directory paths, account data, tokens, or screenshots and fixtures derived from a personal account. The only exception is a screenshot that the repository maintainer supplied and explicitly approved for public release; even then, it must not expose tokens, email addresses, local paths, private repository data, or other non-public account data. Use synthetic values such as `octocat`, `user@example.com`, and repository-relative paths everywhere else.
+- Never copy issue, pull-request, Jira, support-ticket, chat, or other external-work-item content into product code, tests, fixtures, comments, logs, screenshots, generated artifacts, or documentation. The maintainer-approved public screenshot exception above may include public GitHub repository, issue, or pull-request text already visible in the product UI; it does not cover Jira, support, chat, private repositories, private work items, or copied external text elsewhere in the repository. Translate every other external requirement into generic product behavior and terminology; keep external identifiers, URLs, customer data, reporter details, and verbatim text out of the repository.
+- Before committing, scan every changed tracked artifact, including binary assets and metadata, for personal information and external-work-item residue.
+
 ## Testing And Done Criteria
 
 - Always run `pnpm typecheck` after code changes.
@@ -71,6 +77,12 @@ Keep this file short and practical. Add rules here only when they are core to th
 - Add a regression test when changing sync semantics, storage compatibility, migration/backfill logic, or GitHub data mapping.
 - Name new tests, suites, and replay env prefixes by product surface or behavior, not priority or phase labels. Use names like `query-fuzz`, `tag-store-fuzz`, or `BACKGROUND_RUNNER_FUZZ`.
 - For docs-only changes, code tests are optional.
+- Do not add automated tests that read Markdown files to assert prose, headings, links, or section layout. Test the owning runtime behavior or machine-readable contract instead; review published documentation directly.
+
+## Documentation
+
+- Keep `docs/` for user-facing guides, privacy policies, Chrome Web Store material, and other published product documentation.
+- Internal workflows, implementation history, and superseded plans are research context, not current public contracts. Keep them out of `docs/` and do not cite them as implementation authority.
 
 ## Comment Rules
 

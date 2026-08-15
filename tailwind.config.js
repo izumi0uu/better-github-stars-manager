@@ -57,6 +57,7 @@ export default {
         },
         success: 'hsl(var(--success))',
         warning: 'hsl(var(--warning))',
+        info: 'hsl(var(--info))',
         'search-match': {
           DEFAULT: 'hsl(var(--search-match))',
           foreground: 'hsl(var(--search-match-foreground))',

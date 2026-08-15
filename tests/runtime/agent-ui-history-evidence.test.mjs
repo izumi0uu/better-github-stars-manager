@@ -8,9 +8,9 @@ import { validateRuntimeEvidenceFile } from '../../scripts/agent-runtime-release
 
 const HOST = path.resolve('tests/runtime/agent-ui-history-extension-host.mjs');
 const COMPOSITION = path.resolve('tests/runtime/agent-runtime-composition.mjs');
-const FILENAME = 'agent-ui-history.schema-v1.json';
+const FILENAME = 'agent-ui-history.schema.json';
 
-test('UI/history producer publishes the exact private schema-v1 envelope', () => {
+test('UI/history producer publishes the exact private schema envelope', () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'bgsm-ui-history-evidence-'));
   try {
     const result = spawnSync(process.execPath, [HOST], {

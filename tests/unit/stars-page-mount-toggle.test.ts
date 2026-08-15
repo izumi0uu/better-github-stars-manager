@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, vi } from 'vitest';
 import { mountState, pageOwner } from '@/content/stars-page/mount-state';
+import brandMarkUrl from '@/assets/bgsm-brand-mark.svg?url';
 
 const CONFIG_STORAGE_KEY = 'github-stars-manager-config';
 
@@ -33,7 +34,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 function setStarsUrl(): void {
-  window.history.replaceState(null, '', '/idah?tab=stars');
+  window.history.replaceState(null, '', '/octocat?tab=stars');
 }
 
 function clearInjectedChrome(): void {
@@ -72,12 +73,14 @@ async function loadContentScript({
   config,
   getConfig,
   getLocale,
+  getUsername,
   initialBodyOverflow = '',
   initialHtmlOverflow = '',
 }: {
   config?: Config;
   getConfig?: () => Promise<Config>;
   getLocale?: () => Promise<string>;
+  getUsername?: () => Promise<string | null>;
   initialBodyOverflow?: string;
   initialHtmlOverflow?: string;
 } = {}) {
@@ -96,7 +99,7 @@ async function loadContentScript({
   });
   let currentConfig = config ?? { starsPanelDefaultEnabled: true };
   const getConfigFn = vi.fn(getConfig ?? (() => Promise.resolve(currentConfig)));
-  const getUsernameMock = vi.fn(() => Promise.resolve('idah'));
+  const getUsernameMock = vi.fn(getUsername ?? (() => Promise.resolve('octocat')));
   const getLocaleMock = vi.fn(getLocale ?? (() => Promise.resolve('en')));
 
   vi.doMock('@/auth/auth-store', () => ({
@@ -156,11 +159,11 @@ describe('stars-page mount and toggle invariants', () => {
   });
 
   it('derives owner only from supported stars profile paths', () => {
-    assert.equal(pageOwner('/idah'), 'idah');
-    assert.equal(pageOwner('/users/Idah'), 'idah');
+    assert.equal(pageOwner('/octocat'), 'octocat');
+    assert.equal(pageOwner('/users/OctoCat'), 'octocat');
     assert.equal(pageOwner('/stars'), null);
     assert.equal(pageOwner('/orgs/github'), null);
-    assert.equal(pageOwner('/idah/repo'), null);
+    assert.equal(pageOwner('/octocat/repo'), null);
   });
 
   it('maps ownership and effective enabled state to panel, fab, or none', () => {
@@ -204,7 +207,7 @@ describe('stars-page mount and toggle invariants', () => {
     assert.ok(secondWindow);
 
     for (const target of [firstWindow, secondWindow]) {
-      target.history.replaceState(null, '', '/idah?tab=stars');
+      target.history.replaceState(null, '', '/octocat?tab=stars');
       target.document.body.innerHTML = '<main data-pjax-container><h1>Stars</h1></main>';
       loaded.installStarsPageRuntime(target);
     }
@@ -240,7 +243,7 @@ describe('stars-page mount and toggle invariants', () => {
     assert.ok(secondWindow);
 
     for (const target of [firstWindow, secondWindow]) {
-      target.history.replaceState(null, '', '/idah?tab=stars');
+      target.history.replaceState(null, '', '/octocat?tab=stars');
       target.document.body.innerHTML = '<main data-pjax-container><h1>Stars</h1></main>';
     }
 
@@ -365,6 +368,44 @@ describe('stars-page mount and toggle invariants', () => {
     assert.equal(document.querySelectorAll('#gsm-fab').length, 1);
     assert.equal(document.documentElement.style.overflow, 'scroll');
     assert.equal(document.body.style.overflow, 'auto');
+  });
+
+  it('does not remove panel or FAB hosts owned by another extension instance', async () => {
+    const pendingConfig = deferred<Config>();
+    await loadContentScript({
+      getConfig: () => pendingConfig.promise,
+      getUsername: () => Promise.resolve('another-user'),
+    });
+    const foreignPanel = document.createElement('div');
+    foreignPanel.id = 'gsm-manager-host';
+    const foreignFab = document.createElement('div');
+    foreignFab.id = 'gsm-fab';
+    document.body.append(foreignPanel, foreignFab);
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+
+    pendingConfig.resolve({ starsPanelDefaultEnabled: true });
+    await flush();
+
+    assert.equal(document.getElementById('gsm-manager-host'), foreignPanel);
+    assert.equal(document.getElementById('gsm-fab'), foreignFab);
+    assert.equal(document.documentElement.style.overflow, 'hidden');
+    assert.equal(document.body.style.overflow, 'hidden');
+  });
+
+  it('renders the product mark in the FAB launcher', async () => {
+    await loadContentScript({ config: { starsPanelDefaultEnabled: false } });
+    await waitFor(() => document.getElementById('gsm-fab') !== null);
+
+    const button = document.getElementById('gsm-fab')?.shadowRoot?.querySelector('button');
+    const brandMark = button?.querySelector<HTMLImageElement>('img[data-product-brand-mark]');
+    assert.ok(brandMark);
+    assert.equal(brandMark.width, 28);
+    assert.equal(brandMark.height, 28);
+    assert.equal(brandMark.alt, '');
+    assert.equal(brandMark.getAttribute('aria-hidden'), 'true');
+    assert.equal(brandMark.getAttribute('src'), brandMarkUrl);
+    assert.equal(button?.querySelector('svg'), null);
   });
 
   it('keeps a fallback FAB label when locale loading fails', async () => {

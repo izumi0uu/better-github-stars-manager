@@ -339,7 +339,7 @@ test('direct finalizer rejects an extra runtime evidence record before final or 
   for (const { filename } of Object.values(RUNTIME_EVIDENCE_CONTRACTS)) {
     writeFileSync(path.join(runtimeEvidenceDir, filename), '{}\n', { mode: 0o600 });
   }
-  writeFileSync(path.join(runtimeEvidenceDir, 'stale-extra.schema-v1.json'), '{}\n', { mode: 0o600 });
+  writeFileSync(path.join(runtimeEvidenceDir, 'stale-extra.schema.json'), '{}\n', { mode: 0o600 });
   try {
     assert.throws(() => finalizeAgentRelease({
       root,

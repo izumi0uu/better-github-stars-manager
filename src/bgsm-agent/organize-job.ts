@@ -18,7 +18,7 @@ import {
   type NonActionableAnalysisOutcome,
   type ProposalAction,
   type ProposalReviewProjection,
-  type TaxonomyFingerprintV1,
+  type TaxonomyFingerprint,
 } from './proposal';
 import { isProposalId, isRunId, type ProposalId, type RunId } from './identity';
 import {
@@ -390,7 +390,7 @@ export function finalizeAnalyzerBatch(input: Readonly<{
   positions: readonly OrganizeJobRunPagePosition[];
   proposal: AnalyzerBatchProposal;
   taxonomy: SemanticTaxonomyDto;
-  taxonomyFingerprint: TaxonomyFingerprintV1;
+  taxonomyFingerprint: TaxonomyFingerprint;
 }>): FinalizedBatch {
   validateAnalyzerBatchProposal(input.proposal);
   for (const row of input.proposal.rows) {
@@ -562,7 +562,7 @@ function finalizeClassifications(
   positions: readonly OrganizeJobRunPagePosition[],
   classifications: ReadonlyMap<number, AnalyzerBatchProposal['rows'][number] | 'analysis_failed'>,
   taxonomy: SemanticTaxonomyDto | null,
-  taxonomyFingerprint: TaxonomyFingerprintV1 | null,
+  taxonomyFingerprint: TaxonomyFingerprint | null,
 ): FinalizedBatch {
   assertAnalyzing(state);
   validatePage(state, positions);

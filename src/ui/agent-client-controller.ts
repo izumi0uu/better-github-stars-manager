@@ -193,8 +193,8 @@ export function createBgsmAgentClientController(
       if (state.active) turnController?.resumeHydratedTurn(state.hydratedActiveTurn);
       return;
     }
+    snapshot = createSnapshot(nextSources, sources, snapshot);
     sources = nextSources;
-    snapshot = createSnapshot(nextSources);
     for (const listener of [...subscribers]) listener();
     if (state.active) turnController?.resumeHydratedTurn(state.hydratedActiveTurn);
   };
@@ -311,24 +311,43 @@ function sameSnapshotSources(left: SnapshotSources, right: SnapshotSources): boo
     && left.turnState === right.turnState;
 }
 
-function createSnapshot(sources: SnapshotSources): BgsmAgentClientSnapshot {
+function createSnapshot(
+  sources: SnapshotSources,
+  previousSources?: SnapshotSources,
+  previousSnapshot?: BgsmAgentClientSnapshot,
+): BgsmAgentClientSnapshot {
+  const sessions = previousSources?.sessions === sources.sessions && previousSnapshot
+    ? previousSnapshot.sessions
+    : Object.freeze(sources.sessions.map((summary) => Object.freeze({ ...summary })));
+  const messages = previousSources?.messages === sources.messages && previousSnapshot
+    ? previousSnapshot.messages
+    : Object.freeze(sources.messages.map((message) => Object.freeze({ ...message })));
+  const durableRetryDraft = previousSources?.durableRetryDraft === sources.durableRetryDraft
+    && previousSnapshot
+    ? previousSnapshot.durableRetryDraft
+    : sources.durableRetryDraft && Object.freeze({ ...sources.durableRetryDraft });
+  const toolActivities = previousSources?.turnState.toolActivities === sources.turnState.toolActivities
+    && previousSnapshot
+    ? previousSnapshot.turnState.toolActivities
+    : Object.freeze(sources.turnState.toolActivities.map((activity) => (
+        Object.freeze({ ...activity })
+      )));
+
   return Object.freeze({
     activeSessionId: sources.activeSessionId,
-    sessions: Object.freeze(sources.sessions.map((summary) => Object.freeze({ ...summary }))),
-    messages: Object.freeze(sources.messages.map((message) => Object.freeze({ ...message }))),
+    sessions,
+    messages,
     nextBeforeSequence: sources.nextBeforeSequence,
     loadingEarlierMessages: sources.loadingEarlierMessages,
     sessionReady: sources.sessionReady,
     sessionOperationPending: sources.sessionOperationPending,
     sessionInitializationFailed: sources.sessionInitializationFailed,
     hydratedActiveTurn: sources.hydratedActiveTurn,
-    durableRetryDraft: sources.durableRetryDraft && Object.freeze({ ...sources.durableRetryDraft }),
+    durableRetryDraft,
     conversationBinding: sources.conversationBinding,
     turnState: Object.freeze({
       ...sources.turnState,
-      toolActivities: Object.freeze(sources.turnState.toolActivities.map((activity) => (
-        Object.freeze({ ...activity })
-      ))),
+      toolActivities,
     }),
   });
 }

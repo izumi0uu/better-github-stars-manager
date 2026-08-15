@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { GripVertical, Heart, Star as StarIcon, StickyNote } from 'lucide-react';
 import type { Star, Tag } from '@/types';
@@ -20,10 +20,11 @@ import type { LayoutResizeLiveAdapter, LayoutResizeLiveState } from '@/ui/layout
 import { StarRow } from '@/ui/components/StarRow';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n';
-import { visibleTagNames } from '@/tags/tag-model';
+import { createRepositorySearchMatcher } from '@/search/repository-search';
 
 const ROW_HEIGHT = 64;
 const noopLayoutViewportChange = () => {};
+const EMPTY_FAVORITE_OVERRIDES: Record<string, FavoriteOverrideState> = {};
 
 export type StarsTablePhase = 'idle' | 'fading-out' | 'fading-in';
 
@@ -44,10 +45,11 @@ export function StarsTable({
   rows,
   searchQuery = '',
   showRepositoryOwner = true,
+  showRepositoryAvatar = true,
   loading,
   phase,
   tagsByFullName,
-  favoriteOverrides = {},
+  favoriteOverrides = EMPTY_FAVORITE_OVERRIDES,
   selectedTags,
   selectedFullName,
   visibleColumns,
@@ -57,6 +59,7 @@ export function StarsTable({
   layoutEdit,
   layoutResize,
   scrollRef,
+  scrollElement,
   rootRef,
   headerRef,
   layoutResizeLiveAdapterRef,
@@ -74,6 +77,7 @@ export function StarsTable({
   rows: Star[];
   searchQuery?: string;
   showRepositoryOwner?: boolean;
+  showRepositoryAvatar?: boolean;
   loading: boolean;
   phase: StarsTablePhase;
   tagsByFullName: Map<string, Tag>;
@@ -87,6 +91,7 @@ export function StarsTable({
   layoutEdit: StarsTableLayoutEdit;
   layoutResize?: LayoutResizeLiveState | null;
   scrollRef: RefObject<HTMLElement>;
+  scrollElement?: HTMLElement | null;
   rootRef?: RefObject<HTMLElement>;
   headerRef: RefObject<HTMLDivElement>;
   layoutResizeLiveAdapterRef?: MutableRefObject<LayoutResizeLiveAdapter | null>;
@@ -96,7 +101,7 @@ export function StarsTable({
   onToggleFavorite: (fullName: string, favorite: boolean) => Promise<void>;
   onConfirmUnstar?: (fullName: string) => void;
   openUnstarFullName?: string | null;
-  onOpenUnstarChange?: (fullName: string | null, sourceFullName: string) => void;
+  onOpenUnstarChange?: (open: boolean, fullName: string) => void;
   onBeginColumnResize?: (event: PointerEvent<HTMLElement>, id: ColumnId) => void;
   onResizeColumnByKeyboard?: (id: ColumnId, direction: -1 | 1, largeStep?: boolean) => void;
   onAutoFitColumnWidth?: (id: ColumnId) => void;
@@ -118,11 +123,15 @@ export function StarsTable({
   const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => scrollElement ?? scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
   const virtualItems = rowVirtualizer.getVirtualItems();
+  const matchRepositoryName = useMemo(
+    () => createRepositorySearchMatcher(searchQuery).matchName,
+    [searchQuery],
+  );
   const layoutModeTransitionPhase = layoutEdit.transitionPhase ?? 'idle';
   const layoutModePreEnter = layoutModeTransitionPhase === 'pre-enter';
   const virtualRowsSignature = layoutResize
@@ -388,10 +397,10 @@ export function StarsTable({
               >
                 <StarRow
                   star={star}
-                  searchQuery={searchQuery}
+                  matchRepositoryName={matchRepositoryName}
                   showRepositoryOwner={showRepositoryOwner}
-                  tags={visibleTagNames(tag)}
-                  hasNotes={!!(tag?.notes && tag.notes.trim())}
+                  showRepositoryAvatar={showRepositoryAvatar}
+                  tag={tag}
                   favorite={favorite}
                   favoriteBusy={favoriteBusy}
                   selectedTags={selectedTags}
@@ -399,7 +408,7 @@ export function StarsTable({
                   onToggleFavorite={onToggleFavorite}
                   onConfirmUnstar={onConfirmUnstar}
                   unstarPopoverOpen={onOpenUnstarChange ? openUnstarFullName === star.full_name : undefined}
-                  onUnstarPopoverOpenChange={(open) => onOpenUnstarChange?.(open ? star.full_name : null, star.full_name)}
+                  onUnstarPopoverOpenChange={onOpenUnstarChange}
                   selected={selectedFullName === star.full_name}
                   onSelect={onSelect}
                   columns={visibleColumns}

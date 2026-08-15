@@ -26,6 +26,15 @@ import type {
   GitHubWatchRepository,
   GitHubWatchStateRecord,
 } from '@/watch/watch-model';
+import type {
+  RadarActivityRecord,
+  RadarStateRecord,
+} from '@/radar/radar-model';
+import type {
+  RecommendationIgnoreRecord,
+  RecommendationRecord,
+  RecommendationStateRecord,
+} from '@/recommendations/recommendation-model';
 import { normalizeStoredTag, type LegacyTagRow } from './tag-shape';
 
 /**
@@ -53,6 +62,11 @@ export class StarsDB extends Dexie {
   watchRepositories!: Table<GitHubWatchRepository, string>;
   watchNotificationThreads!: Table<GitHubNotificationThread, string>;
   watchState!: Table<GitHubWatchStateRecord, 'singleton'>;
+  radarActivities!: Table<RadarActivityRecord, string>;
+  radarState!: Table<RadarStateRecord, 'singleton'>;
+  recommendations!: Table<RecommendationRecord, string>;
+  recommendationState!: Table<RecommendationStateRecord, 'singleton'>;
+  recommendationIgnores!: Table<RecommendationIgnoreRecord, string>;
 
   constructor() {
     super('better-github-stars-manager');
@@ -108,19 +122,45 @@ export class StarsDB extends Dexie {
       watchNotificationThreads: 'id, repositoryFullName, updatedAt, [repositoryFullName+updatedAt]',
       watchState: 'id',
     });
+    // v5 adds account-bound Radar activity, the optional
+    // `Star.viewer_has_starred` source marker and owner avatar URL, and the
+    // derived For You cache. Neither Star field nor recommendation score is
+    // queried by an index; legacy Star rows remain valid when either is absent.
+    this.version(5).stores({
+      stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
+      tags: 'full_name, mtime',
+      tagMeta: 'name, dimension, mtime',
+      organizeJobs: 'jobId, &activeSlot, status, updatedAt, originAgentSessionId, sessionId',
+      organizeItems: 'id, [jobId+position], [jobId+analysisState], jobId, position, analysisState, leaseExpiresAt',
+      organizeTaxonomies: 'jobId',
+      organizeApplies: 'applyId, jobId, status',
+      organizeApplyRows: 'id, [applyId+position], [applyId+state], applyId, state, leaseExpiresAt',
+      tagDirtyOutbox: 'id, kind, updatedAt',
+      agentSessions: 'id, updatedAt, createdAt',
+      agentMessages: 'id, sessionId, &[sessionId+sequence], [sessionId+turnAttemptId]',
+      agentAttempts: 'id, sessionId, &[sessionId+turnAttemptId], [sessionId+state], updatedAt',
+      agentAttemptRecoveries: 'id, sessionId, &[sessionId+turnAttemptId], updatedAt',
+      agentArtifacts: 'id, sessionId, turnAttemptId, ownerMessageId, storageClass, [sessionId+storageClass], [storageClass+state+lastAccessedAt], [state+createdAt], expiresAt',
+      agentArtifactChunks: 'id, artifactId, &[artifactId+index]',
+      agentStorageUsage: 'id',
+      watchRepositories: 'full_name',
+      watchNotificationThreads: 'id, repositoryFullName, updatedAt, [repositoryFullName+updatedAt]',
+      watchState: 'id',
+      radarActivities: '&id, accountLogin, repositoryKey, starredAt, dismissedAt, [accountLogin+starredAt], [accountLogin+repositoryKey]',
+      radarState: '&id, accountLogin, lastSuccessfulAt',
+      recommendations: '&id, accountLogin',
+      recommendationState: '&id, accountLogin',
+      recommendationIgnores: '&id, accountLogin',
+    });
   }
 }
 
 export const db = new StarsDB();
-
-/**
- * Count of live (non-tombstone) stars — used by the UI header.
- * IndexedDB/Dexie index booleans unreliably, so filter in JS (cheap over ~10k rows).
- */
+/** Count live repositories currently starred by the authenticated account. */
 export async function liveStarCount(): Promise<number> {
   let n = 0;
   await db.stars.each((s) => {
-    if (!s.tombstone) n++;
+    if (!s.tombstone && s.viewer_has_starred !== false) n++;
   });
   return n;
 }

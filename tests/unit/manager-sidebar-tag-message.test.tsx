@@ -5,9 +5,9 @@ import { describe, it } from 'vitest';
 const source = readFileSync(new URL('../../src/ui/ManagerPanel.tsx', import.meta.url), 'utf8');
 
 describe('ManagerPanel sidebar tag mutation wiring', () => {
-  it('uses success-only refresh plus a separate message callback for sidebar tag mutations', () => {
+  it('uses a success-only data callback plus a separate message callback for sidebar tag mutations', () => {
     assert.match(source, /onTagMutationMessage=\{\(message\) => \{/);
-    assert.match(source, /onTagMutationSuccess=\{refreshStars\}/);
+    assert.match(source, /onTagMutationSuccess=\{handleManualTagMutationSuccess\}/);
     assert.doesNotMatch(source, /onTagDeleted=/);
 
     const messageCallback = source.match(/onTagMutationMessage=\{\(message\) => \{[\s\S]*?\n            \}\}/)?.[0] ?? '';

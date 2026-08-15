@@ -9,9 +9,9 @@ import {
   PROVIDER_DIAGNOSTICS_BRIDGE_PATH,
   PROVIDER_DIAGNOSTICS_EVENTS_PATH,
   PROVIDER_DIAGNOSTICS_HEALTH_PATH,
-  type ProviderDiagnosticsBridgeRecordV1,
-  type ProviderDiagnosticsEventsRecordV1,
-  type ProviderDiagnosticsHealthV1,
+  type ProviderDiagnosticsBridgeRecord,
+  type ProviderDiagnosticsEventsRecord,
+  type ProviderDiagnosticsHealth,
 } from './provider-diagnostics-bridge';
 import { getAgentDiagnosticsMessages } from './messages';
 
@@ -20,9 +20,9 @@ type SharedProviderState =
   | { kind: 'empty' }
   | {
       kind: 'ready';
-      record: ProviderDiagnosticsBridgeRecordV1;
-      events: ProviderDiagnosticsEventsRecordV1;
-      health: ProviderDiagnosticsHealthV1;
+      record: ProviderDiagnosticsBridgeRecord;
+      events: ProviderDiagnosticsEventsRecord;
+      health: ProviderDiagnosticsHealth;
     }
   | { kind: 'error'; message: string };
 

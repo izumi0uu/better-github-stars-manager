@@ -74,6 +74,7 @@ const chromeHarness = vi.hoisted(() => {
       },
     },
     alarms: {
+      async get() { return undefined; },
       async create() {},
       async clear() { return false; },
       onAlarm: { addListener() {} },
@@ -87,6 +88,7 @@ const chromeHarness = vi.hoisted(() => {
       },
       onConnect: { addListener() {} },
       onInstalled: { addListener() {} },
+      onStartup: { addListener() {} },
     },
   };
 

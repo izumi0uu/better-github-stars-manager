@@ -5,6 +5,7 @@ import { act, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { AgentPanel } from '@/ui/components/AgentPanel';
+import { AgentProposalReviewCard } from '@/ui/components/AgentOrganizeReview';
 import { AgentHost, type AgentHostPresentation } from '@/ui/components/AgentHost';
 import { AgentSessionMenu } from '@/ui/components/AgentSessionMenu';
 import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
@@ -18,7 +19,7 @@ import {
   createFrozenScope,
   parseContinuationCursorToken,
   parsePreflightToken,
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
   projectFrozenScope,
 } from '@/bgsm-agent/scope';
 import {
@@ -218,6 +219,7 @@ describe('Agent organize-job workbench UI', () => {
             onlyFavorite: false,
             onlyUntagged: false,
             onlyArchived: false,
+            onlyOwned: false,
             sortKey: 'starred_at',
             sortDir: 'desc',
           },
@@ -284,6 +286,7 @@ describe('Agent organize-job workbench UI', () => {
             onlyFavorite: false,
             onlyUntagged: false,
             onlyArchived: false,
+            onlyOwned: false,
             sortKey: 'starred_at',
             sortDir: 'desc',
           },
@@ -308,7 +311,7 @@ describe('Agent organize-job workbench UI', () => {
       presentation: presentationFor(review, { status: 'completed' }),
     });
 
-    expect(presentations.at(-1)).toEqual({ status: 'Completed', active: false });
+    expect(presentations.at(-1)).toEqual({ status: 'Completed', statusKind: 'completed', active: false });
   });
 
   it('stops toolbar activity when a newer child snapshot fails before the durable presentation advances', async () => {
@@ -330,6 +333,7 @@ describe('Agent organize-job workbench UI', () => {
             onlyFavorite: false,
             onlyUntagged: false,
             onlyArchived: false,
+            onlyOwned: false,
             sortKey: 'starred_at',
             sortDir: 'desc',
           },
@@ -376,7 +380,7 @@ describe('Agent organize-job workbench UI', () => {
         reason: 'requested_output_tokens',
         budget: parent.budget,
         usage: parent.usage,
-        continuationCursor: parseContinuationCursorToken('cursor:v1:toolbar-child'),
+        continuationCursor: parseContinuationCursorToken('cursor:toolbar-child'),
       },
     });
 
@@ -399,7 +403,7 @@ describe('Agent organize-job workbench UI', () => {
       },
     });
 
-    expect(presentations.at(-1)).toEqual({ status: 'Failed', active: false });
+    expect(presentations.at(-1)).toEqual({ status: 'Failed', statusKind: 'failed', active: false });
   });
 
   it('renders a same-generation runtime failure over a durable analyzing phase', async () => {
@@ -421,6 +425,7 @@ describe('Agent organize-job workbench UI', () => {
             onlyFavorite: false,
             onlyUntagged: false,
             onlyArchived: false,
+            onlyOwned: false,
             sortKey: 'starred_at',
             sortDir: 'desc',
           },
@@ -459,7 +464,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(currentPhase(container)).toBeUndefined();
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
-    expect(presentations.at(-1)).toEqual({ status: 'Failed', active: false });
+    expect(presentations.at(-1)).toEqual({ status: 'Failed', statusKind: 'failed', active: false });
   });
 
   it('handles empty and confirmed preflight without exposing protocol details', async () => {
@@ -486,7 +491,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: readyRequest.sessionId,
       requestId: readyRequest.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:ui-confirm'),
+      preflightToken: parsePreflightToken('preflight:ui-confirm'),
       label: 'All live stars',
       count: 290,
     });
@@ -499,11 +504,11 @@ describe('Agent organize-job workbench UI', () => {
     expect(container.textContent?.match(/Pending confirmation · 290 repositories/gu))
       .toHaveLength(1);
     expect(container.querySelector('[data-testid="agent-stopbar"]')).toBeNull();
-    expect(container.innerHTML).not.toContain('preflight:v1:ui-confirm');
+    expect(container.innerHTML).not.toContain('preflight:ui-confirm');
     await click(buttonWithText(container, 'Start analysis'));
     expect(activeOrganizePort().posted).toContainEqual(expect.objectContaining({
       type: 'startBgsmOrganizeJob',
-      preflightToken: 'preflight:v1:ui-confirm',
+      preflightToken: 'preflight:ui-confirm',
     }));
     expect(container.textContent).toContain('Starting analysis');
     await emitMessage({
@@ -529,7 +534,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: request.sessionId,
       requestId: request.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:agent-confirm'),
+      preflightToken: parsePreflightToken('preflight:agent-confirm'),
       label: 'All live stars',
       count: 303,
     });
@@ -547,7 +552,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(starts).toHaveLength(1);
     expect(starts[0]).toEqual(expect.objectContaining({
       requestId: request.requestId,
-      preflightToken: 'preflight:v1:agent-confirm',
+      preflightToken: 'preflight:agent-confirm',
     }));
     expect(container.textContent).toContain('Starting analysis');
     expect(container.querySelector('[data-testid="agent-header-status"]')?.textContent)
@@ -565,7 +570,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: request.sessionId,
       requestId: request.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:deferred-start'),
+      preflightToken: parsePreflightToken('preflight:deferred-start'),
       label: 'All live stars',
       count: 303,
     });
@@ -590,7 +595,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(replacementPort.posted).toContainEqual(expect.objectContaining({
       type: 'startBgsmOrganizeJob',
       requestId: request.requestId,
-      preflightToken: 'preflight:v1:deferred-start',
+      preflightToken: 'preflight:deferred-start',
     }));
   });
 
@@ -664,7 +669,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: request.sessionId,
       requestId: request.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:cancel-before-handoff'),
+      preflightToken: parsePreflightToken('preflight:cancel-before-handoff'),
       label: 'All live stars',
       count: 303,
     });
@@ -689,7 +694,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: request.sessionId,
       requestId: request.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:ordered-confirmation'),
+      preflightToken: parsePreflightToken('preflight:ordered-confirmation'),
       label: 'All live stars',
       count: 303,
     });
@@ -723,7 +728,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: request!.sessionId,
       requestId: request!.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:agent-direct-start'),
+      preflightToken: parsePreflightToken('preflight:agent-direct-start'),
       label: 'All live stars',
       count: 303,
     });
@@ -732,7 +737,7 @@ describe('Agent organize-job workbench UI', () => {
     expect(starts).toHaveLength(1);
     expect(starts[0]).toEqual(expect.objectContaining({
       requestId: request!.requestId,
-      preflightToken: 'preflight:v1:agent-direct-start',
+      preflightToken: 'preflight:agent-direct-start',
       taskInstruction: prompt,
     }));
     expect(container.textContent).toContain('Starting analysis');
@@ -741,7 +746,7 @@ describe('Agent organize-job workbench UI', () => {
   it('keeps analysis failures review-free and resumes only the failed suffix', async () => {
     const container = await mountHarness();
     const request = await requestOrganizePreflight(container);
-    const continuationCursor = parseContinuationCursorToken('cursor:v1:analysis-blocked');
+    const continuationCursor = parseContinuationCursorToken('cursor:analysis-blocked');
     const snapshot = analysisSnapshot(request.controllerId, request.sessionId, 'analysis_blocked');
     const coverage: OrganizeJobRunCoverageSummary = {
       total: 3,
@@ -1019,7 +1024,7 @@ describe('Agent organize-job workbench UI', () => {
     const blocked: OrganizeJobRunSnapshot = {
       ...base,
       terminalReason: 'analysis_failed',
-      continuationCursor: parseContinuationCursorToken('cursor:v1:mixed-authority-discard'),
+      continuationCursor: parseContinuationCursorToken('cursor:mixed-authority-discard'),
       coverage,
     };
     await emitMessage({ type: 'bgsmOrganizeJobRunSnapshot', snapshot: blocked });
@@ -1054,7 +1059,7 @@ describe('Agent organize-job workbench UI', () => {
     const request = await requestOrganizePreflight(container);
     const total = 319;
     const retryFrom = 300;
-    const continuationCursor = parseContinuationCursorToken('cursor:v1:failed-suffix-progress');
+    const continuationCursor = parseContinuationCursorToken('cursor:failed-suffix-progress');
     const parentBase = analysisSnapshot(
       request.controllerId,
       request.sessionId,
@@ -1217,7 +1222,7 @@ describe('Agent organize-job workbench UI', () => {
     expect([...container.querySelectorAll('button')].some((button) => button.textContent?.includes('Continue remaining')))
       .toBe(false);
 
-    const continuationCursor = parseContinuationCursorToken('cursor:v1:ui-blocked-child');
+    const continuationCursor = parseContinuationCursorToken('cursor:ui-blocked-child');
     const childSnapshot: OrganizeJobRunSnapshot = {
       ...parent,
       runId: childRunId,
@@ -1267,7 +1272,7 @@ describe('Agent organize-job workbench UI', () => {
         reason: 'requested_output_tokens',
         budget: parent.budget,
         usage: parent.usage,
-        continuationCursor: parseContinuationCursorToken('cursor:v1:auto-continuation'),
+        continuationCursor: parseContinuationCursorToken('cursor:auto-continuation'),
       },
     });
 
@@ -1327,7 +1332,7 @@ describe('Agent organize-job workbench UI', () => {
         unchanged: 74,
         analysisFailed: 1,
       },
-      continuationCursor: parseContinuationCursorToken('cursor:v1:ui-durable-generation'),
+      continuationCursor: parseContinuationCursorToken('cursor:ui-durable-generation'),
     };
     const parentPresentation = presentationFor(parent, {
       revision: 20,
@@ -2065,6 +2070,114 @@ describe('Agent organize-job workbench UI', () => {
     expect(currentPhase(container)).toBeUndefined();
   });
 
+  it('keeps proposal-row expansion and edit drafts local while committing review decisions upward', async () => {
+    const proposalId = parseProposalId('proposal:v1:ui-row-state');
+    const firstRowId = `${proposalId}:row:0`;
+    const secondRowId = `${proposalId}:row:1`;
+    const onToggleRow = vi.fn();
+    const onInsertCorrection = vi.fn();
+    const container = mountReact(
+      <AgentProposalReviewCard
+        proposal={{
+          proposalId,
+          actionableCount: 2,
+          nonActionableCount: 0,
+          review: {
+            version: 1,
+            proposalId,
+            runId: parseRunId('run:v1:ui-row-state'),
+            generation: 1,
+            rows: [
+              {
+                proposalRowId: firstRowId,
+                frozenIndex: 0,
+                repositoryId: 'owner/repo-0',
+                proposedActions: [{ kind: 'add_existing_tag', tag: 'TypeScript', evidence: 'Topic' }],
+                preselected: true,
+              },
+              {
+                proposalRowId: secondRowId,
+                frozenIndex: 1,
+                repositoryId: 'owner/repo-1',
+                proposedActions: [{ kind: 'propose_new_tag', tag: 'CLI', evidence: 'Tooling' }],
+                preselected: true,
+              },
+            ],
+          },
+        }}
+        selectedProposalRowIds={new Set([firstRowId, secondRowId])}
+        reviewEditable
+        applyInFlight={false}
+        applySelectedTotal={2}
+        coveredRepositoryCount={2}
+        onToggleRow={onToggleRow}
+        onSelectAll={vi.fn()}
+        onClear={vi.fn()}
+        onApplySelected={vi.fn()}
+        onInsertCorrection={onInsertCorrection}
+      />,
+      mountedRoots,
+    );
+    const rows = [...container.querySelectorAll<HTMLElement>('[data-testid="organize-job-proposal-row"]')];
+    const [firstRow, secondRow] = rows;
+    if (!firstRow || !secondRow) throw new Error('Expected two proposal review rows.');
+
+    await click(buttonWithText(firstRow, 'Show review details'));
+    expect(firstRow.textContent).toContain(`proposalRowId: ${firstRowId}`);
+    expect(secondRow.textContent).not.toContain(`proposalRowId: ${secondRowId}`);
+    await click(buttonWithText(secondRow, 'Show review details'));
+    await click(buttonWithText(firstRow, 'Hide review details'));
+    expect(firstRow.textContent).not.toContain(`proposalRowId: ${firstRowId}`);
+    expect(secondRow.textContent).toContain(`proposalRowId: ${secondRowId}`);
+
+    await click(buttonWithText(firstRow, 'Edit tag'));
+    const firstInput = firstRow.querySelector<HTMLInputElement>('input[aria-label="Edit tag TypeScript for owner/repo-0"]');
+    if (!firstInput) throw new Error('First row edit input was not rendered.');
+    await setInputValue(firstInput, '');
+    await click(buttonWithText(firstRow, 'Save correction'));
+    expect(firstRow.querySelector('[role="alert"]')?.textContent).toBe('Enter a non-empty tag.');
+
+    await click(buttonWithText(secondRow, 'Edit tag'));
+    const secondInput = secondRow.querySelector<HTMLInputElement>('input[aria-label="Edit tag CLI for owner/repo-1"]');
+    if (!secondInput) throw new Error('Second row edit input was not rendered.');
+    await setInputValue(secondInput, 'Command line');
+    await click(buttonWithText(firstRow, 'Cancel edit'));
+    expect(firstRow.querySelector('input')).toBeNull();
+    expect(firstRow.querySelector('[role="alert"]')).toBeNull();
+    expect(secondRow.querySelector<HTMLInputElement>('input')?.value).toBe('Command line');
+    expect(secondRow.textContent).toContain(`proposalRowId: ${secondRowId}`);
+
+    await click(buttonWithText(secondRow, 'Save correction'));
+    expect(secondRow.textContent).toContain('Rejected · Corrected to Command line');
+    expect(onToggleRow).toHaveBeenNthCalledWith(1, secondRowId);
+    await click(buttonWithText(secondRow, 'Ask to revise'));
+    expect(onInsertCorrection).toHaveBeenLastCalledWith(
+      'For owner/repo-1, do not apply the reviewed tag "CLI". Re-analyze that repository with the corrected tag intent "Command line" and return a fresh review row before any apply.',
+    );
+    await click(buttonWithText(container, 'Ask to revise rejected (1)'));
+    expect(onInsertCorrection).toHaveBeenLastCalledWith(
+      'Revise this tag review before any apply. Keep the frozen scope unchanged, skip rejected rows, and re-analyze only the corrected intent. Rejections/corrections:\nowner/repo-1: Corrected to Command line',
+    );
+
+    await click(buttonWithText(secondRow, 'Undo reject'));
+    expect(secondRow.textContent).not.toContain('Corrected to Command line');
+    expect(container.textContent).not.toContain('Ask to revise rejected (1)');
+    expect(secondRow.textContent).toContain(`proposalRowId: ${secondRowId}`);
+
+    await click(buttonWithText(firstRow, 'Reject'));
+    await click(buttonWithText(firstRow, 'Wrong repository'));
+    expect(firstRow.textContent).toContain('Rejected · Wrong repository');
+    expect(onToggleRow).toHaveBeenNthCalledWith(2, firstRowId);
+    await click(buttonWithText(firstRow, 'Ask to revise'));
+    expect(onInsertCorrection).toHaveBeenLastCalledWith(
+      'For owner/repo-0, reject the current suggestion (Wrong repository). Re-analyze that repository with this correction in mind and return a fresh review row before any apply.',
+    );
+    await click(buttonWithText(container, 'Ask to revise rejected (1)'));
+    expect(onInsertCorrection).toHaveBeenLastCalledWith(
+      'Revise this tag review before any apply. Keep the frozen scope unchanged, skip rejected rows, and re-analyze only the corrected intent. Rejections/corrections:\nowner/repo-0: Wrong repository',
+    );
+  });
+
   it('reviews, applies, and renders receipts only from durable job pages', async () => {
     const container = await mountHarness();
     const preflight = await requestOrganizePreflight(container);
@@ -2074,7 +2187,7 @@ describe('Agent organize-job workbench UI', () => {
       sessionId: preflight.sessionId,
       requestId: preflight.requestId,
       status: 'ready',
-      preflightToken: parsePreflightToken('preflight:v1:durable-review'),
+      preflightToken: parsePreflightToken('preflight:durable-review'),
       label: 'All live stars',
       count: 102,
     });
@@ -2722,6 +2835,7 @@ function Harness() {
       onlyFavorite: false,
       onlyUntagged: false,
       onlyArchived: false,
+      onlyOwned: false,
       sortKey: 'starred_at',
       sortDir: 'desc',
     },
@@ -2853,7 +2967,7 @@ function analysisSnapshot(
       filterSnapshot: '{}',
       repositoryIds: Array.from({ length: count }, (_, index) => `owner/repo-${index}`),
       capturedAt: 1,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${'a'.repeat(43)}`),
+      fingerprint: parseScopeFingerprint(`fs:${'a'.repeat(43)}`),
     })),
     budget: createProductionRunBudget(),
     usage: createEmptyRunBudgetUsage(),
@@ -2865,7 +2979,7 @@ function analysisSnapshot(
 
 async function enterBlockedAnalysis(container: HTMLElement, suffix: string) {
   const request = await requestOrganizePreflight(container);
-  const continuationCursor = parseContinuationCursorToken(`cursor:v1:${suffix}`);
+  const continuationCursor = parseContinuationCursorToken(`cursor:${suffix}`);
   const base = analysisSnapshot(request.controllerId, request.sessionId, 'analysis_blocked');
   const coverage: OrganizeJobRunCoverageSummary = {
     total: 3,
@@ -3108,6 +3222,16 @@ async function waitForProgress(container: HTMLElement, expected: number) {
       await new Promise((resolve) => window.setTimeout(resolve, 10));
     });
   }
+}
+
+async function setInputValue(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    valueSetter?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await Promise.resolve();
+  });
 }
 
 async function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {

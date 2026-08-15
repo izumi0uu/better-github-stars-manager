@@ -1,4 +1,4 @@
-import type { TraceArtifactV1 } from './contracts';
+import type { TraceArtifact } from './contracts';
 
 export type TraceArtifactJsonChunk = Readonly<{
   jsonChunk: string;
@@ -20,7 +20,7 @@ export type AsyncTraceArtifactJsonReader = Readonly<{
  * JSON string or an array containing every output chunk.
  */
 export function createTraceArtifactJsonReader(
-  artifact: TraceArtifactV1,
+  artifact: TraceArtifact,
 ): TraceArtifactJsonReader {
   const segments = traceArtifactJsonSegments(artifact);
   let pending = '';
@@ -123,7 +123,7 @@ export function createAsyncTraceArtifactJsonReader(
   });
 }
 
-function* traceArtifactJsonSegments(artifact: TraceArtifactV1): Generator<string> {
+function* traceArtifactJsonSegments(artifact: TraceArtifact): Generator<string> {
   yield '{"schemaVersion":';
   yield JSON.stringify(artifact.schemaVersion);
   yield ',"exporterVersion":';

@@ -1754,7 +1754,7 @@ function publishEvidence(evidence, { silent = false } = {}) {
   if (directory) {
     publishRuntimeEvidence({
       directory,
-      filename: 'agent-ui-history.schema-v1.json',
+      filename: 'agent-ui-history.schema.json',
       evidence,
       ...options,
     });

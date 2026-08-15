@@ -8,4 +8,6 @@ declare module '*.css?inline' {
 declare module '*.css';
 
 declare const __GSM_DEV__: boolean;
+declare const __GSM_DEV_UI_VISIBLE__: boolean;
 declare const __GSM_VERSION_HASH__: string;
+declare const __GSM_STORE_TARGET__: string;

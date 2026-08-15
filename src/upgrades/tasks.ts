@@ -22,12 +22,27 @@ async function needsRepoDataSyncBackfill(): Promise<boolean> {
   return !!firstMissing;
 }
 
+/** Owner avatars are canonical GitHub metadata and need complete live-library coverage. */
+async function needsRepoOwnerAvatarBackfill(): Promise<boolean> {
+  const firstMissing = await db.stars
+    .toCollection()
+    .filter((star) => !star.tombstone && star.owner_avatar_url == null)
+    .first();
+  return !!firstMissing;
+}
+
 export const backfillTasks: Record<BackfillId, BackfillTaskDef> = {
-  repo_data_sync_v1: {
-    id: 'repo_data_sync_v1',
+  repo_data_sync: {
+    id: 'repo_data_sync',
     kind: 'full_sync',
     severity: 'notice',
     detectNeed: needsRepoDataSyncBackfill,
+  },
+  repo_owner_avatar: {
+    id: 'repo_owner_avatar',
+    kind: 'full_sync',
+    severity: 'notice',
+    detectNeed: needsRepoOwnerAvatarBackfill,
   },
 };
 

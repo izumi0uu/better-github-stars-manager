@@ -8,7 +8,7 @@ describe('layout edit interaction lock invariants', () => {
     const source = read('src/ui/ManagerPanel.tsx');
 
     expect(source).toMatch(/const\s+interactionLocked\s*=\s*editingLayout;/);
-    expect(source).toMatch(/useLayoutEffect\(\(\)\s*=>\s*\{\s*if \(!editingLayout\) return;\s*setSelected\(null\);\s*setOpenUnstarFullName\(null\);\s*\}, \[editingLayout\]\);/);
+    expect(source).toMatch(/useLayoutEffect\(\(\)\s*=>\s*\{\s*if \(!editingLayout\) return;\s*setSelected\(null\);\s*closeUnstarPopover\(\);\s*\}, \[closeUnstarPopover, editingLayout\]\);/);
     expect(source).toMatch(/shouldIgnorePanelShortcut\(interactionLocked,\s*e\.target\)/);
     expect(source).toMatch(/<ActiveFilterChips[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
     expect(source).toMatch(/<FloatingLocaleToggle[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
@@ -20,7 +20,7 @@ describe('layout edit interaction lock invariants', () => {
     const motion = read('src/ui/styles/motion.css');
 
     expect(source).toContain('key={helperInfoKey(info, unstarFeedback)}');
-    expect(source).toContain('gsm-helper-text-update inline-block rounded-sm px-1 transition-[background-color,opacity,transform] duration-150');
+    expect(source).toContain('gsm-helper-text-update inline-block min-w-0 rounded-sm px-1 transition-[background-color,opacity,transform] duration-150');
     expect(motion).toContain('.gsm-helper-text-update');
     expect(motion).toContain('gsm-flash-col var(--gsm-duration-flash) var(--gsm-ease-linearized) var(--gsm-delay-flash);');
   });

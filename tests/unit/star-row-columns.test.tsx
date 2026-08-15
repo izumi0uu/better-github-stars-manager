@@ -2,6 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { StarRow } from '@/ui/components/StarRow';
 import type { Star } from '@/types';
+import { createRepositorySearchMatcher } from '@/search/repository-search';
+import { fakeTag } from './test-utils';
 
 function fakeStar(createdAt: string | null): Star {
   return {
@@ -21,12 +23,34 @@ function fakeStar(createdAt: string | null): Star {
   };
 }
 
+function renderRepositoryAvatar(
+  star: Star,
+  showRepositoryAvatar: boolean,
+  showRepositoryOwner = true,
+): string {
+  return renderToStaticMarkup(
+    <StarRow
+      star={star}
+      showRepositoryOwner={showRepositoryOwner}
+      showRepositoryAvatar={showRepositoryAvatar}
+      favorite={false}
+      favoriteBusy={false}
+      selectedTags={[]}
+      onToggleTag={vi.fn()}
+      onToggleFavorite={vi.fn(async () => undefined)}
+      selected={false}
+      onSelect={vi.fn()}
+      columns={['repository']}
+      gridTemplateColumns="180px"
+      flashedColumn={null}
+    />,
+  );
+}
+
 function renderCreatedColumn(createdAt: string | null): string {
   return renderToStaticMarkup(
     <StarRow
       star={fakeStar(createdAt)}
-      tags={[]}
-      hasNotes={false}
       favorite={false}
       favoriteBusy={false}
       selectedTags={[]}
@@ -45,10 +69,8 @@ function renderRepositoryColumn(searchQuery: string, showRepositoryOwner = true)
   return renderToStaticMarkup(
     <StarRow
       star={fakeStar('2020-01-02T12:00:00Z')}
-      searchQuery={searchQuery}
+      matchRepositoryName={createRepositorySearchMatcher(searchQuery).matchName}
       showRepositoryOwner={showRepositoryOwner}
-      tags={[]}
-      hasNotes={false}
       favorite={false}
       favoriteBusy={false}
       selectedTags={[]}
@@ -64,12 +86,60 @@ function renderRepositoryColumn(searchQuery: string, showRepositoryOwner = true)
 }
 
 describe('star row column rendering', () => {
+  it('does not create an avatar image while the layout option is disabled', () => {
+    const markup = renderRepositoryAvatar({
+      ...fakeStar('2020-01-02T12:00:00Z'),
+      owner_avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4',
+    }, false);
+
+    expect(markup).not.toContain('data-repository-avatar');
+    expect(markup).not.toContain('<img');
+  });
+
+  it('layers a deterministic initial fallback below each lazy async avatar', () => {
+    const markup = renderRepositoryAvatar({
+      ...fakeStar('2020-01-02T12:00:00Z'),
+      owner_avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4',
+    }, true);
+
+    expect(markup).toContain('data-repository-avatar-slot');
+    expect(markup).toContain('data-repository-avatar-fallback');
+    expect(markup).toContain('data-avatar-color=');
+    expect(markup).toContain('>R</span>');
+    expect(markup).toContain('data-repository-avatar');
+    expect(markup).toContain('loading="lazy"');
+    expect(markup).toContain('decoding="async"');
+    expect(markup.indexOf('data-repository-avatar-fallback')).toBeLessThan(markup.indexOf('data-repository-avatar="true"'));
+    expect(markup.indexOf('data-repository-avatar-slot')).toBeLessThan(markup.indexOf('owner/repo'));
+  });
+
+  it('renders the uppercase repository initial without an image when metadata is missing', () => {
+    const markup = renderRepositoryAvatar(fakeStar('2020-01-02T12:00:00Z'), true, false);
+
+    expect(markup).toContain('data-repository-avatar-slot');
+    expect(markup).toContain('data-repository-avatar-fallback');
+    expect(markup).toContain('>R</span>');
+    expect(markup).not.toContain('<img');
+  });
+
+  it('maps repository identities to stable varied fallback colors', () => {
+    const first = renderRepositoryAvatar(fakeStar('2020-01-02T12:00:00Z'), true);
+    const repeated = renderRepositoryAvatar(fakeStar('2020-01-02T12:00:00Z'), true);
+    const different = renderRepositoryAvatar({
+      ...fakeStar('2020-01-02T12:00:00Z'),
+      full_name: 'owner/another',
+    }, true);
+    const color = (markup: string) => markup.match(/data-avatar-color="([^"]+)"/)?.[1];
+
+    expect(color(first)).toBeDefined();
+    expect(color(repeated)).toBe(color(first));
+    expect(color(different)).not.toBe(color(first));
+  });
+
   it('applies the shared table min width when provided', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={fakeStar('2020-01-02T12:00:00Z')}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}
@@ -140,13 +210,34 @@ describe('star row column rendering', () => {
     expect(markup).not.toContain('data-search-match');
     expect(markup).toContain('aria-label="owner/repo">repo</span>');
   });
+  it('renders a non-filtering personal fork row badge from repository metadata', () => {
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={{ ...fakeStar('2020-01-02T12:00:00Z'), fork: true }}
+        tag={fakeTag({ manualTags: ['topic'], notes: '' })}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['repository', 'tags']}
+        gridTemplateColumns="180px 140px"
+        flashedColumn={null}
+      />,
+    );
+
+    expect(markup).toContain('data-row-badge="fork"');
+    expect(markup).toContain('Fork');
+    expect(markup).toContain('data-inline-tag-measure="tag"');
+    expect(markup).not.toMatch(/<button[^>]*>[\s\S]*Fork[\s\S]*<\/button>/);
+  });
 
   it('uses the edit-layout star alignment in the default browse layout', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 }}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}
@@ -170,8 +261,6 @@ describe('star row column rendering', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234567 }}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}
@@ -199,8 +288,6 @@ describe('star row column rendering', () => {
     const markup = renderToStaticMarkup(
       <StarRow
         star={{ ...fakeStar('2020-01-02T12:00:00Z'), stargazers_count: 1234 }}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}
@@ -220,4 +307,28 @@ describe('star row column rendering', () => {
     expect(markup).not.toContain('justify-end');
   });
 
+});
+
+describe('owned public repository star state', () => {
+  it('shows an honest disabled state instead of an Unstar action', () => {
+    const markup = renderToStaticMarkup(
+      <StarRow
+        star={{ ...fakeStar('2024-01-01T00:00:00Z'), viewer_has_starred: false }}
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={() => {}}
+        onToggleFavorite={async () => {}}
+        selected={false}
+        onSelect={() => {}}
+        columns={['starAction']}
+        gridTemplateColumns="32px"
+        flashedColumn={null}
+        onConfirmUnstar={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('Owned public repository · not starred');
+    expect(markup).not.toContain('Unstar owner/repo');
+  });
 });

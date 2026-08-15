@@ -14,7 +14,7 @@ export type OnboardingStage =
   | 'coach'
   | 'done';
 
-export type BackfillId = 'repo_data_sync_v1';
+export type BackfillId = 'repo_data_sync' | 'repo_owner_avatar';
 
 export type BackfillStatus =
   | 'pending'
@@ -46,6 +46,7 @@ export interface LibraryViewPrefs {
     onlyFavorite: boolean;
     onlyUntagged: boolean;
     onlyArchived: boolean;
+    onlyOwned: boolean;
   };
   sort: {
     sortKey: LibraryViewSortKey;
@@ -53,7 +54,7 @@ export interface LibraryViewPrefs {
   };
 }
 
-/** Star metadata stored locally. */
+/** Repository metadata stored locally for a GitHub star or an owned public repository. */
 export interface Star {
   full_name: string;
   html_url: string;
@@ -65,6 +66,10 @@ export interface Star {
   created_at: string | null; // ISO, repo creation time
   fork: boolean;
   archived: boolean;
+  /** Canonical GitHub repository-owner avatar URL. Missing on legacy or unavailable rows. */
+  owner_avatar_url?: string;
+  /** Whether the authenticated account currently stars this repository. Missing on legacy rows means starred. */
+  viewer_has_starred?: boolean;
   starred_at: string;
   /** True once a full rescan no longer sees this repo in /user/starred. */
   tombstone: boolean;
@@ -321,15 +326,38 @@ export interface AgentProviderConfig {
   credentialRevision: string | null;
   capability: AgentProviderCapabilityRecord | null;
 }
-export type WatchCredentialSource = 'main' | 'dedicated' | null;
+export type GitHubCredentialStatus = 'ready' | 'reauthorization_required' | null;
+export type WatchCollapsedRepositorySignatures = Record<string, string>;
+export type StoreRatingPromptStatus =
+  | 'tracking'
+  | 'snoozed'
+  | 'disabled'
+  | 'store_opened'
+  | 'exhausted';
+
+export interface StoreRatingPromptState {
+  version: 1;
+  status: StoreRatingPromptStatus;
+  activeLocalDays: readonly string[];
+  meaningfulActionCount: number;
+  exposureCount: number;
+  snoozeUntil: string | null;
+}
+
 
 /** Light config kept in chrome.storage.local. */
 export interface Config {
   tokenEncrypted: string | null;
   tokenCryptoMeta: CryptoMeta | null;
-  watchNotificationsTokenEncrypted: string | null;
-  watchNotificationsTokenCryptoMeta: CryptoMeta | null;
-  watchCredentialSource: WatchCredentialSource;
+  githubCredentialStatus: GitHubCredentialStatus;
+  /** @deprecated Legacy persisted fields are ignored by runtime normalization. */
+  watchNotificationsTokenEncrypted?: string | null;
+  /** Legacy persisted Watch fields retained only for fixture decoding. */
+  watchNotificationsTokenCryptoMeta?: CryptoMeta | null;
+  watchCredentialSource?: 'main' | 'dedicated' | null;
+  watchCollapsedRepositories: WatchCollapsedRepositorySignatures;
+  /** Whether the single Classic PAT has proven optional Notifications access. */
+  watchNotificationsEnabled: boolean;
   agentProvider: AgentProviderConfig;
   /** Explicit Agent data-sharing acknowledgement for one disclosure/provider/origin tuple. */
   agentDataDisclosureAcceptance: AgentDataDisclosureAcceptance | null;
@@ -350,6 +378,8 @@ export interface Config {
   seenTooltips: number;
   /** Whether the one-time Auto Tags choice has already been answered. */
   autoTagAgentPromptSeen: boolean;
+  /** Installation-local eligibility, cooldown, and terminal state for store-rating reminders. */
+  storeRatingPrompt: StoreRatingPromptState;
   /** Legacy max topic-derived tags per repo. Read as compatibility input only. */
   autoTagLimit: number;
   /** Max topic-derived tags per repo for automated organization. */
@@ -368,6 +398,7 @@ export interface Config {
     hidden: string[];
     widths?: Partial<Record<ColumnId, number>>;
     showRepositoryOwner?: boolean;
+    showRepositoryAvatar?: boolean;
   } | null;
   /** One-shot migration flag: clear auto-derived `language` tags (now that
    *  language is a first-class filter, not a tag). Set true after the migration

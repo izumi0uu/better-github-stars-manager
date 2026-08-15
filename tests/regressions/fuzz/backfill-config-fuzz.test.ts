@@ -12,7 +12,8 @@ const FILE = 'tests/regressions/fuzz/backfill-config-fuzz.test.ts';
 const PREFIX = 'BACKFILL_CONFIG_FUZZ';
 const SUITE = 'backfill/config fuzz';
 const CASES = fuzzCases(PREFIX, '20260705-backfill', 100);
-const backfillId = 'repo_data_sync_v1' as const;
+const backfillId = 'repo_data_sync' as const;
+const avatarBackfillId = 'repo_owner_avatar' as const;
 
 beforeEach(async () => {
   await db.delete();
@@ -29,20 +30,38 @@ describe('backfill/config seeded fuzz', () => {
       const rng = createRng(CASES.seed, caseIndex);
       const existing = makeBackfillMap(rng);
       const liveRowsMissingCreatedAt = rng.bool();
-      await seedStars(rng, liveRowsMissingCreatedAt);
+      const liveRowsMissingAvatar = rng.bool();
+      await seedStars(rng, liveRowsMissingCreatedAt, liveRowsMissingAvatar);
 
       const keepRunning = rng.bool();
       const actual = await reconcileBackfillMap(existing, { keepRunning });
       assertReconcileMatches(actual, {
         existing,
         liveRowsMissingCreatedAt,
+        liveRowsMissingAvatar,
         keepRunning,
         caseIndex,
       });
-      const expectedStatus = expectedStatusFor(existing, liveRowsMissingCreatedAt, keepRunning);
+      const expectedStatus = expectedStatusFor(
+        existing,
+        backfillId,
+        liveRowsMissingCreatedAt,
+        keepRunning,
+      );
+      const expectedAvatarStatus = expectedStatusFor(
+        existing,
+        avatarBackfillId,
+        liveRowsMissingAvatar,
+        keepRunning,
+      );
+      const expectedActive = isActive(expectedStatus)
+        ? backfillId
+        : isActive(expectedAvatarStatus)
+          ? avatarBackfillId
+          : null;
       assert.equal(
         selectActiveBackfillId(actual),
-        expectedStatus === 'running' || expectedStatus === 'failed' || expectedStatus === 'pending' ? backfillId : null,
+        expectedActive,
         fuzzFailure({
           suite: SUITE,
           prefix: PREFIX,
@@ -50,9 +69,9 @@ describe('backfill/config seeded fuzz', () => {
           caseIndex,
           file: FILE,
           invariant: 'active backfill selection matches model',
-          expected: expectedStatus,
-          actual: selectActiveBackfillId(actual),
-          trace: { existing, liveRowsMissingCreatedAt, keepRunning, actual },
+          expected: { repo: expectedStatus, avatar: expectedAvatarStatus, active: expectedActive },
+          actual: { states: actual, active: selectActiveBackfillId(actual) },
+          trace: { existing, liveRowsMissingCreatedAt, liveRowsMissingAvatar, keepRunning },
         }),
       );
     });
@@ -161,17 +180,19 @@ describe('backfill/config seeded fuzz', () => {
 });
 
 function makeBackfillMap(rng: SeededRng): BackfillMap {
-  if (rng.bool(0.25)) return {};
-  const status = rng.pick(['pending', 'running', 'done', 'failed', 'deferred'] as const);
-  return {
-    [backfillId]: {
+  const out: BackfillMap = {};
+  for (const id of [backfillId, avatarBackfillId] as const) {
+    if (rng.bool(0.25)) continue;
+    const status = rng.pick(['pending', 'running', 'done', 'failed', 'deferred'] as const);
+    out[id] = {
       status,
       queuedAt: rng.maybe(iso(rng.int(0, 4)), 0.85),
       lastAttemptAt: rng.maybe(iso(rng.int(5, 9)), 0.7),
       completedAt: status === 'done' ? rng.maybe(iso(rng.int(10, 14)), 0.85) : null,
       error: status === 'failed' || status === 'deferred' ? `seeded-${status}` : null,
-    },
-  };
+    };
+  }
+  return out;
 }
 
 function assertReconcileMatches(
@@ -179,46 +200,48 @@ function assertReconcileMatches(
   context: {
     existing: BackfillMap;
     liveRowsMissingCreatedAt: boolean;
+    liveRowsMissingAvatar: boolean;
     keepRunning: boolean;
     caseIndex: number;
   },
 ): void {
-  const actualState = actual[backfillId];
-  const existing = context.existing[backfillId];
-  const expectedStatus = expectedStatusFor(context.existing, context.liveRowsMissingCreatedAt, context.keepRunning);
-  assert.ok(actualState, fuzzFailure({
-    suite: SUITE,
-    prefix: PREFIX,
-    seed: CASES.seed,
-    caseIndex: context.caseIndex,
-    file: FILE,
-    invariant: 'reconcileBackfillMap returns known backfill state',
-    trace: context,
-  }));
-  assert.equal(actualState.status, expectedStatus, fuzzFailure({
-    suite: SUITE,
-    prefix: PREFIX,
-    seed: CASES.seed,
-    caseIndex: context.caseIndex,
-    file: FILE,
-    invariant: 'reconciled status matches model',
-    expected: expectedStatus,
-    actual: actualState,
-    trace: context,
-  }));
+  assertBackfillStateMatches(actual, backfillId, context.liveRowsMissingCreatedAt, context);
+  assertBackfillStateMatches(actual, avatarBackfillId, context.liveRowsMissingAvatar, context);
+}
 
-  if (expectedStatus === existing?.status && (existing.status === 'failed' || existing.status === 'deferred' || existing.status === 'running')) {
-    assert.deepEqual(actualState, existing, fuzzFailure({
-      suite: SUITE,
-      prefix: PREFIX,
-      seed: CASES.seed,
-      caseIndex: context.caseIndex,
-      file: FILE,
-      invariant: 'terminal/deferred/running evidence is preserved',
-      expected: existing,
-      actual: actualState,
-      trace: context,
-    }));
+function assertBackfillStateMatches(
+  actual: BackfillMap,
+  id: typeof backfillId | typeof avatarBackfillId,
+  needs: boolean,
+  context: {
+    existing: BackfillMap;
+    liveRowsMissingCreatedAt: boolean;
+    liveRowsMissingAvatar: boolean;
+    keepRunning: boolean;
+    caseIndex: number;
+  },
+): void {
+  const actualState = actual[id];
+  const existing = context.existing[id];
+  const expectedStatus = expectedStatusFor(context.existing, id, needs, context.keepRunning);
+  const failure = (invariant: string, expected?: unknown) => fuzzFailure({
+    suite: SUITE,
+    prefix: PREFIX,
+    seed: CASES.seed,
+    caseIndex: context.caseIndex,
+    file: FILE,
+    invariant,
+    expected,
+    actual: actualState,
+    trace: { id, needs, ...context },
+  });
+
+  assert.ok(actualState, failure('reconcileBackfillMap returns known backfill state'));
+  assert.equal(actualState.status, expectedStatus, failure('reconciled status matches model', expectedStatus));
+
+  if (expectedStatus === existing?.status
+    && (existing.status === 'failed' || existing.status === 'deferred' || existing.status === 'running')) {
+    assert.deepEqual(actualState, existing, failure('terminal/deferred/running evidence is preserved', existing));
     return;
   }
 
@@ -238,8 +261,13 @@ function assertReconcileMatches(
   assert.ok(actualState.queuedAt, 'pending state keeps or creates queuedAt');
 }
 
-function expectedStatusFor(input: BackfillMap, needs: boolean, keepRunning: boolean): BackfillState['status'] {
-  const existing = input[backfillId];
+function expectedStatusFor(
+  input: BackfillMap,
+  id: typeof backfillId | typeof avatarBackfillId,
+  needs: boolean,
+  keepRunning: boolean,
+): BackfillState['status'] {
+  const existing = input[id];
   if (existing?.status === 'done') return 'done';
   if (!needs) return 'done';
   if (existing?.status === 'failed' || existing?.status === 'deferred') return existing.status;
@@ -247,7 +275,15 @@ function expectedStatusFor(input: BackfillMap, needs: boolean, keepRunning: bool
   return 'pending';
 }
 
-async function seedStars(rng: SeededRng, includeMissingCreatedAt: boolean): Promise<void> {
+function isActive(status: BackfillState['status']): boolean {
+  return status === 'running' || status === 'failed' || status === 'pending';
+}
+
+async function seedStars(
+  rng: SeededRng,
+  includeMissingCreatedAt: boolean,
+  includeMissingAvatar: boolean,
+): Promise<void> {
   const stars: Star[] = [];
   const count = rng.int(0, 10);
   for (let index = 0; index < count; index++) {
@@ -260,6 +296,9 @@ async function seedStars(rng: SeededRng, includeMissingCreatedAt: boolean): Prom
       topics: [],
       pushed_at: iso(index),
       created_at: includeMissingCreatedAt && index === 0 ? null : iso(index + 20),
+      owner_avatar_url: includeMissingAvatar && index === 0
+        ? undefined
+        : `https://avatars.githubusercontent.com/u/${index + 1}?v=4`,
       fork: false,
       archived: false,
       starred_at: iso(index + 40),
@@ -277,6 +316,24 @@ async function seedStars(rng: SeededRng, includeMissingCreatedAt: boolean): Prom
       topics: [],
       pushed_at: iso(1),
       created_at: null,
+      owner_avatar_url: includeMissingAvatar ? undefined : 'https://avatars.githubusercontent.com/u/999?v=4',
+      fork: false,
+      archived: false,
+      starred_at: iso(2),
+      tombstone: false,
+      synced_at: iso(3),
+    });
+  }
+  if (includeMissingAvatar && !stars.some((star) => !star.tombstone && star.owner_avatar_url == null)) {
+    stars.push({
+      full_name: 'owner/missing-avatar',
+      html_url: 'https://github.com/owner/missing-avatar',
+      description: '',
+      language: null,
+      stargazers_count: 0,
+      topics: [],
+      pushed_at: iso(1),
+      created_at: iso(20),
       fork: false,
       archived: false,
       starred_at: iso(2),

@@ -5,7 +5,7 @@ import {
   parseTraceArtifactJson,
   validateTraceArtifact,
   type DevTraceEvent,
-  type TraceArtifactV1,
+  type TraceArtifact,
 } from '@/agent-observability';
 
 function event(sequence = 1): DevTraceEvent {
@@ -34,7 +34,7 @@ function event(sequence = 1): DevTraceEvent {
   });
 }
 
-function artifact(events: readonly DevTraceEvent[] = [event()]): TraceArtifactV1 {
+function artifact(events: readonly DevTraceEvent[] = [event()]): TraceArtifact {
   return {
     schemaVersion: 1,
     exporterVersion: '1.0.0',

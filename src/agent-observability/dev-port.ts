@@ -144,7 +144,7 @@ async function handleEvidence(
       await activeTransfer?.reader.cancel();
       const source = db.streamArtifactJson({
         scope,
-        exporterVersion: 'bgsm-agent-dev-port-v1',
+        exporterVersion: 'bgsm-agent-dev-port',
         build: {
           versionHash: VERSION_HASH,
           extensionVersion: extensionVersion(),

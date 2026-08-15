@@ -1,10 +1,10 @@
 import { canonicalJson, sha256Base64Url } from '@/agent-harness/canonical-json';
 import type { Star, Tag, TagMeta } from '@/types';
 import {
-  parseSourceFingerprintV1,
-  parseTaxonomyFingerprintV1,
-  type SourceFingerprintV1,
-  type TaxonomyFingerprintV1,
+  parseSourceFingerprint,
+  parseTaxonomyFingerprint,
+  type SourceFingerprint,
+  type TaxonomyFingerprint,
 } from './proposal';
 
 export type SourceFingerprintInput = Readonly<{
@@ -25,12 +25,12 @@ export const MAX_FINGERPRINT_TAXONOMY_ENTRIES = 500;
 export const MAX_FINGERPRINT_NAME_BYTES = 256;
 export const MAX_FINGERPRINT_DIMENSION_BYTES = 256;
 
-export function sourceFingerprintV1(input: SourceFingerprintInput): Promise<SourceFingerprintV1>;
-export function sourceFingerprintV1(star: Star, tag?: Tag | null): Promise<SourceFingerprintV1>;
-export async function sourceFingerprintV1(
+export function sourceFingerprint(input: SourceFingerprintInput): Promise<SourceFingerprint>;
+export function sourceFingerprint(star: Star, tag?: Tag | null): Promise<SourceFingerprint>;
+export async function sourceFingerprint(
   inputOrStar: SourceFingerprintInput | Star,
   tag?: Tag | null,
-): Promise<SourceFingerprintV1> {
+): Promise<SourceFingerprint> {
   const input = 'star' in inputOrStar ? inputOrStar : { star: inputOrStar, tag: tag ?? null };
   const tuple = Object.freeze([
     1,
@@ -56,20 +56,20 @@ export async function sourceFingerprintV1(
       input.tag?.dismissedAutoTagsMtime ?? null,
     ]),
   ]);
-  return parseSourceFingerprintV1(`sf:v1:${await sha256Base64Url(canonicalJson(tuple))}`);
+  return parseSourceFingerprint(`sf:v1:${await sha256Base64Url(canonicalJson(tuple))}`);
 }
 
-export function taxonomyFingerprintV1(
+export function taxonomyFingerprint(
   taxonomy: TaxonomyFingerprintInput,
-): Promise<TaxonomyFingerprintV1>;
-export function taxonomyFingerprintV1(
+): Promise<TaxonomyFingerprint>;
+export function taxonomyFingerprint(
   tagMeta: readonly TagMeta[],
   tags?: readonly Tag[],
-): Promise<TaxonomyFingerprintV1>;
-export async function taxonomyFingerprintV1(
+): Promise<TaxonomyFingerprint>;
+export async function taxonomyFingerprint(
   taxonomyOrMeta: TaxonomyFingerprintInput | readonly TagMeta[],
   tags?: readonly Tag[],
-): Promise<TaxonomyFingerprintV1> {
+): Promise<TaxonomyFingerprint> {
   const taxonomy = tags === undefined && isTaxonomyFingerprintInput(taxonomyOrMeta)
     ? normalizeTaxonomyFingerprintInput(taxonomyOrMeta)
     : canonicalTaxonomyEntries(taxonomyOrMeta as readonly TagMeta[], tags ?? []);
@@ -84,7 +84,7 @@ export async function taxonomyFingerprintV1(
       entry.sourceMtime,
     ]))),
   ]);
-  return parseTaxonomyFingerprintV1(`tf:v1:${await sha256Base64Url(canonicalJson(tuple))}`);
+  return parseTaxonomyFingerprint(`tf:v1:${await sha256Base64Url(canonicalJson(tuple))}`);
 }
 
 function normalizeTaxonomyFingerprintInput(

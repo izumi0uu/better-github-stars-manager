@@ -20,7 +20,7 @@ import {
   createFrozenScope,
   parseContinuationCursorToken,
   parsePreflightToken,
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
   projectFrozenScope,
 } from '@/bgsm-agent/scope';
 import {
@@ -343,7 +343,7 @@ describe('Agent workbench durable organize-job reducer', () => {
         sessionId,
         requestId: 'preflight-reconnect',
         status: 'ready',
-        preflightToken: parsePreflightToken('preflight:v1:reconnect'),
+        preflightToken: parsePreflightToken('preflight:reconnect'),
         label: 'All live stars',
         count: 3,
       },
@@ -505,7 +505,7 @@ describe('Agent workbench durable organize-job reducer', () => {
       ...baseSnapshot(),
       state: 'analysis_blocked' as const,
       terminalReason: 'analysis_failed' as const,
-      continuationCursor: parseContinuationCursorToken('cursor:v1:retryable-send-failure'),
+      continuationCursor: parseContinuationCursorToken('cursor:retryable-send-failure'),
     };
     const state = withSnapshot(parent);
     const pending = reduceAgentWorkbench(state, { type: 'continue_requested' });
@@ -556,7 +556,7 @@ describe('Agent workbench durable organize-job reducer', () => {
   });
 
   it('admits continuation only from stopped authoritative states', () => {
-    const cursor = parseContinuationCursorToken('cursor:v1:row-101');
+    const cursor = parseContinuationCursorToken('cursor:row-101');
     for (const state of ['analysis_blocked', 'budget_exhausted', 'completed', 'failed'] as const) {
       expect(canContinueOrganizeJobRun({ state, continuationCursor: cursor })).toBe(true);
     }
@@ -583,7 +583,7 @@ describe('Agent workbench durable organize-job reducer', () => {
         sessionId,
         requestId: 'request-stale',
         status: 'ready',
-        preflightToken: parsePreflightToken('preflight:v1:stale'),
+        preflightToken: parsePreflightToken('preflight:stale'),
         label: 'Stale scope',
         count: 4,
       },
@@ -598,7 +598,7 @@ describe('Agent workbench durable organize-job reducer', () => {
         sessionId,
         requestId: 'request-current',
         status: 'ready',
-        preflightToken: parsePreflightToken('preflight:v1:current'),
+        preflightToken: parsePreflightToken('preflight:current'),
         label: 'Selected repository',
         count: 1,
       },
@@ -627,7 +627,7 @@ describe('Agent workbench durable organize-job reducer', () => {
         sessionId,
         requestId: 'request-cancel',
         status: 'ready',
-        preflightToken: parsePreflightToken('preflight:v1:cancel'),
+        preflightToken: parsePreflightToken('preflight:cancel'),
         label: 'All live stars',
         count: 303,
       },
@@ -677,7 +677,7 @@ describe('Agent workbench durable organize-job reducer', () => {
         sessionId,
         requestId: 'request-race',
         status: 'ready',
-        preflightToken: parsePreflightToken('preflight:v1:state-start'),
+        preflightToken: parsePreflightToken('preflight:state-start'),
         label: 'All live stars',
         count: 303,
       },
@@ -845,7 +845,7 @@ describe('Agent workbench durable organize-job reducer', () => {
       ...baseSnapshot(),
       state: 'budget_exhausted' as const,
       terminalReason: 'consumed_positions' as const,
-      continuationCursor: parseContinuationCursorToken('cursor:v1:next'),
+      continuationCursor: parseContinuationCursorToken('cursor:next'),
     };
     const child = {
       ...baseSnapshot(parseRunId('run:v1:child'), 2),
@@ -868,7 +868,7 @@ describe('Agent workbench durable organize-job reducer', () => {
   });
 
   it('rewinds visible progress while a failed suffix is retried', () => {
-    const continuationCursor = parseContinuationCursorToken('cursor:v1:failed-suffix-retry');
+    const continuationCursor = parseContinuationCursorToken('cursor:failed-suffix-retry');
     const parentCoverage = {
       total: 3,
       analyzed: 3,
@@ -950,7 +950,7 @@ describe('Agent workbench durable organize-job reducer', () => {
   });
 
   it('surfaces a failed manual continuation instead of treating it as automatic recovery', () => {
-    const continuationCursor = parseContinuationCursorToken('cursor:v1:manual-retry-error');
+    const continuationCursor = parseContinuationCursorToken('cursor:manual-retry-error');
     const parent: OrganizeJobRunSnapshot = {
       ...baseSnapshot(),
       state: 'analysis_blocked',
@@ -1135,7 +1135,7 @@ describe('Agent workbench durable organize-job reducer', () => {
       filterSnapshot: '{}',
       repositoryIds,
       capturedAt: 1,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${'b'.repeat(43)}`),
+      fingerprint: parseScopeFingerprint(`fs:${'b'.repeat(43)}`),
     }));
     const parent: OrganizeJobRunSnapshot = {
       ...baseSnapshot(),
@@ -1159,7 +1159,7 @@ describe('Agent workbench durable organize-job reducer', () => {
         tombstoned: 0,
         analysisFailed: 0,
       },
-      continuationCursor: parseContinuationCursorToken('cursor:v1:durable-child'),
+      continuationCursor: parseContinuationCursorToken('cursor:durable-child'),
     };
     const parentJob: BgsmOrganizeJobPresentation = {
       ...presentation(),
@@ -1267,7 +1267,7 @@ describe('Agent workbench durable organize-job reducer', () => {
           reason: 'requested_output_tokens',
           budget: parent.budget,
           usage: parent.usage,
-          continuationCursor: parseContinuationCursorToken('cursor:v1:auto-failed'),
+          continuationCursor: parseContinuationCursorToken('cursor:auto-failed'),
         },
       },
     });
@@ -1324,7 +1324,7 @@ describe('Agent workbench durable organize-job reducer', () => {
           reason: 'requested_output_tokens',
           budget: parent.budget,
           usage: parent.usage,
-          continuationCursor: parseContinuationCursorToken('cursor:v1:durable-auto-retry'),
+          continuationCursor: parseContinuationCursorToken('cursor:durable-auto-retry'),
         },
       },
     });
@@ -1551,7 +1551,7 @@ function baseSnapshot(id = runId, generation = 1): OrganizeJobRunSnapshot {
       filterSnapshot: '{}',
       repositoryIds: ['repo-0', 'repo-1', 'repo-2'],
       capturedAt: 1,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${'a'.repeat(43)}`),
+      fingerprint: parseScopeFingerprint(`fs:${'a'.repeat(43)}`),
     })),
     budget: createProductionRunBudget(),
     usage: createEmptyRunBudgetUsage(),

@@ -1,13 +1,17 @@
 import type {
   LibraryViewPrefs,
   LibraryViewSortDir,
+  Locale,
   LibraryViewSortKey,
+  WatchCollapsedRepositorySignatures,
 } from '@/types';
 
+export const DEFAULT_LOCALE: Locale = 'zh-CN';
 export const DEFAULT_AUTO_TAG_LIMIT = 5;
 export const MIN_AUTO_TAG_LIMIT = 1;
 export const MAX_AUTO_TAG_LIMIT = 50;
 export const DEFAULT_MIN_TOPIC_REPO_COUNT = 3;
+export const MAX_WATCH_COLLAPSED_REPOSITORIES = 100;
 
 const SORT_KEYS: readonly LibraryViewSortKey[] = [
   'starred_at',
@@ -28,6 +32,7 @@ export const DEFAULT_LIBRARY_VIEW_PREFS: LibraryViewPrefs = {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
   },
   sort: {
     sortKey: 'starred_at',
@@ -81,6 +86,22 @@ function uniqueStrings(value: unknown): string[] {
   }
   return out;
 }
+export function normalizeWatchCollapsedRepositories(
+  value: unknown,
+): WatchCollapsedRepositorySignatures {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+
+  const normalized: WatchCollapsedRepositorySignatures = {};
+  const entries = Object.entries(value as Record<string, unknown>);
+  for (const [rawRepository, rawSignature] of entries.slice(-MAX_WATCH_COLLAPSED_REPOSITORIES)) {
+    if (typeof rawSignature !== 'string') continue;
+    const repository = rawRepository.trim().toLowerCase();
+    const signature = rawSignature.trim();
+    if (!repository || repository.length > 200 || !signature || signature.length > 16_384) continue;
+    normalized[repository] = signature;
+  }
+  return normalized;
+}
 
 function normalizeSortKey(value: unknown): LibraryViewSortKey {
   return typeof value === 'string' && SORT_KEYS.includes(value as LibraryViewSortKey)
@@ -114,6 +135,7 @@ export function normalizeLibraryViewPrefs(value: unknown): LibraryViewPrefs {
       onlyFavorite: filters.onlyFavorite === true,
       onlyUntagged: filters.onlyUntagged === true,
       onlyArchived: filters.onlyArchived === true,
+      onlyOwned: filters.onlyOwned === true,
     },
     sort: {
       sortKey: normalizeSortKey(sort.sortKey),

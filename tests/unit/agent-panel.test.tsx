@@ -2,8 +2,8 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, useState } from 'react';
-import type { ReactElement } from 'react';
+import { act, createElement, useState } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { AgentPanel as PresentationalAgentPanel } from '@/ui/components/AgentPanel';
 import { useBgsmAgent } from '@/ui/hooks/use-bgsm-agent';
 import type { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';
@@ -23,7 +23,7 @@ import type {
 import type { BgsmAgentConversationCandidate } from '@/bgsm-agent/conversation-binding';
 import {
   createFrozenScope,
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
   projectFrozenScope,
   type LaunchCandidateContract,
 } from '@/bgsm-agent/scope';
@@ -54,6 +54,29 @@ vi.mock('@/utils/messaging', async (importOriginal) => {
     inspectActiveBgsmAgentSessionTurn: messagingMocks.inspectActive,
     loadDurableBgsmAgentSession: messagingMocks.loadSession,
     readDurableAgentRetryDraftCandidate: messagingMocks.retryDraft,
+  };
+});
+
+const conversationRenderMock = vi.hoisted(() => vi.fn());
+
+type ConversationProps = Readonly<{
+  active?: boolean;
+  scrollKey: string | number;
+  resumeLabel: string;
+  className?: string;
+  children: ReactNode;
+}>;
+
+vi.mock('@/ui/ai-elements/chat', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown> & {
+    Conversation: (props: ConversationProps) => ReactElement;
+  };
+  return {
+    ...actual,
+    Conversation: (props: Parameters<typeof actual.Conversation>[0]) => {
+      conversationRenderMock();
+      return createElement(actual.Conversation, props);
+    },
   };
 });
 
@@ -156,7 +179,7 @@ function selectedRepositoryBinding(): Record<string, unknown> {
       kind: 'selected_repository',
       selectedRepositoryIdHint: 'owner/repo',
     },
-    scopeFingerprint: `fs:v1:${'a'.repeat(43)}`,
+    scopeFingerprint: `fs:${'a'.repeat(43)}`,
     label: 'owner/repo',
     count: 1,
     providerFingerprint: `pcf:v1:${'b'.repeat(43)}`,
@@ -180,6 +203,7 @@ beforeEach(() => {
     acknowledge: vi.fn(),
   });
   messagingMocks.requestPreflight.mockReset();
+  conversationRenderMock.mockReset();
   scrollIntoViewMock.mockReset();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
@@ -1120,7 +1144,7 @@ describe('AgentPanel', () => {
         kind: 'selected_repository' as const,
         selectedRepositoryIdHint: 'owner/repo',
       },
-      scopeFingerprint: parseScopeFingerprintV1(`fs:v1:${'a'.repeat(43)}`),
+      scopeFingerprint: parseScopeFingerprint(`fs:${'a'.repeat(43)}`),
       label: 'owner/repo',
       count: 1,
       providerFingerprint: `pcf:v1:${'b'.repeat(43)}`,
@@ -3261,12 +3285,14 @@ describe('AgentPanel', () => {
     });
   });
 
-  it('does not force-scroll conversation while the user types', async () => {
+  it('does not rerender or force-scroll the conversation while the user types', async () => {
     const container = await mountAgentPanel(<AgentPanel open onClose={vi.fn()} />);
     scrollIntoViewMock.mockClear();
+    const renderCount = conversationRenderMock.mock.calls.length;
 
     await setTextareaValue(container.querySelector<HTMLTextAreaElement>('textarea')!, 'Drafting a question');
 
+    expect(conversationRenderMock).toHaveBeenCalledTimes(renderCount);
     expect(scrollIntoViewMock).not.toHaveBeenCalled();
   });
 
@@ -4194,7 +4220,7 @@ function workbenchSnapshot(state: OrganizeJobRunSnapshot['state']): OrganizeJobR
       filterSnapshot: '{}',
       repositoryIds: ['owner/repo'],
       capturedAt: 1,
-      fingerprint: parseScopeFingerprintV1(`fs:v1:${'w'.repeat(43)}`),
+      fingerprint: parseScopeFingerprint(`fs:${'w'.repeat(43)}`),
     })),
     budget: createProductionRunBudget(),
     usage: createEmptyRunBudgetUsage(),

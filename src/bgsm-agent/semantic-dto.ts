@@ -1,13 +1,13 @@
 import type { Star, Tag, TagMeta } from '@/types';
 import { canonicalTagMetaWinners } from '@/tags/tag-model';
 import { MAX_SEMANTIC_TAG_NAME_BYTES } from './policy';
-import type { SourceFingerprintV1 } from './proposal';
+import type { SourceFingerprint } from './proposal';
 import {
   MAX_FINGERPRINT_DIMENSION_BYTES,
   MAX_FINGERPRINT_TAXONOMY_ENTRIES,
   canonicalTaxonomyEntries,
-  sourceFingerprintV1,
-  taxonomyFingerprintV1,
+  sourceFingerprint,
+  taxonomyFingerprint,
   type TaxonomyFingerprintInput,
 } from './source-fingerprint';
 
@@ -20,7 +20,7 @@ export const MAX_SEMANTIC_DIMENSION_BYTES = MAX_FINGERPRINT_DIMENSION_BYTES;
 export type SemanticRepositoryDto = Readonly<{
   frozenIndex: number;
   repositoryId: string;
-  sourceFingerprint: SourceFingerprintV1;
+  sourceFingerprint: SourceFingerprint;
   fullName: string;
   description: string;
   language: string | null;
@@ -65,7 +65,7 @@ export async function buildSemanticRepositoryDto(input: Readonly<{
 }>): Promise<SemanticRepositoryDto> {
   assertNonnegativeSafeInteger(input.frozenIndex, 'Semantic repository frozenIndex');
   assertTrimmedNonempty(input.star.full_name, 'Semantic repository full_name');
-  const sourceFingerprint = await sourceFingerprintV1(input.star, input.tag);
+  const repoSourceFingerprint = await sourceFingerprint(input.star, input.tag);
   const excludedTagKeys = new Set(input.excludedTagNames.map(normalizedNameKey));
   const tags = Object.freeze({
     manual: Object.freeze(boundedNames(
@@ -82,7 +82,7 @@ export async function buildSemanticRepositoryDto(input: Readonly<{
   return Object.freeze({
     frozenIndex: input.frozenIndex,
     repositoryId: input.star.full_name,
-    sourceFingerprint,
+    sourceFingerprint: repoSourceFingerprint,
     fullName: input.star.full_name,
     description: truncateUtf8(input.star.description, MAX_SEMANTIC_DESCRIPTION_BYTES),
     language: input.star.language === null
@@ -171,7 +171,7 @@ export function findSemanticTaxonomyEntry(
 }
 
 export async function fingerprintSemanticTaxonomy(dto: SemanticTaxonomyDto) {
-  return taxonomyFingerprintV1(dto.entries as TaxonomyFingerprintInput);
+  return taxonomyFingerprint(dto.entries as TaxonomyFingerprintInput);
 }
 
 function boundedNames(

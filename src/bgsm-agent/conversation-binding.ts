@@ -1,9 +1,9 @@
 import { canonicalJson, sha256Base64Url } from '@/agent-harness/canonical-json';
 import {
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
   validateLaunchCandidateContract,
   type LaunchCandidateContract,
-  type ScopeFingerprintV1,
+  type ScopeFingerprint,
 } from './scope';
 
 export type BgsmAgentConversationCandidate = Extract<
@@ -14,7 +14,7 @@ export type BgsmAgentConversationCandidate = Extract<
 export type BgsmAgentConversationBinding = Readonly<{
   version: 1;
   candidateContract: BgsmAgentConversationCandidate;
-  scopeFingerprint: ScopeFingerprintV1;
+  scopeFingerprint: ScopeFingerprint;
   label: string;
   count: number;
   providerFingerprint: string;
@@ -24,7 +24,7 @@ export async function createBgsmAgentConversationScopeFingerprint(input: Readonl
   candidateContract: BgsmAgentConversationCandidate;
   repositoryIds: readonly string[];
   label: string;
-}>): Promise<ScopeFingerprintV1> {
+}>): Promise<ScopeFingerprint> {
   validateBgsmAgentConversationCandidate(input.candidateContract);
   assertRepositoryIds(input.repositoryIds);
   assertTrimmedNonempty(input.label, 'Conversation scope label');
@@ -33,7 +33,7 @@ export async function createBgsmAgentConversationScopeFingerprint(input: Readonl
     repositoryIds: input.repositoryIds,
     label: input.label,
   }));
-  return parseScopeFingerprintV1(`fs:v1:${digest}`);
+  return parseScopeFingerprint(`fs:${digest}`);
 }
 
 export function createBgsmAgentConversationBinding(input: Omit<
@@ -60,7 +60,7 @@ export function validateBgsmAgentConversationBinding(
   if (value.version !== 1) throw new TypeError('Conversation binding version must be 1.');
   validateBgsmAgentConversationCandidate(value.candidateContract);
   if (typeof value.scopeFingerprint !== 'string'
-    || !/^fs:v1:[A-Za-z0-9_-]{43}$/u.test(value.scopeFingerprint)) {
+    || !parseScopeFingerprint(value.scopeFingerprint)) {
     throw new TypeError('Conversation scope fingerprint is malformed.');
   }
   assertTrimmedNonempty(value.label, 'Conversation scope label');

@@ -4,7 +4,7 @@ import {
   DEV_TRACE_EVIDENCE_PORT,
   type DevTraceEvidenceChunk,
   type DevTracePortResponse,
-  type TraceArtifactV1,
+  type TraceArtifact,
 } from '@/agent-observability';
 import { attachDevTracePort } from '@/agent-observability/dev-port';
 import type { DevTraceDB } from '@/agent-observability/dev-trace-db';
@@ -44,7 +44,7 @@ class FakePort {
 
 const diagnosticsUrl = 'chrome-extension://test-extension/src/dev-agent/index.html';
 
-function artifact(): TraceArtifactV1 {
+function artifact(): TraceArtifact {
   return {
     schemaVersion: 1,
     exporterVersion: 'test',

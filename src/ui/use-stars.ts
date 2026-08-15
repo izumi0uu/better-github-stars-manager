@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useFilterStore } from './filter-store';
 import { useLibraryViewPrefs } from './hooks/use-library-view-prefs';
 import type { Star, Tag } from '@/types';
@@ -35,6 +35,7 @@ export function useStars() {
     onlyFavorite: f.onlyFavorite,
     onlyUntagged: f.onlyUntagged,
     onlyArchived: f.onlyArchived,
+    onlyOwned: f.onlyOwned,
     sortKey: f.sortKey,
     sortDir: f.sortDir,
   };
@@ -119,12 +120,17 @@ export function useStars() {
 
   const rows: Star[] = committed?.rows ?? [];
 
-  const tagsByFullName = new Map<string, Tag>();
-  if (committed?.tagsForRows) {
-    for (const [name, tag] of Object.entries(committed.tagsForRows)) {
-      if (tag) tagsByFullName.set(name, tag);
+  // Built once per query result; rebuilding on every ManagerPanel render is
+  // O(total stars) main-thread work that directly adds click latency.
+  const tagsByFullName = useMemo(() => {
+    const map = new Map<string, Tag>();
+    if (committed?.tagsForRows) {
+      for (const [name, tag] of Object.entries(committed.tagsForRows)) {
+        if (tag) map.set(name, tag);
+      }
     }
-  }
+    return map;
+  }, [committed]);
 
   return {
     rows,
