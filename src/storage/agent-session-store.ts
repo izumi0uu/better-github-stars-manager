@@ -406,18 +406,22 @@ function validateAgentAttemptRow(
   assertTimestamp(attempt.updatedAt, 'Agent attempt update time');
 }
 
-async function validateAgentAttemptRowIdentity(attempt: AgentAttemptRow): Promise<void> {
-  validateAgentAttemptRow(attempt);
+async function verifyAgentAttemptRowIdentity(attempt: AgentAttemptRow): Promise<void> {
   const launch = attempt.admittedLaunch;
   if (!launch) throw new TypeError('Agent attempt must retain its admitted launch.');
-  const [launchDigest, storageId] = await Dexie.waitFor(Promise.all([
+  const [launchDigest, storageId] = await Promise.all([
     digestAgentSessionLaunch(launch),
     agentAttemptStorageId(attempt.sessionId, attempt.turnAttemptId),
     Promise.all(attempt.artifactCoverage.map(verifyAgentArtifactCoverageRecord)),
-  ]));
+  ]);
   if (launchDigest !== attempt.admittedLaunchDigest || storageId !== attempt.id) {
     throw new TypeError('Agent attempt immutable identity is inconsistent.');
   }
+}
+
+async function validateAgentAttemptRowIdentity(attempt: AgentAttemptRow): Promise<void> {
+  validateAgentAttemptRow(attempt);
+  await Dexie.waitFor(verifyAgentAttemptRowIdentity(attempt));
 }
 
 async function validateSessionAttemptRows(
@@ -425,9 +429,9 @@ async function validateSessionAttemptRows(
   attempts: readonly AgentAttemptRow[],
 ): Promise<void> {
   try {
+    for (const attempt of attempts) validateAgentAttemptRow(attempt, sessionId);
+    await Dexie.waitFor(Promise.all(attempts.map((attempt) => verifyAgentAttemptRowIdentity(attempt))));
     for (const attempt of attempts) {
-      validateAgentAttemptRow(attempt, sessionId);
-      await validateAgentAttemptRowIdentity(attempt);
       if (
         attempt.state === 'state_uncertain'
         || (attempt.state === 'terminal_non_retryable' && attempt.terminalReason === 'abandoned')
@@ -535,6 +539,8 @@ async function pruneSettledAgentAttempts(
   preserveAttemptIds: readonly string[] = [],
 ): Promise<void> {
   const protectedIds = new Set(preserveAttemptIds);
+  const attemptCount = await db.agentAttempts.where('sessionId').equals(sessionId).count();
+  if (attemptCount <= AGENT_SESSION_RECENT_ATTEMPT_LIMIT + protectedIds.size) return;
   const settled: AgentAttemptRow[] = [];
   for (const attempt of await readAgentAttemptRows(sessionId)) {
     try {
