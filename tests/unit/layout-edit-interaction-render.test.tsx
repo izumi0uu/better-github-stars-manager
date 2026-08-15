@@ -194,8 +194,10 @@ describe('layout edit interaction lock render behavior', () => {
 
     expect(projectLinks).toHaveLength(1);
     expect(projectLinks[0]).toContain('aria-label="Open the project repository"');
-    expect(projectLinks[0]).toContain('group-hover/product:bg-primary-foreground');
-    expect(projectLinks[0]).toContain('group-hover/product:text-primary');
+    expect(projectLinks[0]).toContain('data-product-brand-mark="true"');
+    expect(projectLinks[0]).toContain('<img');
+    expect(projectLinks[0]).not.toContain('<svg');
+    expect(projectLinks[0]).toContain('group-hover/product:scale-105');
     expect(projectLinks[0]).toContain('group-active/product:scale-95');
     expect(projectLinks[0]).toContain('motion-reduce:transition-none');
     expect(markup).not.toContain('Stars Manager');
@@ -272,7 +274,9 @@ describe('layout edit interaction lock render behavior', () => {
       'Gist',
     ].map((label) => markup.match(new RegExp(`<span[^>]*max-\\[1280px\\]:hidden[^>]*>${label}</span>`))?.[0]);
 
-    expect(toolbarRow).toContain('min-w-max');
+    expect(toolbarRow).toContain('w-full');
+    expect(toolbarRow).toContain('min-w-0');
+    expect(toolbarRow).not.toContain('min-w-max');
     expect(toolbarRow).not.toContain('flex-wrap');
     expect(leftZone).toContain('min-w-0');
     expect(leftZone).toContain('flex-[1_1_auto]');
@@ -280,7 +284,9 @@ describe('layout edit interaction lock render behavior', () => {
     expect(rightZone).toContain('whitespace-nowrap');
     expect(markup).toContain('data-toolbar-search="true"');
     expect(markup).toContain('min-w-[72px]');
-    expect(markup).toContain('w-[clamp(5rem,12vw,10.625rem)]');
+    expect(markup).toContain('max-w-[15rem]');
+    expect(markup).toContain('flex-[1_1_15rem]');
+    expect(markup).toContain('w-[clamp(5rem,10vw,8.75rem)]');
     expect(hiddenActionLabels.every(Boolean)).toBe(true);
     expect(accountTrigger).toContain('size-8');
     expect(accountTrigger).toContain('rounded-full');

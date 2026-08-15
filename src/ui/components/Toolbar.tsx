@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Sun, Moon, Search, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow, X,
-  Tags, Upload, Download, AlertTriangle, ExternalLink, Home, EyeOff, Star, RefreshCcw,
+  Tags, Upload, Download, AlertTriangle, ExternalLink, Home, EyeOff, RefreshCcw,
   Pencil, ChevronDown, Check, Pause, ClipboardCheck, Loader2,
 } from 'lucide-react';
 import { REPO_URL } from '@/lib/links';
+import brandMarkUrl from '@/assets/bgsm-brand-mark.svg?url';
 import type { FilterState } from '@/ui/filter-store';
 import type { SyncStatus } from '@/utils/messaging';
 import { bgCall } from '@/utils/messaging';
@@ -382,8 +383,8 @@ export function Toolbar({
 
   return (
     <div className="border-b border-border bg-card" data-toolbar-root>
-      <div className="flex min-h-[52px] min-w-max items-center gap-1 px-2 pl-2.5 min-[1281px]:gap-2 min-[1281px]:px-2.5 min-[1281px]:pl-3.5" data-toolbar-row>
-        {/* Share free width with the gutter, then shrink search and sort before the fixed right rail. */}
+      <div className="flex min-h-[52px] w-full min-w-0 items-center gap-1 px-2 pl-2.5 min-[1281px]:gap-2 min-[1281px]:px-2.5 min-[1281px]:pl-3.5" data-toolbar-row>
+        {/* Let search and sort shrink before the fixed right rail; the spacer absorbs surplus width. */}
         <div className="flex min-w-0 flex-[1_1_auto] items-center gap-1 min-[1281px]:gap-2" data-toolbar-left>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -399,10 +400,17 @@ export function Toolbar({
               })}
               {...getLockedAnchorProps(layoutEditing)}
             >
-              <span
-                className="grid size-6 place-items-center rounded-md bg-primary text-primary-foreground transition-[background-color,color,transform] duration-150 ease-out group-hover/product:bg-primary-foreground group-hover/product:text-primary group-active/product:scale-95 group-active/product:bg-primary-foreground group-active/product:text-primary motion-reduce:transform-none motion-reduce:transition-none min-[1025px]:size-7"
-              >
-                <Star className="size-4" />
+              <span className="grid size-6 place-items-center transition-transform duration-150 ease-out group-hover/product:scale-105 group-active/product:scale-95 motion-reduce:transform-none motion-reduce:transition-none min-[1025px]:size-7">
+                <img
+                  src={brandMarkUrl}
+                  alt=""
+                  aria-hidden="true"
+                  width={128}
+                  height={128}
+                  draggable={false}
+                  data-product-brand-mark
+                  className="size-full object-contain"
+                />
               </span>
             </a>
           </TooltipTrigger>
@@ -455,6 +463,7 @@ export function Toolbar({
               {watchUnreadCount > 0 && (
                 <span
                   aria-hidden="true"
+                  data-watch-unread-badge
                   className={SURFACE_COUNT_BADGE_CLASS}
                 >
                   {watchUnreadCount > 99 ? '99+' : watchUnreadCount}
@@ -504,7 +513,7 @@ export function Toolbar({
 
         {starsSurface && (
           <>
-        <div className="relative min-w-[72px] flex-[1_1_20rem]" data-toolbar-search>
+        <div className="relative min-w-[72px] max-w-[15rem] flex-[1_1_15rem]" data-toolbar-search>
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={searchRef}
@@ -535,7 +544,7 @@ export function Toolbar({
           if (layoutEditing) return;
           f.setSort(value as typeof f.sortKey);
         }}>
-          <SelectTrigger disabled={layoutEditing} className="h-9 w-[clamp(5rem,12vw,10.625rem)] shrink min-[641px]:min-w-[7.5rem]">
+          <SelectTrigger disabled={layoutEditing} className="h-9 w-[clamp(5rem,10vw,8.75rem)] shrink min-[641px]:min-w-[7.5rem]">
             <SelectValue placeholder={m.toolbar.sortName} />
           </SelectTrigger>
           <SelectContent>
