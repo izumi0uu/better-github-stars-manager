@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, vi } from 'vitest';
 import { mountState, pageOwner } from '@/content/stars-page/mount-state';
+import brandMarkUrl from '@/assets/bgsm-brand-mark.svg?url';
 
 const CONFIG_STORAGE_KEY = 'github-stars-manager-config';
 
@@ -403,6 +404,7 @@ describe('stars-page mount and toggle invariants', () => {
     assert.equal(brandMark.height, 28);
     assert.equal(brandMark.alt, '');
     assert.equal(brandMark.getAttribute('aria-hidden'), 'true');
+    assert.equal(brandMark.getAttribute('src'), brandMarkUrl);
     assert.equal(button?.querySelector('svg'), null);
   });
 

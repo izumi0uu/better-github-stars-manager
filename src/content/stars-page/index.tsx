@@ -171,7 +171,7 @@ export function installStarsPageRuntime(pageWindow: Window): void {
     }
     .btn:hover { background:rgba(20,23,28,1); transform:translateY(-1px); }
     .btn:active { transform:translateY(0); }
-    .btn img { display:block; width:28px; height:28px; object-fit:contain; }
+    .btn img { display:block; width:28px; height:28px; object-fit:contain; transform:translateY(-1px); }
     /* CSS-only tooltip. The native title attribute has a fixed ~1-2s system
        delay we cannot shorten; this shows ~immediately. Opens to the LEFT since
        the FAB sits in the bottom-right corner. Only rendered once data-tip is
