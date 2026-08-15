@@ -3,12 +3,29 @@ import {
   type GitHubNotificationThread,
   type WatchInboxProjection,
 } from '@/watch/watch-model';
+import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const MONTH_MS = 30 * DAY_MS;
 const YEAR_MS = 365 * DAY_MS;
+const WATCH_CREDENTIAL_ERROR_CODES: Record<string, true> = {
+  authentication_required: true,
+  permission_denied: true,
+};
+
+export function formatWatchAbsoluteTime(value: string | null, locale: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return new Intl.DateTimeFormat(locale, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
 
 /** Compact, locale-neutral age used for Watch's machine-data column. */
 export function formatWatchRelativeTime(
@@ -102,4 +119,197 @@ export function filterWatchInboxProjection(
     ].some((value) => value.toLowerCase().includes(query));
   });
   return projectWatchInbox(threads);
+}
+
+export type WatchInboxFlatRow =
+  | {
+    kind: 'repository';
+    key: string;
+    group: WatchInboxProjection['groups'][number];
+  }
+  | {
+    kind: 'thread';
+    key: string;
+    repositoryFullName: string;
+    thread: GitHubNotificationThread;
+  };
+
+export type WatchThreadNavigationKey = 'ArrowUp' | 'ArrowDown' | 'Home' | 'End';
+
+/** One logical row stream keeps repository size from defining the render batch. */
+export function buildWatchInboxRows(
+  groups: WatchInboxProjection['groups'],
+  expandedRepositories: ReadonlySet<string>,
+): WatchInboxFlatRow[] {
+  const rows: WatchInboxFlatRow[] = [];
+  for (const group of groups) {
+    const repository = group.repositoryFullName.toLowerCase();
+    rows.push({
+      kind: 'repository',
+      key: `repository:${repository}`,
+      group,
+    });
+    if (!expandedRepositories.has(repository)) continue;
+    for (const thread of group.threads) {
+      rows.push({
+        kind: 'thread',
+        key: `thread:${thread.id}`,
+        repositoryFullName: group.repositoryFullName,
+        thread,
+      });
+    }
+  }
+  return rows;
+}
+
+export function adjacentWatchThreadRowIndex(
+  rows: readonly WatchInboxFlatRow[],
+  currentThreadId: string,
+  key: WatchThreadNavigationKey,
+): number | null {
+  const currentIndex = rows.findIndex((row) => (
+    row.kind === 'thread' && row.thread.id === currentThreadId
+  ));
+  if (currentIndex < 0) return null;
+
+  const direction = key === 'ArrowUp' ? -1 : 1;
+  let index = key === 'Home'
+    ? 0
+    : key === 'End'
+      ? rows.length - 1
+      : currentIndex + direction;
+  while (index >= 0 && index < rows.length) {
+    if (rows[index].kind === 'thread') return index;
+    index += key === 'Home' || key === 'ArrowDown' ? 1 : -1;
+  }
+  return currentIndex;
+}
+
+export function watchGroupContentSignature(
+  threads: Iterable<GitHubNotificationThread>,
+): string {
+  const markers = Array.from(threads, (thread) => [thread.id, thread.updatedAt] as const);
+  markers.sort(([leftId, leftUpdatedAt], [rightId, rightUpdatedAt]) => (
+    leftId.localeCompare(rightId) || leftUpdatedAt.localeCompare(rightUpdatedAt)
+  ));
+  return JSON.stringify(markers);
+}
+
+export function hasNewWatchGroupContent(
+  previousSignature: string,
+  threads: Iterable<GitHubNotificationThread>,
+): boolean {
+  let previousMarkers: Set<string>;
+  try {
+    const parsed = JSON.parse(previousSignature) as unknown;
+    if (!Array.isArray(parsed)) return true;
+    previousMarkers = new Set(parsed.map((marker) => JSON.stringify(marker)));
+  } catch {
+    return true;
+  }
+  return Array.from(threads).some((thread) => (
+    !previousMarkers.has(JSON.stringify([thread.id, thread.updatedAt]))
+  ));
+}
+
+export type WatchStatusPresentationKind =
+  | 'loading'
+  | 'refreshing'
+  | 'credential_error'
+  | 'query_error'
+  | 'refresh_error'
+  | 'cooldown'
+  | 'scope_error'
+  | 'inbox_error'
+  | 'stale'
+  | 'truncated'
+  | 'never_loaded'
+  | 'fresh';
+
+export interface WatchStatusPresentation {
+  kind: WatchStatusPresentationKind;
+  tone: 'muted' | 'success' | 'warning' | 'destructive';
+  code: string | null;
+  snapshotAt: string | null;
+}
+
+export function deriveWatchStatusPresentation(input: {
+  result: WatchInboxQueryResponse | null;
+  loading: boolean;
+  refreshing: boolean;
+  error: 'query' | 'refresh' | null;
+}): WatchStatusPresentation {
+  const { result, loading, refreshing, error } = input;
+  if (loading && !result) {
+    return { kind: 'loading', tone: 'muted', code: null, snapshotAt: null };
+  }
+
+  const state = result?.status.state;
+  const code = state?.inbox.errorCode ?? state?.scope.errorCode ?? null;
+  const snapshotAt = state?.inbox.lastSuccessfulAt ?? state?.scope.lastSuccessfulAt ?? null;
+  const hasInboxSnapshot = state?.inbox.lastSuccessfulAt !== null &&
+    state?.inbox.lastSuccessfulAt !== undefined;
+  const hasSnapshot = snapshotAt !== null;
+  const credentialCode = state?.inbox.errorCode ?? null;
+  if (credentialCode && WATCH_CREDENTIAL_ERROR_CODES[credentialCode]) {
+    return {
+      kind: 'credential_error',
+      tone: hasSnapshot ? 'warning' : 'destructive',
+      code: credentialCode,
+      snapshotAt,
+    };
+  }
+  if (error === 'query') {
+    return {
+      kind: 'query_error',
+      tone: hasSnapshot ? 'warning' : 'destructive',
+      code,
+      snapshotAt,
+    };
+  }
+  if (error === 'refresh') {
+    return { kind: 'refresh_error', tone: 'warning', code, snapshotAt };
+  }
+  if (result?.status.inboxStatus === 'error') {
+    return {
+      kind: 'inbox_error',
+      tone: hasSnapshot ? 'warning' : 'destructive',
+      code,
+      snapshotAt,
+    };
+  }
+  if (result?.status.inboxStatus === 'stale') {
+    return { kind: 'stale', tone: 'warning', code, snapshotAt };
+  }
+  if (result?.status.scopeStatus === 'error') {
+    return {
+      kind: 'scope_error',
+      tone: hasInboxSnapshot ? 'warning' : 'destructive',
+      code: state?.scope.errorCode ?? null,
+      snapshotAt,
+    };
+  }
+  if (result?.status.scopeStatus === 'stale') {
+    return {
+      kind: 'scope_error',
+      tone: 'warning',
+      code: state?.scope.errorCode ?? null,
+      snapshotAt,
+    };
+  }
+  if (result?.status.inboxStatus === 'cooldown') {
+    return { kind: 'cooldown', tone: 'warning', code: 'cooldown', snapshotAt };
+  }
+  if (state?.inbox.truncated) {
+    return { kind: 'truncated', tone: 'warning', code: 'truncated', snapshotAt };
+  }
+  if (refreshing || result?.status.refreshing) {
+    return { kind: 'refreshing', tone: 'muted', code: null, snapshotAt };
+  }
+  if (!result || result.status.scopeStatus === 'not_configured'
+    || result.status.inboxStatus === 'not_configured'
+    || result.status.inboxStatus === 'never_loaded') {
+    return { kind: 'never_loaded', tone: 'muted', code: null, snapshotAt };
+  }
+  return { kind: 'fresh', tone: 'success', code: null, snapshotAt };
 }

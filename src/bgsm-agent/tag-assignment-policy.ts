@@ -52,7 +52,9 @@ export function buildBgsmAgentTagCoverageSnapshot(
   library: BgsmAgentTagPolicyLibrary,
 ): BgsmAgentTagCoverageSnapshot {
   const liveRepositoryIds = new Set(
-    library.stars.filter((star) => !star.tombstone).map((star) => star.full_name),
+    library.stars
+      .filter((star) => !star.tombstone && star.viewer_has_starred !== false)
+      .map((star) => star.full_name),
   );
   const excludedTagKeys = excludedCanonicalTagKeys(library.tagMeta);
   const tagsByRepository = new Map(
@@ -64,7 +66,7 @@ export function buildBgsmAgentTagCoverageSnapshot(
   const visibleTagsByRepository = new Map<string, ReadonlySet<string>>();
 
   for (const star of library.stars) {
-    if (star.tombstone) continue;
+    if (star.tombstone || star.viewer_has_starred === false) continue;
     const visibleTagKeys = new Set(
       visibleTagNames(tagsByRepository.get(star.full_name))
         .map(canonicalTagKey)

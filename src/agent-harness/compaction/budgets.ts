@@ -45,7 +45,7 @@ function syntheticCapability(contextWindow: number): AgentModelContextCapability
     maxOutputTokens: Math.min(8_192, contextWindow),
     source: 'user-declared',
     sourceRevision: 'compatibility-fixture',
-    capabilityRevision: `mcc:v1:compat:${contextWindow}`,
+    capabilityRevision: `mcc:compat:${contextWindow}`,
   };
 }
 

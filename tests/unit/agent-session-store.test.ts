@@ -5,7 +5,7 @@ import {
   agentArtifactCoverageDirectives,
   createAgentArtifactCoverage,
 } from '@/bgsm-agent/artifact-coverage';
-import { parseScopeFingerprintV1 } from '@/bgsm-agent/scope';
+import { parseScopeFingerprint } from '@/bgsm-agent/scope';
 import { BGSM_AGENT_SUMMARY_MAX_BYTES } from '@/bgsm-agent/session';
 import type {
   BgsmAgentActiveProjection,
@@ -1956,7 +1956,7 @@ describe('durable Agent session store', () => {
         status,
         ...(status === 'preflight_ready' ? {
           preflight: {
-            token: `preflight:v1:delete-${status}`,
+            token: `preflight:delete-${status}`,
             requestId: `request:delete-${status}`,
             state: 'ready' as const,
             expiresAt: 200,
@@ -2010,7 +2010,7 @@ describe('durable Agent session store', () => {
       ...organizeJob(created.session.id, created.session.id),
       status: 'preflight_ready' as const,
       preflight: {
-        token: 'preflight:v1:expired-session-delete',
+        token: 'preflight:expired-session-delete',
         requestId: 'request:expired-session-delete',
         state: 'ready' as const,
         expiresAt: 50,
@@ -2023,7 +2023,7 @@ describe('durable Agent session store', () => {
       jobId: 'organize-job:v1:stale-session-delete',
       activeSlot: undefined,
       preflight: {
-        token: 'preflight:v1:stale-session-delete',
+        token: 'preflight:stale-session-delete',
         requestId: 'request:stale-session-delete',
         state: 'consumed' as const,
         expiresAt: 200,
@@ -2111,7 +2111,7 @@ function fullTransition(sessionId: string): BgsmAgentSessionTransition {
         kind: 'selected_repository',
         selectedRepositoryIdHint: 'owner/repo',
       },
-      scopeFingerprint: parseScopeFingerprintV1(`fs:v1:${'a'.repeat(43)}`),
+      scopeFingerprint: parseScopeFingerprint(`fs:${'a'.repeat(43)}`),
       label: 'owner/repo',
       count: 1,
       providerFingerprint: `pcf:v1:${'b'.repeat(43)}`,

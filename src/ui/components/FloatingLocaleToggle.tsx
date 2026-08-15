@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { getMessages, useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { bgCall } from '@/utils/messaging';
-import { DEV, VERSION_HASH } from '@/dev';
+import { DEV_UI_VISIBLE, VERSION_HASH } from '@/dev';
 import { getLockedRegionProps } from '@/ui/interaction-lock';
 import type { Locale } from '@/types';
 
@@ -62,7 +62,7 @@ export function FloatingLocaleToggle({
       {...getLockedRegionProps(interactionLocked)}
     >
       <div className="flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-1.5 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        {DEV && (
+        {DEV_UI_VISIBLE && (
           <>
             <span className="rounded-full bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] text-warning">
               {m.dev.version(VERSION_HASH)}

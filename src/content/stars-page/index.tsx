@@ -3,6 +3,7 @@ import { ManagerPanel } from '@/ui/ManagerPanel';
 import { I18nProvider } from '@/i18n';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { applyFabLabel } from '@/content/stars-page/fab-label';
+import brandMarkUrl from '@/assets/bgsm-brand-mark.svg?url';
 import { mountState, pageOwner } from '@/content/stars-page/mount-state';
 import { stopEditableKeydownAtShadowBoundary } from '@/content/stars-page/keyboard-boundary';
 import {
@@ -11,6 +12,7 @@ import {
   resetPanelToggle,
   showPanel,
 } from '@/content/stars-page/panel-toggle';
+import { signalRecommendationEntry } from '@/utils/recommendation-entry';
 import cssText from '@/ui/styles/index.css?inline';
 
 /**
@@ -76,6 +78,7 @@ export function installStarsPageRuntime(pageWindow: Window): void {
   }
 
   function unlockPageScroll(): void {
+    if (savedHtmlOverflow === null && savedBodyOverflow === null) return;
     document.documentElement.style.overflow = savedHtmlOverflow ?? '';
     document.body.style.overflow = savedBodyOverflow ?? '';
     savedHtmlOverflow = null;
@@ -84,11 +87,15 @@ export function installStarsPageRuntime(pageWindow: Window): void {
 
   // Keep the React root so ejecting also tears down runtime/progress listeners.
   let panelRoot: Root | null = null;
+  let panelHost: HTMLDivElement | null = null;
 
   function injectPanel(): void {
     if (!isStarsPage()) return;
-    if (document.getElementById('gsm-manager-host')) return; // idempotent
-
+    if (panelHost?.isConnected) return;
+    if (panelRoot) panelRoot.unmount();
+    panelRoot = null;
+    panelHost = null;
+    if (document.getElementById('gsm-manager-host')) return;
     // Full-screen overlay host (kept in the light DOM for positioning); the
     // actual UI + styles live inside its shadow root.
     const host = document.createElement('div');
@@ -120,6 +127,7 @@ export function installStarsPageRuntime(pageWindow: Window): void {
 
     const main = document.querySelector('main') ?? document.querySelector('[data-pjax-container]') ?? document.body;
     main.parentElement?.insertBefore(host, main);
+    panelHost = host;
 
     panelRoot = createRoot(root);
     panelRoot.render(
@@ -133,13 +141,17 @@ export function installStarsPageRuntime(pageWindow: Window): void {
   function ejectPanel(): void {
     panelRoot?.unmount();
     panelRoot = null;
-    document.getElementById('gsm-manager-host')?.remove();
+    panelHost?.remove();
+    panelHost = null;
     unlockPageScroll();
   }
 
   // Vanilla shadow-root FAB shown only while the session-local panel hide is active.
+  let fabHost: HTMLDivElement | null = null;
   function injectFab(): void {
-    if (document.getElementById('gsm-fab')) return; // idempotent
+    if (fabHost?.isConnected) return;
+    fabHost = null;
+    if (document.getElementById('gsm-fab')) return;
 
     const host = document.createElement('div');
     host.id = 'gsm-fab';
@@ -159,7 +171,7 @@ export function installStarsPageRuntime(pageWindow: Window): void {
     }
     .btn:hover { background:rgba(20,23,28,1); transform:translateY(-1px); }
     .btn:active { transform:translateY(0); }
-    .btn svg { display:block; }
+    .btn img { display:block; width:28px; height:28px; object-fit:contain; transform:translateY(-1px); }
     /* CSS-only tooltip. The native title attribute has a fixed ~1-2s system
        delay we cannot shorten; this shows ~immediately. Opens to the LEFT since
        the FAB sits in the bottom-right corner. Only rendered once data-tip is
@@ -186,12 +198,21 @@ export function installStarsPageRuntime(pageWindow: Window): void {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn';
-    btn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>`;
+    const brandMark = document.createElement('img');
+    brandMark.src = brandMarkUrl;
+    brandMark.alt = '';
+    brandMark.width = 28;
+    brandMark.height = 28;
+    brandMark.draggable = false;
+    brandMark.setAttribute('aria-hidden', 'true');
+    brandMark.setAttribute('data-product-brand-mark', '');
+    btn.appendChild(brandMark);
     btn.setAttribute('data-tip', 'Better GitHub Stars Manager');
     btn.setAttribute('aria-label', 'Better GitHub Stars Manager');
     btn.onclick = () => showPanel(pageWindow);
     shadow.appendChild(btn);
     document.body.appendChild(host);
+    fabHost = host;
 
     // No React here; localize after mount and let the CSS bubble wait for data-tip.
     void authStore.getLocale()
@@ -204,7 +225,8 @@ export function installStarsPageRuntime(pageWindow: Window): void {
   }
 
   function ejectFab(): void {
-    document.getElementById('gsm-fab')?.remove();
+    fabHost?.remove();
+    fabHost = null;
   }
 
   // Drop stale async results across rapid PJAX navigations.
@@ -278,5 +300,6 @@ export function installStarsPageRuntime(pageWindow: Window): void {
 }
 
 export function onExecute(): void {
+  signalRecommendationEntry();
   installStarsPageRuntime(window);
 }

@@ -30,7 +30,10 @@ export default defineConfig(({ command }) => {
   // keeps dev-only helpers unless the Web Store packaging path opts out.
   const RELEASE = process.env.GSM_RELEASE === 'true';
   const DEV = !RELEASE && (command === 'serve' || command === 'build' || process.env.GSM_DEV === 'true');
+  // Screenshot and QA runs may hide manager-only dev chrome without disabling diagnostics.
+  const DEV_UI_VISIBLE = DEV && process.env.GSM_HIDE_DEV_UI !== 'true';
   const VERSION_HASH = versionHash();
+  const STORE_TARGET = process.env.GSM_STORE_TARGET ?? (RELEASE ? 'chrome' : 'none');
   const outDir = process.env.GSM_DIST_DIR ?? 'dist';
 
   return {
@@ -48,7 +51,9 @@ export default defineConfig(({ command }) => {
     ],
     define: {
       __GSM_DEV__: JSON.stringify(DEV),
+      __GSM_DEV_UI_VISIBLE__: JSON.stringify(DEV_UI_VISIBLE),
       __GSM_VERSION_HASH__: JSON.stringify(VERSION_HASH),
+      __GSM_STORE_TARGET__: JSON.stringify(STORE_TARGET),
     },
     resolve: {
       alias: {

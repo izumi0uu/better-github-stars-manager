@@ -15,13 +15,16 @@ import {
   type WatchScopeSnapshot,
 } from '@/watch/watch-model';
 
-const ACCOUNT = 'idah';
+const ACCOUNT = 'octocat';
 const NOW = Date.parse('2026-08-05T03:04:05.000Z');
 
 function config(): Config {
   return {
     tokenEncrypted: 'main-cipher',
     tokenCryptoMeta: { iv: 'main-iv', salt: 'main-salt' },
+    githubCredentialStatus: 'ready',
+    watchCollapsedRepositories: {},
+    watchNotificationsEnabled: true,
     watchNotificationsTokenEncrypted: 'watch-cipher',
     watchNotificationsTokenCryptoMeta: { iv: 'watch-iv', salt: 'watch-salt' },
     watchCredentialSource: 'dedicated',
@@ -52,6 +55,14 @@ function config(): Config {
     seenOnboarding: true,
     seenTooltips: 0,
     autoTagAgentPromptSeen: false,
+    storeRatingPrompt: {
+      version: 1,
+      status: 'tracking',
+      activeLocalDays: [],
+      meaningfulActionCount: 0,
+      exposureCount: 0,
+      snoozeUntil: null,
+    },
     autoTagLimit: 5,
     maxTagsPerRepo: 5,
     minTopicRepoCount: 3,
@@ -62,6 +73,7 @@ function config(): Config {
         tags: [],
         tagMode: 'any',
         showTombstone: false,
+        onlyOwned: false,
         onlyFavorite: false,
         onlyUntagged: false,
         onlyArchived: false,
@@ -132,7 +144,7 @@ function harness(input: {
   fetchNotifications?: WatchRefreshCoordinatorDependencies['fetchNotifications'];
   queryInbox?: typeof watchStore.queryStoredWatchInbox;
   disconnectInbox?: typeof watchStore.disconnectWatchInbox;
-  liveRepositoryNames?: string[];
+  liveRepositoryNames?: string[] | (() => string[] | Promise<string[]>);
   currentTime?: number;
   now?: () => number;
   runSerialized?: WatchRefreshCoordinatorDependencies['runSerialized'];
@@ -222,7 +234,11 @@ function harness(input: {
     },
     fetchScope,
     fetchNotifications,
-    loadLiveRepositoryNames: async () => input.liveRepositoryNames ?? ['OWNER/REPO'],
+    mutateNotification: vi.fn(),
+    fetchSubjectDetail: vi.fn(),
+    loadLiveRepositoryNames: async () => typeof input.liveRepositoryNames === 'function'
+      ? input.liveRepositoryNames()
+      : input.liveRepositoryNames ?? (await db.stars.toArray()).map((star) => star.full_name),
     store: {
       getState: watchStore.getWatchState,
       getRepositories: watchStore.getWatchRepositories,
@@ -232,9 +248,11 @@ function harness(input: {
       replaceScope: watchStore.replaceWatchScope,
       recordScopeFailure: watchStore.recordWatchScopeFailure,
       replaceInbox: watchStore.replaceWatchInbox,
+      getNotificationThread: watchStore.getWatchNotificationThread,
       revalidateInbox: watchStore.revalidateWatchInbox,
       recordInboxFailure: watchStore.recordWatchInboxFailure,
       disconnectInbox: input.disconnectInbox ?? watchStore.disconnectWatchInbox,
+      applyThreadMutation: watchStore.applyWatchThreadMutation,
       clearData: watchStore.clearWatchData,
     },
     now: input.now ?? (() => input.currentTime ?? NOW),
@@ -316,7 +334,71 @@ afterAll(async () => {
 });
 
 describe('Watch background refresh coordinator', () => {
-  it('coalesces repeated refresh requests and publishes only live watched stars', async () => {
+  it('publishes live-star Notifications even when native scope omits the repository', async () => {
+    const h = harness({
+      fetchScope: vi.fn(async () => ({
+        repositories: [],
+        pageCount: 1,
+        fetchedAt: new Date(NOW).toISOString(),
+      })),
+    });
+
+    const result = await h.coordinator.refresh();
+
+    expect(result.scopePublished).toBe(true);
+    expect(result.inboxPublished).toBe(true);
+    expect(await watchStore.getWatchRepositories(ACCOUNT)).toEqual([]);
+    expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads)
+      .toEqual([thread()]);
+    expect(h.broadcastChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('rechecks live Stars in the publication transaction after Notifications fetch', async () => {
+    const pendingInbox = deferred<WatchNotificationSnapshot>();
+    const h = harness({ fetchNotifications: vi.fn(async () => pendingInbox.promise) });
+
+    const refresh = h.coordinator.refresh();
+    await vi.waitFor(() => expect(h.fetchNotifications).toHaveBeenCalledTimes(1));
+    await db.stars.update('owner/repo', { tombstone: true, viewer_has_starred: false });
+    pendingInbox.resolve(inboxSnapshot());
+
+    const result = await refresh;
+    expect(result.inboxPublished).toBe(true);
+    expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads)
+      .toEqual([]);
+  });
+
+  it('publishes a Star added while Notifications are in flight', async () => {
+    const pendingInbox = deferred<WatchNotificationSnapshot>();
+    await db.stars.clear();
+    const h = harness({ fetchNotifications: vi.fn(async () => pendingInbox.promise) });
+
+    const refresh = h.coordinator.refresh();
+    await vi.waitFor(() => expect(h.fetchNotifications).toHaveBeenCalledTimes(1));
+    await db.stars.put({
+      full_name: 'owner/repo',
+      html_url: 'https://github.com/owner/repo',
+      description: '',
+      language: null,
+      stargazers_count: 1,
+      topics: [],
+      pushed_at: null,
+      created_at: null,
+      fork: false,
+      archived: false,
+      starred_at: new Date(NOW).toISOString(),
+      tombstone: false,
+      viewer_has_starred: true,
+      synced_at: new Date(NOW).toISOString(),
+    });
+    pendingInbox.resolve(inboxSnapshot());
+
+    await refresh;
+    expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads)
+      .toEqual([thread()]);
+  });
+
+  it('coalesces repeated refresh requests and publishes only live-star Notifications', async () => {
     const pendingScope = deferred<WatchScopeSnapshot>();
     const fetchScope = vi.fn(async () => pendingScope.promise);
     const h = harness({ fetchScope });
@@ -334,8 +416,7 @@ describe('Watch background refresh coordinator', () => {
     expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads).toHaveLength(1);
     expect(h.broadcastChanged).toHaveBeenCalledTimes(1);
   });
-
-  it('makes no network requests during the persisted poll cooldown', async () => {
+  it('refreshes native membership but skips Notifications during Inbox cooldown', async () => {
     await watchStore.replaceWatchScope({
       accountLogin: ACCOUNT,
       repositories: [{ full_name: 'owner/repo' }],
@@ -349,27 +430,23 @@ describe('Watch background refresh coordinator', () => {
       nextAllowedAt: new Date(NOW + 30_000).toISOString(),
       candidateCount: 1,
       truncated: false,
+      mode: 'replace',
     });
     const h = harness();
 
     const result = await h.coordinator.refresh();
 
-    expect(h.fetchScope).not.toHaveBeenCalled();
+    expect(h.fetchScope).toHaveBeenCalledTimes(1);
     expect(h.fetchNotifications).not.toHaveBeenCalled();
+    expect(result.scopePublished).toBe(true);
     expect(result.status.inboxStatus).toBe('cooldown');
-    expect(h.broadcastChanged).not.toHaveBeenCalled();
+    expect(h.broadcastChanged).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    ['main', 'main-token'],
-    ['dedicated', 'watch-token'],
-  ] as const)('fetches Notifications through the selected %s credential', async (source, token) => {
-    const h = harness({ watchCredentialSource: source });
-
-    const result = await h.coordinator.refresh();
-
-    expect(h.fetchNotifications).toHaveBeenCalledWith(expect.objectContaining({ token }));
-    expect(result.status.credentialSource).toBe(source);
+  it('fetches Notifications through the configured credential', async () => {
+    const h = harness();
+    await h.coordinator.refresh();
+    expect(h.fetchNotifications).toHaveBeenCalledWith(expect.objectContaining({ token: 'watch-token' }));
   });
 
   it('refreshes only native scope when Watch has no selected credential', async () => {
@@ -380,10 +457,25 @@ describe('Watch background refresh coordinator', () => {
     expect(h.fetchNotifications).not.toHaveBeenCalled();
     expect(result.scopePublished).toBe(true);
     expect(result.status.inboxStatus).toBe('not_configured');
-    expect(result.status.credentialSource).toBeNull();
   });
 
-  it('continues Inbox refresh against a stale successful scope', async () => {
+  it('continues Inbox refresh when watched-membership refresh fails', async () => {
+    const fetchScope = vi.fn(async () => {
+      throw new GitHubWatchError('network_error');
+    });
+    const h = harness({ fetchScope });
+
+    const result = await h.coordinator.refresh();
+
+    expect(h.fetchNotifications).toHaveBeenCalledTimes(1);
+    expect(result.inboxPublished).toBe(true);
+    expect(result.status.scopeStatus).toBe('error');
+    expect(result.status.inboxStatus).toBe('cooldown');
+    expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads)
+      .toEqual([thread()]);
+  });
+
+  it('continues Inbox refresh against a stale watched-membership snapshot', async () => {
     await watchStore.replaceWatchScope({
       accountLogin: ACCOUNT,
       repositories: [{ full_name: 'owner/repo' }],
@@ -402,19 +494,6 @@ describe('Watch background refresh coordinator', () => {
     expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads).toHaveLength(1);
   });
 
-  it('does not request Notifications without a successful scope snapshot', async () => {
-    const fetchScope = vi.fn(async () => {
-      throw new GitHubWatchError('permission_denied');
-    });
-    const h = harness({ fetchScope });
-
-    const result = await h.coordinator.refresh();
-
-    expect(h.fetchNotifications).not.toHaveBeenCalled();
-    expect(result.status.scopeStatus).toBe('error');
-    expect(result.status.inboxStatus).toBe('scope_unavailable');
-  });
-
   it('revalidates a 304 without replacing cached rows', async () => {
     await watchStore.replaceWatchScope({
       accountLogin: ACCOUNT,
@@ -429,6 +508,7 @@ describe('Watch background refresh coordinator', () => {
       nextAllowedAt: new Date(NOW - 60_000).toISOString(),
       candidateCount: 1,
       truncated: true,
+      mode: 'replace',
     });
     await watchStore.recordWatchInboxFailure({
       accountLogin: ACCOUNT,
@@ -455,7 +535,7 @@ describe('Watch background refresh coordinator', () => {
     expect(stored.state?.inbox.truncated).toBe(true);
   });
 
-  it('invalidates the Notifications validator when the effective scope changes', async () => {
+  it('keeps the Notifications validator when watched membership changes', async () => {
     await watchStore.replaceWatchScope({
       accountLogin: ACCOUNT,
       repositories: [{ full_name: 'owner/repo' }],
@@ -469,18 +549,23 @@ describe('Watch background refresh coordinator', () => {
       nextAllowedAt: new Date(NOW - 60_000).toISOString(),
       candidateCount: 1,
       truncated: false,
+      mode: 'replace',
     });
     const fetchNotifications = vi.fn(async (options) => {
-      expect(options.lastModified).toBeNull();
+      expect(options.lastModified).toBe('Tue, 04 Aug 2026 03:04:05 GMT');
       return inboxSnapshot({
-        threads: [thread('new-scope', 'other/repo')],
+        threads: [thread('custom')],
         candidateCount: 1,
         matchedCount: 1,
       });
     });
     const h = harness({
+      fetchScope: vi.fn(async () => ({
+        repositories: [],
+        pageCount: 1,
+        fetchedAt: new Date(NOW).toISOString(),
+      })),
       fetchNotifications,
-      liveRepositoryNames: ['owner/repo', 'other/repo'],
     });
 
     await h.coordinator.refresh();
@@ -490,7 +575,7 @@ describe('Watch background refresh coordinator', () => {
       accountLogin: ACCOUNT,
       unreadOnly: false,
     });
-    expect(stored.threads.map((item) => item.id)).toEqual(['new-scope']);
+    expect(stored.threads.map((item) => item.id)).toEqual(['cached', 'custom']);
     expect(stored.state?.inbox.lastModified).toBe(
       'Wed, 05 Aug 2026 03:04:05 GMT',
     );
@@ -510,6 +595,7 @@ describe('Watch background refresh coordinator', () => {
       nextAllowedAt: null,
       candidateCount: 1,
       truncated: false,
+      mode: 'replace',
     });
     const queryStarted = deferred<void>();
     const releaseQuery = deferred<void>();
@@ -548,6 +634,7 @@ describe('Watch background refresh coordinator', () => {
       nextAllowedAt: null,
       candidateCount: 1,
       truncated: false,
+      mode: 'replace',
     });
     await db.stars.update('owner/repo', { tombstone: true });
 
@@ -650,7 +737,6 @@ describe('Watch background refresh coordinator', () => {
 
     const result = await refresh;
     expect(result.inboxPublished).toBe(false);
-    expect(result.status.credentialSource).toBe('main');
     expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads).toEqual([]);
   });
 
@@ -666,7 +752,6 @@ describe('Watch background refresh coordinator', () => {
 
     const result = await refresh;
     expect(result.inboxPublished).toBe(false);
-    expect(result.status.credentialSource).toBe('dedicated');
     expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads).toEqual([]);
   });
 
@@ -687,7 +772,6 @@ describe('Watch background refresh coordinator', () => {
 
     expect(await watchStore.getWatchState(ACCOUNT)).toBeNull();
     expect((await h.coordinator.getStatus()).hasNotificationsToken).toBe(true);
-    expect((await h.coordinator.getStatus()).credentialSource).toBe('dedicated');
   });
 
   it('clears the old classic credential only when its persisted identity still matches', async () => {
@@ -705,7 +789,6 @@ describe('Watch background refresh coordinator', () => {
     });
 
     expect((await h.coordinator.getStatus()).hasNotificationsToken).toBe(false);
-    expect((await h.coordinator.getStatus()).credentialSource).toBeNull();
     expect(await watchStore.getWatchState(ACCOUNT)).toBeNull();
   });
 
@@ -721,7 +804,6 @@ describe('Watch background refresh coordinator', () => {
     const status = await h.coordinator.getStatus();
 
     expect(status.hasNotificationsToken).toBe(false);
-    expect(status.credentialSource).toBeNull();
   });
 
   it('disconnects Watch while retaining the main credential and native scope', async () => {
@@ -732,7 +814,6 @@ describe('Watch background refresh coordinator', () => {
     expect(h.fetchNotifications).toHaveBeenCalledTimes(1);
 
     const status = await h.coordinator.disconnectInbox();
-    expect(status.credentialSource).toBeNull();
     expect(status.hasMainToken).toBe(true);
     expect(status.hasNotificationsToken).toBe(false);
     expect(await watchStore.getWatchRepositories(ACCOUNT)).toEqual([{ full_name: 'owner/repo' }]);
@@ -741,7 +822,6 @@ describe('Watch background refresh coordinator', () => {
     const afterDisconnect = await h.coordinator.refresh();
     expect(h.fetchScope).toHaveBeenCalledTimes(2);
     expect(h.fetchNotifications).toHaveBeenCalledTimes(1);
-    expect(afterDisconnect.status.credentialSource).toBeNull();
     expect(afterDisconnect.status.hasMainToken).toBe(true);
   });
 

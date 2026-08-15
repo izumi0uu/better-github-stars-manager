@@ -34,6 +34,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
     libraryViewHydrated: true,
@@ -46,6 +47,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     setOnlyFavorite: vi.fn(),
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
+    setOnlyOwned: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
@@ -66,6 +68,10 @@ vi.mock('@/ui/hooks/use-theme', () => ({
     themeClass: '',
     toggle: vi.fn(),
   }),
+}));
+
+vi.mock('@/ui/hooks/use-manager-surface-badges', () => ({
+  useManagerSurfaceBadges: () => ({ watchUnreadCount: 0, radarUnseenCount: 0 }),
 }));
 
 vi.mock('@/ui/hooks/use-column-layout-editor', () => ({
@@ -115,7 +121,7 @@ vi.mock('@/ui/components/ActiveFilterChips', () => ({
 }));
 
 vi.mock('@/ui/components/FilterSidebar', () => ({
-  FilterSidebar: () => <div data-coach-target="tags" />,
+  FilterSidebar: () => <div />,
 }));
 
 vi.mock('@/ui/components/FloatingLocaleToggle', () => ({
@@ -150,6 +156,7 @@ function status(stage: SyncStatus['onboardingStage']): SyncStatus {
     backfills: {},
     activeBackfillId: null,
     inFlight: true,
+    organizeJobActive: false,
   };
 }
 
@@ -166,7 +173,7 @@ function mountPanel(initialStage: SyncStatus['onboardingStage']) {
     if (message.type === 'getStatus') return ok(status(initialStage));
     if (message.type === 'query') return ok({ grandTotal: 3 });
     if (message.type === 'getAccount') {
-      return ok({ username: 'idah', avatarUrl: 'avatar.png', displayName: 'Idah', gistId: null });
+      return ok({ username: 'octocat', avatarUrl: 'avatar.png', displayName: 'Octo Cat', gistId: null });
     }
     throw new Error(`Unexpected message: ${message.type}`);
   });
@@ -232,29 +239,38 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('ManagerPanel Auto Tags coach step', () => {
-  it('renders Auto Tags as the second post-sync coach step', async () => {
+describe('ManagerPanel coach tour', () => {
+  it('walks through workspaces, Sync, Auto Tags, Cubby, and panel exit in order', async () => {
     const { container } = mountPanel('coach');
+    const steps = [
+      { target: 'surface-tabs', title: 'Meet the three workspaces', body: 'Stars organizes your saved repositories' },
+      { target: 'sync', title: 'Keep Stars in sync', body: 'Neither action creates or changes tags' },
+      { target: 'auto-tags', title: 'Add topic-based tags', body: 'It never runs as part of Sync' },
+      { target: 'agent', title: 'Organize with Cubby', body: 'library-wide changes reviewed before Apply' },
+      { target: 'hide-panel', title: 'Exit the panel', body: 'reopen the manager at any time' },
+    ];
 
-    await waitFor(() => {
-      expect(container.querySelector('[data-coach-target="auto-tags"]')).not.toBeNull();
-      expect(container.textContent).toContain('Step 1 of 5');
-      expect(container.textContent).toContain('Sync your stars');
-    });
+    for (const [index, step] of steps.entries()) {
+      await waitFor(() => {
+        expect(container.textContent).toContain(`Step ${index + 1} of ${steps.length}`);
+        expect(container.textContent).toContain(step.title);
+        expect(container.textContent).toContain(step.body);
+        expect(container.querySelector(`[data-coach-step-target="${step.target}"]`)).not.toBeNull();
+        expect(container.querySelector(`[data-coach-target="${step.target}"]`)).not.toBeNull();
+      });
 
-    const nextButton = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent?.trim() === 'Next');
-    expect(nextButton).toBeDefined();
+      if (index < steps.length - 1) {
+        const nextButton = [...container.querySelectorAll('button')]
+          .find((button) => button.textContent?.trim() === 'Next');
+        expect(nextButton).toBeDefined();
+        act(() => { nextButton!.click(); });
+      }
+    }
 
-    act(() => {
-      nextButton!.click();
-    });
-
-    await waitFor(() => {
-      expect(container.textContent).toContain('Step 2 of 5');
-      expect(container.textContent).toContain('Generate tags when you choose');
-      expect(container.textContent).toContain('Sync and Full Sync never change tags');
-    });
+    expect(container.querySelector('[data-coach-target="tags"]')).toBeNull();
+    expect(container.querySelector('[data-coach-target="repo"]')).toBeNull();
+    expect([...container.querySelectorAll('button')]
+      .some((button) => button.textContent?.trim() === 'Got it')).toBe(true);
   });
 
   it('does not show the coach overlay for an empty-library onboarding stage', async () => {

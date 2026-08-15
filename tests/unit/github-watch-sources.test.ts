@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchGitHubNotifications } from '@/api/github-notifications-source';
+import {
+  fetchGitHubNotifications,
+  mutateGitHubNotificationThread,
+} from '@/api/github-notifications-source';
+import { fetchGitHubWatchSubjectDetail } from '@/api/github-watch-subject-source';
 import { fetchGitHubWatchScope } from '@/api/github-watch-scope-source';
 import { createSerializedRunner } from '@/background/serialized-runner';
 import { GitHubWatchError } from '@/watch/watch-model';
@@ -41,6 +45,35 @@ function notification(id: string, fullName = 'Owner/Repo', overrides: Record<str
       type: 'PullRequest',
       url: `https://api.github.com/repos/${fullName}/pulls/7`,
     },
+    ...overrides,
+  };
+}
+
+function subjectDetail(overrides: Record<string, unknown> = {}) {
+  return {
+    number: 7,
+    title: 'Review Watch details',
+    state: 'open',
+    state_reason: null,
+    html_url: 'https://github.com/owner/repo/pull/7',
+    repository_url: 'https://api.github.com/repos/owner/repo',
+    user: {
+      login: 'octocat',
+      avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4',
+      html_url: 'https://github.com/octocat',
+    },
+    created_at: '2026-08-05T01:00:00Z',
+    updated_at: '2026-08-05T02:00:00Z',
+    labels: [{ name: 'watch', color: 'AABBCC' }],
+    assignees: [{
+      login: 'hubot',
+      avatar_url: 'https://avatars.githubusercontent.com/u/2?v=4',
+      html_url: 'https://github.com/hubot',
+    }],
+    milestone: { title: 'Inbox' },
+    comments: 3,
+    body: '**Bounded** _Markdown_ body',
+    pull_request: {},
     ...overrides,
   };
 }
@@ -244,6 +277,21 @@ describe('GitHub Watch API sources', () => {
     expect(result.pollIntervalSeconds).toBe(60);
   });
 
+  it('calls a supplied Notifications fetch function without a synthetic receiver', async () => {
+    const fetchImpl = function (this: unknown): Promise<Response> {
+      if (this !== undefined) throw new TypeError('Illegal invocation');
+      return Promise.resolve(jsonResponse([]));
+    } as typeof fetch;
+
+    const result = await fetchGitHubNotifications({
+      token: 'classic_notifications',
+      fetchImpl,
+      now: () => NOW,
+    });
+
+    expect(result.pageCount).toBe(1);
+  });
+
   it('keeps the timeout active while consuming a response body and releases the shared queue', async () => {
     const runner = createSerializedRunner();
     const hangingFetch = vi.fn<typeof fetch>(async (_input, init) => {
@@ -328,5 +376,207 @@ describe('GitHub Watch API sources', () => {
         code: 'invalid_thread',
         page: 1,
       }));
+  });
+  it('marks one notification thread read or done with the dedicated token', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => new Response(null, {
+      status: init?.method === 'PATCH' ? 205 : 204,
+    }));
+
+    await mutateGitHubNotificationThread({
+      token: 'classic_notifications',
+      threadId: '123',
+      action: 'read',
+      fetchImpl,
+    });
+    await mutateGitHubNotificationThread({
+      token: 'classic_notifications',
+      threadId: '456',
+      action: 'done',
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(1,
+      'https://api.github.com/notifications/threads/123',
+      expect.objectContaining({ method: 'PATCH', cache: 'no-store' }));
+    expect(fetchImpl).toHaveBeenNthCalledWith(2,
+      'https://api.github.com/notifications/threads/456',
+      expect.objectContaining({ method: 'DELETE', cache: 'no-store' }));
+    for (const [, init] of fetchImpl.mock.calls) {
+      const headers = new Headers(init?.headers);
+      expect(headers.get('authorization')).toBe('Bearer classic_notifications');
+      expect(headers.get('x-github-api-version')).toBe('2022-11-28');
+    }
+  });
+
+  it('rejects malformed notification mutation ids and non-contract statuses', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 404 }));
+    await expect(mutateGitHubNotificationThread({
+      token: 'token',
+      threadId: 'not-a-thread',
+      action: 'read',
+      fetchImpl,
+    })).rejects.toMatchObject({ code: 'invalid_thread' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    await expect(mutateGitHubNotificationThread({
+      token: 'token',
+      threadId: '123',
+      action: 'done',
+      fetchImpl,
+    })).rejects.toMatchObject({ code: 'invalid_response', status: 404 });
+  });
+
+  it('fetches and normalizes Issue/PR details with the main-token contract', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(subjectDetail()));
+
+    const detail = await fetchGitHubWatchSubjectDetail({
+      token: 'github_pat_main',
+      identity: {
+        kind: 'pull_request',
+        repositoryFullName: 'owner/repo',
+        number: 7,
+        apiUrl: 'https://api.github.com/repos/owner/repo/issues/7',
+        htmlUrl: 'https://github.com/owner/repo/pull/7',
+      },
+      fetchImpl,
+    });
+
+    expect(detail).toEqual(expect.objectContaining({
+      kind: 'pull_request',
+      repositoryFullName: 'owner/repo',
+      number: 7,
+      title: 'Review Watch details',
+      state: 'open',
+      labels: [{ name: 'watch', color: 'aabbcc' }],
+      commentCount: 3,
+      bodyMarkdown: '**Bounded** _Markdown_ body',
+    }));
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://api.github.com/repos/owner/repo/issues/7',
+      expect.objectContaining({
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'omit',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+      }),
+    );
+    const headers = new Headers(fetchImpl.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('authorization')).toBe('Bearer github_pat_main');
+    expect(headers.get('accept')).toBe('application/vnd.github.raw+json');
+    expect(headers.get('x-github-api-version')).toBe('2026-03-10');
+  });
+
+  it('accepts null or empty raw Markdown and rejects missing or oversized bodies', async () => {
+    const identity = {
+      kind: 'pull_request' as const,
+      repositoryFullName: 'owner/repo',
+      number: 7,
+      apiUrl: 'https://api.github.com/repos/owner/repo/issues/7',
+      htmlUrl: 'https://github.com/owner/repo/pull/7',
+    };
+
+    for (const body of [null, '']) {
+      await expect(fetchGitHubWatchSubjectDetail({
+        token: 'token',
+        identity,
+        fetchImpl: vi.fn(async () => jsonResponse(subjectDetail({ body }))),
+      })).resolves.toMatchObject({ bodyMarkdown: body });
+    }
+
+    await expect(fetchGitHubWatchSubjectDetail({
+      token: 'token',
+      identity,
+      fetchImpl: vi.fn(async () => jsonResponse(subjectDetail({ body: undefined }))),
+    })).rejects.toMatchObject({ code: 'invalid_response' });
+
+    await expect(fetchGitHubWatchSubjectDetail({
+      token: 'token',
+      identity,
+      fetchImpl: vi.fn(async () => jsonResponse(subjectDetail({ body: 'x'.repeat(100_001) }))),
+    })).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
+  it('rejects redirected, oversized, and identity-mismatched subject detail responses', async () => {
+    const identity = {
+      kind: 'issue' as const,
+      repositoryFullName: 'owner/repo',
+      number: 7,
+      apiUrl: 'https://api.github.com/repos/owner/repo/issues/7',
+      htmlUrl: 'https://github.com/owner/repo/issues/7',
+    };
+    const redirected = vi.fn<typeof fetch>(async () => jsonResponse({}, { status: 301 }));
+    await expect(fetchGitHubWatchSubjectDetail({ token: 'token', identity, fetchImpl: redirected }))
+      .rejects.toMatchObject({ code: 'subject_not_found' });
+
+    const oversized = vi.fn<typeof fetch>(async () => jsonResponse({}, {
+      headers: { 'content-length': String(512 * 1024 + 1) },
+    }));
+    await expect(fetchGitHubWatchSubjectDetail({ token: 'token', identity, fetchImpl: oversized }))
+      .rejects.toMatchObject({ code: 'invalid_response' });
+
+    const mismatched = vi.fn<typeof fetch>(async () => jsonResponse(subjectDetail({
+      html_url: 'https://github.com/other/repo/issues/7',
+      pull_request: undefined,
+    })));
+    await expect(fetchGitHubWatchSubjectDetail({ token: 'token', identity, fetchImpl: mismatched }))
+      .rejects.toMatchObject({ code: 'invalid_response' });
+
+    const hostileAvatarQuery = vi.fn<typeof fetch>(async () => jsonResponse(subjectDetail({
+      user: {
+        login: 'octocat',
+        avatar_url: 'https://avatars.githubusercontent.com/u/1?redirect=https://attacker.example',
+        html_url: 'https://github.com/octocat',
+      },
+    })));
+    await expect(fetchGitHubWatchSubjectDetail({
+      token: 'token',
+      identity,
+      fetchImpl: hostileAvatarQuery,
+    })).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
+  it('maps subject-detail HTTP failures to stable codes with safe statuses', async () => {
+    const identity = {
+      kind: 'issue' as const,
+      repositoryFullName: 'owner/repo',
+      number: 7,
+      apiUrl: 'https://api.github.com/repos/owner/repo/issues/7',
+      htmlUrl: 'https://github.com/owner/repo/issues/7',
+    };
+    const rejected = vi.fn<typeof fetch>(async () => jsonResponse({}, { status: 401 }));
+    await expect(fetchGitHubWatchSubjectDetail({ token: 'token', identity, fetchImpl: rejected }))
+      .rejects.toMatchObject({ code: 'authentication_required', status: 401 });
+
+    const forbidden = vi.fn<typeof fetch>(async () => jsonResponse({}, { status: 403 }));
+    await expect(fetchGitHubWatchSubjectDetail({ token: 'token', identity, fetchImpl: forbidden }))
+      .rejects.toMatchObject({ code: 'permission_denied', status: 403 });
+
+    const limited = vi.fn<typeof fetch>(async () => jsonResponse({}, {
+      status: 403,
+      headers: { 'x-ratelimit-remaining': '0' },
+    }));
+    await expect(fetchGitHubWatchSubjectDetail({ token: 'token', identity, fetchImpl: limited }))
+      .rejects.toMatchObject({ code: 'rate_limited', status: 403 });
+
+    const unavailable = vi.fn<typeof fetch>(async () => jsonResponse({}, { status: 503 }));
+    await expect(fetchGitHubWatchSubjectDetail({ token: 'token', identity, fetchImpl: unavailable }))
+      .rejects.toMatchObject({ code: 'github_unavailable', status: 503 });
+
+    const hanging = vi.fn<typeof fetch>(async (_input, init) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error('Expected subject detail abort signal');
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+          once: true,
+        });
+      });
+    });
+    await expect(fetchGitHubWatchSubjectDetail({
+      token: 'token',
+      identity,
+      fetchImpl: hanging,
+      timeoutMs: 1,
+    })).rejects.toMatchObject({ code: 'deadline_exceeded' });
   });
 });

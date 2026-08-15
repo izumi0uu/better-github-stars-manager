@@ -28,7 +28,7 @@ Use this skill before changing persisted data shape or data-completeness behavio
 
 ## Backfill Contract
 
-- Key backfills by capability, not extension version, e.g. `repo_data_sync_v1`.
+- Key backfills by capability, not extension version, e.g. `repo_data_sync`.
 - Once a backfill is `done`, keep it done unless the task definition itself changes.
 - Do not reopen a done backfill because later/incremental rows are missing optional data.
 - Preserve user deferral: `deferred` must not surface as an active card.

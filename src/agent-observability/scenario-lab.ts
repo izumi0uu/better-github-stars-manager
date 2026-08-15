@@ -107,7 +107,7 @@ type ScriptedProviderStep =
 const TRACE_PROVIDER = Object.freeze({
   providerClass: 'custom' as const,
   protocol: 'chat_completions' as const,
-  modelCapabilityRevision: 'scenario-lab-capability-v1',
+  modelCapabilityRevision: 'scenario-lab-capability',
 });
 
 /**
@@ -1231,7 +1231,7 @@ function createAgentTrace(runtime: ScenarioRuntime) {
     sessionId: scenarioSessionId(runtime),
     turnAttemptId: scenarioAttemptId(runtime),
     baseRevision: 0,
-    executionEpochId: 'scenario-agent-epoch-v1',
+    executionEpochId: 'scenario-agent-epoch',
     startedAt: runtime.now(),
   });
 }

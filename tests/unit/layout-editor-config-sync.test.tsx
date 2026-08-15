@@ -33,6 +33,7 @@ const managerPanelMocks = vi.hoisted(() => ({
   setOnlyFavorite: vi.fn(),
   setOnlyUntagged: vi.fn(),
   setOnlyArchived: vi.fn(),
+  setOnlyOwned: vi.fn(),
   setSort: vi.fn(),
   resetFilters: vi.fn(),
   bgCall: vi.fn(async (method: string) => {
@@ -101,6 +102,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
     libraryViewHydrated: true,
@@ -113,6 +115,7 @@ vi.mock('@/ui/filter-store', async (importOriginal) => {
     setOnlyFavorite: managerPanelMocks.setOnlyFavorite,
     setOnlyUntagged: managerPanelMocks.setOnlyUntagged,
     setOnlyArchived: managerPanelMocks.setOnlyArchived,
+    setOnlyOwned: managerPanelMocks.setOnlyOwned,
     setSort: managerPanelMocks.setSort,
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: managerPanelMocks.resetFilters,
@@ -133,6 +136,10 @@ vi.mock('@/ui/hooks/use-theme', () => ({
     themeClass: '',
     toggle: vi.fn(),
   }),
+}));
+
+vi.mock('@/ui/hooks/use-manager-surface-badges', () => ({
+  useManagerSurfaceBadges: () => ({ watchUnreadCount: 0, radarUnseenCount: 0 }),
 }));
 
 vi.mock('@/utils/messaging', async (importOriginal) => {
@@ -206,6 +213,7 @@ function fakeFilterState(): FilterState {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at',
     sortDir: 'desc',
     libraryViewHydrated: true,
@@ -218,6 +226,7 @@ function fakeFilterState(): FilterState {
     setOnlyFavorite: vi.fn(),
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
+    setOnlyOwned: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
@@ -286,6 +295,7 @@ function LayoutToolbarHarness() {
     <div ref={rootRef}>
       <TooltipProvider>
         <Toolbar
+          account={null}
           f={fakeFilterState()}
           status={null}
           loading={false}
@@ -715,6 +725,47 @@ describe('layout editor config sync', () => {
       customColumnLayout: expect.objectContaining({ showRepositoryOwner: false }),
     });
     expect(editor.current.showRepositoryOwner).toBe(false);
+  });
+
+  it('previews, saves, cancels, and resets repository avatar visibility', async () => {
+    authMocks.getConfig.mockResolvedValue(defaultConfig());
+    const editor = mountLayoutEditor();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(editor.current.showRepositoryAvatar).toBe(true);
+    act(() => {
+      editor.current.beginCustomLayoutEdit();
+      editor.current.setRepositoryAvatarVisible(false);
+    });
+    expect(editor.current.showRepositoryAvatar).toBe(false);
+    expect(editor.current.draftLayout.showRepositoryAvatar).toBe(false);
+
+    act(() => {
+      editor.current.cancelLayoutEdit();
+      editor.current.beginCustomLayoutEdit();
+    });
+    expect(editor.current.showRepositoryAvatar).toBe(true);
+
+    act(() => {
+      editor.current.setRepositoryAvatarVisible(false);
+    });
+    await act(async () => {
+      await editor.current.saveLayoutEdit();
+    });
+    expect(authMocks.update).toHaveBeenCalledWith({
+      columnLayoutMode: 'custom',
+      customColumnLayout: expect.objectContaining({ showRepositoryAvatar: false }),
+    });
+
+    act(() => {
+      editor.current.beginCustomLayoutEdit();
+      editor.current.resetLayoutEdit();
+    });
+    expect(editor.current.draftLayout.showRepositoryAvatar).toBeUndefined();
+    expect(editor.current.showRepositoryAvatar).toBe(true);
   });
 
   it('refreshes cancel target when config changes while layout edit is open', async () => {

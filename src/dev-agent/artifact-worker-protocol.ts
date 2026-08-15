@@ -1,6 +1,6 @@
-import type { TraceArtifactV1 } from '@/agent-observability';
+import type { TraceArtifact } from '@/agent-observability';
 
-export const DEV_ARTIFACT_WORKER_MARKER = 'bgsm-agent-artifact-worker-v1';
+export const DEV_ARTIFACT_WORKER_MARKER = 'bgsm-agent-artifact-worker';
 
 export type ArtifactWorkerRequest =
   | Readonly<{
@@ -36,7 +36,7 @@ export type ArtifactWorkerResponse =
   | Readonly<{
       type: 'artifact_parse_result';
       jobId: string;
-      artifact: TraceArtifactV1;
+      artifact: TraceArtifact;
     }>
   | Readonly<{
       type: 'artifact_parse_error';

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it, vi } from 'vitest';
-import { sourceFingerprintV1 } from '@/bgsm-agent/source-fingerprint';
+import { sourceFingerprint } from '@/bgsm-agent/source-fingerprint';
 import {
   buildSemanticPolicyTaxonomyFromStorage,
   fingerprintSemanticTaxonomy,
@@ -88,7 +88,7 @@ describe('durable whole-library organize job store', () => {
       mtime: '2026-07-18T00:00:00.000Z',
     });
     const fingerprints = new Map(await Promise.all(stars.map(async (star) => (
-      [star.full_name, await sourceFingerprintV1(star, undefined)] as const
+      [star.full_name, await sourceFingerprint(star, undefined)] as const
     ))));
     const policyTaxonomy = buildSemanticPolicyTaxonomyFromStorage(await db.tagMeta.toArray(), []);
     const taxonomy = {
@@ -1206,7 +1206,7 @@ describe('durable whole-library organize job store', () => {
     const stars = repositoryIds.map((full_name) => fakeStar({ full_name }));
     await db.stars.bulkPut(stars);
     const fingerprints = new Map(await Promise.all(stars.map(async (star) => (
-      [star.full_name, await sourceFingerprintV1(star, undefined)] as const
+      [star.full_name, await sourceFingerprint(star, undefined)] as const
     ))));
     const policyTaxonomy = buildSemanticPolicyTaxonomyFromStorage([], []);
     const frozenTaxonomyFingerprint = await fingerprintSemanticTaxonomy(policyTaxonomy);
@@ -1303,7 +1303,7 @@ describe('durable whole-library organize job store', () => {
       outcomes: await Promise.all(claim!.items.map(async (item) => ({
         position: item.position,
         state: 'actionable' as const,
-        sourceFingerprint: await sourceFingerprintV1(stars[item.position]!, undefined),
+        sourceFingerprint: await sourceFingerprint(stars[item.position]!, undefined),
         proposedActions: [{
           kind: 'propose_new_tag' as const,
           tag: 'organized',
@@ -1362,7 +1362,7 @@ describe('durable whole-library organize job store', () => {
       outcomes: [{
         position: 0,
         state: 'actionable',
-        sourceFingerprint: await sourceFingerprintV1(star, undefined),
+        sourceFingerprint: await sourceFingerprint(star, undefined),
         proposedActions: [{
           kind: 'propose_new_tag',
           tag: 'atomic',
@@ -1408,7 +1408,7 @@ describe('durable whole-library organize job store', () => {
       outcomes: [{
         position: 0,
         state: 'actionable',
-        sourceFingerprint: await sourceFingerprintV1(star, undefined),
+        sourceFingerprint: await sourceFingerprint(star, undefined),
         proposedActions: [{
           kind: 'propose_new_tag',
           tag: 'old',
@@ -1679,7 +1679,7 @@ describe('durable whole-library organize job store', () => {
     for (const status of ['cancelled', 'completed'] as const) {
       const input = preflightInput([`owner/${status}`], {
         jobId: `organize-job:v1:terminal-${status}`,
-        preflightToken: `preflight:v1:terminal-${status}`,
+        preflightToken: `preflight:terminal-${status}`,
         requestId: `request:terminal-${status}`,
         controllerId: `controller:v1:terminal-${status}`,
         sessionId: `session:terminal-${status}`,
@@ -1709,7 +1709,7 @@ describe('durable whole-library organize job store', () => {
 
   it('expires and cancels durable preflights without exposing them as active jobs', async () => {
     const expiredInput = preflightInput(['owner/expired'], {
-      preflightToken: 'preflight:v1:expired-store',
+      preflightToken: 'preflight:expired-store',
       requestId: 'request:expired-store',
       expiresAt: 110,
     });
@@ -1728,7 +1728,7 @@ describe('durable whole-library organize job store', () => {
     }), null);
 
     const cancelledInput = preflightInput(['owner/cancelled'], {
-      preflightToken: 'preflight:v1:cancelled-store',
+      preflightToken: 'preflight:cancelled-store',
       requestId: 'request:cancelled-store',
       controllerId: 'controller:v1:cancel-store',
       sessionId: 'session:cancel-store',
@@ -1754,7 +1754,7 @@ describe('durable whole-library organize job store', () => {
     const currentJobId = 'organize-job:v1:current-store';
     const abandoned = preflightInput(['owner/abandoned-first', 'owner/abandoned-second'], {
       jobId: abandonedJobId,
-      preflightToken: 'preflight:v1:abandoned-store',
+      preflightToken: 'preflight:abandoned-store',
       requestId: 'request:abandoned-store',
       controllerId: 'controller:v1:abandoned-store',
       sessionId: 'session:abandoned-store',
@@ -1763,7 +1763,7 @@ describe('durable whole-library organize job store', () => {
     });
     const current = preflightInput(['owner/current'], {
       jobId: currentJobId,
-      preflightToken: 'preflight:v1:current-store',
+      preflightToken: 'preflight:current-store',
       requestId: 'request:current-store',
       controllerId: 'controller:v1:current-store',
       sessionId: 'session:current-store',
@@ -1812,7 +1812,7 @@ function preflightInput(
   return {
     ...jobInput(repositoryIds),
     activeSlot: undefined,
-    preflightToken: 'preflight:v1:store-test',
+    preflightToken: 'preflight:store-test',
     requestId: 'request:store-test',
     expiresAt: 200,
     ...overrides,

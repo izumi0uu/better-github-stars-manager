@@ -1,10 +1,34 @@
 /**
  * @vitest-environment jsdom
  */
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const virtualScrollToIndex = vi.hoisted(() => vi.fn());
+
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: ({
+    count,
+    getItemKey,
+  }: {
+    count: number;
+    getItemKey: (index: number) => string | number;
+  }) => ({
+    getTotalSize: () => count * 37,
+    getVirtualItems: () => Array.from(
+      { length: Math.min(count, 12) },
+      (_, index) => ({ index, start: index * 37, size: 37, key: getItemKey(index) }),
+    ),
+    measureElement: vi.fn(),
+    scrollToIndex: virtualScrollToIndex,
+  }),
+}));
 import { WatchInbox } from '@/ui/components/WatchInbox';
-import type { GitHubNotificationThread } from '@/watch/watch-model';
+import { WatchStatusRibbon } from '@/ui/components/WatchStatusRibbon';
+import type { GitHubNotificationThread, WatchSubjectDetail } from '@/watch/watch-model';
 import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
+import { watchGroupContentSignature } from '@/ui/watch-inbox-presentation';
 import {
   cleanupMountedRootsAndBody,
   click,
@@ -42,22 +66,23 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
     groups: overrides.groups ?? threads.map((item) => ({
       repositoryFullName: item.repositoryFullName,
       repositoryHtmlUrl: item.repositoryHtmlUrl,
+      repositoryOwnerLogin: item.repositoryOwnerLogin ?? null,
+      repositoryOwnerAvatarUrl: item.repositoryOwnerAvatarUrl ?? null,
       latestUpdatedAt: item.updatedAt,
       threads: [item],
     })),
     unreadCount: overrides.unreadCount ?? threads.length,
     totalCount: overrides.totalCount ?? threads.length,
     status: overrides.status ?? {
-      accountLogin: 'idah',
+      accountLogin: 'octocat',
       hasMainToken: true,
       hasNotificationsToken: true,
-      credentialSource: 'main',
       refreshing: false,
       scopeStatus: 'fresh',
       inboxStatus: 'fresh',
       state: {
         id: 'singleton',
-        accountLogin: 'idah',
+        accountLogin: 'octocat',
         scope: {
           lastAttemptAt: '2026-08-05T00:00:00Z',
           lastSuccessfulAt: '2026-08-05T00:00:00Z',
@@ -81,8 +106,51 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
 
 const mountedRoots: MountedRoot[] = [];
 
+function subjectDetail(): WatchSubjectDetail {
+  return {
+    kind: 'issue' as const,
+    repositoryFullName: 'owner/repo-0',
+    number: 1,
+    title: 'Thread 0',
+    state: 'open' as const,
+    stateReason: null,
+    htmlUrl: 'https://github.com/owner/repo-0/issues/1',
+    author: {
+      login: 'octocat',
+      avatarUrl: 'https://avatars.githubusercontent.com/u/1',
+      htmlUrl: 'https://github.com/octocat',
+    },
+    createdAt: '2026-08-04T00:00:00Z',
+    updatedAt: '2026-08-05T00:00:00Z',
+    labels: [{ name: 'bug', color: 'd73a4a' }],
+    assignees: [{
+      login: 'hubot',
+      avatarUrl: 'https://avatars.githubusercontent.com/u/2',
+      htmlUrl: 'https://github.com/hubot',
+    }],
+    milestoneTitle: 'Inbox',
+    commentCount: 2,
+    bodyMarkdown: [
+      '# Summary',
+      '',
+      'Use **safe Markdown** and [the docs](https://example.com/docs).',
+      '',
+      '![blocked image](https://attacker.example/pixel.png)',
+      '',
+      '<script>window.__markdown_injected__ = true</script>',
+      '',
+      '[blocked link](javascript:alert(1))',
+      '',
+      '- first item',
+      '- second item',
+    ].join('\n'),
+  };
+}
+
 afterEach(() => {
   cleanupMountedRootsAndBody(mountedRoots);
+  vi.unstubAllGlobals();
+  virtualScrollToIndex.mockClear();
 });
 
 function renderInbox(props: Partial<React.ComponentProps<typeof WatchInbox>> = {}) {
@@ -97,6 +165,11 @@ function renderInbox(props: Partial<React.ComponentProps<typeof WatchInbox>> = {
       onRefresh={vi.fn()}
       onRetryQuery={vi.fn()}
       onOpenOptions={vi.fn()}
+      onOpenMainTokenOptions={vi.fn()}
+      actionPending={null}
+      actionError={null}
+      onMarkThreadsRead={vi.fn()}
+      onMarkThreadsDone={vi.fn()}
       {...props}
     />,
     mountedRoots,
@@ -138,6 +211,39 @@ function keydown(target: HTMLElement, key: string) {
 }
 
 describe('WatchInbox', () => {
+  it('owns search and inbox actions inside the aligned Watch command bar', async () => {
+    const onUnreadOnlyChange = vi.fn();
+    const onRefresh = vi.fn();
+    const container = renderInbox({ onUnreadOnlyChange, onRefresh });
+    const commandBar = container.querySelector<HTMLElement>('[data-surface-command-bar="watch"]');
+
+    expect(commandBar?.querySelector('input[name="watch-search"]')).not.toBeNull();
+    expect(commandBar?.querySelector('[data-surface-work-canvas="watch"]')).not.toBeNull();
+    expect(container.querySelector('[data-watch-thread-list]')
+      ?.closest('[data-surface-work-canvas="watch"]')).not.toBeNull();
+    expect(container.querySelector('[data-surface-list-end="timeline"]')?.textContent)
+      .toContain('End of current snapshot · 1 thread');
+
+    await click(findButtonByText(commandBar!, 'All'));
+    const refresh = Array.from(commandBar?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+      .find((button) => button.getAttribute('aria-label')?.includes('Refresh'));
+    if (!refresh) throw new Error('Expected Watch refresh control');
+    await click(refresh);
+
+    expect(onUnreadOnlyChange).toHaveBeenCalledWith(false);
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it('uses an info tone when the fetched window is truncated', () => {
+    const truncated = result();
+    truncated.status.state!.inbox.truncated = true;
+    const container = renderInbox({ result: truncated });
+    const marker = container.querySelector<HTMLElement>('[data-surface-list-end="timeline"]');
+
+    expect(marker?.textContent).toContain('End of current window · older threads may exist');
+    expect(marker?.getAttribute('data-surface-list-end-tone')).toBe('info');
+  });
+
   it('distinguishes a query failure from missing main-token setup', () => {
     const retry = vi.fn();
     const container = renderInbox({ result: null, error: 'query', onRetryQuery: retry });
@@ -151,7 +257,6 @@ describe('WatchInbox', () => {
     const setupResult = result();
     setupResult.status.hasMainToken = false;
     setupResult.status.hasNotificationsToken = false;
-    setupResult.status.credentialSource = null;
 
     const container = renderInbox({ result: setupResult, onOpenOptions });
     const settings = findButtonByText(container, 'Open options');
@@ -161,52 +266,132 @@ describe('WatchInbox', () => {
     expect(onOpenOptions).toHaveBeenCalledOnce();
   });
 
-  it('routes a terminal permission failure to the supplied recovery callback', async () => {
-    const onOpenOptions = vi.fn();
+  it('keeps Inbox setup available when watched-membership enumeration fails', async () => {
+    const onRefresh = vi.fn();
     const permissionResult = result();
     permissionResult.groups = [];
     permissionResult.threads = [];
     permissionResult.status.scopeStatus = 'error';
-    permissionResult.status.inboxStatus = 'scope_unavailable';
+    permissionResult.status.inboxStatus = 'never_loaded';
     permissionResult.status.state!.scope.lastSuccessfulAt = null;
     permissionResult.status.state!.scope.errorCode = 'permission_denied';
+    permissionResult.status.state!.inbox.lastSuccessfulAt = null;
 
-    const container = renderInbox({ result: permissionResult, onOpenOptions });
-    const settings = findButtonByText(container, 'Open options');
-    expect(settings).not.toBeNull();
+    const container = renderInbox({ result: permissionResult, onRefresh });
+    const refresh = findButtonByText(container, 'Refresh Watch inbox');
 
-    await click(settings!);
-    expect(onOpenOptions).toHaveBeenCalledOnce();
+    await click(refresh);
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain('Refresh to load the latest bounded Inbox snapshot');
   });
 
-  it('keeps Stars, tags, Gist, and sync available during Inbox credential failure', async () => {
+  it('keeps stale rows visible and exposes credential recovery in the status ribbon', async () => {
     const onOpenOptions = vi.fn();
     const permissionResult = result();
     permissionResult.status.inboxStatus = 'error';
     permissionResult.status.state!.inbox.errorCode = 'permission_denied';
 
-    const container = renderInbox({ result: permissionResult, onOpenOptions });
-    expect(container.textContent).toContain('Watch is paused');
-    expect(container.textContent).toContain('Stars');
-    expect(container.textContent).toContain('tags');
-    expect(container.textContent).toContain('Gist');
-    expect(container.textContent).toContain('sync');
+    const inbox = renderInbox({ result: permissionResult });
+    const ribbon = mountReact(
+      <WatchStatusRibbon
+        result={permissionResult}
+        loading={false}
+        refreshing={false}
+        error={null}
+        onOpenOptions={onOpenOptions}
+      />,
+      mountedRoots,
+    );
+    expect(inbox.textContent).toContain('Thread 0');
+    expect(ribbon.textContent).toContain('Classic PAT authorization required');
+    expect(ribbon.textContent).not.toContain('permission_denied');
 
+    await click(findButtonByText(ribbon, 'Open options'));
+    expect(onOpenOptions).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the last successful rows visible while the status ribbon reports staleness', () => {
+    const staleResult = result();
+    staleResult.status.inboxStatus = 'stale';
+    staleResult.status.state!.inbox.errorCode = 'network';
+
+    const inbox = renderInbox({ result: staleResult });
+    const ribbon = mountReact(
+      <WatchStatusRibbon
+        result={staleResult}
+        loading={false}
+        refreshing={false}
+        error={null}
+      />,
+      mountedRoots,
+    );
+
+    expect(inbox.textContent).toContain('Thread 0');
+    expect(ribbon.querySelector('[role="status"]')).not.toBeNull();
+    expect(ribbon.textContent).toContain('Couldn’t refresh · showing saved rows');
+  });
+
+  it('dismisses a warning status ribbon with the close control', async () => {
+    const staleResult = result();
+    staleResult.status.inboxStatus = 'stale';
+
+    const ribbon = mountReact(
+      <WatchStatusRibbon
+        result={staleResult}
+        loading={false}
+        refreshing={false}
+        error={null}
+      />,
+      mountedRoots,
+    );
+    expect(ribbon.textContent).toContain('Couldn’t refresh · showing saved rows');
+    const dismiss = ribbon.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
+    expect(dismiss).not.toBeNull();
+
+    await act(async () => { dismiss?.click(); });
+    expect(ribbon.querySelector('[data-watch-status]')).toBeNull();
+  });
+
+  it('shows a new warning after a previously dismissed warning changes identity', async () => {
+    const staleResult = result();
+    staleResult.status.scopeStatus = 'stale';
+    staleResult.status.inboxStatus = 'stale';
+    const onOpenOptions = vi.fn();
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const render = (next: WatchInboxQueryResponse) => act(() => root.render(
+      <WatchStatusRibbon
+        result={next}
+        loading={false}
+        refreshing={false}
+        error={null}
+        onOpenOptions={onOpenOptions}
+      />,
+    ));
+
+    render(staleResult);
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!);
+    expect(container.querySelector('[data-watch-status]')).toBeNull();
+
+    const credentialResult = result();
+    credentialResult.status.inboxStatus = 'error';
+    credentialResult.status.state!.inbox.errorCode = 'permission_denied';
+    render(credentialResult);
+
+    expect(container.textContent).toContain('Classic PAT authorization required');
     await click(findButtonByText(container, 'Open options'));
     expect(onOpenOptions).toHaveBeenCalledOnce();
   });
 
-  it('keeps the last successful rows visible while Watch is stale', () => {
-    const staleResult = result();
-    staleResult.status.scopeStatus = 'stale';
-    staleResult.status.inboxStatus = 'stale';
-    staleResult.status.state!.scope.errorCode = 'network';
-    staleResult.status.state!.inbox.errorCode = 'network';
-
-    const container = renderInbox({ result: staleResult });
-
-    expect(container.textContent).toContain('Thread 0');
-    expect(container.querySelector('[role="status"]')).not.toBeNull();
+  it('renders the repository owner avatar in group headers', () => {
+    const withAvatar = thread(0, {
+      repositoryOwnerAvatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
+    });
+    const container = renderInbox({ result: result({ threads: [withAvatar] }) });
+    const avatar = container.querySelector('img[data-repository-avatar]');
+    expect(avatar?.getAttribute('src')).toBe('https://avatars.githubusercontent.com/u/1?v=4');
   });
 
   it('renders raw reason metadata, the repository unread count, and a safe GitHub link', () => {
@@ -224,6 +409,8 @@ describe('WatchInbox', () => {
         groups: [{
           repositoryFullName: unreadThread.repositoryFullName,
           repositoryHtmlUrl: unreadThread.repositoryHtmlUrl,
+          repositoryOwnerLogin: unreadThread.repositoryOwnerLogin ?? null,
+          repositoryOwnerAvatarUrl: unreadThread.repositoryOwnerAvatarUrl ?? null,
           latestUpdatedAt: unreadThread.updatedAt,
           threads: [unreadThread, readThread],
         }],
@@ -231,11 +418,11 @@ describe('WatchInbox', () => {
         totalCount: 2,
       }),
     });
-    const link = container.querySelector<HTMLAnchorElement>(
-      'a[aria-label="Open on GitHub: Thread 0"]',
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[data-watch-thread][aria-label="Notification details: Thread 0"]',
     );
-    const reason = link?.querySelector('code');
-    const updated = link?.querySelector('time');
+    const reason = disclosure?.querySelector('code');
+    const updated = disclosure?.querySelector('time');
     const repository = container
       .querySelector('[aria-label="Collapse owner/repo-0"]')
       ?.closest('section');
@@ -245,9 +432,8 @@ describe('WatchInbox', () => {
     expect(reason?.textContent).toBe('future_reason');
     expect(reason?.getAttribute('title')).toBe('future_reason');
     expect(unreadPill).toBeDefined();
-    expect(link?.href).toBe('https://github.com/owner/repo-0/issues/1');
-    expect(link?.target).toBe('_blank');
-    expect(link?.relList.contains('noreferrer')).toBe(true);
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('false');
+    expect(disclosure?.getAttribute('aria-controls')).toBeTruthy();
     expect(updated?.dateTime).toBe('2026-08-05T00:00:00Z');
     expect(updated?.title).toBe(new Intl.DateTimeFormat('en', {
       month: 'short',
@@ -265,39 +451,340 @@ describe('WatchInbox', () => {
       subjectHtmlUrl: null,
     });
     const container = renderInbox({ result: result({ threads: [unknownThread] }) });
-    const link = container.querySelector<HTMLAnchorElement>(
-      'a[aria-label="Open on GitHub: Thread 0"]',
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[data-watch-thread][aria-label="Notification details: Thread 0"]',
     );
-    const descriptionId = link?.getAttribute('aria-describedby');
+    const descriptionId = disclosure?.getAttribute('aria-describedby');
     const description = descriptionId
       ? container.ownerDocument.getElementById(descriptionId)
       : null;
 
-    expect(link?.href).toBe('https://github.com/owner/repo-0');
     expect(description).not.toBeNull();
     expect(description?.textContent).toContain('FutureType. future_reason.');
   });
 
-  it('uses separate accessible group controls and lazily mounts later thread groups', async () => {
+  it('expands notification details and routes row actions without opening GitHub', async () => {
+    const onMarkThreadsRead = vi.fn();
+    const onMarkThreadsDone = vi.fn();
+    const container = renderInbox({ onMarkThreadsRead, onMarkThreadsDone });
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[data-watch-thread][aria-label="Notification details: Thread 0"]',
+    );
+    if (!disclosure) throw new Error('Expected Watch thread disclosure');
+
+    await click(disclosure);
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+    const detailsId = disclosure.getAttribute('aria-controls');
+    const details = detailsId ? document.getElementById(detailsId) : null;
+    expect(details?.getAttribute('role')).toBe('region');
+    expect(details?.textContent).toContain('future_reason');
+    expect(details?.textContent).toContain('Unread');
+
+    await click(findButtonByText(details!, 'Mark as read'));
+    await click(findButtonByText(details!, 'Mark as done'));
+    expect(onMarkThreadsRead).toHaveBeenCalledWith(['0']);
+    expect(onMarkThreadsDone).toHaveBeenCalledWith(['0']);
+
+    const open = details?.querySelector<HTMLAnchorElement>('a[href="https://github.com/owner/repo-0/issues/1"]');
+    expect(open?.textContent).toContain('Open Issue in GitHub');
+    expect(open?.target).toBe('_blank');
+    expect(open?.relList.contains('noreferrer')).toBe(true);
+  });
+
+  it('loads supported Issue details on expansion without blocking notification actions', async () => {
+    const detail = subjectDetail();
+    const { promise: request, resolve: resolveRequest } = Promise.withResolvers<WatchSubjectDetail>();
+    vi.stubGlobal('chrome', {
+      runtime: { sendMessage: vi.fn(async () => ({ ok: true, data: await request })) },
+      storage: { onChanged: { addListener: vi.fn(), removeListener: vi.fn() } },
+    });
+    const onMarkThreadsRead = vi.fn();
+    const container = renderInbox({ onMarkThreadsRead });
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[data-watch-thread][aria-label="Notification details: Thread 0"]',
+    );
+    if (!disclosure) throw new Error('Expected Watch thread disclosure');
+
+    await click(disclosure);
+    expect(container.querySelector('[data-watch-subject-detail="loading"]')).not.toBeNull();
+    expect(findButtonByText(container, 'Mark as read').disabled).toBe(false);
+    await act(async () => {
+      resolveRequest(detail);
+      await request;
+      await Promise.resolve();
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    });
+
+    const loaded = container.querySelector('[data-watch-subject-detail="success"]');
+    expect(loaded?.textContent).toContain('Open');
+    expect(loaded?.textContent).toContain('#1');
+    expect(loaded?.textContent).toContain('by @octocat');
+    expect(loaded?.textContent).toContain('2 comments');
+    expect(loaded?.textContent).toContain('Milestone: Inbox');
+    expect(loaded?.textContent).toContain('Assigned to @hubot');
+    expect(loaded?.textContent).toContain('bug');
+    expect(loaded?.querySelector('h1')?.textContent).toBe('Summary');
+    expect(loaded?.querySelector('[data-streamdown="strong"]')?.textContent).toBe('safe Markdown');
+    const external = loaded?.querySelector<HTMLAnchorElement>('a[href="https://example.com/docs"]');
+    expect(external?.target).toBe('_blank');
+    expect(external?.relList.contains('noreferrer')).toBe(true);
+    expect(loaded?.querySelector('img')).toBeNull();
+    expect(loaded?.querySelector('script')).toBeNull();
+    expect(loaded?.querySelector('a[href^="javascript:"]')).toBeNull();
+    const markdown = loaded?.querySelector<HTMLElement>('[data-watch-subject-body="preview"]');
+    expect(markdown?.classList.contains('gsm-watch-subject-markdown-preview')).toBe(true);
+    await click(findButtonByText(container, 'Mark as read'));
+    expect(onMarkThreadsRead).toHaveBeenCalledWith(['0']);
+  });
+
+  it('expands overflowing Markdown inside a bounded body region and collapses it again', async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(240);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(108);
+    vi.stubGlobal('chrome', {
+      runtime: { sendMessage: vi.fn(async () => ({ ok: true, data: subjectDetail() })) },
+      storage: { onChanged: { addListener: vi.fn(), removeListener: vi.fn() } },
+    });
+    const container = renderInbox();
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[data-watch-thread][aria-label="Notification details: Thread 0"]',
+    );
+    if (!disclosure) throw new Error('Expected Watch thread disclosure');
+
+    await click(disclosure);
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    });
+
+    const show = findButtonByText(container, 'Show full description');
+    const bodyId = show.getAttribute('aria-controls');
+    const body = bodyId ? document.getElementById(bodyId) : null;
+    expect(show.getAttribute('aria-expanded')).toBe('false');
+    expect(body?.getAttribute('data-watch-subject-body')).toBe('preview');
+    expect(body?.classList.contains('gsm-watch-subject-markdown-faded')).toBe(true);
+
+    await click(show);
+    const collapse = findButtonByText(container, 'Collapse description');
+    expect(collapse.getAttribute('aria-expanded')).toBe('true');
+    expect(body?.getAttribute('data-watch-subject-body')).toBe('expanded');
+    expect(body?.classList.contains('gsm-watch-subject-markdown-expanded')).toBe(true);
+
+    await click(collapse);
+    expect(findButtonByText(container, 'Show full description').getAttribute('aria-expanded')).toBe('false');
+    expect(body?.getAttribute('data-watch-subject-body')).toBe('preview');
+  });
+
+  it.each([
+    {
+      code: 'authentication_required',
+      expected: 'saved GitHub Classic PAT was rejected',
+    },
+    {
+      code: 'permission_denied',
+      expected: 'GitHub Classic PAT needs the repo scope',
+    },
+  ])('offers focused Options recovery for $code detail failures', async ({ code, expected }) => {
+    const { promise: request, resolve: resolveRequest } = Promise.withResolvers<void>();
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: vi.fn(async () => {
+          await request;
+          return {
+            ok: false,
+            error: 'generic background copy',
+            code,
+          };
+        }),
+      },
+      storage: { onChanged: { addListener: vi.fn(), removeListener: vi.fn() } },
+    });
+    const onOpenMainTokenOptions = vi.fn();
+    const container = renderInbox({ onOpenMainTokenOptions });
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[data-watch-thread][aria-label="Notification details: Thread 0"]',
+    );
+    if (!disclosure) throw new Error('Expected Watch thread disclosure');
+
+    await click(disclosure);
+    await act(async () => {
+      resolveRequest();
+      await request.catch(() => undefined);
+      await Promise.resolve();
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    });
+
+    const details = container.querySelector<HTMLElement>('[data-watch-subject-detail="error"]');
+    expect(details?.textContent).toContain(expected);
+    expect(findButtonByText(details!, 'Open options')).not.toBeNull();
+    expect(findButtonByText(details!, 'Retry')).not.toBeNull();
+
+    await click(findButtonByText(details!, 'Open options'));
+    expect(onOpenMainTokenOptions).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain('future_reason');
+    expect(findButtonByText(container, 'Mark as done').disabled).toBe(false);
+    expect(container.querySelector('a[href="https://github.com/owner/repo-0/issues/1"]')).not.toBeNull();
+  });
+
+  it('keeps non-permission detail failures retry-only', async () => {
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: vi.fn(async () => ({
+          ok: false,
+          error: 'GitHub rate-limited this detail request. Retry later.',
+          code: 'rate_limited',
+        })),
+      },
+      storage: { onChanged: { addListener: vi.fn(), removeListener: vi.fn() } },
+    });
+    const container = renderInbox();
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[data-watch-thread][aria-label="Notification details: Thread 0"]',
+    );
+    if (!disclosure) throw new Error('Expected Watch thread disclosure');
+
+    await click(disclosure);
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    });
+
+    const details = container.querySelector<HTMLElement>('[data-watch-subject-detail="error"]');
+    expect(details?.textContent).toContain('GitHub rate-limited this detail request');
+    expect(findButtonByText(details!, 'Retry')).not.toBeNull();
+    expect(Array.from(details?.querySelectorAll('button') ?? [])
+      .some((button) => button.textContent?.trim() === 'Open options')).toBe(false);
+  });
+  it('routes bulk actions to one complete repository group, never the global inbox', async () => {
+    const repositoryUnread = thread(0, {
+      repositoryFullName: 'owner/repository-a',
+      repositoryHtmlUrl: 'https://github.com/owner/repository-a',
+    });
+    const repositoryRead = thread(1, {
+      repositoryFullName: 'owner/repository-a',
+      repositoryHtmlUrl: 'https://github.com/owner/repository-a',
+      unread: false,
+    });
+    const otherRepository = thread(2, {
+      repositoryFullName: 'owner/repository-b',
+      repositoryHtmlUrl: 'https://github.com/owner/repository-b',
+    });
+    const onMarkThreadsRead = vi.fn();
+    const onMarkThreadsDone = vi.fn();
+    const container = renderInbox({
+      result: result({
+        threads: [repositoryUnread, repositoryRead, otherRepository],
+        groups: [{
+          repositoryFullName: 'owner/repository-a',
+          repositoryHtmlUrl: 'https://github.com/owner/repository-a',
+          repositoryOwnerLogin: 'owner',
+          repositoryOwnerAvatarUrl: null,
+          latestUpdatedAt: repositoryUnread.updatedAt,
+          threads: [repositoryUnread, repositoryRead],
+        }, {
+          repositoryFullName: 'owner/repository-b',
+          repositoryHtmlUrl: 'https://github.com/owner/repository-b',
+          repositoryOwnerLogin: 'owner',
+          repositoryOwnerAvatarUrl: null,
+          latestUpdatedAt: otherRepository.updatedAt,
+          threads: [otherRepository],
+        }],
+        unreadCount: 2,
+        totalCount: 3,
+      }),
+      onMarkThreadsRead,
+      onMarkThreadsDone,
+    });
+    const search = container.querySelector<HTMLInputElement>('input[name="watch-search"]');
+    if (!search) throw new Error('Expected Watch search input');
+    await setInputValue(search, 'Thread 0');
+    const commandBar = container.querySelector<HTMLElement>('[data-surface-command-bar="watch"]');
+    const repository = container.querySelector<HTMLElement>(
+      '[data-watch-repository="owner/repository-a"]',
+    );
+    if (!repository) throw new Error('Expected repository-scoped Watch actions');
+
+    expect(commandBar?.textContent).not.toContain('Mark all as read');
+    expect(commandBar?.textContent).not.toContain('Mark all as done');
+    await click(findButtonByText(repository, 'Mark all as read'));
+    await click(findButtonByText(repository, 'Mark all as done'));
+
+    expect(onMarkThreadsRead).toHaveBeenCalledWith(['0']);
+    expect(onMarkThreadsDone).toHaveBeenCalledWith(['0', '1']);
+    expect(onMarkThreadsRead).not.toHaveBeenCalledWith(['2']);
+    expect(onMarkThreadsDone).not.toHaveBeenCalledWith(expect.arrayContaining(['2']));
+  });
+
+  it('shows pending state only on the matching repository action and disables conflicts', () => {
+    const first = thread(0, {
+      repositoryFullName: 'owner/repository-a',
+      repositoryHtmlUrl: 'https://github.com/owner/repository-a',
+    });
+    const second = thread(1, {
+      repositoryFullName: 'owner/repository-b',
+      repositoryHtmlUrl: 'https://github.com/owner/repository-b',
+    });
+    const container = renderInbox({
+      result: result({ threads: [first, second] }),
+      actionPending: { action: 'read', threadIds: ['0'] },
+      actionError: 'done',
+    });
+    const firstRepository = container.querySelector<HTMLElement>(
+      '[data-watch-repository="owner/repository-a"]',
+    );
+    const secondRepository = container.querySelector<HTMLElement>(
+      '[data-watch-repository="owner/repository-b"]',
+    );
+    if (!firstRepository || !secondRepository) throw new Error('Expected both Watch repositories');
+
+    expect(findButtonByText(firstRepository, 'Marking as read…').disabled).toBe(true);
+    expect(findButtonByText(firstRepository, 'Mark all as done').disabled).toBe(true);
+    expect(findButtonByText(secondRepository, 'Mark all as read').disabled).toBe(true);
+    expect(secondRepository.textContent).not.toContain('Marking as read…');
+    const error = container.querySelector('[aria-live="polite"]');
+    expect(error?.textContent).toContain('Couldn’t mark the selected notifications as done.');
+  });
+
+  it('defaults repository groups open, excludes collapsed threads, and closes disclosures', async () => {
     const threads = Array.from({ length: 9 }, (_, index) => thread(index));
-    const container = renderInbox({ result: result({ threads }) });
+    const onCollapseChange = vi.fn();
+    const container = renderInbox({
+      result: result({ threads }),
+      onRepositoryCollapseChange: onCollapseChange,
+    });
 
     expect(container.querySelector('summary')).toBeNull();
-    expect(container.querySelector('[role="group"]')?.getAttribute('aria-label'))
-      .toBe('Inbox thread filter');
-    expect(container.textContent).toContain('Thread 7');
-    expect(container.textContent).not.toContain('Thread 8');
+    const disclosureSelector =
+      'button[data-watch-thread][aria-label="Notification details: Thread 8"]';
+    const disclosure = container.querySelector<HTMLButtonElement>(disclosureSelector);
+    if (!disclosure) throw new Error('Expected Watch thread disclosure');
+    await click(disclosure);
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+
+    const collapse = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Collapse owner/repo-8"]',
+    );
+    expect(collapse).not.toBeNull();
+    expect(collapse?.getAttribute('aria-expanded')).toBe('true');
+    await click(collapse!);
 
     const expand = container.querySelector<HTMLButtonElement>(
       '[aria-label="Expand owner/repo-8"]',
     );
-    expect(expand).not.toBeNull();
     expect(expand?.getAttribute('aria-expanded')).toBe('false');
-    await click(expand!);
+    expect(container.querySelector(disclosureSelector)).toBeNull();
+    expect(onCollapseChange).toHaveBeenCalledWith(
+      'owner/repo-8',
+      watchGroupContentSignature([threads[8]]),
+    );
+    const collapsedRepository = container.querySelector<HTMLElement>(
+      '[data-watch-repository="owner/repo-8"]',
+    );
+    if (!collapsedRepository) throw new Error('Expected collapsed Watch repository');
+    expect(findButtonByText(collapsedRepository, 'Mark all as read').disabled).toBe(false);
+    expect(findButtonByText(collapsedRepository, 'Mark all as done').disabled).toBe(false);
 
-    expect(container.textContent).toContain('Thread 8');
-    expect(expand?.getAttribute('aria-expanded')).toBe('true');
-    expect(expand?.getAttribute('aria-label')).toBe('Collapse owner/repo-8');
+    await click(expand!);
+    expect(container.querySelector(disclosureSelector)?.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('searches repository names and thread titles, then shows a filter-specific empty state', async () => {
@@ -319,9 +806,7 @@ describe('WatchInbox', () => {
     const container = renderInbox({
       result: result({ threads: [release, security, review] }),
     });
-    const search = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search repositories and threads"]',
-    );
+    const search = container.querySelector<HTMLInputElement>('input[name="watch-search"]');
     if (!search) throw new Error('Expected Watch search input');
 
     await setInputValue(search, 'SECURITY-CENTER');
@@ -329,7 +814,6 @@ describe('WatchInbox', () => {
     expect(container.textContent).toContain('Dependency alert');
     expect(container.textContent).not.toContain('Prepare the changelog');
     expect(container.textContent).not.toContain('Review requested for navigation');
-    expect(container.querySelector('header')?.textContent).toContain('1 thread');
 
     await setInputValue(search, 'requested for NAVIGATION');
 
@@ -342,29 +826,55 @@ describe('WatchInbox', () => {
       'No threads match the current Watch search and reason filters.',
     );
     expect(container.textContent).not.toContain('No unread threads in the latest Watch snapshot.');
-    expect(container.querySelector('header')?.textContent).toContain('0 threads');
   });
 
-  it('temporarily reveals matching lazy groups and restores their collapsed state', async () => {
+  it('temporarily reveals matching persisted groups and restores their collapsed state', async () => {
     const threads = Array.from({ length: 9 }, (_, index) => thread(index));
-    const container = renderInbox({ result: result({ threads }) });
-    const search = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search repositories and threads"]',
-    );
+    const container = renderInbox({
+      result: result({ threads }),
+      collapsedRepositories: {
+        'owner/repo-8': watchGroupContentSignature([threads[8]]),
+      },
+    });
+    const search = container.querySelector<HTMLInputElement>('input[name="watch-search"]');
     if (!search) throw new Error('Expected Watch search input');
 
-    expect(container.textContent).not.toContain('Thread 8');
+    expect(container.querySelector(
+      'button[data-watch-thread][aria-label="Notification details: Thread 8"]',
+    )).toBeNull();
     await setInputValue(search, 'Thread 8');
 
-    expect(container.textContent).toContain('Thread 8');
     expect(container.querySelector('[aria-label="Collapse owner/repo-8"]')?.hasAttribute('disabled'))
       .toBe(true);
+    expect(container.querySelector(
+      'button[data-watch-thread][aria-label="Notification details: Thread 8"]',
+    )).not.toBeNull();
 
     await setInputValue(search, '');
 
-    expect(container.textContent).not.toContain('Thread 8');
     expect(container.querySelector('[aria-label="Expand owner/repo-8"]')?.hasAttribute('disabled'))
       .toBe(false);
+    expect(container.querySelector(
+      'button[data-watch-thread][aria-label="Notification details: Thread 8"]',
+    )).toBeNull();
+  });
+
+  it('auto-expands updated repository content and clears the stale collapse record', () => {
+    const current = thread(0, { updatedAt: '2026-08-06T00:00:00Z' });
+    const previous = { ...current, updatedAt: '2026-08-05T00:00:00Z' };
+    const onCollapseChange = vi.fn();
+    const container = renderInbox({
+      result: result({ threads: [current] }),
+      collapsedRepositories: {
+        'owner/repo-0': watchGroupContentSignature([previous]),
+      },
+      onRepositoryCollapseChange: onCollapseChange,
+    });
+
+    expect(container.querySelector('[aria-label="Collapse owner/repo-0"]')).not.toBeNull();
+    expect(container.querySelector('[data-watch-repository="owner/repo-0"]')
+      ?.classList.contains('gsm-watch-auto-expanded')).toBe(true);
+    expect(onCollapseChange).toHaveBeenCalledWith('owner/repo-0', null);
   });
 
   it('shows raw reason facets with counts, supports multi-select, and applies presets', async () => {
@@ -422,7 +932,7 @@ describe('WatchInbox', () => {
     expect(container.textContent).toContain('Security alert');
     expect(container.textContent).not.toContain('Review request');
     expect(container.textContent).not.toContain('Future event');
-    expect(container.querySelector('header')?.textContent).toContain('3 threads');
+    expect(container.querySelectorAll('button[data-watch-thread]')).toHaveLength(3);
 
     await click(findButtonByText(popover, 'Direct'));
 
@@ -433,7 +943,65 @@ describe('WatchInbox', () => {
     expect(container.textContent).not.toContain('Future event');
   });
 
-  it('moves focus with Arrow Up/Down/Home/End across visible thread links only', async () => {
+  it('bounds the browser path by flat virtual rows for four skewed repositories', () => {
+    const groups = Array.from({ length: 4 }, (_, repositoryIndex) => {
+      const repositoryFullName = `owner/large-${repositoryIndex}`;
+      const repositoryThreads = Array.from({ length: 200 }, (_, threadIndex) => thread(
+        repositoryIndex * 200 + threadIndex,
+        { repositoryFullName, repositoryHtmlUrl: `https://github.com/${repositoryFullName}` },
+      ));
+      return {
+        repositoryFullName,
+        repositoryHtmlUrl: `https://github.com/${repositoryFullName}`,
+        repositoryOwnerLogin: 'owner',
+        repositoryOwnerAvatarUrl: null,
+        latestUpdatedAt: repositoryThreads[0].updatedAt,
+        threads: repositoryThreads,
+      };
+    });
+    const allThreads = groups.flatMap((group) => group.threads);
+    const container = renderInbox({
+      result: result({ threads: allThreads, groups }),
+      scrollElement: document.createElement('div'),
+    });
+
+    expect(allThreads).toHaveLength(800);
+    expect(container.querySelectorAll('button[data-watch-thread]').length).toBeLessThanOrEqual(11);
+    expect(container.querySelectorAll('[data-watch-repository]').length).toBeLessThanOrEqual(1);
+  });
+
+  it('scrolls an unmounted adjacent logical thread into the virtual window', async () => {
+    const repositoryFullName = 'owner/keyboard-window';
+    const repositoryThreads = Array.from({ length: 30 }, (_, index) => thread(index, {
+      repositoryFullName,
+      repositoryHtmlUrl: `https://github.com/${repositoryFullName}`,
+      updatedAt: `2026-08-05T00:00:${String(index).padStart(2, '0')}Z`,
+    }));
+    const container = renderInbox({
+      result: result({
+        threads: repositoryThreads,
+        groups: [{
+          repositoryFullName,
+          repositoryHtmlUrl: `https://github.com/${repositoryFullName}`,
+          repositoryOwnerLogin: 'owner',
+          repositoryOwnerAvatarUrl: null,
+          latestUpdatedAt: repositoryThreads[29].updatedAt,
+          threads: repositoryThreads,
+        }],
+      }),
+      scrollElement: document.createElement('div'),
+    });
+    const mountedThreads = container.querySelectorAll<HTMLButtonElement>('button[data-watch-thread]');
+    const lastMounted = mountedThreads[mountedThreads.length - 1];
+    if (!lastMounted) throw new Error('Expected a bounded virtual thread window');
+
+    lastMounted.focus();
+    await act(async () => keydown(lastMounted, 'ArrowDown'));
+
+    expect(virtualScrollToIndex).toHaveBeenCalledWith(12, { align: 'auto' });
+  });
+
+  it('moves focus with Arrow Up/Down/Home/End across visible thread disclosures only', async () => {
     const first = thread(0, { subjectTitle: 'First visible thread' });
     const collapsed = thread(1, { subjectTitle: 'Collapsed thread' });
     const last = thread(2, { subjectTitle: 'Last visible thread' });
@@ -444,28 +1012,28 @@ describe('WatchInbox', () => {
     if (!collapseMiddle) throw new Error('Expected middle repository collapse control');
     await click(collapseMiddle);
 
-    const firstLink = container.querySelector<HTMLAnchorElement>(
-      'a[data-watch-thread][aria-label="Open on GitHub: First visible thread"]',
+    const firstButton = container.querySelector<HTMLButtonElement>(
+      'button[data-watch-thread][aria-label="Notification details: First visible thread"]',
     );
-    const lastLink = container.querySelector<HTMLAnchorElement>(
-      'a[data-watch-thread][aria-label="Open on GitHub: Last visible thread"]',
+    const lastButton = container.querySelector<HTMLButtonElement>(
+      'button[data-watch-thread][aria-label="Notification details: Last visible thread"]',
     );
-    if (!firstLink || !lastLink) throw new Error('Expected visible Watch thread links');
+    if (!firstButton || !lastButton) throw new Error('Expected visible Watch thread disclosures');
     expect(container.querySelector(
-      'a[data-watch-thread][aria-label="Open on GitHub: Collapsed thread"]',
+      'button[data-watch-thread][aria-label="Notification details: Collapsed thread"]',
     )).toBeNull();
 
-    firstLink.focus();
-    keydown(firstLink, 'ArrowDown');
-    expect(document.activeElement).toBe(lastLink);
+    firstButton.focus();
+    keydown(firstButton, 'ArrowDown');
+    expect(document.activeElement).toBe(lastButton);
 
-    keydown(lastLink, 'ArrowUp');
-    expect(document.activeElement).toBe(firstLink);
+    keydown(lastButton, 'ArrowUp');
+    expect(document.activeElement).toBe(firstButton);
 
-    keydown(firstLink, 'End');
-    expect(document.activeElement).toBe(lastLink);
+    keydown(firstButton, 'End');
+    expect(document.activeElement).toBe(lastButton);
 
-    keydown(lastLink, 'Home');
-    expect(document.activeElement).toBe(firstLink);
+    keydown(lastButton, 'Home');
+    expect(document.activeElement).toBe(firstButton);
   });
 });

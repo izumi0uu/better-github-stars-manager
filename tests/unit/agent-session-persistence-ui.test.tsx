@@ -3,7 +3,7 @@
  */
 import { act, createElement, useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { parseScopeFingerprintV1 } from '@/bgsm-agent/scope';
+import { parseScopeFingerprint } from '@/bgsm-agent/scope';
 import type { BgsmAgentActiveTurn, BgsmAgentTurnError } from '@/bgsm-agent/turn-protocol';
 import type {
   AgentRetryDraft,
@@ -1597,7 +1597,7 @@ function conversationBinding() {
   return {
     version: 1 as const,
     candidateContract: selectedRepositoryCandidate(),
-    scopeFingerprint: parseScopeFingerprintV1(`fs:v1:${'a'.repeat(43)}`),
+    scopeFingerprint: parseScopeFingerprint(`fs:${'a'.repeat(43)}`),
     label: 'owner/repo',
     count: 1,
     providerFingerprint: `pcf:v1:${'b'.repeat(43)}`,

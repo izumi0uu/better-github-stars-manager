@@ -162,12 +162,12 @@ test('writes newline-inclusive bounded evidence atomically with private permissi
     };
     const result = publishRuntimeEvidence({
       directory: evidenceDirectory,
-      filename: 'fixture-behavior.schema-v1.json',
+      filename: 'fixture-behavior.schema.json',
       evidence,
       validateEvidence: validateFixtureEvidence,
       privateMarkers: ['private-fixture-marker'],
     });
-    const destination = path.join(evidenceDirectory, 'fixture-behavior.schema-v1.json');
+    const destination = path.join(evidenceDirectory, 'fixture-behavior.schema.json');
     const serialized = readFileSync(destination, 'utf8');
     assert.equal(serialized.endsWith('\n'), true);
     assert.equal(Buffer.byteLength(serialized), evidence.evidenceBytes);
@@ -181,7 +181,7 @@ test('writes newline-inclusive bounded evidence atomically with private permissi
         privateMarkers: ['private-fixture-marker'],
       }),
     );
-    assert.deepEqual(readdirSync(evidenceDirectory), ['fixture-behavior.schema-v1.json']);
+    assert.deepEqual(readdirSync(evidenceDirectory), ['fixture-behavior.schema.json']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -224,7 +224,7 @@ test('rejects unknown schema keys, raw URLs, and caller-supplied private markers
     assert.throws(
       () => publishRuntimeEvidence({
         directory: path.join(root, 'evidence'),
-        filename: 'fixture-behavior.schema-v1.json',
+        filename: 'fixture-behavior.schema.json',
         evidence: { ...base, facts: { proved: true, count: 1, label: 'private-fixture-marker' } },
         validateEvidence(value) {
           exactKeys(value, ['schemaVersion', 'status', 'proofScope', 'releaseDist', 'facts', 'evidenceBytes']);
@@ -263,13 +263,13 @@ test('rejects oversized evidence and removes a same-directory temporary file aft
     );
 
     const evidenceDirectory = path.join(root, 'evidence');
-    const destinationDirectory = path.join(evidenceDirectory, 'fixture-behavior.schema-v1.json');
+    const destinationDirectory = path.join(evidenceDirectory, 'fixture-behavior.schema.json');
     mkdirSync(destinationDirectory, { recursive: true });
     assert.throws(
-      () => writeRuntimeEvidenceAtomic(evidenceDirectory, 'fixture-behavior.schema-v1.json', '{}\n'),
+      () => writeRuntimeEvidenceAtomic(evidenceDirectory, 'fixture-behavior.schema.json', '{}\n'),
       (error) => error instanceof RuntimeEvidenceError && error.code === 'atomic_write_failed',
     );
-    assert.deepEqual(readdirSync(evidenceDirectory), ['fixture-behavior.schema-v1.json']);
+    assert.deepEqual(readdirSync(evidenceDirectory), ['fixture-behavior.schema.json']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

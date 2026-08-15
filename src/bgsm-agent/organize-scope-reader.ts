@@ -62,7 +62,7 @@ export async function loadFrozenScopePage(input: Readonly<{
     const record = records.get(repositoryId);
     if (!record) {
       positions.push(Object.freeze({ frozenIndex, repositoryId, kind: 'missing' }));
-    } else if (record.star.tombstone) {
+    } else if (record.star.tombstone || record.star.viewer_has_starred === false) {
       positions.push(Object.freeze({ frozenIndex, repositoryId, kind: 'tombstoned' }));
     } else {
       positions.push(Object.freeze({

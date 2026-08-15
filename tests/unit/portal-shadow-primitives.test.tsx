@@ -32,6 +32,7 @@ vi.mock('@radix-ui/react-popover', async () => {
   const React = await import('react');
   return {
     Root: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Anchor: () => null,
     Trigger: ({ children }: { children: React.ReactNode }) => <button type="button">{children}</button>,
     Portal: ({ container, children }: { container?: HTMLElement; children: React.ReactNode }) => portal(children, container),
     Content: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement> & { sideOffset?: number }>((props, ref) => {

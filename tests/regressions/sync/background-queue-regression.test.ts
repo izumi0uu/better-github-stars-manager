@@ -120,7 +120,7 @@ describe('Background queue regressions', () => {
     const first = jobQueue.run(async () => {
       await firstDone;
     });
-    const backfill = backfillExecutor.runBackfill({ id: 'repo_data_sync_v1' }, String);
+    const backfill = backfillExecutor.runBackfill({ id: 'repo_data_sync' }, String);
 
     await Promise.resolve();
     assert.deepEqual(states, []);
@@ -132,7 +132,7 @@ describe('Background queue regressions', () => {
     releaseFullSync();
     assert.deepEqual(await backfill, {
       ok: true,
-      data: { id: 'repo_data_sync_v1', added: 1, updated: 1, tagged: 0 },
+      data: { id: 'repo_data_sync', added: 1, updated: 1, tagged: 0 },
     });
     await first;
     assert.deepEqual(states, ['running', 'done']);
@@ -157,14 +157,14 @@ describe('Background queue regressions', () => {
       },
     });
 
-    const first = backfillExecutor.runBackfill({ id: 'repo_data_sync_v1' }, String);
-    const second = backfillExecutor.runBackfill({ id: 'repo_data_sync_v1' }, String);
+    const first = backfillExecutor.runBackfill({ id: 'repo_data_sync' }, String);
+    const second = backfillExecutor.runBackfill({ id: 'repo_data_sync' }, String);
     assert.equal(first, second);
 
     releaseFullSync();
     assert.deepEqual(await Promise.all([first, second]), [
-      { ok: true, data: { id: 'repo_data_sync_v1', added: 2, updated: 2, tagged: 0 } },
-      { ok: true, data: { id: 'repo_data_sync_v1', added: 2, updated: 2, tagged: 0 } },
+      { ok: true, data: { id: 'repo_data_sync', added: 2, updated: 2, tagged: 0 } },
+      { ok: true, data: { id: 'repo_data_sync', added: 2, updated: 2, tagged: 0 } },
     ]);
     assert.equal(fullSyncCalls, 1);
   });
@@ -187,7 +187,7 @@ describe('Background queue regressions', () => {
     });
 
     await assert.rejects(
-      () => backfillExecutor.runBackfill({ id: 'repo_data_sync_v1' }, () => 'translated failure'),
+      () => backfillExecutor.runBackfill({ id: 'repo_data_sync' }, () => 'translated failure'),
       /sync failed/,
     );
     assert.deepEqual(states, [
@@ -218,13 +218,13 @@ describe('Background queue regressions', () => {
     });
 
     await assert.rejects(
-      () => backfillExecutor.runBackfill({ id: 'repo_data_sync_v1' }, () => 'translated failure'),
+      () => backfillExecutor.runBackfill({ id: 'repo_data_sync' }, () => 'translated failure'),
       /first attempt failed/,
     );
 
     assert.deepEqual(
-      await backfillExecutor.runBackfill({ id: 'repo_data_sync_v1' }, String),
-      { ok: true, data: { id: 'repo_data_sync_v1', added: 3, updated: 0, tagged: 0 } },
+      await backfillExecutor.runBackfill({ id: 'repo_data_sync' }, String),
+      { ok: true, data: { id: 'repo_data_sync', added: 3, updated: 0, tagged: 0 } },
     );
     assert.equal(fullSyncCalls, 2);
     assert.deepEqual(states, [

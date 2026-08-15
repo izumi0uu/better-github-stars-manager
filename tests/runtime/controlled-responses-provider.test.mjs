@@ -374,6 +374,12 @@ describe('controlled Responses provider CDP lifecycle', () => {
         body: '[]',
         kind: 'watch-notifications-probe',
       }],
+      ['GET github-watch-subject', {
+        status: 200,
+        contentType: 'application/json',
+        body: '{"number":17}',
+        kind: 'watch-subject-detail',
+      }],
       ['GET unknown-http-route', {
         status: 404,
         contentType: 'application/json',
@@ -400,6 +406,7 @@ describe('controlled Responses provider CDP lifecycle', () => {
       httpRequest('file-read', 'https://api.github.com/repos/octo/project/contents/README.md?ref=main', 'gEt'),
       httpRequest('watch-scope', 'https://api.github.com/user/subscriptions?per_page=1&page=1', 'GET'),
       httpRequest('watch-notifications', 'https://api.github.com/notifications?all=true&per_page=1', 'GET'),
+      httpRequest('watch-subject', 'https://api.github.com/repos/octo/project/issues/17', 'GET'),
     ]) {
       client.emit('Fetch.requestPaused', request);
     }
@@ -417,6 +424,7 @@ describe('controlled Responses provider CDP lifecycle', () => {
         { kind: 'repository-file-write', method: 'PUT', route: 'github-contents-file', status: 201 },
         { kind: 'watch-notifications-probe', method: 'GET', route: 'github-notifications', status: 200 },
         { kind: 'watch-scope-probe', method: 'GET', route: 'github-watch-scope', status: 200 },
+        { kind: 'watch-subject-detail', method: 'GET', route: 'github-watch-subject', status: 200 },
       ],
     );
     assert.deepEqual(
@@ -431,6 +439,7 @@ describe('controlled Responses provider CDP lifecycle', () => {
         ['file-write', 201],
         ['watch-notifications', 200],
         ['watch-scope', 200],
+        ['watch-subject', 200],
       ],
     );
 

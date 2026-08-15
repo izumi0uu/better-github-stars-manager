@@ -1,6 +1,6 @@
-export const OPTIONS_INTENT_STORAGE_KEY = 'gsm_options_intent_v1';
+export const OPTIONS_INTENT_STORAGE_KEY = 'gsm_options_intent';
 
-export type OptionsIntentSection = 'watch';
+export type OptionsIntentSection = 'github' | 'watch';
 
 export type OptionsIntent = {
   section: OptionsIntentSection;
@@ -12,7 +12,7 @@ export function parseOptionsIntent(value: unknown): OptionsIntent | null {
 
   const candidate = value as Record<string, unknown>;
   if (
-    candidate.section !== 'watch'
+    (candidate.section !== 'github' && candidate.section !== 'watch')
     || typeof candidate.requestedAt !== 'number'
     || !Number.isFinite(candidate.requestedAt)
   ) return null;
@@ -24,7 +24,9 @@ export function parseOptionsIntent(value: unknown): OptionsIntent | null {
 }
 
 export async function writeOptionsIntent(section: OptionsIntentSection): Promise<void> {
-  if (section !== 'watch') throw new TypeError('Invalid Options intent section.');
+  if (section !== 'github' && section !== 'watch') {
+    throw new TypeError('Invalid Options intent section.');
+  }
 
   const intent: OptionsIntent = {
     section,

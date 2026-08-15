@@ -11,7 +11,21 @@ import { manualTagNames, visibleTagNames } from '@/tags/tag-model';
  * frame, so turbo:load/render + popstate are enough (no MutationObserver).
  */
 
-const injected = new Map<string, { el: HTMLElement; rerender: () => void }>(); // url → host element, for idempotency
+type RepoChipInjection = {
+  document: Document;
+  url: string;
+  repository: string;
+  anchor: HTMLElement;
+  el: HTMLElement;
+};
+
+type RepoChipRuntime = {
+  document: Document;
+  sync(): Promise<void>;
+  dispose(): void;
+};
+
+const pageRuntimes = new WeakMap<Window, RepoChipRuntime>();
 
 /**
  * Inline SVG (shadow root has no React, so lucide-react isn't available);
@@ -23,11 +37,7 @@ function iconSvg(name: 'check' | 'pencil'): string {
   return `<svg ${common}><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
 }
 
-function parseRepoFromUrl(): { owner: string; repo: string } | null {
-  return parseRepoFromPathname(location.pathname);
-}
-
-function findAnchor(): { host: HTMLElement; full_name: string } | null {
+function findAnchor(document: Document): { host: HTMLElement; full_name: string } | null {
   // 1. microdata anchor
   const nameA = document.querySelector<HTMLElement>('strong[itemprop="name"] a[data-pjax]');
   if (nameA) {
@@ -49,7 +59,13 @@ function findAnchor(): { host: HTMLElement; full_name: string } | null {
   return null;
 }
 
-function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')): { el: HTMLElement; rerender: () => void } {
+function buildChip(
+  document: Document,
+  window: Window,
+  full_name: string,
+  tag: Tag | undefined,
+  m = messageFor('en'),
+): HTMLElement {
   const host = document.createElement('span');
   host.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:8px;vertical-align:middle;';
   const root = host.attachShadow({ mode: 'open' });
@@ -161,39 +177,112 @@ function buildChip(full_name: string, tag: Tag | undefined, m = messageFor('en')
     box.appendChild(wrap);
   }
 
-  return { el: host, rerender: render };
+  render();
+  return host;
 }
 
-async function inject() {
-  const repo = parseRepoFromUrl();
-  if (!repo) return cleanup();
-  const anchor = findAnchor();
-  if (!anchor) return; // not a repo page (yet)
-
-  const url = location.href;
-  // Idempotent: if we already injected for this URL, skip.
-  if (injected.has(url)) return;
-
-  const m = messageFor(await authStore.getLocale());
-  const got = await bgCall<{ tag: Tag | null }>('getTag', { full_name: anchor.full_name });
-  const { el, rerender } = buildChip(anchor.full_name, got.tag ?? undefined, m);
-  anchor.host.insertAdjacentElement('afterend', el);
-  injected.set(url, { el, rerender });
-}
-
-function cleanup() {
-  // Remove chips when navigating away from repo pages.
-  for (const [url, entry] of injected) {
-    if (!location.pathname.match(/^\/[^/]+\/[^/]+/)) {
-      entry.el.remove();
-      injected.delete(url);
-    }
+/**
+ * CRXJS may execute the cached content entry again for a WindowProxy whose
+ * Document changed. Keep one runtime per Window and reuse it only while its
+ * exact Document is still current.
+ */
+export function installRepoChipRuntime(pageWindow: Window): void {
+  const pageDocument = pageWindow.document;
+  const existing = pageRuntimes.get(pageWindow);
+  if (existing?.document === pageDocument) {
+    void existing.sync();
+    return;
   }
+  existing?.dispose();
+
+  const window = pageWindow;
+  const document = pageDocument;
+  const { location } = window;
+  let active = true;
+  let syncGeneration = 0;
+  let injection: RepoChipInjection | null = null;
+
+  function disposeInjection(): void {
+    const current = injection;
+    injection = null;
+    current?.el.remove();
+  }
+
+  function targetIsCurrent(
+    generation: number,
+    url: string,
+    repository: string,
+    anchor: HTMLElement,
+  ): boolean {
+    if (!active || generation !== syncGeneration || pageWindow.document !== document) return false;
+    if (location.href !== url) return false;
+    const currentRepo = parseRepoFromPathname(location.pathname);
+    if (!currentRepo || `${currentRepo.owner}/${currentRepo.repo}`.toLowerCase() !== repository) return false;
+    const currentAnchor = findAnchor(document);
+    return currentAnchor?.host === anchor
+      && currentAnchor.full_name.toLowerCase() === repository
+      && anchor.isConnected;
+  }
+
+  async function sync(): Promise<void> {
+    if (!active) return;
+    const generation = ++syncGeneration;
+    const repo = parseRepoFromPathname(location.pathname);
+    if (!repo) {
+      disposeInjection();
+      return;
+    }
+
+    const url = location.href;
+    const repository = `${repo.owner}/${repo.repo}`.toLowerCase();
+    const anchor = findAnchor(document);
+    if (injection && (
+      injection.document !== document
+      || injection.url !== url
+      || injection.repository !== repository
+      || injection.anchor !== anchor?.host
+      || !injection.anchor.isConnected
+      || !injection.el.isConnected
+      || injection.el.ownerDocument !== document
+      || injection.el.parentElement !== injection.anchor.parentElement
+    )) {
+      disposeInjection();
+    }
+
+    if (!anchor || anchor.full_name.toLowerCase() !== repository) {
+      disposeInjection();
+      return;
+    }
+    if (injection) return;
+
+    const m = messageFor(await authStore.getLocale());
+    if (!targetIsCurrent(generation, url, repository, anchor.host)) return;
+    const got = await bgCall<{ tag: Tag | null }>('getTag', { full_name: anchor.full_name });
+    if (!targetIsCurrent(generation, url, repository, anchor.host)) return;
+
+    const el = buildChip(document, window, anchor.full_name, got.tag ?? undefined, m);
+    anchor.host.insertAdjacentElement('afterend', el);
+    injection = { document, url, repository, anchor: anchor.host, el };
+  }
+
+  function dispose(): void {
+    if (!active) return;
+    active = false;
+    syncGeneration += 1;
+    document.removeEventListener('turbo:load', sync);
+    document.removeEventListener('turbo:render', sync);
+    window.removeEventListener('popstate', sync);
+    disposeInjection();
+  }
+
+  const runtime = { document, sync, dispose };
+  pageRuntimes.set(pageWindow, runtime);
+  void sync();
+  document.addEventListener('turbo:load', sync);
+  document.addEventListener('turbo:render', sync);
+  window.addEventListener('popstate', sync);
 }
 
-// Initial + Turbo/PJAX re-injection. No MutationObserver is needed because the
-// title area sits outside the swap frame.
-inject();
-document.addEventListener('turbo:load', inject);
-document.addEventListener('turbo:render', inject);
-window.addEventListener('popstate', inject);
+export function onExecute(): void {
+  installRepoChipRuntime(window);
+}

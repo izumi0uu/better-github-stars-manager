@@ -4,7 +4,7 @@
 import { act, useState, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Star } from '@/types';
+import type { Star, Tag } from '@/types';
 import type { ColumnId } from '@/ui/column-layout';
 import { StarRow } from '@/ui/components/StarRow';
 
@@ -41,6 +41,20 @@ function fakeStar(fullName = 'owner/repo'): Star {
     synced_at: '2024-03-02T00:00:00Z',
   };
 }
+function fakeTag(tags: string[] = [], notes = ''): Tag {
+  return {
+    full_name: 'owner/repo',
+    manualTags: tags,
+    autoTags: [],
+    dismissedAutoTags: [],
+    manualTagsMtime: '',
+    autoTagsMtime: '',
+    dismissedAutoTagsMtime: '',
+    notes,
+    mtime: '',
+  };
+}
+
 
 function mount(element: ReactElement): { container: HTMLDivElement; root: Root } {
   const container = document.createElement('div');
@@ -63,8 +77,7 @@ function rowWithColumns(
   return (
     <StarRow
       star={fakeStar()}
-      tags={['ui', 'react', 'agent', 'tooling', 'automation']}
-      hasNotes={false}
+      tag={fakeTag(['ui', 'react', 'agent', 'tooling', 'automation'])}
       favorite={false}
       favoriteBusy={false}
       selectedTags={[]}
@@ -91,8 +104,6 @@ function ControlledUnstarRow({
   return (
     <StarRow
       star={fakeStar()}
-      tags={[]}
-      hasNotes={false}
       favorite={false}
       favoriteBusy={false}
       selectedTags={[]}
@@ -131,6 +142,37 @@ describe('star row inline tag fitting', () => {
     document.body.replaceChildren();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('reveals the repository initial when an avatar image fails', () => {
+    const star = {
+      ...fakeStar('owner/network-fallback'),
+      owner_avatar_url: 'https://avatars.githubusercontent.com/u/broken?v=4',
+    };
+    const { container } = mount(
+      <StarRow
+        star={star}
+        showRepositoryAvatar
+        favorite={false}
+        favoriteBusy={false}
+        selectedTags={[]}
+        onToggleTag={vi.fn()}
+        onToggleFavorite={vi.fn(async () => undefined)}
+        selected={false}
+        onSelect={vi.fn()}
+        columns={['repository']}
+        gridTemplateColumns="220px"
+        flashedColumn={null}
+      />,
+    );
+    const image = container.querySelector<HTMLImageElement>('[data-repository-avatar]');
+    const fallback = container.querySelector('[data-repository-avatar-fallback]');
+
+    expect(fallback?.textContent).toBe('N');
+    expect(image?.hidden).toBe(false);
+    act(() => image?.dispatchEvent(new Event('error')));
+    expect(image?.hidden).toBe(true);
+    expect(fallback?.textContent).toBe('N');
   });
 
   it('expands beyond the initial two tags when the measured column width allows it', () => {
@@ -192,8 +234,6 @@ describe('star row inline tag fitting', () => {
     mount(
       <StarRow
         star={fakeStar()}
-        tags={[]}
-        hasNotes={false}
         favorite={false}
         favoriteBusy={false}
         selectedTags={[]}

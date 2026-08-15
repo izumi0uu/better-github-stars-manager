@@ -1,14 +1,10 @@
-# Chrome Web Store update notes
+# Chrome Web Store submission reference
 
 [简体中文](../zh/chrome-web-store-submission.md)
 
-This reference collects candidate listing copy, manifest-derived permission justifications, reviewer steps, and external Chrome Web Store work. It does not claim that a package is release-ready, uploaded, under review, or published.
+This reference collects Store listing copy, manifest-derived permission justifications, reviewer steps, and external Chrome Web Store work. It does not claim that a package is release-ready, uploaded, under review, or published.
 
-## Current update status
-
-The public item is already version `1.0.8`. This work is an update, not a first submission. Google requires each uploaded update to contain the complete package and a version larger than the published version.
-
-The user explicitly approved `1.0.9` as the candidate version. The repository package and generated manifest now use `1.0.9`; the clean runtime, package, and final verification gates have not yet passed at this point in the record.
+## Evidence boundaries
 
 Keep these evidence states separate:
 
@@ -20,21 +16,19 @@ Keep these evidence states separate:
 
 None of these states implies a later state. Local evidence must keep `dashboardSubmissionClaimed: false`.
 
-Google documents the update flow in [Update your Chrome Web Store item](https://developer.chrome.com/docs/webstore/update). Upload, review, and publication remain separate external states whether work is performed in the Dashboard or through an enabled API workflow.
+For an update, Google requires a complete package with a version greater than the published version. Google documents this flow in [Update your Chrome Web Store item](https://developer.chrome.com/docs/webstore/update). Upload, review, and publication remain separate external states whether work is performed in the Dashboard or through an enabled API workflow.
 
 ## Public URLs
 
 - [Project homepage](https://github.com/izumi0uu/better-github-stars-manager)
-- [Candidate privacy policy](https://github.com/izumi0uu/better-github-stars-manager/blob/master/docs/en/privacy-policy.md)
+- [Privacy policy](https://github.com/izumi0uu/better-github-stars-manager/blob/master/docs/en/privacy-policy.md)
 - [Support and issue tracker](https://github.com/izumi0uu/better-github-stars-manager/issues)
 
 The privacy URL is usable only after the reviewed policy is public and retrievable without authentication. Dashboard values and the public listing, privacy display, promo assets, and installed version must be checked manually.
 
-Historical observation from the Phase 8 fact sheet: the public item showed `1.0.8`, its privacy URL served older policy text, and its public privacy display did not describe current Cubby, Gist, and Provider processing. Treat this as dated audit evidence, not proof of the current dashboard or public state.
+## Store listing copy
 
-## Candidate listing copy
-
-The candidate copy describes the current implementation. It is not evidence that the dashboard contains this text.
+This copy describes the current implementation. It is not evidence that the dashboard contains this text.
 
 ### Store name
 
@@ -55,7 +49,7 @@ Use it to:
 - organize repositories with custom tags and notes
 - filter by language, tags, and untagged status
 - sync only your annotation layer through your own secret GitHub Gist
-- view GitHub Notifications for currently starred repositories you watch through the optional Watch Inbox
+- view GitHub Notifications for currently starred repositories through the optional Watch Inbox, with a separate informational count for watched repositories
 - use your own OpenAI, OpenRouter, Anthropic, or compatible AI service with Cubby
 
 Ordinary Cubby prompts can authorize bounded tag changes. Every write remains limited by current-turn local evidence, operation limits, and the current write policy.
@@ -70,7 +64,7 @@ Developer Tools
 
 ## Local asset inventory
 
-The Phase 8 source inventory observed the following local files and dimensions. This does not prove dashboard upload, ordering, review, or public display.
+The repository contains the following local files and dimensions. This does not prove dashboard upload, ordering, review, or public display.
 
 Prepared screenshots:
 
@@ -92,11 +86,11 @@ Prepared store icon:
 
 Google's [image requirements](https://developer.chrome.com/docs/webstore/images) require a 128x128 icon, at least one screenshot, and a 440x280 small promotional image. The 1400x560 marquee image is optional. Screenshots must show the current product experience.
 
-The reviewed tiles now say “Local-first star organization.” and “Direct to GitHub and your selected AI provider. No developer-operated proxy.” The marquee adds that stars, tags, and notes remain in the browser while sync and AI requests go directly to the selected services. Its “Yours to keep” card describes optional sync through the user's secret Gist with **Push** and **Pull**. It makes no JSON, CSV, Markdown, export, or backup claim. The previous “Zero server. 100% private.” and “Private by Design” claims are absent.
+The tiles say “Local-first star organization.” and “Direct to GitHub and your selected AI provider. No developer-operated proxy.” The marquee adds that stars, tags, and notes remain in the browser while sync and AI requests go directly to the selected services. Its “Yours to keep” card describes optional sync through the user's secret Gist with **Push** and **Pull**. It makes no JSON, CSV, Markdown, export, backup, or absolute privacy claim.
 
-The tiles contain typography and the brand icon, not screenshots. Review found no credentials, tokens, account data, private notes, prompts, Provider payloads, absolute privacy claims, or unsupported export claims. The regenerated small tile has SHA-256 `10b3b09739a454c63e805fa292d969c8223fb3bf5257c04a854d399b07b82aea`. The corrected marquee has SHA-256 `874796aa24006e023d22fdab1cd074862ec158cf2cbb71539136630ac6810258`.
+The tiles contain typography and the brand icon, not screenshots. They contain no credentials, tokens, account data, private notes, prompts, Provider payloads, or unsupported export claims.
 
-Two consecutive generations produced byte-identical outputs on the same machine and Chrome build. Different Chrome builds can rasterize the same source differently, so this evidence makes no cross-machine reproducibility claim. Dashboard upload and public rendering remain separate external checks.
+Different Chrome builds can rasterize the same source differently. Regenerate and inspect the outputs before each upload; dashboard upload and public rendering remain separate external checks.
 
 Dashboard asset presence, ordering, locale assignment, review status, and public rendering remain manual and unverified. In-app English and Simplified Chinese switching does not establish a localized Web Store listing.
 
@@ -106,7 +100,7 @@ These justifications derive from the current Manifest V3 source. The final clean
 
 ### `storage`
 
-Provides `chrome.storage.local` for lightweight configuration, encrypted GitHub and AI-service credentials, the selected Watch credential source, and query or UI state. Star and annotation data, Watch snapshots, Cubby's bounded conversation/recovery/artifact ledger, and separately bounded Organize records use extension-local IndexedDB. A transient `chrome.storage.session` value routes Watch recovery to the relevant Options section and is consumed immediately.
+Provides `chrome.storage.local` for lightweight configuration and the encrypted GitHub Classic PAT and AI-service credentials, plus query or UI state. Star and annotation data, Watch snapshots, Cubby's bounded conversation/recovery/artifact ledger, and separately bounded Organize records use extension-local IndexedDB. A transient `chrome.storage.session` value routes Watch recovery to the relevant Options section and is consumed immediately.
 
 ### `alarms`
 
@@ -148,7 +142,8 @@ Use this source-backed mapping while completing the dashboard. The dashboard ans
 - Data is not sold or used for personalized advertising, credit, or lending decisions
 - No analytics or advertising software development kit receives extension data
 - GitHub and Gist receive only data needed for requested GitHub, search, and sync features
-- Watch Inbox processes watched-repository membership and bounded GitHub notification metadata only after explicit setup; it reuses the main credential after a successful capability check or stores a separate encrypted Notifications token when required
+- Watch Inbox processes watched-repository membership and bounded GitHub notification metadata only after explicit setup; it reuses the single Classic PAT after checking its `notifications` capability
+- Following Radar uses the same Classic PAT only after checking its `read:user` capability; missing optional capabilities disable only the dependent feature
 - Watch scope, notification threads, and refresh state stay in local IndexedDB and are never synced through Gist or sent to an AI service by default
 - The selected AI service receives task data only when Cubby is used
 - No developer-operated proxy or backend receives GitHub, Gist, or Provider traffic
@@ -160,8 +155,8 @@ Use this source-backed mapping while completing the dashboard. The dashboard ans
 - The logical ledger warns at 256 MiB and stops new writes at 512 MiB; it excludes separately bounded Organize tables and differs from Chrome's whole-extension browser estimate
 - Cubby retains at most one latest completed or cancelled Organize workflow independently of its origin conversation
 - Origin-conversation deletion removes its transcript, attempt, recovery, and conversation-artifact rows but retains the latest terminal Organize result until Dismiss, replacement, or uninstall
-- Task data can include the prompt, scoped public metadata, requested bounded public snippets and paths, requested in-scope private notes, visible bounded tags, and protocol observations
-- Unrequested private notes, credentials, the GitHub token, and unrelated stars are excluded from model-visible task data by default
+- Task data can include the prompt, scoped public metadata, bounded public snippets and paths, in-scope private notes, visible bounded tags, and protocol observations. Trusted instructions limit code and note tools to requests that call for those data.
+- The runtime enforces scope, tool authorization, and result bounds, but it does not semantically classify the prompt. Credentials, the GitHub token, and unrelated stars remain outside model-visible task data.
 - OpenAI, OpenRouter, and custom OpenAI-compatible keys use `Authorization: Bearer`; Anthropic uses `x-api-key`
 - Provider keys go only to the exact bound origin as authentication headers, not as prompt, tool, artifact, or log content
 - Release diagnostics exclude committed history, attempts, recoveries, raw Provider requests and responses, keys, and authentication headers
@@ -178,18 +173,26 @@ Store credentials only in the Chrome Web Store Dashboard **Test instructions** t
 The dashboard should distinguish two paths:
 
 - **Credential-free path**: install, open Options, inspect disclosures, theme and locale controls, and verify that no private credential is bundled
-- **Credential-required path**: use dedicated, least-privilege, revocable GitHub and AI-service credentials supplied only in Dashboard Test Instructions; include a same-account classic `notifications` PAT only when the main review credential cannot access Notifications
+- **Credential-required path**: use a dedicated, least-privilege, revocable GitHub **Classic PAT** and AI-service credentials supplied only in Dashboard Test Instructions
+
+The GitHub review PAT should use the current product scope set:
+
+```text
+repo,gist,notifications,read:user
+```
+
+`repo` and `gist` are required for the full core experience. `notifications` enables Watch Inbox and `read:user` enables Following Radar; omitting either must leave unrelated features usable. Do not use a fine-grained PAT for this review because the current product uses one Classic PAT.
 
 Use these reviewer steps after private credentials are available:
 
-1. Open Options and enter the dedicated GitHub fine-grained personal access token from Dashboard Test Instructions.
-2. Confirm the token has public-repository access plus `Starring: Read and write` and `Gists: Read and write` for full-feature review.
+1. Open Options and enter the dedicated GitHub Classic PAT from Dashboard Test Instructions.
+2. Confirm the token uses `repo`, `gist`, `notifications`, and `read:user`; do not grant organization administration, workflow, repository deletion, key, audit-log, enterprise, package, or Webhook administration scopes.
 3. Click **Save & verify** and confirm the authenticated account appears.
 4. Open `https://github.com/your_username_here?tab=stars`, then run **Full Sync**.
 5. Verify that stars appear and that search, filters, notes, and manual tags work locally.
-6. Open **Watch**, choose **Set up Watch Inbox**, and confirm the extension checks the existing GitHub connection before requesting another credential.
-7. If that credential can read Notifications, confirm Watch connects without storing a separate token. Otherwise use the same-account classic `notifications` PAT supplied only in Dashboard Test Instructions and confirm the fallback appears only after the failed capability check.
-8. Refresh Watch and confirm only notifications for repositories that are both currently starred and watched are displayed. Turn Watch off and confirm cached threads and any separate token are removed while Stars remains usable.
+6. Open **Watch** and confirm the existing Classic PAT is checked without requesting a second credential.
+7. Refresh Watch and confirm that only notifications for currently starred repositories are displayed, with a separate informational count for watched repositories. Turn Watch off and confirm cached threads are removed while Stars remains usable.
+8. Open **Following Radar** and confirm it loads when `read:user` is present; remove that capability only in a separate negative test if needed.
 9. Use **Push** and **Pull** to verify the dedicated secret Gist sync path.
 10. In Options, select the AI service and confirm the collapsed notice shows the selected service and exact origin.
 11. Enter the model and dedicated AI-service key from Dashboard Test Instructions, then run **Test connection**.
@@ -206,18 +209,17 @@ Use these reviewer steps after private credentials are available:
 
 Do not place the credential values or cleanup secrets in this document. Dashboard setup, credential validity, live service behavior, and cleanup remain manual until observed.
 
-## Candidate version prerequisite
+## Version approval prerequisite
 
-Candidate version `1.0.9` is explicitly approved, is strictly greater than public `1.0.8`, and is now applied to the package and generated manifest. The runner requires `GSM_VERSION_APPROVAL` to contain valid JSON with exactly three fields: the approved candidate, observed current public version, and observed prior uploaded version. Missing, scalar, extra-field, or mismatched approval blocks the run.
+Before release verification, confirm that the package and generated manifest use the explicitly approved version and that it is greater than the directly observed current public and prior uploaded versions. The runner requires `GSM_VERSION_APPROVAL` to contain valid JSON with exactly three fields: `approvedCandidateVersion`, `observedCurrentPublicVersion`, and `observedPriorUploadVersion`. Missing, scalar, extra-field, or mismatched approval blocks the run. Populate these fields from the release being verified rather than copying values from an earlier submission.
 
 ## Local release pipeline
 
-The Phase 8 command names below exist in the current source. Their presence does not claim that the current candidate package has passed them.
+The commands below exist in the current source. Their presence does not claim that the current release package has passed them.
 
-After the exact intended source is committed cleanly, bind the approval with single-quoted JSON so the shell passes it unchanged:
+After the exact intended source is committed cleanly, set `GSM_VERSION_APPROVAL` to the release-specific JSON described above, then run:
 
 ```sh
-export GSM_VERSION_APPROVAL='{"approvedCandidateVersion":"1.0.9","observedCurrentPublicVersion":"1.0.8","observedPriorUploadVersion":"1.0.8"}'
 pnpm verify:agent-runtime
 pnpm verify:agent-release-gates
 ```
@@ -232,14 +234,14 @@ The release workflow runs its package and GitHub Release path for tag pushes, bu
 
 ## Dashboard and publication checklist
 
-Complete or directly verify these items after a clean local candidate passes:
+Complete or directly verify these items after clean local verification passes:
 
 - publish the exact reviewed privacy policy and verify unauthenticated retrieval
 - reconcile the Store listing text, screenshots, promo images, category, homepage, and support fields
 - reconcile single purpose, all permission justifications including `alarms`, remote-code answer, data-use checkboxes, and Limited Use certification
 - place dedicated reviewer instructions and credentials only in Dashboard Test Instructions
 - verify distribution, visibility, countries, pricing, rollout, and deferred-publishing choices
-- upload the exact clean candidate package manually, or verify that the gated tagged workflow selected that exact ZIP
+- upload the exact verified package manually, or verify that the gated tagged workflow selected that exact ZIP
 - confirm the dashboard or API accepted the package and reports the expected version and permissions
 - submit the update only after every dashboard field is correct, or verify that the configured workflow invoked publication under that condition
 - record review outcome separately from upload

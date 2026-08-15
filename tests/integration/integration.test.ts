@@ -117,6 +117,7 @@ function defaultFilter() {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at' as const,
     sortDir: 'desc' as const,
   };
@@ -350,6 +351,41 @@ describe('Integration (real query engine + Dexie)', () => {
     });
     assert.deepEqual(r.rows.map((s) => s.full_name), ['b/rust']);
     assert.equal(r.rows[0]?.archived, true);
+  });
+
+  it('onlyOwned keeps repositories directly owned by the authenticated account', async () => {
+    await db.stars.bulkPut([
+      {
+        ...base,
+        full_name: 'a/public-owned-unstarred',
+        starred_at: '2026-06-23',
+        viewer_has_starred: false,
+      },
+      { ...base, full_name: 'a-team/shared-tool', starred_at: '2026-06-24' },
+    ] as Star[]);
+    invalidateCache();
+
+    const result = await queryStars({
+      filter: { ...defaultFilter(), onlyOwned: true },
+      accountLogin: ' A ',
+      offset: 0,
+      limit: 100,
+    });
+
+    assert.deepEqual(result.rows.map((star) => star.full_name), [
+      'a/public-owned-unstarred',
+      'a/ai',
+    ]);
+  });
+
+  it('onlyOwned fails closed when no authenticated account is available', async () => {
+    const result = await queryStars({
+      filter: { ...defaultFilter(), onlyOwned: true },
+      offset: 0,
+      limit: 100,
+    });
+
+    assert.deepEqual(result.rows, []);
   });
 
   it('sort by stargazers desc', async () => {

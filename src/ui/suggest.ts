@@ -32,7 +32,7 @@ function resolveSuggestionPolicy(policy: AutoTagSuggestionPolicy): {
 export function countTopicRepoFrequency(stars: Pick<Star, 'topics'>[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const star of stars) {
-    const repoTopics = new Set(star.topics.map((topic) => canonicalTagKey(topic)));
+    const repoTopics = new Set((star.topics ?? []).map((topic) => canonicalTagKey(topic)));
     for (const topic of repoTopics) {
       counts.set(topic, (counts.get(topic) ?? 0) + 1);
     }

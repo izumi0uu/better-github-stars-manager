@@ -419,7 +419,7 @@ function startFullLibraryAnalysisTool(
 export async function loadLiveBgsmAgentRepositoryScope(): Promise<string[]> {
   const repositoryIds: string[] = [];
   await db.stars.each((star) => {
-    if (!star.tombstone) repositoryIds.push(star.full_name);
+    if (!star.tombstone && star.viewer_has_starred !== false) repositoryIds.push(star.full_name);
   });
   return repositoryIds.sort((left, right) => left.localeCompare(right));
 }

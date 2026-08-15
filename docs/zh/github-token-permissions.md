@@ -2,94 +2,71 @@
 
 [English](../en/github-token-permissions.md)
 
-本指南说明 Better GitHub Stars Manager 使用的 GitHub 凭据。Cubby 使用另一份 AI 服务凭据，详见下文。
+本指南说明 Better GitHub Stars Manager 使用的单一 GitHub 凭据。Cubby 使用另一份 AI 服务凭据，详见下文。
 
 最后核对 GitHub 文档：2026-08-11。
 
-## 推荐配置
+## 当前配置
 
-建议使用两个凭据。主连接使用细粒度 Token，Classic Token 只负责读取 Notifications。
-
-### 主连接：Fine-grained PAT
-
-打开 [Fine-grained personal access token 创建页](https://github.com/settings/personal-access-tokens/new)，按下表设置：
-
-| 设置项 | 选择 |
-| --- | --- |
-| Resource owner | 你的个人 GitHub 账号 |
-| Repository access | Public repositories |
-| Account permission: Starring | Read and write |
-| Account permission: Gists | Read and write |
-| Account permission: Watching | Read-only |
-
-其他权限保持 `No access`，也不需要授权私有仓库。
-
-GitHub 的 Gists 权限作用于整个账号，Fine-grained PAT 不能只授权某一个 Gist。扩展只会创建一个专用的 Secret Gist 来同步批注。
-
-这些权限在扩展中的用途如下：
-
-| 权限 | 扩展调用的 GitHub API | 对应功能 |
-| --- | --- | --- |
-| Starring: read | `GET /user/starred` | 首次同步、增量同步和全量重扫 |
-| Starring: write | `DELETE /user/starred/{owner}/{repo}` | 在管理器中取消 Star |
-| Gists: read and write | `/gists` 相关接口 | 推送和拉取标签、笔记与标签元数据 |
-| Watching: read | `GET /user/subscriptions` | 找出同时处于 Star 和 Watch 状态的仓库 |
-| 公开仓库访问 | 公开仓库、代码搜索、Contents 和 Git blob 接口 | 读取公开元数据；你要求 Cubby 搜索代码时，读取有限的公开代码片段 |
-
-点击 `Save & verify` 后，扩展会检查账号、读取一页 Stars、创建并删除一个临时 Secret Gist，再检查 Watching 权限。这个临时 Gist 用来确认写入和清理权限。扩展不会在配置阶段测试取消 Star，因为那会修改你的 GitHub 账号；因此 Starring 必须保留 Read and write。
-
-### Watch Inbox：Classic PAT
-
-GitHub 当前的 Notifications REST API 只接受 Personal access token (classic)，不接受 Fine-grained PAT。打开 [Classic PAT 创建页](https://github.com/settings/tokens/new)，使用与主连接相同的 GitHub 账号，只勾选：
+使用一个 GitHub **Classic PAT**。Options 页会打开已预填以下 scope 的 [Classic PAT 表单](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager)：
 
 ```text
-notifications
-```
-
-不要给这个 Token 添加 `repo`、`gist`、`user` 或 `workflow`。读取 Watch Inbox 只需要 `notifications`，没有必要改用权限更大的 `repo`。
-
-先连接主 Token，再到 Options 中点击 `Set up Watch Inbox`。扩展会先测试主凭据，确认无法读取 Notifications 后才显示 Classic PAT 输入框。Fine-grained 主 Token 通常需要这个备用 Token；如果主连接本身使用兼容的 Classic PAT，Watch 可以直接复用它。
-
-两个 Token 必须属于同一个 GitHub 账号。账号不一致时，扩展不会保存 Watch Token。
-
-## 只用一个 Token
-
-如果你不想维护两个 Token，可以创建一个 Classic PAT，并勾选：
-
-```text
-public_repo
+repo
 gist
 notifications
+read:user
 ```
 
-它可以覆盖取消 Star、Gist 同步、Watching 和 Notifications 等 GitHub 功能，但权限明显更大。`public_repo` 包含对公开仓库的广泛写权限。除非你确实需要访问私有仓库，否则不要勾选范围更大的 `repo`。
+设置有限有效期，确认 scopes，生成 Token，然后粘贴到 `Options > GitHub Classic PAT` 并点击 **Save & verify**。
 
-从权限控制来看，两个 Token 更合适：主 Token 保持细粒度，Classic Token 只有 `notifications`。
+## Scope 与功能对应关系
+
+| Scope | 要求 | 对应功能 |
+| --- | --- | --- |
+| `repo` | 必需 | Stars 同步、Star/Unstar、仓库元数据、私有仓库访问、已 Watch 仓库成员关系，以及你有权访问的 Issue/Pull Request 详情 |
+| `gist` | 必需 | 通过扩展的私有 Gist 推送和拉取标签、笔记、收藏信息与标签元数据 |
+| `notifications` | 可选能力 | Watch 收件箱读取和通知操作 |
+| `read:user` | 可选能力 | Following Radar 读取你关注的账号及其公开 Star 动态 |
+
+当前产品支持私有 Stars 和仓库操作，因此有意使用范围较广的 `repo`；`public_repo` 不能直接替代当前契约。GitHub 的 `gist` scope 作用于整个账号，不能只授权扩展使用的那一个 Gist。
+
+不要授予 `user`、`user:email`、`user:follow`、`project`、`admin:org`、`workflow`、`delete_repo`、package、密钥、审计日志、enterprise 或 Webhook 管理权限；扩展不会使用这些权限。
+
+## 验证行为
+
+点击 **Save & verify** 后，扩展会验证账号、读取一页 Stars、创建并删除一个临时 Secret Gist，并探测 Notifications 权限。Gist 探测会同时证明写入和清理权限。配置阶段不会测试 Star 或 Unstar，因为那会修改你的 GitHub 账号。
+
+缺少 `notifications` 或 `read:user` 时，只能禁用 Watch 收件箱或 Following Radar；Stars 和 Gist 必须继续可用。Following Radar 会在加载该界面时检查自己的可选能力。
+
+## 凭据生命周期
+
+产品只在 `chrome.storage.local` 中保存一个加密的 Classic PAT；明文只存在于内存中。它不会保存第二个 Notifications 凭据，也不会静默回退到另一份凭据。
+
+这是一次有意的凭据切换。之前保存的 Fine-grained PAT 可能需要重新授权。扩展会保留本地 Stars、标签、笔记和设置，只有新的 Classic PAT 通过必需检查后才替换加密值。
 
 ## Cubby 与 AI 功能
 
-GitHub Token 不能用于连接 Cubby 的 AI 服务。使用 Cubby 时，还要在 Options 中单独填写 AI 服务的 API Key、Base URL 和模型。扩展不会把 GitHub Token 发送给你选择的 AI 模型。
+GitHub Token 不能用于连接 Cubby 的 AI 服务。使用 Cubby 时，还要在 Options 中单独填写 AI 服务的 API Key、Base URL 和模型。扩展绝不会把 GitHub Token 发送给所选 AI 模型。
 
 ## 检查配置
 
-1. 在 `Options > GitHub connection` 粘贴主 Token，点击 `Save & verify`。
-2. 确认账号、Stars、Gist 和 Watching 检查通过。
-3. 打开 `Options > Watch Inbox` 并开始设置。
-4. 如果主 Token 无法读取 Notifications，粘贴同一账号下只带 `notifications` 的 Classic PAT。
-5. 在 GitHub 上 Star 并 Watch 一个仓库，然后打开管理器的 Watch 页签并刷新 Inbox。
+1. 在 `Options > GitHub Classic PAT` 粘贴 Classic PAT，然后点击 **Save & verify**。
+2. 确认显示正确的已认证账号，并且必需的 Stars 和 Gist 检查通过。
+3. 打开管理器并运行 **Full Sync**。
+4. 打开 **Watch**。有 `notifications` 时刷新，确认收件箱只显示当前已 Star 仓库的通知，并单独展示已 Watch 仓库的参考计数。
+5. 打开 **Following Radar**。有 `read:user` 时，确认 Following 动态可以加载。
 
-Watch 只显示同时处于 Star 和 Watch 状态的仓库通知。刷新 Watch 不会修改你在 GitHub 上的订阅设置。
+刷新 Watch 不会修改你在 GitHub 上的订阅设置。
 
 ## 安全说明
 
-Token 与密码一样敏感。请设置过期时间，只在扩展的 Options 页面粘贴 Token；一旦泄露，立即到 GitHub 撤销。GitHub 建议在条件允许时使用 Fine-grained PAT，也建议为 Classic PAT 设置过期时间。
+把 PAT 当作密码。请设置过期时间，只在扩展的 Options 页面粘贴；一旦泄露，立即撤销或轮换。
 
 扩展会先加密 GitHub 凭据，再写入 `chrome.storage.local`。存储位置和数据流说明见[隐私政策](privacy-policy.md)。
 
 ## GitHub 官方依据
 
 - [Personal access token 管理说明](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
-- [Fine-grained PAT 权限与 API 对应表](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
 - [Starring REST API](https://docs.github.com/en/rest/activity/starring)
 - [Gists REST API](https://docs.github.com/en/rest/gists/gists)
 - [Watching REST API](https://docs.github.com/en/rest/activity/watching)
@@ -97,4 +74,4 @@ Token 与密码一样敏感。请设置过期时间，只在扩展的 Options �
 - [Classic PAT 与 OAuth scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps)
 - [Code search REST API](https://docs.github.com/en/rest/search/search#search-code)
 
-GitHub 已宣布弃用公开的 `GET /users/{username}/subscriptions` 接口。过渡期间，该接口仍可访问，但可能返回空响应；GitHub 计划在后续阶段完全移除它。Better GitHub Stars Manager 使用的是已认证的 `GET /user/subscriptions` 接口，GitHub 当前的 Fine-grained 权限表仍将它列在 `Watching: read` 下。相关说明见 [GitHub API 访问限制公告](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/)。
+GitHub 已宣布限制 Watching 接口，并弃用公开的 `GET /users/{username}/subscriptions`。扩展使用的认证接口 `GET /user/subscriptions` 仍在文档中，但 GitHub 没有保证这个用法会长期可用。Better GitHub Stars Manager 只把已 Watch 仓库成员关系当作参考快照，不会用它筛掉 Watch Inbox 通知。详情见 [Watch 策略](watch-strategy.md)和 [GitHub API 访问限制公告](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/)。

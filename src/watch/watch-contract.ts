@@ -2,7 +2,34 @@ import type {
   GitHubWatchStateRecord,
   WatchInboxProjection,
 } from '@/watch/watch-model';
-import type { WatchCredentialSource } from '@/types';
+export type WatchThreadAction = 'read' | 'done';
+
+export const WATCH_MAX_THREAD_ACTIONS = 500;
+
+export interface WatchThreadMutationResult {
+  action: WatchThreadAction;
+  requestedCount: number;
+  changedCount: number;
+}
+
+export function parseWatchThreadIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > WATCH_MAX_THREAD_ACTIONS) {
+    return null;
+  }
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string') return null;
+    const id = item.trim();
+    if (!/^\d{1,32}$/u.test(id) || ids.has(id)) return null;
+    ids.add(id);
+  }
+  return [...ids];
+}
+
+export function parseWatchThreadId(value: unknown): string | null {
+  const parsed = parseWatchThreadIds([value]);
+  return parsed?.[0] ?? null;
+}
 
 export type WatchScopeStatus =
   | 'not_configured'
@@ -13,7 +40,6 @@ export type WatchScopeStatus =
 
 export type WatchInboxStatus =
   | 'not_configured'
-  | 'scope_unavailable'
   | 'never_loaded'
   | 'fresh'
   | 'stale'
@@ -22,7 +48,6 @@ export type WatchInboxStatus =
 
 export interface WatchStatus {
   accountLogin: string | null;
-  credentialSource: WatchCredentialSource;
   hasMainToken: boolean;
   hasNotificationsToken: boolean;
   refreshing: boolean;

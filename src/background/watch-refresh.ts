@@ -3,11 +3,15 @@ import {
   WATCH_DEFAULT_POLL_INTERVAL_SECONDS,
   WATCH_MAX_POLL_INTERVAL_SECONDS,
   type fetchGitHubNotifications,
+  type mutateGitHubNotificationThread,
 } from '@/api/github-notifications-source';
 import type { fetchGitHubWatchScope } from '@/api/github-watch-scope-source';
+import type { fetchGitHubWatchSubjectDetail } from '@/api/github-watch-subject-source';
 import type {
   clearWatchData,
+  applyWatchThreadMutation,
   disconnectWatchInbox,
+  getWatchNotificationThread,
   getWatchRepositories,
   getWatchState,
   queryStoredWatchInbox,
@@ -23,12 +27,17 @@ import {
   GitHubWatchError,
   canonicalRepositoryFullName,
   projectWatchInbox,
-  type GitHubNotificationThread,
+  watchSubjectIdentity,
+  type WatchSubjectDetail,
+  type WatchSubjectIdentity,
 } from '@/watch/watch-model';
-import type {
-  WatchInboxQueryResponse,
-  WatchRefreshResult,
-  WatchStatus,
+import {
+  parseWatchThreadIds,
+  type WatchInboxQueryResponse,
+  type WatchRefreshResult,
+  type WatchStatus,
+  type WatchThreadAction,
+  type WatchThreadMutationResult,
 } from '@/watch/watch-contract';
 
 type WatchAuth = Pick<typeof authStore,
@@ -41,18 +50,22 @@ export interface WatchRefreshCoordinatorDependencies {
   auth: WatchAuth;
   fetchScope: typeof fetchGitHubWatchScope;
   fetchNotifications: typeof fetchGitHubNotifications;
+  mutateNotification: typeof mutateGitHubNotificationThread;
+  fetchSubjectDetail: typeof fetchGitHubWatchSubjectDetail;
   loadLiveRepositoryNames(): Promise<string[]>;
   store: {
     getState: typeof getWatchState;
     getRepositories: typeof getWatchRepositories;
     queryInbox: typeof queryStoredWatchInbox;
     reconcileAccount: typeof reconcileWatchAccount;
+    getNotificationThread: typeof getWatchNotificationThread;
     reconcileLiveStars: typeof reconcileWatchLiveStars;
     replaceScope: typeof replaceWatchScope;
     recordScopeFailure: typeof recordWatchScopeFailure;
     replaceInbox: typeof replaceWatchInbox;
     revalidateInbox: typeof revalidateWatchInbox;
     recordInboxFailure: typeof recordWatchInboxFailure;
+    applyThreadMutation: typeof applyWatchThreadMutation;
     disconnectInbox: typeof disconnectWatchInbox;
     clearData: typeof clearWatchData;
   };
@@ -64,6 +77,10 @@ export interface WatchRefreshCoordinator {
   getStatus(): Promise<WatchStatus>;
   queryInbox(unreadOnly: boolean): Promise<WatchInboxQueryResponse>;
   refresh(): Promise<WatchRefreshResult>;
+  getSubjectDetail(threadId: string): Promise<WatchSubjectDetail>;
+  refreshInbox(): Promise<WatchRefreshResult>;
+  markThreadsRead(threadIds: readonly string[]): Promise<WatchThreadMutationResult>;
+  markThreadsDone(threadIds: readonly string[]): Promise<WatchThreadMutationResult>;
   disconnectInbox(): Promise<WatchStatus>;
   clearData(): Promise<WatchStatus>;
   reconcileAccount(options?: {
@@ -89,11 +106,30 @@ function nextAllowedAt(attemptedAtMs: number, pollIntervalSeconds: number): stri
   return new Date(attemptedAtMs + seconds * 1_000).toISOString();
 }
 
+const THREAD_MUTATION_CONCURRENCY = 4;
+const SUBJECT_DETAIL_CACHE_LIMIT = 100;
+
+function sameSubjectIdentity(
+  left: WatchSubjectIdentity,
+  right: WatchSubjectIdentity,
+): boolean {
+  return left.kind === right.kind &&
+    left.repositoryFullName === right.repositoryFullName &&
+    left.number === right.number &&
+    left.apiUrl === right.apiUrl &&
+    left.htmlUrl === right.htmlUrl;
+}
+
 export function createWatchRefreshCoordinator(
   dependencies: WatchRefreshCoordinatorDependencies,
 ): WatchRefreshCoordinator {
   const now = dependencies.now ?? Date.now;
   let inFlight: { identity: string; promise: Promise<WatchRefreshResult> } | null = null;
+  let inboxInFlight: { identity: string; promise: Promise<WatchRefreshResult> } | null = null;
+  const subjectDetails = new Map<string, WatchSubjectDetail>();
+  const subjectDetailInFlight = new Map<string, Promise<WatchSubjectDetail>>();
+  let subjectAuthority = '';
+  let subjectGeneration = 0;
 
   async function readAuth(): Promise<AuthSnapshot> {
     return dependencies.auth.getGitHubCredentialSnapshot();
@@ -108,20 +144,118 @@ export function createWatchRefreshCoordinator(
       latest.mainToken !== null &&
       latest.mainIdentity === snapshot.mainIdentity &&
       (!includeNotifications || (
-        latest.watchCredentialSource === snapshot.watchCredentialSource &&
         latest.notificationsToken === snapshot.notificationsToken &&
         latest.notificationsIdentity === snapshot.notificationsIdentity
       ));
+  }
+
+  async function loadLiveNames(): Promise<Set<string>> {
+    return new Set((await dependencies.loadLiveRepositoryNames()).flatMap((name) => {
+      const canonical = canonicalRepositoryFullName(name);
+      return canonical ? [canonical] : [];
+    }));
   }
 
   function refreshIdentity(auth: AuthSnapshot): string {
     return JSON.stringify([
       auth.accountLogin,
       auth.mainIdentity,
-      auth.watchCredentialSource,
       auth.notificationsIdentity,
       auth.mainToken !== null,
+      auth.notificationsToken !== null,
     ]);
+  }
+
+  function subjectAuthorityFor(auth: AuthSnapshot): string {
+    return JSON.stringify([auth.accountLogin, auth.mainIdentity, auth.mainToken !== null]);
+  }
+
+  function synchronizeSubjectAuthority(auth: AuthSnapshot): number {
+    const nextAuthority = subjectAuthorityFor(auth);
+    if (subjectAuthority !== nextAuthority) {
+      subjectAuthority = nextAuthority;
+      subjectGeneration++;
+      subjectDetails.clear();
+      subjectDetailInFlight.clear();
+    }
+    return subjectGeneration;
+  }
+
+  function subjectCacheKey(auth: AuthSnapshot, identity: WatchSubjectIdentity): string {
+    return JSON.stringify([
+      auth.mainIdentity,
+      identity.repositoryFullName,
+      identity.kind,
+      identity.number,
+    ]);
+  }
+
+  function readSubjectCache(key: string): WatchSubjectDetail | null {
+    const cached = subjectDetails.get(key);
+    if (!cached) return null;
+    subjectDetails.delete(key);
+    subjectDetails.set(key, cached);
+    return cached;
+  }
+
+  function writeSubjectCache(key: string, detail: WatchSubjectDetail): void {
+    subjectDetails.delete(key);
+    subjectDetails.set(key, detail);
+    while (subjectDetails.size > SUBJECT_DETAIL_CACHE_LIMIT) {
+      const oldest = subjectDetails.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      subjectDetails.delete(oldest);
+    }
+  }
+
+  async function getSubjectDetail(threadId: string): Promise<WatchSubjectDetail> {
+    const auth = await readAuth();
+    const generation = synchronizeSubjectAuthority(auth);
+    if (!auth.accountLogin || !auth.mainToken) {
+      throw new GitHubWatchError('authentication_required');
+    }
+    const thread = await dependencies.store.getNotificationThread({
+      accountLogin: auth.accountLogin,
+      threadId,
+    });
+    const identity = thread ? watchSubjectIdentity(thread) : null;
+    if (!identity) throw new GitHubWatchError('subject_not_found');
+
+    const key = subjectCacheKey(auth, identity);
+    const cached = readSubjectCache(key);
+    if (cached) return cached;
+    const active = subjectDetailInFlight.get(key);
+    if (active) return active;
+
+    const promise = (async () => {
+      const detail = await dependencies.fetchSubjectDetail({
+        token: auth.mainToken!,
+        identity,
+      });
+      const latestAuth = await readAuth();
+      if (
+        synchronizeSubjectAuthority(latestAuth) !== generation ||
+        latestAuth.accountLogin !== auth.accountLogin ||
+        latestAuth.mainIdentity !== auth.mainIdentity ||
+        latestAuth.mainToken === null
+      ) throw new GitHubWatchError('credential_changed');
+      const latestThread = await dependencies.store.getNotificationThread({
+        accountLogin: auth.accountLogin,
+        threadId,
+      });
+      const latestIdentity = latestThread ? watchSubjectIdentity(latestThread) : null;
+      if (!latestIdentity || !sameSubjectIdentity(identity, latestIdentity)) {
+        throw new GitHubWatchError('credential_changed');
+      }
+      if (generation !== subjectGeneration) throw new GitHubWatchError('credential_changed');
+      writeSubjectCache(key, detail);
+      return detail;
+    })();
+    subjectDetailInFlight.set(key, promise);
+    void promise.finally(() => {
+      if (subjectDetailInFlight.get(key) === promise) subjectDetailInFlight.delete(key);
+    }).catch(() => {});
+    return promise;
   }
 
 
@@ -131,8 +265,7 @@ export function createWatchRefreshCoordinator(
     stateOverride?: WatchStatus['state'],
   ): Promise<WatchStatus> {
     const hasMainToken = !!(auth.accountLogin && auth.mainToken);
-    const credentialSource = auth.watchCredentialSource;
-    const hasNotificationsToken = credentialSource !== null && !!auth.notificationsToken;
+    const hasNotificationsToken = !!auth.notificationsToken;
     const state = stateOverride === undefined && hasMainToken && auth.accountLogin
       ? await dependencies.store.getState(auth.accountLogin)
       : stateOverride ?? null;
@@ -144,10 +277,8 @@ export function createWatchRefreshCoordinator(
     let inboxStatus: WatchStatus['inboxStatus'];
     if (!hasNotificationsToken) {
       inboxStatus = 'not_configured';
-    } else if (!state?.scope.lastSuccessfulAt) {
-      inboxStatus = 'scope_unavailable';
-    } else if (!state.inbox.lastSuccessfulAt) {
-      inboxStatus = state.inbox.errorCode ? 'error' : 'never_loaded';
+    } else if (!state?.inbox.lastSuccessfulAt) {
+      inboxStatus = state?.inbox.errorCode ? 'error' : 'never_loaded';
     } else if (state.inbox.errorCode) {
       inboxStatus = 'stale';
     } else if (
@@ -160,7 +291,6 @@ export function createWatchRefreshCoordinator(
     }
     return {
       accountLogin: auth.accountLogin,
-      credentialSource,
       hasMainToken,
       hasNotificationsToken,
       refreshing,
@@ -170,7 +300,7 @@ export function createWatchRefreshCoordinator(
     };
   }
 
-  async function deriveStatus(refreshing = inFlight !== null): Promise<WatchStatus> {
+  async function deriveStatus(refreshing = inFlight !== null || inboxInFlight !== null): Promise<WatchStatus> {
     return deriveStatusForAuth(await readAuth(), refreshing);
   }
 
@@ -184,7 +314,10 @@ export function createWatchRefreshCoordinator(
     if (refreshIdentity(auth) !== refreshIdentity(latest)) {
       return {
         ...projectWatchInbox([], { unreadOnly }),
-        status: await deriveStatusForAuth(latest, inFlight !== null),
+        status: await deriveStatusForAuth(
+          latest,
+          inFlight !== null || inboxInFlight !== null,
+        ),
       };
     }
     return {
@@ -192,52 +325,135 @@ export function createWatchRefreshCoordinator(
       groups: result.groups,
       unreadCount: result.unreadCount,
       totalCount: result.totalCount,
-      status: await deriveStatusForAuth(auth, inFlight !== null, result.state),
+      status: await deriveStatusForAuth(
+        auth,
+        inFlight !== null || inboxInFlight !== null,
+        result.state,
+      ),
     };
   }
 
-  async function performRefresh(auth: AuthSnapshot): Promise<RefreshOutcome> {
-    const empty: RefreshOutcome = {
+  function emptyOutcome(): RefreshOutcome {
+    return {
       scopePublished: false,
       inboxPublished: false,
       notModified: false,
     };
+  }
+
+  async function publishInbox(
+    auth: AuthSnapshot,
+    refreshStartedAt: number,
+    attemptedAt: string,
+  ): Promise<{
+    inboxPublished: boolean;
+    notModified: boolean;
+    changed: boolean;
+    credentialsChanged: boolean;
+  }> {
+    const state = await dependencies.store.getState(auth.accountLogin!);
+    try {
+      if (!auth.notificationsToken) throw new GitHubWatchError('authentication_required');
+      const snapshot = await dependencies.fetchNotifications({
+        token: auth.notificationsToken,
+        before: refreshStartedAt,
+        lastModified: state?.inbox.lastModified ?? null,
+        now: () => refreshStartedAt,
+      });
+      if (!await sameCredentials(auth, true)) {
+        return {
+          inboxPublished: false,
+          notModified: false,
+          changed: false,
+          credentialsChanged: true,
+        };
+      }
+      const allowedAt = nextAllowedAt(now(), snapshot.pollIntervalSeconds);
+      if (snapshot.notModified) {
+        await dependencies.store.revalidateInbox({
+          accountLogin: auth.accountLogin!,
+          attemptedAt,
+          successfulAt: snapshot.fetchedAt,
+          nextAllowedAt: allowedAt,
+          lastModified: snapshot.lastModified,
+          requireLiveStars: true,
+        });
+        return {
+          inboxPublished: false,
+          notModified: true,
+          changed: true,
+          credentialsChanged: false,
+        };
+      }
+      await dependencies.store.replaceInbox({
+        accountLogin: auth.accountLogin!,
+        threads: snapshot.threads,
+        attemptedAt,
+        successfulAt: snapshot.fetchedAt,
+        lastModified: snapshot.lastModified,
+        nextAllowedAt: allowedAt,
+        candidateCount: snapshot.candidateCount,
+        truncated: snapshot.truncated,
+        mode: state?.inbox.lastModified ? 'merge' : 'replace',
+        requireLiveStars: true,
+      });
+      return {
+        inboxPublished: true,
+        notModified: false,
+        changed: true,
+        credentialsChanged: false,
+      };
+    } catch (error) {
+      if (!await sameCredentials(auth, true)) {
+        return {
+          inboxPublished: false,
+          notModified: false,
+          changed: false,
+          credentialsChanged: true,
+        };
+      }
+      await dependencies.store.recordInboxFailure({
+        accountLogin: auth.accountLogin!,
+        attemptedAt,
+        errorCode: stableErrorCode(error),
+      });
+      return {
+        inboxPublished: false,
+        notModified: false,
+        changed: true,
+        credentialsChanged: false,
+      };
+    }
+  }
+
+  async function performRefresh(auth: AuthSnapshot): Promise<RefreshOutcome> {
+    const empty = emptyOutcome();
     if (!auth.accountLogin || !auth.mainToken || !await sameCredentials(auth, false)) {
       return empty;
     }
     const refreshStartedAt = now();
     const attemptedAt = new Date(refreshStartedAt).toISOString();
-    const previousState = await dependencies.store.getState(auth.accountLogin);
-    if (
-      auth.watchCredentialSource !== null &&
-      auth.notificationsToken &&
-      previousState?.inbox.nextAllowedAt &&
-      Date.parse(previousState.inbox.nextAllowedAt) > refreshStartedAt
-    ) return empty;
 
     let changed = false;
-    let scopeAvailable = false;
-    let scopeNames = new Set<string>();
+    if (!await sameCredentials(auth, false)) return empty;
     let scopePublished = false;
     try {
-      const [remoteScope, liveNames] = await Promise.all([
-        dependencies.fetchScope({ token: auth.mainToken, now: () => refreshStartedAt }),
-        dependencies.loadLiveRepositoryNames(),
-      ]);
+      const remoteScope = await dependencies.fetchScope({
+        token: auth.mainToken,
+        now: () => refreshStartedAt,
+      });
       if (!await sameCredentials(auth, false)) return empty;
-      const live = new Set(liveNames.flatMap((name) => {
-        const canonical = canonicalRepositoryFullName(name);
-        return canonical ? [canonical] : [];
-      }));
-      const repositories = remoteScope.repositories.filter((repository) => live.has(repository.full_name));
+      const currentLiveNames = await loadLiveNames();
+      if (!await sameCredentials(auth, false)) return empty;
+      const repositories = remoteScope.repositories.filter((repository) => (
+        currentLiveNames.has(repository.full_name)
+      ));
       await dependencies.store.replaceScope({
         accountLogin: auth.accountLogin,
         repositories,
         attemptedAt,
         successfulAt: remoteScope.fetchedAt,
       });
-      scopeNames = new Set(repositories.map((repository) => repository.full_name));
-      scopeAvailable = true;
       scopePublished = true;
       changed = true;
     } catch (error) {
@@ -248,69 +464,57 @@ export function createWatchRefreshCoordinator(
         errorCode: stableErrorCode(error),
       });
       changed = true;
-      const state = await dependencies.store.getState(auth.accountLogin);
-      if (state?.scope.lastSuccessfulAt) {
-        const repositories = await dependencies.store.getRepositories(auth.accountLogin);
-        scopeNames = new Set(repositories.map((repository) => repository.full_name));
-        scopeAvailable = true;
-      }
     }
 
     let inboxPublished = false;
     let notModified = false;
-    if (auth.watchCredentialSource !== null && auth.notificationsToken && scopeAvailable && await sameCredentials(auth, true)) {
+    if (
+      auth.notificationsToken &&
+      await sameCredentials(auth, true)
+    ) {
       const state = await dependencies.store.getState(auth.accountLogin);
-      try {
-        const snapshot = await dependencies.fetchNotifications({
-          token: auth.notificationsToken,
-          before: refreshStartedAt,
-          lastModified: state?.inbox.lastModified ?? null,
-          now: () => refreshStartedAt,
-        });
-        if (!await sameCredentials(auth, true)) {
+      const inboxCoolingDown = !!(
+        state?.inbox.nextAllowedAt &&
+        Date.parse(state.inbox.nextAllowedAt) > refreshStartedAt
+      );
+      if (!inboxCoolingDown) {
+        const inbox = await publishInbox(auth, refreshStartedAt, attemptedAt);
+        if (inbox.credentialsChanged) {
           if (changed) dependencies.broadcastChanged();
           return { ...empty, scopePublished };
         }
-        const allowedThreads: GitHubNotificationThread[] = snapshot.threads.filter((thread) => (
-          scopeNames.has(thread.repositoryFullName)
-        ));
-        const allowedAt = nextAllowedAt(now(), snapshot.pollIntervalSeconds);
-        if (snapshot.notModified) {
-          await dependencies.store.revalidateInbox({
-            accountLogin: auth.accountLogin,
-            attemptedAt,
-            successfulAt: snapshot.fetchedAt,
-            nextAllowedAt: allowedAt,
-            lastModified: snapshot.lastModified,
-          });
-          notModified = true;
-        } else {
-          await dependencies.store.replaceInbox({
-            accountLogin: auth.accountLogin,
-            threads: allowedThreads,
-            attemptedAt,
-            successfulAt: snapshot.fetchedAt,
-            lastModified: snapshot.lastModified,
-            nextAllowedAt: allowedAt,
-            candidateCount: snapshot.candidateCount,
-            truncated: snapshot.truncated,
-          });
-          inboxPublished = true;
-        }
-        changed = true;
-      } catch (error) {
-        if (await sameCredentials(auth, true)) {
-          await dependencies.store.recordInboxFailure({
-            accountLogin: auth.accountLogin,
-            attemptedAt,
-            errorCode: stableErrorCode(error),
-          });
-          changed = true;
-        }
+        inboxPublished = inbox.inboxPublished;
+        notModified = inbox.notModified;
+        changed ||= inbox.changed;
       }
     }
     if (changed) dependencies.broadcastChanged();
     return { scopePublished, inboxPublished, notModified };
+  }
+
+  async function performInboxRefresh(auth: AuthSnapshot): Promise<RefreshOutcome> {
+    const empty = emptyOutcome();
+    if (
+      !auth.accountLogin ||
+      !auth.mainToken ||
+      !auth.notificationsToken ||
+      !await sameCredentials(auth, true)
+    ) return empty;
+
+    const refreshStartedAt = now();
+    const attemptedAt = new Date(refreshStartedAt).toISOString();
+    const state = await dependencies.store.getState(auth.accountLogin);
+    if (
+      state?.inbox.nextAllowedAt &&
+      Date.parse(state.inbox.nextAllowedAt) > refreshStartedAt
+    ) return empty;
+    const inbox = await publishInbox(auth, refreshStartedAt, attemptedAt);
+    if (inbox.changed) dependencies.broadcastChanged();
+    return {
+      scopePublished: false,
+      inboxPublished: inbox.inboxPublished,
+      notModified: inbox.notModified,
+    };
   }
 
   async function refresh(): Promise<WatchRefreshResult> {
@@ -339,6 +543,104 @@ export function createWatchRefreshCoordinator(
       if (inFlight?.promise === promise) inFlight = null;
     }).catch(() => {});
     return promise;
+  }
+
+  async function refreshInbox(): Promise<WatchRefreshResult> {
+    const activeBeforeReconcile = inFlight ?? inboxInFlight;
+    if (activeBeforeReconcile) return activeBeforeReconcile.promise;
+
+    await reconcileAccount();
+    const requestedAuth = await readAuth();
+    const activeAfterReconcile = inFlight ?? inboxInFlight;
+    if (activeAfterReconcile) return activeAfterReconcile.promise;
+
+    const identity = refreshIdentity(requestedAuth);
+    const operation = dependencies.runSerialized(() => performInboxRefresh(requestedAuth));
+    const promise = operation.then(async (outcome) => ({
+      ...outcome,
+      status: await deriveStatus(false),
+    }));
+    inboxInFlight = { identity, promise };
+    void promise.finally(() => {
+      if (inboxInFlight?.promise === promise) inboxInFlight = null;
+    }).catch(() => {});
+    return promise;
+  }
+
+  async function performThreadMutation(
+    auth: AuthSnapshot,
+    action: WatchThreadAction,
+    requestedIds: readonly string[],
+  ): Promise<WatchThreadMutationResult> {
+    const threadIds = parseWatchThreadIds(requestedIds);
+    if (!threadIds) throw new GitHubWatchError('invalid_thread');
+    if (
+      !auth.accountLogin ||
+      !auth.mainToken ||
+      !auth.notificationsToken ||
+      !await sameCredentials(auth, true)
+    ) throw new GitHubWatchError('authentication_required');
+
+    const stored = await dependencies.store.queryInbox({
+      accountLogin: auth.accountLogin,
+      unreadOnly: false,
+    });
+    const byId = new Map(stored.threads.map((thread) => [thread.id, thread]));
+    const targets = threadIds.filter((id) => {
+      const thread = byId.get(id);
+      return thread !== undefined && (action === 'done' || thread.unread);
+    });
+    if (targets.length === 0) {
+      return { action, requestedCount: threadIds.length, changedCount: 0 };
+    }
+
+    let cursor = 0;
+    let failure: unknown = null;
+    const succeeded: string[] = [];
+    const workers = Array.from(
+      { length: Math.min(THREAD_MUTATION_CONCURRENCY, targets.length) },
+      async () => {
+        while (failure === null) {
+          const index = cursor++;
+          const threadId = targets[index];
+          if (threadId === undefined) return;
+          try {
+            await dependencies.mutateNotification({
+              token: auth.notificationsToken!,
+              threadId,
+              action,
+            });
+            succeeded.push(threadId);
+          } catch (error) {
+            failure = error;
+          }
+        }
+      },
+    );
+    await Promise.all(workers);
+
+    if (!await sameCredentials(auth, true)) {
+      throw new GitHubWatchError('authentication_required');
+    }
+    const changedCount = succeeded.length > 0
+      ? await dependencies.store.applyThreadMutation({
+        accountLogin: auth.accountLogin,
+        threadIds: succeeded,
+        action,
+      })
+      : 0;
+    if (changedCount > 0) dependencies.broadcastChanged();
+    if (failure !== null) throw failure;
+    return { action, requestedCount: threadIds.length, changedCount };
+  }
+
+  async function mutateThreads(
+    action: WatchThreadAction,
+    threadIds: readonly string[],
+  ): Promise<WatchThreadMutationResult> {
+    await reconcileAccount();
+    const auth = await readAuth();
+    return dependencies.runSerialized(() => performThreadMutation(auth, action, threadIds));
   }
 
   async function disconnectInboxCommand(): Promise<WatchStatus> {
@@ -373,17 +675,14 @@ export function createWatchRefreshCoordinator(
         : false;
       const shouldClearNotifications = !auth.accountLogin || (
         !!options.invalidateNotificationsIdentity &&
-        auth.watchCredentialSource !== null &&
         auth.notificationsIdentity === options.invalidateNotificationsIdentity
       );
       let credentialsCleared = false;
       if (shouldClearNotifications) {
         const latest = await readAuth();
         if (
-          !latest.accountLogin || (
-            latest.watchCredentialSource !== null &&
-            latest.notificationsIdentity === options.invalidateNotificationsIdentity
-          )
+          !latest.accountLogin ||
+          latest.notificationsIdentity === options.invalidateNotificationsIdentity
         ) {
           await dependencies.auth.clearWatchNotificationsToken();
           credentialsCleared = true;
@@ -402,10 +701,14 @@ export function createWatchRefreshCoordinator(
       await reconcileAccount();
       return queryInbox(unreadOnly);
     },
+    getSubjectDetail,
     refresh,
+    refreshInbox,
+    markThreadsRead: (threadIds) => mutateThreads('read', threadIds),
+    markThreadsDone: (threadIds) => mutateThreads('done', threadIds),
     disconnectInbox: disconnectInboxCommand,
     clearData: clearDataCommand,
     reconcileAccount,
-    isRefreshing: () => inFlight !== null,
+    isRefreshing: () => inFlight !== null || inboxInFlight !== null,
   };
 }

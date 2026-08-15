@@ -32,7 +32,7 @@ import {
   createFrozenScope,
   projectFrozenScope,
   parsePreflightToken,
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
   type FrozenScope,
   type FrozenScopeKind,
   type PreflightToken,
@@ -90,7 +90,7 @@ type PreflightRecord = Readonly<{
   controllerId: ControllerId;
   sessionId: string;
   candidate: ResolvedLaunchCandidate;
-  scopeFingerprint: Awaited<ReturnType<typeof parseScopeFingerprintV1>>;
+  scopeFingerprint: Awaited<ReturnType<typeof parseScopeFingerprint>>;
   capturedAt: number;
   expiresAt: number;
 }>;
@@ -395,8 +395,8 @@ export function createBgsmAgentController(
       if (!isCurrentPreflightRequest(identity, authority)) {
         throw new TypeError('OrganizeJobRun preflight request is stale.');
       }
-      const scopeFingerprint = parseScopeFingerprintV1(`fs:v1:${digest}`);
-      const token = parsePreflightToken(`preflight:v1:${randomId()}`);
+      const scopeFingerprint = parseScopeFingerprint(`fs:${digest}`);
+      const token = parsePreflightToken(`preflight:${randomId()}`);
       const expiresAt = capturedAt + preflightTtlMs;
       preflights.set(token, Object.freeze({
         token,

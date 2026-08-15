@@ -3,6 +3,7 @@ import {
   Sun,
   Moon,
   Star,
+  Heart,
   Check,
   AlertTriangle,
   ExternalLink,
@@ -13,7 +14,6 @@ import {
   GITHUB_CREDENTIALS_STORAGE_KEY,
 } from "@/auth/auth-store";
 import {
-  BackgroundCallError,
   bgCall,
   mergeProgressStatus,
   mergeStatusSnapshot,
@@ -22,7 +22,6 @@ import {
 } from "@/utils/messaging";
 import {
   TOKEN_WATCHING_FORBIDDEN,
-  WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN,
   translateError,
 } from "@/api/errors";
 import {
@@ -37,13 +36,6 @@ import { Textarea } from "@/ui/shadcn/textarea";
 import { Separator } from "@/ui/shadcn/separator";
 import { Input } from "@/ui/shadcn/input";
 import { Checkbox } from "@/ui/shadcn/checkbox";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/ui/shadcn/select";
 import { cn } from "@/lib/utils";
 import { REPO_URL } from "@/lib/links";
 import { useImeBufferedInput } from "@/ui/hooks/use-ime-input";
@@ -57,49 +49,21 @@ import {
   normalizeMinTopicRepoCount,
 } from "@/preferences";
 import {
-  getProvider as getAgentProvider,
-  getProviders as getAgentProviders,
-  isSavedAgentCredentialEligible,
-  resolveAgentModelContextCapability,
-  resolveAgentProviderEndpoint,
-  trustedAgentModelContextCapability,
-} from "@/agent-harness/models";
+  CURRENT_EXTENSION_STORE_LISTING,
+  DEFAULT_STORE_RATING_PROMPT_STATE,
+} from '@/store-rating';
+import type { StoreRatingPromptState } from "@/types";
+import tokenGuideCreateUrl from "../../store-assets/screenshots/token-guide-create-classic-pat.webp?url";
+import tokenGuideScopesUrl from "../../store-assets/screenshots/token-guide-select-scopes.webp?url";
+import tokenGuideGenerateUrl from "../../store-assets/screenshots/token-guide-generate-token.webp?url";
 import {
-  getAgentProviderHostAccess,
-  hasAgentProviderHostPermission,
-  requestAgentProviderHostPermission,
-} from "@/agent-harness/provider-access";
-import type {
-  AgentCustomProviderProtocol,
-  AgentProviderConfig,
-  AgentProviderId,
-  WatchCredentialSource,
-} from "@/types";
-import type {
-  AgentStorageCleanupResult,
-  AgentStorageUsageSnapshot,
-} from "@/storage/agent-storage-store";
-import { AgentDataDisclosurePanel } from "./AgentDataDisclosurePanel";
-import {
-  AgentStoragePanel,
-  formatStorageBytes,
-} from "./AgentStoragePanel";
+  DEFAULT_OPTIONS_AGENT_SETTINGS_SNAPSHOT,
+  OptionsAgentSettings,
+  type OptionsAgentSettingsSnapshot,
+} from "./OptionsAgentSettings";
 
-const tutorialNewToken = "/tutorial/img_01.png";
-const tutorialRepoAccess = "/tutorial/img_02.png";
-const tutorialPermissions = "/tutorial/img_03.png";
-const agentProviders = getAgentProviders();
-const DEFAULT_CUSTOM_AGENT_PROTOCOL: AgentCustomProviderProtocol = "chat-completions";
-const MIN_AGENT_CONTEXT_WINDOW = 4_096;
-const MAX_AGENT_CONTEXT_WINDOW = 2_000_000;
 
 type OptionsMessage = { kind: "ok" | "warn" | "err"; text: string };
-type AgentConnectionResult = {
-  providerLabel: string;
-  model: string;
-  latencyMs: number;
-  preview: string;
-};
 function StatusNotice({
   message,
   className,
@@ -132,68 +96,26 @@ function StatusNotice({
 export function Options() {
   const [username, setUsername] = useState<string | null>(null);
   const [hasUsableToken, setHasUsableToken] = useState(false);
-  const [watchCredentialSource, setWatchCredentialSource] =
-    useState<WatchCredentialSource>(null);
   const [gistId, setGistId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [agentProvider, setAgentProvider] = useState<AgentProviderId>("openai");
-  const [agentProtocol, setAgentProtocol] =
-    useState<AgentCustomProviderProtocol>(DEFAULT_CUSTOM_AGENT_PROTOCOL);
-  const [agentBaseUrl, setAgentBaseUrl] = useState("");
-  const [agentModel, setAgentModel] = useState(
-    getAgentProvider("openai").defaultModel,
-  );
-  const [agentDeclaredContextWindow, setAgentDeclaredContextWindow] = useState("");
-  const [agentWorkingContextWindow, setAgentWorkingContextWindow] = useState("");
-  const [agentApiKey, setAgentApiKey] = useState("");
-  const [hasSavedAgentApiKey, setHasSavedAgentApiKey] = useState(false);
-  const [savedAgentProviderConfig, setSavedAgentProviderConfig] =
-    useState<AgentProviderConfig | null>(null);
-  const [agentHostAccessGranted, setAgentHostAccessGranted] = useState(false);
-  const [agentHostAccessBusy, setAgentHostAccessBusy] = useState(false);
+  const [agentSettingsSnapshot, setAgentSettingsSnapshot] =
+    useState<OptionsAgentSettingsSnapshot>(DEFAULT_OPTIONS_AGENT_SETTINGS_SNAPSHOT);
   const [maxTagsPerRepo, setMaxTagsPerRepo] = useState<string>(String(DEFAULT_AUTO_TAG_LIMIT));
   const [minTopicRepoCount, setMinTopicRepoCount] = useState<string>(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
   const persistedMaxTagsPerRepoRef = useRef(String(DEFAULT_AUTO_TAG_LIMIT));
   const persistedMinTopicRepoCountRef = useRef(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
   const [starsPanelDefaultEnabled, setStarsPanelDefaultEnabled] = useState(true);
+  const [storeRatingPrompt, setStoreRatingPrompt] = useState<StoreRatingPromptState>(
+    DEFAULT_STORE_RATING_PROMPT_STATE,
+  );
   const [tokenBusy, setTokenBusy] = useState(false);
-  const [watchTokenBusy, setWatchTokenBusy] = useState(false);
-  const [watchSetupBusy, setWatchSetupBusy] = useState(false);
-  const [watchMainUnavailable, setWatchMainUnavailable] = useState(false);
-  const [watchShowOtherFeaturesSafe, setWatchShowOtherFeaturesSafe] = useState(false);
-  const [agentSaveBusy, setAgentSaveBusy] = useState(false);
-  const [agentTestBusy, setAgentTestBusy] = useState(false);
-  const [agentStorageUsage, setAgentStorageUsage] =
-    useState<AgentStorageUsageSnapshot | null>(null);
-  const [agentStorageLoading, setAgentStorageLoading] = useState(true);
-  const [agentStorageClearBusy, setAgentStorageClearBusy] = useState(false);
-  const [agentStorageError, setAgentStorageError] = useState<string | null>(null);
-  const [agentStorageNotice, setAgentStorageNotice] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [msg, setMsg] = useState<OptionsMessage | null>(null);
-  const [watchMsg, setWatchMsg] = useState<OptionsMessage | null>(null);
-  const [agentMsg, setAgentMsg] = useState<OptionsMessage | null>(null);
   const { locale, setLocale, m } = useI18n();
   const tokenInput = useImeBufferedInput("");
-  const watchTokenInput = useImeBufferedInput("");
   const refreshGeneration = useRef(0);
-  const watchHeadingRef = useRef<HTMLHeadingElement>(null);
+  const tokenHeadingRef = useRef<HTMLHeadingElement>(null);
 
-  const loadAgentStorageUsage = async () => {
-    setAgentStorageLoading(true);
-    setAgentStorageError(null);
-    try {
-      const usage = await bgCall<AgentStorageUsageSnapshot>("getAgentStorageUsage");
-      setAgentStorageUsage(usage);
-    } catch (error) {
-      const message = error instanceof BackgroundCallError
-        ? error.message
-        : translateError(error, m);
-      setAgentStorageError(m.options.agentStorageUnavailable(message));
-    } finally {
-      setAgentStorageLoading(false);
-    }
-  };
 
   const refresh = async () => {
     const generation = ++refreshGeneration.current;
@@ -205,34 +127,16 @@ export function Options() {
     if (generation !== refreshGeneration.current) return;
     setUsername(c.username);
     setHasUsableToken(hasToken);
-    setWatchCredentialSource(c.watchCredentialSource);
+    // The main Classic PAT is the only GitHub credential.
     setGistId(c.gistId);
     setTheme(c.theme);
-    setAgentProvider(c.agentProvider.provider);
-    setAgentProtocol(
-      c.agentProvider.protocol ?? DEFAULT_CUSTOM_AGENT_PROTOCOL,
-    );
-    setAgentBaseUrl(c.agentProvider.baseUrl ?? "");
-    setAgentModel(c.agentProvider.model);
-    setAgentDeclaredContextWindow(
-      c.agentProvider.declaredContextWindow == null
-        ? ""
-        : String(c.agentProvider.declaredContextWindow),
-    );
-    setAgentWorkingContextWindow(
-      c.agentProvider.workingContextWindow == null
-        ? ""
-        : String(c.agentProvider.workingContextWindow),
-    );
-    setSavedAgentProviderConfig(c.agentProvider);
-    setHasSavedAgentApiKey(
-      !!(c.agentProvider.apiKeyEncrypted && c.agentProvider.apiKeyCryptoMeta),
-    );
+    setAgentSettingsSnapshot({ providerConfig: c.agentProvider });
     setMaxTagsPerRepo(String(c.maxTagsPerRepo));
     setMinTopicRepoCount(String(c.minTopicRepoCount));
     persistedMaxTagsPerRepoRef.current = String(c.maxTagsPerRepo);
     persistedMinTopicRepoCountRef.current = String(c.minTopicRepoCount);
     setStarsPanelDefaultEnabled(c.starsPanelDefaultEnabled);
+    setStoreRatingPrompt(c.storeRatingPrompt);
     setSyncStatus((current) => mergeStatusSnapshot(current, status));
   };
   useEffect(() => {
@@ -245,33 +149,28 @@ export function Options() {
     return off;
   }, [hasUsableToken]);
 
-  useEffect(() => {
-    void loadAgentStorageUsage();
-  }, []);
 
-  // Deep-link from Watch setup/recovery actions: consume the transient session
-  // intent on mount and on later writes (already-open page), then move focus to
-  // the Watch block heading. The dedicated fallback is never revealed here.
+  // Deep-link from credential recovery actions: consume the transient session
+  // intent on mount and on later writes to an already-open Options page.
   useEffect(() => {
     let cancelled = false;
-    const applyWatchIntent = async () => {
+    const applyOptionsIntent = async () => {
       const intent = await consumeOptionsIntent();
-      if (cancelled || intent?.section !== "watch") return;
-      const heading = watchHeadingRef.current;
+      if (cancelled || !intent) return;
+      const heading = tokenHeadingRef.current;
       if (!heading) return;
       heading.scrollIntoView?.({ block: "start" });
       heading.focus({ preventScroll: true });
     };
-    void applyWatchIntent();
+    void applyOptionsIntent();
     const handleStorageChanged = (
       changes: Record<string, chrome.storage.StorageChange>,
       areaName: string,
     ) => {
       if (areaName !== "session") return;
       const change = changes[OPTIONS_INTENT_STORAGE_KEY];
-      if (!change) return;
-      if (parseOptionsIntent(change.newValue)?.section !== "watch") return;
-      void applyWatchIntent();
+      if (!change || !parseOptionsIntent(change.newValue)) return;
+      void applyOptionsIntent();
     };
     chrome.storage.onChanged.addListener(handleStorageChanged);
     return () => {
@@ -284,12 +183,12 @@ export function Options() {
     setTokenBusy(true);
     setMsg(null);
     try {
-      const { username: u, watching } = await authStore.setToken(tokenInput.value);
-      setMsg(watching.available
+      const { username: u, notifications } = await authStore.setToken(tokenInput.value);
+      setMsg(notifications.available
         ? { kind: "ok", text: m.options.tokenVerified(u) }
         : {
             kind: "warn",
-            text: watching.errorCode === TOKEN_WATCHING_FORBIDDEN
+            text: notifications.errorCode === TOKEN_WATCHING_FORBIDDEN
               ? m.options.tokenVerifiedWatchForbidden(u)
               : m.options.tokenVerifiedWatchUnverified(u),
           });
@@ -308,229 +207,6 @@ export function Options() {
     setMsg({ kind: "ok", text: m.options.tokenRemoved });
   };
 
-  // Explicit Watch opt-in: probe the stable main credential/account for the
-  // Notifications capability. Only a proven permission rejection reveals the
-  // dedicated classic-PAT fallback; network/unknown failures stay retryable.
-  const enableWatchWithMainConnection = async () => {
-    setWatchSetupBusy(true);
-    setWatchMsg(null);
-    setWatchShowOtherFeaturesSafe(false);
-    try {
-      const { username: connectedUsername } =
-        await authStore.enableWatchWithMainToken();
-      setWatchMainUnavailable(false);
-      watchTokenInput.commit("");
-      await refresh();
-      setWatchMsg({
-        kind: "ok",
-        text: m.options.watchSetupMainConnected(connectedUsername),
-      });
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message === WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN
-      ) {
-        setWatchMainUnavailable(true);
-      } else {
-        setWatchMsg({ kind: "err", text: m.options.watchSetupCheckFailed });
-        setWatchShowOtherFeaturesSafe(true);
-      }
-    } finally {
-      setWatchSetupBusy(false);
-    }
-  };
-
-  const saveWatchNotificationsToken = async () => {
-    setWatchTokenBusy(true);
-    setWatchMsg(null);
-    setWatchShowOtherFeaturesSafe(false);
-    try {
-      const { username: connectedUsername } = await authStore.setWatchNotificationsToken(
-        watchTokenInput.value,
-      );
-      watchTokenInput.commit("");
-      setWatchMainUnavailable(false);
-      await refresh();
-      setWatchMsg({
-        kind: "ok",
-        text: m.options.watchTokenConnected(connectedUsername),
-      });
-    } catch (error) {
-      setWatchMsg({ kind: "err", text: translateError(error, m) });
-      setWatchShowOtherFeaturesSafe(true);
-    } finally {
-      setWatchTokenBusy(false);
-    }
-  };
-
-  const disconnectWatchNotificationsToken = async () => {
-    setWatchTokenBusy(true);
-    setWatchMsg(null);
-    setWatchShowOtherFeaturesSafe(false);
-    try {
-      await bgCall("disconnectWatchInbox");
-      watchTokenInput.commit("");
-      setWatchMainUnavailable(false);
-      await refresh();
-      setWatchMsg({ kind: "ok", text: m.options.watchTokenDisconnected });
-    } catch (error) {
-      setWatchMsg({ kind: "err", text: translateError(error, m) });
-    } finally {
-      setWatchTokenBusy(false);
-    }
-  };
-
-  const requestAgentConnectionTest = (apiKey?: string) => bgCall<AgentConnectionResult>(
-    "testAgentProviderConnection",
-    {
-      provider: agentProvider,
-      protocol: agentProvider === "custom-openai-compatible" ? agentProtocol : null,
-      baseUrl: agentProvider === "custom-openai-compatible" ? agentBaseUrl : null,
-      model: agentModel,
-      declaredContextWindow: resolvedDeclaredContextWindow,
-      workingContextWindow: parsedWorkingContextWindow,
-      apiKey,
-    },
-  );
-  const formatAgentConnectionError = (error: unknown) => (
-    error instanceof BackgroundCallError ? error.message : translateError(error, m)
-  );
-
-  const saveAgentSettings = async () => {
-    setAgentSaveBusy(true);
-    setAgentMsg(null);
-    try {
-      await authStore.updateAgentProviderConfig({
-        provider: agentProvider,
-        protocol: agentProvider === "custom-openai-compatible" ? agentProtocol : null,
-        baseUrl:
-          agentProvider === "custom-openai-compatible" ? agentBaseUrl : null,
-        model: agentModel,
-        declaredContextWindow: resolvedDeclaredContextWindow,
-        workingContextWindow: parsedWorkingContextWindow,
-        apiKey: agentApiKey,
-      });
-      setAgentApiKey("");
-      await refresh();
-      const target = agentDisclosureTarget;
-      const hasHostAccess = !!target && await hasAgentProviderHostPermission(
-        target.provider,
-        target.canonicalBaseUrl,
-      );
-      setAgentHostAccessGranted(hasHostAccess);
-      if (!hasHostAccess) {
-        setAgentMsg({ kind: "ok", text: m.options.agentSavedNeedsHostAccess });
-        return;
-      }
-      try {
-        const result = await requestAgentConnectionTest();
-        await refresh();
-        setAgentMsg({
-          kind: "ok",
-          text: m.options.agentSavedAndTested(
-            result.providerLabel,
-            result.model,
-            result.latencyMs,
-          ),
-        });
-      } catch (error) {
-        setAgentMsg({
-          kind: "err",
-          text: m.options.agentSavedTestFailed(formatAgentConnectionError(error)),
-        });
-      }
-    } catch (e) {
-      setAgentMsg({ kind: "err", text: formatAgentConnectionError(e) });
-    } finally {
-      setAgentSaveBusy(false);
-    }
-  };
-
-  const clearAgentApiKey = async () => {
-    setAgentMsg(null);
-    try {
-      await authStore.clearAgentProviderApiKey();
-      setAgentApiKey("");
-      await refresh();
-      setAgentMsg({ kind: "ok", text: m.options.agentKeyRemoved });
-    } catch (e) {
-      setAgentMsg({ kind: "err", text: translateError(e, m) });
-    }
-  };
-
-  const clearAgentToolCache = async () => {
-    setAgentStorageClearBusy(true);
-    setAgentStorageError(null);
-    setAgentStorageNotice(null);
-    try {
-      const result = await bgCall<AgentStorageCleanupResult>("clearAgentToolCache");
-      setAgentStorageUsage(result.usage);
-      setAgentStorageNotice(m.options.agentStorageCacheCleared(
-        result.deletedArtifacts,
-        formatStorageBytes(result.freedBytes, locale),
-        result.protectedArtifacts,
-      ));
-    } catch (error) {
-      const message = error instanceof BackgroundCallError
-        ? error.message
-        : translateError(error, m);
-      setAgentStorageError(m.options.agentStorageClearFailed(message));
-    } finally {
-      setAgentStorageClearBusy(false);
-    }
-  };
-
-  const testAgentConnection = async () => {
-    const permissionTarget = agentDisclosureTarget;
-    setAgentTestBusy(true);
-    setAgentMsg(null);
-    try {
-      const result = await requestAgentConnectionTest(agentApiKey.trim() || undefined);
-      setAgentMsg({
-        kind: "ok",
-        text: m.options.agentTestOk(
-          result.providerLabel,
-          result.model,
-          result.latencyMs,
-        ),
-      });
-    } catch (e) {
-      setAgentMsg({ kind: "err", text: formatAgentConnectionError(e) });
-    } finally {
-      if (permissionTarget) {
-        const granted = await hasAgentProviderHostPermission(
-          permissionTarget.provider,
-          permissionTarget.canonicalBaseUrl,
-        );
-        setAgentHostAccessGranted(granted);
-      }
-      setAgentTestBusy(false);
-    }
-  };
-
-  const changeAgentProvider = (next: AgentProviderId) => {
-    setAgentMsg(null);
-    setAgentProvider(next);
-    setAgentModel(getAgentProvider(next).defaultModel);
-  };
-
-  const grantAgentHostAccess = async () => {
-    if (!agentDisclosureTarget) return;
-    setAgentHostAccessBusy(true);
-    setAgentMsg(null);
-    try {
-      await requestAgentProviderHostPermission(
-        agentDisclosureTarget.provider,
-        agentDisclosureTarget.canonicalBaseUrl,
-      );
-      setAgentHostAccessGranted(true);
-    } catch (e) {
-      setAgentHostAccessGranted(false);
-      setAgentMsg({ kind: "err", text: translateError(e, m) });
-    } finally {
-      setAgentHostAccessBusy(false);
-    }
-  };
 
   const toggleTheme = async () => {
     const next = theme === "dark" ? "light" : "dark";
@@ -568,6 +244,25 @@ export function Options() {
     await authStore.update({ starsPanelDefaultEnabled: checked });
   };
 
+  const setStoreRatingReminderEnabled = async (enabled: boolean) => {
+    try {
+      const config = enabled
+        ? await authStore.reenableStoreRatingPrompt()
+        : await authStore.disableStoreRatingPrompt();
+      setStoreRatingPrompt(config.storeRatingPrompt);
+    } catch (error) {
+      setMsg({ kind: "err", text: translateError(error, m) });
+    }
+  };
+
+  const markStoreRatingOpened = () => {
+    void authStore.recordStoreRatingNavigation()
+      .then((config) => setStoreRatingPrompt(config.storeRatingPrompt))
+      .catch((error) => {
+        setMsg({ kind: "err", text: translateError(error, m) });
+      });
+  };
+
   const syncing = !!(
     syncStatus?.inFlight && syncStatus.progress && syncStatus.progress.phase !== "idle"
   );
@@ -590,89 +285,24 @@ export function Options() {
     : null;
   const starsUrl =
     hasUsableToken && username ? `https://github.com/${username}?tab=stars` : null;
-  // The dedicated classic-PAT fallback stays collapsed until the main
-  // credential proves unavailable or a dedicated source is already selected.
-  const watchDedicatedFormVisible =
-    watchCredentialSource === "dedicated" || watchMainUnavailable;
-  const customAgentSelected = agentProvider === "custom-openai-compatible";
-  const trustedAgentContextCapability = trustedAgentModelContextCapability(
-    agentProvider,
-    agentModel,
-  );
-  const agentDeclaredContextRequired = !trustedAgentContextCapability;
-  const agentDeclaredContextVisible = customAgentSelected || agentDeclaredContextRequired;
-  const parsedDeclaredContextWindow = parseAgentContextWindow(agentDeclaredContextWindow);
-  const parsedWorkingContextWindow = parseAgentContextWindow(agentWorkingContextWindow);
-  const agentDeclaredContextValid = parsedDeclaredContextWindow !== undefined &&
-    (!agentDeclaredContextRequired || parsedDeclaredContextWindow !== null);
-  const resolvedDeclaredContextWindow = customAgentSelected || agentDeclaredContextRequired
-    ? parsedDeclaredContextWindow ?? null
-    : null;
-  const selectedProviderContextWindow = resolveAgentModelContextCapability({
-    provider: agentProvider,
-    model: agentModel,
-    declaredContextWindow: resolvedDeclaredContextWindow,
-  })?.contextWindow;
-  const agentWorkingContextExceedsProvider = parsedWorkingContextWindow != null &&
-    selectedProviderContextWindow != null &&
-    parsedWorkingContextWindow > selectedProviderContextWindow;
-  const agentWorkingContextValid = parsedWorkingContextWindow !== undefined &&
-    !agentWorkingContextExceedsProvider;
-  const agentContextSettingsValid = agentDeclaredContextValid && agentWorkingContextValid;
-  const agentBaseUrlReady = !customAgentSelected || !!agentBaseUrl.trim();
-  const hasEligibleSavedAgentApiKey = !!savedAgentProviderConfig &&
-    isSavedAgentCredentialEligible(savedAgentProviderConfig, {
-      provider: agentProvider,
-      baseUrl: customAgentSelected ? agentBaseUrl : null,
-    });
-  const agentDisclosureTarget = resolveDisclosureTarget(
-    agentProvider,
-    customAgentSelected ? agentBaseUrl : null,
-    customAgentSelected ? agentProtocol : null,
-  );
-  const customAgentHostAccessRequired = !!agentDisclosureTarget &&
-    getAgentProviderHostAccess(
-      agentDisclosureTarget.provider,
-      agentDisclosureTarget.canonicalBaseUrl,
-    ).kind === "optional";
-  const canTestAgentConnection =
-    !!(agentApiKey.trim() || hasEligibleSavedAgentApiKey) &&
-    agentBaseUrlReady &&
-    agentContextSettingsValid &&
-    agentHostAccessGranted;
-
-  useEffect(() => {
-    let current = true;
-    if (!agentDisclosureTarget) {
-      setAgentHostAccessGranted(false);
-      return () => {
-        current = false;
-      };
-    }
-    const refreshHostAccess = () => hasAgentProviderHostPermission(
-      agentDisclosureTarget.provider,
-      agentDisclosureTarget.canonicalBaseUrl,
-    ).then((granted) => {
-      if (current) setAgentHostAccessGranted(granted);
-    });
-    const handlePermissionChange = () => {
-      void refreshHostAccess();
-    };
-    const permissionAddedEvent = chrome.permissions.onAdded as chrome.permissions.PermissionsAddedEvent & {
-      removeListener?: (listener: typeof handlePermissionChange) => void;
-    };
-    const permissionRemovedEvent = chrome.permissions.onRemoved as chrome.permissions.PermissionsRemovedEvent & {
-      removeListener?: (listener: typeof handlePermissionChange) => void;
-    };
-    void refreshHostAccess();
-    permissionAddedEvent.addListener(handlePermissionChange);
-    permissionRemovedEvent.addListener(handlePermissionChange);
-    return () => {
-      current = false;
-      permissionAddedEvent.removeListener?.(handlePermissionChange);
-      permissionRemovedEvent.removeListener?.(handlePermissionChange);
-    };
-  }, [agentDisclosureTarget?.canonicalOrigin, agentDisclosureTarget?.provider]);
+  const storeRatingSnoozeActive = storeRatingPrompt.status === 'snoozed'
+    && !!storeRatingPrompt.snoozeUntil
+    && Date.parse(storeRatingPrompt.snoozeUntil) > Date.now();
+  const storeRatingReminderEnabled = storeRatingPrompt.status === 'tracking'
+    || storeRatingPrompt.status === 'snoozed';
+  const storeRatingReminderStatus = storeRatingSnoozeActive
+    ? m.options.storeRatingReminderSnoozed(
+      new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(
+        new Date(storeRatingPrompt.snoozeUntil!),
+      ),
+    )
+    : storeRatingPrompt.status === 'exhausted'
+      ? m.options.storeRatingReminderExhausted
+      : storeRatingPrompt.status === 'store_opened'
+        ? m.options.storeRatingReminderStoreOpened
+        : storeRatingPrompt.status === 'disabled'
+          ? m.options.storeRatingReminderDisabled
+          : m.options.storeRatingReminderTracking;
 
   useEffect(() => {
     const listener = (
@@ -695,16 +325,15 @@ export function Options() {
         oldCfg?.tokenEncrypted === newCfg?.tokenEncrypted &&
         JSON.stringify(oldCfg?.tokenCryptoMeta ?? null) ===
           JSON.stringify(newCfg?.tokenCryptoMeta ?? null) &&
-        oldCfg?.watchNotificationsTokenEncrypted ===
-          newCfg?.watchNotificationsTokenEncrypted &&
-        JSON.stringify(oldCfg?.watchNotificationsTokenCryptoMeta ?? null) ===
-          JSON.stringify(newCfg?.watchNotificationsTokenCryptoMeta ?? null) &&
-        oldCfg?.watchCredentialSource === newCfg?.watchCredentialSource &&
+        oldCfg?.githubCredentialStatus === newCfg?.githubCredentialStatus &&
+        oldCfg?.watchNotificationsEnabled === newCfg?.watchNotificationsEnabled &&
         JSON.stringify(oldCfg?.agentProvider ?? null) ===
           JSON.stringify(newCfg?.agentProvider ?? null) &&
         oldCfg?.maxTagsPerRepo === newCfg?.maxTagsPerRepo &&
         oldCfg?.minTopicRepoCount === newCfg?.minTopicRepoCount &&
-        oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled;
+        oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled &&
+        JSON.stringify(oldCfg?.storeRatingPrompt ?? null) ===
+          JSON.stringify(newCfg?.storeRatingPrompt ?? null);
       if (visibleConfigUnchanged) return;
       void refresh();
     };
@@ -780,14 +409,21 @@ export function Options() {
         {m.options.starRepoButton}
       </a>
 
-      {/* 1. Token */}
-      <section className="mt-6">
-        <h2 className="text-base font-medium">{m.options.tokenHeading}</h2>
+      {/* 1. GitHub connection */}
+      <section className="mt-6" data-testid="github-connection-settings">
+        <h2
+          id="github-connection-heading"
+          ref={tokenHeadingRef}
+          tabIndex={-1}
+          className="text-base font-medium"
+        >
+          {m.options.tokenHeading}
+        </h2>
         <p className="gsm-body-note mt-1">
           {m.options.tokenIntroPrefix}{" "}
           <a
-            className="text-primary hover:underline"
-            href="https://github.com/settings/personal-access-tokens/new"
+            className="text-primary underline"
+            href="https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager"
             target="_blank"
             rel="noreferrer"
           >
@@ -796,38 +432,63 @@ export function Options() {
           . {m.options.tokenIntroSuffix}
         </p>
 
-        {/* Detailed PAT walkthrough with tutorial screenshots. Captions live in i18n. */}
-        <details className="gsm-status-note mt-3 rounded-md border border-border bg-muted/20 p-3 text-muted-foreground">
+        <details
+          data-testid="token-setup-guide"
+          className="gsm-status-note mt-3 rounded-md border border-border bg-muted/20 p-3 text-muted-foreground"
+        >
           <summary className="cursor-pointer font-medium text-foreground">
             {m.options.tokenStepsTitle}
           </summary>
-          <ol className="mt-2 list-decimal space-y-1.5 pl-5 leading-relaxed">
-            <li>{m.options.tokenStep1}</li>
-            <li>{m.options.tokenStep2}</li>
-            <li>{m.options.tokenStep3}</li>
-            <li>{m.options.tokenStep4}</li>
-            <li>{m.options.tokenStep5}</li>
+          <ol className="mt-3 grid list-decimal gap-4 pl-5 leading-relaxed">
+            <li className="pl-1">
+              <p className="font-medium text-foreground">{m.options.tokenStep1Title}</p>
+              <p className="mt-1">{m.options.tokenStep1}</p>
+              <img
+                src={tokenGuideCreateUrl}
+                alt={m.options.tokenStep1Alt}
+                width={1568}
+                height={875}
+                loading="lazy"
+                decoding="async"
+                className="mt-2 h-auto w-full rounded-md border border-border bg-background object-contain"
+              />
+            </li>
+            <li className="pl-1">
+              <p className="font-medium text-foreground">{m.options.tokenStep2Title}</p>
+              <p className="mt-1">{m.options.tokenStep2}</p>
+              <img
+                src={tokenGuideScopesUrl}
+                alt={m.options.tokenStep2Alt}
+                width={1568}
+                height={520}
+                loading="lazy"
+                decoding="async"
+                className="mt-2 h-auto w-full rounded-md border border-border bg-background object-contain"
+              />
+            </li>
+            <li className="pl-1">
+              <p className="font-medium text-foreground">{m.options.tokenStep3Title}</p>
+              <p className="mt-1">{m.options.tokenStep3}</p>
+              <img
+                src={tokenGuideGenerateUrl}
+                alt={m.options.tokenStep3Alt}
+                width={888}
+                height={290}
+                loading="lazy"
+                decoding="async"
+                className="mt-2 h-auto w-full rounded-md border border-border bg-background object-contain"
+              />
+            </li>
           </ol>
-          <div className="mt-3 grid gap-2">
-            <ScreenshotCard
-              src={tutorialNewToken}
-              caption={m.options.shotNewToken}
-            />
-            <ScreenshotCard
-              src={tutorialRepoAccess}
-              caption={m.options.shotRepoAccess}
-            />
-            <ScreenshotCard
-              src={tutorialPermissions}
-              caption={m.options.shotPermissions}
-            />
-          </div>
+          <p className="mt-3 text-xs text-warning">{m.options.tokenScopesWarning}</p>
         </details>
 
         <ul className="gsm-body-note mt-2">
           <li>{m.options.tokenPublicRepos}</li>
           <li>{m.options.tokenGists}</li>
           <li>{m.options.tokenWatchingOptional}</li>
+          <li>{m.options.tokenIssuesOptional}</li>
+          <li>{m.options.tokenFollowersOptional}</li>
         </ul>
         <p className="mt-1 text-xs text-warning">{m.options.tokenGistNote}</p>
 
@@ -888,474 +549,16 @@ export function Options() {
         )}
       </section>
 
-      {/* Watch Inbox (optional): reuse the main GitHub connection when it can
-          read Notifications; the dedicated classic-PAT form appears only after
-          the main credential proves unavailable or is already selected. */}
-      <section className="mt-6" data-testid="watch-inbox-settings">
-        <h2
-          id="watch-inbox-heading"
-          ref={watchHeadingRef}
-          tabIndex={-1}
-          className="text-base font-medium"
-        >
-          {m.options.watchTokenHeading}
-        </h2>
-        <p className="gsm-body-note mt-1">{m.options.watchSetupDescription}</p>
+      <Separator className="my-6" />
 
-        {watchCredentialSource && username && (
-          <div
-            data-testid="watch-credential-source"
-            className="gsm-status-note my-3 flex flex-wrap items-center gap-1.5 text-success"
-          >
-            <Check className="size-4 shrink-0" />
-            <span>
-              {watchCredentialSource === "main"
-                ? m.options.watchSetupMainConnected(username)
-                : m.options.watchSetupDedicatedConnected(username)}
-            </span>
-            <Button
-              data-testid="watch-token-disconnect"
-              variant="ghost"
-              size="sm"
-              className="ml-2"
-              disabled={watchTokenBusy || watchSetupBusy}
-              onClick={() => void disconnectWatchNotificationsToken()}
-            >
-              {m.options.watchTokenDisconnect}
-            </Button>
-          </div>
-        )}
-
-        {!watchCredentialSource && (
-          <div className="mt-3">
-            <Button
-              data-testid="watch-setup-enable"
-              variant={watchMainUnavailable ? "outline" : "default"}
-              disabled={
-                watchSetupBusy || watchTokenBusy || !hasUsableToken || !username
-              }
-              onClick={() => void enableWatchWithMainConnection()}
-            >
-              {watchSetupBusy ? (
-                <>
-                  <Spinner data-icon="inline-start" />
-                  {m.options.watchSetupChecking}
-                </>
-              ) : (
-                m.options.watchSetupEnable
-              )}
-            </Button>
-            {!hasUsableToken && (
-              <p className="mt-1 text-xs text-warning">
-                {m.options.watchTokenMainRequired}
-              </p>
-            )}
-          </div>
-        )}
-        {watchSetupBusy && (
-          <div
-            data-testid="watch-main-checking"
-            role="status"
-            aria-live="polite"
-            className="gsm-status-note mt-3 text-muted-foreground"
-          >
-            {m.options.watchSetupChecking}
-          </div>
-        )}
-
-        {watchDedicatedFormVisible && (
-          <div
-            data-testid="watch-dedicated-form"
-            className="mt-4 rounded-md border border-border bg-muted/20 p-3"
-          >
-            {watchMainUnavailable && !watchCredentialSource && (
-              <div className="mb-3">
-                <StatusNotice
-                  message={{
-                    kind: "warn",
-                    text: m.options.watchSetupMainUnavailable,
-                  }}
-                />
-                <p className="gsm-body-note mt-1">
-                  {m.options.watchSetupOtherFeaturesSafe}
-                </p>
-              </div>
-            )}
-            <p className="gsm-body-note">
-              {m.options.watchTokenIntroPrefix}{" "}
-              <a
-                className="text-primary hover:underline"
-                href="https://github.com/settings/tokens/new?scopes=notifications&description=GitHub%20Stars%20Manager%20Watch%20Inbox"
-                target="_blank"
-                rel="noreferrer"
-              >
-                {m.options.watchTokenLinkLabel}
-              </a>
-              . {m.options.watchTokenIntroSuffix}
-            </p>
-            <p className="gsm-body-note mt-2">{m.options.watchTokenAccountHint}</p>
-
-            <label
-              htmlFor="watch-notifications-token"
-              className="mt-3 block text-sm font-medium text-foreground"
-            >
-              {m.options.watchTokenLabel}
-            </label>
-            <Input
-              id="watch-notifications-token"
-              name="watch-notifications-token"
-              type="password"
-              autoComplete="new-password"
-              spellCheck={false}
-              {...watchTokenInput.inputProps}
-              placeholder="ghp_..."
-              disabled={!hasUsableToken || !username || watchTokenBusy}
-              className="mt-1 font-mono"
-            />
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Button
-                data-testid="watch-token-connect"
-                disabled={
-                  watchTokenBusy ||
-                  watchSetupBusy ||
-                  !hasUsableToken ||
-                  !username ||
-                  !watchTokenInput.value.trim()
-                }
-                onClick={() => void saveWatchNotificationsToken()}
-              >
-                {watchTokenBusy ? (
-                  <>
-                    <Spinner data-icon="inline-start" />
-                    {m.options.watchTokenVerifying}
-                  </>
-                ) : watchCredentialSource === "dedicated" ? (
-                  m.options.watchTokenReplace
-                ) : (
-                  m.options.watchTokenConnect
-                )}
-              </Button>
-            </div>
-          </div>
-        )}
-        {watchMsg && (
-          <StatusNotice
-            message={watchMsg}
-            className="mt-3"
-            testId="watch-token-status"
-          />
-        )}
-        {watchShowOtherFeaturesSafe && watchMsg?.kind === "err" && (
-          <p className="gsm-body-note mt-1">
-            {m.options.watchSetupOtherFeaturesSafe}
-          </p>
-        )}
-      </section>
-
-      <section className="mt-6">
-        <h2 className="text-base font-medium">{m.options.agentHeading}</h2>
-        <p className="gsm-body-note mt-1">{m.options.agentIntro}</p>
-        <div className="mt-3 grid gap-4 rounded-lg border border-border bg-muted/20 p-4">
-          <div className="grid gap-1.5">
-            <label
-              htmlFor="agent-provider"
-              className="text-sm font-medium text-foreground"
-            >
-              {m.options.agentServiceLabel}
-            </label>
-            <p className="gsm-body-note">{m.options.agentServiceHint}</p>
-            <Select
-              value={agentProvider}
-              onValueChange={(value) =>
-                changeAgentProvider(value as AgentProviderId)
-              }
-            >
-              <SelectTrigger id="agent-provider" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {agentProviders.map((provider) => (
-                  <SelectItem key={provider.id} value={provider.id}>
-                    {provider.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <details
-            className="border-t border-border pt-3"
-            data-testid="agent-advanced-settings"
-          >
-            <summary className="cursor-pointer text-sm font-medium text-foreground">
-              {m.options.agentAdvancedSettings}
-            </summary>
-            <div className="mt-3 grid gap-4">
-              {customAgentSelected && (
-                <div className="grid gap-1.5">
-                  <span
-                    id="agent-protocol-label"
-                    className="text-sm font-medium text-foreground"
-                  >
-                    {m.options.agentProtocolLabel}
-                  </span>
-                  <p className="gsm-body-note">{m.options.agentProtocolHint}</p>
-                  <div
-                    className="grid grid-cols-2 gap-1 rounded-md border border-border bg-muted/20 p-1"
-                    role="group"
-                    aria-labelledby="agent-protocol-label"
-                  >
-                    {([
-                      ["chat-completions", m.options.agentProtocolChat],
-                      ["responses", m.options.agentProtocolResponses],
-                    ] as const).map(([protocol, label]) => {
-                      const selected = agentProtocol === protocol;
-                      return (
-                        <button
-                          key={protocol}
-                          type="button"
-                          aria-pressed={selected}
-                          onClick={() => {
-                            setAgentMsg(null);
-                            setAgentProtocol(protocol);
-                          }}
-                          className={cn(
-                            "min-h-9 rounded px-3 py-2 text-sm font-medium transition-colors",
-                            {
-                              "bg-primary text-primary-foreground shadow-sm": selected,
-                              "text-muted-foreground hover:bg-muted hover:text-foreground": !selected,
-                            },
-                          )}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {customAgentSelected && (
-                <div className="grid gap-1.5">
-                  <label
-                    htmlFor="agent-base-url"
-                    className="text-sm font-medium text-foreground"
-                  >
-                    {m.options.agentBaseUrlLabel}
-                  </label>
-                  <p className="gsm-body-note">{m.options.agentBaseUrlHint}</p>
-                  <Input
-                    id="agent-base-url"
-                    value={agentBaseUrl}
-                    onChange={(event) => {
-                      setAgentMsg(null);
-                      setAgentBaseUrl(event.currentTarget.value);
-                    }}
-                    placeholder={m.options.agentBaseUrlPlaceholder}
-                    className="font-mono"
-                  />
-                </div>
-              )}
-
-              {agentDeclaredContextVisible && (
-                <div className="grid gap-1.5">
-                    <label
-                      htmlFor="agent-provider-context-window"
-                      className="text-sm font-medium text-foreground"
-                    >
-                      {m.options.agentProviderContextWindowLabel}
-                    </label>
-                    <p className="gsm-body-note">
-                      {m.options.agentProviderContextWindowHint}
-                    </p>
-                    <Input
-                      id="agent-provider-context-window"
-                      data-testid="agent-provider-context-window"
-                      type="number"
-                      inputMode="numeric"
-                      min={MIN_AGENT_CONTEXT_WINDOW}
-                      max={MAX_AGENT_CONTEXT_WINDOW}
-                      step={1}
-                      required={agentDeclaredContextRequired}
-                      aria-invalid={!agentDeclaredContextValid}
-                      value={agentDeclaredContextWindow}
-                      onChange={(event) => {
-                        setAgentMsg(null);
-                        setAgentDeclaredContextWindow(event.currentTarget.value);
-                      }}
-                      placeholder={trustedAgentContextCapability
-                        ? String(trustedAgentContextCapability.contextWindow)
-                        : "128000"}
-                    />
-                    {!agentDeclaredContextValid && (
-                      <p className="text-xs text-destructive" role="alert">
-                        {agentDeclaredContextWindow.trim()
-                          ? m.options.agentContextWindowRange
-                          : m.options.agentProviderContextWindowRequired}
-                      </p>
-                    )}
-                </div>
-              )}
-
-              <div className="grid gap-1.5">
-                  <label
-                    htmlFor="agent-working-context-window"
-                    className="text-sm font-medium text-foreground"
-                  >
-                    {m.options.agentWorkingContextWindowLabel}
-                  </label>
-                  <p className="gsm-body-note">
-                    {m.options.agentWorkingContextWindowHint}
-                  </p>
-                  <Input
-                    id="agent-working-context-window"
-                    data-testid="agent-working-context-window"
-                    type="number"
-                    inputMode="numeric"
-                    min={MIN_AGENT_CONTEXT_WINDOW}
-                    max={MAX_AGENT_CONTEXT_WINDOW}
-                    step={1}
-                    aria-invalid={!agentWorkingContextValid}
-                    value={agentWorkingContextWindow}
-                    onChange={(event) => {
-                      setAgentMsg(null);
-                      setAgentWorkingContextWindow(event.currentTarget.value);
-                    }}
-                    placeholder={m.options.agentWorkingContextWindowPlaceholder}
-                  />
-                {!agentWorkingContextValid && (
-                  <p className="text-xs text-destructive" role="alert">
-                    {agentWorkingContextExceedsProvider
-                      ? m.options.agentWorkingContextWindowTooLarge
-                      : m.options.agentContextWindowRange}
-                  </p>
-                )}
-              </div>
-            </div>
-          </details>
-
-          <div className="grid gap-1.5">
-            <label
-              htmlFor="agent-model"
-              className="text-sm font-medium text-foreground"
-            >
-              {m.options.agentModelLabel}
-            </label>
-            <p className="gsm-body-note">{m.options.agentModelHint}</p>
-            <Input
-              id="agent-model"
-              value={agentModel}
-              onChange={(event) => {
-                setAgentMsg(null);
-                setAgentModel(event.currentTarget.value);
-              }}
-              placeholder={getAgentProvider(agentProvider).defaultModel}
-              className="font-mono"
-            />
-          </div>
-
-          <div className="grid gap-1.5">
-            <label
-              htmlFor="agent-api-key"
-              className="text-sm font-medium text-foreground"
-            >
-              {m.options.agentApiKeyLabel}
-            </label>
-            <p className="gsm-body-note">{m.options.agentApiKeyHint}</p>
-            <Input
-              id="agent-api-key"
-              type="password"
-              value={agentApiKey}
-              onChange={(event) => {
-                setAgentMsg(null);
-                setAgentApiKey(event.currentTarget.value);
-              }}
-              placeholder={m.options.agentApiKeyPlaceholder}
-              className="font-mono"
-            />
-            {hasEligibleSavedAgentApiKey && !agentApiKey.trim() && (
-              <p className="gsm-body-note">{m.options.agentSavedKeyHint}</p>
-            )}
-          </div>
-
-          {agentDisclosureTarget && (
-            <AgentDataDisclosurePanel
-              providerLabel={getAgentProvider(agentDisclosureTarget.provider).label}
-              canonicalOrigin={agentDisclosureTarget.canonicalOrigin}
-              customHostAccessRequired={customAgentHostAccessRequired}
-              hostAccessGranted={agentHostAccessGranted}
-              hostAccessBusy={
-                agentHostAccessBusy || agentSaveBusy || agentTestBusy
-              }
-              onGrantAccess={() => void grantAgentHostAccess()}
-            />
-          )}
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              onClick={saveAgentSettings}
-              disabled={
-                agentSaveBusy ||
-                agentHostAccessBusy ||
-                agentTestBusy ||
-                !agentModel.trim() ||
-                !agentBaseUrlReady ||
-                !agentContextSettingsValid
-              }
-            >
-              {agentSaveBusy ? (
-                <>
-                  <Spinner data-icon="inline-start" />
-                  {m.options.agentSaving}
-                </>
-              ) : (
-                m.options.agentSave
-              )}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => void testAgentConnection()}
-              disabled={
-                agentTestBusy ||
-                agentSaveBusy ||
-                agentHostAccessBusy ||
-                !agentModel.trim() ||
-                !canTestAgentConnection
-              }
-            >
-              {agentTestBusy ? (
-                <>
-                  <Spinner data-icon="inline-start" />
-                  {m.options.agentTesting}
-                </>
-              ) : (
-                m.options.agentTest
-              )}
-            </Button>
-            {hasSavedAgentApiKey && (
-              <Button variant="ghost" onClick={() => void clearAgentApiKey()}>
-                {m.options.agentRemoveKey}
-              </Button>
-            )}
-          </div>
-          {agentMsg && (
-            <StatusNotice message={agentMsg} testId="agent-connection-status" />
-          )}
-        </div>
-        <AgentStoragePanel
-          usage={agentStorageUsage}
-          loading={agentStorageLoading}
-          clearBusy={agentStorageClearBusy}
-          error={agentStorageError}
-          notice={agentStorageNotice}
-          onRefresh={loadAgentStorageUsage}
-          onClearToolCache={clearAgentToolCache}
-        />
-      </section>
+      <OptionsAgentSettings
+        snapshot={agentSettingsSnapshot}
+        onRefresh={refresh}
+      />
 
       <Separator className="my-6" />
 
-      {/* 4. Gist */}
+      {/* 3. Gist */}
       <section>
         <h2 className="text-base font-medium">{m.options.gistHeading}</h2>
         <p className="gsm-status-note mt-1 text-muted-foreground">
@@ -1397,7 +600,7 @@ export function Options() {
         </div>
       </section>
 
-      {/* 5. Preference */}
+      {/* 4. Preferences */}
       <section className="mt-6">
         <h2 className="text-base font-medium">{m.options.behaviorHeading}</h2>
         <div className="mt-3 grid gap-4 rounded-lg border border-border bg-muted/20 p-4">
@@ -1444,36 +647,68 @@ export function Options() {
               </span>
             </label>
           </div>
+
+          {CURRENT_EXTENSION_STORE_LISTING && (
+            <div
+              className="grid gap-3 border-t border-border pt-4"
+              data-testid="store-rating-settings"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="grid min-w-0 gap-1">
+                  <span className="text-sm font-medium text-foreground">
+                    {m.options.storeRatingHeading}
+                  </span>
+                  <span className="gsm-body-note">
+                    {m.options.storeRatingManualHint(CURRENT_EXTENSION_STORE_LISTING.label)}
+                  </span>
+                </div>
+                <Button asChild variant="outline" className="shrink-0">
+                  <a
+                    href={CURRENT_EXTENSION_STORE_LISTING.ratingUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={markStoreRatingOpened}
+                  >
+                    <Heart data-icon className="fill-current text-favorite" aria-hidden="true" />
+                    {m.options.storeRatingManualAction(CURRENT_EXTENSION_STORE_LISTING.label)}
+                    <ExternalLink data-icon aria-hidden="true" />
+                  </a>
+                </Button>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="store-rating-reminder"
+                  checked={storeRatingReminderEnabled}
+                  onCheckedChange={(checked) => {
+                    void setStoreRatingReminderEnabled(checked === true);
+                  }}
+                  aria-label={storeRatingReminderEnabled
+                    ? m.options.storeRatingReminderDisable
+                    : m.options.storeRatingReminderEnable}
+                  aria-describedby="store-rating-reminder-status"
+                  className="mt-0.5"
+                />
+                <label
+                  htmlFor="store-rating-reminder"
+                  className="grid cursor-pointer gap-1"
+                >
+                  <span className="text-sm font-medium text-foreground">
+                    {m.options.storeRatingReminderLabel}
+                  </span>
+                  <span id="store-rating-reminder-status" className="gsm-body-note">
+                    {storeRatingReminderStatus}
+                  </span>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
       </section>
     </div>
   );
 }
 
-function parseAgentContextWindow(value: string): number | null | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (!/^\d+$/u.test(trimmed)) return undefined;
-  const parsed = Number(trimmed);
-  if (
-    !Number.isSafeInteger(parsed) ||
-    parsed < MIN_AGENT_CONTEXT_WINDOW ||
-    parsed > MAX_AGENT_CONTEXT_WINDOW
-  ) return undefined;
-  return parsed;
-}
-
-function resolveDisclosureTarget(
-  provider: AgentProviderId,
-  baseUrl: string | null,
-  protocol: AgentCustomProviderProtocol | null,
-) {
-  try {
-    return resolveAgentProviderEndpoint(provider, baseUrl, protocol);
-  } catch {
-    return null;
-  }
-}
 
 function NumericPrefField({
   id,
@@ -1527,22 +762,5 @@ function NumericPrefField({
         </span>
       </div>
     </div>
-  );
-}
-
-function ScreenshotCard({ src, caption }: { src: string; caption: string }) {
-  return (
-    <figure className="overflow-hidden rounded-md border border-border bg-muted/30">
-      <img
-        src={src}
-        alt={caption}
-        loading="lazy"
-        decoding="async"
-        className="block w-full"
-      />
-      <figcaption className="gsm-helper-text border-t border-border px-3 py-2">
-        {caption}
-      </figcaption>
-    </figure>
   );
 }

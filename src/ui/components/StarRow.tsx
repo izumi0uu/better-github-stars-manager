@@ -1,6 +1,6 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Archive, Star as StarIcon, StickyNote } from 'lucide-react';
-import type { Star } from '@/types';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Archive, GitFork, Star as StarIcon, StickyNote } from 'lucide-react';
+import type { Star, Tag } from '@/types';
 import { Badge } from '@/ui/shadcn/badge';
 import { Button } from '@/ui/shadcn/button';
 import { FavoriteButton } from '@/ui/components/FavoriteButton';
@@ -10,10 +10,10 @@ import { useI18n } from '@/i18n';
 import { getLockedRegionProps } from '@/ui/interaction-lock';
 import type { ColumnId } from '@/ui/column-layout';
 import { fitInlineTags } from '@/ui/inline-tag-fit';
-import {
-  createRepositorySearchMatcher,
-  type SearchTextRange,
-} from '@/search/repository-search';
+import type { RepositorySearchMatch } from '@/search/repository-search';
+import { SearchMatchText } from '@/ui/components/SearchMatchText';
+import { RepositoryOwnerAvatar } from '@/ui/components/RepositoryOwnerAvatar';
+import { visibleTagNames } from '@/tags/tag-model';
 
 /**
  * virtualized-list row. Fixed h-16 (64px) MUST match the virtualizer
@@ -25,12 +25,37 @@ const INLINE_TAG_GAP_PX = 4;
 const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
+
+export type StarRowProps = {
+  star: Star;
+  matchRepositoryName?: (fullName: string) => RepositorySearchMatch;
+  showRepositoryOwner?: boolean;
+  showRepositoryAvatar?: boolean;
+  tag?: Tag;
+  favorite: boolean;
+  favoriteBusy: boolean;
+  selectedTags: string[];
+  onToggleTag: (tag: string) => void;
+  onToggleFavorite: (fullName: string, favorite: boolean) => Promise<void>;
+  selected: boolean;
+  onSelect: (fullName: string) => void;
+  columns: ColumnId[];
+  gridTemplateColumns: string;
+  flashedColumn: ColumnId | null;
+  interactionLocked?: boolean;
+  minWidth?: number;
+  onConfirmUnstar?: (fullName: string) => void;
+  unstarPopoverOpen?: boolean;
+  onUnstarPopoverOpenChange?: (open: boolean, fullName: string) => void;
+};
+
+
 export const StarRow = memo(function StarRow({
   star,
-  searchQuery = '',
+  matchRepositoryName,
   showRepositoryOwner = true,
-  tags,
-  hasNotes,
+  showRepositoryAvatar = true,
+  tag,
   favorite,
   favoriteBusy,
   selectedTags,
@@ -46,28 +71,9 @@ export const StarRow = memo(function StarRow({
   onConfirmUnstar,
   unstarPopoverOpen,
   onUnstarPopoverOpenChange,
-}: {
-  star: Star;
-  searchQuery?: string;
-  showRepositoryOwner?: boolean;
-  tags: string[];
-  hasNotes: boolean;
-  favorite: boolean;
-  favoriteBusy: boolean;
-  selectedTags: string[];
-  onToggleTag: (tag: string) => void;
-  onToggleFavorite: (full_name: string, favorite: boolean) => Promise<void>;
-  selected: boolean;
-  onSelect: (full_name: string) => void;
-  columns: ColumnId[];
-  gridTemplateColumns: string;
-  flashedColumn: ColumnId | null;
-  interactionLocked?: boolean;
-  minWidth?: number;
-  onConfirmUnstar?: (fullName: string) => void;
-  unstarPopoverOpen?: boolean;
-  onUnstarPopoverOpenChange?: (open: boolean) => void;
-}) {
+}: StarRowProps) {
+  const tags = useMemo(() => visibleTagNames(tag), [tag]);
+  const hasNotes = !!(tag?.notes && tag.notes.trim());
   const selectedSet = useMemo(() => new Set(selectedTags), [selectedTags]);
   const tagCellRef = useRef<HTMLDivElement | null>(null);
   const tagMeasureRef = useRef<HTMLDivElement | null>(null);
@@ -76,9 +82,12 @@ export const StarRow = memo(function StarRow({
   const [tagFit, setTagFit] = useState<{ tagsKey: string; visibleCount: number } | null>(null);
   const [uncontrolledUnstarOpen, setUncontrolledUnstarOpen] = useState(false);
   const unstarOpen = unstarPopoverOpen ?? uncontrolledUnstarOpen;
-  const setUnstarOpen = onUnstarPopoverOpenChange ?? setUncontrolledUnstarOpen;
   const handlePopoverOpenChange = (open: boolean) => {
-    setUnstarOpen(open);
+    if (onUnstarPopoverOpenChange) {
+      onUnstarPopoverOpenChange(open, star.full_name);
+      return;
+    }
+    setUncontrolledUnstarOpen(open);
   };
   const initialVisibleCount = Math.min(INITIAL_VISIBLE_TAGS, tags.length);
   const fittedVisibleCount = tagFit?.tagsKey === tagsKey ? tagFit.visibleCount : initialVisibleCount;
@@ -86,10 +95,14 @@ export const StarRow = memo(function StarRow({
   const visible = tags.slice(0, visibleCount);
   const hiddenCount = tags.length - visible.length;
   const overflow = hiddenCount > 0;
-  const repositoryNameMatch = useMemo(
-    () => createRepositorySearchMatcher(searchQuery).matchName(star.full_name),
-    [searchQuery, star.full_name],
+  const repositoryMatchRanges = useMemo(
+    () => matchRepositoryName?.(star.full_name).nameRanges ?? [],
+    [matchRepositoryName, star.full_name],
   );
+  const repositorySourceOffset = showRepositoryOwner
+    ? 0
+    : Math.max(0, star.full_name.lastIndexOf('/') + 1);
+  const repositoryLabel = star.full_name.slice(repositorySourceOffset);
   const { m } = useI18n();
 
   useIsomorphicLayoutEffect(() => {
@@ -159,18 +172,29 @@ export const StarRow = memo(function StarRow({
         switch (column) {
           case 'repository':
             return (
-              <div key={column} data-row-col={column} className={cn('flex items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+              <div key={column} data-row-col={column} className={cn('flex min-w-0 items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+                {showRepositoryAvatar ? <RepositoryOwnerAvatar fullName={star.full_name} url={star.owner_avatar_url} /> : null}
                 <span
-                  className="truncate text-primary"
+                  className="min-w-0 flex-1 truncate text-primary"
                   title={showRepositoryOwner ? undefined : star.full_name}
                   aria-label={showRepositoryOwner ? undefined : star.full_name}
                 >
-                  <HighlightedRepositoryName
-                    fullName={star.full_name}
-                    ranges={repositoryNameMatch.nameRanges}
-                    showOwner={showRepositoryOwner}
+                  <SearchMatchText
+                    text={repositoryLabel}
+                    ranges={repositoryMatchRanges}
+                    sourceOffset={repositorySourceOffset}
                   />
                 </span>
+                {star.fork && (
+                  <Badge
+                    data-row-badge="fork"
+                    variant="outline"
+                    className="h-4 shrink-0 gap-1 border-info/35 bg-info/10 px-1.5 text-[10px] font-medium leading-none text-info"
+                  >
+                    <GitFork className="size-2.5" aria-hidden="true" />
+                    {m.starRow.fork}
+                  </Badge>
+                )}
                 {star.archived && <Archive className="size-3 shrink-0 text-warning" aria-label={m.starRow.archived} />}
               </div>
             );
@@ -287,13 +311,24 @@ export const StarRow = memo(function StarRow({
           case 'starAction':
             return (
               <div key={column} data-row-col={column} className={cn('flex justify-center rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
-                {star.tombstone || !onConfirmUnstar ? (
+                {!onConfirmUnstar ? (
                   <button
                     type="button"
                     disabled
                     className="grid size-8 place-items-center rounded-md text-muted-foreground/45"
                     title={m.starRow.alreadyUnstarred}
                     aria-label={m.starRow.alreadyUnstarred}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <StarIcon className="size-4" />
+                  </button>
+                ) : star.tombstone || star.viewer_has_starred === false ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="grid size-8 place-items-center rounded-md text-muted-foreground/45"
+                    title={star.tombstone ? m.starRow.alreadyUnstarred : m.starRow.notStarred}
+                    aria-label={star.tombstone ? m.starRow.alreadyUnstarred : m.starRow.notStarred}
                     onClick={(e) => e.stopPropagation()}
                   >
                     <StarIcon className="size-4" />
@@ -322,7 +357,7 @@ export const StarRow = memo(function StarRow({
                       className="flex w-auto items-center gap-1 rounded-lg border-0 p-1.5 shadow-lg data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 origin-[--radix-popover-content-transform-origin]"
                       onClick={(e) => e.stopPropagation()}
                       onPointerDown={(e) => e.stopPropagation()}
-                      onInteractOutside={() => setUnstarOpen(false)}
+                      onInteractOutside={() => handlePopoverOpenChange(false)}
                     >
                       <Button
                         type="button"
@@ -330,7 +365,7 @@ export const StarRow = memo(function StarRow({
                         className="h-5 px-1.5 text-[10px]"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setUnstarOpen(false);
+                          handlePopoverOpenChange(false);
                         }}
                       >
                         {m.starRow.unstarCancel}
@@ -340,7 +375,7 @@ export const StarRow = memo(function StarRow({
                         className="h-5 px-1.5 text-[10px]"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setUnstarOpen(false);
+                          handlePopoverOpenChange(false);
                           onConfirmUnstar(star.full_name);
                         }}
                       >
@@ -386,41 +421,6 @@ export const StarRow = memo(function StarRow({
   );
 });
 
-function HighlightedRepositoryName({
-  fullName,
-  ranges,
-  showOwner,
-}: {
-  fullName: string;
-  ranges: readonly SearchTextRange[];
-  showOwner: boolean;
-}) {
-  const sourceOffset = showOwner ? 0 : Math.max(0, fullName.lastIndexOf('/') + 1);
-  const label = fullName.slice(sourceOffset);
-  if (ranges.length === 0) return label;
-
-  const content: ReactNode[] = [];
-  let cursor = 0;
-  for (const range of ranges) {
-    const start = Math.max(cursor, Math.min(label.length, range.start - sourceOffset));
-    const end = Math.max(start, Math.min(label.length, range.end - sourceOffset));
-    if (start > cursor) content.push(label.slice(cursor, start));
-    if (end > start) {
-      content.push(
-        <mark
-          key={`${start}:${end}`}
-          data-search-match=""
-          className="rounded-[2px] bg-search-match/70 text-search-match-foreground"
-        >
-          {label.slice(start, end)}
-        </mark>,
-      );
-    }
-    cursor = end;
-  }
-  if (cursor < label.length) content.push(label.slice(cursor));
-  return <>{content}</>;
-}
 
 function fmt(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;

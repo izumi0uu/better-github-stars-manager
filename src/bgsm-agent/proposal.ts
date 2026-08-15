@@ -6,15 +6,15 @@ import {
   PROPOSAL_REVIEW_PAGE_HARD_LIMIT,
 } from './policy';
 import { isProposalId, isRunId, type ProposalId, type RunId } from './identity';
-import { isScopeFingerprintV1, type ScopeFingerprintV1 } from './scope';
+import { isScopeFingerprint, type ScopeFingerprint } from './scope';
 
 declare const fingerprintBrand: unique symbol;
 
-export type SourceFingerprintV1 = string & {
-  readonly [fingerprintBrand]: 'SourceFingerprintV1';
+export type SourceFingerprint = string & {
+  readonly [fingerprintBrand]: 'SourceFingerprint';
 };
-export type TaxonomyFingerprintV1 = string & {
-  readonly [fingerprintBrand]: 'TaxonomyFingerprintV1';
+export type TaxonomyFingerprint = string & {
+  readonly [fingerprintBrand]: 'TaxonomyFingerprint';
 };
 
 export const SOURCE_FINGERPRINT_PREFIX = 'sf:v1:';
@@ -63,7 +63,7 @@ export type AnalyzerClassification = ProposalAction | AnalyzerNonActionableClass
 export type AnalyzerBatchProposalRow = Readonly<{
   frozenIndex: number;
   repositoryId: string;
-  sourceFingerprint: SourceFingerprintV1;
+  sourceFingerprint: SourceFingerprint;
   classifications: readonly AnalyzerClassification[];
 }>;
 
@@ -71,7 +71,7 @@ export type AnalyzerBatchProposal = Readonly<{
   version: 1;
   runId: RunId;
   generation: number;
-  scopeFingerprint: ScopeFingerprintV1;
+  scopeFingerprint: ScopeFingerprint;
   rows: readonly AnalyzerBatchProposalRow[];
 }>;
 
@@ -91,8 +91,8 @@ export type ActionableProposalRow = Readonly<{
   proposalRowId: string;
   frozenIndex: number;
   repositoryId: string;
-  sourceFingerprint: SourceFingerprintV1;
-  taxonomyFingerprint: TaxonomyFingerprintV1;
+  sourceFingerprint: SourceFingerprint;
+  taxonomyFingerprint: TaxonomyFingerprint;
   actions: readonly ProposalAction[];
 }>;
 
@@ -158,25 +158,25 @@ export type RowUniverseSnapshot = Readonly<{
   actionableProposalRows: readonly ActionableProposalRow[];
 }>;
 
-export function parseSourceFingerprintV1(value: string): SourceFingerprintV1 {
-  if (!isSourceFingerprintV1(value)) {
+export function parseSourceFingerprint(value: string): SourceFingerprint {
+  if (!isSourceFingerprint(value)) {
     throw new TypeError('Source fingerprint must be sf:v1:<base64url SHA-256>.');
   }
   return value;
 }
 
-export function parseTaxonomyFingerprintV1(value: string): TaxonomyFingerprintV1 {
-  if (!isTaxonomyFingerprintV1(value)) {
+export function parseTaxonomyFingerprint(value: string): TaxonomyFingerprint {
+  if (!isTaxonomyFingerprint(value)) {
     throw new TypeError('Taxonomy fingerprint must be tf:v1:<base64url SHA-256>.');
   }
   return value;
 }
 
-export function isSourceFingerprintV1(value: unknown): value is SourceFingerprintV1 {
+export function isSourceFingerprint(value: unknown): value is SourceFingerprint {
   return typeof value === 'string' && /^sf:v1:[A-Za-z0-9_-]{43}$/u.test(value);
 }
 
-export function isTaxonomyFingerprintV1(value: unknown): value is TaxonomyFingerprintV1 {
+export function isTaxonomyFingerprint(value: unknown): value is TaxonomyFingerprint {
   return typeof value === 'string' && /^tf:v1:[A-Za-z0-9_-]{43}$/u.test(value);
 }
 
@@ -356,7 +356,7 @@ export function validateAnalyzerBatchProposal(
   if (value.version !== 1) throw new TypeError('Analyzer batch proposal version must be 1.');
   if (!isRunId(value.runId)) throw new TypeError('Analyzer batch proposal runId is malformed.');
   assertNonnegativeSafeInteger(value.generation, 'Analyzer batch proposal generation');
-  if (!isScopeFingerprintV1(value.scopeFingerprint)) {
+  if (!isScopeFingerprint(value.scopeFingerprint)) {
     throw new TypeError('Analyzer batch proposal scopeFingerprint is malformed.');
   }
   if (
@@ -393,10 +393,10 @@ export function validateActionableProposalRow(
   assertTrimmedNonempty(value.proposalRowId, 'proposalRowId');
   assertNonnegativeSafeInteger(value.frozenIndex, 'frozenIndex');
   assertTrimmedNonempty(value.repositoryId, 'repositoryId');
-  if (!isSourceFingerprintV1(value.sourceFingerprint)) {
+  if (!isSourceFingerprint(value.sourceFingerprint)) {
     throw new TypeError('Actionable proposal source fingerprint is malformed.');
   }
-  if (!isTaxonomyFingerprintV1(value.taxonomyFingerprint)) {
+  if (!isTaxonomyFingerprint(value.taxonomyFingerprint)) {
     throw new TypeError('Actionable proposal taxonomy fingerprint is malformed.');
   }
   validateActions(value.actions, 'actions');
@@ -527,7 +527,7 @@ function validateAnalyzerBatchProposalRow(
   assertExactKeys(value, ['frozenIndex', 'repositoryId', 'sourceFingerprint', 'classifications']);
   assertNonnegativeSafeInteger(value.frozenIndex, 'Analyzer row frozenIndex');
   assertTrimmedNonempty(value.repositoryId, 'Analyzer row repositoryId');
-  if (!isSourceFingerprintV1(value.sourceFingerprint)) {
+  if (!isSourceFingerprint(value.sourceFingerprint)) {
     throw new TypeError('Analyzer row sourceFingerprint is malformed.');
   }
   if (!Array.isArray(value.classifications) || value.classifications.length === 0) {

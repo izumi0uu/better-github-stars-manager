@@ -27,23 +27,17 @@ export const TOKEN_GIST_PROBE_BAD_SHAPE = 'TOKEN_GIST_PROBE_BAD_SHAPE';
 export const TOKEN_GIST_CLEANUP_STATUS = 'TOKEN_GIST_CLEANUP_STATUS:';
 export const TOKEN_GIST_CLEANUP_NETWORK = 'TOKEN_GIST_CLEANUP_NETWORK';
 export const TOKEN_WATCHING_FORBIDDEN = 'TOKEN_WATCHING_FORBIDDEN';
-export const TOKEN_WATCHING_BAD_SHAPE = 'TOKEN_WATCHING_BAD_SHAPE';
 export const TOKEN_WATCHING_STATUS = 'TOKEN_WATCHING_STATUS:';
 export const TOKEN_WATCHING_NETWORK = 'TOKEN_WATCHING_NETWORK';
+export const TOKEN_WATCHING_BAD_SHAPE = 'TOKEN_WATCHING_BAD_SHAPE';
+// Separate classic PAT used only for Star/Unstar writes.
+export const STAR_TOKEN_EMPTY = 'STAR_TOKEN_EMPTY';
+export const STAR_TOKEN_REJECTED = 'STAR_TOKEN_REJECTED';
+export const STAR_TOKEN_ACCOUNT_MISMATCH = 'STAR_TOKEN_ACCOUNT_MISMATCH';
+export const STAR_TOKEN_PROFILE_STATUS = 'STAR_TOKEN_PROFILE_STATUS:';
+export const STAR_TOKEN_PROFILE_BAD_SHAPE = 'STAR_TOKEN_PROFILE_BAD_SHAPE';
+export const STAR_TOKEN_PROFILE_NETWORK = 'STAR_TOKEN_PROFILE_NETWORK';
 
-// Optional classic token used only by the Watch Inbox.
-export const WATCH_TOKEN_EMPTY = 'WATCH_TOKEN_EMPTY';
-export const WATCH_TOKEN_MAIN_ACCOUNT_REQUIRED = 'WATCH_TOKEN_MAIN_ACCOUNT_REQUIRED';
-export const WATCH_TOKEN_REJECTED = 'WATCH_TOKEN_REJECTED';
-export const WATCH_TOKEN_ACCOUNT_MISMATCH = 'WATCH_TOKEN_ACCOUNT_MISMATCH';
-export const WATCH_TOKEN_ACCOUNT_CHANGED = 'WATCH_TOKEN_ACCOUNT_CHANGED';
-export const WATCH_TOKEN_PROFILE_STATUS = 'WATCH_TOKEN_PROFILE_STATUS:';
-export const WATCH_TOKEN_PROFILE_BAD_SHAPE = 'WATCH_TOKEN_PROFILE_BAD_SHAPE';
-export const WATCH_TOKEN_PROFILE_NETWORK = 'WATCH_TOKEN_PROFILE_NETWORK';
-export const WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN = 'WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN';
-export const WATCH_TOKEN_NOTIFICATIONS_STATUS = 'WATCH_TOKEN_NOTIFICATIONS_STATUS:';
-export const WATCH_TOKEN_NOTIFICATIONS_NETWORK = 'WATCH_TOKEN_NOTIFICATIONS_NETWORK';
-export const WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE = 'WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE';
 
 // Sync / stars-fetch codes (thrown by github-star-source.ts).
 export const GH_TOKEN_REJECTED = 'GH_TOKEN_REJECTED';
@@ -97,24 +91,10 @@ export function translateError(e: unknown, m: MessageCatalog): string {
   if (raw === TOKEN_GISTS_NETWORK) return m.errors.tokenGistsNetwork;
   if (raw === TOKEN_GIST_PROBE_BAD_SHAPE) return m.errors.tokenGistProbeBadShape;
   if (raw.startsWith(TOKEN_GIST_CLEANUP_STATUS)) return m.errors.tokenGistCleanupStatus(raw.slice(TOKEN_GIST_CLEANUP_STATUS.length));
-  if (raw === TOKEN_GIST_CLEANUP_NETWORK) return m.errors.tokenGistCleanupNetwork;
-  if (raw === WATCH_TOKEN_EMPTY) return m.errors.watchTokenEmpty;
-  if (raw === WATCH_TOKEN_MAIN_ACCOUNT_REQUIRED) return m.errors.watchTokenMainAccountRequired;
-  if (raw === WATCH_TOKEN_REJECTED) return m.errors.watchTokenRejected;
-  if (raw === WATCH_TOKEN_ACCOUNT_MISMATCH) return m.errors.watchTokenAccountMismatch;
-  if (raw === WATCH_TOKEN_ACCOUNT_CHANGED) return m.errors.watchTokenAccountChanged;
-  if (raw.startsWith(WATCH_TOKEN_PROFILE_STATUS)) {
-    return m.errors.watchTokenProfileStatus(raw.slice(WATCH_TOKEN_PROFILE_STATUS.length));
-  }
-  if (raw === WATCH_TOKEN_PROFILE_BAD_SHAPE) return m.errors.watchTokenProfileBadShape;
-  if (raw === WATCH_TOKEN_PROFILE_NETWORK) return m.errors.watchTokenProfileNetwork;
-  if (raw === WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN) return m.errors.watchTokenNotificationsForbidden;
-  if (raw.startsWith(WATCH_TOKEN_NOTIFICATIONS_STATUS)) {
-    return m.errors.watchTokenNotificationsStatus(raw.slice(WATCH_TOKEN_NOTIFICATIONS_STATUS.length));
-  }
-  if (raw === WATCH_TOKEN_NOTIFICATIONS_NETWORK) return m.errors.watchTokenNotificationsNetwork;
-  if (raw === WATCH_TOKEN_NOTIFICATIONS_BAD_SHAPE) return m.errors.watchTokenNotificationsBadShape;
-
+  if (raw === TOKEN_WATCHING_FORBIDDEN) return m.errors.tokenWatchingForbidden;
+  if (raw.startsWith(TOKEN_WATCHING_STATUS)) return m.errors.tokenWatchingStatus(raw.slice(TOKEN_WATCHING_STATUS.length));
+  if (raw === TOKEN_WATCHING_NETWORK) return m.errors.tokenWatchingNetwork;
+  if (raw === TOKEN_WATCHING_BAD_SHAPE) return m.errors.tokenWatchingBadShape;
   // Sync / stars-fetch codes.
   if (raw === GH_TOKEN_REJECTED) return m.errors.ghTokenRejected;
   if (raw === GH_RATE_LIMIT) return m.errors.ghRateLimit;
@@ -142,17 +122,11 @@ export function translateError(e: unknown, m: MessageCatalog): string {
   if (raw === AGENT_PROVIDER_IDENTITY_CHANGED) return m.errors.agentProviderIdentityChanged;
   if (raw === AGENT_DATA_DISCLOSURE_REQUIRED) return m.errors.agentDataDisclosureRequired;
   if (raw === AGENT_CONTEXT_CAPABILITY_REQUIRED) return m.errors.agentContextCapabilityRequired;
-  if (raw === AGENT_CONTEXT_CAPABILITY_INFEASIBLE) {
-    return m.errors.agentContextCapabilityInfeasible;
-  }
-  if (providerErrorCode === AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE) {
-    return m.errors.agentArtifactCoverageStalled;
-  }
-  if (providerErrorCode === 'protocol_error' || providerErrorCode === 'parse_error') {
-    return m.errors.agentProviderResponseInvalid;
-  }
+  if (raw === AGENT_CONTEXT_CAPABILITY_INFEASIBLE) return m.errors.agentContextCapabilityInfeasible;
+  if (providerErrorCode === AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE) return m.errors.agentArtifactCoverageStalled;
+  if (providerErrorCode === 'protocol_error' || providerErrorCode === 'parse_error') return m.errors.agentProviderResponseInvalid;
 
-  // Passthrough — keep the raw tail so nothing is silently lost.
+  // Passthrough — keep the raw tail so nothing is silently swallowed.
   return m.errors.unknown(raw);
 }
 

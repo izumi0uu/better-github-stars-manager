@@ -1,6 +1,6 @@
 import { createDurableJobRecovery } from './durable-job-recovery';
 
-export const ORGANIZE_ANALYSIS_RECOVERY_ALARM = 'bgsm-organize-analysis-recovery-v1';
+export const ORGANIZE_ANALYSIS_RECOVERY_ALARM = 'bgsm-organize-analysis-recovery';
 export const ORGANIZE_ANALYSIS_RECOVERY_DELAY_MINUTES = 1;
 
 export type RecoverableOrganizeAnalysis = Readonly<{

@@ -126,7 +126,7 @@ if (primaryFailure || teardownFailure) {
     try {
       publishRuntimeEvidence({
         directory: process.env.GSM_RUNTIME_EVIDENCE_DIR,
-        filename: 'agent-artifact.schema-v1.json',
+        filename: 'agent-artifact.schema.json',
         evidence: buildArtifactEvidence(),
         validateEvidence: validateArtifactEvidence,
         privateMarkers: [
@@ -192,6 +192,7 @@ async function run() {
       },
     );
     pageDiagnostics = hookPageDiagnostics(page, 'runtime-options', { issues: pageIssues });
+    await useEnglishLocale(page);
     await waitForOptionsReady(page);
   });
 
@@ -406,7 +407,7 @@ async function run() {
       'GET github-starred',
       'POST github-gists',
       'DELETE github-probe-gist',
-      'GET github-watch-scope',
+      'GET github-notifications',
     ]);
     runtime.containmentStep = 'page-unexpected';
     assert.equal(pageHttpPolicy.unexpectedRequests.length, 0);
@@ -757,7 +758,7 @@ function githubWorkerFixture({ route, method }) {
       { 'x-oauth-scopes': 'public_repo, gist' },
     ),
     'GET github-starred': json([], 'github-token-stars'),
-    'GET github-watch-scope': json([], 'github-token-watch-scope'),
+    'GET github-notifications': json([], 'github-token-notifications'),
     'POST github-gists': json({ id: 'runtime-probe-gist' }, 'github-token-gist-create', 201),
     'DELETE github-probe-gist': {
       status: 204,
@@ -767,6 +768,20 @@ function githubWorkerFixture({ route, method }) {
     },
   };
   return routes[`${method} ${route}`] ?? null;
+}
+
+async function useEnglishLocale(targetPage) {
+  await targetPage.evaluate(async () => {
+    const { gsm_config: config = {} } = await chrome.storage.local.get('gsm_config');
+    await chrome.storage.local.set({
+      gsm_config: { ...config, locale: 'en' },
+    });
+  });
+  await targetPage.waitForFunction(
+    () => [...document.querySelectorAll('button')]
+      .some((button) => /^Save & verify$/i.test(button.textContent?.trim() ?? '')),
+    { timeout: SETUP_TIMEOUT_MS },
+  );
 }
 
 async function waitForOptionsReady(targetPage) {

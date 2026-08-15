@@ -3,6 +3,7 @@ import { authStore } from '@/auth/auth-store';
 import { I18nProvider } from '@/i18n';
 import '@/ui/styles/index.css';
 import { Options } from './Options';
+import { signalRecommendationEntry } from '@/utils/recommendation-entry';
 
 const root = document.getElementById('root')!;
 
@@ -11,6 +12,8 @@ authStore.getTheme().then((t) => {
   document.documentElement.classList.toggle('dark', t === 'dark');
 });
 
+
+signalRecommendationEntry();
 createRoot(root).render(
   <I18nProvider>
     <Options />

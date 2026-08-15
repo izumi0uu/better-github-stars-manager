@@ -3,10 +3,7 @@
  */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN,
-  WATCH_TOKEN_NOTIFICATIONS_NETWORK,
-} from '@/api/errors';
+import { TOKEN_WATCHING_FORBIDDEN } from '@/api/errors';
 import { Options } from '@/options/Options';
 import { getMessages } from '@/i18n';
 import type { Config } from '@/types';
@@ -18,6 +15,18 @@ import {
   setInputValue,
   type MountedRoot,
 } from './test-utils';
+
+vi.mock('@/store-rating', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/store-rating')>();
+  return {
+    ...actual,
+    CURRENT_EXTENSION_STORE_LISTING: {
+      target: 'chrome',
+      label: 'Chrome Web Store',
+      ratingUrl: 'https://example.com/reviews',
+    },
+  };
+});
 
 const authMocks = vi.hoisted(() => ({
   getConfig: vi.fn(),
@@ -33,11 +42,14 @@ const authMocks = vi.hoisted(() => ({
   setTheme: vi.fn(),
   update: vi.fn(),
   updateAutoTagPolicy: vi.fn(),
+  disableStoreRatingPrompt: vi.fn(),
+  recordStoreRatingNavigation: vi.fn(),
+  reenableStoreRatingPrompt: vi.fn(),
 }));
 
 vi.mock('@/auth/auth-store', () => ({
   CONFIG_STORAGE_KEY: 'gsm_config',
-  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials_v1',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
   authStore: authMocks,
 }));
 
@@ -93,9 +105,9 @@ function config(overrides: Partial<Config> = {}): Config {
     ...overrides,
     tokenEncrypted: overrides.tokenEncrypted ?? 'cipher',
     tokenCryptoMeta: overrides.tokenCryptoMeta ?? { iv: 'iv', salt: 'salt' },
-    watchNotificationsTokenEncrypted: overrides.watchNotificationsTokenEncrypted ?? null,
-    watchNotificationsTokenCryptoMeta: overrides.watchNotificationsTokenCryptoMeta ?? null,
-    watchCredentialSource: overrides.watchCredentialSource ?? null,
+    githubCredentialStatus: overrides.githubCredentialStatus ?? 'ready',
+    watchNotificationsEnabled: overrides.watchNotificationsEnabled ?? false,
+    watchCollapsedRepositories: overrides.watchCollapsedRepositories ?? {},
     agentProvider: overrides.agentProvider
       ? {
           declaredContextWindow: overrides.agentProvider.provider === 'custom-openai-compatible'
@@ -121,13 +133,21 @@ function config(overrides: Partial<Config> = {}): Config {
     lastSyncStarredAt: overrides.lastSyncStarredAt ?? null,
     gistId: overrides.gistId ?? null,
     gistSyncCursor: overrides.gistSyncCursor ?? null,
-    username: overrides.username ?? 'idah',
+    username: overrides.username ?? 'octocat',
     avatarUrl: overrides.avatarUrl ?? null,
     displayName: overrides.displayName ?? null,
     onboardingStage: overrides.onboardingStage ?? 'done',
     seenOnboarding: overrides.seenOnboarding ?? true,
     seenTooltips: overrides.seenTooltips ?? 0,
     autoTagAgentPromptSeen: overrides.autoTagAgentPromptSeen ?? false,
+    storeRatingPrompt: overrides.storeRatingPrompt ?? {
+      version: 1,
+      status: 'tracking',
+      activeLocalDays: [],
+      meaningfulActionCount: 0,
+      exposureCount: 0,
+      snoozeUntil: null,
+    },
     autoTagLimit: overrides.autoTagLimit ?? 5,
     maxTagsPerRepo: overrides.maxTagsPerRepo ?? 5,
     minTopicRepoCount: overrides.minTopicRepoCount ?? 3,
@@ -141,6 +161,7 @@ function config(overrides: Partial<Config> = {}): Config {
         onlyFavorite: false,
         onlyUntagged: false,
         onlyArchived: false,
+        onlyOwned: false,
       },
       sort: {
         sortKey: 'starred_at',
@@ -206,6 +227,9 @@ describe('Options preferences', () => {
     authMocks.setTheme.mockReset();
     authMocks.update.mockReset();
     authMocks.updateAutoTagPolicy.mockReset();
+    authMocks.disableStoreRatingPrompt.mockReset();
+    authMocks.recordStoreRatingNavigation.mockReset();
+    authMocks.reenableStoreRatingPrompt.mockReset();
     storageListeners.length = 0;
     for (const key of Object.keys(sessionStorageValues)) delete sessionStorageValues[key];
     runtimeListeners.length = 0;
@@ -314,7 +338,7 @@ describe('Options preferences', () => {
 
     await renderOptions();
 
-    const link = document.querySelector<HTMLAnchorElement>('a[href="https://github.com/idah?tab=stars"]');
+    const link = document.querySelector<HTMLAnchorElement>('a[href="https://github.com/octocat?tab=stars"]');
     expect(link).not.toBeNull();
     expect(link?.target).toBe('_blank');
     expect(link?.rel).toContain('noreferrer');
@@ -327,8 +351,8 @@ describe('Options preferences', () => {
 
     await renderOptions();
 
-    expect(document.querySelector('a[href="https://github.com/idah?tab=stars"]')).toBeNull();
-    expect(document.body.textContent).toContain('Cached account @idah');
+    expect(document.querySelector('a[href="https://github.com/octocat?tab=stars"]')).toBeNull();
+    expect(document.body.textContent).toContain(watchCopy.cachedAccountWarning('octocat'));
   });
 
   it('loads Agent storage independently and clears only the re-fetchable tool cache', async () => {
@@ -358,6 +382,70 @@ describe('Options preferences', () => {
     expect(panel?.textContent).toContain('0 B');
     expect(panel?.textContent).toContain('Cleared 2 cached tool artifacts and freed 2 MiB.');
     expect(clearCache?.disabled).toBe(true);
+  });
+
+  it('offers the verified store link and explicit reminder disable/re-enable controls', async () => {
+    const disabled = config({
+      storeRatingPrompt: {
+        version: 1,
+        status: 'disabled',
+        activeLocalDays: ['2026-08-13', '2026-08-14', '2026-08-15'],
+        meaningfulActionCount: 3,
+        exposureCount: 1,
+        snoozeUntil: null,
+      },
+    });
+    const tracking = config({
+      storeRatingPrompt: {
+        ...disabled.storeRatingPrompt,
+        status: 'tracking',
+        exposureCount: 0,
+      },
+    });
+    const storeOpened = config({
+      storeRatingPrompt: {
+        ...tracking.storeRatingPrompt,
+        status: 'store_opened',
+      },
+    });
+    authMocks.getConfig.mockResolvedValue(disabled);
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.reenableStoreRatingPrompt.mockResolvedValue(tracking);
+    authMocks.disableStoreRatingPrompt.mockResolvedValue(disabled);
+    authMocks.recordStoreRatingNavigation.mockResolvedValue(storeOpened);
+
+    await renderOptions();
+
+    const panel = document.querySelector('[data-testid="store-rating-settings"]');
+    const link = panel?.querySelector<HTMLAnchorElement>('a[href="https://example.com/reviews"]');
+    const reminder = panel?.querySelector<HTMLButtonElement>('#store-rating-reminder');
+    expect(link?.textContent).toContain('Rate in Chrome Web Store');
+    expect(link?.target).toBe('_blank');
+    expect(reminder?.getAttribute('aria-checked')).toBe('false');
+    expect(panel?.textContent).toContain('Disabled');
+
+    await click(reminder!);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(authMocks.reenableStoreRatingPrompt).toHaveBeenCalledTimes(1);
+    expect(reminder?.getAttribute('aria-checked')).toBe('true');
+    expect(panel?.textContent).toContain('Enabled');
+
+    await click(reminder!);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(authMocks.disableStoreRatingPrompt).toHaveBeenCalledTimes(1);
+    expect(reminder?.getAttribute('aria-checked')).toBe('false');
+
+    link!.addEventListener('click', (event) => event.preventDefault());
+    await act(async () => {
+      link!.click();
+      await Promise.resolve();
+    });
+    expect(authMocks.recordStoreRatingNavigation).toHaveBeenCalledTimes(1);
+    expect(panel?.textContent).toContain('Disabled after opening the store');
   });
 
   it('normalizes and persists split auto-tag policy inputs independently', async () => {
@@ -420,7 +508,7 @@ describe('Options preferences', () => {
     await renderOptions();
 
     const remove = [...document.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Remove token'));
+      .find((button) => button.textContent?.includes('Remove Classic PAT'));
     expect(remove).toBeInstanceOf(HTMLButtonElement);
     await act(async () => {
       (remove as HTMLButtonElement).click();
@@ -428,274 +516,61 @@ describe('Options preferences', () => {
       await Promise.resolve();
     });
 
-    expect(document.querySelector('a[href="https://github.com/idah?tab=stars"]')).toBeNull();
+    expect(document.querySelector('a[href="https://github.com/octocat?tab=stars"]')).toBeNull();
   });
 
-  it.each([
-    {
-      errorCode: 'TOKEN_WATCHING_FORBIDDEN',
-      expected: 'Watch needs Account · Watching (read).',
-    },
-    {
-      errorCode: 'TOKEN_WATCHING_NETWORK',
-      expected: 'Watch access could not be verified.',
-    },
-  ])('keeps a saved main token successful but surfaces $errorCode beside its form', async ({
-    errorCode,
-    expected,
-  }) => {
+  it('shows one unified GitHub token section with a collapsed illustrated guide', async () => {
+    authMocks.getConfig.mockResolvedValue(config());
+    authMocks.hasToken.mockResolvedValue(true);
+
+    await renderOptions();
+
+    const githubSettings = document.querySelector<HTMLElement>(
+      '[data-testid="github-connection-settings"]',
+    );
+    expect(githubSettings?.textContent).toContain(watchCopy.tokenStep1);
+    expect(githubSettings?.textContent).toContain('read:user');
+    expect(githubSettings?.textContent).toContain('Following');
+    const guide = githubSettings?.querySelector<HTMLDetailsElement>(
+      '[data-testid="token-setup-guide"]',
+    );
+    expect(guide).toBeInstanceOf(HTMLDetailsElement);
+    expect(guide?.open).toBe(false);
+    expect(guide?.querySelector('summary')?.textContent).toContain(watchCopy.tokenStepsTitle);
+    expect(guide?.querySelectorAll('ol > li')).toHaveLength(3);
+    const images = [...(guide?.querySelectorAll<HTMLImageElement>('img') ?? [])];
+    expect(images.map((image) => image.alt)).toEqual([
+      watchCopy.tokenStep1Alt,
+      watchCopy.tokenStep2Alt,
+      watchCopy.tokenStep3Alt,
+    ]);
+    expect(images.map((image) => [image.width, image.height])).toEqual([
+      [1568, 875],
+      [1568, 520],
+      [888, 290],
+    ]);
+    expect(images.every((image) => image.getAttribute('loading') === 'lazy')).toBe(true);
+    expect(document.querySelector('[data-testid="watch-inbox-settings"]')).toBeNull();
+  });
+
+  it('shows a saved token warning when optional Notifications access is unavailable', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
     authMocks.setToken.mockResolvedValue({
-      username: 'idah',
-      watching: { available: false, errorCode },
+      username: 'octocat',
+      notifications: { available: false, errorCode: TOKEN_WATCHING_FORBIDDEN },
     });
-
     await renderOptions();
-
     const input = document.querySelector<HTMLTextAreaElement>('textarea[placeholder="github_pat_..."]');
-    expect(input).toBeInstanceOf(HTMLTextAreaElement);
-    await setTextareaValue(input!, 'github_pat_without_watching');
+    await setTextareaValue(input!, 'github_pat_without_notifications');
     const save = [...document.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.trim() === 'Save & verify');
     await click(save!);
-
-    expect(authMocks.setToken).toHaveBeenCalledWith('github_pat_without_watching');
-    expect(input?.value).toBe('');
-    const status = document.querySelector('[data-testid="main-token-status"]');
-    expect(status?.getAttribute('role')).toBe('status');
-    expect(status?.textContent).not.toBe('');
-    expect(status?.textContent).toContain(expected);
+    expect(authMocks.setToken).toHaveBeenCalledWith('github_pat_without_notifications');
+    expect(document.querySelector('[data-testid="main-token-status"]')?.textContent)
+      .toContain(watchCopy.tokenVerifiedWatchForbidden('octocat'));
   });
-
-  it('starts with the optional Watch setup visible and the dedicated credential form collapsed', async () => {
-    authMocks.getConfig.mockResolvedValue(config());
-    authMocks.hasToken.mockResolvedValue(false);
-
-    await renderOptions();
-
-    const watchSettings = document.querySelector<HTMLElement>(
-      '[data-testid="watch-inbox-settings"]',
-    );
-    const setup = document.querySelector<HTMLButtonElement>(
-      '[data-testid="watch-setup-enable"]',
-    );
-    expect(watchSettings).not.toBeNull();
-    expect(watchSettings?.textContent).toContain(watchCopy.watchTokenHeading);
-    expect(watchSettings?.textContent).toContain(watchCopy.watchTokenMainRequired);
-    expect(setup).toBeInstanceOf(HTMLButtonElement);
-    expect(setup?.textContent?.trim()).toBe(watchCopy.watchSetupEnable);
-    expect(setup?.disabled).toBe(true);
-    expect(document.querySelector('[data-testid="watch-dedicated-form"]')).toBeNull();
-    expect(document.querySelector('#watch-notifications-token')).toBeNull();
-  });
-
-  it('checks the main GitHub connection explicitly and shows it as the selected Watch source', async () => {
-    let currentConfig = config();
-    let watchEnabled = false;
-    let finishProbe!: () => void;
-    const probe = new Promise<void>((resolve) => {
-      finishProbe = resolve;
-    });
-    authMocks.getConfig.mockImplementation(() => Promise.resolve(currentConfig));
-    authMocks.hasToken.mockResolvedValue(true);
-    authMocks.hasWatchNotificationsToken.mockImplementation(() => Promise.resolve(watchEnabled));
-    authMocks.enableWatchWithMainToken.mockImplementation(async () => {
-      await probe;
-      currentConfig = config({ watchCredentialSource: 'main' });
-      watchEnabled = true;
-      return { username: 'idah' };
-    });
-
-    await renderOptions();
-
-    const setup = document.querySelector<HTMLButtonElement>(
-      '[data-testid="watch-setup-enable"]',
-    );
-    expect(setup).toBeInstanceOf(HTMLButtonElement);
-    await act(async () => {
-      setup!.click();
-      await Promise.resolve();
-    });
-
-    expect(authMocks.enableWatchWithMainToken).toHaveBeenCalledTimes(1);
-    const checking = document.querySelector('[data-testid="watch-main-checking"]');
-    expect(checking).not.toBeNull();
-    expect(checking?.textContent?.trim()).toBe(watchCopy.watchSetupChecking);
-    expect(checking?.getAttribute('role')).toBe('status');
-    expect(setup?.disabled).toBe(true);
-
-    await act(async () => {
-      finishProbe();
-      await probe;
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const source = document.querySelector('[data-testid="watch-credential-source"]');
-    expect(source?.textContent?.trim()).toContain(watchCopy.watchSetupMainConnected('idah'));
-    const disconnect = document.querySelector<HTMLButtonElement>(
-      '[data-testid="watch-token-disconnect"]',
-    );
-    expect(disconnect).toBeInstanceOf(HTMLButtonElement);
-    expect(disconnect?.textContent?.trim()).toBe(watchCopy.watchTokenDisconnect);
-    expect(document.querySelector('[data-testid="watch-dedicated-form"]')).toBeNull();
-    expect(document.querySelector('#watch-notifications-token')).toBeNull();
-  });
-
-  it('reveals an accessible dedicated Notifications credential form only after main access is forbidden', async () => {
-    authMocks.getConfig.mockResolvedValue(config());
-    authMocks.hasToken.mockResolvedValue(true);
-    authMocks.enableWatchWithMainToken.mockRejectedValue(
-      new Error(WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN),
-    );
-
-    await renderOptions();
-
-    const setup = document.querySelector<HTMLButtonElement>(
-      '[data-testid="watch-setup-enable"]',
-    );
-    await click(setup!);
-
-    const form = document.querySelector<HTMLElement>('[data-testid="watch-dedicated-form"]');
-    const input = form?.querySelector<HTMLInputElement>('#watch-notifications-token');
-    const label = form?.querySelector<HTMLLabelElement>('label[for="watch-notifications-token"]');
-    const connect = form?.querySelector<HTMLButtonElement>('[data-testid="watch-token-connect"]');
-    const creationLink = form?.querySelector<HTMLAnchorElement>(
-      'a[href*="github.com/settings/tokens/new"][href*="notifications"]',
-    );
-    expect(authMocks.enableWatchWithMainToken).toHaveBeenCalledTimes(1);
-    expect(form).not.toBeNull();
-    expect(input?.type).toBe('password');
-    expect(label?.textContent?.trim()).toBe(watchCopy.watchTokenLabel);
-    expect(connect?.textContent?.trim()).toBe(watchCopy.watchTokenConnect);
-    expect(connect?.disabled).toBe(true);
-    expect(creationLink?.textContent?.trim()).toBe(watchCopy.watchTokenLinkLabel);
-    const watchSettings = document.querySelector('[data-testid="watch-inbox-settings"]');
-    expect(watchSettings?.textContent).toContain(watchCopy.watchSetupMainUnavailable);
-    expect(watchSettings?.textContent).toContain(watchCopy.watchSetupOtherFeaturesSafe);
-    expect(setup?.disabled).toBe(false);
-  });
-
-  it('keeps a failed main capability check retryable without revealing the dedicated form', async () => {
-    authMocks.getConfig.mockResolvedValue(config());
-    authMocks.hasToken.mockResolvedValue(true);
-    authMocks.enableWatchWithMainToken.mockRejectedValue(
-      new Error(WATCH_TOKEN_NOTIFICATIONS_NETWORK),
-    );
-
-    await renderOptions();
-
-    const setup = document.querySelector<HTMLButtonElement>(
-      '[data-testid="watch-setup-enable"]',
-    );
-    await click(setup!);
-
-    expect(document.querySelector('[data-testid="watch-dedicated-form"]')).toBeNull();
-    expect(setup?.disabled).toBe(false);
-    const alert = document.querySelector('[data-testid="watch-token-status"]');
-    expect(alert?.getAttribute('role')).toBe('alert');
-    expect(alert?.textContent).toContain(watchCopy.watchSetupCheckFailed);
-    expect(document.querySelector('[data-testid="watch-inbox-settings"]')?.textContent)
-      .toContain(watchCopy.watchSetupOtherFeaturesSafe);
-
-    await click(setup!);
-    expect(authMocks.enableWatchWithMainToken).toHaveBeenCalledTimes(2);
-    expect(document.querySelector('[data-testid="watch-dedicated-form"]')).toBeNull();
-  });
-
-  it('connects a same-account dedicated credential, clears its draft, and disconnects Watch only', async () => {
-    const initialConfig = config();
-    const dedicatedConfig = config({
-      watchCredentialSource: 'dedicated',
-      watchNotificationsTokenEncrypted: 'watch-cipher',
-      watchNotificationsTokenCryptoMeta: { iv: 'watch-iv', salt: 'watch-salt' },
-    });
-    authMocks.getConfig
-      .mockResolvedValueOnce(initialConfig)
-      .mockResolvedValueOnce(initialConfig)
-      .mockResolvedValueOnce(dedicatedConfig)
-      .mockResolvedValue(initialConfig);
-    authMocks.hasToken.mockResolvedValue(true);
-    authMocks.hasWatchNotificationsToken
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true)
-      .mockResolvedValue(false);
-    authMocks.enableWatchWithMainToken.mockRejectedValue(
-      new Error(WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN),
-    );
-    authMocks.setWatchNotificationsToken.mockResolvedValue({ username: 'idah' });
-
-    await renderOptions();
-    await click(document.querySelector<HTMLButtonElement>('[data-testid="watch-setup-enable"]')!);
-
-    const input = document.querySelector<HTMLInputElement>('#watch-notifications-token');
-    const connect = document.querySelector<HTMLButtonElement>(
-      '[data-testid="watch-token-connect"]',
-    );
-    expect(input).not.toBeNull();
-    expect(connect).toBeInstanceOf(HTMLButtonElement);
-    await setInputValue(input!, 'ghp-watch');
-    expect(connect?.disabled).toBe(false);
-    await click(connect!);
-
-    expect(authMocks.setWatchNotificationsToken).toHaveBeenCalledWith('ghp-watch');
-    await vi.waitFor(() => {
-      const source = document.querySelector('[data-testid="watch-credential-source"]');
-      expect(source?.textContent?.trim()).toContain(watchCopy.watchSetupDedicatedConnected('idah'));
-    });
-    expect(document.querySelector<HTMLInputElement>('#watch-notifications-token')?.value).toBe('');
-
-    const disconnect = document.querySelector<HTMLButtonElement>(
-      '[data-testid="watch-token-disconnect"]',
-    );
-    expect(disconnect).toBeInstanceOf(HTMLButtonElement);
-    expect(disconnect?.textContent?.trim()).not.toBe('');
-    await click(disconnect!);
-
-    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
-      type: 'disconnectWatchInbox',
-    });
-    expect(document.querySelector('[data-testid="watch-credential-source"]')).toBeNull();
-    expect(document.querySelector('[data-testid="watch-setup-enable"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="watch-token-status"]')?.textContent)
-      .toContain(watchCopy.watchTokenDisconnected);
-    expect(authMocks.clearToken).not.toHaveBeenCalled();
-  });
-
-  it('preserves a working dedicated source and replacement draft when verification fails', async () => {
-    authMocks.getConfig.mockResolvedValue(config({
-      watchCredentialSource: 'dedicated',
-      watchNotificationsTokenEncrypted: 'watch-cipher',
-      watchNotificationsTokenCryptoMeta: { iv: 'watch-iv', salt: 'watch-salt' },
-    }));
-    authMocks.hasToken.mockResolvedValue(true);
-    authMocks.hasWatchNotificationsToken.mockResolvedValue(true);
-    authMocks.setWatchNotificationsToken.mockRejectedValue(
-      new Error(WATCH_TOKEN_NOTIFICATIONS_FORBIDDEN),
-    );
-
-    await renderOptions();
-
-    const input = document.querySelector<HTMLInputElement>('#watch-notifications-token');
-    const replace = document.querySelector<HTMLButtonElement>(
-      '[data-testid="watch-token-connect"]',
-    );
-    expect(input).not.toBeNull();
-    await setInputValue(input!, 'ghp-replacement');
-    await click(replace!);
-
-    expect(input?.value).toBe('ghp-replacement');
-    expect(document.querySelector('[data-testid="watch-token-status"]')?.getAttribute('role'))
-      .toBe('alert');
-    expect(document.querySelector('[data-testid="watch-credential-source"]')?.textContent)
-      .toContain(watchCopy.watchSetupDedicatedConnected('idah'));
-    expect(document.querySelector('[data-testid="watch-inbox-settings"]')?.textContent)
-      .toContain(watchCopy.watchSetupOtherFeaturesSafe);
-  });
-
-  it('consumes an initial Watch intent, renders the setup block, and focuses its heading', async () => {
+  it('routes an initial Watch recovery intent to the single GitHub connection', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
     sessionStorageValues[OPTIONS_INTENT_STORAGE_KEY] = {
@@ -709,32 +584,31 @@ describe('Options preferences', () => {
       await Promise.resolve();
     });
 
-    const watchSettings = document.querySelector<HTMLElement>(
-      '[data-testid="watch-inbox-settings"]',
+    const githubSettings = document.querySelector<HTMLElement>(
+      '[data-testid="github-connection-settings"]',
     );
-    const heading = watchSettings?.querySelector<HTMLElement>(
-      'h2[tabindex="-1"], h3[tabindex="-1"]',
+    const heading = githubSettings?.querySelector<HTMLElement>(
+      'h2[tabindex="-1"]',
     );
-    expect(watchSettings).not.toBeNull();
-    expect(heading?.textContent?.trim()).not.toBe('');
+    expect(githubSettings).not.toBeNull();
     expect(document.activeElement).toBe(heading);
-    expect(document.querySelector('[data-testid="watch-dedicated-form"]')).toBeNull();
+    expect(document.querySelector('[data-testid="watch-inbox-settings"]')).toBeNull();
     expect(chrome.storage.session.remove).toHaveBeenCalledWith(OPTIONS_INTENT_STORAGE_KEY);
   });
 
-  it('consumes a new Watch intent in an already-open Options page and moves focus to setup', async () => {
+  it('routes a new Watch recovery intent to the GitHub connection in an open Options page', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
 
     await renderOptions();
 
-    const watchSettings = document.querySelector<HTMLElement>(
-      '[data-testid="watch-inbox-settings"]',
+    const githubSettings = document.querySelector<HTMLElement>(
+      '[data-testid="github-connection-settings"]',
     );
-    const heading = watchSettings?.querySelector<HTMLElement>(
-      'h2[tabindex="-1"], h3[tabindex="-1"]',
+    const heading = githubSettings?.querySelector<HTMLElement>(
+      'h2[tabindex="-1"]',
     );
-    expect(watchSettings).not.toBeNull();
+    expect(githubSettings).not.toBeNull();
     expect(document.activeElement).not.toBe(heading);
 
     const intent = { section: 'watch', requestedAt: 2 };
@@ -751,7 +625,7 @@ describe('Options preferences', () => {
     });
 
     expect(document.activeElement).toBe(heading);
-    expect(document.querySelector('[data-testid="watch-dedicated-form"]')).toBeNull();
+    expect(document.querySelector('[data-testid="watch-inbox-settings"]')).toBeNull();
     expect(chrome.storage.session.remove).toHaveBeenCalledWith(OPTIONS_INTENT_STORAGE_KEY);
   });
 
@@ -1398,6 +1272,60 @@ describe('Options preferences', () => {
     );
   });
 
+  it('adopts refreshed persisted Agent settings while retaining the plaintext key draft', async () => {
+    const initial = config();
+    const cleanRefresh = config({
+      agentProvider: {
+        ...initial.agentProvider,
+        model: 'gpt-5-mini',
+      },
+    });
+    const dirtyRefresh = config({
+      agentProvider: {
+        ...cleanRefresh.agentProvider,
+        model: 'gpt-5-nano',
+      },
+    });
+    let currentConfig = initial;
+    authMocks.getConfig.mockImplementation(() => Promise.resolve(currentConfig));
+    authMocks.hasToken.mockResolvedValue(true);
+
+    await renderOptions();
+    const modelInput = document.querySelector<HTMLInputElement>('#agent-model');
+    const apiKeyInput = document.querySelector<HTMLInputElement>('#agent-api-key');
+    expect(modelInput?.value).toBe('gpt-5.4');
+    expect(apiKeyInput?.value).toBe('');
+
+    currentConfig = cleanRefresh;
+    await act(async () => {
+      for (const listener of storageListeners) {
+        listener({
+          gsm_config: { oldValue: initial, newValue: cleanRefresh },
+        }, 'local');
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(modelInput?.value).toBe('gpt-5-mini');
+
+    await setInputValue(modelInput!, 'draft-model-not-yet-saved');
+    await setInputValue(apiKeyInput!, 'synthetic-unsaved-key');
+    currentConfig = dirtyRefresh;
+    await act(async () => {
+      for (const listener of storageListeners) {
+        listener({
+          gsm_config: { oldValue: cleanRefresh, newValue: dirtyRefresh },
+        }, 'local');
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(modelInput?.value).toBe('gpt-5-nano');
+    expect(apiKeyInput?.value).toBe('synthetic-unsaved-key');
+  });
+
   it('ignores legacy disclosure acceptance changes without resetting provider drafts', async () => {
     const initial = config({ agentDataDisclosureAcceptance: null });
     const accepted = config({
@@ -1414,13 +1342,17 @@ describe('Options preferences', () => {
     await renderOptions();
     const modelInput = document.querySelector<HTMLInputElement>('#agent-model');
     await setInputValue(modelInput!, 'draft-model-not-yet-saved');
+    const configReadsBeforeDisclosure = authMocks.getConfig.mock.calls.length;
     await act(async () => {
-      storageListeners[0]?.({
-        gsm_config: { oldValue: initial, newValue: accepted },
-      }, 'local');
+      for (const listener of storageListeners) {
+        listener({
+          gsm_config: { oldValue: initial, newValue: accepted },
+        }, 'local');
+      }
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(authMocks.getConfig).toHaveBeenCalledTimes(configReadsBeforeDisclosure);
 
     expect(modelInput?.value).toBe('draft-model-not-yet-saved');
     expect(document.body.textContent).not.toContain('Accept disclosure');

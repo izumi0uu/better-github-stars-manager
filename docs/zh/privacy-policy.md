@@ -2,7 +2,7 @@
 
 [English](../en/privacy-policy.md)
 
-生效日期：2026-08-09
+生效日期：2026-08-12
 
 Better GitHub Stars Manager 是一个用于整理 GitHub Star 仓库的 Chrome 扩展。本政策说明扩展处理哪些数据、数据会发送到哪里、本地记录保留多久，以及你可以怎样删除这些数据。
 
@@ -21,17 +21,17 @@ Better GitHub Stars Manager 只会为了你请求的功能访问 GitHub 数据�
 
 扩展只会为了以下目的处理数据：
 
-- 验证你提供的 GitHub Token；
+- 验证你提供的 GitHub **Classic PAT**；
 - 获取并显示你的 Star 仓库；
 - 将你创建的标签和笔记保存在你自己的 Secret Gist 中，并在你选择时同步；
 - 通过你选择的 AI 服务和精确的服务地址测试或运行 Cubby；
-- 在你主动请求后，使用选定的 GitHub 凭据显示可选的 Watch Inbox。
+- 在你主动请求后，检查同一个 GitHub 凭据的 Notifications 能力并显示可选的 Watch Inbox。
 
 ## 扩展处理的数据
 
 扩展处理的数据类别包括：
 
-- 你在 Options 中粘贴的主 GitHub Personal Access Token，以及仅在 Watch Inbox 需要时使用的专用 Notifications Token；
+- 你在 Options 中粘贴的单一 GitHub **Classic PAT**；其可选的 `notifications` 和 `read:user` 能力分别控制 Watch Inbox 和 Following Radar；
 - 来自 `GET /user` 的 GitHub 账号信息，例如用户名、显示名称和头像地址；
 - 来自 `GET /user/starred` 的 Star 元数据，例如仓库名、URL、描述、语言、topics、Star 数量和日期；
 - 来自 `GET /user/subscriptions` 的已 Watch 仓库成员关系；
@@ -62,7 +62,7 @@ Better GitHub Stars Manager 只会为了你请求的功能访问 GitHub 数据�
 
 扩展把数据存放在以下位置：
 
-- GitHub 凭据先使用 AES-GCM 加密，再保存到 `chrome.storage.local`。Watch 在能力检查通过后复用主凭据；需要时则保存单独加密的 Notifications Token；
+- 单一 GitHub Classic PAT 使用 AES-GCM 加密后保存到 `chrome.storage.local`，Stars、Gist、Watch 和 Following 在各自能力检查后复用该凭据；
 - AI 服务 API Key 使用 AES-GCM 加密后保存到 `chrome.storage.local`，并绑定到选定的 Provider 和规范化服务地址；
 - 轻量配置，包括绑定的 Gist ID，保存到 `chrome.storage.local`；
 - Star 元数据、标签和笔记保存到 IndexedDB，以便快速查询；
@@ -107,18 +107,18 @@ Options 会显示一个折叠的信息摘要，其中写明选定的 Provider �
 
 - 你的提示词或有界任务指令；
 - 所选或冻结范围内的公开仓库元数据；
-- 你请求索引代码搜索时得到的有界公开代码片段和文件路径；
-- 只有当前提示词明确要求时，才会发送范围内仓库的私有笔记；
+- Cubby 为当前请求使用索引代码搜索时得到的有界公开代码片段和文件路径；
+- Cubby 通过范围受限的笔记工具读取的私有笔记；可信指令要求它只在请求需要笔记内容时使用该工具；
 - 当前可见且有界的标签分类；
 - 协议观察结果，包括工具定义、有界工具结果、交互选择和应用生成的摘要。
 
 索引代码搜索不是完整搜索。GitHub 搜索默认分支的索引，可能遗漏文件或只返回部分结果。扩展会重新确认仓库仍然公开且未归档，读取有界的匹配 Git blob，并把每个代码片段视为不可信数据。
 
-只有当前提示词要求读取私有笔记时，Cubby 才会通过有范围限制的工具读取它们。笔记和代码片段都被视为不可信数据。已提交的工具结果可能在后续对话中再次发送，或只发送给同一个绑定的 AI Provider 进行摘要。
+普通对话会注册私有笔记和仓库代码工具。运行时会限制仓库范围、工具授权和结果大小，但不会判断提示词是否在语义上要求这些数据。Cubby 的可信指令要求它只在请求需要相应数据时调用工具。笔记和代码片段都被视为不可信数据。已提交的工具结果可能在后续对话中再次发送，或只发送给同一个绑定的 AI Provider 进行摘要。
 
 默认情况下，Cubby 不会把以下数据作为模型可见的任务输入发送：
 
-- 你没有要求使用的私有笔记；
+- 请求不需要笔记内容时的私有笔记；这是指令层限制，不是独立的运行时意图分类器；
 - 凭据或 Secret；
 - GitHub Token；
 - 当前范围之外或未相关的 Star 仓库。
@@ -148,8 +148,8 @@ Chrome 的主机匹配模式可能覆盖某个协议和主机名下的所有端�
 
 你可以通过以下方式删除数据：
 
-- 在 Options 中清除已保存的 GitHub Token；
-- 关闭 Watch Inbox，删除其选定的凭据绑定、单独的 Notifications Token 和缓存的通知 thread。相同账号的已 Watch 仓库范围可能暂时保留在本地，直到清除主 GitHub 账号或卸载扩展；
+- 在 Options 中清除已保存的 GitHub Classic PAT；
+- 关闭 Watch Inbox，删除其能力绑定和缓存的通知 thread；Stars 仍可用；
 - 删除已保存的 AI 服务 Key，或更换 Provider 或服务地址，这会使原来的凭据绑定失效；
 - 在取消或完成关联的 Organize 工作流后删除 Cubby 对话；
 - 在 workbench 中关闭保留的已完成或已取消 Organize 结果；

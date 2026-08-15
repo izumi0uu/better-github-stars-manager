@@ -37,6 +37,7 @@ function makeFilterState(order: string[], tags = ['react', 'ui']): FilterState {
     onlyFavorite: false,
     onlyUntagged: false,
     onlyArchived: false,
+    onlyOwned: false,
     sortKey: 'starred_at',
     sortDir: 'desc',
     libraryViewHydrated: true,
@@ -49,6 +50,7 @@ function makeFilterState(order: string[], tags = ['react', 'ui']): FilterState {
     setOnlyFavorite: vi.fn(),
     setOnlyUntagged: vi.fn(),
     setOnlyArchived: vi.fn(),
+    setOnlyOwned: vi.fn(),
     setSort: vi.fn(),
     applyLibraryViewPrefs: vi.fn(),
     resetFilters: vi.fn(),
@@ -80,6 +82,40 @@ describe('FilterSidebar delete-all-tags control', () => {
 
   afterEach(() => {
     cleanupMountedRootsAndBody(mountedRoots);
+  });
+
+  it('shows the authenticated owner filter first and disables it without an account', async () => {
+    const authenticated = makeFilterState([]);
+    const authenticatedContainer = mount(
+      <FilterSidebar
+        f={authenticated}
+        languages={[]}
+        tagTree={{ total: 0, tags: [] }}
+        accountLogin="izumiiOuOu"
+      />,
+    );
+    const authenticatedCheckboxes = [...authenticatedContainer.querySelectorAll('[role="checkbox"]')];
+    expect(authenticatedContainer.textContent).toContain('My public repositories');
+    expect(authenticatedContainer.textContent).toContain(
+      'All public repositories owned by @izumiiOuOu, including unstarred repositories',
+    );
+    expect(authenticatedCheckboxes[0]?.hasAttribute('disabled')).toBe(false);
+
+    await click(authenticatedCheckboxes[0] as HTMLButtonElement);
+    expect(authenticated.setOnlyOwned).toHaveBeenCalledWith(true);
+
+    cleanupMountedRootsAndBody(mountedRoots);
+    const unavailable = makeFilterState([]);
+    const unavailableContainer = mount(
+      <FilterSidebar
+        f={unavailable}
+        languages={[]}
+        tagTree={{ total: 0, tags: [] }}
+      />,
+    );
+    const unavailableCheckbox = unavailableContainer.querySelector('[role="checkbox"]');
+    expect(unavailableContainer.textContent).toContain('GitHub account required');
+    expect(unavailableCheckbox?.hasAttribute('disabled')).toBe(true);
   });
 
   it('renders the sort control beside the Tags header and natural-sorts tags across search toggles', async () => {

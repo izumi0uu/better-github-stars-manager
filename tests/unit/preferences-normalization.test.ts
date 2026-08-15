@@ -37,6 +37,7 @@ describe('preference normalization', () => {
         onlyFavorite: true,
         onlyUntagged: true,
         onlyArchived: true,
+        onlyOwned: true,
         query: 'do-not-persist',
       },
       sort: {
@@ -57,6 +58,7 @@ describe('preference normalization', () => {
         onlyFavorite: true,
         onlyUntagged: true,
         onlyArchived: true,
+        onlyOwned: true,
       },
       sort: {
         sortKey: 'created_at',

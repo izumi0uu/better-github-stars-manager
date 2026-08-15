@@ -67,7 +67,7 @@ describe('Full sync repo-created-time regressions', () => {
         lastSyncStarredAt: null,
         gistId: null,
         gistSyncCursor: null,
-        username: 'idah',
+        username: 'octocat',
         avatarUrl: null,
         displayName: null,
         seenOnboarding: false,
@@ -81,6 +81,12 @@ describe('Full sync repo-created-time regressions', () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       seenUrls.push(url);
+      if (url.includes('/users/octocat/repos?')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       if (url === 'https://api.github.com/user/starred?per_page=100&page=1') {
         return new Response(JSON.stringify([
           {
@@ -96,6 +102,7 @@ describe('Full sync repo-created-time regressions', () => {
               created_at: '2020-01-02T12:00:00Z',
               fork: false,
               archived: false,
+              owner: { avatar_url: 'https://avatars.githubusercontent.com/u/10?v=4' },
             },
           },
         ]), {
@@ -120,6 +127,7 @@ describe('Full sync repo-created-time regressions', () => {
               created_at: '2021-03-04T08:00:00Z',
               fork: true,
               archived: true,
+              owner: { avatar_url: 'https://avatars.githubusercontent.com/u/11?v=4' },
             },
           },
         ]), { status: 200 });
@@ -127,27 +135,33 @@ describe('Full sync repo-created-time regressions', () => {
       throw new Error(`unexpected fetch: ${url} ${(init?.method ?? 'GET')}`);
     }) as typeof fetch;
 
+    const originalGetUsername = authStore.getUsername;
     const originalGetToken = authStore.getToken;
     authStore.getToken = async () => 'github_pat_test';
+    authStore.getUsername = async () => 'octocat';
 
     try {
       const result = await githubStarSource.syncFull();
       assert.deepEqual(result, { added: 2, updated: 2 });
       assert.deepEqual(seenUrls, [
         'https://api.github.com/user/starred?per_page=100&page=1',
+        'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',
         'https://api.github.com/user/starred?per_page=100&page=2',
       ]);
 
       const oldRepo = await db.stars.get('a/old-repo');
       assert.equal(oldRepo?.created_at, '2020-01-02T12:00:00Z');
+      assert.equal(oldRepo?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/10?v=4');
       assert.equal(oldRepo?.topics[0], 'tooling');
 
       const archivedRepo = await db.stars.get('b/archived-repo');
       assert.equal(archivedRepo?.created_at, '2021-03-04T08:00:00Z');
       assert.equal(archivedRepo?.pushed_at, '2026-06-27T10:00:00Z');
       assert.equal(archivedRepo?.archived, true);
+      assert.equal(archivedRepo?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/11?v=4');
       assert.equal((await authStore.getConfig()).lastSyncStarredAt, '2026-06-28T10:00:00Z');
     } finally {
+      authStore.getUsername = originalGetUsername;
       authStore.getToken = originalGetToken;
     }
   });

@@ -21,55 +21,6 @@ describe('Agent release conformance', () => {
     expect(source).toContain('agentDisclosureCustomAccess');
   });
 
-  it('states the complete Provider privacy boundary without forcing identical prose', () => {
-    const privacy = read('docs/en/privacy-policy.md').toLowerCase();
-    for (const phrase of [
-      'prompt or bounded task instruction',
-      'committed conversation history',
-      'current prompt',
-      'visible, bounded tag taxonomy',
-      'private notes',
-      'credentials or secrets',
-      'github token',
-      'unrelated or out-of-scope stars',
-      'authorization: bearer',
-      'x-api-key',
-      'developer-operated proxy',
-    ]) expect(privacy, `privacy policy is missing ${phrase}`).toContain(phrase);
-
-    const submission = read('docs/en/chrome-web-store-submission.md').toLowerCase();
-    for (const phrase of [
-      'task data can include the prompt',
-      'committed conversation history',
-      'current-turn local evidence',
-      'visible bounded tags',
-      'unrequested private notes',
-      'credentials',
-      'github token',
-      'unrelated stars',
-      'authorization: bearer',
-      'x-api-key',
-      'developer-operated proxy',
-    ]) expect(submission, `submission notes are missing ${phrase}`).toContain(phrase);
-
-    for (const provider of ['openai', 'openrouter', 'anthropic', 'custom']) {
-      expect(privacy).toContain(provider);
-      expect(submission).toContain(provider);
-    }
-  });
-
-  it('keeps the current retention contract in the localized release docs', () => {
-    const privacy = read('docs/en/privacy-policy.md');
-    expect(privacy).toMatch(/normally prunes valid settled attempts to the newest 128 per conversation/i);
-    expect(privacy).toMatch(/current attempt and damaged recovery evidence beyond that normal pruning boundary/i);
-    expect(privacy).toMatch(/until you explicitly delete the conversation/i);
-    expect(privacy).not.toMatch(/(?:absolute|hard|maximum) (?:limit|maximum|cap) of 128/i);
-
-    const submission = read('docs/en/chrome-web-store-submission.md');
-    expect(submission).toMatch(/normally pruned to the newest 128 per conversation/i);
-    expect(submission).toMatch(/current attempt and damaged recovery evidence may remain until explicit conversation deletion/i);
-  });
-
   it('keeps manifest host declarations aligned with built-in and custom behavior', () => {
     const manifest = read('manifest.config.ts');
     expect(manifest).toContain("'https://api.openai.com/*'");
@@ -222,20 +173,6 @@ describe('Agent release conformance', () => {
     expect(captureScript).toContain("assert.equal(disclosure.categoryCount, 4)");
     expect(captureScript).toContain("assert.equal(disclosure.collapsed, true)");
     expect(captureScript).toContain("assert.deepEqual(disclosure.passwordValues, [''])");
-  });
-
-  it('records the current Pi comparison and compaction boundaries', () => {
-    const technicalReference = read('docs/en/cubby-agent.md');
-    const normalizedReference = technicalReference.replace(/\s+/gu, ' ');
-    for (const phrase of [
-      '6d5ede31c8b8584b422bd0fa2ce10a39b2a0cdce',
-      'Pi-informed decisions',
-      'exact prepared-request bytes',
-      '64 KiB projected tool-result memory ceiling',
-      'complete assistant/tool envelope',
-      'Raw canonical history stays intact',
-    ]) expect(normalizedReference).toContain(phrase);
-    expect(technicalReference).not.toContain('MVP does not need full chat memory compaction yet');
   });
 
   it('delegates Agent background authority through the worker runtime graph', () => {

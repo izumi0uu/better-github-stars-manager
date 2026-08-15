@@ -24,7 +24,7 @@ import {
 import type { OrganizeProposal } from '@/bgsm-agent/proposal';
 import type { ProposalId, RunId } from '@/bgsm-agent/identity';
 import type { SemanticTaxonomyDto } from '@/bgsm-agent/semantic-dto';
-import type { TaxonomyFingerprintV1 } from '@/bgsm-agent/proposal';
+import type { TaxonomyFingerprint } from '@/bgsm-agent/proposal';
 import type { BudgetExhaustionReason } from '@/bgsm-agent/policy';
 import type { RunBudgetUsage } from '@/bgsm-agent/policy';
 import { FROZEN_SCOPE_PAGE_DEFAULT } from '@/bgsm-agent/policy';
@@ -45,7 +45,7 @@ export type SchedulerPage = Readonly<{
   positions: readonly OrganizeJobRunPagePosition[];
   taxonomy: SemanticTaxonomyDto;
   policyTaxonomy: SemanticTaxonomyDto;
-  taxonomyFingerprint: TaxonomyFingerprintV1;
+  taxonomyFingerprint: TaxonomyFingerprint;
 }>;
 
 export interface BgsmOrganizeJobScheduler {

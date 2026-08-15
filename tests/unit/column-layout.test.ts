@@ -192,6 +192,24 @@ describe('column layout editing', () => {
     expect(layoutsEqual(ownerHidden!, DEFAULT_COLUMN_LAYOUT)).toBe(false);
   });
 
+  it('defaults repository avatars on and preserves an explicit opt-out', () => {
+    expect(normalizeStoredColumnLayoutPreference({
+      ...DEFAULT_COLUMN_LAYOUT,
+      showRepositoryAvatar: true,
+    })).toBeNull();
+
+    const avatarDisabled = normalizeStoredColumnLayoutPreference({
+      ...DEFAULT_COLUMN_LAYOUT,
+      showRepositoryAvatar: false,
+    });
+
+    expect(avatarDisabled).toEqual({
+      ...DEFAULT_COLUMN_LAYOUT,
+      showRepositoryAvatar: false,
+    });
+    expect(layoutsEqual(avatarDisabled!, DEFAULT_COLUMN_LAYOUT)).toBe(false);
+  });
+
   it('keeps default order and hidden as custom when explicit widths exist', () => {
     expect(normalizeStoredColumnLayoutPreference({
       ...DEFAULT_COLUMN_LAYOUT,

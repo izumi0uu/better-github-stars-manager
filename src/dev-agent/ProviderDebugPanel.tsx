@@ -31,7 +31,7 @@ import {
 import {
   PROVIDER_DIAGNOSTICS_BRIDGE_PERMISSION,
   PROVIDER_DIAGNOSTICS_BRIDGE_URL,
-  type ProviderDiagnosticsBridgeRecordV1,
+  type ProviderDiagnosticsBridgeRecord,
 } from './provider-diagnostics-bridge';
 import { monitorStateFromBridgeRecord } from '@/agent-observability/provider-monitor';
 
@@ -401,16 +401,16 @@ function hostAccessLabel(
   return d.checkingProviderHostAccess;
 }
 
-async function readBridgeResponse(response: Response): Promise<Partial<ProviderDiagnosticsBridgeRecordV1> & { error?: string } | null> {
+async function readBridgeResponse(response: Response): Promise<Partial<ProviderDiagnosticsBridgeRecord> & { error?: string } | null> {
   try {
-    return await response.json() as Partial<ProviderDiagnosticsBridgeRecordV1> & { error?: string };
+    return await response.json() as Partial<ProviderDiagnosticsBridgeRecord> & { error?: string };
   } catch {
     return null;
   }
 }
 
 function readBridgeError(
-  body: (Partial<ProviderDiagnosticsBridgeRecordV1> & { error?: string }) | null,
+  body: (Partial<ProviderDiagnosticsBridgeRecord> & { error?: string }) | null,
   status: number,
 ): string {
   return body?.error ?? `Loopback diagnostics server returned HTTP ${status}.`;

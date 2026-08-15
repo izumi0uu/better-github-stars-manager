@@ -12,8 +12,21 @@ import {
 } from '@/ui/agent-ui-presentation';
 import type { MessageCatalog } from '@/i18n';
 
+export type AgentToolbarStatusKind =
+  | 'working'
+  | 'analyzing'
+  | 'blocked'
+  | 'review'
+  | 'applying'
+  | 'paused'
+  | 'completed'
+  | 'cancelled'
+  | 'failed'
+  | 'interrupted';
+
 export type AgentHostPresentation = Readonly<{
   status: string | null;
+  statusKind: AgentToolbarStatusKind | null;
   active: boolean;
 }>;
 
@@ -66,8 +79,10 @@ export function AgentHost({
     organizeView,
   ]);
   const presentation = useMemo<AgentHostPresentation>(() => {
+    const toolbar = resolveToolbarStatus(uiPresentation, agent.status?.text ?? null, m.agentPanel);
     return {
-      status: resolveToolbarStatus(uiPresentation, agent.status?.text ?? null, m.agentPanel),
+      status: toolbar.text,
+      statusKind: toolbar.kind,
       active: uiPresentation.toolbar.active,
     };
   }, [
@@ -156,8 +171,11 @@ function resolveToolbarStatus(
   presentation: AgentUiPresentation,
   chatStatus: string | null,
   labels: MessageCatalog['agentPanel'],
-): string | null {
+): { text: string | null; kind: AgentToolbarStatusKind | null } {
   const { kind, progress, active } = presentation.toolbar;
+  const text = (value: string | null, statusKind: AgentToolbarStatusKind | null) => (
+    { text: value, kind: statusKind }
+  );
   switch (kind) {
     case 'chat_queued':
     case 'chat_working':
@@ -166,45 +184,48 @@ function resolveToolbarStatus(
     case 'chat_done':
     case 'chat_stopped':
     case 'chat_failed':
-      return active ? chatStatus ?? labels.chatWorking : null;
+      return active ? text(chatStatus ?? labels.chatWorking, 'working') : text(null, null);
     case 'scope_requesting':
-      return labels.resolvingScopeHeader;
+      return text(labels.resolvingScopeHeader, null);
     case 'scope_ready':
-      return labels.scopeReady;
+      return text(labels.scopeReady, null);
     case 'scope_starting':
-      return labels.workbench.startingAnalysis;
+      return text(labels.workbench.startingAnalysis, 'analyzing');
     case 'scope_failed':
-      return null;
+      return text(null, null);
     case 'analyzing':
-      return progress && progress.total > 0
-        ? `${progress.completed}/${progress.total}`
-        : labels.runStateLabel('analyzing');
+      return text(
+        progress && progress.total > 0
+          ? `${progress.completed}/${progress.total}`
+          : labels.runStateLabel('analyzing'),
+        'analyzing',
+      );
     case 'reconnecting':
-      return labels.toolbarInterrupted;
+      return text(labels.toolbarInterrupted, 'interrupted');
     case 'analysis_blocked':
     case 'review_invalid':
-      return labels.runStateLabel('analysis_blocked');
+      return text(labels.runStateLabel('analysis_blocked'), 'blocked');
     case 'review_loading':
     case 'review_ready':
-      return labels.toolbarReview;
+      return text(labels.toolbarReview, 'review');
     case 'review_failed':
-      return null;
+      return text(null, null);
     case 'applying':
-      return labels.toolbarApplying;
+      return text(labels.toolbarApplying, 'applying');
     case 'paused':
-      return labels.runStateLabel('paused');
+      return text(labels.runStateLabel('paused'), 'paused');
     case 'receipt':
     case 'completed_no_changes':
-      return labels.runStateLabel('completed');
+      return text(labels.runStateLabel('completed'), 'completed');
     case 'cancelled':
-      return labels.runStateLabel('cancelled');
+      return text(labels.runStateLabel('cancelled'), 'cancelled');
     case 'interrupted':
-      return labels.toolbarInterrupted;
+      return text(labels.toolbarInterrupted, 'interrupted');
     case 'failed':
-      return labels.runStateLabel('failed');
+      return text(labels.runStateLabel('failed'), 'failed');
     case 'context_recovery':
     case 'scope_empty':
     case 'idle':
-      return null;
+      return text(null, null);
   }
 }

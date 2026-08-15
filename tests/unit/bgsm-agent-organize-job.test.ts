@@ -42,14 +42,14 @@ import {
   reconcileOrganizeTagCoverage,
 } from '@/bgsm-agent/policy';
 import {
-  parseSourceFingerprintV1,
-  parseTaxonomyFingerprintV1,
+  parseSourceFingerprint,
+  parseTaxonomyFingerprint,
   type AnalyzerBatchProposalRow,
 } from '@/bgsm-agent/proposal';
 import {
   createFrozenScope,
   createFrozenScopeCursor,
-  parseScopeFingerprintV1,
+  parseScopeFingerprint,
 } from '@/bgsm-agent/scope';
 import {
   buildSemanticPolicyTaxonomyFromStorage,
@@ -58,7 +58,7 @@ import {
   buildSemanticTaxonomyDto,
   fingerprintSemanticTaxonomy,
 } from '@/bgsm-agent/semantic-dto';
-import { sourceFingerprintV1, taxonomyFingerprintV1 } from '@/bgsm-agent/source-fingerprint';
+import { sourceFingerprint, taxonomyFingerprint } from '@/bgsm-agent/source-fingerprint';
 import { loadFrozenScopePage } from '@/bgsm-agent/organize-scope-reader';
 import {
   admitNextBatch,
@@ -70,9 +70,9 @@ import type { Star, Tag, TagMeta } from '@/types';
 const DIGEST = 'A'.repeat(43);
 const RUN_ID = parseRunId('run:v1:test');
 const PROPOSAL_ID = parseProposalId('proposal:v1:test');
-const SCOPE_FINGERPRINT = parseScopeFingerprintV1(`fs:v1:${DIGEST}`);
-const SOURCE_FINGERPRINT = parseSourceFingerprintV1(`sf:v1:${DIGEST}`);
-const TAXONOMY_FINGERPRINT = parseTaxonomyFingerprintV1(`tf:v1:${DIGEST}`);
+const SCOPE_FINGERPRINT = parseScopeFingerprint(`fs:${DIGEST}`);
+const SOURCE_FINGERPRINT = parseSourceFingerprint(`sf:v1:${DIGEST}`);
+const TAXONOMY_FINGERPRINT = parseTaxonomyFingerprint(`tf:v1:${DIGEST}`);
 
 describe('semantic DTOs and fingerprints', () => {
   it('omits notes/storage-only fields and keeps fingerprint inclusion explicit', async () => {
@@ -90,7 +90,7 @@ describe('semantic DTOs and fingerprints', () => {
     expect(JSON.stringify(first)).not.toContain('dismissedAutoTags');
     expect(JSON.stringify(first)).not.toContain('dismissedAutomatic');
     expect(first.sourceFingerprint).toBe(second.sourceFingerprint);
-    expect(await sourceFingerprintV1(star({ description: 'changed' }), firstTag))
+    expect(await sourceFingerprint(star({ description: 'changed' }), firstTag))
       .not.toBe(first.sourceFingerprint);
   });
 
@@ -158,7 +158,7 @@ describe('semantic DTOs and fingerprints', () => {
       },
     ]);
     expect(await fingerprintSemanticTaxonomy(dto)).toBe(
-      await taxonomyFingerprintV1([], tags),
+      await taxonomyFingerprint([], tags),
     );
     const merged = buildSemanticTaxonomyFromStorage([
       tagMeta({
