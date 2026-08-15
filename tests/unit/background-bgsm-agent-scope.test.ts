@@ -3,6 +3,7 @@ import { describe, it } from 'vitest';
 import {
   createBgsmAgentConversationBinding,
   createBgsmAgentConversationScopeFingerprint,
+  validateBgsmAgentConversationBinding,
   type BgsmAgentConversationCandidate,
   type BgsmAgentTurnInput,
 } from '@/bgsm-agent';
@@ -147,19 +148,33 @@ describe('Cubby conversation scope binding', () => {
       providerFingerprint: PROVIDER,
     });
 
-    await assert.rejects(
-      resolveBgsmAgentConversation({
-        turnAttemptId: 'turn-attempt-legacy-scope',
-        sessionId: 'session-legacy-scope',
-        baseRevision: 1,
-        prompt: 'Follow up',
-        history: [{ id: 'old', role: 'user', content: 'old', createdAt: 1 }],
-        binding,
-      }, {
-        providerFingerprint: PROVIDER,
-        resolveCandidate: resolver(),
-      }),
-      /scope changed/i,
-    );
+    const resolved = await resolveBgsmAgentConversation({
+      turnAttemptId: 'turn-attempt-legacy-scope',
+      sessionId: 'session-legacy-scope',
+      baseRevision: 1,
+      prompt: 'Follow up',
+      history: [{ id: 'old', role: 'user', content: 'old', createdAt: 1 }],
+      binding,
+    }, {
+      providerFingerprint: PROVIDER,
+      resolveCandidate: resolver(),
+    });
+
+    assert.equal(resolved.binding, binding);
+    assert.deepEqual(resolved.repositoryIds, ['owner/repo']);
+  });
+
+  it('reports malformed string fingerprints through the conversation binding contract', () => {
+    assert.throws(() => validateBgsmAgentConversationBinding({
+      version: 1,
+      candidateContract: candidate,
+      scopeFingerprint: 'malformed',
+      label: 'owner/repo',
+      count: 1,
+      providerFingerprint: PROVIDER,
+    }), {
+      name: 'TypeError',
+      message: 'Conversation scope fingerprint is malformed.',
+    });
   });
 });

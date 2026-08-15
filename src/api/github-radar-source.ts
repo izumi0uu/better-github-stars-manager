@@ -56,6 +56,7 @@ type ActivityPageTarget = Readonly<{
 type ActivityBatch = GraphqlRateLimit & {
   activities: RadarActivityRecord[];
   continuations: ActivityPageTarget[];
+  skippedTargets: ActivityPageTarget[];
   privateActivityOmitted: boolean;
 };
 
@@ -103,17 +104,19 @@ function parseResetAt(value: unknown): string | null {
   return Number.isFinite(millis) ? new Date(millis).toISOString() : null;
 }
 
-function classifyGraphqlErrors(errors: unknown): GitHubRadarError {
-  if (!Array.isArray(errors) || errors.length === 0) {
-    return new GitHubRadarError('invalid_response');
-  }
+function graphqlErrorTypes(error: Record<string, unknown>): string[] {
+  const extensions = record(error.extensions);
+  return [nonEmptyString(error.type), nonEmptyString(extensions?.type)].filter(
+    (value): value is string => value !== null,
+  );
+}
+
+function classifyGraphqlErrors(errors: readonly unknown[]): GitHubRadarError {
+  if (errors.length === 0) return new GitHubRadarError('invalid_response');
 
   const types = errors.flatMap((item) => {
     const error = record(item);
-    const extensions = record(error?.extensions);
-    return [nonEmptyString(error?.type), nonEmptyString(extensions?.type)].filter(
-      (value): value is string => value !== null,
-    );
+    return error ? graphqlErrorTypes(error) : [];
   });
 
   if (types.some((type) => /RATE_LIMIT/iu.test(type))) {
@@ -123,6 +126,33 @@ function classifyGraphqlErrors(errors: unknown): GitHubRadarError {
     return new GitHubRadarError('permission_denied');
   }
   return new GitHubRadarError('invalid_response');
+}
+
+function recoverableMissingActivityIndexes(
+  errors: readonly unknown[],
+  targetCount: number,
+): Set<number> | null {
+  const indexes = new Set<number>();
+  for (const item of errors) {
+    const error = record(item);
+    const types = error ? graphqlErrorTypes(error) : [];
+    const path = error?.path;
+    if (
+      types.length === 0
+      || types.some((type) => type.toUpperCase() !== 'NOT_FOUND')
+      || !Array.isArray(path)
+      || path.length === 0
+      || path.some((segment) => typeof segment !== 'string'
+        && !(typeof segment === 'number' && Number.isSafeInteger(segment) && segment >= 0))
+    ) return null;
+
+    const alias = path[0];
+    const match = typeof alias === 'string' ? /^follower(0|[1-9]\d*)$/u.exec(alias) : null;
+    const index = match ? Number(match[1]) : -1;
+    if (!Number.isSafeInteger(index) || index < 0 || index >= targetCount) return null;
+    indexes.add(index);
+  }
+  return indexes.size > 0 ? indexes : null;
 }
 
 function headerRateLimit(response: Response): GraphqlRateLimit {
@@ -166,7 +196,11 @@ async function fetchGraphql(
   query: string,
   variables: Record<string, unknown>,
   options: { signal?: AbortSignal; timeoutMs: number },
-): Promise<{ data: Record<string, unknown>; rateLimit: GraphqlRateLimit }> {
+): Promise<{
+  data: Record<string, unknown>;
+  errors: readonly unknown[];
+  rateLimit: GraphqlRateLimit;
+}> {
   if (options.signal?.aborted) throw new GitHubRadarError('request_aborted');
   const controller = new AbortController();
   let requestTimedOut = false;
@@ -215,12 +249,13 @@ async function fetchGraphql(
     throw new GitHubRadarError('invalid_response');
   }
 
-  if (Array.isArray(envelope.errors) && envelope.errors.length > 0) {
-    throw classifyGraphqlErrors(envelope.errors);
-  }
+  const errors = Array.isArray(envelope.errors) ? envelope.errors : [];
   const data = record(envelope.data);
-  if (!data) throw new GitHubRadarError('invalid_response');
-  return { data, rateLimit: headerRateLimit(response) };
+  if (!data) {
+    if (errors.length > 0) throw classifyGraphqlErrors(errors);
+    throw new GitHubRadarError('invalid_response');
+  }
+  return { data, errors, rateLimit: headerRateLimit(response) };
 }
 
 function parseRateLimit(
@@ -241,6 +276,7 @@ async function fetchFollowingPage(
   options: { signal?: AbortSignal; timeoutMs: number },
 ): Promise<FollowingPage> {
   const result = await fetchGraphql(fetchImpl, token, FOLLOWING_QUERY, { cursor }, options);
+  if (result.errors.length > 0) throw classifyGraphqlErrors(result.errors);
   const viewer = record(result.data.viewer);
   const accountLogin = nonEmptyString(viewer?.login);
   const following = record(viewer?.following);
@@ -309,12 +345,14 @@ function parseActivityBatch(
   accountLogin: string,
   targets: readonly ActivityPageTarget[],
   cutoffMillis: number,
+  skippedIndexes: ReadonlySet<number>,
 ): ActivityBatch {
   const activities: RadarActivityRecord[] = [];
   const continuations: ActivityPageTarget[] = [];
   let privateActivityOmitted = false;
 
   for (let index = 0; index < targets.length; index += 1) {
+    if (skippedIndexes.has(index)) continue;
     const userValue = data[`follower${index}`];
     if (userValue === null) continue;
     const user = record(userValue);
@@ -402,6 +440,7 @@ function parseActivityBatch(
   return {
     activities,
     continuations,
+    skippedTargets: targets.filter((_, index) => skippedIndexes.has(index)),
     privateActivityOmitted,
     ...parseRateLimit(data, fallbackRateLimit),
   };
@@ -427,12 +466,17 @@ async function fetchActivityBatch(
     variables,
     options,
   );
+  const skippedIndexes = result.errors.length === 0
+    ? new Set<number>()
+    : recoverableMissingActivityIndexes(result.errors, targets.length);
+  if (skippedIndexes === null) throw classifyGraphqlErrors(result.errors);
   return parseActivityBatch(
     result.data,
     result.rateLimit,
     accountLogin,
     targets,
     cutoffMillis,
+    skippedIndexes,
   );
 }
 
@@ -562,10 +606,13 @@ export async function fetchGitHubRadar(
     offset += targets.length;
     activities.push(...batch.activities);
     batchCount += 1;
-    scannedFollowingCount += targets.filter((target) => target.cursor === null).length;
+    scannedFollowingCount += targets.filter((target) => (
+      target.cursor === null && !batch.skippedTargets.includes(target)
+    )).length;
     rateLimitRemaining = minNullable(rateLimitRemaining, batch.remaining);
     rateLimitResetAt = batch.resetAt ?? rateLimitResetAt;
     if (batch.privateActivityOmitted) partialReasons.add('private_activity_omitted');
+    addPendingActivityReasons(batch.skippedTargets, partialReasons);
 
     for (const continuation of batch.continuations) {
       const identity = JSON.stringify([

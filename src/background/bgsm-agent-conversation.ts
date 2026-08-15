@@ -36,7 +36,8 @@ export async function resolveBgsmAgentConversation(
       dependencies.providerFingerprint,
     );
     if (
-      recomputed.scopeFingerprint !== input.binding.scopeFingerprint
+      scopeFingerprintDigest(recomputed.scopeFingerprint)
+        !== scopeFingerprintDigest(input.binding.scopeFingerprint)
       || recomputed.label !== input.binding.label
       || recomputed.count !== input.binding.count
     ) {
@@ -65,6 +66,12 @@ export async function resolveBgsmAgentConversation(
     binding,
     repositoryIds: Object.freeze([...candidate.repositoryIds]),
   });
+}
+
+function scopeFingerprintDigest(
+  fingerprint: BgsmAgentConversationBinding['scopeFingerprint'],
+): string {
+  return fingerprint.slice(fingerprint.lastIndexOf(':') + 1);
 }
 
 async function bindingFor(

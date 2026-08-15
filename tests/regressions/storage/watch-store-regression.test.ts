@@ -449,6 +449,18 @@ describe('Watch snapshot storage', () => {
     assert.equal(stored.state?.inbox.matchedCount, 2);
 
     assert.equal(await applyWatchThreadMutation({
+      accountLogin: 'another-user',
+      threadIds: ['1'],
+      action: 'done',
+    }), 0);
+    stored = await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false });
+    assert.deepEqual(stored.threads.map((row) => [row.id, row.unread]), [
+      ['1', false],
+      ['2', true],
+    ]);
+    assert.equal(stored.state?.inbox.matchedCount, 2);
+
+    assert.equal(await applyWatchThreadMutation({
       accountLogin: ACCOUNT,
       threadIds: ['1', '2'],
       action: 'done',
@@ -457,11 +469,6 @@ describe('Watch snapshot storage', () => {
     assert.equal(stored.totalCount, 0);
     assert.equal(stored.state?.inbox.matchedCount, 0);
 
-    assert.equal(await applyWatchThreadMutation({
-      accountLogin: 'another-user',
-      threadIds: ['1'],
-      action: 'done',
-    }), 0);
   });
 
   it('counts unread Inbox rows only for the bound account', async () => {

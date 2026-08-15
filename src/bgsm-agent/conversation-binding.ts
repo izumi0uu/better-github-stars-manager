@@ -1,6 +1,7 @@
 import { canonicalJson, sha256Base64Url } from '@/agent-harness/canonical-json';
 import {
   parseScopeFingerprint,
+  isScopeFingerprint,
   validateLaunchCandidateContract,
   type LaunchCandidateContract,
   type ScopeFingerprint,
@@ -59,8 +60,7 @@ export function validateBgsmAgentConversationBinding(
   ]);
   if (value.version !== 1) throw new TypeError('Conversation binding version must be 1.');
   validateBgsmAgentConversationCandidate(value.candidateContract);
-  if (typeof value.scopeFingerprint !== 'string'
-    || !parseScopeFingerprint(value.scopeFingerprint)) {
+  if (!isScopeFingerprint(value.scopeFingerprint)) {
     throw new TypeError('Conversation scope fingerprint is malformed.');
   }
   assertTrimmedNonempty(value.label, 'Conversation scope label');
