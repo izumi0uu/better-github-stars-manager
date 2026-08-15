@@ -3,6 +3,7 @@ import {
   Sun,
   Moon,
   Star,
+  Heart,
   Check,
   AlertTriangle,
   ExternalLink,
@@ -56,6 +57,10 @@ import {
   normalizeMinTopicRepoCount,
 } from "@/preferences";
 import {
+  CURRENT_EXTENSION_STORE_LISTING,
+  DEFAULT_STORE_RATING_PROMPT_STATE,
+} from '@/store-rating';
+import {
   getProvider as getAgentProvider,
   getProviders as getAgentProviders,
   isSavedAgentCredentialEligible,
@@ -72,6 +77,7 @@ import type {
   AgentCustomProviderProtocol,
   AgentProviderConfig,
   AgentProviderId,
+  StoreRatingPromptState,
 } from "@/types";
 import type {
   AgentStorageCleanupResult,
@@ -82,6 +88,9 @@ import {
   AgentStoragePanel,
   formatStorageBytes,
 } from "./AgentStoragePanel";
+import tokenGuideCreateUrl from "../../store-assets/screenshots/token-guide-create-classic-pat.webp?url";
+import tokenGuideScopesUrl from "../../store-assets/screenshots/token-guide-select-scopes.webp?url";
+import tokenGuideGenerateUrl from "../../store-assets/screenshots/token-guide-generate-token.webp?url";
 
 const agentProviders = getAgentProviders();
 const DEFAULT_CUSTOM_AGENT_PROTOCOL: AgentCustomProviderProtocol = "chat-completions";
@@ -149,6 +158,9 @@ export function Options() {
   const persistedMaxTagsPerRepoRef = useRef(String(DEFAULT_AUTO_TAG_LIMIT));
   const persistedMinTopicRepoCountRef = useRef(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
   const [starsPanelDefaultEnabled, setStarsPanelDefaultEnabled] = useState(true);
+  const [storeRatingPrompt, setStoreRatingPrompt] = useState<StoreRatingPromptState>(
+    DEFAULT_STORE_RATING_PROMPT_STATE,
+  );
   const [tokenBusy, setTokenBusy] = useState(false);
   const [agentSaveBusy, setAgentSaveBusy] = useState(false);
   const [agentTestBusy, setAgentTestBusy] = useState(false);
@@ -220,6 +232,7 @@ export function Options() {
     persistedMaxTagsPerRepoRef.current = String(c.maxTagsPerRepo);
     persistedMinTopicRepoCountRef.current = String(c.minTopicRepoCount);
     setStarsPanelDefaultEnabled(c.starsPanelDefaultEnabled);
+    setStoreRatingPrompt(c.storeRatingPrompt);
     setSyncStatus((current) => mergeStatusSnapshot(current, status));
   };
   useEffect(() => {
@@ -482,6 +495,25 @@ export function Options() {
     await authStore.update({ starsPanelDefaultEnabled: checked });
   };
 
+  const setStoreRatingReminderEnabled = async (enabled: boolean) => {
+    try {
+      const config = enabled
+        ? await authStore.reenableStoreRatingPrompt()
+        : await authStore.disableStoreRatingPrompt();
+      setStoreRatingPrompt(config.storeRatingPrompt);
+    } catch (error) {
+      setMsg({ kind: "err", text: translateError(error, m) });
+    }
+  };
+
+  const markStoreRatingOpened = () => {
+    void authStore.recordStoreRatingNavigation()
+      .then((config) => setStoreRatingPrompt(config.storeRatingPrompt))
+      .catch((error) => {
+        setMsg({ kind: "err", text: translateError(error, m) });
+      });
+  };
+
   const syncing = !!(
     syncStatus?.inFlight && syncStatus.progress && syncStatus.progress.phase !== "idle"
   );
@@ -504,6 +536,24 @@ export function Options() {
     : null;
   const starsUrl =
     hasUsableToken && username ? `https://github.com/${username}?tab=stars` : null;
+  const storeRatingSnoozeActive = storeRatingPrompt.status === 'snoozed'
+    && !!storeRatingPrompt.snoozeUntil
+    && Date.parse(storeRatingPrompt.snoozeUntil) > Date.now();
+  const storeRatingReminderEnabled = storeRatingPrompt.status === 'tracking'
+    || storeRatingPrompt.status === 'snoozed';
+  const storeRatingReminderStatus = storeRatingSnoozeActive
+    ? m.options.storeRatingReminderSnoozed(
+      new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(
+        new Date(storeRatingPrompt.snoozeUntil!),
+      ),
+    )
+    : storeRatingPrompt.status === 'exhausted'
+      ? m.options.storeRatingReminderExhausted
+      : storeRatingPrompt.status === 'store_opened'
+        ? m.options.storeRatingReminderStoreOpened
+        : storeRatingPrompt.status === 'disabled'
+          ? m.options.storeRatingReminderDisabled
+          : m.options.storeRatingReminderTracking;
   const customAgentSelected = agentProvider === "custom-openai-compatible";
   const trustedAgentContextCapability = trustedAgentModelContextCapability(
     agentProvider,
@@ -611,7 +661,9 @@ export function Options() {
           JSON.stringify(newCfg?.agentProvider ?? null) &&
         oldCfg?.maxTagsPerRepo === newCfg?.maxTagsPerRepo &&
         oldCfg?.minTopicRepoCount === newCfg?.minTopicRepoCount &&
-        oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled;
+        oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled &&
+        JSON.stringify(oldCfg?.storeRatingPrompt ?? null) ===
+          JSON.stringify(newCfg?.storeRatingPrompt ?? null);
       if (visibleConfigUnchanged) return;
       void refresh();
     };
@@ -710,15 +762,55 @@ export function Options() {
           . {m.options.tokenIntroSuffix}
         </p>
 
-        <details className="gsm-status-note mt-3 rounded-md border border-border bg-muted/20 p-3 text-muted-foreground">
+        <details
+          data-testid="token-setup-guide"
+          className="gsm-status-note mt-3 rounded-md border border-border bg-muted/20 p-3 text-muted-foreground"
+        >
           <summary className="cursor-pointer font-medium text-foreground">
             {m.options.tokenStepsTitle}
           </summary>
-          <ol className="mt-2 list-decimal space-y-1.5 pl-5 leading-relaxed">
-            <li>{m.options.tokenStep1}</li>
-            <li>{m.options.tokenStep2}</li>
-            <li>{m.options.tokenStep3}</li>
+          <ol className="mt-3 grid list-decimal gap-4 pl-5 leading-relaxed">
+            <li className="pl-1">
+              <p className="font-medium text-foreground">{m.options.tokenStep1Title}</p>
+              <p className="mt-1">{m.options.tokenStep1}</p>
+              <img
+                src={tokenGuideCreateUrl}
+                alt={m.options.tokenStep1Alt}
+                width={1568}
+                height={875}
+                loading="lazy"
+                decoding="async"
+                className="mt-2 h-auto w-full rounded-md border border-border bg-background object-contain"
+              />
+            </li>
+            <li className="pl-1">
+              <p className="font-medium text-foreground">{m.options.tokenStep2Title}</p>
+              <p className="mt-1">{m.options.tokenStep2}</p>
+              <img
+                src={tokenGuideScopesUrl}
+                alt={m.options.tokenStep2Alt}
+                width={1568}
+                height={520}
+                loading="lazy"
+                decoding="async"
+                className="mt-2 h-auto w-full rounded-md border border-border bg-background object-contain"
+              />
+            </li>
+            <li className="pl-1">
+              <p className="font-medium text-foreground">{m.options.tokenStep3Title}</p>
+              <p className="mt-1">{m.options.tokenStep3}</p>
+              <img
+                src={tokenGuideGenerateUrl}
+                alt={m.options.tokenStep3Alt}
+                width={888}
+                height={290}
+                loading="lazy"
+                decoding="async"
+                className="mt-2 h-auto w-full rounded-md border border-border bg-background object-contain"
+              />
+            </li>
           </ol>
+          <p className="mt-3 text-xs text-warning">{m.options.tokenScopesWarning}</p>
         </details>
 
         <ul className="gsm-body-note mt-2">
@@ -1181,6 +1273,62 @@ export function Options() {
               </span>
             </label>
           </div>
+
+          {CURRENT_EXTENSION_STORE_LISTING && (
+            <div
+              className="grid gap-3 border-t border-border pt-4"
+              data-testid="store-rating-settings"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="grid min-w-0 gap-1">
+                  <span className="text-sm font-medium text-foreground">
+                    {m.options.storeRatingHeading}
+                  </span>
+                  <span className="gsm-body-note">
+                    {m.options.storeRatingManualHint(CURRENT_EXTENSION_STORE_LISTING.label)}
+                  </span>
+                </div>
+                <Button asChild variant="outline" className="shrink-0">
+                  <a
+                    href={CURRENT_EXTENSION_STORE_LISTING.ratingUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={markStoreRatingOpened}
+                  >
+                    <Heart data-icon className="fill-current text-favorite" aria-hidden="true" />
+                    {m.options.storeRatingManualAction(CURRENT_EXTENSION_STORE_LISTING.label)}
+                    <ExternalLink data-icon aria-hidden="true" />
+                  </a>
+                </Button>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="store-rating-reminder"
+                  checked={storeRatingReminderEnabled}
+                  onCheckedChange={(checked) => {
+                    void setStoreRatingReminderEnabled(checked === true);
+                  }}
+                  aria-label={storeRatingReminderEnabled
+                    ? m.options.storeRatingReminderDisable
+                    : m.options.storeRatingReminderEnable}
+                  aria-describedby="store-rating-reminder-status"
+                  className="mt-0.5"
+                />
+                <label
+                  htmlFor="store-rating-reminder"
+                  className="grid cursor-pointer gap-1"
+                >
+                  <span className="text-sm font-medium text-foreground">
+                    {m.options.storeRatingReminderLabel}
+                  </span>
+                  <span id="store-rating-reminder-status" className="gsm-body-note">
+                    {storeRatingReminderStatus}
+                  </span>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
       </section>
     </div>

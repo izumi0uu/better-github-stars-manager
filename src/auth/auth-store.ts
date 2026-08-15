@@ -42,6 +42,17 @@ import {
   validateAgentDataDisclosureAcceptance,
   type AgentDataDisclosureAcceptance,
 } from "@/bgsm-agent/disclosure";
+import {
+  DEFAULT_STORE_RATING_PROMPT_STATE,
+  consumeStoreRatingPromptExposure,
+  disableStoreRatingPrompt,
+  normalizeStoreRatingPromptState,
+  recordStoreRatingActiveDay,
+  recordStoreRatingMeaningfulAction,
+  recordStoreRatingNavigation,
+  reenableStoreRatingPrompt,
+  snoozeStoreRatingPrompt,
+} from "@/store-rating";
 
 /**
  * Owns the single Classic PAT lifecycle.
@@ -124,6 +135,7 @@ const DEFAULT_CONFIG: Config = {
   seenOnboarding: false,
   seenTooltips: 0,
   autoTagAgentPromptSeen: false,
+  storeRatingPrompt: DEFAULT_STORE_RATING_PROMPT_STATE,
   autoTagLimit: DEFAULT_AUTO_TAG_LIMIT,
   maxTagsPerRepo: DEFAULT_AUTO_TAG_LIMIT,
   minTopicRepoCount: DEFAULT_MIN_TOPIC_REPO_COUNT,
@@ -203,6 +215,7 @@ function mergeStoredConfig(stored: Partial<Config>): Config {
       stored.agentDataDisclosureAcceptance,
     ),
     autoTagAgentPromptSeen: stored.autoTagAgentPromptSeen === true,
+    storeRatingPrompt: normalizeStoreRatingPromptState(stored.storeRatingPrompt),
     maxTagsPerRepo: maxTagsPerRepo ?? DEFAULT_CONFIG.maxTagsPerRepo,
     watchCollapsedRepositories: normalizeWatchCollapsedRepositories(
       stored.watchCollapsedRepositories,
@@ -291,6 +304,7 @@ function withNormalizedConfig(config: Config): Config {
     ...config,
     agentProvider: normalizeAgentProviderConfig(config.agentProvider),
     agentDataDisclosureAcceptance: normalizeAgentDataDisclosureAcceptance(config.agentDataDisclosureAcceptance),
+    storeRatingPrompt: normalizeStoreRatingPromptState(config.storeRatingPrompt),
     autoTagLimit: normalizeAutoTagLimit(config.autoTagLimit),
     maxTagsPerRepo: normalizeMaxTagsPerRepo(config.maxTagsPerRepo, config.autoTagLimit),
     minTopicRepoCount: normalizeMinTopicRepoCount(config.minTopicRepoCount),
@@ -1073,6 +1087,69 @@ export const authStore = {
       return;
     }
     await mutateStoredConfig((current) => ({ ...current, ...patch }));
+  },
+
+  async recordStoreRatingActiveDay(now = Date.now()): Promise<Config> {
+    return mutateStoredConfig((current) => {
+      const storeRatingPrompt = recordStoreRatingActiveDay(current.storeRatingPrompt, now);
+      return storeRatingPrompt === current.storeRatingPrompt
+        ? null
+        : { ...current, storeRatingPrompt };
+    });
+  },
+
+  async recordStoreRatingMeaningfulAction(): Promise<Config> {
+    return mutateStoredConfig((current) => {
+      const storeRatingPrompt = recordStoreRatingMeaningfulAction(current.storeRatingPrompt);
+      return storeRatingPrompt === current.storeRatingPrompt
+        ? null
+        : { ...current, storeRatingPrompt };
+    });
+  },
+
+  async consumeStoreRatingPromptExposure(now = Date.now()): Promise<{
+    config: Config;
+    consumed: boolean;
+  }> {
+    let consumed = false;
+    const config = await mutateStoredConfig((current) => {
+      const storeRatingPrompt = consumeStoreRatingPromptExposure(
+        current.storeRatingPrompt,
+        now,
+      );
+      if (!storeRatingPrompt) return null;
+      consumed = true;
+      return { ...current, storeRatingPrompt };
+    });
+    return { config, consumed };
+  },
+
+  async snoozeStoreRatingPrompt(now = Date.now()): Promise<Config> {
+    return mutateStoredConfig((current) => ({
+      ...current,
+      storeRatingPrompt: snoozeStoreRatingPrompt(current.storeRatingPrompt, now),
+    }));
+  },
+
+  async disableStoreRatingPrompt(): Promise<Config> {
+    return mutateStoredConfig((current) => ({
+      ...current,
+      storeRatingPrompt: disableStoreRatingPrompt(current.storeRatingPrompt),
+    }));
+  },
+
+  async recordStoreRatingNavigation(): Promise<Config> {
+    return mutateStoredConfig((current) => ({
+      ...current,
+      storeRatingPrompt: recordStoreRatingNavigation(current.storeRatingPrompt),
+    }));
+  },
+
+  async reenableStoreRatingPrompt(): Promise<Config> {
+    return mutateStoredConfig((current) => ({
+      ...current,
+      storeRatingPrompt: reenableStoreRatingPrompt(current.storeRatingPrompt),
+    }));
   },
 
   async updateAgentProviderConfig(patch: {

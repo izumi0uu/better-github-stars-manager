@@ -6,6 +6,7 @@ export default defineConfig({
     __GSM_DEV__: 'true',
     __GSM_DEV_UI_VISIBLE__: 'true',
     __GSM_VERSION_HASH__: '"test"',
+    __GSM_STORE_TARGET__: '"none"',
   },
   resolve: {
     alias: {

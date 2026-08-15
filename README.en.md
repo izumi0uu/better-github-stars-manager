@@ -171,23 +171,32 @@ The extension uses Manifest V3. After installing, open `https://github.com/{you}
 5. Open `https://github.com/{you}?tab=stars` to start the extension automatically
 6. On the first visit, **Full Sync** starts automatically
 
-Use the prefilled [Classic PAT creation form](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager). Set a finite expiration and keep only the scopes you need.
+Open the prefilled [Classic PAT form](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager) and follow the steps below.
 
 <details>
-<summary><strong>Review GitHub token permissions</strong></summary>
+<summary><strong>Open the illustrated GitHub token setup guide</strong></summary>
 
 <br>
 
-| Scope | Requirement | Purpose |
-|---|---|---|
-| `repo` | Required | Stars sync, Star/Unstar, repository metadata, private repositories, Watch scope, and accessible Issue/Pull Request details |
-| `gist` | Required | Sync tags, notes, favorites, and tag metadata through a secret Gist in your account |
-| `notifications` | Optional | Watch Inbox reads, mark-read, and mark-done actions |
-| `read:user` | Optional | Following reads followed accounts and their public Star activity |
+#### 1. Set the expiration
 
-Do not grant `user`, `user:email`, `user:follow`, `project`, `admin:org`, `workflow`, `delete_repo`, package, key, audit-log, enterprise, or Webhook administration scopes. The extension does not use them.
+Keep the Note and choose a finite expiration.
 
-Read the [GitHub token permissions guide](docs/en/github-token-permissions.md) for verification behavior and the credential lifecycle.
+<img src="store-assets/screenshots/token-guide-create-classic-pat.webp" alt="Classic PAT Note, expiration, and repo scope" width="1568" height="875" />
+
+#### 2. Check the scopes
+
+Keep `repo`, `gist`, `notifications`, and `read:user` selected. Leave `user` unselected.
+
+<img src="store-assets/screenshots/token-guide-select-scopes.webp" alt="gist, notifications, and read:user selected; user unselected" width="1568" height="520" />
+
+#### 3. Generate and save
+
+Select **Generate token**, copy the token, paste it into **Options > GitHub Classic PAT**, then select **Save & verify**.
+
+<img src="store-assets/screenshots/token-guide-generate-token.webp" alt="Select Generate token to create the GitHub Classic PAT" width="888" height="290" />
+
+GitHub shows the token once. Keep it private.
 
 </details>
 

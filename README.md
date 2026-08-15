@@ -171,23 +171,32 @@ Github token 会进行本地加密。Cubby 对话、恢复记录和产物以未�
 5. 打开 `https://github.com/{you}?tab=stars` 自动启动
 6. 首次进入时自动运行 **Full Sync**
 
-使用预填的 [Classic PAT 创建表单](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager)，设置有限有效期，并只保留需要的 scopes。
+打开[预填的 Classic PAT 表单](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager)，按下图完成配置。
 
 <details>
-<summary><strong>查看 GitHub Token 权限</strong></summary>
+<summary><strong>展开图文配置 GitHub Token</strong></summary>
 
 <br>
 
-| Scope | 要求 | 用途 |
-|---|---|---|
-| `repo` | 必需 | Stars 同步、Star/Unstar、仓库元数据、私有仓库、Watch 范围，以及可访问的 Issue/Pull Request 详情 |
-| `gist` | 必需 | 通过你账号下的 Secret Gist 同步标签、笔记、收藏和标签元数据 |
-| `notifications` | 可选 | Watch Inbox 读取、标记已读和标记完成 |
-| `read:user` | 可选 | Following 读取关注账号及其公开 Star 动态 |
+#### 1. 设置有效期
 
-不需要授予 `user`、`user:email`、`user:follow`、`project`、`admin:org`、`workflow`、`delete_repo`、package、密钥、审计日志、enterprise 或 Webhook 管理权限。扩展不会使用这些 scopes。
+保留 Note，并选择有限有效期。
 
-完整验证行为与凭据生命周期见 [GitHub Token 权限](docs/zh/github-token-permissions.md)。
+<img src="store-assets/screenshots/token-guide-create-classic-pat.webp" alt="Classic PAT 的 Note、有效期和 repo scope" width="1568" height="875" />
+
+#### 2. 确认 scopes
+
+保留 `repo`、`gist`、`notifications` 和 `read:user`；不要勾选 `user`。
+
+<img src="store-assets/screenshots/token-guide-select-scopes.webp" alt="已勾选 gist、notifications 和 read:user，未勾选 user" width="1568" height="520" />
+
+#### 3. 生成并保存
+
+点击 **Generate token**，复制 Token，粘贴到 **Options > GitHub Classic PAT**，然后点击 **Save & verify**。
+
+<img src="store-assets/screenshots/token-guide-generate-token.webp" alt="点击 Generate token 生成 GitHub Classic PAT" width="888" height="290" />
+
+GitHub 只显示一次 Token，请妥善保管。
 
 </details>
 

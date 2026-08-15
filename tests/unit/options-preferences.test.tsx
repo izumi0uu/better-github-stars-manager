@@ -16,6 +16,18 @@ import {
   type MountedRoot,
 } from './test-utils';
 
+vi.mock('@/store-rating', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/store-rating')>();
+  return {
+    ...actual,
+    CURRENT_EXTENSION_STORE_LISTING: {
+      target: 'chrome',
+      label: 'Chrome Web Store',
+      ratingUrl: 'https://example.com/reviews',
+    },
+  };
+});
+
 const authMocks = vi.hoisted(() => ({
   getConfig: vi.fn(),
   hasToken: vi.fn(),
@@ -30,6 +42,9 @@ const authMocks = vi.hoisted(() => ({
   setTheme: vi.fn(),
   update: vi.fn(),
   updateAutoTagPolicy: vi.fn(),
+  disableStoreRatingPrompt: vi.fn(),
+  recordStoreRatingNavigation: vi.fn(),
+  reenableStoreRatingPrompt: vi.fn(),
 }));
 
 vi.mock('@/auth/auth-store', () => ({
@@ -125,6 +140,14 @@ function config(overrides: Partial<Config> = {}): Config {
     seenOnboarding: overrides.seenOnboarding ?? true,
     seenTooltips: overrides.seenTooltips ?? 0,
     autoTagAgentPromptSeen: overrides.autoTagAgentPromptSeen ?? false,
+    storeRatingPrompt: overrides.storeRatingPrompt ?? {
+      version: 1,
+      status: 'tracking',
+      activeLocalDays: [],
+      meaningfulActionCount: 0,
+      exposureCount: 0,
+      snoozeUntil: null,
+    },
     autoTagLimit: overrides.autoTagLimit ?? 5,
     maxTagsPerRepo: overrides.maxTagsPerRepo ?? 5,
     minTopicRepoCount: overrides.minTopicRepoCount ?? 3,
@@ -204,6 +227,9 @@ describe('Options preferences', () => {
     authMocks.setTheme.mockReset();
     authMocks.update.mockReset();
     authMocks.updateAutoTagPolicy.mockReset();
+    authMocks.disableStoreRatingPrompt.mockReset();
+    authMocks.recordStoreRatingNavigation.mockReset();
+    authMocks.reenableStoreRatingPrompt.mockReset();
     storageListeners.length = 0;
     for (const key of Object.keys(sessionStorageValues)) delete sessionStorageValues[key];
     runtimeListeners.length = 0;
@@ -358,6 +384,70 @@ describe('Options preferences', () => {
     expect(clearCache?.disabled).toBe(true);
   });
 
+  it('offers the verified store link and explicit reminder disable/re-enable controls', async () => {
+    const disabled = config({
+      storeRatingPrompt: {
+        version: 1,
+        status: 'disabled',
+        activeLocalDays: ['2026-08-13', '2026-08-14', '2026-08-15'],
+        meaningfulActionCount: 3,
+        exposureCount: 1,
+        snoozeUntil: null,
+      },
+    });
+    const tracking = config({
+      storeRatingPrompt: {
+        ...disabled.storeRatingPrompt,
+        status: 'tracking',
+        exposureCount: 0,
+      },
+    });
+    const storeOpened = config({
+      storeRatingPrompt: {
+        ...tracking.storeRatingPrompt,
+        status: 'store_opened',
+      },
+    });
+    authMocks.getConfig.mockResolvedValue(disabled);
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.reenableStoreRatingPrompt.mockResolvedValue(tracking);
+    authMocks.disableStoreRatingPrompt.mockResolvedValue(disabled);
+    authMocks.recordStoreRatingNavigation.mockResolvedValue(storeOpened);
+
+    await renderOptions();
+
+    const panel = document.querySelector('[data-testid="store-rating-settings"]');
+    const link = panel?.querySelector<HTMLAnchorElement>('a[href="https://example.com/reviews"]');
+    const reminder = panel?.querySelector<HTMLButtonElement>('#store-rating-reminder');
+    expect(link?.textContent).toContain('Rate in Chrome Web Store');
+    expect(link?.target).toBe('_blank');
+    expect(reminder?.getAttribute('aria-checked')).toBe('false');
+    expect(panel?.textContent).toContain('Disabled');
+
+    await click(reminder!);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(authMocks.reenableStoreRatingPrompt).toHaveBeenCalledTimes(1);
+    expect(reminder?.getAttribute('aria-checked')).toBe('true');
+    expect(panel?.textContent).toContain('Enabled');
+
+    await click(reminder!);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(authMocks.disableStoreRatingPrompt).toHaveBeenCalledTimes(1);
+    expect(reminder?.getAttribute('aria-checked')).toBe('false');
+
+    link!.addEventListener('click', (event) => event.preventDefault());
+    await act(async () => {
+      link!.click();
+      await Promise.resolve();
+    });
+    expect(authMocks.recordStoreRatingNavigation).toHaveBeenCalledTimes(1);
+    expect(panel?.textContent).toContain('Disabled after opening the store');
+  });
+
   it('normalizes and persists split auto-tag policy inputs independently', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
@@ -429,7 +519,7 @@ describe('Options preferences', () => {
     expect(document.querySelector('a[href="https://github.com/octocat?tab=stars"]')).toBeNull();
   });
 
-  it('shows one unified GitHub token section', async () => {
+  it('shows one unified GitHub token section with a collapsed illustrated guide', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
 
@@ -438,10 +528,28 @@ describe('Options preferences', () => {
     const githubSettings = document.querySelector<HTMLElement>(
       '[data-testid="github-connection-settings"]',
     );
-    expect(githubSettings?.textContent).toContain('Open the prefilled classic-token form above');
+    expect(githubSettings?.textContent).toContain(watchCopy.tokenStep1);
     expect(githubSettings?.textContent).toContain('read:user');
-    expect(githubSettings?.textContent).toContain('Following Radar');
-    expect(githubSettings?.querySelectorAll('ol > li')).toHaveLength(3);
+    expect(githubSettings?.textContent).toContain('Following');
+    const guide = githubSettings?.querySelector<HTMLDetailsElement>(
+      '[data-testid="token-setup-guide"]',
+    );
+    expect(guide).toBeInstanceOf(HTMLDetailsElement);
+    expect(guide?.open).toBe(false);
+    expect(guide?.querySelector('summary')?.textContent).toContain(watchCopy.tokenStepsTitle);
+    expect(guide?.querySelectorAll('ol > li')).toHaveLength(3);
+    const images = [...(guide?.querySelectorAll<HTMLImageElement>('img') ?? [])];
+    expect(images.map((image) => image.alt)).toEqual([
+      watchCopy.tokenStep1Alt,
+      watchCopy.tokenStep2Alt,
+      watchCopy.tokenStep3Alt,
+    ]);
+    expect(images.map((image) => [image.width, image.height])).toEqual([
+      [1568, 875],
+      [1568, 520],
+      [888, 290],
+    ]);
+    expect(images.every((image) => image.getAttribute('loading') === 'lazy')).toBe(true);
     expect(document.querySelector('[data-testid="watch-inbox-settings"]')).toBeNull();
   });
 

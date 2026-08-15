@@ -328,6 +328,22 @@ export interface AgentProviderConfig {
 }
 export type GitHubCredentialStatus = 'ready' | 'reauthorization_required' | null;
 export type WatchCollapsedRepositorySignatures = Record<string, string>;
+export type StoreRatingPromptStatus =
+  | 'tracking'
+  | 'snoozed'
+  | 'disabled'
+  | 'store_opened'
+  | 'exhausted';
+
+export interface StoreRatingPromptState {
+  version: 1;
+  status: StoreRatingPromptStatus;
+  activeLocalDays: readonly string[];
+  meaningfulActionCount: number;
+  exposureCount: number;
+  snoozeUntil: string | null;
+}
+
 
 /** Light config kept in chrome.storage.local. */
 export interface Config {
@@ -362,6 +378,8 @@ export interface Config {
   seenTooltips: number;
   /** Whether the one-time Auto Tags choice has already been answered. */
   autoTagAgentPromptSeen: boolean;
+  /** Installation-local eligibility, cooldown, and terminal state for store-rating reminders. */
+  storeRatingPrompt: StoreRatingPromptState;
   /** Legacy max topic-derived tags per repo. Read as compatibility input only. */
   autoTagLimit: number;
   /** Max topic-derived tags per repo for automated organization. */

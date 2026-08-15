@@ -41,6 +41,12 @@ export interface MessageCatalog {
     autoTagAgentPromptBody: string;
     autoTagAgentPromptYes: string;
     autoTagAgentPromptNo: string;
+    storeRatingPromptTitle: string;
+    storeRatingPromptBody: string;
+    storeRatingPromptLinkLabel: (store: string) => string;
+    storeRatingPromptStoreNote: (store: string) => string;
+    storeRatingPromptLater: string;
+    storeRatingPromptNever: string;
     deleteTagFailed: (error: string) => string;
     deleteAllTagsFailed: (error: string) => string;
     noTokenBanner: string;
@@ -824,6 +830,17 @@ export interface MessageCatalog {
     title: string;
     /** Label for the prominent "Star the project" CTA button. */
     starRepoButton: string;
+    storeRatingHeading: string;
+    storeRatingManualAction: (store: string) => string;
+    storeRatingManualHint: (store: string) => string;
+    storeRatingReminderLabel: string;
+    storeRatingReminderTracking: string;
+    storeRatingReminderSnoozed: (date: string) => string;
+    storeRatingReminderDisabled: string;
+    storeRatingReminderExhausted: string;
+    storeRatingReminderStoreOpened: string;
+    storeRatingReminderEnable: string;
+    storeRatingReminderDisable: string;
     agentHeading: string;
     agentIntro: string;
     agentServiceLabel: string;
@@ -929,9 +946,16 @@ export interface MessageCatalog {
     tokenRemoved: string;
     /** Compact PAT walkthrough. */
     tokenStepsTitle: string;
+    tokenStep1Title: string;
     tokenStep1: string;
+    tokenStep1Alt: string;
+    tokenStep2Title: string;
     tokenStep2: string;
+    tokenStep2Alt: string;
+    tokenStep3Title: string;
     tokenStep3: string;
+    tokenStep3Alt: string;
+    tokenScopesWarning: string;
     languageLabel: string;
     gistHeading: string;
     gistBoundPrefix: string;
@@ -1119,6 +1143,14 @@ const messages: Record<Locale, MessageCatalog> = {
         "Auto Tags adds local tags directly from GitHub topics. Cubby also checks repository details, then waits for you to approve its suggestions.",
       autoTagAgentPromptYes: "Ask Cubby",
       autoTagAgentPromptNo: "Use Auto Tags",
+      storeRatingPromptTitle: "Enjoying Better GitHub Stars Manager?",
+      storeRatingPromptBody:
+        "A quick store rating helps other GitHub users discover the extension.",
+      storeRatingPromptLinkLabel: (store) =>
+        `Rate Better GitHub Stars Manager in ${store}`,
+      storeRatingPromptStoreNote: (store) => `Choose your rating in ${store}.`,
+      storeRatingPromptLater: "Later",
+      storeRatingPromptNever: "Never remind me",
       deleteTagFailed: (error) => `delete tag: ${error}`,
       deleteAllTagsFailed: (error) => `delete all tags: ${error}`,
       noTokenBanner: "A GitHub Classic PAT is required to load your data.",
@@ -2030,6 +2062,18 @@ const messages: Record<Locale, MessageCatalog> = {
     options: {
       title: "Better GitHub Stars Manager — Options",
       starRepoButton: "Like the project? Leave a star:)",
+      storeRatingHeading: "Store rating",
+      storeRatingManualAction: (store) => `Rate in ${store}`,
+      storeRatingManualHint: (store) =>
+        `Opens the verified Better GitHub Stars Manager listing in ${store}.`,
+      storeRatingReminderLabel: "Automatic rating reminder",
+      storeRatingReminderTracking: "Enabled",
+      storeRatingReminderSnoozed: (date) => `Paused until ${date}`,
+      storeRatingReminderDisabled: "Disabled",
+      storeRatingReminderExhausted: "Finished after two reminders",
+      storeRatingReminderStoreOpened: "Disabled after opening the store",
+      storeRatingReminderEnable: "Enable reminders",
+      storeRatingReminderDisable: "Disable reminders",
       agentHeading: "2. Cubby",
       agentIntro:
         "Connect an AI service. Cubby sends requests directly to it and shows the results in the extension.",
@@ -2162,13 +2206,17 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenVerifiedWatchForbidden: (username) => `Classic PAT verified for @${username}. Stars and Gist are ready; add notifications to use Watch.`,
       tokenVerifiedWatchUnverified: (username) => `Classic PAT verified for @${username}. Stars and Gist are ready, but Notifications access could not be checked.`,
       tokenRemoved: "GitHub Classic PAT removed.",
-      tokenStepsTitle: "How to create a GitHub token",
-      tokenStep1:
-        "Open the prefilled classic-token form above, choose a name and expiration, then review the selected scopes: repo → Stars, repository access, and Issue/PR details; gist → cross-device annotation sync; notifications → Watch Inbox; read:user → Following Radar.",
-      tokenStep2:
-        "Generate the token, copy it immediately, paste it above, then choose Save & verify.",
-      tokenStep3:
-        "If GitHub rejects a feature later, update this same token's scopes and save it here again.",
+      tokenStepsTitle: "Token setup",
+      tokenStep1Title: "Set the expiration",
+      tokenStep1: "Open the prefilled form, keep the Note, and choose a finite expiration.",
+      tokenStep1Alt: "Classic PAT Note, expiration, and repo scope",
+      tokenStep2Title: "Check the scopes",
+      tokenStep2: "Keep repo, gist, notifications, and read:user selected. Leave user unselected.",
+      tokenStep2Alt: "gist, notifications, and read:user selected; user unselected",
+      tokenStep3Title: "Generate and save",
+      tokenStep3: "Generate the token, copy it, paste it below, then select Save & verify.",
+      tokenStep3Alt: "GitHub Generate token button",
+      tokenScopesWarning: "GitHub shows the token once. Keep it private.",
       languageLabel: "Language",
       gistHeading: "3. Gist sync",
       gistBoundPrefix: "Bound to gist",
@@ -2397,6 +2445,14 @@ const messages: Record<Locale, MessageCatalog> = {
         "Auto Tags 会直接根据 GitHub 主题添加本地标签。Cubby 会多看一眼仓库详情，先给出建议，等你确认后再改。",
       autoTagAgentPromptYes: "让 Cubby 看看",
       autoTagAgentPromptNo: "直接用 Auto Tags",
+      storeRatingPromptTitle: "喜欢 Better GitHub Stars Manager 吗？",
+      storeRatingPromptBody:
+        "一条简短的商店评价，可以帮助更多 GitHub 用户发现这个扩展。",
+      storeRatingPromptLinkLabel: (store) =>
+        `前往 ${store} 评价 Better GitHub Stars Manager`,
+      storeRatingPromptStoreNote: (store) => `实际评分将在 ${store} 中完成。`,
+      storeRatingPromptLater: "以后再说",
+      storeRatingPromptNever: "不再提醒",
       deleteTagFailed: (error) => `删除标签失败: ${error}`,
       deleteAllTagsFailed: (error) => `删除全部标签失败: ${error}`,
       noTokenBanner: "应用需要 GitHub Classic PAT 鉴权才能加载数据。",
@@ -3301,6 +3357,18 @@ const messages: Record<Locale, MessageCatalog> = {
     options: {
       title: "Better GitHub Stars Manager — 选项",
       starRepoButton: "点个Star~",
+      storeRatingHeading: "商店评分",
+      storeRatingManualAction: (store) => `前往 ${store} 评分`,
+      storeRatingManualHint: (store) =>
+        `打开 Better GitHub Stars Manager 在 ${store} 中已验证的商店页面。`,
+      storeRatingReminderLabel: "自动评分提醒",
+      storeRatingReminderTracking: "已启用",
+      storeRatingReminderSnoozed: (date) => `已暂停至 ${date}`,
+      storeRatingReminderDisabled: "已停用",
+      storeRatingReminderExhausted: "两次提醒已完成",
+      storeRatingReminderStoreOpened: "打开商店后已停用",
+      storeRatingReminderEnable: "启用提醒",
+      storeRatingReminderDisable: "停用提醒",
       tokenHeading: "1. GitHub Classic PAT",
       tokenIntroPrefix: "创建 Stars、Gist、Watch 和 Following 共用的唯一 GitHub token：",
       tokenLinkLabel: "打开已预填的 classic token 表单",
@@ -3432,11 +3500,17 @@ const messages: Record<Locale, MessageCatalog> = {
       tokenVerifiedWatchForbidden: (username) => `@${username} 的 Classic PAT 已验证。Stars 和 Gist 可用；如需 Watch，请添加 notifications。`,
       tokenVerifiedWatchUnverified: (username) => `@${username} 的 Classic PAT 已验证。Stars 和 Gist 可用，但暂时无法检查 Notifications。`,
       tokenRemoved: "GitHub Classic PAT 已移除。",
-      tokenStepsTitle: "如何创建 GitHub token",
-      tokenStep1:
-        "打开上方已经预填的 classic token 表单，设置名称和有效期，并确认 scopes：repo → Stars、仓库访问和 Issue/PR 详情；gist → 跨设备同步标签和笔记；notifications → Watch 收件箱；read:user → Following Radar。",
-      tokenStep2: "生成 token 后立即复制，粘贴到上方，然后点击保存并验证。",
-      tokenStep3: "如果后续某项功能被 GitHub 拒绝，请更新同一个 token 的 scopes，再回到这里重新保存。",
+      tokenStepsTitle: "Token 配置",
+      tokenStep1Title: "设置有效期",
+      tokenStep1: "打开预填表单，保留 Note，并选择有限有效期。",
+      tokenStep1Alt: "Classic PAT 的 Note、有效期和 repo scope",
+      tokenStep2Title: "确认 scopes",
+      tokenStep2: "保留 repo、gist、notifications 和 read:user；不要勾选 user。",
+      tokenStep2Alt: "已勾选 gist、notifications 和 read:user，未勾选 user",
+      tokenStep3Title: "生成并保存",
+      tokenStep3: "生成 Token，复制并粘贴到下方，然后点击保存并验证。",
+      tokenStep3Alt: "GitHub Generate token 按钮",
+      tokenScopesWarning: "GitHub 只显示一次 Token，请妥善保管。",
       languageLabel: "语言",
       gistHeading: "3. Gist 同步",
       gistBoundPrefix: "已绑定 gist",

@@ -205,4 +205,62 @@ describe('preferences persistence', () => {
     assert.equal(storedConfig.maxTagsPerRepo, 8);
     assert.equal(storedConfig.minTopicRepoCount, 3);
   });
+
+  it('normalizes and serializes store-rating reminder mutations', async () => {
+    const { authStore, CONFIG_STORAGE_KEY } = await import('../src/auth/auth-store');
+    storageBacking[CONFIG_STORAGE_KEY] = {
+      storeRatingPrompt: {
+        version: 1,
+        status: 'tracking',
+        activeLocalDays: ['invalid'],
+        meaningfulActionCount: -1,
+        exposureCount: 99,
+        snoozeUntil: 'invalid',
+      },
+    };
+
+    assert.deepEqual((await authStore.getConfig()).storeRatingPrompt, {
+      version: 1,
+      status: 'exhausted',
+      activeLocalDays: [],
+      meaningfulActionCount: 0,
+      exposureCount: 2,
+      snoozeUntil: null,
+    });
+
+    await authStore.reenableStoreRatingPrompt();
+    for (const now of [
+      new Date(2026, 7, 13, 12).getTime(),
+      new Date(2026, 7, 14, 12).getTime(),
+      new Date(2026, 7, 15, 12).getTime(),
+    ]) {
+      await authStore.recordStoreRatingActiveDay(now);
+    }
+    await Promise.all([
+      authStore.recordStoreRatingMeaningfulAction(),
+      authStore.recordStoreRatingMeaningfulAction(),
+      authStore.recordStoreRatingMeaningfulAction(),
+      authStore.recordStoreRatingMeaningfulAction(),
+    ]);
+
+    const now = Date.parse('2026-08-15T12:00:00.000Z');
+    const claims = await Promise.all([
+      authStore.consumeStoreRatingPromptExposure(now),
+      authStore.consumeStoreRatingPromptExposure(now),
+    ]);
+    assert.equal(claims.filter((claim) => claim.consumed).length, 1);
+
+    const storedConfig = storageBacking[CONFIG_STORAGE_KEY] as Config;
+    assert.deepEqual({
+      status: storedConfig.storeRatingPrompt.status,
+      activeLocalDays: storedConfig.storeRatingPrompt.activeLocalDays,
+      meaningfulActionCount: storedConfig.storeRatingPrompt.meaningfulActionCount,
+      exposureCount: storedConfig.storeRatingPrompt.exposureCount,
+    }, {
+      status: 'snoozed',
+      activeLocalDays: ['2026-08-13', '2026-08-14', '2026-08-15'],
+      meaningfulActionCount: 3,
+      exposureCount: 1,
+    });
+  });
 });
