@@ -199,6 +199,7 @@ async function run(runtime) {
       },
     },
   );
+  await useEnglishLocale(runtime.page);
 
   runtime.stage = 'raw-capture';
   runtime.rawCapture = await verifyRawCaptureLifecycle(runtime.page);
@@ -524,6 +525,20 @@ function assertScenarioArtifact(artifact, runtime) {
     rawCredentialOccurrences,
     privatePayloadOccurrences,
   });
+}
+
+async function useEnglishLocale(page) {
+  await page.evaluate(async () => {
+    const { gsm_config: config = {} } = await chrome.storage.local.get('gsm_config');
+    await chrome.storage.local.set({
+      gsm_config: { ...config, locale: 'en' },
+    });
+  });
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="agent-diagnostics-raw-capture"]')
+      ?.textContent?.includes('repository code and private notes'),
+    { timeout: TIMEOUT_MS },
+  );
 }
 
 async function verifyRawCaptureLifecycle(page) {
