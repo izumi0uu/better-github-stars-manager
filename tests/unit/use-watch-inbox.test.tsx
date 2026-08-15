@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { act } from 'react';
+import { act, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWatchInbox } from '@/ui/hooks/use-watch-inbox';
 import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
@@ -95,10 +95,17 @@ function cooldownResponse(
   return response;
 }
 
-function Harness() {
-  const inbox = useWatchInbox();
+function Harness({ initialActive = true }: { initialActive?: boolean } = {}) {
+  const [active, setActive] = useState(initialActive);
+  const inbox = useWatchInbox({ active });
   return (
     <div>
+      <button type="button" data-testid="activate" onClick={() => setActive(true)}>
+        Activate
+      </button>
+      <button type="button" data-testid="deactivate" onClick={() => setActive(false)}>
+        Deactivate
+      </button>
       <button type="button" data-testid="all" onClick={() => inbox.setUnreadOnly(false)}>
         All
       </button>
@@ -130,6 +137,7 @@ function Harness() {
         Collapse
       </button>
       <span data-testid="mode">{inbox.unreadOnly ? 'unread' : 'all'}</span>
+      <span data-testid="active">{active ? 'active' : 'dormant'}</span>
       <span data-testid="loading">{inbox.loading ? 'loading' : 'ready'}</span>
       <span data-testid="count">{inbox.result?.totalCount ?? 'none'}</span>
       <span data-testid="collapsed">
@@ -184,6 +192,95 @@ afterEach(() => {
 });
 
 describe('useWatchInbox', () => {
+  it('stays dormant without presenting a request as in flight', async () => {
+    watchMocks.bgCall.mockResolvedValue(queryResponse(1));
+    const container = mountReact(<Harness initialActive={false} />, mountedRoots);
+
+    await act(async () => {
+      await Promise.resolve();
+      runtimeListeners[0]?.({ type: 'watchChanged' });
+      storageListeners[0]?.({
+        gsm_github_credentials: { newValue: { watchCredentialSource: 'main' } },
+      }, 'local');
+      await Promise.resolve();
+    });
+
+    expect(watchMocks.bgCall).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="active"]')?.textContent).toBe('dormant');
+    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('none');
+  });
+
+  it('starts exactly one visible initial query on first activation', async () => {
+    const firstQuery = deferred<WatchInboxQueryResponse>();
+    watchMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryWatchInbox') return firstQuery.promise;
+      throw new Error(`Unexpected request: ${type}`);
+    });
+    const container = mountReact(<Harness initialActive={false} />, mountedRoots);
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="activate"]')!);
+
+    expect(watchMocks.bgCall).toHaveBeenCalledTimes(1);
+    expect(watchMocks.bgCall).toHaveBeenCalledWith('queryWatchInbox', { unreadOnly: false });
+    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('loading');
+
+    await act(async () => {
+      firstQuery.resolve(queryResponse(1));
+      await firstQuery.promise;
+      await Promise.resolve();
+    });
+
+    expect(watchMocks.bgCall).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+  });
+
+  it('clears dormant cached rows on credential change and visibly reloads on activation', async () => {
+    const reactivationQuery = deferred<WatchInboxQueryResponse>();
+    let queryCount = 0;
+    watchMocks.bgCall.mockImplementation((type: string) => {
+      if (type !== 'queryWatchInbox') throw new Error(`Unexpected request: ${type}`);
+      queryCount += 1;
+      return queryCount === 1 ? Promise.resolve(queryResponse(1)) : reactivationQuery.promise;
+    });
+    const container = mountReact(<Harness />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="deactivate"]')!);
+    await act(async () => {
+      runtimeListeners[0]?.({ type: 'watchChanged' });
+      storageListeners[0]?.({
+        gsm_github_credentials: { newValue: { watchCredentialSource: 'dedicated' } },
+      }, 'local');
+      await Promise.resolve();
+    });
+    expect(queryCount).toBe(1);
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('none');
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="activate"]')!);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(queryCount).toBe(2);
+    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('loading');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('none');
+
+    await act(async () => {
+      reactivationQuery.resolve(queryResponse(2));
+      await reactivationQuery.promise;
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
+    expect(queryCount).toBe(2);
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
+  });
+
   it('keeps the latest local Unread/All mode after an in-flight refresh completes', async () => {
     const refresh = deferred<unknown>();
     const queryModes: boolean[] = [];
@@ -240,7 +337,7 @@ describe('useWatchInbox', () => {
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
   });
 
-  it('silently reloads only when the authoritative GitHub credential record changes', async () => {
+  it('clears the cached result while reloading an authoritative credential change', async () => {
     const credentialQuery = deferred<WatchInboxQueryResponse>();
     const queryModes: boolean[] = [];
     watchMocks.bgCall.mockImplementation((
@@ -284,8 +381,8 @@ describe('useWatchInbox', () => {
     });
 
     expect(queryModes).toEqual([false, false]);
-    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
-    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('loading');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('none');
 
     await act(async () => {
       credentialQuery.resolve(queryResponse(3));
@@ -293,6 +390,45 @@ describe('useWatchInbox', () => {
       await Promise.resolve();
     });
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('3');
+  });
+
+  it('keeps old-account results cleared when credential reload fails and an older query resolves', async () => {
+    const staleQuery = deferred<WatchInboxQueryResponse>();
+    let queryCount = 0;
+    watchMocks.bgCall.mockImplementation((type: string) => {
+      if (type !== 'queryWatchInbox') throw new Error(`Unexpected request: ${type}`);
+      queryCount += 1;
+      if (queryCount === 1) return Promise.resolve(queryResponse(4));
+      if (queryCount === 2) return staleQuery.promise;
+      return Promise.reject(new Error('background unavailable'));
+    });
+    const container = mountReact(<Harness />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('4');
+
+    await act(async () => {
+      runtimeListeners[0]?.({ type: 'watchChanged' });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      storageListeners[0]?.({
+        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+      }, 'local');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('none');
+    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
+
+    await act(async () => {
+      staleQuery.resolve(queryResponse(9));
+      await staleQuery.promise;
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('none');
   });
 
   it('requeries local status once the persisted cooldown expires', async () => {

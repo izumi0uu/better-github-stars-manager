@@ -202,6 +202,32 @@ export async function getWatchState(
   return state?.accountLogin === normalizedLogin ? state : null;
 }
 
+export async function countUnreadWatchThreads(
+  accountLogin: string | null | undefined,
+): Promise<number> {
+  if (!accountLogin?.trim()) return 0;
+  const normalizedLogin = normalizeAccountLogin(accountLogin);
+  return db.transaction('r', db.stars, db.watchNotificationThreads, db.watchState, async () => {
+    const state = await db.watchState.get(WATCH_STATE_ID);
+    if (state?.accountLogin !== normalizedLogin) return 0;
+    const unreadThreads = await db.watchNotificationThreads
+      .filter((thread) => thread.unread)
+      .toArray();
+    if (unreadThreads.length === 0) return 0;
+    const repositoryNames = [...new Set(unreadThreads.map((thread) => thread.repositoryFullName))];
+    const liveStars = await db.stars
+      .where('full_name')
+      .anyOfIgnoreCase(repositoryNames)
+      .filter((star) => !star.tombstone && star.viewer_has_starred !== false)
+      .toArray();
+    const liveNames = liveRepositoryNames(liveStars);
+    return unreadThreads.reduce(
+      (count, thread) => count + (liveNames.has(thread.repositoryFullName) ? 1 : 0),
+      0,
+    );
+  });
+}
+
 export async function getWatchRepositories(
   accountLogin: string | null | undefined,
 ): Promise<GitHubWatchRepository[]> {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { GITHUB_CREDENTIALS_STORAGE_KEY } from '@/auth/auth-store';
 import { bgCall } from '@/utils/messaging';
 import type {
   RadarQueryResponse,
@@ -25,7 +26,14 @@ export type RadarActionError = Readonly<{
   message: string;
 }>;
 
-export function useRadar() {
+export function useRadar({
+  active = true,
+  onMeaningfulAction,
+}: {
+  /** Dormant resources preserve cached data and perform no background query work. */
+  active?: boolean;
+  onMeaningfulAction?: () => void;
+} = {}) {
   const [result, setResult] = useState<RadarQueryResponse | null>(null);
   const [recommendations, setRecommendations] = useState<RecommendationQueryResponse | null>(null);
   const [discoverView, setDiscoverView] = useState<RadarDiscoverView>('following');
@@ -34,8 +42,8 @@ export function useRadar() {
     following: true,
     self: false,
   });
-  const [loading, setLoading] = useState(true);
-  const [recommendationLoading, setRecommendationLoading] = useState(true);
+  const [loading, setLoading] = useState(active);
+  const [recommendationLoading, setRecommendationLoading] = useState(active);
   const [refreshing, setRefreshing] = useState(false);
   const [recommendationRefreshing, setRecommendationRefreshing] = useState(false);
   const [error, setError] = useState<'query' | 'refresh' | null>(null);
@@ -43,6 +51,10 @@ export function useRadar() {
   const [pendingAction, setPendingAction] = useState<RadarPendingAction | null>(null);
   const [actionError, setActionError] = useState<RadarActionError | null>(null);
   const mountedRef = useRef(true);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const radarLoadedRef = useRef(false);
+  const recommendationsLoadedRef = useRef(false);
   const generation = useRef(0);
   const recommendationGeneration = useRef(0);
   const refreshingRef = useRef(false);
@@ -69,7 +81,7 @@ export function useRadar() {
   }, []);
 
   const load = useCallback(async (silent = false) => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || !activeRef.current) return;
     const requestGeneration = ++generation.current;
     if (!silent) {
       setLoading(true);
@@ -77,19 +89,30 @@ export function useRadar() {
     }
     try {
       const next = await bgCall<RadarQueryResponse>('queryRadar');
-      if (!mountedRef.current || generation.current !== requestGeneration) return;
+      if (
+        !mountedRef.current
+        || !activeRef.current
+        || generation.current !== requestGeneration
+      ) return;
       setResult(next);
+      radarLoadedRef.current = true;
       setError(null);
     } catch {
-      if (!mountedRef.current || generation.current !== requestGeneration) return;
+      if (
+        !mountedRef.current
+        || !activeRef.current
+        || generation.current !== requestGeneration
+      ) return;
       setError('query');
     } finally {
-      if (mountedRef.current && generation.current === requestGeneration) setLoading(false);
+      if (mountedRef.current && activeRef.current && generation.current === requestGeneration) {
+        setLoading(false);
+      }
     }
   }, []);
 
   const loadRecommendations = useCallback(async (silent = false) => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || !activeRef.current) return;
     const requestGeneration = ++recommendationGeneration.current;
     if (!silent) {
       setRecommendationLoading(true);
@@ -97,29 +120,50 @@ export function useRadar() {
     }
     try {
       const next = await bgCall<RecommendationQueryResponse>('queryRecommendations');
-      if (!mountedRef.current || recommendationGeneration.current !== requestGeneration) return;
+      if (
+        !mountedRef.current
+        || !activeRef.current
+        || recommendationGeneration.current !== requestGeneration
+      ) return;
       setRecommendations(next);
+      recommendationsLoadedRef.current = true;
       setRecommendationError(null);
     } catch {
-      if (!mountedRef.current || recommendationGeneration.current !== requestGeneration) return;
+      if (
+        !mountedRef.current
+        || !activeRef.current
+        || recommendationGeneration.current !== requestGeneration
+      ) return;
       setRecommendationError('query');
     } finally {
-      if (mountedRef.current && recommendationGeneration.current === requestGeneration) {
+      if (
+        mountedRef.current
+        && activeRef.current
+        && recommendationGeneration.current === requestGeneration
+      ) {
         setRecommendationLoading(false);
       }
     }
   }, []);
 
   useEffect(() => {
-    void load(false);
-    void loadRecommendations(false);
-  }, [load, loadRecommendations]);
+    if (!active) {
+      generation.current += 1;
+      recommendationGeneration.current += 1;
+      setLoading(false);
+      setRecommendationLoading(false);
+      return;
+    }
+    void load(radarLoadedRef.current);
+    void loadRecommendations(recommendationsLoadedRef.current);
+  }, [active, load, loadRecommendations]);
 
   useEffect(() => {
     if (typeof chrome === 'undefined') return;
     const onMessage = chrome.runtime?.onMessage;
     if (!onMessage) return;
     const listener = (message: { type?: string }) => {
+      if (!activeRef.current) return;
       if (message.type === 'radarChanged' || message.type === 'dataChanged') void load(true);
       if (message.type === 'recommendationsChanged' || message.type === 'dataChanged') {
         void loadRecommendations(true);
@@ -129,12 +173,39 @@ export function useRadar() {
     return () => onMessage.removeListener(listener);
   }, [load, loadRecommendations]);
 
+  useEffect(() => {
+    if (typeof chrome === 'undefined') return;
+    const onChanged = chrome.storage?.onChanged;
+    if (!onChanged) return;
+    const listener = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      if (areaName !== 'local' || !changes[GITHUB_CREDENTIALS_STORAGE_KEY]) return;
+      generation.current += 1;
+      recommendationGeneration.current += 1;
+      radarLoadedRef.current = false;
+      recommendationsLoadedRef.current = false;
+      setResult(null);
+      setRecommendations(null);
+      setError(null);
+      setRecommendationError(null);
+      setLoading(activeRef.current);
+      setRecommendationLoading(activeRef.current);
+      if (!activeRef.current) return;
+      void load();
+      void loadRecommendations();
+    };
+    onChanged.addListener(listener);
+    return () => onChanged.removeListener(listener);
+  }, [load, loadRecommendations]);
+
   const cooldownUntil = result?.status.snapshotStatus === 'cooldown'
     ? result.status.state?.nextAllowedAt ?? null
     : null;
   useEffect(() => {
-    if (!cooldownUntil) {
-      cooldownProbeRef.current = { deadline: null, attempts: 0 };
+    if (!active || !cooldownUntil) {
+      if (!cooldownUntil) cooldownProbeRef.current = { deadline: null, attempts: 0 };
       return;
     }
     const allowedAt = Date.parse(cooldownUntil);
@@ -150,14 +221,16 @@ export function useRadar() {
       void load(true);
     }, Math.max(0, remaining) + 25);
     return () => window.clearTimeout(timer);
-  }, [cooldownProbeTick, cooldownUntil, load]);
+  }, [active, cooldownProbeTick, cooldownUntil, load]);
 
   const recommendationCooldownUntil = recommendations?.status.snapshotStatus === 'cooldown'
     ? recommendations.status.state?.nextAllowedAt ?? null
     : null;
   useEffect(() => {
-    if (!recommendationCooldownUntil) {
-      recommendationCooldownProbeRef.current = { deadline: null, attempts: 0 };
+    if (!active || !recommendationCooldownUntil) {
+      if (!recommendationCooldownUntil) {
+        recommendationCooldownProbeRef.current = { deadline: null, attempts: 0 };
+      }
       return;
     }
     const allowedAt = Date.parse(recommendationCooldownUntil);
@@ -174,6 +247,7 @@ export function useRadar() {
     }, Math.max(0, remaining) + 25);
     return () => window.clearTimeout(timer);
   }, [
+    active,
     loadRecommendations,
     recommendationCooldownProbeTick,
     recommendationCooldownUntil,
@@ -222,6 +296,7 @@ export function useRadar() {
   const mutate = useCallback(async <T,>(
     action: RadarPendingAction,
     operation: () => Promise<T>,
+    meaningful = false,
   ): Promise<T | null> => {
     if (!mountedRef.current || mutatingRef.current) return null;
     mutatingRef.current = true;
@@ -229,6 +304,7 @@ export function useRadar() {
     setActionError(null);
     try {
       const value = await operation();
+      if (meaningful) onMeaningfulAction?.();
       await load(true);
       return value;
     } catch (mutationError) {
@@ -244,7 +320,7 @@ export function useRadar() {
       mutatingRef.current = false;
       if (mountedRef.current) setPendingAction(null);
     }
-  }, [load]);
+  }, [load, onMeaningfulAction]);
 
   const star = useCallback((repositoryKey: string, fullName: string) => mutate(
     { kind: 'star', repositoryKey },
@@ -252,6 +328,7 @@ export function useRadar() {
       await loadRecommendations(true);
       return value;
     }),
+    true,
   ), [loadRecommendations, mutate]);
 
   const unstar = useCallback((repositoryKey: string, fullName: string) => mutate(
@@ -260,6 +337,7 @@ export function useRadar() {
       await loadRecommendations(true);
       return value;
     }),
+    true,
   ), [loadRecommendations, mutate]);
 
   const setFavorite = useCallback((
@@ -269,11 +347,13 @@ export function useRadar() {
   ) => mutate(
     { kind: 'favorite', repositoryKey },
     () => bgCall('setFavorite', { full_name: fullName, favorite }),
+    true,
   ), [mutate]);
 
   const addTag = useCallback((repositoryKey: string, fullName: string, tag: string) => mutate(
     { kind: 'tag', repositoryKey },
     () => bgCall('radarAddTag', { fullName, tag }),
+    true,
   ), [mutate]);
 
   const dismiss = useCallback((repositoryKey: string, activityIds: readonly string[]) => mutate<RadarStatus>(

@@ -232,6 +232,7 @@ import {
   type BgsmOrganizeJobDeliveryKind,
   type BgsmOrganizeJobControlFailureReason,
   type BgsmOrganizeJobErrorReason,
+  type ManagerSurfaceBadgeCounts,
   type BgsmOrganizeJobServerMessage,
 } from "@/utils/messaging";
 import { writeOptionsIntent } from '@/utils/options-intent';
@@ -250,6 +251,7 @@ type Req = BgsmAgentSessionRequest
   | { type: "gistPush" }
   | { type: "gistPull" }
   | { type: "getStatus" }
+  | { type: "queryManagerSurfaceBadges" }
   | { type: "getWatchStatus" }
   | { type: "queryWatchInbox"; unreadOnly?: unknown }
   | { type: "getWatchSubjectDetail"; threadId?: unknown }
@@ -363,6 +365,43 @@ const radarRefreshCoordinator = createRadarRefreshCoordinator({
   },
   broadcastChanged: broadcastRadarChanged,
 });
+
+const EMPTY_MANAGER_SURFACE_BADGE_COUNTS: ManagerSurfaceBadgeCounts = Object.freeze({
+  watchUnreadCount: 0,
+  radarUnseenCount: 0,
+});
+
+type GitHubCredentialSnapshot = Awaited<ReturnType<typeof authStore.getGitHubCredentialSnapshot>>;
+
+function badgeAccountLogin(snapshot: GitHubCredentialSnapshot): string | null {
+  const login = snapshot.accountLogin?.trim();
+  return login ? login.toLocaleLowerCase('en-US') : null;
+}
+
+function badgeCredentialUnchanged(
+  previous: GitHubCredentialSnapshot,
+  current: GitHubCredentialSnapshot,
+): boolean {
+  return badgeAccountLogin(previous) === badgeAccountLogin(current)
+    && previous.mainIdentity === current.mainIdentity
+    && Boolean(previous.mainToken) === Boolean(current.mainToken);
+}
+
+async function queryManagerSurfaceBadgeCounts(): Promise<ManagerSurfaceBadgeCounts> {
+  const credential = await authStore.getGitHubCredentialSnapshot();
+  const accountLogin = badgeAccountLogin(credential);
+  if (!accountLogin || !credential.mainToken) return EMPTY_MANAGER_SURFACE_BADGE_COUNTS;
+
+  const [watchUnreadCount, radarUnseenCount] = await Promise.all([
+    watchStore.countUnreadWatchThreads(accountLogin),
+    radarStore.countUnseenRadarActivities(accountLogin),
+  ]);
+  const latestCredential = await authStore.getGitHubCredentialSnapshot();
+  if (!badgeCredentialUnchanged(credential, latestCredential)) {
+    return EMPTY_MANAGER_SURFACE_BADGE_COUNTS;
+  }
+  return { watchUnreadCount, radarUnseenCount };
+}
 const recommendationRefreshCoordinator = createRecommendationRefreshCoordinator({
   runSerialized: (operation) => jobQueue.run(operation),
   auth: authStore,
@@ -1414,7 +1453,10 @@ async function getStatusConfigAndBackfills() {
 
 async function getStatusPayload() {
   const { cfg, backfills } = await getStatusConfigAndBackfills();
-  const hasToken = await authStore.hasToken();
+  const [hasToken, activeOrganizeJob] = await Promise.all([
+    authStore.hasToken(),
+    getActiveOrganizeJob(),
+  ]);
   const onboardingStage = normalizeOnboardingStage(
     cfg.onboardingStage,
     cfg.seenOnboarding,
@@ -1441,6 +1483,7 @@ async function getStatusPayload() {
     backfills,
     activeBackfillId: selectActiveBackfillId(backfills),
     inFlight: jobQueue.isRunning(),
+    organizeJobActive: !!activeOrganizeJob,
   };
 }
 
@@ -1682,6 +1725,8 @@ async function handle(req: Req): Promise<Res> {
       }
       case "getStatus":
         return { ok: true, data: await getStatusPayload() };
+      case "queryManagerSurfaceBadges":
+        return { ok: true, data: await queryManagerSurfaceBadgeCounts() };
       case 'getWatchStatus': {
         const m = await getLocaleMessages();
         try {

@@ -69,6 +69,22 @@ function stateForAccount(
   return state && state.accountLogin === accountKey(accountLogin) ? state : null;
 }
 
+export async function countUnseenRadarActivities(
+  accountLogin: string | null | undefined,
+): Promise<number> {
+  if (!accountLogin?.trim()) return 0;
+  const key = accountKey(accountLogin);
+  return db.transaction('r', db.radarActivities, db.radarState, async () => {
+    const state = await db.radarState.get(RADAR_STATE_ID);
+    if (state?.accountLogin !== key) return 0;
+    return db.radarActivities
+      .where('accountLogin')
+      .equals(key)
+      .filter((activity) => activity.dismissedAt === null && storedSeenAt(activity.seenAt) === null)
+      .count();
+  });
+}
+
 /** Remove another account's cached activity before any new account can read it. */
 export async function prepareRadarAccount(accountLogin: string): Promise<void> {
   const key = accountKey(accountLogin);

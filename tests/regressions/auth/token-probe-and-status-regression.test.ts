@@ -102,12 +102,14 @@ describe('Status/token regressions', () => {
       backfills: {},
       activeBackfillId: null,
       inFlight: true,
+      organizeJobActive: true,
     };
     const next = mergeStatusPatch(current, { seenTooltips: 2 });
     assert.equal(next.seenTooltips, 2);
     assert.deepEqual(next.progress, current.progress);
     assert.equal(next.hasToken, true);
     assert.equal(next.inFlight, true);
+    assert.equal(next.organizeJobActive, true);
   });
 
   it('mergeStatusSnapshot keeps live progress when a restored snapshot is idle', () => {
@@ -120,6 +122,7 @@ describe('Status/token regressions', () => {
       backfills: {},
       activeBackfillId: null,
       inFlight: true,
+      organizeJobActive: true,
     };
     const snapshot: SyncStatus = {
       progress: { phase: 'idle', done: 0, total: null, message: 'Last sync done' },
@@ -130,11 +133,13 @@ describe('Status/token regressions', () => {
       backfills: {},
       activeBackfillId: null,
       inFlight: false,
+      organizeJobActive: false,
     };
     const merged = mergeStatusSnapshot(current, snapshot);
     assert.ok(merged);
     assert.deepEqual(merged!.progress, current.progress);
     assert.equal(merged!.inFlight, true);
+    assert.equal(merged!.organizeJobActive, false);
   });
 
   it('translateError keeps split token-probe codes distinct', () => {

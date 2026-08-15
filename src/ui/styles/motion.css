@@ -513,19 +513,6 @@
     }
   }
 
-  .gsm-watch-group-content {
-    display: grid;
-    grid-template-rows: 0fr;
-    opacity: 0;
-    transition:
-      grid-template-rows var(--gsm-duration-control) var(--gsm-ease-standard),
-      opacity var(--gsm-duration-fast) var(--gsm-ease-standard);
-  }
-
-  .gsm-watch-group-content-open {
-    grid-template-rows: 1fr;
-    opacity: 1;
-  }
 
   .gsm-watch-thread-chevron {
     transition: transform var(--gsm-duration-fast) var(--gsm-ease-enter);
@@ -797,7 +784,6 @@
     .gsm-agent-drawer,
     .gsm-agent-drawer-scrim,
     .gsm-surface-indicator,
-    .gsm-watch-group-content,
     .gsm-watch-thread-chevron,
     .gsm-watch-thread-disclosure,
     .gsm-watch-thread-inspector,

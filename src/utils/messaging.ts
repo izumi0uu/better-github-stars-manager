@@ -83,6 +83,13 @@ export interface SyncStatus {
   activeBackfillId: BackfillId | null;
   /** True while the background is still holding an active serialized job. */
   inFlight: boolean;
+  /** Authoritative durable Organize job activity from the background store. */
+  organizeJobActive: boolean;
+}
+
+export interface ManagerSurfaceBadgeCounts {
+  watchUnreadCount: number;
+  radarUnseenCount: number;
 }
 
 
@@ -1395,6 +1402,7 @@ export function mergeProgressStatus(
     backfills,
     activeBackfillId: selectActiveBackfillId(backfills),
     inFlight: progress.phase !== 'idle',
+    organizeJobActive: current?.organizeJobActive ?? false,
   };
 }
 
@@ -1412,6 +1420,7 @@ export function mergeStatusPatch(
     backfills: {},
     activeBackfillId: null,
     inFlight: false,
+    organizeJobActive: false,
   };
   const hasToken = patch.hasToken ?? base.hasToken;
   const onboardingStage = normalizeOnboardingStage(
@@ -1455,6 +1464,7 @@ export function mergeStatusSnapshot(current: SyncStatus | null, snapshot: SyncSt
     backfills: normalizeBackfillMap(snapshot.backfills ?? current?.backfills),
     activeBackfillId: selectActiveBackfillId(snapshot.backfills ?? current?.backfills),
     inFlight: keepLiveProgress ? true : snapshot.inFlight ?? current?.inFlight ?? snapshot.progress.phase !== 'idle',
+    organizeJobActive: snapshot.organizeJobActive ?? current?.organizeJobActive ?? false,
   };
   merged.seenOnboarding = stageMarksOnboardingSeen(merged.onboardingStage);
   return merged;

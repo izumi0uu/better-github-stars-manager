@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adjacentWatchThreadRowIndex,
+  buildWatchInboxRows,
   deriveWatchStatusPresentation,
   countWatchReasons,
   filterWatchInboxProjection,
@@ -164,6 +166,48 @@ describe('Watch inbox presentation filters', () => {
       ...KNOWN_NOTIFICATION_REASONS,
       'future_reason',
     ])).toEqual(['future_reason']);
+  });
+});
+
+describe('Watch inbox flat rows', () => {
+  const groups: WatchInboxProjection['groups'] = [{
+    repositoryFullName: 'owner/alpha',
+    repositoryHtmlUrl: 'https://github.com/owner/alpha',
+    repositoryOwnerLogin: 'owner',
+    repositoryOwnerAvatarUrl: null,
+    latestUpdatedAt: threads[1].updatedAt,
+    threads: [threads[0], threads[1]],
+  }, {
+    repositoryFullName: 'owner/security',
+    repositoryHtmlUrl: 'https://github.com/owner/security',
+    repositoryOwnerLogin: 'owner',
+    repositoryOwnerAvatarUrl: null,
+    latestUpdatedAt: threads[2].updatedAt,
+    threads: [threads[2]],
+  }];
+
+  it('emits one stable header/thread stream and excludes collapsed repository threads', () => {
+    const rows = buildWatchInboxRows(groups, new Set(['owner/alpha']));
+
+    expect(rows.map((row) => row.key)).toEqual([
+      'repository:owner/alpha',
+      'thread:1',
+      'thread:2',
+      'repository:owner/security',
+    ]);
+    expect(rows.filter((row) => row.kind === 'thread').map((row) => row.thread.id))
+      .toEqual(['1', '2']);
+    expect(buildWatchInboxRows(groups, new Set()).map((row) => row.kind))
+      .toEqual(['repository', 'repository']);
+  });
+
+  it('finds adjacent logical threads across repository header boundaries', () => {
+    const rows = buildWatchInboxRows(groups, new Set(['owner/alpha', 'owner/security']));
+
+    expect(adjacentWatchThreadRowIndex(rows, '2', 'ArrowDown')).toBe(4);
+    expect(adjacentWatchThreadRowIndex(rows, '3', 'ArrowUp')).toBe(2);
+    expect(adjacentWatchThreadRowIndex(rows, '2', 'Home')).toBe(1);
+    expect(adjacentWatchThreadRowIndex(rows, '1', 'End')).toBe(4);
   });
 });
 

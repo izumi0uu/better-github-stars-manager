@@ -14,12 +14,19 @@ import type {
 import { normalizeWatchCollapsedRepositories } from '@/preferences';
 import type { WatchCollapsedRepositorySignatures } from '@/types';
 
-export function useWatchInbox() {
+export function useWatchInbox({
+  active = true,
+  onMeaningfulAction,
+}: {
+  /** Dormant resources preserve cached data and perform no background query work. */
+  active?: boolean;
+  onMeaningfulAction?: () => void;
+} = {}) {
   const [unreadOnly, setUnreadOnly] = useState(true);
   const [collapsedRepositories, setCollapsedRepositories] =
     useState<WatchCollapsedRepositorySignatures>({});
   const [result, setResult] = useState<WatchInboxQueryResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(active);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<'query' | 'refresh' | null>(null);
   const [actionPending, setActionPending] = useState<{
@@ -31,6 +38,9 @@ export function useWatchInbox() {
   const refreshingRef = useRef(false);
   const actionPendingRef = useRef(false);
   const mountedRef = useRef(true);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const hasLoadedRef = useRef(false);
   const cooldownProbeRef = useRef<{ deadline: string | null; attempts: number }>({
     deadline: null,
     attempts: 0,
@@ -46,7 +56,7 @@ export function useWatchInbox() {
   }, []);
 
   const load = useCallback(async (silent = false) => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || !activeRef.current) return;
     const requestGeneration = ++generation.current;
     if (!silent) {
       setLoading(true);
@@ -54,20 +64,36 @@ export function useWatchInbox() {
     }
     try {
       const next = await bgCall<WatchInboxQueryResponse>('queryWatchInbox', { unreadOnly: false });
-      if (!mountedRef.current || generation.current !== requestGeneration) return;
+      if (
+        !mountedRef.current
+        || !activeRef.current
+        || generation.current !== requestGeneration
+      ) return;
       setResult(next);
+      hasLoadedRef.current = true;
       setError(null);
     } catch {
-      if (!mountedRef.current || generation.current !== requestGeneration) return;
+      if (
+        !mountedRef.current
+        || !activeRef.current
+        || generation.current !== requestGeneration
+      ) return;
       setError('query');
     } finally {
-      if (mountedRef.current && generation.current === requestGeneration) setLoading(false);
+      if (mountedRef.current && activeRef.current && generation.current === requestGeneration) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    void load(false);
-  }, [load]);
+    if (!active) {
+      generation.current += 1;
+      setLoading(false);
+      return;
+    }
+    void load(hasLoadedRef.current);
+  }, [active, load]);
   useEffect(() => {
     let active = true;
     void authStore.getConfig()
@@ -86,7 +112,7 @@ export function useWatchInbox() {
     const onMessage = chrome.runtime?.onMessage;
     if (!onMessage) return;
     const listener = (message: { type?: string }) => {
-      if (message.type === 'watchChanged') void load(true);
+      if (message.type === 'watchChanged' && activeRef.current) void load(true);
     };
     onMessage.addListener(listener);
     return () => onMessage.removeListener(listener);
@@ -106,7 +132,14 @@ export function useWatchInbox() {
           nextConfig?.watchCollapsedRepositories,
         ));
       }
-      if (changes[GITHUB_CREDENTIALS_STORAGE_KEY]) void load(true);
+      if (changes[GITHUB_CREDENTIALS_STORAGE_KEY]) {
+        generation.current += 1;
+        hasLoadedRef.current = false;
+        setResult(null);
+        setError(null);
+        setLoading(activeRef.current);
+        if (activeRef.current) void load();
+      }
     };
     onChanged.addListener(listener);
     return () => onChanged.removeListener(listener);
@@ -116,8 +149,8 @@ export function useWatchInbox() {
     ? result.status.state?.inbox.nextAllowedAt ?? null
     : null;
   useEffect(() => {
-    if (!cooldownUntil) {
-      cooldownProbeRef.current = { deadline: null, attempts: 0 };
+    if (!active || !cooldownUntil) {
+      if (!cooldownUntil) cooldownProbeRef.current = { deadline: null, attempts: 0 };
       return;
     }
     const allowedAt = Date.parse(cooldownUntil);
@@ -136,7 +169,7 @@ export function useWatchInbox() {
       void load(true);
     }, Math.max(0, remaining) + 25);
     return () => clearTimeout(timer);
-  }, [cooldownProbeTick, cooldownUntil, load]);
+  }, [active, cooldownProbeTick, cooldownUntil, load]);
 
   const refresh = useCallback(async () => {
     if (!mountedRef.current || refreshingRef.current) return;
@@ -170,6 +203,7 @@ export function useWatchInbox() {
         action === 'read' ? 'markWatchThreadsRead' : 'markWatchThreadsDone',
         { threadIds },
       );
+      onMeaningfulAction?.();
       await load(true);
     } catch {
       await load(true);
@@ -178,7 +212,7 @@ export function useWatchInbox() {
       actionPendingRef.current = false;
       if (mountedRef.current) setActionPending(null);
     }
-  }, [load]);
+  }, [load, onMeaningfulAction]);
 
   const markThreadsRead = useCallback((threadIds: readonly string[]) => (
     mutateThreads('read', threadIds)

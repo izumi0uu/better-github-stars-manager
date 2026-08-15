@@ -19,6 +19,7 @@ function status(patch: Partial<SyncStatus> = {}): SyncStatus {
     backfills: {},
     activeBackfillId: null,
     inFlight: false,
+    organizeJobActive: false,
     ...patch,
   };
 }

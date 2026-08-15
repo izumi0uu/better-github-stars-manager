@@ -4,6 +4,26 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const virtualScrollToIndex = vi.hoisted(() => vi.fn());
+
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: ({
+    count,
+    getItemKey,
+  }: {
+    count: number;
+    getItemKey: (index: number) => string | number;
+  }) => ({
+    getTotalSize: () => count * 37,
+    getVirtualItems: () => Array.from(
+      { length: Math.min(count, 12) },
+      (_, index) => ({ index, start: index * 37, size: 37, key: getItemKey(index) }),
+    ),
+    measureElement: vi.fn(),
+    scrollToIndex: virtualScrollToIndex,
+  }),
+}));
 import {
   WatchInbox,
   WatchStatusRibbon,
@@ -132,6 +152,7 @@ function subjectDetail(): WatchSubjectDetail {
 afterEach(() => {
   cleanupMountedRootsAndBody(mountedRoots);
   vi.unstubAllGlobals();
+  virtualScrollToIndex.mockClear();
 });
 
 function renderInbox(props: Partial<React.ComponentProps<typeof WatchInbox>> = {}) {
@@ -725,7 +746,7 @@ describe('WatchInbox', () => {
     expect(error?.textContent).toContain('Couldn’t mark the selected notifications as done.');
   });
 
-  it('defaults repository groups open and persists explicit collapse intent', async () => {
+  it('defaults repository groups open, excludes collapsed threads, and closes disclosures', async () => {
     const threads = Array.from({ length: 9 }, (_, index) => thread(index));
     const onCollapseChange = vi.fn();
     const container = renderInbox({
@@ -734,6 +755,13 @@ describe('WatchInbox', () => {
     });
 
     expect(container.querySelector('summary')).toBeNull();
+    const disclosureSelector =
+      'button[data-watch-thread][aria-label="Notification details: Thread 8"]';
+    const disclosure = container.querySelector<HTMLButtonElement>(disclosureSelector);
+    if (!disclosure) throw new Error('Expected Watch thread disclosure');
+    await click(disclosure);
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+
     const collapse = container.querySelector<HTMLButtonElement>(
       '[aria-label="Collapse owner/repo-8"]',
     );
@@ -745,9 +773,7 @@ describe('WatchInbox', () => {
       '[aria-label="Expand owner/repo-8"]',
     );
     expect(expand?.getAttribute('aria-expanded')).toBe('false');
-    expect(container.querySelector(
-      'button[data-watch-thread][aria-label="Notification details: Thread 8"]',
-    )?.getAttribute('data-watch-thread-hidden')).toBe('true');
+    expect(container.querySelector(disclosureSelector)).toBeNull();
     expect(onCollapseChange).toHaveBeenCalledWith(
       'owner/repo-8',
       watchGroupContentSignature([threads[8]]),
@@ -758,6 +784,9 @@ describe('WatchInbox', () => {
     if (!collapsedRepository) throw new Error('Expected collapsed Watch repository');
     expect(findButtonByText(collapsedRepository, 'Mark all as read').disabled).toBe(false);
     expect(findButtonByText(collapsedRepository, 'Mark all as done').disabled).toBe(false);
+
+    await click(expand!);
+    expect(container.querySelector(disclosureSelector)?.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('searches repository names and thread titles, then shows a filter-specific empty state', async () => {
@@ -814,14 +843,14 @@ describe('WatchInbox', () => {
 
     expect(container.querySelector(
       'button[data-watch-thread][aria-label="Notification details: Thread 8"]',
-    )?.getAttribute('data-watch-thread-hidden')).toBe('true');
+    )).toBeNull();
     await setInputValue(search, 'Thread 8');
 
     expect(container.querySelector('[aria-label="Collapse owner/repo-8"]')?.hasAttribute('disabled'))
       .toBe(true);
     expect(container.querySelector(
       'button[data-watch-thread][aria-label="Notification details: Thread 8"]',
-    )?.hasAttribute('data-watch-thread-hidden')).toBe(false);
+    )).not.toBeNull();
 
     await setInputValue(search, '');
 
@@ -829,7 +858,7 @@ describe('WatchInbox', () => {
       .toBe(false);
     expect(container.querySelector(
       'button[data-watch-thread][aria-label="Notification details: Thread 8"]',
-    )?.getAttribute('data-watch-thread-hidden')).toBe('true');
+    )).toBeNull();
   });
 
   it('auto-expands updated repository content and clears the stale collapse record', () => {
@@ -905,9 +934,7 @@ describe('WatchInbox', () => {
     expect(container.textContent).toContain('Security alert');
     expect(container.textContent).not.toContain('Review request');
     expect(container.textContent).not.toContain('Future event');
-    expect(container.querySelectorAll(
-      'button[data-watch-thread]:not([data-watch-thread-hidden])',
-    )).toHaveLength(3);
+    expect(container.querySelectorAll('button[data-watch-thread]')).toHaveLength(3);
 
     await click(findButtonByText(popover, 'Direct'));
 
@@ -916,6 +943,64 @@ describe('WatchInbox', () => {
     expect(container.textContent).toContain('Review request');
     expect(container.textContent).not.toContain('Security alert');
     expect(container.textContent).not.toContain('Future event');
+  });
+
+  it('bounds the browser path by flat virtual rows for four skewed repositories', () => {
+    const groups = Array.from({ length: 4 }, (_, repositoryIndex) => {
+      const repositoryFullName = `owner/large-${repositoryIndex}`;
+      const repositoryThreads = Array.from({ length: 200 }, (_, threadIndex) => thread(
+        repositoryIndex * 200 + threadIndex,
+        { repositoryFullName, repositoryHtmlUrl: `https://github.com/${repositoryFullName}` },
+      ));
+      return {
+        repositoryFullName,
+        repositoryHtmlUrl: `https://github.com/${repositoryFullName}`,
+        repositoryOwnerLogin: 'owner',
+        repositoryOwnerAvatarUrl: null,
+        latestUpdatedAt: repositoryThreads[0].updatedAt,
+        threads: repositoryThreads,
+      };
+    });
+    const allThreads = groups.flatMap((group) => group.threads);
+    const container = renderInbox({
+      result: result({ threads: allThreads, groups }),
+      scrollElement: document.createElement('div'),
+    });
+
+    expect(allThreads).toHaveLength(800);
+    expect(container.querySelectorAll('button[data-watch-thread]').length).toBeLessThanOrEqual(11);
+    expect(container.querySelectorAll('[data-watch-repository]').length).toBeLessThanOrEqual(1);
+  });
+
+  it('scrolls an unmounted adjacent logical thread into the virtual window', async () => {
+    const repositoryFullName = 'owner/keyboard-window';
+    const repositoryThreads = Array.from({ length: 30 }, (_, index) => thread(index, {
+      repositoryFullName,
+      repositoryHtmlUrl: `https://github.com/${repositoryFullName}`,
+      updatedAt: `2026-08-05T00:00:${String(index).padStart(2, '0')}Z`,
+    }));
+    const container = renderInbox({
+      result: result({
+        threads: repositoryThreads,
+        groups: [{
+          repositoryFullName,
+          repositoryHtmlUrl: `https://github.com/${repositoryFullName}`,
+          repositoryOwnerLogin: 'owner',
+          repositoryOwnerAvatarUrl: null,
+          latestUpdatedAt: repositoryThreads[29].updatedAt,
+          threads: repositoryThreads,
+        }],
+      }),
+      scrollElement: document.createElement('div'),
+    });
+    const mountedThreads = container.querySelectorAll<HTMLButtonElement>('button[data-watch-thread]');
+    const lastMounted = mountedThreads[mountedThreads.length - 1];
+    if (!lastMounted) throw new Error('Expected a bounded virtual thread window');
+
+    lastMounted.focus();
+    await act(async () => keydown(lastMounted, 'ArrowDown'));
+
+    expect(virtualScrollToIndex).toHaveBeenCalledWith(12, { align: 'auto' });
   });
 
   it('moves focus with Arrow Up/Down/Home/End across visible thread disclosures only', async () => {
@@ -938,7 +1023,7 @@ describe('WatchInbox', () => {
     if (!firstButton || !lastButton) throw new Error('Expected visible Watch thread disclosures');
     expect(container.querySelector(
       'button[data-watch-thread][aria-label="Notification details: Collapsed thread"]',
-    )?.getAttribute('data-watch-thread-hidden')).toBe('true');
+    )).toBeNull();
 
     firstButton.focus();
     keydown(firstButton, 'ArrowDown');

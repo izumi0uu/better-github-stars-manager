@@ -52,6 +52,7 @@ import type {
   RadarView,
 } from '@/ui/hooks/use-radar';
 import { useDelayedHoverIntent } from '@/ui/hooks/use-delayed-hover-intent';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useDismissableNotice } from '@/ui/hooks/use-dismissable-notice';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { SearchMatchText } from '@/ui/components/SearchMatchText';
@@ -73,6 +74,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/shadcn/tooltip';
 interface RadarSurfaceProps {
   result: RadarQueryResponse | null;
   recommendations: RecommendationQueryResponse | null;
+  scrollElement?: HTMLElement | null;
   discoverView: RadarDiscoverView;
   loading: boolean;
   recommendationLoading: boolean;
@@ -2141,6 +2143,7 @@ function ForYouSurface({
 export function RadarSurface({
   result,
   recommendations,
+  scrollElement,
   discoverView,
   loading,
   recommendationLoading,
@@ -2193,6 +2196,12 @@ export function RadarSurface({
   const visibleResultCount = view === 'feed'
     ? activitySearchResults.length
     : projectSearchResults.length;
+  const radarVirtualizer = useVirtualizer({
+    count: view === 'feed' ? activitySearchResults.length : projectSearchResults.length,
+    getScrollElement: () => scrollElement ?? null,
+    estimateSize: () => (view === 'feed' ? 84 : 168),
+    overscan: 8,
+  });
 
   useEffect(() => {
     setOpenRowKey(null);
@@ -2386,6 +2395,44 @@ export function RadarSurface({
         : view === 'feed'
           ? m.radar.listEndActivities(visibleResultCount)
           : m.radar.listEndProjects(visibleResultCount);
+  const renderRadarRow = (index: number) => {
+    if (view === 'feed') {
+      const searchResult = activitySearchResults[index];
+      const { activity } = searchResult;
+      return (
+        <RadarFeedRow
+          searchResult={searchResult}
+          open={openRowKey === activity.id}
+          onOpenChange={(open) => setOpenRowKey(open ? activity.id : null)}
+          pendingAction={pendingAction}
+          actionError={actionError}
+          onStar={onStar}
+          onUnstar={onUnstar}
+          onSetFavorite={onSetFavorite}
+          onAddTag={onAddTag}
+          onDismiss={() => dismissAt(activity.repositoryKey, [activity.id], index)}
+          onMarkSeen={onMarkSeen}
+        />
+      );
+    }
+    const searchResult = projectSearchResults[index];
+    const { project } = searchResult;
+    return (
+      <RadarProjectRow
+        searchResult={searchResult}
+        open={openRowKey === `project:${project.repositoryKey}`}
+        onOpenChange={(open) => setOpenRowKey(open ? `project:${project.repositoryKey}` : null)}
+        pendingAction={pendingAction}
+        actionError={actionError}
+        onStar={onStar}
+        onUnstar={onUnstar}
+        onSetFavorite={onSetFavorite}
+        onAddTag={onAddTag}
+        onDismiss={() => dismissAt(project.repositoryKey, project.activityIds, index)}
+        onMarkSeen={onMarkSeen}
+      />
+    );
+  };
   return renderFrame(
     <>
       {!partialDismissed && state?.partialReasons.length ? (
@@ -2422,48 +2469,46 @@ export function RadarSurface({
       ) : (
         <SurfaceWorkCanvas
           variant={view === 'feed' ? 'following-feed' : 'following'}
-          className="divide-y divide-border/70 py-1"
           data-radar-view={view}
         >
-          {view === 'feed'
-            ? activitySearchResults.map((searchResult, index) => {
-              const { activity } = searchResult;
+          {scrollElement ? (
+            <div style={{ height: radarVirtualizer.getTotalSize(), position: 'relative' }}>
+              {radarVirtualizer.getVirtualItems().map((vi) => {
+                const index = vi.index;
+                const itemKey = view === 'feed'
+                  ? activitySearchResults[index].activity.id
+                  : projectSearchResults[index].project.repositoryKey;
+                return (
+                  <div
+                    key={itemKey}
+                    ref={radarVirtualizer.measureElement}
+                    data-index={index}
+                    className="border-b border-border/70"
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${vi.start}px)`,
+                    }}
+                  >
+                    {renderRadarRow(index)}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            (view === 'feed' ? activitySearchResults : projectSearchResults).map((searchResult, index) => {
+              const itemKey = 'activity' in searchResult
+                ? searchResult.activity.id
+                : searchResult.project.repositoryKey;
               return (
-                <RadarFeedRow
-                  key={activity.id}
-                  searchResult={searchResult}
-                  open={openRowKey === activity.id}
-                  onOpenChange={(open) => setOpenRowKey(open ? activity.id : null)}
-                  pendingAction={pendingAction}
-                  actionError={actionError}
-                  onStar={onStar}
-                  onUnstar={onUnstar}
-                  onSetFavorite={onSetFavorite}
-                  onAddTag={onAddTag}
-                  onDismiss={() => dismissAt(activity.repositoryKey, [activity.id], index)}
-                  onMarkSeen={onMarkSeen}
-                />
+                <div key={itemKey} className="border-b border-border/70">
+                  {renderRadarRow(index)}
+                </div>
               );
             })
-            : projectSearchResults.map((searchResult, index) => {
-              const { project } = searchResult;
-              return (
-                <RadarProjectRow
-                  key={project.repositoryKey}
-                  searchResult={searchResult}
-                  open={openRowKey === `project:${project.repositoryKey}`}
-                  onOpenChange={(open) => setOpenRowKey(open ? `project:${project.repositoryKey}` : null)}
-                  pendingAction={pendingAction}
-                  actionError={actionError}
-                  onStar={onStar}
-                  onUnstar={onUnstar}
-                  onSetFavorite={onSetFavorite}
-                  onAddTag={onAddTag}
-                  onDismiss={() => dismissAt(project.repositoryKey, project.activityIds, index)}
-                  onMarkSeen={onMarkSeen}
-                />
-              );
-            })}
+          )}
           <SurfaceListEndMarker tone={listEndTone} text={listEndText} />
         </SurfaceWorkCanvas>
       )}

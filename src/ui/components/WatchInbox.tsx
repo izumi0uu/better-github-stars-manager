@@ -18,6 +18,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -28,6 +29,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { Streamdown } from 'streamdown';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useI18n } from '@/i18n';
 
 import { cn } from '@/lib/utils';
@@ -44,6 +46,8 @@ import { Input } from '@/ui/shadcn/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
 import { Spinner } from '@/ui/shadcn/spinner';
 import {
+  adjacentWatchThreadRowIndex,
+  buildWatchInboxRows,
   countWatchReasons,
   deriveWatchStatusPresentation,
   filterWatchInboxProjection,
@@ -53,6 +57,7 @@ import {
   watchReasonPresetValues,
   type WatchReasonCount,
   type WatchReasonPreset,
+  type WatchThreadNavigationKey,
 } from '@/ui/watch-inbox-presentation';
 import {
   notificationSubjectTypeLabel,
@@ -103,6 +108,7 @@ function WatchMarkdownLink({
 
 interface WatchInboxProps {
   result: WatchInboxQueryResponse | null;
+  scrollElement?: HTMLElement | null;
   loading: boolean;
   refreshing: boolean;
   error: 'query' | 'refresh' | null;
@@ -140,6 +146,10 @@ const REASON_PRESETS: readonly WatchReasonPreset[] = [
   'other',
 ];
 
+const WATCH_REPOSITORY_ROW_ESTIMATE = 34;
+const WATCH_THREAD_ROW_ESTIMATE = 37;
+const WATCH_ROW_OVERSCAN = 8;
+
 function normalizedReason(reason: string): string {
   return reason.trim().toLowerCase();
 }
@@ -160,33 +170,6 @@ function isWatchCredentialError(code: string | null | undefined): boolean {
   return code === 'authentication_required' || code === 'permission_denied';
 }
 
-function handleThreadListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-  if (event.altKey || event.ctrlKey || event.metaKey) return;
-  if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
-  const target = event.target instanceof Element
-    ? event.target.closest<HTMLButtonElement>('button[data-watch-thread]')
-    : null;
-  if (!target || !event.currentTarget.contains(target)) return;
-
-  // Only expanded groups participate in list-level keyboard navigation.
-  const buttons = Array.from(
-    event.currentTarget.querySelectorAll<HTMLButtonElement>(
-      'button[data-watch-thread]:not([data-watch-thread-hidden])',
-    ),
-  );
-  const currentIndex = buttons.indexOf(target);
-  if (currentIndex < 0 || buttons.length === 0) return;
-
-  const nextIndex = event.key === 'Home'
-    ? 0
-    : event.key === 'End'
-      ? buttons.length - 1
-      : event.key === 'ArrowUp'
-        ? Math.max(0, currentIndex - 1)
-        : Math.min(buttons.length - 1, currentIndex + 1);
-  event.preventDefault();
-  buttons[nextIndex]?.focus();
-}
 
 function ReasonFilterPopover({
   reasonCounts,
@@ -761,22 +744,28 @@ function SubjectDetailSlot({
 function ThreadRow({
   thread,
   locale,
-  hidden,
+  expanded,
+  focusRequested,
   actionPending,
+  onExpandedChange,
+  onFocusRequestHandled,
   onOpenMainTokenOptions,
   onMarkThreadsRead,
   onMarkThreadsDone,
 }: {
   thread: GitHubNotificationThread;
   locale: string;
-  hidden: boolean;
+  expanded: boolean;
+  focusRequested: boolean;
   actionPending: WatchInboxProps['actionPending'];
+  onExpandedChange: (expanded: boolean) => void;
+  onFocusRequestHandled: (threadId: string) => void;
   onOpenMainTokenOptions: () => void;
   onMarkThreadsRead: (ids: readonly string[]) => void;
   onMarkThreadsDone: (ids: readonly string[]) => void;
 }) {
   const { m } = useI18n();
-  const [expanded, setExpanded] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
   const [keyboardTransition, setKeyboardTransition] = useState(false);
   const target = thread.subjectHtmlUrl ?? thread.repositoryHtmlUrl;
   const updated = formatWatchRelativeTime(thread.updatedAt);
@@ -792,24 +781,25 @@ function ThreadRow({
   const donePending = threadActionPending && actionPending?.action === 'done';
 
   useEffect(() => {
-    if (hidden) setExpanded(false);
-  }, [hidden]);
+    if (!focusRequested) return;
+    buttonRef.current?.focus();
+    onFocusRequestHandled(thread.id);
+  }, [focusRequested, onFocusRequestHandled, thread.id]);
 
   const toggleExpanded = (event: ReactMouseEvent<HTMLButtonElement>) => {
     const keyboard = event.detail === 0;
     setKeyboardTransition(keyboard);
-    setExpanded((current) => !current);
+    onExpandedChange(!expanded);
     if (keyboard) requestAnimationFrame(() => setKeyboardTransition(false));
   };
 
   return (
     <article className="min-w-0" data-watch-thread-row={thread.id}>
       <button
+        ref={buttonRef}
         id={disclosureId}
         type="button"
-        data-watch-thread
-        data-watch-thread-hidden={hidden || undefined}
-        tabIndex={hidden ? -1 : undefined}
+        data-watch-thread={thread.id}
         aria-expanded={expanded}
         aria-controls={detailsId}
         aria-label={`${m.watch.threadDetails}: ${thread.subjectTitle}`}
@@ -959,43 +949,30 @@ function notificationSubjectIcon(type: string, reason: string): LucideIcon {
   }
 }
 
-function WatchGroup({
+function WatchRepositoryHeader({
   group,
   sourceGroup,
-  locale,
-  persistedSignature,
+  expanded,
   revealMatches,
   autoExpanded,
   actionPending,
-  onCollapseChange,
+  onToggleExpanded,
   onSelectRepository,
-  onOpenMainTokenOptions,
   onMarkThreadsRead,
   onMarkThreadsDone,
 }: {
   group: WatchInboxQueryResponse['groups'][number];
   sourceGroup: WatchInboxQueryResponse['groups'][number];
-  locale: string;
-  persistedSignature: string | null;
+  expanded: boolean;
   revealMatches: boolean;
   autoExpanded: boolean;
   actionPending: WatchInboxProps['actionPending'];
-  onCollapseChange?: (repository: string, signature: string | null) => void;
+  onToggleExpanded: () => void;
   onSelectRepository?: (fullName: string) => void;
-  onOpenMainTokenOptions: () => void;
   onMarkThreadsRead: (ids: readonly string[]) => void;
   onMarkThreadsDone: (ids: readonly string[]) => void;
 }) {
   const { m } = useI18n();
-  const [manualExpansion, setManualExpansion] = useState<'expanded' | 'collapsed' | null>(null);
-  const contentId = useId();
-  const contentSignature = watchGroupContentSignature(sourceGroup.threads);
-  const hasNewContent = persistedSignature
-    ? hasNewWatchGroupContent(persistedSignature, sourceGroup.threads)
-    : false;
-  const persistentlyCollapsed = persistedSignature !== null && !hasNewContent;
-  const expanded = revealMatches || hasNewContent || manualExpansion === 'expanded'
-    || (!persistentlyCollapsed && manualExpansion !== 'collapsed');
   const unreadCount = sourceGroup.threads.reduce(
     (count, thread) => count + Number(thread.unread),
     0,
@@ -1016,25 +993,9 @@ function WatchGroup({
   const readPending = pendingTargetsThisRepository && actionPending?.action === 'read';
   const donePending = pendingTargetsThisRepository && actionPending?.action === 'done';
 
-  useEffect(() => {
-    if (hasNewContent) setManualExpansion('expanded');
-  }, [hasNewContent]);
-
-  const toggleExpanded = () => {
-    if (revealMatches) return;
-    if (expanded) {
-      setManualExpansion('collapsed');
-      onCollapseChange?.(group.repositoryFullName, contentSignature);
-    } else {
-      setManualExpansion('expanded');
-      onCollapseChange?.(group.repositoryFullName, null);
-    }
-  };
-
   return (
     <section
       className={cn('relative bg-background', { 'gsm-watch-auto-expanded': autoExpanded })}
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '26px 320px' }}
       data-watch-repository={group.repositoryFullName}
     >
       <div className="flex min-h-[26px] min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md">
@@ -1045,12 +1006,11 @@ function WatchGroup({
           type="button"
           className="gsm-touch-target grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-transparent"
           aria-expanded={expanded}
-          aria-controls={contentId}
           aria-label={expanded
             ? m.watch.collapseRepository(group.repositoryFullName)
             : m.watch.expandRepository(group.repositoryFullName)}
           disabled={revealMatches}
-          onClick={toggleExpanded}
+          onClick={onToggleExpanded}
         >
           <ChevronDown
             className={cn('size-3.5 transition-transform', { '-rotate-90': !expanded })}
@@ -1108,35 +1068,13 @@ function WatchGroup({
           </Button>
         </div>
       </div>
-      <div
-        id={contentId}
-        className={cn('gsm-watch-group-content', { 'gsm-watch-group-content-open': expanded })}
-        aria-hidden={!expanded}
-        {...(!expanded
-          ? ({ inert: '' } as unknown as React.HTMLAttributes<HTMLDivElement>)
-          : {})}
-      >
-        <div className="min-h-0 overflow-hidden">
-          {group.threads.map((thread) => (
-            <ThreadRow
-              key={thread.id}
-              thread={thread}
-              locale={locale}
-              hidden={!expanded}
-              actionPending={actionPending}
-              onOpenMainTokenOptions={onOpenMainTokenOptions}
-              onMarkThreadsRead={onMarkThreadsRead}
-              onMarkThreadsDone={onMarkThreadsDone}
-            />
-          ))}
-        </div>
-      </div>
     </section>
   );
 }
 
 export function WatchInbox({
   result,
+  scrollElement,
   loading,
   refreshing,
   actionPending,
@@ -1156,6 +1094,13 @@ export function WatchInbox({
   const { m, locale } = useI18n();
   const [query, setQuery] = useState('');
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
+  const [manualRepositoryExpansions, setManualRepositoryExpansions] = useState<
+    Record<string, 'expanded' | 'collapsed'>
+  >({});
+  const [expandedThreadIds, setExpandedThreadIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [pendingFocusThreadId, setPendingFocusThreadId] = useState<string | null>(null);
   const [autoExpandedRepositories, setAutoExpandedRepositories] = useState<Record<string, true>>({});
   const reconciledCollapseSignatures = useRef<Record<string, string>>({});
   const searchInput = useImeBufferedInput(query, setQuery);
@@ -1180,7 +1125,150 @@ export function WatchInbox({
   ), [result?.groups]);
   const groups = visibleProjection?.groups ?? [];
   const hasPresentationFilters = query.trim().length > 0 || selectedReasons.length > 0;
+  const expandedRepositories = useMemo(() => {
+    const expanded = new Set<string>();
+    for (const group of groups) {
+      const repository = group.repositoryFullName.toLowerCase();
+      const sourceGroup = sourceGroupsByRepository.get(repository) ?? group;
+      const persistedSignature = collapsedRepositories[repository] ?? null;
+      const hasNewContent = persistedSignature !== null
+        && hasNewWatchGroupContent(persistedSignature, sourceGroup.threads);
+      const manualExpansion = manualRepositoryExpansions[repository] ?? null;
+      const persistentlyCollapsed = persistedSignature !== null && !hasNewContent;
+      if (
+        hasPresentationFilters
+        || hasNewContent
+        || manualExpansion === 'expanded'
+        || (!persistentlyCollapsed && manualExpansion !== 'collapsed')
+      ) expanded.add(repository);
+    }
+    return expanded;
+  }, [
+    collapsedRepositories,
+    groups,
+    hasPresentationFilters,
+    manualRepositoryExpansions,
+    sourceGroupsByRepository,
+  ]);
+  const flatRows = useMemo(
+    () => buildWatchInboxRows(groups, expandedRepositories),
+    [expandedRepositories, groups],
+  );
+  const rowVirtualizer = useVirtualizer({
+    count: flatRows.length,
+    getScrollElement: () => scrollElement ?? null,
+    getItemKey: (index) => flatRows[index]?.key ?? index,
+    estimateSize: (index) => flatRows[index]?.kind === 'repository'
+      ? WATCH_REPOSITORY_ROW_ESTIMATE
+      : WATCH_THREAD_ROW_ESTIMATE,
+    overscan: WATCH_ROW_OVERSCAN,
+  });
   const refreshDisabled = refreshing || actionPending !== null || status?.inboxStatus === 'cooldown';
+
+  const handleRepositoryToggle = useCallback((
+    group: WatchInboxQueryResponse['groups'][number],
+  ) => {
+    if (hasPresentationFilters) return;
+    const repository = group.repositoryFullName.toLowerCase();
+    const sourceGroup = sourceGroupsByRepository.get(repository) ?? group;
+    const expanded = expandedRepositories.has(repository);
+    setManualRepositoryExpansions((current) => ({
+      ...current,
+      [repository]: expanded ? 'collapsed' : 'expanded',
+    }));
+    if (expanded) {
+      const threadIds = new Set(sourceGroup.threads.map((thread) => thread.id));
+      setExpandedThreadIds((current) => {
+        let changed = false;
+        const next = new Set<string>();
+        for (const id of current) {
+          if (threadIds.has(id)) changed = true;
+          else next.add(id);
+        }
+        return changed ? next : current;
+      });
+      if (pendingFocusThreadId && threadIds.has(pendingFocusThreadId)) {
+        setPendingFocusThreadId(null);
+      }
+      onRepositoryCollapseChange?.(
+        group.repositoryFullName,
+        watchGroupContentSignature(sourceGroup.threads),
+      );
+    } else {
+      onRepositoryCollapseChange?.(group.repositoryFullName, null);
+    }
+  }, [
+    expandedRepositories,
+    hasPresentationFilters,
+    onRepositoryCollapseChange,
+    pendingFocusThreadId,
+    sourceGroupsByRepository,
+  ]);
+
+  const handleThreadExpandedChange = useCallback((threadId: string, expanded: boolean) => {
+    setExpandedThreadIds((current) => {
+      const next = new Set(current);
+      if (expanded) next.add(threadId);
+      else next.delete(threadId);
+      return next;
+    });
+  }, []);
+
+  const handleFocusRequestHandled = useCallback((threadId: string) => {
+    setPendingFocusThreadId((current) => current === threadId ? null : current);
+  }, []);
+
+  useEffect(() => {
+    if (hasPresentationFilters) return;
+    const collapsedThreadIds = new Set<string>();
+    for (const group of groups) {
+      const repository = group.repositoryFullName.toLowerCase();
+      if (expandedRepositories.has(repository)) continue;
+      const sourceGroup = sourceGroupsByRepository.get(repository) ?? group;
+      for (const thread of sourceGroup.threads) collapsedThreadIds.add(thread.id);
+    }
+    if (collapsedThreadIds.size === 0) return;
+    setExpandedThreadIds((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (collapsedThreadIds.has(id)) changed = true;
+        else next.add(id);
+      }
+      return changed ? next : current;
+    });
+    setPendingFocusThreadId((current) => (
+      current && collapsedThreadIds.has(current) ? null : current
+    ));
+  }, [expandedRepositories, groups, hasPresentationFilters, sourceGroupsByRepository]);
+
+  const handleThreadListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const target = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>('button[data-watch-thread]')
+      : null;
+    const currentThreadId = target?.dataset.watchThread;
+    if (!target || !currentThreadId || !event.currentTarget.contains(target)) return;
+    const nextRowIndex = adjacentWatchThreadRowIndex(
+      flatRows,
+      currentThreadId,
+      event.key as WatchThreadNavigationKey,
+    );
+    if (nextRowIndex === null) return;
+    const nextRow = flatRows[nextRowIndex];
+    if (nextRow.kind !== 'thread') return;
+    event.preventDefault();
+    const mountedTarget = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('button[data-watch-thread]'),
+    ).find((button) => button.dataset.watchThread === nextRow.thread.id);
+    if (mountedTarget) {
+      mountedTarget.focus();
+      return;
+    }
+    setPendingFocusThreadId(nextRow.thread.id);
+    rowVirtualizer.scrollToIndex(nextRowIndex, { align: 'auto' });
+  };
 
   useEffect(() => {
     if (!result || !onRepositoryCollapseChange) return;
@@ -1204,6 +1292,11 @@ export function WatchInbox({
       }
     }
     if (Object.keys(newlyExpanded).length > 0) {
+      setManualRepositoryExpansions((current) => {
+        const next = { ...current };
+        for (const repository of Object.keys(newlyExpanded)) next[repository] = 'expanded';
+        return next;
+      });
       setAutoExpandedRepositories((current) => ({ ...current, ...newlyExpanded }));
     }
   }, [collapsedRepositories, onRepositoryCollapseChange, result]);
@@ -1243,6 +1336,48 @@ export function WatchInbox({
 
   const inboxNeverLoaded = !state?.inbox.lastSuccessfulAt;
   const inboxCredentialFailure = isWatchCredentialError(state?.inbox.errorCode);
+
+  const rowSpacingClass = (index: number) => {
+    const row = flatRows[index];
+    const nextRow = flatRows[index + 1];
+    if (row.kind === 'repository' && nextRow?.kind === 'thread') return 'pb-1';
+    return !nextRow || nextRow.kind === 'repository' ? 'pb-3.5' : undefined;
+  };
+
+  const renderRowContent = (row: (typeof flatRows)[number]) => {
+    if (row.kind === 'repository') {
+      const repository = row.group.repositoryFullName.toLowerCase();
+      const sourceGroup = sourceGroupsByRepository.get(repository) ?? row.group;
+      return (
+        <WatchRepositoryHeader
+          group={row.group}
+          sourceGroup={sourceGroup}
+          expanded={expandedRepositories.has(repository)}
+          revealMatches={hasPresentationFilters}
+          autoExpanded={autoExpandedRepositories[repository] === true}
+          actionPending={actionPending}
+          onToggleExpanded={() => handleRepositoryToggle(row.group)}
+          onSelectRepository={onSelectRepository}
+          onMarkThreadsRead={onMarkThreadsRead}
+          onMarkThreadsDone={onMarkThreadsDone}
+        />
+      );
+    }
+    return (
+      <ThreadRow
+        thread={row.thread}
+        locale={locale}
+        expanded={expandedThreadIds.has(row.thread.id)}
+        focusRequested={pendingFocusThreadId === row.thread.id}
+        actionPending={actionPending}
+        onExpandedChange={(expanded) => handleThreadExpandedChange(row.thread.id, expanded)}
+        onFocusRequestHandled={handleFocusRequestHandled}
+        onOpenMainTokenOptions={onOpenMainTokenOptions}
+        onMarkThreadsRead={onMarkThreadsRead}
+        onMarkThreadsDone={onMarkThreadsDone}
+      />
+    );
+  };
 
   let content: React.ReactNode;
   if (!status.hasNotificationsToken) {
@@ -1305,31 +1440,41 @@ export function WatchInbox({
     content = (
       <SurfaceWorkCanvas variant="watch" className="px-4 py-3 max-sm:px-3">
         <div
-          className="relative flex flex-col gap-3.5 before:absolute before:bottom-3 before:left-[7px] before:top-3 before:w-px before:bg-muted-foreground/30 before:content-['']"
+          className="relative before:absolute before:bottom-3 before:left-[7px] before:top-3 before:w-px before:bg-muted-foreground/30 before:content-['']"
           data-watch-thread-list
           onKeyDown={handleThreadListKeyDown}
         >
-          {groups.map((group) => {
-            const repository = group.repositoryFullName.toLowerCase();
-            const sourceGroup = sourceGroupsByRepository.get(repository) ?? group;
-            return (
-              <WatchGroup
-                key={group.repositoryFullName}
-                group={group}
-                sourceGroup={sourceGroup}
-                locale={locale}
-                persistedSignature={collapsedRepositories[repository] ?? null}
-                revealMatches={hasPresentationFilters}
-                autoExpanded={autoExpandedRepositories[repository] === true}
-                actionPending={actionPending}
-                onCollapseChange={onRepositoryCollapseChange}
-                onSelectRepository={onSelectRepository}
-                onOpenMainTokenOptions={onOpenMainTokenOptions}
-                onMarkThreadsRead={onMarkThreadsRead}
-                onMarkThreadsDone={onMarkThreadsDone}
-              />
-            );
-          })}
+          {scrollElement ? (
+            <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
+              {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const row = flatRows[virtualRow.index];
+                if (!row) return null;
+                return (
+                  <div
+                    key={virtualRow.key}
+                    ref={rowVirtualizer.measureElement}
+                    data-index={virtualRow.index}
+                    className={rowSpacingClass(virtualRow.index)}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    {renderRowContent(row)}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            flatRows.map((row, index) => (
+              <div key={row.key} className={rowSpacingClass(index)}>
+                {renderRowContent(row)}
+              </div>
+            ))
+          )}
           <SurfaceListEndMarker
             variant="timeline"
             tone={listEndTone}

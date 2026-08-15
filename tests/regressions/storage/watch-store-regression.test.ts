@@ -6,6 +6,7 @@ import { createChromeMock } from '../../helpers/chrome-mock';
 import {
   applyWatchThreadMutation,
   clearWatchData,
+  countUnreadWatchThreads,
   disconnectWatchInbox,
   getWatchRepositories,
   getWatchState,
@@ -461,6 +462,39 @@ describe('Watch snapshot storage', () => {
       threadIds: ['1'],
       action: 'done',
     }), 0);
+  });
+
+  it('counts unread Inbox rows only for the bound account', async () => {
+    await db.stars.put(star('Owner/Repo'));
+    await replaceWatchScope({
+      accountLogin: ACCOUNT,
+      repositories: [{ full_name: 'owner/repo' }],
+      attemptedAt: FIRST,
+    });
+    await replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [
+        thread('1'),
+        { ...thread('2'), unread: false },
+        thread('3', 'outside/not-starred'),
+      ],
+      attemptedAt: FIRST,
+      lastModified: null,
+      nextAllowedAt: null,
+      candidateCount: 3,
+      truncated: false,
+      mode: 'replace',
+    });
+
+    assert.equal(await countUnreadWatchThreads('octocat'), 1);
+    assert.equal(await countUnreadWatchThreads('another-user'), 0);
+
+    await applyWatchThreadMutation({
+      accountLogin: ACCOUNT,
+      threadIds: ['1'],
+      action: 'read',
+    });
+    assert.equal(await countUnreadWatchThreads(ACCOUNT), 0);
   });
 
   it('isolates account changes and lets disconnect clear only private Inbox data', async () => {

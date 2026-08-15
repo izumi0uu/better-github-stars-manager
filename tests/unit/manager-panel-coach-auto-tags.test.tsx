@@ -70,6 +70,10 @@ vi.mock('@/ui/hooks/use-theme', () => ({
   }),
 }));
 
+vi.mock('@/ui/hooks/use-manager-surface-badges', () => ({
+  useManagerSurfaceBadges: () => ({ watchUnreadCount: 0, radarUnseenCount: 0 }),
+}));
+
 vi.mock('@/ui/hooks/use-column-layout-editor', () => ({
   useColumnLayoutEditor: () => {
     const order = ['favorite', 'repo', 'description', 'language', 'stars', 'updated', 'created', 'tags', 'notes'];
@@ -152,6 +156,7 @@ function status(stage: SyncStatus['onboardingStage']): SyncStatus {
     backfills: {},
     activeBackfillId: null,
     inFlight: true,
+    organizeJobActive: false,
   };
 }
 

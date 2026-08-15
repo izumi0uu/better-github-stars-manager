@@ -108,6 +108,71 @@ export function filterWatchInboxProjection(
   });
   return projectWatchInbox(threads);
 }
+
+export type WatchInboxFlatRow =
+  | {
+    kind: 'repository';
+    key: string;
+    group: WatchInboxProjection['groups'][number];
+  }
+  | {
+    kind: 'thread';
+    key: string;
+    repositoryFullName: string;
+    thread: GitHubNotificationThread;
+  };
+
+export type WatchThreadNavigationKey = 'ArrowUp' | 'ArrowDown' | 'Home' | 'End';
+
+/** One logical row stream keeps repository size from defining the render batch. */
+export function buildWatchInboxRows(
+  groups: WatchInboxProjection['groups'],
+  expandedRepositories: ReadonlySet<string>,
+): WatchInboxFlatRow[] {
+  const rows: WatchInboxFlatRow[] = [];
+  for (const group of groups) {
+    const repository = group.repositoryFullName.toLowerCase();
+    rows.push({
+      kind: 'repository',
+      key: `repository:${repository}`,
+      group,
+    });
+    if (!expandedRepositories.has(repository)) continue;
+    for (const thread of group.threads) {
+      rows.push({
+        kind: 'thread',
+        key: `thread:${thread.id}`,
+        repositoryFullName: group.repositoryFullName,
+        thread,
+      });
+    }
+  }
+  return rows;
+}
+
+export function adjacentWatchThreadRowIndex(
+  rows: readonly WatchInboxFlatRow[],
+  currentThreadId: string,
+  key: WatchThreadNavigationKey,
+): number | null {
+  const currentIndex = rows.findIndex((row) => (
+    row.kind === 'thread' && row.thread.id === currentThreadId
+  ));
+  if (currentIndex < 0) return null;
+
+  const direction = key === 'ArrowUp' ? -1 : 1;
+  let index = key === 'Home'
+    ? 0
+    : key === 'End'
+      ? rows.length - 1
+      : currentIndex + direction;
+  while (index >= 0 && index < rows.length) {
+    if (rows[index].kind === 'thread') return index;
+    index += key === 'Home' || key === 'ArrowDown' ? 1 : -1;
+  }
+  return currentIndex;
+}
+
 export function watchGroupContentSignature(
   threads: Iterable<GitHubNotificationThread>,
 ): string {

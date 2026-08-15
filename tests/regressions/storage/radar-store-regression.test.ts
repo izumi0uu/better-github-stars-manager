@@ -4,6 +4,7 @@ import { db } from '@/storage/db';
 import {
   clearRadarData,
   commitRadarSnapshot,
+  countUnseenRadarActivities,
   dismissRadarActivities,
   getRadarState,
   listRadarActivities,
@@ -181,6 +182,22 @@ describe('Radar snapshot storage', () => {
 
     expect(await db.radarActivities.get('a')).toMatchObject({ seenAt: FIRST });
     expect(await followedActivities()).toMatchObject([{ id: 'a', seen: true }]);
+  });
+
+  it('counts visible unseen activity only for the bound account', async () => {
+    await commitRadarSnapshot(snapshot([
+      activity('unseen', 'owner/unseen', FIRST),
+      activity('seen', 'owner/seen', FIRST, { seenAt: FIRST }),
+      activity('dismissed', 'owner/dismissed', FIRST),
+    ], FIRST));
+    await dismissRadarActivities('viewer', ['dismissed']);
+    await markRadarActivitiesSeen('viewer', ['seen'], FIRST);
+
+    expect(await countUnseenRadarActivities('VIEWER')).toBe(1);
+    expect(await countUnseenRadarActivities('another-account')).toBe(0);
+
+    await markRadarActivitiesSeen('viewer', ['unseen'], SECOND);
+    expect(await countUnseenRadarActivities('viewer')).toBe(0);
   });
 
   it('keeps the last successful rows while recording a stale failure', async () => {
