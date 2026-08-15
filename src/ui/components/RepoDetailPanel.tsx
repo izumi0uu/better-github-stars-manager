@@ -41,6 +41,7 @@ export function RepoDetailPanel({
   selectedTags,
   onToggleTag,
   onDataChanged,
+  onMeaningfulAction,
   onClose,
   onPrev,
   onNext,
@@ -53,6 +54,7 @@ export function RepoDetailPanel({
   selectedTags: string[];
   onToggleTag: (tag: string) => void;
   onDataChanged?: () => void;
+  onMeaningfulAction?: () => void;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -174,6 +176,7 @@ export function RepoDetailPanel({
     try {
       await bgCall("setTags", { full_name: star.full_name, tags: nextTags });
       onDataChanged?.();
+      onMeaningfulAction?.();
       ok = true;
       flashSaved(setTagsSavePhase, tagsTimerRef);
     } catch (e) {
@@ -192,6 +195,7 @@ export function RepoDetailPanel({
     try {
       await bgCall("setNotes", { full_name: star.full_name, notes: nextNotes });
       onDataChanged?.();
+      onMeaningfulAction?.();
       ok = true;
       flashSaved(setNotesSavePhase, notesTimerRef);
     } finally {
@@ -210,6 +214,7 @@ export function RepoDetailPanel({
       await bgCall("removeVisibleTag", { full_name: star.full_name, name });
       updateDraftTags(draftTagsRef.current.filter((tagName) => tagName.toLowerCase() !== name.toLowerCase()));
       onDataChanged?.();
+      onMeaningfulAction?.();
     } catch (e) {
       setTagError(m.popup.failed(m.repoDetail.tagsAction, translateError(e, m)));
     }

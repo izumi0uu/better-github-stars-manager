@@ -155,6 +155,10 @@ vi.mock('@/ui/hooks/use-radar', () => {
   return { useRadar: () => radar };
 });
 
+vi.mock('@/ui/hooks/use-manager-surface-badges', () => ({
+  useManagerSurfaceBadges: () => ({ watchUnreadCount: 3, radarUnseenCount: 0 }),
+}));
+
 
 vi.mock('@/ui/hooks/use-column-layout-editor', () => ({
   useColumnLayoutEditor: () => ({
@@ -535,6 +539,27 @@ describe('ManagerPanel unstar flow', () => {
     const tokenLink = container.querySelector<HTMLAnchorElement>('a[href="https://github.com/settings/tokens"]');
     expect(tokenLink?.textContent).toBe('github.com/settings/tokens');
     expect(container.querySelector('[data-testid="confirm-unstar"]')).not.toBeNull();
+  });
+  it('reuses one scroll viewport and resets it before switching surfaces', () => {
+    const { container } = mountPanel();
+    const viewport = container.querySelector<HTMLElement>('.no-scrollbar');
+    if (!viewport) throw new Error('Expected Manager Surface viewport');
+    viewport.scrollTop = 180;
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="watch-surface"]')?.click();
+    });
+
+    expect(container.querySelector('.no-scrollbar')).toBe(viewport);
+    expect(viewport.scrollTop).toBe(0);
+
+    viewport.scrollTop = 90;
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="radar-surface"]')?.click();
+    });
+
+    expect(container.querySelector('.no-scrollbar')).toBe(viewport);
+    expect(viewport.scrollTop).toBe(0);
   });
   it('switches to Following without resetting Stars filters and maps its view shortcut V', () => {
     const { container } = mountPanel();

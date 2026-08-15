@@ -4,6 +4,7 @@ import { useStars } from '@/ui/use-stars';
 import { useFilterStore } from '@/ui/filter-store';
 import { Toolbar } from '@/ui/components/Toolbar';
 import { AutoTagAgentPrompt } from '@/ui/components/AutoTagAgentPrompt';
+import { StoreRatingPrompt } from '@/ui/components/StoreRatingPrompt';
 import { FilterSidebar } from '@/ui/components/FilterSidebar';
 import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
@@ -21,8 +22,10 @@ import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/compon
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
 import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
 import { useAutoTagAgentPrompt } from '@/ui/hooks/use-auto-tag-agent-prompt';
+import { useStoreRatingPrompt } from '@/ui/hooks/use-store-rating-prompt';
 import { useWatchInbox } from '@/ui/hooks/use-watch-inbox';
 import { useRadar } from '@/ui/hooks/use-radar';
+import { useManagerSurfaceBadges } from '@/ui/hooks/use-manager-surface-badges';
 import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
@@ -128,8 +131,15 @@ function helperInfoKey(info: string | null, unstarFeedback: UnstarFeedback | nul
 
 export function ManagerPanel() {
   const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
-  const watchInbox = useWatchInbox();
-  const radar = useRadar();
+  const storeRatingMeaningfulActionRef = useRef<() => void | Promise<void>>(() => {});
+  const reportStoreRatingMeaningfulAction = useCallback(() => {
+    void storeRatingMeaningfulActionRef.current();
+  }, []);
+  const [surface, setSurface] = useState<ManagerSurface>('stars');
+  const [surfaceDirection, setSurfaceDirection] = useState<ManagerSurfaceDirection>('forward');
+  const watchInbox = useWatchInbox({ active: surface === 'watch', onMeaningfulAction: reportStoreRatingMeaningfulAction });
+  const radar = useRadar({ active: surface === 'radar', onMeaningfulAction: reportStoreRatingMeaningfulAction });
+  const surfaceBadges = useManagerSurfaceBadges();
   const f = useFilterStore();
   const {
     status,
@@ -147,9 +157,7 @@ export function ManagerPanel() {
     deferBackfill,
     isOnboardingCardStage,
   } = useManagerSyncActions({ refreshStars });
-  const [surface, setSurface] = useState<ManagerSurface>('stars');
   const [account, setAccount] = useState<Account | null>(null);
-  const [surfaceDirection, setSurfaceDirection] = useState<ManagerSurfaceDirection>('forward');
   const [selected, setSelected] = useState<string | null>(null);
   const [watchDetail, setWatchDetail] = useState<WatchRepositoryDetail | null>(null);
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
@@ -390,14 +398,45 @@ export function ManagerPanel() {
     setAgentPanelOpen(true);
   };
 
-  const handleAutoAssignTags = async () => {
-    await autoAssignTags();
-  };
-
   const autoTagAgentPrompt = useAutoTagAgentPrompt({
     onOpenAgent: openAgentPanel,
-    onRunAutoTags: () => { void handleAutoAssignTags(); },
+    onRunAutoTags: () => { void autoAssignTags(); },
   });
+  // The hook rechecks durable background jobs; this gate covers visible local UI only.
+  const managerIdleForStoreRating = !!statusLoaded
+    && !!status
+    && status.hasToken
+    && status.onboardingStage === 'done'
+    && !loading
+    && phase === 'idle'
+    && !busy
+    && !pendingAction
+    && coachStep === null
+    && !interactionLocked
+    && !columnMenuOpen
+    && !selectedStar
+    && !openUnstarFullName
+    && !autoTagAgentPrompt.open
+    && !agentPanelOpen
+    && !agentPresentation.active
+    && !info
+    && !unstarFeedback;
+  const storeRatingPrompt = useStoreRatingPrompt({
+    onboardingComplete: statusLoaded && status?.onboardingStage === 'done',
+    onMainManager: starsSurface,
+    managerIdle: managerIdleForStoreRating,
+  });
+  storeRatingMeaningfulActionRef.current = storeRatingPrompt.recordMeaningfulAction;
+
+  useEffect(() => {
+    if (successAction !== 'syncFull' && successAction !== 'syncIncremental') return;
+    reportStoreRatingMeaningfulAction();
+  }, [reportStoreRatingMeaningfulAction, successAction]);
+
+  const handleManualTagMutationSuccess = useCallback(() => {
+    refreshStars();
+    reportStoreRatingMeaningfulAction();
+  }, [refreshStars, reportStoreRatingMeaningfulAction]);
 
   const handleSurfaceChange = (next: ManagerSurface) => {
     if (next === surface || editingLayout) return;
@@ -408,6 +447,9 @@ export function ManagerPanel() {
     setUnstarFeedback(null);
     setAgentPanelOpen(false);
     autoTagAgentPrompt.dismiss();
+    // One viewport owns every Surface. Reset it before changing the virtual row
+    // model instead of remounting the scroll container and its observers.
+    if (listRef.current) listRef.current.scrollTop = 0;
     setSurfaceDirection(managerSurfaceDirection(surface, next));
     setSurface(next);
   };
@@ -461,6 +503,7 @@ export function ManagerPanel() {
       }));
       setUnstarFeedback(null);
       setInfo(null);
+      reportStoreRatingMeaningfulAction();
     } catch (e) {
       setFavoriteOverrides((current) => {
         if (!(full_name in current)) return current;
@@ -585,8 +628,12 @@ export function ManagerPanel() {
           layoutEditChrome={layoutEditChrome}
           surface={surface}
           onSurfaceChange={handleSurfaceChange}
-          watchUnreadCount={watchInbox.result?.unreadCount ?? 0}
-          radarUnseenCount={radar.result?.unseenCount ?? 0}
+          watchUnreadCount={watchSurface
+            ? watchInbox.result?.unreadCount ?? surfaceBadges.watchUnreadCount
+            : surfaceBadges.watchUnreadCount}
+          radarUnseenCount={radarSurface
+            ? radar.result?.unseenCount ?? surfaceBadges.radarUnseenCount
+            : surfaceBadges.radarUnseenCount}
         />
         {watchSurface && (
           <WatchStatusRibbon
@@ -652,7 +699,6 @@ export function ManagerPanel() {
         )}
 
         <div
-          key={surface}
           id={`gsm-${surface}-surface-panel`}
           role="tabpanel"
           data-surface={surface}
@@ -670,7 +716,7 @@ export function ManagerPanel() {
               if (message) setInfo(message);
               if (message) setUnstarFeedback(null);
             }}
-            onTagMutationSuccess={refreshStars}
+            onTagMutationSuccess={handleManualTagMutationSuccess}
           />}
 
           <div
@@ -681,6 +727,7 @@ export function ManagerPanel() {
             {watchSurface ? (
               <WatchInbox
                 result={watchInbox.result}
+                scrollElement={listElement}
                 loading={watchInbox.loading}
                 refreshing={watchInbox.refreshing}
                 error={watchInbox.error}
@@ -701,6 +748,7 @@ export function ManagerPanel() {
             ) : radarSurface ? (
               <RadarSurface
                 result={radar.result}
+                scrollElement={listElement}
                 recommendations={radar.recommendations}
                 discoverView={radar.discoverView}
                 loading={radar.loading}
@@ -822,6 +870,7 @@ export function ManagerPanel() {
                 selectedTags={f.tags}
                 onToggleTag={f.toggleTag}
                 onDataChanged={handleDetailDataChanged}
+                onMeaningfulAction={reportStoreRatingMeaningfulAction}
                 onClose={() => {
                   watchDetailGeneration.current++;
                   setSelected(null);
@@ -874,6 +923,17 @@ export function ManagerPanel() {
             onSkip={() => void skipCoach()}
           />
         )}
+        {storeRatingPrompt.listing && (
+          <StoreRatingPrompt
+            open={storeRatingPrompt.open}
+            storeLabel={storeRatingPrompt.listing.label}
+            ratingUrl={storeRatingPrompt.listing.ratingUrl}
+            onRate={storeRatingPrompt.rate}
+            onLater={storeRatingPrompt.later}
+            onNever={storeRatingPrompt.never}
+          />
+        )}
+
       </div>
       </TooltipProvider>
     </PortalProvider>

@@ -138,6 +138,10 @@ vi.mock('@/ui/hooks/use-theme', () => ({
   }),
 }));
 
+vi.mock('@/ui/hooks/use-manager-surface-badges', () => ({
+  useManagerSurfaceBadges: () => ({ watchUnreadCount: 0, radarUnseenCount: 0 }),
+}));
+
 vi.mock('@/utils/messaging', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/messaging')>();
   return {
