@@ -12,6 +12,7 @@ const INVALID_TOKEN = 'github_pat_invalid_extension_browser_smoke';
 const STARS_URL = 'https://github.com/smoke-user?tab=stars';
 const REPO_URL = 'https://github.com/smoke-user/smoke-repo';
 const DOM_POLLING_MS = 100;
+const STORE_RATING_SMOKE = process.env.GSM_STORE_TARGET === 'chrome';
 
 if (!existsSync(path.join(DIST, 'manifest.json'))) {
   console.error(`No dist/manifest.json found at ${DIST}. Run "pnpm build" first.`);
@@ -107,9 +108,11 @@ try {
   await waitForManagerRoot(ownStars);
   ok('manager injected, first Auto Tags click offered Cubby, drawer opened accessibly, and panel toggle worked');
 
-  step('5b) Manager toolbar keeps one row across responsive widths');
-  await assertToolbarResponsiveLayout(ownStars);
-  ok('toolbar kept one row, compressed search/sort controls, synchronized action labels, and a circular compact account trigger');
+  if (!STORE_RATING_SMOKE) {
+    step('5b) Manager toolbar keeps one row across responsive widths');
+    await assertToolbarResponsiveLayout(ownStars);
+    ok('toolbar kept one row, compressed search/sort controls, synchronized action labels, and a circular compact account trigger');
+  }
 
   step('6) Discover switches from Following to deterministic For You recommendations');
   const seededWatch = await seedWatchAndRadarFixture(extId);
@@ -117,6 +120,8 @@ try {
   await ownStars.bringToFront();
   await ownStars.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
   await waitForManagerRoot(ownStars);
+  await assertManagerSurfaceBadges(ownStars, { watch: '2', radar: '1' });
+  ok('Watch and Radar badges rendered from lightweight stored counts before either surface opened');
   await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
   await assertRadarSourceFilters(ownStars);
   await assertForYouRecommendations(ownStars);
@@ -172,6 +177,8 @@ try {
     notificationOutsideLiveStarsVisible: false,
     radarActivityCount: 1,
     radarUnseenCount: 1,
+    watchBadgeCount: 2,
+    radarBadgeCount: 1,
     recommendationCount: 1,
     recommendationExcludedFromStars: true,
   });
@@ -180,6 +187,10 @@ try {
   await waitForStarsRows(ownStars, 'seeded Stars fixture');
   await assertRepositoryAvatarLayout(ownStars);
   ok('repository avatars rendered after deep virtual-list scrolling, and layout edit persisted an explicit opt-out');
+  await waitForBackgroundIdle(popup);
+  await delay(500);
+  await waitForBackgroundIdle(popup);
+  resetBackgroundGitHubApiCalls(browser, extId);
   await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
   await openWatchSurface(ownStars, 'Unread issue thread');
   const unreadSnapshot = await readWatchSnapshot(ownStars);
@@ -232,6 +243,37 @@ try {
   await assertStarsRowsAfterSurfaceReturn(ownStars, 'watch');
   await assertStarsRowsAfterSurfaceReturn(ownStars, 'radar');
   ok('Stars rows rendered after returning from both Watch and Following');
+
+  if (STORE_RATING_SMOKE) {
+    step('11b) Store rating prompt waits through onboarding, recovery, and active work');
+    await seedConfig(extId, {
+      onboardingStage: 'coach',
+      seenOnboarding: false,
+      storeRatingPrompt: {
+        version: 1,
+        status: 'tracking',
+        activeLocalDays: ['2026-08-13', '2026-08-14', '2026-08-15'],
+        meaningfulActionCount: 2,
+        exposureCount: 0,
+        snoozeUntil: null,
+      },
+    });
+    await refreshManagerStatusFromStorage(extId);
+    await waitForManagerRoot(ownStars);
+    await assertStoreRatingSuppressedDuringOnboarding(ownStars);
+    await finishStoreRatingOnboarding(ownStars);
+    await waitForStarsRows(ownStars, 'store-rating fixture');
+
+    const storeRatingSync = installBackgroundStoreRatingSyncFixture(extId);
+    try {
+      await assertStoreRatingSuppressedByVisibleError(ownStars, storeRatingSync);
+      await assertStoreRatingPrompt(ownStars, extId, storeRatingSync);
+    } finally {
+      storeRatingSync.restore();
+    }
+    await assertStoreRatingOptions(extId);
+    ok('prompt stayed suppressed through onboarding, recovery, and active work; keyboard dismissal restored the favorite control and Options could disable/re-enable reminders');
+  }
 
   step('12) Watch recovery opens focused GitHub authorization without clearing the Classic PAT');
   await markManagerMount(ownStars);
@@ -424,6 +466,30 @@ async function seedConfig(extId, patch) {
     await chrome.storage.local.set({ [key]: { ...(current[key] ?? {}), ...nextPatch } });
   }, patch);
   await page.close();
+}
+
+
+async function refreshManagerStatusFromStorage(extId) {
+  const page = await openExtensionPage(extId, OPTIONS_PATH, 'refresh-manager-status');
+  try {
+    await page.evaluate(async () => {
+      const key = 'gsm_github_credentials';
+      const current = await chrome.storage.local.get(key);
+      const credentials = current[key];
+      if (!credentials?.tokenEncrypted) {
+        throw new Error('main credential was unavailable while refreshing manager status');
+      }
+      await chrome.storage.local.set({
+        [key]: {
+          ...credentials,
+          storeRatingSmokeRefresh: Date.now(),
+        },
+      });
+      await chrome.storage.local.set({ [key]: credentials });
+    });
+  } finally {
+    await page.close();
+  }
 }
 
 async function seedWatchAndRadarFixture(extId) {
@@ -805,6 +871,14 @@ async function seedWatchAndRadarFixture(extId) {
     ) {
       throw new Error(radarQuery?.error ?? `seeded Radar query was unavailable: ${JSON.stringify(radarQuery?.data ?? null)}`);
     }
+    const surfaceBadges = await chrome.runtime.sendMessage({ type: 'queryManagerSurfaceBadges' });
+    if (
+      !surfaceBadges?.ok
+      || surfaceBadges.data?.watchUnreadCount !== 2
+      || surfaceBadges.data?.radarUnseenCount !== 1
+    ) {
+      throw new Error(surfaceBadges?.error ?? `seeded badge summary was unavailable: ${JSON.stringify(surfaceBadges?.data ?? null)}`);
+    }
     const recommendationQuery = await chrome.runtime.sendMessage({ type: 'queryRecommendations' });
     if (
       !recommendationQuery?.ok
@@ -840,6 +914,8 @@ async function seedWatchAndRadarFixture(extId) {
     return {
       databaseVersion,
       hasMainToken: allInbox.data.status.hasMainToken,
+      watchBadgeCount: surfaceBadges.data.watchUnreadCount,
+      radarBadgeCount: surfaceBadges.data.radarUnseenCount,
       hasNotificationsToken: allInbox.data.status.hasNotificationsToken,
       allThreadCount: allInbox.data.totalCount,
       allGroupCount: allInbox.data.groups.length,
@@ -972,6 +1048,74 @@ function installBackgroundWatchSubjectDetailFixture(extId) {
       assert.ok(nextMode === 'success' || nextMode === 'forbidden');
       mode = nextMode;
     },
+  };
+}
+
+function installBackgroundStoreRatingSyncFixture(extId) {
+  const guard = backgroundGitHubApiGuard;
+  assert.ok(guard, `GitHub API guard was not installed for ${extId}`);
+  const previousHandle = guard.handle;
+  const queued = [];
+  let waiter = null;
+
+  guard.handle = async (client, event) => {
+    const url = new URL(event.request.url);
+    const isIncrementalStarsRequest = event.request.method === 'GET'
+      && url.origin === 'https://api.github.com'
+      && url.pathname === '/user/starred'
+      && url.searchParams.get('per_page') === '100'
+      && url.searchParams.get('page') === '1';
+    if (!isIncrementalStarsRequest) {
+      return previousHandle ? previousHandle(client, event) : false;
+    }
+
+    const request = {
+      async failInvalidResponse() {
+        const body = JSON.stringify({ message: 'store-rating smoke sync failure' });
+        await client.send('Fetch.fulfillRequest', {
+          requestId: event.requestId,
+          responseCode: 400,
+          responseHeaders: [
+            { name: 'content-type', value: 'application/json; charset=utf-8' },
+            { name: 'content-length', value: String(Buffer.byteLength(body)) },
+          ],
+          body: Buffer.from(body).toString('base64'),
+        });
+      },
+    };
+    if (waiter) {
+      const current = waiter;
+      waiter = null;
+      current.resolve(request);
+    } else {
+      queued.push(request);
+    }
+    return true;
+  };
+
+  return {
+    async waitForRequest(timeoutMs = 10_000) {
+      const next = queued.shift();
+      if (next) return next;
+      assert.equal(waiter, null, 'store-rating sync fixture already has a pending waiter');
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let timeout;
+      const pendingWaiter = {
+        resolve(request) {
+          clearTimeout(timeout);
+          resolve(request);
+        },
+      };
+      timeout = setTimeout(() => {
+        if (waiter === pendingWaiter) waiter = null;
+        reject(new Error('store-rating sync did not reach the deferred GitHub request'));
+      }, timeoutMs);
+      waiter = pendingWaiter;
+      return promise;
+    },
+    restore() {
+      guard.handle = previousHandle;
+    }
   };
 }
 
@@ -1362,6 +1506,31 @@ async function waitForManagerRoot(page) {
   );
 }
 
+async function assertManagerSurfaceBadges(page, expected) {
+  try {
+    await page.waitForFunction(
+      (counts) => {
+        const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+        return root?.querySelector('#gsm-stars-surface-tab')?.getAttribute('aria-selected') === 'true'
+          && root.querySelector('[data-watch-unread-badge]')?.textContent?.trim() === counts.watch
+          && root.querySelector('[data-radar-unseen-badge]')?.textContent?.trim() === counts.radar;
+      },
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+      expected,
+    );
+  } catch (error) {
+    const state = await page.evaluate(() => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      return {
+        active: root?.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim() ?? null,
+        watch: root?.querySelector('[data-watch-unread-badge]')?.textContent?.trim() ?? null,
+        radar: root?.querySelector('[data-radar-unseen-badge]')?.textContent?.trim() ?? null,
+      };
+    });
+    throw await pageWaitError(page, `surface badges did not render before entry: ${JSON.stringify(state)}`, error);
+  }
+}
+
 async function waitForStarsRows(page, label) {
   try {
     await page.waitForFunction(
@@ -1388,6 +1557,522 @@ async function waitForStarsRows(page, label) {
       };
     });
     throw await pageWaitError(page, `${label} did not render repository rows: ${JSON.stringify(state)}`, error);
+  }
+}
+
+async function assertStoreRatingPromptAbsent(page, reason, settleMs = 350) {
+  await delay(settleMs);
+  const present = await page.evaluate(() => {
+    const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+    return !!shadow?.querySelector('[role="dialog"][aria-labelledby="gsm-store-rating-title"]');
+  });
+  assert.equal(present, false, `rating prompt opened during ${reason}`);
+}
+
+async function shadowElementHandle(page, selector, label) {
+  const handle = await page.evaluateHandle((targetSelector) => (
+    document.getElementById('gsm-manager-host')?.shadowRoot?.querySelector(targetSelector) ?? null
+  ), selector);
+  const element = handle.asElement();
+  if (!element) {
+    await handle.dispose();
+    throw new Error(`${label} was unavailable`);
+  }
+  return element;
+}
+
+
+async function assertStoreRatingSuppressedDuringOnboarding(page) {
+  await page.bringToFront();
+  const deadline = Date.now() + 10_000;
+  let config = null;
+  while (Date.now() < deadline) {
+    config = await readStoredConfig(page.browser());
+    if (config?.onboardingStage === 'coach' && config.seenOnboarding === false) break;
+    await delay(DOM_POLLING_MS);
+  }
+  assert.equal(config?.onboardingStage, 'coach', 'onboarding fixture did not reach the coach stage');
+  assert.equal(config?.seenOnboarding, false, 'onboarding fixture was already marked complete');
+  await page.waitForFunction(
+    () => !!document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('.gsm-favorite-action:not([disabled])'),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+  const favoriteBefore = await page.evaluate(() => (
+    document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('.gsm-favorite-action:not([disabled])')?.getAttribute('data-active') ?? null
+  ));
+  assert.notEqual(favoriteBefore, null, 'favorite action during onboarding was unavailable');
+  const favoriteClicked = await page.evaluate(() => {
+    const button = document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('.gsm-favorite-action:not([disabled])');
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  });
+  assert.equal(favoriteClicked, true, 'favorite action during onboarding could not be triggered');
+  await page.waitForFunction(
+    (before) => {
+      const button = document.getElementById('gsm-manager-host')?.shadowRoot
+        ?.querySelector('.gsm-favorite-action:not([disabled])');
+      return !!button && button.isConnected
+        && button.getAttribute('data-active') !== before;
+    },
+    { polling: DOM_POLLING_MS, timeout: 5_000 },
+    favoriteBefore,
+  );
+  const prompt = (await readStoredConfig(page.browser()))?.storeRatingPrompt ?? null;
+  assert.equal(prompt?.meaningfulActionCount, 2, 'onboarding favorite incorrectly qualified the rating prompt');
+  await assertStoreRatingPromptAbsent(page, 'onboarding');
+}
+
+async function finishStoreRatingOnboarding(page) {
+  await page.waitForFunction(
+    () => [...(document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelectorAll('button') ?? [])]
+      .some((button) => button.textContent?.trim() === 'Skip tour'),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+  const skipped = await page.evaluate(() => {
+    const button = [...(document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelectorAll('button') ?? [])]
+      .find((candidate) => candidate.textContent?.trim() === 'Skip tour');
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  });
+  assert.equal(skipped, true, 'onboarding Skip tour action could not be triggered');
+  const deadline = Date.now() + 10_000;
+  let config = null;
+  while (Date.now() < deadline) {
+    config = await readStoredConfig(page.browser());
+    if (config?.onboardingStage === 'done' && config.seenOnboarding === true) break;
+    await delay(DOM_POLLING_MS);
+  }
+  assert.equal(config?.onboardingStage, 'done', 'Skip tour did not persist completed onboarding');
+  assert.equal(config?.seenOnboarding, true, 'Skip tour did not persist the onboarding completion marker');
+  await page.waitForFunction(
+    () => !document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('[data-coach-step-target]'),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+}
+
+
+
+async function assertStoreRatingSuppressedByVisibleError(page, syncFixture) {
+  const syncButton = await shadowElementHandle(
+    page,
+    'button[data-coach-target="sync"]:not([disabled])',
+    'incremental Sync action',
+  );
+  await syncButton.click();
+  await syncButton.dispose();
+  const request = await syncFixture.waitForRequest();
+  await page.waitForFunction(
+    () => document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('button[data-coach-target="sync"]')?.hasAttribute('disabled') === true,
+    { polling: DOM_POLLING_MS, timeout: 5_000 },
+  );
+  await assertStoreRatingPromptAbsent(page, 'active sync before recovery');
+  await request.failInvalidResponse();
+  try {
+    await page.waitForFunction(
+      () => {
+        const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+        const recovery = [...(shadow?.querySelectorAll('.gsm-helper-text') ?? [])]
+          .find((node) => node.querySelector('button[aria-label="Close"]'));
+        return !!recovery && !!recovery.textContent?.trim();
+      },
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+    );
+  } catch (error) {
+    const state = await page.evaluate(() => {
+      const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+      const root = shadow?.getElementById('gsm-manager-root');
+      return {
+        text: root?.textContent?.slice(-500) ?? null,
+        helpers: [...(shadow?.querySelectorAll('.gsm-helper-text') ?? [])]
+          .map((node) => node.textContent?.trim() ?? ''),
+        syncDisabled: root?.querySelector('button[data-coach-target="sync"]')?.hasAttribute('disabled') ?? null,
+      };
+    });
+    throw new Error(`visible sync recovery did not render: ${JSON.stringify(state)}`, { cause: error });
+  }
+  const recoveryText = await page.evaluate(() => {
+    const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+    return [...(shadow?.querySelectorAll('.gsm-helper-text') ?? [])]
+      .find((node) => node.querySelector('button[aria-label="Close"]'))
+      ?.textContent?.trim() ?? '';
+  });
+  assert.match(recoveryText, /GitHub|400/u, 'visible recovery did not describe the failed sync');
+  await assertStoreRatingPromptAbsent(page, 'visible sync error before a qualifying action');
+  const promptAfterFailure = (await readStoredConfig(page.browser()))?.storeRatingPrompt ?? null;
+  assert.equal(promptAfterFailure?.meaningfulActionCount, 2, 'failed sync incorrectly qualified the rating prompt');
+}
+
+async function waitForStoreRatingPrompt(page, extId) {
+  try {
+    await page.waitForFunction(
+      () => !!document.getElementById('gsm-manager-host')?.shadowRoot
+        ?.querySelector('[role="dialog"][aria-labelledby="gsm-store-rating-title"]'),
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+    );
+  } catch (error) {
+    const manager = await page.evaluate(() => {
+      const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+      const root = shadow?.getElementById('gsm-manager-root');
+      return {
+        activeTab: root?.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim() ?? null,
+        favoriteActive: root?.querySelector('.gsm-favorite-action')?.getAttribute('data-active') ?? null,
+        promptPresent: !!shadow?.querySelector('[role="dialog"][aria-labelledby="gsm-store-rating-title"]'),
+      };
+    });
+    const diagnosticPage = await openExtensionPage(extId, OPTIONS_PATH, 'store-rating-diagnostic');
+    const durable = await diagnosticPage.evaluate(async () => {
+      const config = (await chrome.storage.local.get('gsm_config')).gsm_config ?? null;
+      const response = await chrome.runtime.sendMessage({ type: 'getStatus' });
+      const status = response?.data ?? response ?? null;
+      return {
+        status: status ? {
+          hasToken: status.hasToken ?? null,
+          onboardingStage: status.onboardingStage ?? null,
+          progressPhase: status.progress?.phase ?? null,
+          inFlight: status.inFlight ?? null,
+          activeBackfillId: status.activeBackfillId ?? null,
+          organizeJobActive: status.organizeJobActive ?? null,
+        } : null,
+        configOnboardingStage: config?.onboardingStage ?? null,
+        prompt: config?.storeRatingPrompt ? {
+          status: config.storeRatingPrompt.status ?? null,
+          activeDays: config.storeRatingPrompt.activeLocalDays?.length ?? null,
+          meaningfulActions: config.storeRatingPrompt.meaningfulActionCount ?? null,
+          exposures: config.storeRatingPrompt.exposureCount ?? null,
+        } : null,
+      };
+    });
+    await diagnosticPage.close();
+    throw new Error(`rating prompt did not open: ${JSON.stringify({ manager, durable })}`, { cause: error });
+  }
+}
+
+async function storeRatingFocusedControl(page) {
+  return page.evaluate(() => {
+    const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const active = shadow?.activeElement;
+    if (active instanceof HTMLAnchorElement) return 'rate';
+    if (!(active instanceof HTMLButtonElement)) return null;
+    if (active.getAttribute('aria-label') === 'Close') return 'close';
+    if (active.textContent?.trim() === 'Never remind me') return 'never';
+    if (active.textContent?.trim() === 'Later') return 'later';
+    return null;
+  });
+}
+
+async function waitForStoredStoreRatingSnooze(browserInstance, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let prompt = null;
+  while (Date.now() < deadline) {
+    prompt = (await readStoredConfig(browserInstance))?.storeRatingPrompt ?? null;
+    if (prompt?.status === 'snoozed' && prompt.exposureCount === 1 && prompt.snoozeUntil) return prompt;
+    await delay(DOM_POLLING_MS);
+  }
+  throw new Error(`Escape did not persist Later snooze state: ${JSON.stringify(prompt)}`);
+}
+
+async function waitForStoredStoreRatingActionCount(browserInstance, expected, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let prompt = null;
+  while (Date.now() < deadline) {
+    prompt = (await readStoredConfig(browserInstance))?.storeRatingPrompt ?? null;
+    if (prompt?.meaningfulActionCount === expected) return prompt;
+    await delay(DOM_POLLING_MS);
+  }
+  throw new Error(`favorite did not persist rating action count ${expected}: ${JSON.stringify(prompt)}`);
+}
+
+
+async function assertStoreRatingPrompt(page, extId, syncFixture) {
+  await page.bringToFront();
+  await assertStoreRatingPromptAbsent(page, 'visible recovery before the qualifying favorite');
+  const detailOpened = await page.evaluate(() => {
+    const row = document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('[data-layout-row-grid]');
+    if (!(row instanceof HTMLElement)) return false;
+    row.click();
+    return true;
+  });
+  assert.equal(detailOpened, true, 'repository detail could not block the prompt during qualification');
+  await page.waitForFunction(
+    () => !!document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('.drawer-anim.drawer-enter'),
+    { polling: DOM_POLLING_MS, timeout: 5_000 },
+  );
+
+  const favoriteBefore = await page.evaluate(() => (
+    document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('.gsm-favorite-action:not([disabled])')?.getAttribute('data-active') ?? null
+  ));
+  assert.notEqual(favoriteBefore, null, 'favorite action that qualifies the prompt was unavailable');
+  const favoriteClicked = await page.evaluate(() => {
+    const button = document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('.gsm-favorite-action:not([disabled])');
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  });
+  assert.equal(favoriteClicked, true, 'favorite action could not qualify the prompt');
+  await page.waitForFunction(
+    (before) => document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('.gsm-favorite-action:not([disabled])')?.getAttribute('data-active') !== before,
+    { polling: DOM_POLLING_MS, timeout: 5_000 },
+    favoriteBefore,
+  );
+  await waitForStoredStoreRatingActionCount(page.browser(), 3);
+  await assertStoreRatingPromptAbsent(page, 'open repository detail after the qualifying favorite');
+
+  const recoveryRequestPending = syncFixture.waitForRequest();
+  const recoverySyncClicked = await page.evaluate(() => {
+    const button = document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('button[data-coach-target="sync"]');
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+    button.click();
+    return true;
+  });
+  assert.equal(recoverySyncClicked, true, 'sync action could not restore a visible recovery state');
+  const recoveryRequest = await recoveryRequestPending;
+  await recoveryRequest.failInvalidResponse();
+  await page.waitForFunction(
+    () => [...(document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelectorAll('.gsm-helper-text') ?? [])]
+      .some((node) => node.querySelector('button[aria-label="Close"]')),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+  const detailClosed = await page.evaluate(() => {
+    const button = document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('.drawer-anim.drawer-enter button[title="Close (Esc)"]');
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  });
+  assert.equal(detailClosed, true, 'repository detail could not release the eligible prompt');
+  await page.waitForFunction(
+    () => !document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('.drawer-anim.drawer-enter'),
+    { polling: DOM_POLLING_MS, timeout: 5_000 },
+  );
+  await assertStoreRatingPromptAbsent(page, 'visible sync error after the qualifying favorite');
+
+  const backgroundWorkPage = await openExtensionPage(extId, OPTIONS_PATH, 'store-rating-active-work');
+  await backgroundWorkPage.evaluate(() => {
+    void chrome.runtime.sendMessage({ type: 'syncIncremental' }).catch(() => {});
+  });
+  const blockedRequest = await syncFixture.waitForRequest();
+  await backgroundWorkPage.waitForFunction(
+    async () => {
+      const response = await chrome.runtime.sendMessage({ type: 'getStatus' });
+      return response?.ok
+        && response.data?.inFlight === true
+        && response.data?.progress?.phase === 'incremental';
+    },
+    { polling: DOM_POLLING_MS, timeout: 5_000 },
+  );
+
+  await page.bringToFront();
+  const closeRecovery = await shadowElementHandle(
+    page,
+    '.gsm-helper-text button[aria-label="Close"]',
+    'sync error recovery close action',
+  );
+  await closeRecovery.evaluate((button) => button.click());
+  await closeRecovery.dispose();
+  await page.waitForFunction(
+    () => ![...(document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelectorAll('.gsm-helper-text') ?? [])]
+      .some((node) => node.querySelector('button[aria-label="Close"]')),
+    { polling: DOM_POLLING_MS, timeout: 5_000 },
+  );
+  const favorite = await shadowElementHandle(
+    page,
+    '.gsm-favorite-action:not([disabled])',
+    'favorite action that qualified the prompt',
+  );
+  await favorite.focus();
+  await backgroundWorkPage.waitForFunction(
+    async () => {
+      const response = await chrome.runtime.sendMessage({ type: 'getStatus' });
+      return response?.ok && response.data?.inFlight === true;
+    },
+    { polling: DOM_POLLING_MS, timeout: 5_000 },
+  );
+  await assertStoreRatingPromptAbsent(page, 'authoritative background work after the qualifying favorite');
+
+  await blockedRequest.failInvalidResponse();
+  await backgroundWorkPage.waitForFunction(
+    async () => {
+      const response = await chrome.runtime.sendMessage({ type: 'getStatus' });
+      return response?.ok
+        && response.data?.inFlight === false
+        && response.data?.progress?.phase === 'idle';
+    },
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+  await backgroundWorkPage.close();
+  await waitForStoreRatingPrompt(page, extId);
+
+  const rendered = await page.evaluate(() => {
+    const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const dialog = shadow?.querySelector('[role="dialog"][aria-labelledby="gsm-store-rating-title"]');
+    const link = dialog?.querySelector('a[href]');
+    const image = dialog?.querySelector('picture img');
+    const source = dialog?.querySelector('picture source');
+    const rect = dialog?.getBoundingClientRect();
+    return {
+      ariaModal: dialog?.getAttribute('aria-modal') ?? null,
+      title: shadow?.getElementById('gsm-store-rating-title')?.textContent?.trim() ?? null,
+      heartCount: dialog?.querySelectorAll('[data-heart-index]').length ?? 0,
+      storeLinkCount: dialog?.querySelectorAll('a').length ?? 0,
+      href: link instanceof HTMLAnchorElement ? link.href : null,
+      focused: shadow?.activeElement === link,
+      gifSource: image?.getAttribute('src') ?? null,
+      reducedMotionSource: source?.getAttribute('srcset') ?? null,
+      rightGap: rect ? innerWidth - rect.right : null,
+      bottomGap: rect ? innerHeight - rect.bottom : null,
+      insideViewport: !!rect && rect.left >= 0 && rect.top >= 0
+        && rect.right <= innerWidth && rect.bottom <= innerHeight,
+    };
+  });
+  assert.deepEqual(rendered, {
+    ariaModal: 'true',
+    title: 'Enjoying Better GitHub Stars Manager?',
+    heartCount: 5,
+    storeLinkCount: 1,
+    href: 'https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa/reviews',
+    focused: true,
+    gifSource: rendered.gifSource,
+    reducedMotionSource: rendered.reducedMotionSource,
+    rightGap: rendered.rightGap,
+    bottomGap: rendered.bottomGap,
+    insideViewport: true,
+  });
+  assert.match(rendered.gifSource ?? '', /index-agent-working.*\.gif/u);
+  assert.match(rendered.reducedMotionSource ?? '', /(?:index-agent-static.*\.png|^data:image\/png)/u);
+  assert.equal(typeof rendered.rightGap === 'number' && rendered.rightGap >= 8 && rendered.rightGap <= 32, true);
+  assert.equal(typeof rendered.bottomGap === 'number' && rendered.bottomGap >= 8 && rendered.bottomGap <= 32, true);
+
+  const thirdHeart = await page.evaluate(() => {
+    const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const heart = shadow?.querySelector('[data-heart-index="3"]');
+    const rect = heart?.getBoundingClientRect();
+    return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+  });
+  assert.ok(thirdHeart, 'third rating heart was not measurable');
+  await page.mouse.move(thirdHeart.x, thirdHeart.y);
+  await page.waitForFunction(() => {
+    const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const hearts = [...(shadow?.querySelectorAll('[data-heart-index]') ?? [])];
+    return hearts.filter((heart) => heart.getAttribute('data-active') === 'true').length === 3;
+  }, { polling: DOM_POLLING_MS, timeout: 5_000 });
+
+  const fifthHeart = await page.evaluate(() => {
+    const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const heart = shadow?.querySelector('[data-heart-index="5"]');
+    const rect = heart?.getBoundingClientRect();
+    return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+  });
+  assert.ok(fifthHeart, 'fifth rating heart was not measurable');
+  await page.mouse.move(fifthHeart.x, fifthHeart.y);
+  await page.waitForFunction(() => {
+    const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const hearts = [...(shadow?.querySelectorAll('[data-heart-index]') ?? [])];
+    return hearts.every((heart) => heart.getAttribute('data-active') === 'true');
+  }, { polling: DOM_POLLING_MS, timeout: 5_000 });
+  await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
+  if (process.env.GSM_STORE_RATING_SCREENSHOT) {
+    await page.screenshot({ path: path.resolve(process.env.GSM_STORE_RATING_SCREENSHOT) });
+  }
+
+  assert.equal(await storeRatingFocusedControl(page), 'rate', 'real focus did not enter the rating dialog');
+  await page.keyboard.press('Tab');
+  assert.equal(await storeRatingFocusedControl(page), 'never', 'Tab left the rating dialog after its store link');
+  await page.keyboard.press('Tab');
+  assert.equal(await storeRatingFocusedControl(page), 'later', 'Tab left the rating dialog before Later');
+  await page.keyboard.press('Tab');
+  assert.equal(await storeRatingFocusedControl(page), 'close', 'Tab did not wrap from Later to the dialog close action');
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('Tab');
+  await page.keyboard.up('Shift');
+  assert.equal(await storeRatingFocusedControl(page), 'later', 'Shift+Tab did not wrap from the dialog close action to Later');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(
+    () => !document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('[role="dialog"][aria-labelledby="gsm-store-rating-title"]'),
+    { polling: DOM_POLLING_MS, timeout: 5_000 },
+  );
+  const focusRestored = await page.evaluate((favoriteButton) => {
+    const shadow = document.getElementById('gsm-manager-host')?.shadowRoot;
+    return favoriteButton.isConnected && shadow?.activeElement === favoriteButton;
+  }, favorite);
+  assert.equal(focusRestored, true, 'Escape did not return focus to the favorite control that initiated the prompt');
+  await favorite.dispose();
+
+  const snoozed = await waitForStoredStoreRatingSnooze(page.browser());
+  assert.equal(snoozed.meaningfulActionCount, 3);
+  assert.equal(Date.parse(snoozed.snoozeUntil) > Date.now(), true, 'Escape did not persist a future Later snooze');
+}
+
+async function assertStoreRatingOptions(extId) {
+  const page = await openExtensionPage(extId, OPTIONS_PATH, 'store-rating-options');
+  try {
+    await page.waitForSelector('[data-testid="store-rating-settings"]', { timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const settings = document.querySelector('[data-testid="store-rating-settings"]');
+      return settings?.querySelector('#store-rating-reminder')?.getAttribute('aria-checked') === 'true'
+        && settings.textContent?.includes('Paused until');
+    }, { polling: DOM_POLLING_MS, timeout: 10_000 });
+    const initial = await page.evaluate(async () => {
+      const settings = document.querySelector('[data-testid="store-rating-settings"]');
+      const link = settings?.querySelector('a');
+      const stored = await chrome.storage.local.get('gsm_config');
+      const prompt = stored.gsm_config?.storeRatingPrompt ?? null;
+      return {
+        href: link instanceof HTMLAnchorElement ? link.href : null,
+        status: prompt?.status ?? null,
+        exposureCount: prompt?.exposureCount ?? null,
+        hasRatingValue: !!prompt && Object.hasOwn(prompt, 'rating'),
+      };
+    });
+    assert.deepEqual(initial, {
+      href: 'https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa/reviews',
+      status: 'snoozed',
+      exposureCount: 1,
+      hasRatingValue: false,
+    });
+
+    await page.click('#store-rating-reminder');
+    await page.waitForFunction(
+      () => document.querySelector('#store-rating-reminder')?.getAttribute('aria-checked') === 'false',
+      { polling: DOM_POLLING_MS, timeout: 5_000 },
+    );
+    const disabled = await page.evaluate(async () => (
+      (await chrome.storage.local.get('gsm_config')).gsm_config?.storeRatingPrompt?.status
+    ));
+    assert.equal(disabled, 'disabled');
+
+    await page.click('#store-rating-reminder');
+    await page.waitForFunction(
+      () => document.querySelector('#store-rating-reminder')?.getAttribute('aria-checked') === 'true',
+      { polling: DOM_POLLING_MS, timeout: 5_000 },
+    );
+    const reenabled = await page.evaluate(async () => {
+      const prompt = (await chrome.storage.local.get('gsm_config')).gsm_config?.storeRatingPrompt;
+      return { status: prompt?.status ?? null, exposureCount: prompt?.exposureCount ?? null };
+    });
+    assert.deepEqual(reenabled, { status: 'tracking', exposureCount: 0 });
+  } finally {
+    await page.close();
   }
 }
 async function assertRepositoryAvatarLayout(page) {
@@ -2162,7 +2847,7 @@ async function closeWatchRepositoryDetail(page) {
 
 async function assertToolbarResponsiveLayout(page) {
   const originalViewport = page.viewport() ?? { width: 800, height: 600, deviceScaleFactor: 1 };
-  const widths = [1440, 1280, 1024, 900, 768, 640, 480];
+  const widths = [1440, 1309, 1280, 1024, 900, 768, 640, 480];
   const samples = [];
 
   for (const width of widths) {
@@ -2240,6 +2925,10 @@ async function assertToolbarResponsiveLayout(page) {
   assert.ok(desktop, 'desktop toolbar sample was missing');
   assert.equal(desktop.searchWidth >= 240, true, `desktop search remained too short: ${JSON.stringify(desktop)}`);
   assert.equal(desktop.searchWidth > desktop.sortWidth, true, 'desktop search was not wider than the sort control');
+  const laptop = samples.find((sample) => sample.viewportWidth === 1309);
+  assert.ok(laptop, '14-inch laptop toolbar sample was missing');
+  assert.equal(laptop.searchWidth <= 241, true, `14-inch search remained too wide: ${JSON.stringify(laptop)}`);
+  assert.equal(laptop.sortWidth <= 141, true, `14-inch sort remained too wide: ${JSON.stringify(laptop)}`);
 
   const searchWidths = new Set(samples.map((sample) => Math.round(sample.searchWidth)));
   const sortWidths = new Set(samples.map((sample) => Math.round(sample.sortWidth)));
