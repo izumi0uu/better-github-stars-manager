@@ -3,6 +3,7 @@ import { ManagerPanel } from '@/ui/ManagerPanel';
 import { I18nProvider } from '@/i18n';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { applyFabLabel } from '@/content/stars-page/fab-label';
+import brandMarkUrl from '@/assets/bgsm-brand-mark.svg?url';
 import { mountState, pageOwner } from '@/content/stars-page/mount-state';
 import { stopEditableKeydownAtShadowBoundary } from '@/content/stars-page/keyboard-boundary';
 import {
@@ -170,7 +171,7 @@ export function installStarsPageRuntime(pageWindow: Window): void {
     }
     .btn:hover { background:rgba(20,23,28,1); transform:translateY(-1px); }
     .btn:active { transform:translateY(0); }
-    .btn svg { display:block; }
+    .btn img { display:block; width:28px; height:28px; object-fit:contain; }
     /* CSS-only tooltip. The native title attribute has a fixed ~1-2s system
        delay we cannot shorten; this shows ~immediately. Opens to the LEFT since
        the FAB sits in the bottom-right corner. Only rendered once data-tip is
@@ -197,7 +198,15 @@ export function installStarsPageRuntime(pageWindow: Window): void {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn';
-    btn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>`;
+    const brandMark = document.createElement('img');
+    brandMark.src = brandMarkUrl;
+    brandMark.alt = '';
+    brandMark.width = 28;
+    brandMark.height = 28;
+    brandMark.draggable = false;
+    brandMark.setAttribute('aria-hidden', 'true');
+    brandMark.setAttribute('data-product-brand-mark', '');
+    btn.appendChild(brandMark);
     btn.setAttribute('data-tip', 'Better GitHub Stars Manager');
     btn.setAttribute('aria-label', 'Better GitHub Stars Manager');
     btn.onclick = () => showPanel(pageWindow);

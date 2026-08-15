@@ -392,6 +392,20 @@ describe('stars-page mount and toggle invariants', () => {
     assert.equal(document.body.style.overflow, 'hidden');
   });
 
+  it('renders the product mark in the FAB launcher', async () => {
+    await loadContentScript({ config: { starsPanelDefaultEnabled: false } });
+    await waitFor(() => document.getElementById('gsm-fab') !== null);
+
+    const button = document.getElementById('gsm-fab')?.shadowRoot?.querySelector('button');
+    const brandMark = button?.querySelector<HTMLImageElement>('img[data-product-brand-mark]');
+    assert.ok(brandMark);
+    assert.equal(brandMark.width, 28);
+    assert.equal(brandMark.height, 28);
+    assert.equal(brandMark.alt, '');
+    assert.equal(brandMark.getAttribute('aria-hidden'), 'true');
+    assert.equal(button?.querySelector('svg'), null);
+  });
+
   it('keeps a fallback FAB label when locale loading fails', async () => {
     await loadContentScript({
       config: { starsPanelDefaultEnabled: false },
