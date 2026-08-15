@@ -77,6 +77,7 @@ export function installStarsPageRuntime(pageWindow: Window): void {
   }
 
   function unlockPageScroll(): void {
+    if (savedHtmlOverflow === null && savedBodyOverflow === null) return;
     document.documentElement.style.overflow = savedHtmlOverflow ?? '';
     document.body.style.overflow = savedBodyOverflow ?? '';
     savedHtmlOverflow = null;
@@ -85,11 +86,15 @@ export function installStarsPageRuntime(pageWindow: Window): void {
 
   // Keep the React root so ejecting also tears down runtime/progress listeners.
   let panelRoot: Root | null = null;
+  let panelHost: HTMLDivElement | null = null;
 
   function injectPanel(): void {
     if (!isStarsPage()) return;
-    if (document.getElementById('gsm-manager-host')) return; // idempotent
-
+    if (panelHost?.isConnected) return;
+    if (panelRoot) panelRoot.unmount();
+    panelRoot = null;
+    panelHost = null;
+    if (document.getElementById('gsm-manager-host')) return;
     // Full-screen overlay host (kept in the light DOM for positioning); the
     // actual UI + styles live inside its shadow root.
     const host = document.createElement('div');
@@ -121,6 +126,7 @@ export function installStarsPageRuntime(pageWindow: Window): void {
 
     const main = document.querySelector('main') ?? document.querySelector('[data-pjax-container]') ?? document.body;
     main.parentElement?.insertBefore(host, main);
+    panelHost = host;
 
     panelRoot = createRoot(root);
     panelRoot.render(
@@ -134,13 +140,17 @@ export function installStarsPageRuntime(pageWindow: Window): void {
   function ejectPanel(): void {
     panelRoot?.unmount();
     panelRoot = null;
-    document.getElementById('gsm-manager-host')?.remove();
+    panelHost?.remove();
+    panelHost = null;
     unlockPageScroll();
   }
 
   // Vanilla shadow-root FAB shown only while the session-local panel hide is active.
+  let fabHost: HTMLDivElement | null = null;
   function injectFab(): void {
-    if (document.getElementById('gsm-fab')) return; // idempotent
+    if (fabHost?.isConnected) return;
+    fabHost = null;
+    if (document.getElementById('gsm-fab')) return;
 
     const host = document.createElement('div');
     host.id = 'gsm-fab';
@@ -193,6 +203,7 @@ export function installStarsPageRuntime(pageWindow: Window): void {
     btn.onclick = () => showPanel(pageWindow);
     shadow.appendChild(btn);
     document.body.appendChild(host);
+    fabHost = host;
 
     // No React here; localize after mount and let the CSS bubble wait for data-tip.
     void authStore.getLocale()
@@ -205,7 +216,8 @@ export function installStarsPageRuntime(pageWindow: Window): void {
   }
 
   function ejectFab(): void {
-    document.getElementById('gsm-fab')?.remove();
+    fabHost?.remove();
+    fabHost = null;
   }
 
   // Drop stale async results across rapid PJAX navigations.

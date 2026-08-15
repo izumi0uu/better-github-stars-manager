@@ -72,12 +72,14 @@ async function loadContentScript({
   config,
   getConfig,
   getLocale,
+  getUsername,
   initialBodyOverflow = '',
   initialHtmlOverflow = '',
 }: {
   config?: Config;
   getConfig?: () => Promise<Config>;
   getLocale?: () => Promise<string>;
+  getUsername?: () => Promise<string | null>;
   initialBodyOverflow?: string;
   initialHtmlOverflow?: string;
 } = {}) {
@@ -96,7 +98,7 @@ async function loadContentScript({
   });
   let currentConfig = config ?? { starsPanelDefaultEnabled: true };
   const getConfigFn = vi.fn(getConfig ?? (() => Promise.resolve(currentConfig)));
-  const getUsernameMock = vi.fn(() => Promise.resolve('octocat'));
+  const getUsernameMock = vi.fn(getUsername ?? (() => Promise.resolve('octocat')));
   const getLocaleMock = vi.fn(getLocale ?? (() => Promise.resolve('en')));
 
   vi.doMock('@/auth/auth-store', () => ({
@@ -365,6 +367,29 @@ describe('stars-page mount and toggle invariants', () => {
     assert.equal(document.querySelectorAll('#gsm-fab').length, 1);
     assert.equal(document.documentElement.style.overflow, 'scroll');
     assert.equal(document.body.style.overflow, 'auto');
+  });
+
+  it('does not remove panel or FAB hosts owned by another extension instance', async () => {
+    const pendingConfig = deferred<Config>();
+    await loadContentScript({
+      getConfig: () => pendingConfig.promise,
+      getUsername: () => Promise.resolve('another-user'),
+    });
+    const foreignPanel = document.createElement('div');
+    foreignPanel.id = 'gsm-manager-host';
+    const foreignFab = document.createElement('div');
+    foreignFab.id = 'gsm-fab';
+    document.body.append(foreignPanel, foreignFab);
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+
+    pendingConfig.resolve({ starsPanelDefaultEnabled: true });
+    await flush();
+
+    assert.equal(document.getElementById('gsm-manager-host'), foreignPanel);
+    assert.equal(document.getElementById('gsm-fab'), foreignFab);
+    assert.equal(document.documentElement.style.overflow, 'hidden');
+    assert.equal(document.body.style.overflow, 'hidden');
   });
 
   it('keeps a fallback FAB label when locale loading fails', async () => {
