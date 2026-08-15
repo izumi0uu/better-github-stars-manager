@@ -13,6 +13,7 @@ import type {
 } from '@/watch/watch-contract';
 import { normalizeWatchCollapsedRepositories } from '@/preferences';
 import type { WatchCollapsedRepositorySignatures } from '@/types';
+import type { WatchThreadActionPending } from '@/ui/watch-inbox-types';
 
 export function useWatchInbox({
   active = true,
@@ -29,10 +30,7 @@ export function useWatchInbox({
   const [loading, setLoading] = useState(active);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<'query' | 'refresh' | null>(null);
-  const [actionPending, setActionPending] = useState<{
-    action: WatchThreadAction;
-    threadIds: readonly string[];
-  } | null>(null);
+  const [actionPending, setActionPending] = useState<WatchThreadActionPending | null>(null);
   const [actionError, setActionError] = useState<WatchThreadAction | null>(null);
   const generation = useRef(0);
   const refreshingRef = useRef(false);

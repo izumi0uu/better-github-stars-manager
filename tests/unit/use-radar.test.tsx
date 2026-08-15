@@ -474,6 +474,7 @@ describe('useRadar', () => {
     const container = mountReact(<Harness />, mountedRoots);
     await settle();
     expect(runtimeListeners).toHaveLength(1);
+    expect(storageListeners).toHaveLength(1);
 
     await act(async () => {
       runtimeListeners[0]?.({ type: 'recommendationsChanged' });
@@ -492,6 +493,14 @@ describe('useRadar', () => {
     });
     expect(radarQueries).toBe(2);
     expect(recommendationQueries).toBe(3);
+
+    act(() => {
+      mountedRoots.pop()?.unmount();
+    });
+    expect(runtimeListeners).toHaveLength(0);
+    expect(storageListeners).toHaveLength(0);
+    expect(chrome.runtime.onMessage.removeListener).toHaveBeenCalledTimes(1);
+    expect(chrome.storage.onChanged.removeListener).toHaveBeenCalledTimes(1);
   });
 
   it('projects seen immediately and reconciles with the authoritative query', async () => {

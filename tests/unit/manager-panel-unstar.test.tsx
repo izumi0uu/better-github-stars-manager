@@ -244,9 +244,10 @@ vi.mock('@/ui/components/Toolbar', () => ({
     </div>
   ),
 }));
-vi.mock('@/ui/components/RadarSurface', () => ({
-  RadarSurface: () => <div data-testid="radar-surface-content" />,
-  RadarSurfaceActions: () => null,
+vi.mock('@/ui/components/Radar', () => ({
+  Radar: () => <div data-testid="radar-surface-content" />,
+}));
+vi.mock('@/ui/components/RadarStatusRibbon', () => ({
   RadarStatusRibbon: () => <div data-testid="radar-status-ribbon" />,
 }));
 
@@ -276,7 +277,9 @@ vi.mock('@/ui/components/WatchInbox', () => ({
       </button>
     </div>
   ),
-  WatchSurfaceActions: () => null,
+}));
+
+vi.mock('@/ui/components/WatchStatusRibbon', () => ({
   WatchStatusRibbon: () => <div data-testid="watch-status-ribbon" />,
 }));
 

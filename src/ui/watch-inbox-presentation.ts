@@ -15,6 +15,18 @@ const WATCH_CREDENTIAL_ERROR_CODES: Record<string, true> = {
   permission_denied: true,
 };
 
+export function formatWatchAbsoluteTime(value: string | null, locale: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return new Intl.DateTimeFormat(locale, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 /** Compact, locale-neutral age used for Watch's machine-data column. */
 export function formatWatchRelativeTime(
   value: string | null,

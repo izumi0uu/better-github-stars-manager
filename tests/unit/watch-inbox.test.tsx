@@ -24,10 +24,8 @@ vi.mock('@tanstack/react-virtual', () => ({
     scrollToIndex: virtualScrollToIndex,
   }),
 }));
-import {
-  WatchInbox,
-  WatchStatusRibbon,
-} from '@/ui/components/WatchInbox';
+import { WatchInbox } from '@/ui/components/WatchInbox';
+import { WatchStatusRibbon } from '@/ui/components/WatchStatusRibbon';
 import type { GitHubNotificationThread, WatchSubjectDetail } from '@/watch/watch-model';
 import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
 import { watchGroupContentSignature } from '@/ui/watch-inbox-presentation';

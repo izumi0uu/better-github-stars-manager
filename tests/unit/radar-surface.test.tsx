@@ -2,11 +2,9 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  RadarStatusRibbon,
-  RadarSurface,
-  RadarSurfaceActions,
-} from '@/ui/components/RadarSurface';
+import { Radar } from '@/ui/components/Radar';
+import { RadarCommandBarActions } from '@/ui/components/RadarCommandBar';
+import { RadarStatusRibbon } from '@/ui/components/RadarStatusRibbon';
 import type { RadarQueryResponse, RadarStatus } from '@/radar/radar-contract';
 import type { RadarActivityPresentation } from '@/radar/radar-model';
 import type {
@@ -15,6 +13,22 @@ import type {
 } from '@/recommendations/recommendation-model';
 import { cleanupMountedRootsAndBody, setInputValue } from './test-utils';
 import { TooltipProvider } from '@/ui/shadcn/tooltip';
+
+const virtualizerSpies = vi.hoisted(() => ({
+  measureElement: vi.fn(),
+}));
+
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 100,
+    getVirtualItems: () => Array.from({ length: count }, (_, index) => ({
+      index,
+      key: index,
+      start: index * 100,
+    })),
+    measureElement: virtualizerSpies.measureElement,
+  }),
+}));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -159,8 +173,8 @@ function mount(element: React.ReactElement): HTMLDivElement {
 const noOp = async () => undefined;
 
 function surfaceProps(
-  overrides: Partial<React.ComponentProps<typeof RadarSurface>> = {},
-): React.ComponentProps<typeof RadarSurface> {
+  overrides: Partial<React.ComponentProps<typeof Radar>> = {},
+): React.ComponentProps<typeof Radar> {
   return {
     result: radarResult(),
     recommendations: recommendationResult(),
@@ -197,12 +211,14 @@ function surfaceProps(
 
 afterEach(() => {
   cleanupMountedRootsAndBody(mountedRoots);
+  virtualizerSpies.measureElement.mockClear();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
-describe('RadarSurface', () => {
+describe('Radar', () => {
   it('keeps the Following feed and command controls intact', () => {
-    const container = mount(<RadarSurface {...surfaceProps()} />);
+    const container = mount(<Radar {...surfaceProps()} />);
 
     expect(container.querySelectorAll('[data-radar-row]')).toHaveLength(2);
     expect(container.querySelector('[data-surface-command-bar="following"]')).not.toBeNull();
@@ -211,9 +227,110 @@ describe('RadarSurface', () => {
     expect(container.querySelector('[data-radar-view="for-you"]')).toBeNull();
   });
 
+  it('keeps dismiss separate from seen intent and restores focus after removal', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const onDismiss = vi.fn(noOp);
+    const onMarkSeen = vi.fn();
+    const initialResult = radarResult();
+    const baseProps = surfaceProps({ onDismiss, onMarkSeen });
+    let nextFrame: FrameRequestCallback | null = null;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      nextFrame = callback;
+      return 1;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+    const render = (
+      result: RadarQueryResponse,
+      pendingAction: React.ComponentProps<typeof Radar>['pendingAction'],
+    ) => act(() => root.render(
+      <TooltipProvider>
+        <Radar {...baseProps} result={result} pendingAction={pendingAction} />
+      </TooltipProvider>,
+    ));
+
+    render(initialResult, null);
+    const firstDismiss = container.querySelector<HTMLButtonElement>('[data-radar-dismiss]');
+    expect(firstDismiss).not.toBeNull();
+    act(() => firstDismiss?.click());
+
+    expect(onMarkSeen).not.toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledWith('owner/one', ['one']);
+
+    render(initialResult, { kind: 'dismiss', repositoryKey: 'owner/one' });
+    render({
+      ...initialResult,
+      activities: initialResult.activities.slice(1),
+      unseenCount: 1,
+    }, null);
+    act(() => {
+      const callback = nextFrame;
+      nextFrame = null;
+      callback?.(0);
+    });
+
+    const remainingDismiss = container.querySelector<HTMLButtonElement>('[data-radar-dismiss]');
+    expect(remainingDismiss).not.toBeNull();
+    expect(document.activeElement).toBe(remainingDismiss);
+  });
+
+  it('preserves keyed virtual activity and project rows with measurement indices', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const scrollElement = document.createElement('div');
+    const initialResult = radarResult();
+    const reversedResult = {
+      ...initialResult,
+      activities: [...initialResult.activities].reverse(),
+    };
+    const reorderedProjectResult = {
+      ...initialResult,
+      activities: initialResult.activities.map((row) => ({
+        ...row,
+        starredAt: row.id === 'one'
+          ? '2026-08-09T10:00:00.000Z'
+          : '2026-08-11T10:00:00.000Z',
+      })),
+    };
+    const baseProps = surfaceProps({ scrollElement });
+    const render = (result: RadarQueryResponse, view: 'feed' | 'projects') => act(() => root.render(
+      <TooltipProvider>
+        <Radar {...baseProps} result={result} view={view} />
+      </TooltipProvider>,
+    ));
+
+    render(initialResult, 'feed');
+    const activityWrapper = container
+      .querySelector('[data-radar-row="one"]')
+      ?.closest<HTMLElement>('[data-index]');
+    expect(activityWrapper?.dataset.index).toBe('0');
+    expect(container.querySelectorAll('[data-index]')).toHaveLength(2);
+    expect(virtualizerSpies.measureElement).toHaveBeenCalled();
+
+    render(reversedResult, 'feed');
+    expect(container.querySelector('[data-radar-row="one"]')?.closest('[data-index]'))
+      .toBe(activityWrapper);
+    expect(activityWrapper?.dataset.index).toBe('1');
+
+    render(initialResult, 'projects');
+    const projectWrapper = container
+      .querySelector('[data-radar-project="owner/one"]')
+      ?.closest<HTMLElement>('[data-index]');
+    expect(projectWrapper?.dataset.index).toBe('0');
+
+    render(reorderedProjectResult, 'projects');
+    expect(container.querySelector('[data-radar-project="owner/one"]')?.closest('[data-index]'))
+      .toBe(projectWrapper);
+    expect(projectWrapper?.dataset.index).toBe('1');
+  });
+
   it('scopes topic suggestions and tag mutations to the selected repository', async () => {
     const onAddTag = vi.fn(noOp);
-    const container = mount(<RadarSurface {...surfaceProps({ onAddTag })} />);
+    const container = mount(<Radar {...surfaceProps({ onAddTag })} />);
     const trigger = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Quick actions for owner/two"]',
     );
@@ -231,7 +348,7 @@ describe('RadarSurface', () => {
   it('does not expose applied repository topics as suggested tags', async () => {
     const result = radarResult();
     result.activities[1] = { ...result.activities[1]!, tags: ['topic-two'] };
-    const container = mount(<RadarSurface {...surfaceProps({ result })} />);
+    const container = mount(<Radar {...surfaceProps({ result })} />);
     const trigger = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Quick actions for owner/two"]',
     );
@@ -253,7 +370,7 @@ describe('RadarSurface', () => {
     let result = radarResult();
     const render = () => act(() => root.render(
       <TooltipProvider>
-        <RadarSurface {...surfaceProps({ result, onStar, onUnstar })} />
+        <Radar {...surfaceProps({ result, onStar, onUnstar })} />
       </TooltipProvider>,
     ));
 
@@ -290,7 +407,7 @@ describe('RadarSurface', () => {
       favorite: true,
     };
     const onUnstar = vi.fn(noOp);
-    const container = mount(<RadarSurface {...surfaceProps({
+    const container = mount(<Radar {...surfaceProps({
       result,
       view: 'projects',
       onUnstar,
@@ -319,7 +436,7 @@ describe('RadarSurface', () => {
 
   it('switches Discover views with click and arrow-key tab semantics', async () => {
     const onDiscoverViewChange = vi.fn();
-    const container = mount(<RadarSurface {...surfaceProps({ onDiscoverViewChange })} />);
+    const container = mount(<Radar {...surfaceProps({ onDiscoverViewChange })} />);
     const forYouTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
       .find((button) => button.textContent?.includes('For You'));
 
@@ -335,7 +452,7 @@ describe('RadarSurface', () => {
   });
 
   it('renders repository identity and topics without annotation controls', () => {
-    const container = mount(<RadarSurface {...surfaceProps({ discoverView: 'for-you' })} />);
+    const container = mount(<Radar {...surfaceProps({ discoverView: 'for-you' })} />);
     const row = container.querySelector('[data-recommendation-row="candidate/tool"]');
     const avatar = row?.querySelector<HTMLImageElement>('img');
 
@@ -356,7 +473,7 @@ describe('RadarSurface', () => {
   });
   it('ignores a recommendation row and reports the repository key', async () => {
     const onIgnore = vi.fn(noOp);
-    const container = mount(<RadarSurface {...surfaceProps({
+    const container = mount(<Radar {...surfaceProps({
       discoverView: 'for-you',
       onIgnore,
     })} />);
@@ -379,7 +496,7 @@ describe('RadarSurface', () => {
       repositoryFullName: 'One/Repo',
       ignoredAt: '2026-08-10T11:00:00.000Z',
     }];
-    const container = mount(<RadarSurface {...surfaceProps({
+    const container = mount(<Radar {...surfaceProps({
       discoverView: 'for-you',
       recommendations: recommendationResult({}, ignored),
       onRestoreIgnored,
@@ -404,7 +521,7 @@ describe('RadarSurface', () => {
   it('renders repository owner avatars on Following feed rows', () => {
     const avatarActivity = activity('one', 'owner/one');
     avatarActivity.repositoryOwnerAvatarUrl = 'https://avatars.githubusercontent.com/u/1?v=4';
-    const container = mount(<RadarSurface {...surfaceProps({
+    const container = mount(<Radar {...surfaceProps({
       result: { ...radarResult(), activities: [avatarActivity], unseenCount: 1 },
     })} />);
     const avatar = container.querySelector('img[data-repository-avatar]');
@@ -412,7 +529,7 @@ describe('RadarSurface', () => {
   });
 
   it('falls back to a square colored initial when a For You avatar fails to load', () => {
-    const container = mount(<RadarSurface {...surfaceProps({ discoverView: 'for-you' })} />);
+    const container = mount(<Radar {...surfaceProps({ discoverView: 'for-you' })} />);
     const img = container.querySelector('img[src^="https://github.com/candidate.png"]');
     expect(img).not.toBeNull();
     act(() => { img?.dispatchEvent(new Event('error')); });
@@ -428,12 +545,12 @@ describe('RadarSurface', () => {
     mountedRoots.push(root);
     const following = () => (
       <TooltipProvider>
-        <RadarSurface {...surfaceProps({ discoverView: 'following' })} />
+        <Radar {...surfaceProps({ discoverView: 'following' })} />
       </TooltipProvider>
     );
     const forYou = () => (
       <TooltipProvider>
-        <RadarSurface {...surfaceProps({ discoverView: 'for-you' })} />
+        <Radar {...surfaceProps({ discoverView: 'for-you' })} />
       </TooltipProvider>
     );
     act(() => root.render(following()));
@@ -450,12 +567,12 @@ describe('RadarSurface', () => {
     mountedRoots.push(root);
     act(() => root.render(
       <TooltipProvider>
-        <RadarSurface {...surfaceProps({ result: null })} />
+        <Radar {...surfaceProps({ result: null })} />
       </TooltipProvider>,
     ));
     act(() => root.render(
       <TooltipProvider>
-        <RadarSurface {...surfaceProps()} />
+        <Radar {...surfaceProps()} />
       </TooltipProvider>,
     ));
     expect(container.querySelector('[data-radar-surface]')).not.toBeNull();
@@ -469,7 +586,7 @@ describe('RadarSurface', () => {
       repositoryFullName: 'One/Repo',
       ignoredAt: '2026-08-10T11:00:00.000Z',
     }];
-    const container = mount(<RadarSurface {...surfaceProps({
+    const container = mount(<Radar {...surfaceProps({
       discoverView: 'for-you',
       recommendations: recommendationResult({}, ignored, []),
     })} />);
@@ -489,7 +606,7 @@ describe('RadarSurface', () => {
       unseenCount: 0,
       status: status({ state: { ...status().state!, activityCount: 0 } }),
     };
-    const states: Array<Partial<React.ComponentProps<typeof RadarSurface>>> = [
+    const states: Array<Partial<React.ComponentProps<typeof Radar>>> = [
       { result: null },
       {},
       { result: { ...radarResult(), status: status({ hasMainToken: false }) } },
@@ -513,7 +630,7 @@ describe('RadarSurface', () => {
     for (const state of states) {
       act(() => root.render(
         <TooltipProvider>
-          <RadarSurface {...surfaceProps(state)} />
+          <Radar {...surfaceProps(state)} />
         </TooltipProvider>,
       ));
     }
@@ -522,7 +639,7 @@ describe('RadarSurface', () => {
   });
 
   it('dismisses the saved-recommendations warning banner manually', async () => {
-    const container = mount(<RadarSurface {...surfaceProps({
+    const container = mount(<Radar {...surfaceProps({
       discoverView: 'for-you',
       recommendations: recommendationResult({ snapshotStatus: 'stale' }),
     })} />);
@@ -536,7 +653,7 @@ describe('RadarSurface', () => {
   });
 
   it('keeps the fresh summary banner without a dismiss control', () => {
-    const container = mount(<RadarSurface {...surfaceProps({ discoverView: 'for-you' })} />);
+    const container = mount(<Radar {...surfaceProps({ discoverView: 'for-you' })} />);
     const banner = container.querySelector('[data-radar-saved-banner]');
     expect(banner?.textContent).toContain('1 recommendation');
     expect(banner?.querySelector('button')).toBeNull();
@@ -551,7 +668,7 @@ describe('RadarSurface', () => {
         partialReasons: ['following_scan_truncated'],
       },
     });
-    const container = mount(<RadarSurface {...surfaceProps({ result: partialResult })} />);
+    const container = mount(<Radar {...surfaceProps({ result: partialResult })} />);
     const banner = container.querySelector('[data-radar-partial-banner]');
     expect(banner?.textContent).toContain('Partial results');
     const dismiss = banner?.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
@@ -563,7 +680,7 @@ describe('RadarSurface', () => {
 
   it('runs New batch from the command bar and keeps saved rows visible while refreshing', async () => {
     const onRefreshRecommendations = vi.fn();
-    const container = mount(<RadarSurface {...surfaceProps({
+    const container = mount(<Radar {...surfaceProps({
       discoverView: 'for-you',
       recommendationRefreshing: true,
       onRefreshRecommendations,
@@ -575,7 +692,7 @@ describe('RadarSurface', () => {
     expect(container.querySelectorAll('[data-recommendation-row]')).toHaveLength(1);
     expect(container.textContent).toContain('Refreshing · showing saved recommendations');
 
-    const idle = mount(<RadarSurface {...surfaceProps({
+    const idle = mount(<Radar {...surfaceProps({
       discoverView: 'for-you',
       onRefreshRecommendations,
     })} />);
@@ -586,7 +703,7 @@ describe('RadarSurface', () => {
   });
 
   it('filters For You rows and reports an empty search state', async () => {
-    const container = mount(<RadarSurface {...surfaceProps({ discoverView: 'for-you' })} />);
+    const container = mount(<Radar {...surfaceProps({ discoverView: 'for-you' })} />);
     const input = container.querySelector<HTMLInputElement>('input[aria-label="Search recommendations"]');
     expect(input).not.toBeNull();
 
@@ -596,7 +713,7 @@ describe('RadarSurface', () => {
 
   it('preserves saved recommendations across stale and refresh error states', () => {
     const stale = recommendationResult({ snapshotStatus: 'stale', errorCode: 'network_error' });
-    const container = mount(<RadarSurface {...surfaceProps({
+    const container = mount(<Radar {...surfaceProps({
       discoverView: 'for-you',
       recommendations: stale,
       recommendationError: 'refresh',
@@ -609,7 +726,7 @@ describe('RadarSurface', () => {
 
   it('shows a concise Star action and preserves the repository mutation payload', async () => {
     const onStar = vi.fn(noOp);
-    const container = mount(<RadarSurface {...surfaceProps({ discoverView: 'for-you', onStar })} />);
+    const container = mount(<Radar {...surfaceProps({ discoverView: 'for-you', onStar })} />);
     const row = container.querySelector('[data-recommendation-row="candidate/tool"]');
     const starButton = row?.querySelector<HTMLButtonElement>('button[aria-label="Star Candidate/Tool on GitHub"]');
 
@@ -619,10 +736,10 @@ describe('RadarSurface', () => {
   });
 
   it('renders helper text only for a failed recommendation action', () => {
-    const normal = mount(<RadarSurface {...surfaceProps({ discoverView: 'for-you' })} />);
+    const normal = mount(<Radar {...surfaceProps({ discoverView: 'for-you' })} />);
     expect(normal.querySelector('[data-recommendation-row="candidate/tool"] [role="alert"]')).toBeNull();
 
-    const failed = mount(<RadarSurface {...surfaceProps({
+    const failed = mount(<Radar {...surfaceProps({
       discoverView: 'for-you',
       actionError: { repositoryKey: 'candidate/tool', message: 'failed' },
     })} />);
@@ -631,14 +748,14 @@ describe('RadarSurface', () => {
   });
 });
 
-describe('RadarSurfaceActions', () => {
+describe('RadarCommandBarActions', () => {
   it('disables refresh during cooldown', () => {
     const result = radarResult();
     const cooled: RadarQueryResponse = {
       ...result,
       status: status({ snapshotStatus: 'cooldown' }),
     };
-    const container = mount(<RadarSurfaceActions
+    const container = mount(<RadarCommandBarActions
       result={cooled}
       loading={false}
       view="feed"

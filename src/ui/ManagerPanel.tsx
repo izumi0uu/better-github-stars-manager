@@ -10,14 +10,10 @@ import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { StarsTable } from '@/ui/components/StarsTable';
-import {
-  WatchInbox,
-  WatchStatusRibbon,
-} from '@/ui/components/WatchInbox';
-import {
-  RadarStatusRibbon,
-  RadarSurface,
-} from '@/ui/components/RadarSurface';
+import { WatchInbox } from '@/ui/components/WatchInbox';
+import { WatchStatusRibbon } from '@/ui/components/WatchStatusRibbon';
+import { Radar } from '@/ui/components/Radar';
+import { RadarStatusRibbon } from '@/ui/components/RadarStatusRibbon';
 import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
 import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
@@ -746,7 +742,7 @@ export function ManagerPanel() {
                 onSelectRepository={(fullName) => { void handleWatchRepositorySelect(fullName); }}
               />
             ) : radarSurface ? (
-              <RadarSurface
+              <Radar
                 result={radar.result}
                 scrollElement={listElement}
                 recommendations={radar.recommendations}
