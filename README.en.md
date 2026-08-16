@@ -9,7 +9,7 @@
 
 Search, filter, tag, and annotate repositories directly on your GitHub Stars page. Enable Watch, Following, For You, Secret Gist sync, or Cubby AI when you need them.
 
-**Official website:** [betterstars.app](https://betterstars.app/)
+[Website](https://betterstars.app/) · [DEMO](https://better-github-stars-manager.vercel.app/)
 
 [![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Install%20Now-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome Web Store users](https://img.shields.io/chrome-web-store/users/jbiacpcceoffcnmpepifoegagjopjpfa?logo=googlechrome&label=Chrome%20Web%20Store%20users)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
