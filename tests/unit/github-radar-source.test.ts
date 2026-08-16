@@ -194,6 +194,99 @@ describe('GitHub Radar source', () => {
     expect(new Headers(calls[0]?.init.headers).get('authorization')).toBe('Bearer secret');
   });
 
+  it('keeps valid activity aliases when a followed account is missing', async () => {
+    let request = 0;
+    const fetchImpl = vi.fn(async () => {
+      request += 1;
+      if (request === 1) {
+        return jsonResponse(followingEnvelope({ logins: ['alice', 'bob'] }));
+      }
+      const valid = activityEnvelope([{
+        login: 'bob',
+        edges: [{ starredAt: NOW.toISOString(), node: repository('owner/valid') }],
+      }]);
+      return jsonResponse({
+        data: {
+          ...valid.data,
+          follower0: null,
+          follower1: (valid.data as Record<string, unknown>).follower0,
+        },
+        errors: [{ type: 'NOT_FOUND', path: ['follower0'] }],
+      });
+    }) as typeof fetch;
+
+    const snapshot = await fetchGitHubRadar({ token: 'token', fetchImpl, now: () => NOW });
+
+    expect(snapshot.activities.map((activity) => activity.repositoryKey)).toEqual(['owner/valid']);
+    expect(snapshot.scannedFollowingCount).toBe(1);
+    expect(snapshot.batchCount).toBe(1);
+    expect(snapshot.partialReasons).toEqual(['following_scan_truncated']);
+  });
+
+  it('keeps earlier activity when a continuation alias disappears', async () => {
+    let request = 0;
+    const fetchImpl = vi.fn(async () => {
+      request += 1;
+      if (request === 1) return jsonResponse(followingEnvelope({ logins: ['alice'] }));
+      if (request === 2) {
+        return jsonResponse(activityEnvelope([{
+          login: 'alice',
+          edges: [{ starredAt: NOW.toISOString(), node: repository('owner/first-page') }],
+          hasNextPage: true,
+          endCursor: 'page-2',
+        }]));
+      }
+      return jsonResponse({
+        data: {
+          follower0: null,
+          rateLimit: { remaining: 4_800, resetAt: '2026-08-10T13:00:00Z' },
+        },
+        errors: [{ type: 'NOT_FOUND', path: ['follower0'] }],
+      });
+    }) as typeof fetch;
+
+    const snapshot = await fetchGitHubRadar({ token: 'token', fetchImpl, now: () => NOW });
+
+    expect(snapshot.activities.map((activity) => activity.repositoryKey)).toEqual(['owner/first-page']);
+    expect(snapshot.scannedFollowingCount).toBe(1);
+    expect(snapshot.batchCount).toBe(2);
+    expect(snapshot.partialReasons).toEqual(['github_star_list_truncated']);
+  });
+
+  it.each([
+    {
+      name: 'unscoped missing resource',
+      errors: [{ type: 'NOT_FOUND', path: ['viewer'] }],
+      code: 'invalid_response',
+    },
+    {
+      name: 'out-of-range activity alias',
+      errors: [{ type: 'NOT_FOUND', path: ['follower9'] }],
+      code: 'invalid_response',
+    },
+    {
+      name: 'mixed missing and rate-limited aliases',
+      errors: [
+        { type: 'NOT_FOUND', path: ['follower0'] },
+        { type: 'RATE_LIMITED', path: ['rateLimit'] },
+      ],
+      code: 'rate_limited',
+    },
+  ])('keeps $name GraphQL errors fatal', async ({ errors, code }) => {
+    let request = 0;
+    const fetchImpl = vi.fn(async () => {
+      request += 1;
+      if (request === 1) return jsonResponse(followingEnvelope({ logins: ['alice'] }));
+      return jsonResponse({
+        ...activityEnvelope([{ login: 'alice', edges: [] }]),
+        errors,
+      });
+    }) as typeof fetch;
+
+    await expect(fetchGitHubRadar({ token: 'token', fetchImpl, now: () => NOW }))
+      .rejects.toMatchObject({ code });
+  });
+
   it('truthfully reports following truncation before making unaffordable activity requests', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(followingEnvelope({
       logins: ['alice', 'bob'],

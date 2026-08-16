@@ -451,6 +451,50 @@ describe('Options preferences', () => {
     expect(panel?.textContent).toContain('Disabled after opening the store');
   });
 
+  it('keeps rating persistence errors local without replacing token feedback', async () => {
+    const disabled = config({
+      storeRatingPrompt: {
+        version: 1,
+        status: 'disabled',
+        activeLocalDays: [],
+        meaningfulActionCount: 0,
+        exposureCount: 0,
+        snoozeUntil: null,
+      },
+    });
+    const tracking = config({
+      storeRatingPrompt: { ...disabled.storeRatingPrompt, status: 'tracking' },
+    });
+    authMocks.getConfig.mockResolvedValue(disabled);
+    authMocks.hasToken.mockResolvedValue(true);
+    authMocks.setToken.mockRejectedValue(new Error('token persistence failed'));
+    authMocks.reenableStoreRatingPrompt
+      .mockRejectedValueOnce(new Error('rating persistence failed'))
+      .mockResolvedValueOnce(tracking);
+
+    await renderOptions();
+
+    const tokenInput = document.querySelector<HTMLTextAreaElement>('textarea[placeholder="github_pat_..."]');
+    const githubPanel = document.querySelector('[data-testid="github-connection-settings"]');
+    const saveToken = [...githubPanel!.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes(watchCopy.saveVerify));
+    await setTextareaValue(tokenInput!, 'github_pat_example');
+    await click(saveToken!);
+
+    const panel = document.querySelector('[data-testid="store-rating-settings"]');
+    const reminder = panel?.querySelector<HTMLButtonElement>('#store-rating-reminder');
+    await click(reminder!);
+
+    expect(document.querySelector('[data-testid="main-token-status"]')?.getAttribute('role')).toBe('alert');
+    expect(panel?.querySelector('[data-testid="store-rating-status"]')?.getAttribute('role')).toBe('alert');
+
+    await click(reminder!);
+
+    expect(authMocks.reenableStoreRatingPrompt).toHaveBeenCalledTimes(2);
+    expect(panel?.querySelector('[data-testid="store-rating-status"]')).toBeNull();
+    expect(document.querySelector('[data-testid="main-token-status"]')?.getAttribute('role')).toBe('alert');
+  });
+
   it('normalizes and persists split auto-tag policy inputs independently', async () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);

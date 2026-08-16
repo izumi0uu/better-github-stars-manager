@@ -523,6 +523,8 @@ describe('GitHub Watch API sources', () => {
       .rejects.toMatchObject({ code: 'invalid_response' });
 
     const hostileAvatarQuery = vi.fn<typeof fetch>(async () => jsonResponse(subjectDetail({
+      html_url: identity.htmlUrl,
+      pull_request: undefined,
       user: {
         login: 'octocat',
         avatar_url: 'https://avatars.githubusercontent.com/u/1?redirect=https://attacker.example',

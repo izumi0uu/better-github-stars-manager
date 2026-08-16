@@ -442,13 +442,16 @@ describe('Radar', () => {
 
     await act(async () => { forYouTab?.click(); });
     expect(onDiscoverViewChange).toHaveBeenCalledWith('for-you');
+    onDiscoverViewChange.mockClear();
+
 
     const followingTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
       .find((button) => button.textContent?.includes('Following'));
     await act(async () => {
       followingTab?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     });
-    expect(onDiscoverViewChange).toHaveBeenLastCalledWith('for-you');
+    expect(onDiscoverViewChange).toHaveBeenCalledTimes(1);
+    expect(onDiscoverViewChange).toHaveBeenCalledWith('for-you');
   });
 
   it('renders repository identity and topics without annotation controls', () => {

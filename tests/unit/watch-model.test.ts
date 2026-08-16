@@ -7,7 +7,11 @@ import {
   safeSubjectHtmlUrl,
   watchSubjectIdentity,
 } from '@/watch/watch-model';
-import { parseWatchThreadIds, WATCH_MAX_THREAD_ACTIONS } from '@/watch/watch-contract';
+import {
+  parseWatchAccountLogin,
+  parseWatchThreadIds,
+  WATCH_MAX_THREAD_ACTIONS,
+} from '@/watch/watch-contract';
 
 function thread(id: string, repositoryFullName: string, updatedAt: string, unread = true) {
   return normalizeNotificationThread({
@@ -190,6 +194,13 @@ describe('Watch domain model', () => {
       { length: WATCH_MAX_THREAD_ACTIONS + 1 },
       (_, index) => String(index + 1),
     ))).toBeNull();
+  });
+
+  it('normalizes bounded Watch account identities at the message boundary', () => {
+    expect(parseWatchAccountLogin(' OctoCat ')).toBe('octocat');
+    expect(parseWatchAccountLogin('')).toBeNull();
+    expect(parseWatchAccountLogin(null)).toBeNull();
+    expect(parseWatchAccountLogin('a'.repeat(40))).toBeNull();
   });
 
 });
