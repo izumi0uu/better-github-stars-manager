@@ -4,7 +4,10 @@
 import { act, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWatchInbox } from '@/ui/hooks/use-watch-inbox';
-import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
+import {
+  WATCH_MAX_THREAD_ACTIONS,
+  type WatchInboxQueryResponse,
+} from '@/watch/watch-contract';
 import {
   cleanupMountedRootsAndBody,
   click,
@@ -27,6 +30,7 @@ type StorageListener = (
 const runtimeListeners: RuntimeListener[] = [];
 const storageListeners: StorageListener[] = [];
 
+const MANY_THREAD_IDS = Array.from({ length: 1_001 }, (_, index) => String(index + 1));
 vi.mock('@/utils/messaging', () => ({
   bgCall: watchMocks.bgCall,
 }));
@@ -128,6 +132,13 @@ function Harness({ initialActive = true }: { initialActive?: boolean } = {}) {
         onClick={() => void inbox.markThreadsDone(['1', '2'])}
       >
         Mark done
+      </button>
+      <button
+        type="button"
+        data-testid="mark-many-done"
+        onClick={() => void inbox.markThreadsDone(MANY_THREAD_IDS)}
+      >
+        Mark many done
       </button>
       <button
         type="button"
@@ -622,6 +633,46 @@ describe('useWatchInbox', () => {
     expect(container.querySelector('[data-testid="action-pending"]')?.textContent).toBe('none');
     expect(container.querySelector('[data-testid="action-error"]')?.textContent).toBe('none');
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+  });
+
+  it('chunks a repository action with more than one thousand notifications', async () => {
+    const mutationBatches: string[][] = [];
+    let queryCount = 0;
+    watchMocks.bgCall.mockImplementation((
+      type: string,
+      payload?: { threadIds?: string[] },
+    ) => {
+      if (type === 'queryWatchInbox') {
+        queryCount += 1;
+        return Promise.resolve(queryResponse(1_001));
+      }
+      if (type === 'markWatchThreadsDone') {
+        const threadIds = payload?.threadIds ?? [];
+        mutationBatches.push(threadIds);
+        return threadIds.length <= WATCH_MAX_THREAD_ACTIONS
+          ? Promise.resolve(undefined)
+          : Promise.reject(new Error('oversized Watch mutation'));
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+    const container = mountReact(<Harness />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="mark-many-done"]')!);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mutationBatches.map((batch) => batch.length)).toEqual([500, 500, 1]);
+    expect(mutationBatches.flat()).toEqual(MANY_THREAD_IDS);
+    expect(container.querySelector('[data-testid="action-error"]')?.textContent).toBe('none');
+    expect(queryCount).toBe(2);
   });
 
   it('surfaces a failed done mutation after reloading saved rows', async () => {

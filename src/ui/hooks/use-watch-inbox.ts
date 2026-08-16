@@ -5,11 +5,12 @@ import {
   GITHUB_CREDENTIALS_STORAGE_KEY,
 } from '@/auth/auth-store';
 import { bgCall } from '@/utils/messaging';
-import type {
-  WatchInboxQueryResponse,
-  WatchRefreshResult,
-  WatchThreadAction,
-  WatchThreadMutationResult,
+import {
+  WATCH_MAX_THREAD_ACTIONS,
+  type WatchInboxQueryResponse,
+  type WatchRefreshResult,
+  type WatchThreadAction,
+  type WatchThreadMutationResult,
 } from '@/watch/watch-contract';
 import { normalizeWatchCollapsedRepositories } from '@/preferences';
 import type { WatchCollapsedRepositorySignatures } from '@/types';
@@ -197,10 +198,12 @@ export function useWatchInbox({
     setActionPending({ action, threadIds });
     setActionError(null);
     try {
-      await bgCall<WatchThreadMutationResult>(
-        action === 'read' ? 'markWatchThreadsRead' : 'markWatchThreadsDone',
-        { threadIds },
-      );
+      const requestType = action === 'read' ? 'markWatchThreadsRead' : 'markWatchThreadsDone';
+      for (let offset = 0; offset < threadIds.length; offset += WATCH_MAX_THREAD_ACTIONS) {
+        await bgCall<WatchThreadMutationResult>(requestType, {
+          threadIds: threadIds.slice(offset, offset + WATCH_MAX_THREAD_ACTIONS),
+        });
+      }
       onMeaningfulAction?.();
       await load(true);
     } catch {
