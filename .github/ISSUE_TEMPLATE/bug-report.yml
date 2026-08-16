@@ -1,0 +1,123 @@
+name: Bug report / 问题报告
+description: Report reproducible incorrect behavior / 报告可复现的错误行为
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. 感谢你报告问题。
+
+        Search existing issues first. Remove tokens, API keys, private repository data, personal information, and local paths from every field and attachment.
+
+        请先搜索已有 Issue。请从所有字段和附件中删除 Token、API Key、私人仓库数据、个人信息和本机路径。
+
+        Do not report security vulnerabilities here. Follow the repository [security policy](https://github.com/izumi0uu/better-github-stars-manager/security/policy).
+
+        请勿在此报告安全漏洞；请遵循仓库的[安全政策](https://github.com/izumi0uu/better-github-stars-manager/security/policy)。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight / 提交前确认
+      options:
+        - label: I searched existing issues for the same problem. / 我已搜索已有 Issue，确认没有相同问题。
+          required: true
+        - label: I removed credentials, private data, personal information, and identifying screenshots. / 我已删除凭据、私人数据、个人信息和可识别身份的截图。
+          required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface / 受影响功能
+      description: Select the surface where the problem appears. / 选择出现问题的功能。
+      options:
+        - Stars manager / Stars 管理
+        - Watch Inbox
+        - Following Radar
+        - Cubby Agent
+        - Options and authentication / 设置与认证
+        - Gist sync / Gist 同步
+        - Browser build or runtime / 浏览器构建或运行时
+        - Public demo / 公开演示
+        - Other / 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browsers
+    attributes:
+      label: Browser / 浏览器
+      description: Select every browser where you reproduced the problem. / 选择所有能够复现问题的浏览器。
+      multiple: true
+      options:
+        - Google Chrome
+        - Mozilla Firefox
+        - Microsoft Edge
+        - Opera
+        - Other / 其他
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Extension version or commit / 扩展版本或 commit
+      description: Provide the store version or commit SHA you tested. / 填写你测试的商店版本或 commit SHA。
+      placeholder: Store version or commit SHA / 商店版本或 commit SHA
+    validations:
+      required: true
+
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system / 操作系统
+      placeholder: macOS, Windows, or Linux and its version / 系统及版本
+    validations:
+      required: false
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps / 复现步骤
+      description: Provide the smallest deterministic sequence that reproduces the problem. / 提供能够稳定复现问题的最短步骤。
+      placeholder: |
+        1. Open… / 打开……
+        2. Select… / 选择……
+        3. Observe… / 观察……
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior / 实际行为
+      description: Describe what happened, including visible error states. / 描述实际结果，包括可见错误状态。
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior / 预期行为
+      description: Describe the observable result you expected. / 描述你期望看到的结果。
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs / 已脱敏日志
+      description: Paste only the minimum relevant output after removing secrets and private data. / 删除秘密和私人数据后，仅粘贴最相关的最小输出。
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context / 补充信息
+      description: Add sanitized screenshots, recordings, or links that help reproduce the problem. / 添加有助于复现问题的已脱敏截图、录屏或链接。
+    validations:
+      required: false

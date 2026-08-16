@@ -257,6 +257,7 @@ pnpm test:smoke
 - [How For You recommendations work](docs/en/for-you-recommendation-strategy.md)
 - [Cubby Agent technical reference](docs/en/cubby-agent.md)
 - [Privacy policy](docs/en/privacy-policy.md)
+- [Security policy](SECURITY.md)
 - [Chrome Web Store update notes](docs/en/chrome-web-store-submission.md)
 - [Firefox Add-ons submission reference](docs/en/firefox-amo-submission.md)
 - [Microsoft Edge Add-ons submission reference](docs/en/edge-addons-submission.md)
@@ -264,7 +265,7 @@ pnpm test:smoke
 
 ## Contributing
 
-Report bugs and request features through [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues). Pull requests are welcome; read the [contribution guide](CONTRIBUTING.en.md) first for the Cubby Agent diagnostics build and debugging workflow.
+Report bugs and request features through [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues). Pull Requests are welcome; read the [contribution guide](CONTRIBUTING.en.md) for setup, testing, commit, submission requirements, and the Cubby Agent diagnostics workflow.
 
 ## License
 

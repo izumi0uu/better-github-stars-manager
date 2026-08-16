@@ -257,6 +257,7 @@ pnpm test:smoke
 - [For You 推荐如何工作](docs/zh/for-you-recommendation-strategy.md)
 - [Cubby Agent 技术参考](docs/zh/cubby-agent.md)
 - [隐私政策](docs/zh/privacy-policy.md)
+- [安全政策](SECURITY.md)
 - [Chrome Web Store 更新说明](docs/zh/chrome-web-store-submission.md)
 - [Firefox Add-ons 提交参考](docs/zh/firefox-amo-submission.md)
 - [Microsoft Edge Add-ons 提交参考](docs/zh/edge-addons-submission.md)
@@ -264,7 +265,7 @@ pnpm test:smoke
 
 ## 参与贡献
 
-欢迎在 [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues) 报告问题或提交功能建议。Pull request 也可以直接提交到本仓库；提交前请阅读 [贡献指南](CONTRIBUTING.md)，其中包含 Cubby Agent 的诊断构建与调试流程。
+欢迎在 [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues) 报告问题或提交功能建议。Pull Request 也可以直接提交到本仓库；提交前请阅读[贡献指南](CONTRIBUTING.md)，了解开发环境、测试、commit、提交要求，以及 Cubby Agent 的诊断构建与调试流程。
 
 ## 许可证
 
