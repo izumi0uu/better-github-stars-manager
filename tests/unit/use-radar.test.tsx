@@ -4,6 +4,9 @@
 import { act, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRadar } from '@/ui/hooks/use-radar';
+import { createDemoManagerRuntime } from '@/demo/runtime';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import type { RadarQueryResponse, RadarRefreshResult, RadarStatus } from '@/radar/radar-contract';
 import type { RadarActivityPresentation } from '@/radar/radar-model';
 import type {
@@ -26,8 +29,11 @@ const storageListeners: StorageListener[] = [];
 vi.mock('@/utils/messaging', () => ({ bgCall: radarMocks.bgCall }));
 
 vi.mock('@/auth/auth-store', () => ({
+  CONFIG_STORAGE_KEY: 'gsm_config',
   GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
+  authStore: {},
 }));
+const runtime = new ExtensionManagerRuntime();
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -108,7 +114,7 @@ const unseenActivity = {
   displayedStargazerCount: 1,
 } satisfies RadarActivityPresentation;
 
-function Harness({ initialActive = true }: { initialActive?: boolean } = {}) {
+function RadarProbe({ initialActive = true }: { initialActive?: boolean } = {}) {
   const [active, setActive] = useState(initialActive);
   const radar = useRadar({ active });
   return (
@@ -174,6 +180,41 @@ function Harness({ initialActive = true }: { initialActive?: boolean } = {}) {
       <span data-testid="recommendation-status">
         {radar.recommendations?.status.snapshotStatus ?? 'none'}
       </span>
+    </div>
+  );
+}
+
+function Harness(props: { initialActive?: boolean } = {}) {
+  return <ManagerRuntimeProvider runtime={runtime}><RadarProbe {...props} /></ManagerRuntimeProvider>;
+}
+
+function DemoRecommendationProbe() {
+  const radar = useRadar();
+  const recommendation = radar.recommendations?.recommendations[0] ?? null;
+  const ignored = radar.recommendations?.ignored[0] ?? null;
+  return (
+    <div>
+      <button
+        type="button"
+        data-testid="ignore-demo-recommendation"
+        disabled={!recommendation}
+        onClick={() => recommendation && void radar.ignoreRecommendation(
+          recommendation.repositoryKey,
+          recommendation.repositoryFullName,
+        )}
+      >
+        Ignore
+      </button>
+      <button
+        type="button"
+        data-testid="restore-demo-recommendation"
+        disabled={!ignored}
+        onClick={() => ignored && void radar.restoreIgnoredRecommendation(ignored.repositoryKey)}
+      >
+        Restore
+      </button>
+      <span data-testid="demo-recommendation-count">{radar.recommendations?.recommendations.length ?? -1}</span>
+      <span data-testid="demo-ignored-count">{radar.recommendations?.ignored.length ?? -1}</span>
     </div>
   );
 }
@@ -606,5 +647,39 @@ describe('useRadar', () => {
     expect(container.querySelector('[data-testid="recommendation-status"]')?.textContent)
       .toBe('stale');
     expect(container.querySelector('[data-testid="pending-action"]')?.textContent).toBe('none');
+  });
+
+  it('reprojects Demo recommendations after restoring an ignored repository', async () => {
+    const demoRuntime = createDemoManagerRuntime();
+    const container = mountReact(
+      <ManagerRuntimeProvider runtime={demoRuntime}>
+        <DemoRecommendationProbe />
+      </ManagerRuntimeProvider>,
+      mountedRoots,
+    );
+    await settle();
+    await settle();
+    const initialCount = Number(container.querySelector('[data-testid="demo-recommendation-count"]')?.textContent);
+    expect(initialCount).toBeGreaterThanOrEqual(6);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="ignore-demo-recommendation"]')?.click();
+      await Promise.resolve();
+    });
+    await settle();
+    await settle();
+    expect(container.querySelector('[data-testid="demo-recommendation-count"]')?.textContent)
+      .toBe(String(initialCount - 1));
+    expect(container.querySelector('[data-testid="demo-ignored-count"]')?.textContent).toBe('1');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="restore-demo-recommendation"]')?.click();
+      await Promise.resolve();
+    });
+    await settle();
+    await settle();
+    expect(container.querySelector('[data-testid="demo-recommendation-count"]')?.textContent)
+      .toBe(String(initialCount));
+    expect(container.querySelector('[data-testid="demo-ignored-count"]')?.textContent).toBe('0');
   });
 });

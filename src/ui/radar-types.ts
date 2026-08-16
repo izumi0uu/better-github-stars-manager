@@ -30,6 +30,7 @@ export interface RadarProps {
   recommendationError: 'query' | 'refresh' | null;
   actionError: RadarActionError | null;
   pendingAction: RadarPendingAction | null;
+  recommendationFavorites: Readonly<Record<string, boolean>>;
   view: RadarView;
   sources: RadarSourceFilters;
   onDiscoverViewChange: (view: RadarDiscoverView) => void;

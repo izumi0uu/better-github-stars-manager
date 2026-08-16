@@ -7,7 +7,7 @@ import { Input } from '@/ui/shadcn/input';
 import { ActionIcon } from '@/ui/shadcn/action-icon';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/ui/shadcn/tooltip';
 import { cn } from '@/lib/utils';
-import { bgCall } from '@/utils/messaging';
+import { useManagerRuntime } from '@/ui/manager-runtime-context';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { useI18n } from '@/i18n';
 import { getLockedRegionProps } from '@/ui/interaction-lock';
@@ -207,6 +207,7 @@ function TagsSection({
   onTagMutationMessage?: (message: string | null) => void;
   onTagMutationSuccess?: () => void;
 }) {
+  const runtime = useManagerRuntime();
   const { m } = useI18n();
   // Tag-name search.
   const queryInput = useImeBufferedInput('');
@@ -219,7 +220,7 @@ function TagsSection({
 
   const doDelete = async (name: string) => {
     try {
-      const { removed } = await bgCall<{ removed: number }>('deleteTag', { name });
+      const { removed } = await runtime.deleteTag(name);
       // If the deleted tag was an active filter, drop it so results stay coherent.
       if (f.tags.includes(name)) f.toggleTag(name);
       onTagMutationSuccess?.();
@@ -232,10 +233,7 @@ function TagsSection({
 
   const doDeleteAll = async () => {
     try {
-      const result = await bgCall<{
-        assignmentsRemoved: number;
-        distinctTagsRemoved: number;
-      }>('deleteAllTags');
+      const result = await runtime.deleteAllTags();
       if (f.tags.length > 0) f.clearTags();
       onTagMutationSuccess?.();
       onTagMutationMessage?.(

@@ -1,138 +1,72 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, RefreshCw, Sparkles, X } from 'lucide-react';
-import { useStars } from '@/ui/use-stars';
-import { useFilterStore } from '@/ui/filter-store';
-import { Toolbar } from '@/ui/components/Toolbar';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
+import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
+import { I18nProvider, useI18n } from '@/i18n';
+import { cn } from '@/lib/utils';
+import {
+  createExtensionManagerRuntime,
+} from '@/runtime/extension-manager-runtime';
+import { AgentMascotIcon } from '@/ui/components/AgentMascot';
+import { hidePanel } from '@/content/stars-page/panel-toggle';
 import { AutoTagAgentPrompt } from '@/ui/components/AutoTagAgentPrompt';
+import type { AgentHostPresentation } from '@/ui/components/AgentHost';
 import { StoreRatingPrompt } from '@/ui/components/StoreRatingPrompt';
-import { FilterSidebar } from '@/ui/components/FilterSidebar';
-import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
-import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
-import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
-import { StarsTable } from '@/ui/components/StarsTable';
-import { WatchInbox } from '@/ui/components/WatchInbox';
-import { WatchStatusRibbon } from '@/ui/components/WatchStatusRibbon';
-import { Radar } from '@/ui/components/Radar';
-import { RadarStatusRibbon } from '@/ui/components/RadarStatusRibbon';
-import { LayoutColumnMenu, LayoutDragGhost, LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
-import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
-import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
 import { useAutoTagAgentPrompt } from '@/ui/hooks/use-auto-tag-agent-prompt';
+import { useManagerSyncActions } from '@/ui/hooks/use-manager-sync-actions';
 import { useStoreRatingPrompt } from '@/ui/hooks/use-store-rating-prompt';
-import { useWatchInbox } from '@/ui/hooks/use-watch-inbox';
-import { useRadar } from '@/ui/hooks/use-radar';
-import { useManagerSurfaceBadges } from '@/ui/hooks/use-manager-surface-badges';
-import { useManagerStarActions, type UnstarFeedback } from '@/ui/hooks/use-manager-star-actions';
+import {
+  ManagerWorkspace,
+  type ManagerWorkspaceExtension,
+  type ManagerWorkspaceSnapshot,
+} from '@/ui/ManagerWorkspace';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
+import { getLockedAnchorProps, getLockedRegionProps } from '@/ui/interaction-lock';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
-import { PortalProvider } from '@/ui/shadcn/portal-context';
-import { TooltipProvider } from '@/ui/shadcn/tooltip';
-import { useTheme } from '@/ui/hooks/use-theme';
-import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut } from '@/ui/interaction-lock';
-import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
+import type { BackfillState } from '@/types';
 import { bgCall, type SyncStatus } from '@/utils/messaging';
-import { hidePanel } from '@/content/stars-page/panel-toggle';
-import { cn } from '@/lib/utils';
-import { useI18n, type MessageCatalog } from '@/i18n';
-import type { BackfillState, Star, Tag } from '@/types';
-import { COLUMN_DEFS } from '@/ui/column-layout';
-import { layoutViewportFromMeasurements, type LayoutViewportState } from '@/ui/layout-resize-surface';
-import type { LayoutResizeLiveAdapter } from '@/ui/layout-resize-tool';
-import type { AgentHostPresentation } from '@/ui/components/AgentHost';
-import {
-  managerSurfaceDirection,
-  managerSurfaceFromShortcut,
-  type ManagerSurface,
-  type ManagerSurfaceDirection,
-} from '@/ui/manager-surface';
 
 const LazyAgentHost = lazy(() => import('@/ui/components/AgentHost').then(({ AgentHost }) => ({
   default: AgentHost,
 })));
 
-export { layoutViewportFromMeasurements };
-
-
-
-type WatchRepositoryDetail = { star: Star | null; tag: Tag | null };
-type Account = {
+type ExtensionAccount = {
   username: string | null;
   avatarUrl: string | null;
   displayName: string | null;
   gistId: string | null;
 };
 
-const REPO_MARKER = '__GSM_REPO__';
-const TOKEN_SETTINGS_LABEL = 'github.com/settings/tokens';
-const TOKEN_SETTINGS_URL = `https://${TOKEN_SETTINGS_LABEL}`;
-
-function renderTextWithTokenLink(text: string) {
-  const linkIndex = text.indexOf(TOKEN_SETTINGS_LABEL);
-  if (linkIndex < 0) return text;
-
-  return (
-    <>
-      {text.slice(0, linkIndex)}
-      <a
-        href={TOKEN_SETTINGS_URL}
-        target="_blank"
-        rel="noreferrer"
-        className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
-        onClick={(event) => event.stopPropagation()}
-      >
-        {TOKEN_SETTINGS_LABEL}
-      </a>
-      {text.slice(linkIndex + TOKEN_SETTINGS_LABEL.length)}
-    </>
-  );
-}
-
-
-function renderRepoMessage(template: string, fullName: string) {
-  const markerIndex = template.indexOf(REPO_MARKER);
-  if (markerIndex < 0) return renderTextWithTokenLink(template);
-
-  return (
-    <>
-      {template.slice(0, markerIndex)}
-      <span className="inline-flex items-center rounded-md border border-border bg-foreground px-1.5 py-0.5 font-mono text-[10px] leading-none text-background shadow-sm">
-        {fullName}
-      </span>
-      {renderTextWithTokenLink(template.slice(markerIndex + REPO_MARKER.length))}
-    </>
-  );
-}
-
-function UnstarFeedbackText({ feedback, m }: { feedback: UnstarFeedback; m: MessageCatalog }) {
-  const template = feedback.kind === 'done'
-    ? m.starRow.unstarDone(REPO_MARKER)
-    : m.starRow.unstarFailed(REPO_MARKER, feedback.error);
-
-  return <>{renderRepoMessage(template, feedback.fullName)}</>;
-}
-
-function HelperInfoText({ info, unstarFeedback, m }: { info: string | null; unstarFeedback: UnstarFeedback | null; m: MessageCatalog }) {
-  if (unstarFeedback) return <UnstarFeedbackText feedback={unstarFeedback} m={m} />;
-  return <>{info}</>;
-}
-
-function helperInfoKey(info: string | null, unstarFeedback: UnstarFeedback | null): string {
-  if (unstarFeedback) return `${unstarFeedback.kind}:${unstarFeedback.fullName}:${unstarFeedback.kind === 'failed' ? unstarFeedback.error : ''}`;
-  return info ?? '';
-}
-
 export function ManagerPanel() {
-  const { rows, total, grandTotal, loading, phase, languages, tagTree, tagsByFullName, refresh: refreshStars } = useStars();
-  const storeRatingMeaningfulActionRef = useRef<() => void | Promise<void>>(() => {});
-  const reportStoreRatingMeaningfulAction = useCallback(() => {
-    void storeRatingMeaningfulActionRef.current();
+  const runtime = useMemo(() => createExtensionManagerRuntime(), []);
+  return (
+    <ManagerRuntimeProvider runtime={runtime}>
+      <I18nProvider source={runtime}>
+        <ExtensionManagerPanel />
+      </I18nProvider>
+    </ManagerRuntimeProvider>
+  );
+}
+
+function ExtensionManagerPanel() {
+  const { m } = useI18n();
+  const refreshStarsRef = useRef<() => void>(() => {});
+  const [snapshot, setSnapshot] = useState<ManagerWorkspaceSnapshot | null>(null);
+  const handleSnapshotChange = useCallback((next: ManagerWorkspaceSnapshot) => {
+    refreshStarsRef.current = next.refreshStars;
+    setSnapshot(next);
   }, []);
-  const [surface, setSurface] = useState<ManagerSurface>('stars');
-  const [surfaceDirection, setSurfaceDirection] = useState<ManagerSurfaceDirection>('forward');
-  const watchInbox = useWatchInbox({ active: surface === 'watch', onMeaningfulAction: reportStoreRatingMeaningfulAction });
-  const radar = useRadar({ active: surface === 'radar', onMeaningfulAction: reportStoreRatingMeaningfulAction });
-  const surfaceBadges = useManagerSurfaceBadges();
-  const f = useFilterStore();
+  const refreshStars = useCallback(() => refreshStarsRef.current(), []);
   const {
     status,
     statusLoaded,
@@ -149,9 +83,7 @@ export function ManagerPanel() {
     deferBackfill,
     isOnboardingCardStage,
   } = useManagerSyncActions({ refreshStars });
-  const [account, setAccount] = useState<Account | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [watchDetail, setWatchDetail] = useState<WatchRepositoryDetail | null>(null);
+  const [account, setAccount] = useState<ExtensionAccount | null>(null);
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
   const [agentHostMounted, setAgentHostMounted] = useState(false);
   const [agentPresentation, setAgentPresentation] = useState<AgentHostPresentation>({
@@ -160,98 +92,6 @@ export function ManagerPanel() {
     active: false,
   });
   const [coachStep, setCoachStep] = useState<number | null>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
-  const bindListRef = useCallback((node: HTMLDivElement | null) => {
-    listRef.current = node;
-    setListElement(node);
-  }, []);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const layoutResizeLiveAdapterRef = useRef<LayoutResizeLiveAdapter | null>(null);
-  const watchDetailGeneration = useRef(0);
-  const { theme, themeClass, toggle: toggleTheme } = useTheme();
-  const { m } = useI18n();
-  const {
-    layoutMode,
-    editingLayout,
-    layoutConfigReady,
-    layoutEditReady,
-    previewingCustomLayout,
-    draftLayout,
-    showRepositoryOwner,
-    showRepositoryAvatar,
-    visibleColumns,
-    gridTemplateColumns,
-    tableMinWidth,
-    hiddenTrayColumns,
-    customLayoutDirty,
-    hiddenColumnCount,
-    dragGhost,
-    layoutDrag,
-    layoutResize,
-    columnShifts,
-    trayOpen,
-    trayDropReady,
-    trayCaretX,
-    layoutFaded,
-    layoutModeTransitionPhase,
-    flashedColumn,
-    columnMenuOpen,
-    columnMenuPosition,
-    headerRef,
-    hideDropZoneRef,
-    editColumnsButtonRef,
-    setBrowseLayoutMode,
-    previewCustomLayout,
-    beginCustomLayoutEdit,
-    saveLayoutEdit,
-    cancelLayoutEdit,
-    resetLayoutEdit,
-    resetLayoutWidths,
-    setColumnHidden,
-    setRepositoryOwnerVisible,
-    setRepositoryAvatarVisible,
-    beginColumnDrag,
-    beginColumnResize,
-    moveColumnByKeyboard,
-    resizeColumnByKeyboard,
-    autoFitColumnWidth,
-    fitLayoutWidths,
-    beginTrayDrag,
-    restoreHiddenColumn,
-    toggleColumnMenu,
-  } = useColumnLayoutEditor(rootRef, listRef, layoutResizeLiveAdapterRef);
-  const interactionLocked = editingLayout;
-  const [layoutViewport, setLayoutViewport] = useState<LayoutViewportState | null>(null);
-  const visibleRows = rows;
-  const visibleTotal = total;
-  const visibleGrandTotal = grandTotal;
-  const starsSurface = surface === 'stars';
-  const watchSurface = surface === 'watch';
-  const radarSurface = surface === 'radar';
-  const handleUnstarred = useCallback((fullName: string) => {
-    setSelected((current) => (current === fullName ? null : current));
-  }, []);
-  const {
-    favoriteOverrides,
-    unstarFeedback,
-    openUnstarFullName,
-    toggleFavorite: handleToggleFavorite,
-    confirmUnstar: handleConfirmUnstar,
-    changeUnstarPopover: handleOpenUnstarChange,
-    closeUnstarPopover,
-    clearUnstarFeedback,
-    resetUnstarPresentation,
-  } = useManagerStarActions({
-    rows: visibleRows,
-    tagsByFullName,
-    info,
-    interactionLocked,
-    setInfo,
-    onMeaningfulAction: reportStoreRatingMeaningfulAction,
-    onUnstarred: handleUnstarred,
-  });
 
   useEffect(() => {
     let cancelled = false;
@@ -259,82 +99,38 @@ export function ManagerPanel() {
       const next = typeof authStore.getAccount === 'function'
         ? await authStore.getAccount().catch(() => null)
         : null;
-      if (cancelled || !next) return null;
-      setAccount(next);
-      if (!next.username) useFilterStore.getState().setOnlyOwned(false);
+      if (!cancelled && next) setAccount(next);
       return next;
     };
     void refreshAccount().then((current) => {
       if (!current?.username || current.avatarUrl) return;
-      void bgCall<Account>('fetchAccount')
+      void bgCall<ExtensionAccount>('fetchAccount')
         .then((next) => {
           if (!cancelled) setAccount(next);
         })
         .catch(() => {});
     });
-    if (typeof chrome === 'undefined' || !chrome.storage?.onChanged) {
-      return () => {
-        cancelled = true;
-      };
-    }
-
+    const onChanged = globalThis.chrome?.storage?.onChanged;
+    if (!onChanged) return () => {
+      cancelled = true;
+    };
     const listener = (
       changes: Record<string, chrome.storage.StorageChange>,
       areaName: string,
     ) => {
-      const configChange = changes[CONFIG_STORAGE_KEY];
-      if (areaName !== 'local' || !configChange) return;
-      const nextUsername = (configChange.newValue as { username?: unknown } | undefined)?.username;
-      if (typeof nextUsername !== 'string' || !nextUsername.trim()) {
-        useFilterStore.getState().setOnlyOwned(false);
-      }
-      void refreshAccount();
+      if (areaName === 'local' && changes[CONFIG_STORAGE_KEY]) void refreshAccount();
     };
-    chrome.storage.onChanged.addListener(listener);
+    onChanged.addListener(listener);
     return () => {
       cancelled = true;
-      chrome.storage.onChanged.removeListener(listener);
+      onChanged.removeListener(listener);
     };
   }, []);
-  useEffect(() => () => {
-    watchDetailGeneration.current++;
-  }, []);
 
-  useLayoutEffect(() => {
-    if (!editingLayout) return;
-    setSelected(null);
-    closeUnstarPopover();
-  }, [closeUnstarPopover, editingLayout]);
-
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (shouldIgnorePanelShortcut(interactionLocked, e.target)) return;
-      const unmodified = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
-      if (unmodified && e.key === '/' && starsSurface) {
-        e.preventDefault();
-        searchRef.current?.focus();
-        return;
-      }
-      if (unmodified && e.key.toLocaleLowerCase('en-US') === 'v' && radarSurface) {
-        e.preventDefault();
-        radar.setView(radar.view === 'feed' ? 'projects' : 'feed');
-        return;
-      }
-      const shortcutSurface = managerSurfaceFromShortcut(e.key);
-      if (shortcutSurface && !e.altKey && !e.ctrlKey && !e.shiftKey) {
-        e.preventDefault();
-        handleSurfaceChange(shortcutSurface);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [interactionLocked, radar, radarSurface, starsSurface]);
-
-  const dismissOnboarding = async () => {
+  const dismissOnboarding = useCallback(async () => {
     setCoachStep(null);
     await setOnboardingStage('done');
-  };
+  }, [setOnboardingStage]);
 
   useEffect(() => {
     if (!statusLoaded || !status) return;
@@ -345,531 +141,201 @@ export function ManagerPanel() {
     if (coachStep !== null) setCoachStep(null);
   }, [coachStep, status, statusLoaded]);
 
-  const finishCoach = async () => {
-    setCoachStep(null);
-    await dismissOnboarding();
-  };
-  const skipCoach = async () => {
-    setCoachStep(null);
-    await dismissOnboarding();
-  };
-
-  const selectedIdx = useMemo(
-    () => (starsSurface && selected ? visibleRows.findIndex((r) => r.full_name === selected) : -1),
-    [selected, starsSurface, visibleRows],
-  );
-  const selectedStar = starsSurface
-    ? selectedIdx >= 0 ? visibleRows[selectedIdx] : null
-    : selected ? watchDetail?.star ?? null : null;
-  const selectedTag = starsSurface
-    ? selectedStar ? tagsByFullName.get(selectedStar.full_name) : undefined
-    : watchDetail?.tag ?? undefined;
-
-  const handleSelect = useCallback((fullName: string) => {
-    setSelected((current) => (current === fullName ? null : fullName));
-  }, []);
-
-  const handleWatchRepositorySelect = async (fullName: string) => {
-    const requestGeneration = ++watchDetailGeneration.current;
-    setSelected(fullName);
-    setWatchDetail(null);
-    try {
-      const detail = await bgCall<WatchRepositoryDetail>('getWatchRepositoryDetail', { fullName });
-      if (watchDetailGeneration.current !== requestGeneration) return;
-      if (!detail.star) {
-        setSelected(null);
-        return;
-      }
-      setSelected(detail.star.full_name);
-      setWatchDetail(detail);
-    } catch {
-      if (watchDetailGeneration.current === requestGeneration) setSelected(null);
-    }
-  };
-
-  const handleDetailDataChanged = () => {
-    refreshStars();
-    if (watchSurface && selectedStar) {
-      void handleWatchRepositorySelect(selectedStar.full_name);
-    }
-  };
-
-  const openAgentPanel = () => {
+  const openAgentPanel = useCallback(() => {
     setAgentHostMounted(true);
     setAgentPanelOpen(true);
-  };
-
+  }, []);
   const autoTagAgentPrompt = useAutoTagAgentPrompt({
     onOpenAgent: openAgentPanel,
     onRunAutoTags: () => { void autoAssignTags(); },
   });
-  // The hook rechecks durable background jobs; this gate covers visible local UI only.
-  const managerIdleForStoreRating = !!statusLoaded
+
+  useEffect(() => {
+    if (snapshot?.starsSurface !== false) return;
+    setAgentPanelOpen(false);
+    autoTagAgentPrompt.dismiss();
+  }, [autoTagAgentPrompt.dismiss, snapshot?.starsSurface]);
+
+  const managerIdleForStoreRating = !!snapshot
+    && !!statusLoaded
     && !!status
     && status.hasToken
     && status.onboardingStage === 'done'
-    && !loading
-    && phase === 'idle'
+    && !snapshot.loading
+    && snapshot.phase === 'idle'
     && !busy
     && !pendingAction
     && coachStep === null
-    && !interactionLocked
-    && !columnMenuOpen
-    && !selectedStar
-    && !openUnstarFullName
+    && !snapshot.interactionLocked
+    && !snapshot.columnMenuOpen
+    && !snapshot.selectedDetailOpen
+    && !snapshot.unstarPopoverOpen
     && !autoTagAgentPrompt.open
     && !agentPanelOpen
     && !agentPresentation.active
     && !info
-    && !unstarFeedback;
+    && !snapshot.infoOpen;
   const storeRatingPrompt = useStoreRatingPrompt({
     onboardingComplete: statusLoaded && status?.onboardingStage === 'done',
-    onMainManager: starsSurface,
+    onMainManager: snapshot?.starsSurface === true,
     managerIdle: managerIdleForStoreRating,
   });
-  storeRatingMeaningfulActionRef.current = storeRatingPrompt.recordMeaningfulAction;
+  const recordMeaningfulAction = useCallback(() => {
+    void storeRatingPrompt.recordMeaningfulAction();
+  }, [storeRatingPrompt.recordMeaningfulAction]);
 
   useEffect(() => {
-    if (successAction !== 'syncFull' && successAction !== 'syncIncremental') return;
-    reportStoreRatingMeaningfulAction();
-  }, [reportStoreRatingMeaningfulAction, successAction]);
+    if (successAction === 'syncFull' || successAction === 'syncIncremental') {
+      recordMeaningfulAction();
+    }
+  }, [recordMeaningfulAction, successAction]);
 
-  const handleManualTagMutationSuccess = useCallback(() => {
-    refreshStars();
-    reportStoreRatingMeaningfulAction();
-  }, [refreshStars, reportStoreRatingMeaningfulAction]);
-
-  const handleSurfaceChange = useCallback((next: ManagerSurface) => {
-    if (next === surface || editingLayout) return;
-    watchDetailGeneration.current++;
-    setSelected(null);
-    setWatchDetail(null);
-    resetUnstarPresentation();
-    setAgentPanelOpen(false);
-    autoTagAgentPrompt.dismiss();
-    // One viewport owns every Surface. Reset it before changing the virtual row
-    // model instead of remounting the scroll container and its observers.
-    if (listRef.current) listRef.current.scrollTop = 0;
-    setSurfaceDirection(managerSurfaceDirection(surface, next));
-    setSurface(next);
-  }, [autoTagAgentPrompt.dismiss, editingLayout, resetUnstarPresentation, surface]);
-
-  const agentCandidate = useMemo(() => starsSurface && selected
+  const agentCandidate = useMemo(() => snapshot?.starsSurface && snapshot.selectedFullName
     ? {
         kind: 'selected_repository' as const,
-        selectedRepositoryIdHint: selected,
+        selectedRepositoryIdHint: snapshot.selectedFullName,
       }
     : {
         kind: 'current_view' as const,
-        filter: {
-          query: f.query,
-          languages: [...new Set(f.languages)],
-          tags: [...new Set(f.tags)],
-          tagMode: f.tagMode,
-          showTombstone: f.showTombstone,
-          onlyFavorite: f.onlyFavorite,
-          onlyUntagged: f.onlyUntagged,
-          onlyArchived: f.onlyArchived,
-          onlyOwned: f.onlyOwned,
-          sortKey: f.sortKey,
-          sortDir: f.sortDir,
+        filter: snapshot ? {
+          ...snapshot.filter,
+          languages: [...snapshot.filter.languages],
+          tags: [...snapshot.filter.tags],
+        } : {
+          query: '',
+          languages: [],
+          tags: [],
+          tagMode: 'any' as const,
+          showTombstone: false,
+          onlyFavorite: false,
+          onlyUntagged: false,
+          onlyArchived: false,
+          onlyOwned: false,
+          sortKey: 'starred_at' as const,
+          sortDir: 'desc' as const,
         },
-      }, [
-    f.languages,
-    f.onlyArchived,
-    f.onlyOwned,
-    f.onlyFavorite,
-    f.onlyUntagged,
-    f.query,
-    f.showTombstone,
-    f.sortDir,
-    f.sortKey,
-    f.tagMode,
-    f.tags,
-    selected,
-    starsSurface,
-  ]);
+      }, [snapshot]);
 
-
-  const hasActiveFilter =
-    f.languages.length > 0 || f.tags.length > 0 || f.onlyFavorite || f.onlyUntagged
-    || f.onlyArchived || f.onlyOwned;
   const activeBackfillId = status?.activeBackfillId ?? null;
   const activeBackfillState = activeBackfillId ? status?.backfills[activeBackfillId] ?? null : null;
+  let starsContentOverride: ReactNode | undefined;
+  if (!statusLoaded || !status) {
+    starsContentOverride = (
+      <div className="p-10 text-center text-sm text-muted-foreground">{m.common.loading}</div>
+    );
+  } else if (isOnboardingCardStage(status.onboardingStage) && coachStep === null) {
+    starsContentOverride = (
+      <OnboardingCard
+        stage={status.onboardingStage}
+        failedInfo={info}
+        interactionLocked={snapshot?.interactionLocked ?? false}
+        onOpenOptions={() => { void bgCall('openOptions').catch(() => {}); }}
+        onRetry={() => { void doSync('syncFull', m.popup.syncFull); }}
+      />
+    );
+  } else if (status.hasToken && activeBackfillId && activeBackfillState && coachStep === null) {
+    starsContentOverride = (
+      <BackfillCard
+        state={activeBackfillState}
+        progress={status.progress}
+        actionBusy={busy || !!pendingAction}
+        interactionLocked={snapshot?.interactionLocked ?? false}
+        onRun={() => { void runBackfill(activeBackfillId); }}
+        onDefer={() => { void deferBackfill(activeBackfillId); }}
+      />
+    );
+  }
 
-  const layoutColumnMenu = (
-    <LayoutColumnMenu
-      container={rootRef.current}
-      editing={editingLayout}
-      open={columnMenuOpen}
-      position={columnMenuPosition}
-      draftLayout={draftLayout}
-      onSetColumnHidden={setColumnHidden}
-      onSetRepositoryOwnerVisible={setRepositoryOwnerVisible}
-      onSetRepositoryAvatarVisible={setRepositoryAvatarVisible}
-    />
-  );
-
-  const layoutEditChrome = (
-    <LayoutEditChrome
-      editing={editingLayout}
-      draftLayout={draftLayout}
-      resizeColumnLabel={layoutResize ? COLUMN_DEFS[layoutResize.id].label(m) : null}
-      layoutResize={layoutResize}
-      tableWidth={layoutViewport?.tableWidth ?? null}
-      panelWidth={layoutViewport?.panelWidth ?? null}
-      overflowPx={layoutViewport?.overflowPx ?? 0}
-      hiddenTrayColumns={hiddenTrayColumns}
-      trayOpen={trayOpen}
-      trayDropReady={trayDropReady}
-      dropReadyLabel={layoutDrag?.kind === 'column' ? m.toolbar.dragHideHint(layoutDrag.label) : null}
-      editColumnsButtonRef={editColumnsButtonRef}
-      hideDropZoneRef={hideDropZoneRef}
-      onToggleColumnMenu={toggleColumnMenu}
-      onFitWidths={fitLayoutWidths}
-      onResetWidths={resetLayoutWidths}
-      onReset={resetLayoutEdit}
-      onSave={saveLayoutEdit}
-      onCancel={cancelLayoutEdit}
-      onBeginTrayDrag={beginTrayDrag}
-      onRestoreHiddenColumn={restoreHiddenColumn}
-    />
-  );
-
-  return (
-    <PortalProvider containerRef={rootRef}>
-      <TooltipProvider delayDuration={300} skipDelayDuration={150}>
-      <div
-        ref={rootRef}
-        className={cn('relative flex h-full flex-col bg-background text-foreground font-sans', themeClass)}
-      >
-        <Toolbar
-          f={f}
-          account={account}
-          status={status}
-          loading={loading}
-          listPhase={phase}
-          total={visibleTotal}
-          grandTotal={visibleGrandTotal}
-          busy={busy}
-          pendingAction={pendingAction}
-          successAction={successAction}
-          onSync={doSync}
-          onAutoAssignTags={() => { void autoTagAgentPrompt.requestAutoTags(); }}
-          onOpenAgent={openAgentPanel}
-          agentStatus={agentPresentation.status}
-          agentStatusKind={agentPresentation.statusKind}
-          onStatusPatch={applyStatusPatch}
-          onToggleTheme={toggleTheme}
-          onTogglePanel={hidePanel}
-          theme={theme}
-          searchRef={searchRef}
-          layoutMode={layoutMode}
-          layoutEditing={editingLayout}
-          layoutConfigReady={layoutConfigReady}
-          layoutEditReady={layoutEditReady}
-          customLayoutDirty={customLayoutDirty}
-          customPreviewing={previewingCustomLayout}
-          hiddenColumnCount={hiddenColumnCount}
-          onLayoutModeChange={setBrowseLayoutMode}
-          onStartLayoutEdit={editingLayout ? cancelLayoutEdit : beginCustomLayoutEdit}
-          onPreviewCustomChange={previewCustomLayout}
-          layoutEditChrome={layoutEditChrome}
-          surface={surface}
-          onSurfaceChange={handleSurfaceChange}
-          watchUnreadCount={watchSurface
-            ? watchInbox.result?.unreadCount ?? surfaceBadges.watchUnreadCount
-            : surfaceBadges.watchUnreadCount}
-          radarUnseenCount={radarSurface
-            ? radar.result?.unseenCount ?? surfaceBadges.radarUnseenCount
-            : surfaceBadges.radarUnseenCount}
-        />
-        {watchSurface && (
-          <WatchStatusRibbon
-            result={watchInbox.result}
-            loading={watchInbox.loading}
-            refreshing={watchInbox.refreshing}
-            error={watchInbox.error}
-            onOpenOptions={() => bgCall('openOptions', { section: 'watch' }).catch(() => {})}
-          />
-        )}
-        {radarSurface && (
-          <RadarStatusRibbon
-            result={radar.result}
-            loading={radar.loading}
-            refreshing={radar.refreshing}
-            error={radar.error}
-            onOpenOptions={() => bgCall('openOptions').catch(() => {})}
-          />
-        )}
-        {starsSurface && layoutColumnMenu}
-
-        {starsSurface && statusLoaded && status && !status.hasToken && status.onboardingStage === 'done' && (
-          <div className="flex items-center gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
-            <AlertTriangle className="size-4 shrink-0" />
-            <span>{m.manager.noTokenBanner}</span>
-            <Button
-              size="sm"
-              disabled={interactionLocked}
-              onClick={() => bgCall('openOptions').catch(() => {})}
-            >
-              {m.manager.addPat}
-            </Button>
-          </div>
-        )}
-
-        {starsSurface && <div
-          className={cn('gsm-active-filter-row', { open: hasActiveFilter })}
-          aria-hidden={!hasActiveFilter}
-          {...getLockedRegionProps(!hasActiveFilter)}
+  const starsBanner = statusLoaded
+    && status
+    && !status.hasToken
+    && status.onboardingStage === 'done' ? (
+      <div className="flex items-center gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
+        <AlertTriangle className="size-4 shrink-0" />
+        <span>{m.manager.noTokenBanner}</span>
+        <Button
+          size="sm"
+          disabled={snapshot?.interactionLocked}
+          onClick={() => { void bgCall('openOptions').catch(() => {}); }}
         >
-          <div>
-            <ActiveFilterChips f={f} count={visibleTotal} interactionLocked={interactionLocked} />
-          </div>
-        </div>}
+          {m.manager.addPat}
+        </Button>
+      </div>
+    ) : undefined;
 
-        {starsSurface && (info || unstarFeedback) && (
-          <div className="gsm-helper-text flex items-center gap-1 border-b border-border bg-card px-3 py-1">
-            <span
-              key={helperInfoKey(info, unstarFeedback)}
-              className="gsm-helper-text-update inline-block min-w-0 rounded-sm px-1 transition-[background-color,opacity,transform] duration-150"
-            >
-              <HelperInfoText info={info} unstarFeedback={unstarFeedback} m={m} />
-            </span>
-            <button
-              type="button"
-              aria-label={m.common.close}
-              onClick={() => { setInfo(null); clearUnstarFeedback(); }}
-              className="ml-auto inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-            >
-              <X className="size-3" aria-hidden="true" />
-            </button>
-          </div>
-        )}
-
-        <div
-          id={`gsm-${surface}-surface-panel`}
-          role="tabpanel"
-          data-surface={surface}
-          data-surface-direction={surfaceDirection}
-          aria-labelledby={`gsm-${surface}-surface-tab`}
-          className="gsm-surface-panel relative flex min-h-0 flex-1"
-        >
-          {starsSurface && <FilterSidebar
-            f={f}
-            languages={languages}
-            tagTree={tagTree}
-            accountLogin={account?.username ?? null}
-            interactionLocked={interactionLocked}
-            onTagMutationMessage={(message) => {
-              if (message) setInfo(message);
-              if (message) clearUnstarFeedback();
-            }}
-            onTagMutationSuccess={handleManualTagMutationSuccess}
-          />}
-
-          <div
-            ref={bindListRef}
-            data-surface={surface}
-            className="no-scrollbar flex-1 overflow-auto"
-          >
-            {watchSurface ? (
-              <WatchInbox
-                result={watchInbox.result}
-                scrollElement={listElement}
-                loading={watchInbox.loading}
-                refreshing={watchInbox.refreshing}
-                error={watchInbox.error}
-                unreadOnly={watchInbox.unreadOnly}
-                onUnreadOnlyChange={watchInbox.setUnreadOnly}
-                onRefresh={() => { void watchInbox.refresh(); }}
-                onRetryQuery={() => { void watchInbox.reload(); }}
-                actionPending={watchInbox.actionPending}
-                actionError={watchInbox.actionError}
-                onMarkThreadsRead={(threadIds) => { void watchInbox.markThreadsRead(threadIds); }}
-                onMarkThreadsDone={(threadIds) => { void watchInbox.markThreadsDone(threadIds); }}
-                onOpenOptions={() => bgCall('openOptions', { section: 'watch' }).catch(() => {})}
-                onOpenMainTokenOptions={() => bgCall('openOptions', { section: 'github' }).catch(() => {})}
-                collapsedRepositories={watchInbox.collapsedRepositories}
-                onRepositoryCollapseChange={watchInbox.updateRepositoryCollapse}
-                onSelectRepository={(fullName) => { void handleWatchRepositorySelect(fullName); }}
-              />
-            ) : radarSurface ? (
-              <Radar
-                result={radar.result}
-                scrollElement={listElement}
-                recommendations={radar.recommendations}
-                discoverView={radar.discoverView}
-                loading={radar.loading}
-                recommendationLoading={radar.recommendationLoading}
-                refreshing={radar.refreshing}
-                recommendationRefreshing={radar.recommendationRefreshing}
-                error={radar.error}
-                recommendationError={radar.recommendationError}
-                actionError={radar.actionError}
-                pendingAction={radar.pendingAction}
-                view={radar.view}
-                onDiscoverViewChange={radar.setDiscoverView}
-                onViewChange={radar.setView}
-                onSourceEnabledChange={radar.setSourceEnabled}
-                sources={radar.sources}
-                onRefresh={() => { void radar.refresh(); }}
-                onRefreshRecommendations={() => { void radar.refreshRecommendations(); }}
-                onRetryQuery={() => { void radar.reload(); }}
-                onRetryRecommendations={() => { void radar.reloadRecommendations(); }}
-                onOpenOptions={() => bgCall('openOptions').catch(() => {})}
-                onStar={radar.star}
-                onUnstar={radar.unstar}
-                onIgnore={radar.ignoreRecommendation}
-                onRestoreIgnored={radar.restoreIgnoredRecommendation}
-                onSetFavorite={radar.setFavorite}
-                onAddTag={radar.addTag}
-                onDismiss={radar.dismiss}
-                onMarkSeen={radar.markSeen}
-              />
-            ) : !statusLoaded || !status ? (
-              <div className="p-10 text-center text-sm text-muted-foreground">
-                {m.common.loading}
-              </div>
-            ) : isOnboardingCardStage(status.onboardingStage) && coachStep === null ? (
-              <OnboardingCard
-                stage={status.onboardingStage}
-                failedInfo={info}
-                interactionLocked={interactionLocked}
-                onOpenOptions={() => bgCall('openOptions').catch(() => {})}
-                onRetry={() => void doSync('syncFull', m.popup.syncFull)}
-              />
-            ) : status.hasToken && activeBackfillId && activeBackfillState && coachStep === null ? (
-              <BackfillCard
-                state={activeBackfillState}
-                progress={status.progress}
-                actionBusy={busy || !!pendingAction}
-                interactionLocked={interactionLocked}
-                onRun={() => void runBackfill(activeBackfillId)}
-                onDefer={() => void deferBackfill(activeBackfillId)}
-              />
-            ) : (
-              <StarsTable
-                scrollElement={listElement}
-                rows={visibleRows}
-                searchQuery={f.query}
-                showRepositoryOwner={showRepositoryOwner}
-                showRepositoryAvatar={showRepositoryAvatar}
-                loading={loading}
-                phase={phase}
-                tagsByFullName={tagsByFullName}
-                favoriteOverrides={favoriteOverrides}
-                selectedTags={f.tags}
-                selectedFullName={selected}
-                visibleColumns={visibleColumns}
-                gridTemplateColumns={gridTemplateColumns}
-                tableMinWidth={tableMinWidth}
-                interactionLocked={interactionLocked}
-                layoutEdit={{
-                  editing: editingLayout,
-                  faded: layoutFaded,
-                  transitionPhase: layoutModeTransitionPhase,
-                  draggedColumnId: layoutDrag?.kind === 'column' ? layoutDrag.id : null,
-                  draggedColumnHideIntent: layoutDrag?.kind === 'column' ? layoutDrag.hideIntent : false,
-                  columnShifts,
-                  flashedColumn,
-                  trayCaretX,
-                  onBeginColumnDrag: beginColumnDrag,
-                  onMoveColumnByKeyboard: moveColumnByKeyboard,
-                }}
-                layoutResize={layoutResize}
-                scrollRef={listRef}
-                rootRef={rootRef}
-                headerRef={headerRef}
-                layoutResizeLiveAdapterRef={layoutResizeLiveAdapterRef}
-                onLayoutViewportChange={setLayoutViewport}
-                onSelect={handleSelect}
-                onToggleTag={f.toggleTag}
-                onToggleFavorite={handleToggleFavorite}
-                onConfirmUnstar={handleConfirmUnstar}
-                openUnstarFullName={openUnstarFullName}
-                onOpenUnstarChange={handleOpenUnstarChange}
-                onBeginColumnResize={beginColumnResize}
-                onResizeColumnByKeyboard={resizeColumnByKeyboard}
-                onAutoFitColumnWidth={autoFitColumnWidth}
-              />
-            )}
-          </div>
-          {selectedStar && (
-            <button
-              type="button"
-              className="absolute inset-0 z-20 hidden bg-background/60 backdrop-blur-[1px] max-[899px]:block"
-              aria-label={m.common.close}
-              onClick={() => {
-                watchDetailGeneration.current++;
-                setSelected(null);
-                setWatchDetail(null);
-              }}
-            />
-          )}
-
-          <div className={cn('drawer-anim z-30 border-l border-border max-[899px]:absolute max-[899px]:inset-y-0 max-[899px]:right-0 max-[899px]:shadow-xl max-[640px]:left-0', {
-            'drawer-enter': selectedStar,
-            'drawer-exit': !selectedStar,
-          })}>
-            {selectedStar && (
-              <RepoDetailPanel
-                star={selectedStar}
-                tag={selectedTag}
-                selectedTags={f.tags}
-                onToggleTag={f.toggleTag}
-                onDataChanged={handleDetailDataChanged}
-                onMeaningfulAction={reportStoreRatingMeaningfulAction}
-                onClose={() => {
-                  watchDetailGeneration.current++;
-                  setSelected(null);
-                  setWatchDetail(null);
-                }}
-                onPrev={() => starsSurface && selectedIdx > 0 && setSelected(visibleRows[selectedIdx - 1].full_name)}
-                onNext={() => starsSurface && selectedIdx >= 0 && selectedIdx < visibleRows.length - 1 && setSelected(visibleRows[selectedIdx + 1].full_name)}
-                hasPrev={starsSurface && selectedIdx > 0}
-                hasNext={starsSurface && selectedIdx >= 0 && selectedIdx < visibleRows.length - 1}
-                interactionLocked={interactionLocked}
-              />
-            )}
-          </div>
-        </div>
-
-        <FloatingLocaleToggle drawerOpen={!!selectedStar} interactionLocked={interactionLocked} />
-
-        <LayoutDragGhost ghost={dragGhost} />
-
-        {starsSurface && agentHostMounted && (
+  const extension = useMemo<ManagerWorkspaceExtension>(() => ({
+    toolbar: {
+      account: account ? {
+        ...account,
+        gistUrl: account.username && account.gistId
+          ? `https://gist.github.com/${account.username}/${account.gistId}`
+          : null,
+      } : account,
+      status,
+      busy,
+      pendingAction,
+      successAction,
+      onSync: doSync,
+      onAutoAssignTags: () => { void autoTagAgentPrompt.requestAutoTags(); },
+      onOpenAgent: openAgentPanel,
+      agentStatus: agentPresentation.status,
+      agentIcon: <AgentMascotIcon running={agentPresentation.active} />,
+      agentStatusKind: agentPresentation.statusKind,
+      agentActive: agentPresentation.active,
+      onTooltipSeen: (bit) => {
+        applyStatusPatch({ seenTooltips: (status?.seenTooltips ?? 0) | bit });
+        void bgCall<{ seenTooltips: number }>('markTooltipSeen', { bit })
+          .then((data) => applyStatusPatch({ seenTooltips: data.seenTooltips }))
+          .catch(() => {});
+      },
+      onTogglePanel: hidePanel,
+      showGitHubHome: true,
+    },
+    info,
+    onClearInfo: () => setInfo(null),
+    starsBanner,
+    starsContentOverride,
+    onOpenOptions: (section) => {
+      void bgCall('openOptions', section ? { section } : undefined).catch(() => {});
+    },
+    onClearLocalData: async () => {
+      await bgCall('devClearLocalData');
+    },
+    renderOverlays: (rootRef) => (
+      <>
+        {snapshot?.starsSurface && agentHostMounted && (
           <Suspense fallback={null}>
             <LazyAgentHost
               open={agentPanelOpen}
               onHide={() => setAgentPanelOpen(false)}
-              onOpenOptions={() => bgCall('openOptions').catch(() => {})}
+              onOpenOptions={() => { void bgCall('openOptions').catch(() => {}); }}
               onDataChanged={refreshStars}
               onPresentationChange={setAgentPresentation}
               defaultCandidate={agentCandidate}
               chatCandidate={agentCandidate}
-              scopeCount={agentCandidate.kind === 'selected_repository' ? 1 : visibleTotal}
+              scopeCount={agentCandidate.kind === 'selected_repository' ? 1 : snapshot.visibleTotal}
             />
           </Suspense>
         )}
-
-        {starsSurface && <AutoTagAgentPrompt
-          open={autoTagAgentPrompt.open}
-          onChooseAgent={autoTagAgentPrompt.chooseAgent}
-          onChooseAutoTags={autoTagAgentPrompt.chooseAutoTags}
-          onDismiss={autoTagAgentPrompt.dismiss}
-        />}
-
-        {starsSurface && statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
+        {snapshot?.starsSurface && (
+          <AutoTagAgentPrompt
+            open={autoTagAgentPrompt.open}
+            onChooseAgent={autoTagAgentPrompt.chooseAgent}
+            onChooseAutoTags={autoTagAgentPrompt.chooseAutoTags}
+            onDismiss={autoTagAgentPrompt.dismiss}
+          />
+        )}
+        {snapshot?.starsSurface && statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
           <CoachOverlay
             step={coachStep}
             total={COACH_TARGETS.length}
             rootRef={rootRef}
-            onNext={() => setCoachStep((s) => (s === null ? s : Math.min(s + 1, COACH_TARGETS.length - 1)))}
-            onBack={() => setCoachStep((s) => (s === null ? s : Math.max(s - 1, 0)))}
-            onFinish={() => void finishCoach()}
-            onSkip={() => void skipCoach()}
+            onNext={() => setCoachStep((current) => current === null
+              ? current
+              : Math.min(current + 1, COACH_TARGETS.length - 1))}
+            onBack={() => setCoachStep((current) => current === null ? current : Math.max(current - 1, 0))}
+            onFinish={() => { void dismissOnboarding(); }}
+            onSkip={() => { void dismissOnboarding(); }}
           />
         )}
         {storeRatingPrompt.listing && (
@@ -882,10 +348,47 @@ export function ManagerPanel() {
             onNever={storeRatingPrompt.never}
           />
         )}
+      </>
+    ),
+  }), [
+    account,
+    activeBackfillId,
+    agentCandidate,
+    agentHostMounted,
+    agentPanelOpen,
+    agentPresentation.active,
+    agentPresentation.status,
+    agentPresentation.statusKind,
+    applyStatusPatch,
+    autoTagAgentPrompt.chooseAgent,
+    autoTagAgentPrompt.chooseAutoTags,
+    autoTagAgentPrompt.dismiss,
+    autoTagAgentPrompt.open,
+    autoTagAgentPrompt.requestAutoTags,
+    busy,
+    coachStep,
+    dismissOnboarding,
+    doSync,
+    info,
+    openAgentPanel,
+    pendingAction,
+    refreshStars,
+    snapshot,
+    setInfo,
+    starsBanner,
+    starsContentOverride,
+    status,
+    statusLoaded,
+    storeRatingPrompt,
+    successAction,
+  ]);
 
-      </div>
-      </TooltipProvider>
-    </PortalProvider>
+  return (
+    <ManagerWorkspace
+      extension={extension}
+      onMeaningfulAction={recordMeaningfulAction}
+      onSnapshotChange={handleSnapshotChange}
+    />
   );
 }
 
@@ -903,7 +406,6 @@ function OnboardingCard({
   onRetry: () => void;
 }) {
   const { m } = useI18n();
-
   return (
     <div className="flex h-full items-center justify-center p-8">
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-sm">
@@ -911,12 +413,8 @@ function OnboardingCard({
           <Sparkles className="size-5 text-primary" />
           <h2 className="text-base font-semibold">{m.onboarding.title}</h2>
         </div>
-
         {stage === 'needs_token' ? (
-          <div
-            className={cn('space-y-3 text-muted-foreground', { 'opacity-55': interactionLocked })}
-            {...getLockedRegionProps(interactionLocked)}
-          >
+          <div className={cn('space-y-3 text-muted-foreground', { 'opacity-55': interactionLocked })} {...getLockedRegionProps(interactionLocked)}>
             <p>{m.onboarding.noTokenBody}</p>
             <ol className="list-decimal space-y-1 pl-5">
               <li>
@@ -938,28 +436,19 @@ function OnboardingCard({
             </Button>
           </div>
         ) : stage === 'sync_failed' ? (
-          <div
-            className={cn('space-y-3 text-muted-foreground', { 'opacity-55': interactionLocked })}
-            {...getLockedRegionProps(interactionLocked)}
-          >
-            <p>
-              {m.onboarding.syncFailedBody} <span className="text-destructive">{failedInfo}</span>
-            </p>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={onRetry} disabled={interactionLocked}>
-                <RefreshCw className="size-4" data-icon="inline-start" />
-                {m.onboarding.retry}
-              </Button>
-            </div>
+          <div className={cn('space-y-3 text-muted-foreground', { 'opacity-55': interactionLocked })} {...getLockedRegionProps(interactionLocked)}>
+            <p>{m.onboarding.syncFailedBody} <span className="text-destructive">{failedInfo}</span></p>
+            <Button variant="outline" onClick={onRetry} disabled={interactionLocked}>
+              <RefreshCw className="size-4" data-icon="inline-start" />
+              {m.onboarding.retry}
+            </Button>
           </div>
         ) : stage === 'syncing' || stage === 'awaiting_sync' ? (
           <div className="flex items-center gap-2 text-muted-foreground">
             <Spinner className="size-4" />
             <span>{m.onboarding.syncingBody}</span>
           </div>
-        ) : (
-          <p className="text-muted-foreground">{m.manager.emptyState}</p>
-        )}
+        ) : <p className="text-muted-foreground">{m.manager.emptyState}</p>}
       </div>
     </div>
   );
@@ -981,8 +470,7 @@ function BackfillCard({
   onDefer: () => void;
 }) {
   const { m } = useI18n();
-  const busy = state.status === 'running' || (actionBusy && progress.phase === 'full');
-
+  const running = state.status === 'running' || (actionBusy && progress.phase === 'full');
   return (
     <div className="flex h-full items-center justify-center p-8">
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-sm">
@@ -990,8 +478,7 @@ function BackfillCard({
           <Sparkles className="size-5 text-primary" />
           <h2 className="text-base font-semibold">{m.manager.backfillSyncTitle}</h2>
         </div>
-
-        {busy ? (
+        {running ? (
           <div className="space-y-3 text-muted-foreground">
             <div className="flex items-center gap-2">
               <Spinner className="size-4" />
@@ -1002,23 +489,12 @@ function BackfillCard({
         ) : (
           <div className="space-y-3 text-muted-foreground">
             <p>{m.manager.backfillSyncBody}</p>
-            {state.status === 'failed' && state.error && (
-              <p className="text-destructive">{m.manager.backfillSyncFailed(state.error)}</p>
-            )}
+            {state.status === 'failed' && state.error && <p className="text-destructive">{m.manager.backfillSyncFailed(state.error)}</p>}
             <div className="flex gap-2">
               <Button onClick={onRun} disabled={actionBusy || interactionLocked}>
-                {state.status === 'failed' ? (
-                  <>
-                    <RefreshCw className="size-4" data-icon="inline-start" />
-                    {m.manager.backfillSyncRetry}
-                  </>
-                ) : (
-                  m.manager.backfillSyncAction
-                )}
+                {state.status === 'failed' ? <><RefreshCw className="size-4" data-icon="inline-start" />{m.manager.backfillSyncRetry}</> : m.manager.backfillSyncAction}
               </Button>
-              <Button variant="ghost" onClick={onDefer} disabled={actionBusy || interactionLocked}>
-                {m.manager.backfillSyncLater}
-              </Button>
+              <Button variant="ghost" onClick={onDefer} disabled={actionBusy || interactionLocked}>{m.manager.backfillSyncLater}</Button>
             </div>
           </div>
         )}
@@ -1047,7 +523,7 @@ function CoachOverlay({
 }: {
   step: number;
   total: number;
-  rootRef: React.RefObject<HTMLDivElement>;
+  rootRef: RefObject<HTMLDivElement>;
   onNext: () => void;
   onBack: () => void;
   onFinish: () => void;
@@ -1055,48 +531,34 @@ function CoachOverlay({
 }) {
   const { m } = useI18n();
   const target = COACH_TARGETS[step];
-  const targetSel = `[data-coach-target="${target}"]`;
+  const targetSelector = `[data-coach-target="${target}"]`;
   const padding = COACH_SPOT_PADDING[target];
-
   const [spot, setSpot] = useState<{ left: number; top: number; w: number; h: number } | null>(null);
-  const measure = () => {
-    const root = rootRef.current;
-    const el = root?.querySelector<HTMLElement>(targetSel);
-    if (!root || !el) return;
-    const r = el.getBoundingClientRect();
-    const rr = root.getBoundingClientRect();
-    const left = Math.max(0, r.left - rr.left - padding);
-    const top = Math.max(0, r.top - rr.top - padding);
-    const right = Math.min(rr.width, r.right - rr.left + padding);
-    const bottom = Math.min(rr.height, r.bottom - rr.top + padding);
-    setSpot({ left, top, w: right - left, h: bottom - top });
-  };
 
   useEffect(() => {
     const root = rootRef.current;
-    const el = root?.querySelector<HTMLElement>(targetSel);
-    if (!root || !el) return;
-    // 'instant' so the element is in place before we measure; a smooth scroll is
-    // async and would leave the spotlight at a mid-scroll rect.
-    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+    const element = root?.querySelector<HTMLElement>(targetSelector);
+    if (!root || !element) return;
+    const measure = () => {
+      const rect = element.getBoundingClientRect();
+      const rootRect = root.getBoundingClientRect();
+      const left = Math.max(0, rect.left - rootRect.left - padding);
+      const top = Math.max(0, rect.top - rootRect.top - padding);
+      const right = Math.min(rootRect.width, rect.right - rootRect.left + padding);
+      const bottom = Math.min(rootRect.height, rect.bottom - rootRect.top + padding);
+      setSpot({ left, top, w: right - left, h: bottom - top });
+    };
+    element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
     measure();
-    // Re-measure on the next frame and on any in-panel scroll until it settles.
-    const raf = requestAnimationFrame(measure);
-    let settles = 0;
-    const onScroll = () => {
-      measure();
-      if (settles++ > 12) window.removeEventListener('scroll', onScroll, true);
-    };
-    window.addEventListener('scroll', onScroll, true);
-    const onResize = () => measure();
-    window.addEventListener('resize', onResize);
+    const frame = requestAnimationFrame(measure);
+    window.addEventListener('scroll', measure, true);
+    window.addEventListener('resize', measure);
     return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('resize', measure);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, targetSel, rootRef]);
+  }, [padding, rootRef, targetSelector]);
 
   const steps = [
     { title: m.onboarding.coachStep1Title, body: m.onboarding.coachStep1Body },
@@ -1105,49 +567,22 @@ function CoachOverlay({
     { title: m.onboarding.coachStep4Title, body: m.onboarding.coachStep4Body },
     { title: m.onboarding.coachStep5Title, body: m.onboarding.coachStep5Body },
   ];
-  const isLast = step === total - 1;
-
+  const last = step === total - 1;
   return (
-    // Full-screen click shield: blocks pointer events from reaching the page beneath
-    // (toolbar buttons cannot be clicked or hovered). Sync would start network work,
-    // while Hide panel would unmount the manager and end the tour. The card below
-    // opts back into pointer events.
-    <div
-      className="gsm-z-overlay pointer-events-auto absolute inset-0"
-      data-coach-step-target={target}
-    >
+    <div className="gsm-z-overlay pointer-events-auto absolute inset-0" data-coach-step-target={target}>
       {spot && (
-        <div
-          className="gsm-coach-spotlight absolute"
-          style={{
-            left: spot.left,
-            top: spot.top,
-            width: spot.w,
-            height: spot.h,
-            borderRadius: 10,
-            border: '2px solid hsl(var(--primary))',
-            boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.5)',
-          }}
-        />
+        <div className="gsm-coach-spotlight absolute" style={{ left: spot.left, top: spot.top, width: spot.w, height: spot.h, borderRadius: 10, border: '2px solid hsl(var(--primary))', boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.5)' }} />
       )}
-
       <div className="pointer-events-auto absolute bottom-6 left-1/2 w-[min(440px,90vw)] -translate-x-1/2 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl">
-        <div className="gsm-meta-label mb-1 flex items-center justify-between">
-          <span>{m.onboarding.coachTitle}</span>
-          <span>{m.onboarding.coachOf(step + 1, total)}</span>
-        </div>
+        <div className="gsm-meta-label mb-1 flex items-center justify-between"><span>{m.onboarding.coachTitle}</span><span>{m.onboarding.coachOf(step + 1, total)}</span></div>
         <h3 className="text-sm font-semibold">{steps[step]?.title}</h3>
         <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{steps[step]?.body}</p>
         {step === 0 && <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground/80">{m.onboarding.coachIntro}</p>}
         <div className="mt-3 flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onSkip}>{m.onboarding.coachSkip}</Button>
           <span className="flex-1" />
-          {step > 0 && (
-            <Button variant="outline" size="sm" onClick={onBack}>{m.onboarding.coachBack}</Button>
-          )}
-          <Button size="sm" onClick={isLast ? onFinish : onNext}>
-            {isLast ? m.onboarding.gotIt : m.onboarding.coachNext}
-          </Button>
+          {step > 0 && <Button variant="outline" size="sm" onClick={onBack}>{m.onboarding.coachBack}</Button>}
+          <Button size="sm" onClick={last ? onFinish : onNext}>{last ? m.onboarding.gotIt : m.onboarding.coachNext}</Button>
         </div>
       </div>
     </div>

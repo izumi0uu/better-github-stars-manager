@@ -1,7 +1,12 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it } from 'vitest';
-import { compareNullableDate, queryStars, invalidateCache, type QueryParams, type QueryResult } from '@/background/query';
+import { queryStars, invalidateCache } from '@/background/query';
+import {
+  compareNullableDate,
+  type StarsQueryParams,
+  type StarsQueryResult,
+} from '@/stars/stars-query';
 import { db } from '@/storage/db';
 import { visibleTagNames } from '@/tags/tag-model';
 import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
@@ -99,7 +104,7 @@ interface GeneratedQueryCase {
   stars: Star[];
   tags: Tag[];
   tagMeta: TagMeta[];
-  params: QueryParams;
+  params: StarsQueryParams;
 }
 
 function generateQueryCase(rng: SeededRng, options: { forceStars?: number } = {}): GeneratedQueryCase {
@@ -135,7 +140,7 @@ function generateQueryCase(rng: SeededRng, options: { forceStars?: number } = {}
     'cache',
     rng.pick(words),
   ]);
-  const params: QueryParams = {
+  const params: StarsQueryParams = {
     filter: {
       query: rng.bool(0.2) ? `  ${queryTerm.toUpperCase()}  ` : queryTerm,
       languages: rng.subset(languages, 2),
@@ -195,7 +200,7 @@ function makeTag(fullName: string, selected: string[], index: number, rng: Seede
   };
 }
 
-function referenceQuery(input: GeneratedQueryCase): QueryResult {
+function referenceQuery(input: GeneratedQueryCase): StarsQueryResult {
   const indexedStars = [...input.stars].sort((a, b) => a.full_name.localeCompare(b.full_name));
   const excluded = referenceExcludedTagKeys(input.tagMeta);
   const indexedTags = input.tags
@@ -381,8 +386,8 @@ function referenceTagKey(value: string): string {
 }
 
 function assertQueryEqual(
-  actual: QueryResult,
-  expected: QueryResult,
+  actual: StarsQueryResult,
+  expected: StarsQueryResult,
   context: { caseIndex: number; trace: unknown },
 ): void {
   const actualSummary = summarizeResult(actual);
@@ -404,7 +409,7 @@ function assertQueryEqual(
   );
 }
 
-function summarizeResult(result: QueryResult) {
+function summarizeResult(result: StarsQueryResult) {
   return {
     rows: result.rows.map((row) => row.full_name),
     total: result.total,

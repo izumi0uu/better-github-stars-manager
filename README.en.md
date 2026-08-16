@@ -9,6 +9,8 @@
 
 Search, filter, tag, and annotate repositories directly on your GitHub Stars page. Enable Watch, Following, For You, Secret Gist sync, or Cubby AI when you need them.
 
+**Official website:** [betterstars.app](https://betterstars.app/)
+
 [![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Install%20Now-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome Web Store users](https://img.shields.io/chrome-web-store/users/jbiacpcceoffcnmpepifoegagjopjpfa?logo=googlechrome&label=Chrome%20Web%20Store%20users)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
@@ -37,7 +39,7 @@ Search, filter, tag, and annotate repositories directly on your GitHub Stars pag
 
 ### Install
 
-| | Store | Works on |
+| Browser | Store | Works on |
 | :---: | --- | --- |
 | [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome, Edge, Brave, Opera, and other Chromium-based browsers |
 | [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · Coming soon | Microsoft Edge |
@@ -146,6 +148,10 @@ Watch retrieves notifications from your GitHub inbox and organizes them in one w
 - Search repository names and notification titles, and filter by notification reason
 - Fetch an Issue or Pull Request body, state, author, labels, assignees, and milestone on demand
 - Mark one notification or an entire repository group as read or done
+
+<div align="center">
+  <img src="store-assets/screenshots/readme-watch.webp" alt="Watch inbox showing notifications grouped by repository with issue details" width="960" />
+</div>
 
 Watch Inbox requires the optional `notifications` scope on your Classic Personal Access Token (PAT). See [How Watch works](docs/en/watch-strategy.md) for its full behavior.
 
@@ -269,6 +275,7 @@ Copyright (c) 2026 izumi0uu.
 ## Links
 
 - [GitHub repository](https://github.com/izumi0uu/better-github-stars-manager)
+- [Official website](https://betterstars.app/)
 - [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 - [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues)
 

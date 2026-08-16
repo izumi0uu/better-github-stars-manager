@@ -2,8 +2,10 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react';
+import { act, type ReactElement } from 'react';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import {
   cleanupMountedRootsAndBody,
   click,
@@ -14,6 +16,11 @@ import {
 } from './test-utils';
 
 const mountedRoots: MountedRoot[] = [];
+const runtime = new ExtensionManagerRuntime();
+
+function withRuntime(element: ReactElement): ReactElement {
+  return <ManagerRuntimeProvider runtime={runtime}>{element}</ManagerRuntimeProvider>;
+}
 
 function removeButton(container: HTMLElement): HTMLButtonElement {
   const button = container.querySelector('button[title="Remove tag"]');
@@ -41,7 +48,7 @@ describe('RepoDetailPanel visible tag removal', () => {
 
   it('keeps auto-only chips visible and skips data refresh when persistent removal fails', async () => {
     const onDataChanged = vi.fn();
-    const container = mountReact(
+    const container = mountReact(withRuntime(
       <RepoDetailPanel
         star={fakeStar()}
         tag={fakeTag({ manualTags: [], autoTags: ['auto'] })}
@@ -54,8 +61,7 @@ describe('RepoDetailPanel visible tag removal', () => {
         hasPrev={false}
         hasNext={false}
       />,
-      mountedRoots,
-    );
+    ), mountedRoots);
 
     await click(removeButton(container));
 
@@ -80,26 +86,25 @@ describe('RepoDetailPanel visible tag removal', () => {
       hasPrev: false,
       hasNext: false,
     };
-    const container = mountReact(
+    const container = mountReact(withRuntime(
       <RepoDetailPanel
         {...commonProps}
         star={fakeStar()}
         tag={fakeTag({ manualTags: [], autoTags: ['auto'] })}
       />,
-      mountedRoots,
-    );
+    ), mountedRoots);
 
     await click(removeButton(container));
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('remove failed');
 
     await act(async () => {
-      mountedRoots[0].render(
+      mountedRoots[0].render(withRuntime(
         <RepoDetailPanel
           {...commonProps}
           star={fakeStar({ full_name: 'owner/next' })}
           tag={fakeTag({ full_name: 'owner/next', manualTags: [], autoTags: ['next'] })}
         />,
-      );
+      ));
       await Promise.resolve();
     });
 

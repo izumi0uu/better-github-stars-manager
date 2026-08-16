@@ -4,6 +4,8 @@
 import type { ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FilterSidebar } from '@/ui/components/FilterSidebar';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import type { FilterState } from '@/ui/filter-store';
 import {
   cleanupMountedRootsAndBody,
@@ -21,10 +23,20 @@ vi.mock('@/utils/messaging', () => ({
   bgCall: messagingMocks.bgCall,
 }));
 
+vi.mock('@/auth/auth-store', () => ({
+  CONFIG_STORAGE_KEY: 'gsm_config',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
+  authStore: {},
+}));
+
 const mountedRoots: MountedRoot[] = [];
+const runtime = new ExtensionManagerRuntime();
 
 function mount(element: ReactElement): HTMLDivElement {
-  return mountWithTooltipProvider(element, mountedRoots);
+  return mountWithTooltipProvider(
+    <ManagerRuntimeProvider runtime={runtime}>{element}</ManagerRuntimeProvider>,
+    mountedRoots,
+  );
 }
 
 function makeFilterState(order: string[], tags = ['react', 'ui']): FilterState {

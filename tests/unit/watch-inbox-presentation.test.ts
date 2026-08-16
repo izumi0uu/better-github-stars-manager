@@ -226,9 +226,22 @@ describe('Watch repository collapse signatures', () => {
   });
 
   it('treats malformed persisted signatures as stale', () => {
-    expect(hasNewWatchGroupContent('not-json', threads)).toBe(true);
-    expect(hasNewWatchGroupContent('{}', threads)).toBe(true);
+    const currentMarker = [threads[0].id, threads[0].updatedAt];
+    const malformedSignatures = [
+      'not-json',
+      '{}',
+      JSON.stringify([currentMarker, null]),
+      JSON.stringify([currentMarker, 'unexpected']),
+      JSON.stringify([currentMarker, [threads[0].id]]),
+      JSON.stringify([currentMarker, [...currentMarker, 'extra']]),
+      JSON.stringify([currentMarker, [42, threads[0].updatedAt]]),
+    ];
+
+    for (const signature of malformedSignatures) {
+      expect(hasNewWatchGroupContent(signature, [threads[0]])).toBe(true);
+    }
   });
+
 });
 
 describe('Watch status presentation', () => {

@@ -6,9 +6,11 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, it, vi } from 'vitest';
 import { getMessages, I18nProvider, messageFor, useI18n } from '@/i18n';
+import { DEFAULT_LIBRARY_VIEW_PREFS } from '@/preferences';
 import { getAgentDiagnosticsMessages } from '@/dev-agent/messages';
 import { applyFabLabel } from '@/content/stars-page/fab-label';
 import type { Locale } from '@/types';
+import type { ManagerPreferences, ManagerRuntimeListener } from '@/runtime/manager-runtime';
 
 const authMock = vi.hoisted(() => ({
   getLocale: vi.fn<() => Promise<Locale>>(),
@@ -46,13 +48,46 @@ function Consumer() {
   );
 }
 
+function localePreferences(locale: Locale): ManagerPreferences {
+  return {
+    theme: 'dark',
+    locale,
+    libraryView: DEFAULT_LIBRARY_VIEW_PREFS,
+    watchCollapsedRepositories: {},
+    columnLayoutMode: 'default',
+    customColumnLayout: null,
+  };
+}
+
+const localeSource = {
+  async readPreferences() {
+    return localePreferences(await authMock.getLocale());
+  },
+  async updatePreferences(patch: Partial<ManagerPreferences>) {
+    if (patch.locale) await authMock.setLocale(patch.locale);
+    return localePreferences(patch.locale ?? await authMock.getLocale());
+  },
+  subscribe(listener: ManagerRuntimeListener) {
+    const onChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      if (areaName === 'local' && changes.gsm_config) {
+        listener({ kind: 'preferences', epoch: 1 });
+      }
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  },
+};
+
 function mountProvider() {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
   act(() => {
     root.render(
-      <I18nProvider>
+      <I18nProvider source={localeSource}>
         <Consumer />
       </I18nProvider>,
     );

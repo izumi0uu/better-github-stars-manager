@@ -187,6 +187,7 @@ function surfaceProps(
     recommendationError: null,
     actionError: null,
     pendingAction: null,
+    recommendationFavorites: {},
     view: 'feed',
     sources: { following: true, self: false },
     onDiscoverViewChange: vi.fn(),
@@ -442,16 +443,19 @@ describe('Radar', () => {
 
     await act(async () => { forYouTab?.click(); });
     expect(onDiscoverViewChange).toHaveBeenCalledWith('for-you');
+    onDiscoverViewChange.mockClear();
+
 
     const followingTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
       .find((button) => button.textContent?.includes('Following'));
     await act(async () => {
       followingTab?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     });
-    expect(onDiscoverViewChange).toHaveBeenLastCalledWith('for-you');
+    expect(onDiscoverViewChange).toHaveBeenCalledTimes(1);
+    expect(onDiscoverViewChange).toHaveBeenCalledWith('for-you');
   });
 
-  it('renders repository identity and topics without annotation controls', () => {
+  it('renders repository identity, topics, and annotation controls', () => {
     const container = mount(<Radar {...surfaceProps({ discoverView: 'for-you' })} />);
     const row = container.querySelector('[data-recommendation-row="candidate/tool"]');
     const avatar = row?.querySelector<HTMLImageElement>('img');
@@ -467,9 +471,41 @@ describe('Radar', () => {
     expect(row?.textContent).toContain('Because you starred Seed/Repo');
     expect(row?.textContent).toContain('shared topic · developer-tools');
     expect(row?.querySelector('a[href="https://github.com/candidate/tool"]')).not.toBeNull();
-    expect(row?.querySelector('[data-radar-project-action="favorite"]')).toBeNull();
-    expect(row?.textContent).not.toContain('Add tag');
+    expect(row?.querySelector('[data-recommendation-action="favorite"]')).not.toBeNull();
+    expect(row?.querySelector('[data-recommendation-action="tag"]')).not.toBeNull();
     expect(container.querySelector('a[href="https://github.com/trending"]')).not.toBeNull();
+  });
+
+  it('favorites and tags a recommendation with exact repository identity', async () => {
+    const onSetFavorite = vi.fn(noOp);
+    const onAddTag = vi.fn(noOp);
+    const container = mount(<Radar {...surfaceProps({
+      discoverView: 'for-you',
+      onSetFavorite,
+      onAddTag,
+    })} />);
+    const row = container.querySelector('[data-recommendation-row="candidate/tool"]');
+    const favorite = row?.querySelector<HTMLButtonElement>('[data-recommendation-action="favorite"]');
+    const tag = row?.querySelector<HTMLButtonElement>('[data-recommendation-action="tag"]');
+
+    expect(favorite?.getAttribute('aria-pressed')).toBe('false');
+    await act(async () => { favorite?.click(); });
+    expect(onSetFavorite).toHaveBeenCalledWith('candidate/tool', 'Candidate/Tool', true);
+    const favorited = mount(<Radar {...surfaceProps({
+      discoverView: 'for-you',
+      recommendationFavorites: { 'candidate/tool': true },
+    })} />).querySelector<HTMLButtonElement>(
+      '[data-recommendation-row="candidate/tool"] [data-recommendation-action="favorite"]',
+    );
+    expect(favorited?.getAttribute('aria-pressed')).toBe('true');
+
+    await act(async () => { tag?.click(); });
+    const suggestions = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[data-recommendation-tag-composer="candidate/tool"] [aria-label="Suggested tags"] button'),
+    );
+    expect(suggestions.map((button) => button.textContent)).toContain('developer-tools');
+    await act(async () => { suggestions[0]?.click(); });
+    expect(onAddTag).toHaveBeenCalledWith('candidate/tool', 'Candidate/Tool', suggestions[0]?.textContent);
   });
   it('ignores a recommendation row and reports the repository key', async () => {
     const onIgnore = vi.fn(noOp);

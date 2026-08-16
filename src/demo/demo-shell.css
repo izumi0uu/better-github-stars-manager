@@ -1,0 +1,36 @@
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  .demo-shell-root {
+    --demo-shell-chrome-height: 12rem;
+    --demo-workspace-min-height: 42rem;
+
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-x: clip;
+  }
+
+  .demo-interactive-host {
+    height: calc(100vh - var(--demo-shell-chrome-height));
+    height: calc(100dvh - var(--demo-shell-chrome-height));
+    min-height: var(--demo-workspace-min-height);
+    isolation: isolate;
+  }
+
+  .demo-interactive-host > * {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+  }
+
+
+  @media (max-width: 640px) {
+    .demo-shell-root {
+      --demo-shell-chrome-height: 15rem;
+      --demo-workspace-min-height: 38rem;
+    }
+  }

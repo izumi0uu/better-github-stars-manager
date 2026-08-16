@@ -23,6 +23,8 @@ import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { usePrefersReducedMotion } from '@/ui/hooks/use-prefers-reduced-motion';
 import { useWatchSubjectDetails } from '@/ui/hooks/use-watch-subject-details';
+import { ManagerResourceLink } from '@/ui/components/ManagerResource';
+import { useManagerNow } from '@/ui/manager-runtime-context';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
 import {
@@ -70,9 +72,17 @@ function safeWatchMarkdownUrl(value: string): string | undefined {
 function WatchMarkdownLink({
   children,
   node: _node,
+  href = '#',
   ...props
 }: ComponentProps<'a'> & { node?: unknown }) {
-  return <a {...props} target="_blank" rel="noreferrer">{children}</a>;
+  return (
+    <ManagerResourceLink
+      {...props}
+      resource={{ kind: 'subject', label: 'watch-markdown-link', remoteUrl: href }}
+    >
+      {children}
+    </ManagerResourceLink>
+  );
 }
 
 function SubjectDetailContent({
@@ -122,9 +132,12 @@ function SubjectDetailContent({
       </div>
       <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px] text-muted-foreground">
         <span>#{detail.number}</span>
-        <a className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={detail.author.htmlUrl} target="_blank" rel="noreferrer">
+        <ManagerResourceLink
+          className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          resource={{ kind: 'actor', login: detail.author.login, remoteUrl: detail.author.htmlUrl }}
+        >
           {m.watch.subjectAuthor(detail.author.login)}
-        </a>
+        </ManagerResourceLink>
         <time dateTime={detail.createdAt}>{m.watch.subjectCreated(created)}</time>
         <time dateTime={detail.updatedAt}>{m.watch.threadUpdated}: {updated}</time>
         <span>{m.watch.subjectComments(detail.commentCount)}</span>
@@ -304,9 +317,10 @@ export function WatchThreadRow({
 }) {
   const { m } = useI18n();
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const now = useManagerNow();
   const [keyboardTransition, setKeyboardTransition] = useState(false);
   const target = thread.subjectHtmlUrl ?? thread.repositoryHtmlUrl;
-  const updated = formatWatchRelativeTime(thread.updatedAt);
+  const updated = formatWatchRelativeTime(thread.updatedAt, now);
   const updatedTitle = formatWatchAbsoluteTime(thread.updatedAt, locale);
   const subjectType = notificationSubjectTypeLabel(thread.subjectType);
   const SubjectIcon = notificationSubjectIcon(thread.subjectType, thread.reason);
@@ -455,9 +469,12 @@ export function WatchThreadRow({
                   {readPending ? m.watch.markingRead : m.watch.markAsRead}
                 </Button>
                 <Button asChild size="sm" className="h-7 min-w-0 max-w-full px-2.5">
-                  <a href={target} target="_blank" rel="noreferrer" title={m.watch.openSubjectOnGitHub(subjectType)}>
+                  <ManagerResourceLink
+                    resource={{ kind: 'subject', label: subjectType, remoteUrl: target }}
+                    title={m.watch.openSubjectOnGitHub(subjectType)}
+                  >
                     <span className="min-w-0 truncate">{m.watch.openSubjectOnGitHub(subjectType)}</span>
-                  </a>
+                  </ManagerResourceLink>
                 </Button>
               </div>
             </div>

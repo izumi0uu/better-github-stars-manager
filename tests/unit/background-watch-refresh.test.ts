@@ -142,6 +142,7 @@ function harness(input: {
   watchCredentialSource?: Config['watchCredentialSource'];
   fetchScope?: WatchRefreshCoordinatorDependencies['fetchScope'];
   fetchNotifications?: WatchRefreshCoordinatorDependencies['fetchNotifications'];
+  mutateNotification?: WatchRefreshCoordinatorDependencies['mutateNotification'];
   queryInbox?: typeof watchStore.queryStoredWatchInbox;
   disconnectInbox?: typeof watchStore.disconnectWatchInbox;
   liveRepositoryNames?: string[] | (() => string[] | Promise<string[]>);
@@ -198,6 +199,7 @@ function harness(input: {
   };
   const fetchScope = input.fetchScope ?? vi.fn(async () => scopeSnapshot());
   const fetchNotifications = input.fetchNotifications ?? vi.fn(async () => inboxSnapshot());
+  const mutateNotification = input.mutateNotification ?? vi.fn();
   const broadcastChanged = vi.fn();
   const clearWatchNotificationsToken = vi.fn(async () => {
     dedicatedNotificationsToken = null;
@@ -234,7 +236,7 @@ function harness(input: {
     },
     fetchScope,
     fetchNotifications,
-    mutateNotification: vi.fn(),
+    mutateNotification,
     fetchSubjectDetail: vi.fn(),
     loadLiveRepositoryNames: async () => typeof input.liveRepositoryNames === 'function'
       ? input.liveRepositoryNames()
@@ -262,6 +264,7 @@ function harness(input: {
     coordinator,
     fetchScope,
     fetchNotifications,
+    mutateNotification,
     broadcastChanged,
     clearWatchNotificationsToken,
     clearWatchToken() {
@@ -334,6 +337,17 @@ afterAll(async () => {
 });
 
 describe('Watch background refresh coordinator', () => {
+  it('rejects a thread mutation bound to a different GitHub account', async () => {
+    const mutateNotification = vi.fn();
+    const h = harness({ mutateNotification });
+
+    await expect(h.coordinator.markThreadsDone({
+      accountLogin: 'another-user',
+      threadIds: ['1'],
+    })).rejects.toMatchObject({ code: 'authentication_required' });
+    expect(mutateNotification).not.toHaveBeenCalled();
+  });
+
   it('publishes live-star Notifications even when native scope omits the repository', async () => {
     const h = harness({
       fetchScope: vi.fn(async () => ({

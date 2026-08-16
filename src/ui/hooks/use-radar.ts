@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GITHUB_CREDENTIALS_STORAGE_KEY } from '@/auth/auth-store';
-import { bgCall } from '@/utils/messaging';
+import { useManagerRuntime } from '@/ui/manager-runtime-context';
 import type { RadarStatus } from '@/radar/radar-contract';
 import type { RadarActivitySource } from '@/radar/radar-model';
 import type {
@@ -21,6 +20,7 @@ export function useRadar({
   active?: boolean;
   onMeaningfulAction?: () => void;
 } = {}) {
+  const runtime = useManagerRuntime();
   const activity = useRadarActivityResource(active);
   const recommendation = useRadarRecommendationResource(active);
   const [discoverView, setDiscoverView] = useState<RadarDiscoverView>('following');
@@ -31,6 +31,7 @@ export function useRadar({
   });
   const [pendingAction, setPendingAction] = useState<RadarPendingAction | null>(null);
   const [actionError, setActionError] = useState<RadarActionError | null>(null);
+  const [recommendationFavorites, setRecommendationFavorites] = useState<Record<string, boolean>>({});
   const mountedRef = useRef(true);
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -43,45 +44,32 @@ export function useRadar({
     };
   }, []);
 
-  useEffect(() => {
-    if (typeof chrome === 'undefined') return;
-    const onMessage = chrome.runtime?.onMessage;
-    if (!onMessage) return;
-    const listener = (message: { type?: string }) => {
-      if (!activeRef.current) return;
-      if (message.type === 'radarChanged' || message.type === 'dataChanged') {
-        void activity.reload(true);
+  useEffect(() => runtime.subscribe((event) => {
+    if (event.kind === 'reset') setRecommendationFavorites({});
+    if (!activeRef.current) {
+      if (event.kind === 'reset') {
+        activity.invalidateCredentials();
+        recommendation.invalidateCredentials();
       }
-      if (message.type === 'recommendationsChanged' || message.type === 'dataChanged') {
-        void recommendation.reload(true);
-      }
-    };
-    onMessage.addListener(listener);
-    return () => onMessage.removeListener(listener);
-  }, [activity.reload, recommendation.reload]);
-
-  useEffect(() => {
-    if (typeof chrome === 'undefined') return;
-    const onChanged = chrome.storage?.onChanged;
-    if (!onChanged) return;
-    const listener = (
-      changes: Record<string, chrome.storage.StorageChange>,
-      areaName: string,
-    ) => {
-      if (areaName !== 'local' || !changes[GITHUB_CREDENTIALS_STORAGE_KEY]) return;
+      return;
+    }
+    if (event.kind === 'reset') {
       activity.invalidateCredentials();
       recommendation.invalidateCredentials();
-      if (!activeRef.current) return;
-      void activity.reload();
-      void recommendation.reload();
-    };
-    onChanged.addListener(listener);
-    return () => onChanged.removeListener(listener);
-  }, [
+      void activity.reload(false);
+      void recommendation.reload(false);
+      return;
+    }
+    if (event.kind === 'radar' || event.kind === 'data') void activity.reload(true);
+    if (event.kind === 'recommendations' || event.kind === 'data') {
+      void recommendation.reload(true);
+    }
+  }), [
     activity.invalidateCredentials,
     activity.reload,
     recommendation.invalidateCredentials,
     recommendation.reload,
+    runtime,
   ]);
 
   const mutate = useCallback(async <T,>(
@@ -115,58 +103,68 @@ export function useRadar({
 
   const star = useCallback((repositoryKey: string, fullName: string) => mutate(
     { kind: 'star', repositoryKey },
-    () => bgCall('radarStarRepository', { fullName }).then(async (value) => {
+    () => runtime.starRepository(fullName).then(async (value) => {
       await recommendation.reload(true);
       return value;
     }),
     true,
-  ), [mutate, recommendation.reload]);
+  ), [mutate, recommendation.reload, runtime]);
 
   const unstar = useCallback((repositoryKey: string, fullName: string) => mutate(
     { kind: 'star', repositoryKey },
-    () => bgCall('markUnstarred', { full_name: fullName }).then(async (value) => {
+    () => runtime.markUnstarred(fullName).then(async (value) => {
       await recommendation.reload(true);
       return value;
     }),
     true,
-  ), [mutate, recommendation.reload]);
+  ), [mutate, recommendation.reload, runtime]);
 
-  const setFavorite = useCallback((
+  const setFavorite = useCallback(async (
     repositoryKey: string,
     fullName: string,
     favorite: boolean,
-  ) => mutate(
-    { kind: 'favorite', repositoryKey },
-    () => bgCall('setFavorite', { full_name: fullName, favorite }),
-    true,
-  ), [mutate]);
+  ) => {
+    const result = await mutate(
+      { kind: 'favorite', repositoryKey },
+      () => runtime.setFavorite(fullName, favorite),
+      true,
+    );
+    if (result !== null && mountedRef.current) {
+      setRecommendationFavorites((current) => ({
+        ...current,
+        [repositoryKey]: favorite,
+      }));
+    }
+    return result;
+  }, [mutate, runtime]);
 
   const addTag = useCallback((repositoryKey: string, fullName: string, tag: string) => mutate(
     { kind: 'tag', repositoryKey },
-    () => bgCall('radarAddTag', { fullName, tag }),
+    () => runtime.addRepositoryTag(fullName, tag),
     true,
-  ), [mutate]);
+  ), [mutate, runtime]);
 
   const dismiss = useCallback((repositoryKey: string, activityIds: readonly string[]) => mutate<RadarStatus>(
     { kind: 'dismiss', repositoryKey },
-    () => bgCall<RadarStatus>('dismissRadarActivities', { activityIds }),
-  ), [mutate]);
+    () => runtime.dismissRadarActivities(activityIds),
+  ), [mutate, runtime]);
 
   const ignoreRecommendation = useCallback((
     repositoryKey: string,
     repositoryFullName: string,
   ) => mutate(
     { kind: 'ignore', repositoryKey },
-    () => bgCall('ignoreRecommendation', { repositoryKey, repositoryFullName })
+    () => runtime.ignoreRecommendation(repositoryKey, repositoryFullName)
       .then(async (value) => {
         await recommendation.reload(true);
         return value;
       }),
-  ), [mutate, recommendation.reload]);
+  ), [mutate, recommendation.reload, runtime]);
 
   const restoreIgnoredRecommendation = useCallback(async (repositoryKey: string) => {
     try {
-      await bgCall('restoreIgnoredRecommendation', { repositoryKey });
+      await runtime.restoreIgnoredRecommendation(repositoryKey);
+      await recommendation.reload(true);
     } catch (restoreError) {
       if (mountedRef.current) {
         setActionError({
@@ -175,7 +173,7 @@ export function useRadar({
         });
       }
     }
-  }, []);
+  }, [recommendation.reload, runtime]);
 
   const setSourceEnabled = useCallback((source: RadarActivitySource, enabled: boolean) => {
     setSources((current) => (current[source] === enabled
@@ -186,6 +184,7 @@ export function useRadar({
   return {
     result: activity.result,
     recommendations: recommendation.recommendations,
+    recommendationFavorites,
     discoverView,
     setDiscoverView,
     view,

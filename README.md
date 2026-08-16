@@ -9,6 +9,8 @@
 
 直接在 GitHub Stars 页面搜索、筛选、添加标签和笔记。需要时再启用 Watch、Following、For You、Secret Gist 同步和 Cubby AI等功能。
 
+**官方网站：** [betterstars.app](https://betterstars.app/)
+
 [![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-立即安装-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -36,7 +38,7 @@
 
 ### 安装
 
-| | 商店 | 适用浏览器 |
+| 浏览器 | 商店 | 适用浏览器 |
 | :---: | --- | --- |
 | [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome、Edge、Brave、Opera 等 Chromium 内核浏览器 |
 | [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · 即将上架 | Microsoft Edge |
@@ -145,6 +147,10 @@ Watch 工作区用于获取 GitHub 信箱的通知并整理给你:
 - 搜索仓库名和通知标题，可以按通知原因筛选
 - 按需读取 Issue 或 Pull Request 的正文、状态、作者、labels、assignees 和 milestone
 - 将一条通知或整个仓库组标记为已读或完成
+
+<div align="center">
+  <img src="store-assets/screenshots/readme-watch.webp" alt="Watch 收件箱按仓库分组查看通知与详情" width="960" />
+</div>
 
 Watch Inbox 需要 Classic Personal Access Token (PAT) 的可选 `notifications` scope。完整行为见 [Watch 的工作方式](docs/zh/watch-strategy.md)。
 
@@ -269,6 +275,7 @@ Copyright (c) 2026 izumi0uu。
 ## 链接
 
 - [GitHub 仓库](https://github.com/izumi0uu/better-github-stars-manager)
+- [官方网站](https://betterstars.app/)
 - [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 - [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues)
 

@@ -36,9 +36,8 @@ import {
   invalidateCache,
   resolveLaunchCandidate,
   resolveLiveLaunchCandidate,
-  type QueryParams,
-  type QueryResult,
 } from "./query";
+import type { StarsQueryParams, StarsQueryResult } from '@/stars/stars-query';
 import { countTopicRepoFrequency, reconcileAutoTagAssignments, suggestTags } from "@/ui/suggest";
 import type { AutoTagBulkUpdate } from "@/api/tag-store";
 import {
@@ -74,7 +73,11 @@ import {
   type ScheduledRefreshKind,
 } from './scheduled-refresh';
 import { GitHubWatchError, canonicalRepositoryFullName } from '@/watch/watch-model';
-import { parseWatchThreadId, parseWatchThreadIds } from '@/watch/watch-contract';
+import {
+  parseWatchAccountLogin,
+  parseWatchThreadId,
+  parseWatchThreadIds,
+} from '@/watch/watch-contract';
 import { RADAR_MAX_FOLLOWING } from '@/radar/radar-model';
 import {
   createOrganizeApplyPump,
@@ -262,8 +265,8 @@ type Req = BgsmAgentSessionRequest
   | { type: "getWatchSubjectDetail"; threadId?: unknown }
   | { type: "getWatchRepositoryDetail"; fullName?: unknown }
   | { type: "refreshWatchInbox" }
-  | { type: "markWatchThreadsRead"; threadIds?: unknown }
-  | { type: "markWatchThreadsDone"; threadIds?: unknown }
+  | { type: "markWatchThreadsRead"; accountLogin?: unknown; threadIds?: unknown }
+  | { type: "markWatchThreadsDone"; accountLogin?: unknown; threadIds?: unknown }
   | { type: "disconnectWatchInbox" }
   | { type: "clearWatchData" }
   | { type: 'getRecommendationStatus' }
@@ -283,7 +286,7 @@ type Req = BgsmAgentSessionRequest
   | { type: "getUsername" }
   | { type: "getAccount" }
   | { type: "fetchAccount" }
-  | { type: "query"; params: QueryParams }
+  | { type: "query"; params: StarsQueryParams }
   | { type: "setTags"; full_name: string; tags: string[] }
   | { type: "setNotes"; full_name: string; notes: string }
   | { type: "setFavorite"; full_name: string; favorite: boolean }
@@ -1801,14 +1804,18 @@ async function handle(req: Req): Promise<Res> {
       case 'markWatchThreadsRead':
       case 'markWatchThreadsDone': {
         const m = await getLocaleMessages();
+        const accountLogin = parseWatchAccountLogin(req.accountLogin);
         const threadIds = parseWatchThreadIds(req.threadIds);
-        if (!threadIds) return { ok: false, error: m.background.watchThreadActionInvalid };
+        if (!accountLogin || !threadIds) {
+          return { ok: false, error: m.background.watchThreadActionInvalid };
+        }
+        const mutation = { accountLogin, threadIds };
         try {
           return {
             ok: true,
             data: req.type === 'markWatchThreadsRead'
-              ? await watchRefreshCoordinator.markThreadsRead(threadIds)
-              : await watchRefreshCoordinator.markThreadsDone(threadIds),
+              ? await watchRefreshCoordinator.markThreadsRead(mutation)
+              : await watchRefreshCoordinator.markThreadsDone(mutation),
           };
         } catch {
           return { ok: false, error: m.background.watchThreadActionFailed };
@@ -1967,7 +1974,7 @@ async function handle(req: Req): Promise<Res> {
           data: (await queryStars({
             ...req.params,
             accountLogin: await authStore.getUsername(),
-          })) as QueryResult,
+          })) as StarsQueryResult,
         };
       case "runBackfill": {
         const m = await getLocaleMessages();

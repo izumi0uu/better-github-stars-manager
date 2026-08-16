@@ -12,7 +12,7 @@ function readMaybe(path: string) {
 describe('table head sticky contract', () => {
   it('keeps one real sticky table head with a stuck-state sentinel', () => {
     const tableSource = [
-      readMaybe('src/ui/ManagerPanel.tsx'),
+      readMaybe('src/ui/ManagerWorkspace.tsx'),
       readMaybe('src/ui/components/StarsTable.tsx'),
     ].join('\n');
     const motionSource = readMaybe('src/ui/styles/motion.css');

@@ -1,4 +1,4 @@
-import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/turn-protocol';
+import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/api/errors';
 import {
   assertAgentTurnTransportIdentifier,
   validateAgentSessionLaunchDigest,

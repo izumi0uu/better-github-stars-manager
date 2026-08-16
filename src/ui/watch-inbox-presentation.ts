@@ -202,7 +202,11 @@ export function hasNewWatchGroupContent(
   let previousMarkers: Set<string>;
   try {
     const parsed = JSON.parse(previousSignature) as unknown;
-    if (!Array.isArray(parsed)) return true;
+    if (!Array.isArray(parsed) || !parsed.every(
+      (marker: unknown): marker is [string, string] => Array.isArray(marker)
+        && marker.length === 2
+        && marker.every((value) => typeof value === 'string'),
+    )) return true;
     previousMarkers = new Set(parsed.map((marker) => JSON.stringify(marker)));
   } catch {
     return true;
