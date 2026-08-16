@@ -310,9 +310,12 @@ export async function mutateGitHubNotificationThread(
         signal: controller.signal,
       },
     );
+    // 404 on 'done' means the thread is already absent from the inbox, which
+    // is the target state; treat it as an idempotent success instead of
+    // aborting an oversized repository batch on one stale thread.
     const succeeded = options.action === 'read'
       ? response.status === 205 || response.status === 304
-      : response.status === 204;
+      : response.status === 204 || response.status === 404;
     if (succeeded) return;
     throw responseError(response);
   } catch (error) {

@@ -3359,6 +3359,7 @@ async function assertRadarSourceFilters(page) {
       y: rect.top + rect.height / 2,
       backgroundColor: style.backgroundColor,
       boxShadow: style.boxShadow,
+      finePointerHover: matchMedia('(hover: hover) and (pointer: fine)').matches,
     };
   });
   assert.ok(hoverProbe, 'could not locate Radar row for hover probe');
@@ -3374,11 +3375,19 @@ async function assertRadarSourceFilters(page) {
   assert.ok(hoveredStyle, 'could not read Radar row hover style');
   assert.equal(hoverProbe.boxShadow, 'none', 'Radar row rendered a pre-hover inset edge');
   assert.equal(hoveredStyle.boxShadow, 'none', 'Radar row rendered a hover inset edge');
-  assert.notEqual(
-    hoveredStyle.backgroundColor,
-    hoverProbe.backgroundColor,
-    'Radar row hover did not change the immediate row background',
-  );
+  if (hoverProbe.finePointerHover) {
+    assert.notEqual(
+      hoveredStyle.backgroundColor,
+      hoverProbe.backgroundColor,
+      'Radar row hover did not change the immediate row background',
+    );
+  } else {
+    assert.equal(
+      hoveredStyle.backgroundColor,
+      hoverProbe.backgroundColor,
+      'Radar row applied a hover background in a runtime without fine-pointer hover',
+    );
+  }
   const unseen = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
     const tab = root?.querySelector('#gsm-radar-surface-tab');

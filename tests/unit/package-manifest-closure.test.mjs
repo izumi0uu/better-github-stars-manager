@@ -212,7 +212,7 @@ test('measures bundle identities and enforces the frozen release worker exactly'
     ...RELEASE_WORKER_BASELINE,
     kib: RELEASE_WORKER_BASELINE.bytes / 1024,
   };
-  assert.equal(exact.bytes, 741_659);
+  assert.equal(exact.bytes, 741_694);
   assert.equal(WORKER_BYTE_CEILING, exact.bytes);
   assert.equal(enforceWorkerByteCeiling(exact).withinCeiling, true);
   assert.deepEqual(enforceWorkerReleaseBaseline(exact), exact);
