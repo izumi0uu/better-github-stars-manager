@@ -418,12 +418,15 @@ describe('GitHub Watch API sources', () => {
     })).rejects.toMatchObject({ code: 'invalid_thread' });
     expect(fetchImpl).not.toHaveBeenCalled();
 
+    // A done transition on a missing thread is the target state; other
+    // non-contract statuses still surface as failures.
+    const unavailable = vi.fn<typeof fetch>(async () => new Response(null, { status: 503 }));
     await expect(mutateGitHubNotificationThread({
       token: 'token',
       threadId: '123',
       action: 'done',
-      fetchImpl,
-    })).rejects.toMatchObject({ code: 'invalid_response', status: 404 });
+      fetchImpl: unavailable,
+    })).rejects.toMatchObject({ code: 'github_unavailable', status: 503 });
   });
 
   it('fetches and normalizes Issue/PR details with the main-token contract', async () => {
@@ -580,5 +583,73 @@ describe('GitHub Watch API sources', () => {
       fetchImpl: hanging,
       timeoutMs: 1,
     })).rejects.toMatchObject({ code: 'deadline_exceeded' });
+  });
+});
+
+describe('mutateGitHubNotificationThread', () => {
+  it('marks a thread done on 204', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
+    await expect(mutateGitHubNotificationThread({
+      token: 'token',
+      threadId: '42',
+      action: 'done',
+      fetchImpl,
+    })).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://api.github.com/notifications/threads/42',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
+  it('treats a missing done thread as already in the target state', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 404 }));
+    await expect(mutateGitHubNotificationThread({
+      token: 'token',
+      threadId: '42',
+      action: 'done',
+      fetchImpl,
+    })).resolves.toBeUndefined();
+  });
+
+  it('still fails a done transition on a real error', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 403 }));
+    await expect(mutateGitHubNotificationThread({
+      token: 'token',
+      threadId: '42',
+      action: 'done',
+      fetchImpl,
+    })).rejects.toBeInstanceOf(GitHubWatchError);
+  });
+
+  it('marks a thread read on 205 and treats 304 as already read', async () => {
+    const reset = vi.fn<typeof fetch>(async () => new Response(null, { status: 205 }));
+    await expect(mutateGitHubNotificationThread({
+      token: 'token',
+      threadId: '42',
+      action: 'read',
+      fetchImpl: reset,
+    })).resolves.toBeUndefined();
+    expect(reset).toHaveBeenCalledWith(
+      'https://api.github.com/notifications/threads/42',
+      expect.objectContaining({ method: 'PATCH' }),
+    );
+
+    const unmodified = vi.fn<typeof fetch>(async () => new Response(null, { status: 304 }));
+    await expect(mutateGitHubNotificationThread({
+      token: 'token',
+      threadId: '42',
+      action: 'read',
+      fetchImpl: unmodified,
+    })).resolves.toBeUndefined();
+  });
+
+  it('keeps a missing thread a failure for read', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 404 }));
+    await expect(mutateGitHubNotificationThread({
+      token: 'token',
+      threadId: '42',
+      action: 'read',
+      fetchImpl,
+    })).rejects.toBeInstanceOf(GitHubWatchError);
   });
 });

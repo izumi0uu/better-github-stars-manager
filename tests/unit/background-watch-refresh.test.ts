@@ -348,6 +348,80 @@ describe('Watch background refresh coordinator', () => {
     expect(mutateNotification).not.toHaveBeenCalled();
   });
 
+  it('applies the successful part of an oversized done batch', async () => {
+    const threads = Array.from({ length: 500 }, (_, index) => thread(String(index + 1)));
+    await db.watchNotificationThreads.bulkPut(threads);
+    await db.watchState.put({
+      id: 'singleton',
+      accountLogin: ACCOUNT,
+      scope: {
+        lastAttemptAt: null,
+        lastSuccessfulAt: null,
+        errorCode: null,
+        repositoryCount: 0,
+      },
+      inbox: {
+        lastAttemptAt: null,
+        lastSuccessfulAt: null,
+        errorCode: null,
+        lastModified: null,
+        nextAllowedAt: null,
+        candidateCount: 0,
+        matchedCount: 0,
+        truncated: false,
+      },
+    });
+    const mutateNotification = vi.fn(async ({ threadId }: { threadId: string }) => {
+      if (threadId === '250') throw new GitHubWatchError('rate_limited');
+    });
+    const h = harness({ mutateNotification });
+
+    const result = await h.coordinator.markThreadsDone({
+      accountLogin: ACCOUNT,
+      threadIds: threads.map((item) => item.id),
+    });
+
+    expect(mutateNotification).toHaveBeenCalledTimes(500);
+    expect(result).toEqual({ action: 'done', requestedCount: 500, changedCount: 499 });
+    const remaining = await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT });
+    expect(remaining.threads.map((item) => item.id)).toEqual(['250']);
+  });
+
+  it('rejects a done batch when every thread mutation fails', async () => {
+    await db.watchNotificationThreads.bulkPut([thread('1'), thread('2')]);
+    await db.watchState.put({
+      id: 'singleton',
+      accountLogin: ACCOUNT,
+      scope: {
+        lastAttemptAt: null,
+        lastSuccessfulAt: null,
+        errorCode: null,
+        repositoryCount: 0,
+      },
+      inbox: {
+        lastAttemptAt: null,
+        lastSuccessfulAt: null,
+        errorCode: null,
+        lastModified: null,
+        nextAllowedAt: null,
+        candidateCount: 0,
+        matchedCount: 0,
+        truncated: false,
+      },
+    });
+    const mutateNotification = vi.fn(async () => {
+      throw new GitHubWatchError('rate_limited');
+    });
+    const h = harness({ mutateNotification });
+
+    await expect(h.coordinator.markThreadsDone({
+      accountLogin: ACCOUNT,
+      threadIds: ['1', '2'],
+    })).rejects.toMatchObject({ code: 'rate_limited' });
+    expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads)
+      .toHaveLength(2);
+  });
+
   it('publishes live-star Notifications even when native scope omits the repository', async () => {
     const h = harness({
       fetchScope: vi.fn(async () => ({

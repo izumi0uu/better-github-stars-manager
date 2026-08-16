@@ -598,13 +598,16 @@ export function createWatchRefreshCoordinator(
       return { action, requestedCount: threadIds.length, changedCount: 0 };
     }
 
+    // A repository action can cover a thousand-plus threads. One transient
+    // failure (rate limit, stale thread) must not abort the rest of the batch;
+    // succeeded threads are applied and the remainder converges on retry.
     let cursor = 0;
-    let failure: unknown = null;
+    let firstFailure: unknown = null;
     const succeeded: string[] = [];
     const workers = Array.from(
       { length: Math.min(THREAD_MUTATION_CONCURRENCY, targets.length) },
       async () => {
-        while (failure === null) {
+        for (;;) {
           const index = cursor++;
           const threadId = targets[index];
           if (threadId === undefined) return;
@@ -616,7 +619,7 @@ export function createWatchRefreshCoordinator(
             });
             succeeded.push(threadId);
           } catch (error) {
-            failure = error;
+            if (firstFailure === null) firstFailure = error;
           }
         }
       },
@@ -634,7 +637,7 @@ export function createWatchRefreshCoordinator(
       })
       : 0;
     if (changedCount > 0) dependencies.broadcastChanged();
-    if (failure !== null) throw failure;
+    if (succeeded.length === 0 && firstFailure !== null) throw firstFailure;
     return { action, requestedCount: threadIds.length, changedCount };
   }
 
