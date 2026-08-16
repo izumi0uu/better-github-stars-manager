@@ -112,7 +112,7 @@ jobs:
       GSM_DIST_DIR: dist-firefox
       GSM_ARTIFACTS_DIR: artifacts/firefox
       GSM_VERSION_APPROVAL: ${{ vars.GSM_VERSION_APPROVAL }}
-      PUPPETEER_HEADLESS: 'true'
+      PUPPETEER_HEADLESS: 'false'
 
     steps:
       - name: Checkout
@@ -165,7 +165,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run integrated Agent runtime verification
-        run: pnpm verify:agent-runtime
+        run: xvfb-run -a pnpm verify:agent-runtime
 
       - name: Check Firefox output
         run: pnpm check:firefox-output

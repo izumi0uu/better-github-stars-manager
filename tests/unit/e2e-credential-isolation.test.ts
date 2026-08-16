@@ -145,7 +145,7 @@ describe('E2E credential isolation', () => {
     expect(workflow).not.toMatch(
       /\b(?:GH_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|AI_INPUT_API_KEY|CUBBY_API_KEY)\b/,
     );
-    expect(workflow).not.toMatch(/xvfb/iu);
+    expect(workflow.match(/xvfb-run -a pnpm test:(?:smoke:firefox|verify-firefox)/gu) ?? []).toHaveLength(2);
     expectCheckoutCredentialPersistenceDisabled(stableJob);
     expectCheckoutCredentialPersistenceDisabled(versionsJob);
     expectActionsPinned(workflow, [
@@ -159,8 +159,8 @@ describe('E2E credential isolation', () => {
       expect(job).toMatch(/^[ \t]*version:[ \t]*10\.33\.2[ \t]*$/m);
       expect(job).toMatch(/^[ \t]*node-version:[ \t]*24[ \t]*$/m);
       expect(job).toContain('pnpm install --frozen-lockfile');
-      expect(job.match(/^[ \t]*PUPPETEER_HEADLESS:[ \t]*'true'[ \t]*$/gm) ?? []).toHaveLength(1);
-      expect(job).not.toMatch(/^[ \t]*PUPPETEER_HEADLESS:[ \t]*'(?:false|new)'[ \t]*$/m);
+      expect(job.match(/^[ \t]*PUPPETEER_HEADLESS:[ \t]*'false'[ \t]*$/gm) ?? []).toHaveLength(1);
+      expect(job).not.toMatch(/^[ \t]*PUPPETEER_HEADLESS:[ \t]*'(?:true|new)'[ \t]*$/m);
       expect(job.match(/uses: actions\/upload-artifact@/g) ?? []).toHaveLength(1);
       expect(job).toMatch(/^[ \t]*path:[ \t]*dist-firefox[ \t]*$/m);
     }

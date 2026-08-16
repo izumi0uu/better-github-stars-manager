@@ -65,8 +65,8 @@ jobs:
       - name: Run Firefox stable smoke
         env:
           CI: 'true'
-          PUPPETEER_HEADLESS: 'true'
-        run: pnpm test:smoke:firefox
+          PUPPETEER_HEADLESS: 'false'
+        run: xvfb-run -a pnpm test:smoke:firefox
 
       - name: Upload Firefox stable diagnostic artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -129,10 +129,10 @@ jobs:
       - name: Verify Firefox stable and minimum versions
         env:
           CI: 'true'
-          PUPPETEER_HEADLESS: 'true'
+          PUPPETEER_HEADLESS: 'false'
           FIREFOX_STABLE_EXECUTABLE: ${{ steps.firefox-paths.outputs.stable }}
           FIREFOX_140_EXECUTABLE: ${{ steps.firefox-paths.outputs.minimum }}
-        run: pnpm test:verify-firefox
+        run: xvfb-run -a pnpm test:verify-firefox
 
       - name: Upload Firefox version diagnostic artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

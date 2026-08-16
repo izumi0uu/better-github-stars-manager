@@ -103,7 +103,8 @@ describe('Agent release conformance', () => {
     expect(packageFirefox).toContain('GSM_PACKAGE_TARGET: firefox');
     expect(packageFirefox).toContain('GSM_DIST_DIR: dist-firefox');
     expect(packageFirefox).toContain('GSM_ARTIFACTS_DIR: artifacts/firefox');
-    expect(packageFirefox).toContain("PUPPETEER_HEADLESS: 'true'");
+    expect(packageFirefox).toContain("PUPPETEER_HEADLESS: 'false'");
+    expect(packageFirefox).toContain('xvfb-run -a pnpm verify:agent-runtime');
     expect(packageFirefox).toContain('pnpm exec puppeteer browsers install chrome');
     expect(packageFirefox).toContain('pnpm exec puppeteer browsers install firefox');
     expect(packageFirefox).toContain('pnpm exec puppeteer browsers install firefox@stable_140.0.4');
