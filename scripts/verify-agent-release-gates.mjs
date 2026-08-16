@@ -314,7 +314,7 @@ export function listReleaseArtifactFiles({
   if (resolvedArtifacts !== resolvedRoot && !resolvedArtifacts.startsWith(`${resolvedRoot}${path.sep}`)) {
     throw new Error('Release artifact root must stay inside the repository.');
   }
-  assertRealDirectory(resolvedArtifacts, 'Release artifact root');
+  assertRealDirectory(resolvedRoot, resolvedArtifacts, 'Release artifact root');
   if (!['unpublished', 'final_only', 'published'].includes(publicationState)) {
     throw new Error('Release artifact publication state is invalid.');
   }
@@ -373,7 +373,7 @@ export function listPublicReleaseAssetFiles({
   const resolvedRoot = path.resolve(root);
   const resolvedArtifacts = resolveReleaseArtifactsDirectory(resolvedRoot, artifactsDir, env, target);
   assertDirectoryInsideRoot(resolvedRoot, resolvedArtifacts, 'Public release artifact root');
-  assertRealDirectory(resolvedArtifacts, 'Public release artifact root');
+  assertRealDirectory(resolvedRoot, resolvedArtifacts, 'Public release artifact root');
   const names = publicReleaseAssetNames(packageVersion, target);
   const files = names.map((name) => resolveEvidenceFile(resolvedArtifacts, name));
   assertPublicReleaseChecksums(resolvedArtifacts, names);
@@ -389,7 +389,7 @@ export function verifyPublicReleaseAssetDirectory({
   const resolvedRoot = path.resolve(root);
   const resolvedDirectory = path.resolve(resolvedRoot, directory);
   assertDirectoryInsideRoot(resolvedRoot, resolvedDirectory, 'Combined public release directory');
-  assertRealDirectory(resolvedDirectory, 'Combined public release directory');
+  assertRealDirectory(resolvedRoot, resolvedDirectory, 'Combined public release directory');
   const expected = publicReleaseTargets(browserTarget)
     .flatMap((target) => publicReleaseAssetNames(packageVersion, target))
     .sort(bytewiseCompare);
@@ -437,7 +437,20 @@ function resolveReleaseArtifactsDirectory(root, artifactsDir, env, browserTarget
   return path.resolve(root, configuredDirectory);
 }
 
-function assertRealDirectory(directory, label) {
+function assertRealDirectory(root, directory, label) {
+  const relativeSegments = path.relative(root, directory).split(path.sep).filter(Boolean);
+  let currentDirectory = root;
+  if (relativeSegments.length === 0) {
+    assertRealDirectoryEntry(currentDirectory, label);
+    return;
+  }
+  for (const segment of relativeSegments) {
+    currentDirectory = path.join(currentDirectory, segment);
+    assertRealDirectoryEntry(currentDirectory, label);
+  }
+}
+
+function assertRealDirectoryEntry(directory, label) {
   const stats = lstatSync(directory);
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
     throw new Error(`${label} must be a real directory.`);

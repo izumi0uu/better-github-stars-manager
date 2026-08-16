@@ -699,13 +699,29 @@ test('public release listing honors explicit, environment, and target-default ar
   }
 });
 
-test('public release listing rejects redirected, symlinked, and non-directory roots', () => {
+test('public release listing rejects out-of-root, symlinked, and non-directory roots', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'bgsm-public-release-root-safety-'));
+  const externalRoot = mkdtempSync(path.join(os.tmpdir(), 'bgsm-public-release-ancestor-'));
   const realDir = path.join(root, 'real-artifacts');
   const symlinkDir = path.join(root, 'redirected-artifacts');
+  const ancestorLink = path.join(root, 'linked');
+  const linkedArtifactsDir = path.join(ancestorLink, 'artifacts');
+  const linkedReleaseDir = path.join(ancestorLink, 'release-files');
+  const externalArtifactsDir = path.join(externalRoot, 'artifacts');
+  const externalReleaseDir = path.join(externalRoot, 'release-files');
   const fileRoot = path.join(root, 'artifact-file');
+  const chromeZip = `better-github-stars-manager-${VERSION}.zip`;
+  const firefoxZip = `better-github-stars-manager-firefox-${VERSION}.zip`;
+  const firefoxSourceZip = `better-github-stars-manager-firefox-${VERSION}-source.zip`;
   mkdirSync(realDir);
+  mkdirSync(externalArtifactsDir);
+  mkdirSync(externalReleaseDir);
+  writePublicPair(externalArtifactsDir, chromeZip, 'external-chrome');
+  writePublicPair(externalReleaseDir, chromeZip, 'external-chrome');
+  writePublicPair(externalReleaseDir, firefoxZip, 'external-firefox');
+  writePublicPair(externalReleaseDir, firefoxSourceZip, 'external-firefox-source');
   symlinkSync(realDir, symlinkDir);
+  symlinkSync(externalRoot, ancestorLink);
   writeFileSync(fileRoot, 'not a directory');
 
   try {
@@ -734,8 +750,25 @@ test('public release listing rejects redirected, symlinked, and non-directory ro
       }),
       /must be a real directory/,
     );
+    assert.throws(
+      () => listPublicReleaseAssetFiles({
+        root,
+        artifactsDir: linkedArtifactsDir,
+        packageVersion: VERSION,
+      }),
+      /must be a real directory/,
+    );
+    assert.throws(
+      () => verifyPublicReleaseAssetDirectory({
+        root,
+        directory: linkedReleaseDir,
+        packageVersion: VERSION,
+      }),
+      /must be a real directory/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
+    rmSync(externalRoot, { recursive: true, force: true });
   }
 });
 
