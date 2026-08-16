@@ -161,6 +161,7 @@ async function run() {
   await waitForOptionsReady(page);
   scenario.semanticStage = 'setup_save_github';
   await saveGitHubToken(page);
+  reconcileExpectedNotificationProbeDiagnostic();
   scenario.semanticStage = 'setup_save_provider';
   await saveProvider(page);
   scenario.semanticStage = 'setup_install_port';
@@ -793,11 +794,41 @@ function optionsGithubFixture({ route, method }) {
     'GET github-user': json({ login: 'runtime-user', avatar_url: null, name: 'Runtime User' }, 'github-user', 200, { 'x-oauth-scopes': 'public_repo, gist' }),
     'GET github-starred': json([], 'github-starred'),
     'GET github-watch-scope': json([], 'github-watch-scope'),
+    'GET github-notifications': json(
+      { message: 'Resource not accessible by personal access token' },
+      'github-notifications-forbidden',
+      403,
+    ),
     'POST github-gists': json({ id: 'runtime-probe-gist' }, 'github-gist-create', 201),
     'DELETE github-probe-gist': { status: 204, contentType: 'application/json', body: '', kind: 'github-gist-delete' },
   };
   return routes[`${method} ${route}`] ?? null;
 }
+function reconcileExpectedNotificationProbeDiagnostic() {
+  assert.equal(pageHttpPolicy.expectedRequests.some((request) => (
+    request.method === 'GET'
+    && request.route === 'github-notifications'
+    && request.status === 403
+  )), true);
+  const consoleIndex = pageIssues.findIndex((issue) => issue.kind === 'console-error');
+  assert.notEqual(consoleIndex, -1);
+  pageIssues.splice(consoleIndex, 1);
+}
+async function acceptAgentDataDisclosure(targetPage, expectedProvider, expectedOrigin) {
+  await clickTextTrusted(targetPage, /^Accept data sharing$/i);
+  await waitUntil(
+    () => targetPage.evaluate(async ({ provider, origin }) => {
+      const config = (await chrome.storage.local.get('gsm_config')).gsm_config;
+      return config?.agentDataDisclosureAcceptance?.version === 2
+        && config.agentDataDisclosureAcceptance.provider === provider
+        && config.agentDataDisclosureAcceptance.origin === origin;
+    }, { provider: expectedProvider, origin: expectedOrigin }),
+    SETUP_TIMEOUT_MS,
+    'Agent data disclosure acceptance was not persisted.',
+  );
+}
+
+
 
 function toolCall(id, name, argumentsValue, kind, usage = undefined) {
   scenario.operations.scriptedToolCalls += 1;
@@ -1393,6 +1424,7 @@ async function waitForOptionsReady(targetPage) {
 }
 
 async function saveGitHubToken(targetPage) {
+  await clickTextTrusted(targetPage, /^EN$/i);
   await targetPage.waitForSelector('textarea[placeholder="github_pat_..."]:not([disabled])', { visible: true, timeout: SETUP_TIMEOUT_MS });
   await targetPage.evaluate(() => {
     const element = document.querySelector('textarea[placeholder="github_pat_..."]');
@@ -1435,6 +1467,7 @@ async function saveProvider(targetPage) {
     await clickTextTrusted(targetPage, /allow access/i);
     await waitUntil(() => targetPage.evaluate((details) => chrome.permissions.contains(details), permission), SETUP_TIMEOUT_MS, 'Provider host access was not granted.');
   }
+  await acceptAgentDataDisclosure(targetPage, 'custom-openai-compatible', PROVIDER_ORIGIN);
   await clickText(targetPage, /^Save & test$/i);
   await waitUntil(
     () => targetPage.evaluate(() => [...document.querySelectorAll('[role="status"], [role="alert"], .gsm-status-note')].some((node) => node.textContent?.includes('Saved · Connected'))),

@@ -252,6 +252,7 @@ pnpm test:smoke
 - [Cubby Agent 技术参考](docs/zh/cubby-agent.md)
 - [隐私政策](docs/zh/privacy-policy.md)
 - [Chrome Web Store 更新说明](docs/zh/chrome-web-store-submission.md)
+- [Firefox Add-ons 提交参考](docs/zh/firefox-amo-submission.md)
 
 ## 参与贡献
 

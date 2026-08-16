@@ -176,29 +176,43 @@ let plaintextAgentApiKey: {
 let configOperationTail: Promise<void> = Promise.resolve();
 
 type ConfigLockManager = {
-  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+  request<T>(
+    name: string,
+    options: { mode: 'exclusive' },
+    callback: () => Promise<T>,
+  ): Promise<T>;
 };
 
 function getConfigLockManager(): ConfigLockManager | null {
-  const locks = (globalThis as typeof globalThis & {
-    navigator?: { locks?: unknown };
-  }).navigator?.locks;
-  if (!locks || typeof (locks as { request?: unknown }).request !== 'function') return null;
-  return locks as ConfigLockManager;
+  const protocol = globalThis.location?.protocol;
+  // Content scripts inherit the page realm; its LockManager Promise cannot cross Firefox compartments.
+  if (protocol !== 'chrome-extension:' && protocol !== 'moz-extension:') return null;
+  const locks = globalThis.navigator?.locks;
+  if (!locks || typeof locks.request !== 'function') return null;
+  return locks;
 }
 
-/** Serialize whole-config reads/writes across extension pages and the MV3 worker. */
+/** Serialize whole-config reads and writes across extension contexts. */
 function runConfigExclusive<T>(operation: () => Promise<T>): Promise<T> {
-  const execute = () => {
-    const locks = getConfigLockManager();
-    return locks ? locks.request(CONFIG_OPERATION_LOCK, operation) : operation();
-  };
-  const result = configOperationTail.then(execute, execute);
-  configOperationTail = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
+  const previous = configOperationTail;
+  const turn = Promise.withResolvers<void>();
+  configOperationTail = turn.promise;
+  return (async () => {
+    await previous;
+    await Promise.resolve();
+    try {
+      const locks = getConfigLockManager();
+      return locks
+        ? await locks.request(
+            CONFIG_OPERATION_LOCK,
+            { mode: 'exclusive' },
+            async () => await operation(),
+          )
+        : await operation();
+    } finally {
+      turn.resolve();
+    }
+  })();
 }
 
 function mergeStoredConfig(stored: Partial<Config>): Config {
@@ -388,9 +402,50 @@ function updateCredentialCaches(previous: Config, normalized: Config): void {
   }
 }
 
+function runStorageMutation(
+  mutation: (callback: () => void) => void | Promise<void>,
+): Promise<void> {
+  const deferred = Promise.withResolvers<void>();
+  let settled = false;
+  const resolveOnce = () => {
+    if (settled) return;
+    settled = true;
+    deferred.resolve();
+  };
+  const rejectOnce = (error: unknown) => {
+    if (settled) return;
+    settled = true;
+    deferred.reject(error);
+  };
+  const callback = () => {
+    const message = chrome.runtime?.lastError?.message;
+    if (message) rejectOnce(new Error(message));
+    else resolveOnce();
+  };
+  try {
+    const result = mutation(callback);
+    if (result instanceof Promise) {
+      void (async () => {
+        try {
+          await result;
+          resolveOnce();
+        } catch (error) {
+          rejectOnce(error);
+        }
+      })();
+    }
+  } catch (error) {
+    rejectOnce(error);
+  }
+  return deferred.promise;
+}
+
 async function persistConfigUnlocked(_previous: Config, proposed: Config): Promise<Config> {
   const normalized = withNormalizedConfig(proposed);
-  await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: normalized });
+  await runStorageMutation((callback) => chrome.storage.local.set(
+    { [CONFIG_STORAGE_KEY]: normalized },
+    callback,
+  ));
   cache = normalized;
   return normalized;
 }
@@ -402,11 +457,14 @@ async function persistGitHubCredentialsUnlocked(
   const normalized = withNormalizedConfig(proposed);
   const credentials = normalizeStoredGitHubCredentials(credentialsFromConfig(normalized));
   const next = withGitHubCredentials(normalized, credentials);
-  await chrome.storage.local.set({
+  await runStorageMutation((callback) => chrome.storage.local.set({
     [CONFIG_STORAGE_KEY]: next,
     [GITHUB_CREDENTIALS_STORAGE_KEY]: credentials,
-  });
-  await chrome.storage.local.remove(LEGACY_GITHUB_CREDENTIALS_STORAGE_KEY);
+  }, callback));
+  await runStorageMutation((callback) => chrome.storage.local.remove(
+    LEGACY_GITHUB_CREDENTIALS_STORAGE_KEY,
+    callback,
+  ));
   updateCredentialCaches(previous, next);
   return next;
 }
@@ -1233,6 +1291,9 @@ export const authStore = {
         (patch.clearApiKey || replacementCredential || targetChanged) &&
         currentMutationIdentity !== initialMutationIdentity
       ) return null;
+      const endpoint = validatedEndpoint ?? resolveAgentProviderEndpoint(
+        nextProvider, nextBaseUrl, nextProtocol,
+      );
 
       let apiKeyEncrypted = currentProvider.apiKeyEncrypted;
       let apiKeyCryptoMeta = currentProvider.apiKeyCryptoMeta;
@@ -1259,9 +1320,6 @@ export const authStore = {
           value: replacementCredential.value,
         };
       } else {
-        const endpoint = validatedEndpoint ?? resolveAgentProviderEndpoint(
-          nextProvider, nextBaseUrl, nextProtocol,
-        );
         const credentialTargetChanged = credentialScope?.provider !== endpoint.provider ||
           credentialScope?.origin !== endpoint.canonicalOrigin;
         if (credentialTargetChanged) {
@@ -1276,6 +1334,13 @@ export const authStore = {
 
       return {
         ...current,
+        agentDataDisclosureAcceptance: isDisclosureAcceptedFor(
+          current.agentDataDisclosureAcceptance,
+          endpoint.provider,
+          endpoint.canonicalOrigin,
+        )
+          ? current.agentDataDisclosureAcceptance
+          : null,
         agentProvider: normalizeAgentProviderConfig({
           provider: nextProvider,
           protocol: nextProtocol,

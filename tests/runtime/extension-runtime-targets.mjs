@@ -1,11 +1,45 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
+import {
+  FIREFOX_GECKO_ID,
+  FIREFOX_TEST_UUID,
+} from '../../scripts/build-firefox-extension.mjs';
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_POLL_MS = 100;
 const MAX_DIAGNOSTIC_ITEMS = 24;
+const FIREFOX_BACKGROUND_PAGE_PATH = '/_generated_background_page.html';
+const FIREFOX_DISCOVERY_PAGE_PATH = '/src/popup/index.html';
+
 const MAX_LABEL_LENGTH = 160;
-export function resolvePackagedServiceWorker(dist) {
+
+export function normalizeRuntimeTarget(target = 'chrome') {
+  if (target !== 'chrome' && target !== 'firefox') {
+    throw new TypeError(`Unsupported runtime target: ${String(target)}.`);
+  }
+  return target;
+}
+
+export function extensionOrigin(extensionId, target = 'chrome') {
+  const normalizedTarget = normalizeRuntimeTarget(target);
+  if (normalizedTarget === 'firefox') {
+    if (extensionId !== FIREFOX_GECKO_ID && extensionId !== FIREFOX_TEST_UUID) {
+      throw new TypeError('Firefox extensionId must be the fixed Gecko ID or test UUID.');
+    }
+    return `moz-extension://${FIREFOX_TEST_UUID}`;
+  }
+  if (typeof extensionId !== 'string' || !/^[a-z]{32}$/.test(extensionId)) {
+    throw new TypeError('extensionId must be a 32-character Chrome extension ID.');
+  }
+  return `chrome-extension://${extensionId}`;
+}
+
+export function extensionUrl(extensionId, pagePath, target = 'chrome') {
+  return `${extensionOrigin(extensionId, target)}${normalizePagePath(pagePath)}`;
+}
+
+export function resolvePackagedServiceWorker(dist, { target = 'chrome' } = {}) {
+  const normalizedTarget = normalizeRuntimeTarget(target);
   const requestedRoot = path.resolve(dist);
   if (!existsSync(requestedRoot) || !statSync(requestedRoot).isDirectory()) {
     throw new Error('Packaged extension directory is unavailable.');
@@ -22,9 +56,11 @@ export function resolvePackagedServiceWorker(dist) {
   } catch {
     throw new Error('Packaged extension manifest is invalid.');
   }
-  const workerRelativePath = manifest?.background?.service_worker;
+  const workerRelativePath = normalizedTarget === 'firefox'
+    ? manifest?.background?.scripts?.[0]
+    : manifest?.background?.service_worker;
   if (typeof workerRelativePath !== 'string' || workerRelativePath.length === 0) {
-    throw new Error('Packaged extension manifest has no service worker.');
+    throw new Error(`Packaged ${normalizedTarget} extension manifest has no background loader.`);
   }
   const requestedWorkerPath = path.resolve(distRoot, workerRelativePath);
   const requestedRelativePath = path.relative(distRoot, requestedWorkerPath);
@@ -34,10 +70,10 @@ export function resolvePackagedServiceWorker(dist) {
     || requestedRelativePath === '..'
     || path.isAbsolute(requestedRelativePath)
   ) {
-    throw new Error('Packaged service worker escapes the extension directory.');
+    throw new Error('Packaged background loader escapes the extension directory.');
   }
   if (!existsSync(requestedWorkerPath) || !statSync(requestedWorkerPath).isFile()) {
-    throw new Error('Packaged service worker is unavailable.');
+    throw new Error('Packaged background loader is unavailable.');
   }
   const workerPath = realpathSync(requestedWorkerPath);
   const containedRelativePath = path.relative(distRoot, workerPath);
@@ -46,7 +82,7 @@ export function resolvePackagedServiceWorker(dist) {
     || containedRelativePath === '..'
     || path.isAbsolute(containedRelativePath)
   ) {
-    throw new Error('Packaged service worker resolves outside the extension directory.');
+    throw new Error('Packaged background loader resolves outside the extension directory.');
   }
   return Object.freeze({
     distRoot,
@@ -54,51 +90,151 @@ export function resolvePackagedServiceWorker(dist) {
     manifestPath,
     workerPath,
     workerRelativePath: containedRelativePath.split(path.sep).join('/'),
+    backgroundKind: normalizedTarget === 'firefox' ? 'event_page' : 'service_worker',
   });
 }
 
 export async function discoverExtension(browser, {
+  target = 'chrome',
   dist,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   pollMs = 250,
+  openPage = null,
 } = {}) {
-  if (!browser || typeof browser.extensions !== 'function' || typeof browser.targets !== 'function') {
-    throw new TypeError('browser must expose Puppeteer extension and target discovery.');
+  const normalizedTarget = normalizeRuntimeTarget(target);
+  if (!browser) {
+    throw new TypeError('browser must expose Puppeteer extension discovery.');
+  }
+  if (openPage !== null && typeof openPage !== 'function') {
+    throw new TypeError('openPage must be a function when provided.');
+  }
+  if (normalizedTarget === 'firefox') {
+    if (openPage === null && typeof browser.newPage !== 'function') {
+      throw new TypeError('Firefox browser must create an extension control page.');
+    }
+  } else if (typeof browser.targets !== 'function' || typeof browser.extensions !== 'function') {
+    throw new TypeError('Chrome browser must expose Puppeteer extension discovery.');
   }
   assertPositiveTimeout(timeoutMs, 'timeoutMs');
   assertPositiveTimeout(pollMs, 'pollMs');
 
+  if (normalizedTarget === 'firefox') {
+    const expectedPageUrl = extensionUrl(
+      FIREFOX_GECKO_ID,
+      FIREFOX_DISCOVERY_PAGE_PATH,
+      'firefox',
+    );
+    const controlPage = openPage
+      ? await openPage(expectedPageUrl, { timeoutMs, readyTimeoutMs: timeoutMs })
+      : await browser.newPage();
+    const expectedBackgroundUrl = extensionUrl(
+      FIREFOX_GECKO_ID,
+      FIREFOX_BACKGROUND_PAGE_PATH,
+      'firefox',
+    );
+    let stage = 'waiting for extension page readiness';
+    try {
+      if (openPage) {
+        await waitForExtensionPageReady(controlPage, expectedPageUrl, {
+          readyTimeoutMs: timeoutMs,
+          rootSelector: '#root',
+        });
+      } else {
+        await navigateExtensionPage(controlPage, expectedPageUrl, {
+          target: 'firefox',
+          timeoutMs,
+          readyTimeoutMs: timeoutMs,
+          rootSelector: '#root',
+        });
+      }
+      stage = 'reading extension identity';
+      const identity = await controlPage.evaluate(async () => {
+        const backgroundPage = await chrome.runtime.getBackgroundPage();
+        return {
+          runtimeId: chrome.runtime.id,
+          backgroundUrl: backgroundPage?.location.href ?? null,
+        };
+      });
+      stage = 'validating extension identity';
+      if (
+        identity.runtimeId !== FIREFOX_GECKO_ID
+        || identity.backgroundUrl !== expectedBackgroundUrl
+      ) {
+        throw new Error(
+          `Firefox extension identity mismatch: ${boundedLabel(identity.runtimeId)} / ${boundedLabel(identity.backgroundUrl)}`,
+        );
+      }
+      return Object.freeze({
+        extensionId: FIREFOX_GECKO_ID,
+        extId: FIREFOX_GECKO_ID,
+        extension: null,
+        target: null,
+        worker: controlPage,
+        backgroundPage: null,
+        controlPage,
+        backgroundKind: 'event_page',
+      });
+    } catch (error) {
+      await controlPage.close().catch(() => {});
+      throw new Error(
+        `Packaged Firefox background did not become ready before the discovery timeout. Last state: ${stage}: ${boundedLabel(error instanceof Error ? error.message : error)}`,
+      );
+    }
+  }
+
   const expectedDist = dist ? path.resolve(dist) : null;
   const deadline = Date.now() + timeoutMs;
+  let lastDiagnostic = 'no background runtime data';
   while (Date.now() < deadline) {
     const extensions = await browser.extensions().catch(() => null);
     const candidates = [...(extensions?.values?.() ?? [])];
     const extension = candidates.find((candidate) => (
-      candidate.enabled === true && (!expectedDist || path.resolve(candidate.path) === expectedDist)
+      candidate.enabled === true
+      && (!expectedDist || path.resolve(candidate.path) === expectedDist)
     ));
-    const target = extension && browser.targets().find((candidate) => (
-      candidate.type() === 'service_worker' && candidate.url().startsWith(extensionPrefix(extension.id))
-    ));
-    if (extension && target) {
-      const worker = await target.worker().catch(() => null);
-      const runtimeId = worker ? await worker.evaluate(() => chrome.runtime.id).catch(() => null) : null;
+    const background = extension ? await findChromeBackgroundRuntime(browser, extension) : null;
+    if (extension && background) {
+      const runtimeId = await background.executionContext
+        .evaluate(() => chrome.runtime.id)
+        .catch(() => null);
       if (runtimeId === extension.id) {
-        return { extensionId: extension.id, extId: extension.id, extension, target, worker };
+        return Object.freeze({
+          extensionId: extension.id,
+          extId: extension.id,
+          extension,
+          target: background.target,
+          worker: background.executionContext,
+          backgroundPage: null,
+          controlPage: null,
+          backgroundKind: 'service_worker',
+        });
       }
+      lastDiagnostic = `Chrome service worker returned unexpected extension ID: ${boundedLabel(runtimeId)}`;
+    } else {
+      lastDiagnostic = JSON.stringify(candidates.slice(0, MAX_DIAGNOSTIC_ITEMS).map((candidate) => ({
+        id: boundedLabel(candidate.id),
+        enabled: candidate.enabled === true,
+        pathMatches: Boolean(expectedDist && candidate.path && path.resolve(candidate.path) === expectedDist),
+      })));
     }
     await delay(pollMs);
   }
-  throw new Error('Packaged MV3 service worker did not become ready before the discovery timeout.');
+  throw new Error(
+    `Packaged Chrome background did not become ready before the discovery timeout. Last state: ${lastDiagnostic}`,
+  );
 }
 
 export async function openExtensionPage(browser, extensionId, pagePath = '/src/options/index.html', label = pagePath, {
+  target = 'chrome',
   timeoutMs = 30_000,
   readyTimeoutMs = 10_000,
   rootSelector = '#root',
   failClosedHttp = null,
   beforeNavigation = null,
+  openPage = null,
 } = {}) {
-  if (!browser || typeof browser.newPage !== 'function') {
+  const normalizedTarget = normalizeRuntimeTarget(target);
+  if (!browser || (openPage === null && typeof browser.newPage !== 'function')) {
     throw new TypeError('browser must create Puppeteer pages.');
   }
   const normalizedPath = normalizePagePath(pagePath);
@@ -108,30 +244,72 @@ export async function openExtensionPage(browser, extensionId, pagePath = '/src/o
   if (beforeNavigation !== null && typeof beforeNavigation !== 'function') {
     throw new TypeError('beforeNavigation must be a function when provided.');
   }
+  if (openPage !== null && typeof openPage !== 'function') {
+    throw new TypeError('openPage must be a function when provided.');
+  }
 
-  const page = await browser.newPage();
+  const expectedUrl = extensionUrl(extensionId, normalizedPath, normalizedTarget);
+  const page = openPage
+    ? await openPage(expectedUrl, { timeoutMs, readyTimeoutMs })
+    : await browser.newPage();
   let pageHttpPolicy = null;
-  const expectedUrl = `${extensionPrefix(extensionId).slice(0, -1)}${normalizedPath}`;
   try {
     pageHttpPolicy = await installFailClosedPageHttpPolicy(page, failClosedHttp);
     await beforeNavigation?.(page);
-    await page.goto(expectedUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-    await page.waitForFunction(
-      (expected, selector) => (
-        location.href === expected
-        && document.readyState !== 'loading'
-        && (!selector || document.querySelector(selector) !== null)
-      ),
-      { polling: DEFAULT_POLL_MS, timeout: readyTimeoutMs },
-      expectedUrl,
-      rootSelector,
-    );
+    if (openPage) {
+      await waitForExtensionPageReady(page, expectedUrl, { readyTimeoutMs, rootSelector });
+    } else {
+      await navigateExtensionPage(page, expectedUrl, {
+        target: normalizedTarget,
+        timeoutMs,
+        readyTimeoutMs,
+        rootSelector,
+      });
+    }
     return page;
   } catch {
     await pageHttpPolicy?.close();
     await page.close().catch(() => {});
     throw new Error(`Packaged extension page ${safeLabel} did not become ready before its timeout.`);
   }
+}
+async function navigateExtensionPage(page, expectedUrl, {
+  target,
+  timeoutMs,
+  readyTimeoutMs,
+  rootSelector,
+}) {
+  let navigationError = null;
+  try {
+    await page.goto(expectedUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: target === 'firefox' ? Math.min(timeoutMs, 1_000) : timeoutMs,
+    });
+  } catch (error) {
+    navigationError = error;
+    if (target !== 'firefox') throw error;
+  }
+  try {
+    await waitForExtensionPageReady(page, expectedUrl, { readyTimeoutMs, rootSelector });
+  } catch (error) {
+    throw navigationError ?? error;
+  }
+}
+
+async function waitForExtensionPageReady(page, expectedUrl, {
+  readyTimeoutMs,
+  rootSelector,
+}) {
+  await page.waitForFunction(
+    (expected, selector) => (
+      location.href === expected
+      && document.readyState !== 'loading'
+      && (!selector || document.querySelector(selector) !== null)
+    ),
+    { polling: DEFAULT_POLL_MS, timeout: readyTimeoutMs },
+    expectedUrl,
+    rootSelector,
+  );
 }
 
 export async function openHttpFixturePage(browser, url, label = 'http-fixture-page', {
@@ -171,6 +349,18 @@ export async function openHttpFixturePage(browser, url, label = 'http-fixture-pa
     throw new Error(`Packaged HTTP fixture page ${safeLabel} did not become ready before its timeout.`);
   }
 }
+async function findChromeBackgroundRuntime(browser, extension) {
+  const target = browser.targets().find((candidate) => (
+    candidate.type() === 'service_worker'
+    && candidate.url().startsWith(`${extensionOrigin(extension.id, 'chrome')}/`)
+  ));
+  if (!target) return null;
+  const executionContext = await target.worker().catch(() => null);
+  return executionContext ? { target, executionContext, backgroundPage: null } : null;
+}
+
+
+
 
 /** Collect bounded semantic page failures without retaining page error text. */
 export function hookPageDiagnostics(page, label = 'extension-page', { issues = [] } = {}) {
@@ -185,14 +375,20 @@ export function hookPageDiagnostics(page, label = 'extension-page', { issues = [
     }));
   };
   const onConsole = (message) => {
-    if (message.type?.() === 'error') record('console-error');
+    if (message.type?.() !== 'error') return;
+    const rawUrl = message.location?.()?.url ?? '';
+    const text = message.text?.() ?? '';
+    const safeRoute = isHttpUrl(rawUrl)
+      ? classifySafeHttpRoute(rawUrl)
+      : /notifications/iu.test(text) ? 'github-notifications' : null;
+    record('console-error', safeRoute);
   };
   const onPageError = () => record('page-error');
   const onRequestFailed = (request) => {
     const rawUrl = request.url?.() ?? '';
     const method = normalizeMethod(request.method?.());
     const failure = request.failure?.()?.errorText ?? '';
-    const isExtensionResource = /^chrome-extension:\/\//iu.test(rawUrl);
+    const isExtensionResource = /^(?:chrome|moz)-extension:\/\//iu.test(rawUrl);
     if (
       failure === 'net::ERR_ABORTED'
       && (request.isNavigationRequest?.() === true || isExtensionResource)
@@ -398,12 +594,6 @@ function redactLabel(value) {
 }
 
 
-function extensionPrefix(extensionId) {
-  if (typeof extensionId !== 'string' || !/^[a-z]{32}$/.test(extensionId)) {
-    throw new TypeError('extensionId must be a 32-character Chrome extension ID.');
-  }
-  return `chrome-extension://${extensionId}/`;
-}
 
 function normalizePagePath(pagePath) {
   if (typeof pagePath !== 'string' || !pagePath.startsWith('/')) {

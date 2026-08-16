@@ -3,6 +3,7 @@ import {
   CONFIG_STORAGE_KEY,
   GITHUB_CREDENTIALS_STORAGE_KEY,
 } from "@/auth/auth-store";
+import { hasAgentPersonalCommunicationsPermission } from '@/auth/agent-data-permission';
 import { canonicalJson, sha256Base64Url } from '@/agent-harness/canonical-json';
 import { githubStarSource } from "@/api/github-star-source";
 import {
@@ -40,7 +41,11 @@ import {
 } from "./query";
 import { countTopicRepoFrequency, reconcileAutoTagAssignments, suggestTags } from "@/ui/suggest";
 import type { AutoTagBulkUpdate } from "@/api/tag-store";
-import { translateError } from "@/api/errors";
+import {
+  AGENT_DATA_DISCLOSURE_REQUIRED,
+  AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
+  translateError,
+} from "@/api/errors";
 import {
   addTagNames,
   canonicalTagKey,
@@ -557,6 +562,7 @@ const backfillConfig = createBackfillConfigStore(authStore, {
 const agentProviderGate = createAgentProviderGate({
   auth: authStore,
   hasHostPermission: hasAgentProviderHostPermission,
+  hasDataCollectionPermission: hasAgentPersonalCommunicationsPermission,
   testConnection: testRegisteredAgentProviderConnection,
   createProvider: createRegisteredAgentProvider,
   assertContextCapabilityFeasible: assertBgsmAgentContextCapabilityFeasible,
@@ -2122,9 +2128,16 @@ async function handle(req: Req): Promise<Res> {
             getLocaleMessages(),
             describeSafeAgentProviderConnectionFailure(error),
           ]);
+          const code = error instanceof Error && (
+            error.message === AGENT_DATA_DISCLOSURE_REQUIRED ||
+            error.message === AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED
+          )
+            ? error.message
+            : undefined;
           return {
             ok: false,
             error: translateError(error, messages),
+            ...(code ? { code } : {}),
             details,
           };
         }

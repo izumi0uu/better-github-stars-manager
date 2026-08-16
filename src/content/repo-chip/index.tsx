@@ -31,10 +31,24 @@ const pageRuntimes = new WeakMap<Window, RepoChipRuntime>();
  * Inline SVG (shadow root has no React, so lucide-react isn't available);
  * sized/styled to match the lucide set.
  */
-function iconSvg(name: 'check' | 'pencil'): string {
-  const common = 'width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
-  if (name === 'check') return `<svg ${common}><path d="M20 6 9 17l-5-5"/></svg>`;
-  return `<svg ${common}><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function createIconSvg(name: 'check' | 'pencil'): SVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  for (const [key, value] of Object.entries({
+    width: '12', height: '12', viewBox: '0 0 24 24', fill: 'none',
+    stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round',
+    'stroke-linejoin': 'round',
+  })) svg.setAttribute(key, value);
+  const pathData = name === 'check'
+    ? ['M20 6 9 17l-5-5']
+    : ['M12 20h9', 'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z'];
+  for (const d of pathData) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', d);
+    svg.appendChild(path);
+  }
+  return svg;
 }
 
 function findAnchor(document: Document): { host: HTMLElement; full_name: string } | null {
@@ -103,7 +117,6 @@ function buildChip(
   let draft = manualTagNames(tag).join(', ');
 
   function render() {
-    box.innerHTML = '';
     const wrap = document.createElement('span');
     wrap.className = 'chip';
     if (editing) {
@@ -114,7 +127,7 @@ function buildChip(
       input.placeholder = m.tagEditor.bulkPlaceholder;
       input.oninput = () => (draft = input.value);
       const save = document.createElement('button');
-      save.innerHTML = iconSvg('check');
+      save.replaceChildren(createIconSvg('check'));
       save.setAttribute('aria-label', 'Save');
       save.onclick = async () => {
         const tags = draft.split(',').map((t) => t.trim()).filter(Boolean);
@@ -164,7 +177,7 @@ function buildChip(
       }
       const edit = document.createElement('span');
       edit.className = 'edit';
-      edit.innerHTML = iconSvg('pencil');
+      edit.replaceChildren(createIconSvg('pencil'));
       edit.setAttribute('aria-label', m.repoChip.editTags);
       edit.title = m.repoChip.editTags;
       edit.onclick = () => {
@@ -174,7 +187,7 @@ function buildChip(
       };
       wrap.appendChild(edit);
     }
-    box.appendChild(wrap);
+    box.replaceChildren(wrap);
   }
 
   render();

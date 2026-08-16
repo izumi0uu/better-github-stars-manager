@@ -252,6 +252,7 @@ pnpm test:smoke
 - [Cubby Agent technical reference](docs/en/cubby-agent.md)
 - [Privacy policy](docs/en/privacy-policy.md)
 - [Chrome Web Store update notes](docs/en/chrome-web-store-submission.md)
+- [Firefox Add-ons submission reference](docs/en/firefox-amo-submission.md)
 
 ## Contributing
 

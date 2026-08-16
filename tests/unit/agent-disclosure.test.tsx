@@ -20,10 +20,13 @@ describe('Agent data disclosure', () => {
       <AgentDataDisclosurePanel
         providerLabel="Custom OpenAI-compatible"
         canonicalOrigin="https://relay.example.com:8443"
+        disclosureAccepted={false}
+        disclosureBusy={false}
         customHostAccessRequired
         hostAccessGranted={false}
         hostAccessBusy={false}
         onGrantAccess={() => {}}
+        onAcceptDisclosure={() => {}}
       />,
       mountedRoots,
     );
@@ -34,7 +37,7 @@ describe('Agent data disclosure', () => {
     expect(summary?.textContent).toContain('https://relay.example.com:8443');
     expect(summary?.textContent).toContain('direct connection');
     expect(summary?.textContent).not.toContain('BGSM proxy');
-    expect(container.textContent).not.toContain('Accept disclosure');
+    expect(container.textContent).toContain('Accept data sharing');
 
     (summary as HTMLElement).click();
     expect(details?.open).toBe(true);
@@ -45,16 +48,20 @@ describe('Agent data disclosure', () => {
     expect(container.textContent).not.toContain('as an Authorization header');
   });
 
-  it('shows custom host access as the only required action', async () => {
+  it('keeps disclosure acceptance and custom host access as separate actions', async () => {
     const onGrantAccess = vi.fn();
+    const onAcceptDisclosure = vi.fn();
     const container = mountReact(
       <AgentDataDisclosurePanel
         providerLabel="Custom OpenAI-compatible"
         canonicalOrigin="https://relay.example.com"
+        disclosureAccepted={false}
+        disclosureBusy={false}
         customHostAccessRequired
         hostAccessGranted={false}
         hostAccessBusy={false}
         onGrantAccess={onGrantAccess}
+        onAcceptDisclosure={onAcceptDisclosure}
       />,
       mountedRoots,
     );
@@ -62,9 +69,37 @@ describe('Agent data disclosure', () => {
     const grant = [...container.querySelectorAll('button')]
       .find((button) => button.textContent?.includes('Allow access'));
     expect(grant).toBeInstanceOf(HTMLButtonElement);
-    expect(container.textContent).toContain('Allow Chrome access to test or use this custom service.');
+    expect(container.textContent).toContain('Allow browser access to test or use this custom service.');
     await click(grant as HTMLButtonElement);
     expect(onGrantAccess).toHaveBeenCalledOnce();
+    expect(onAcceptDisclosure).not.toHaveBeenCalled();
+    const accept = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Accept data sharing'));
+    await click(accept as HTMLButtonElement);
+    expect(onAcceptDisclosure).toHaveBeenCalledOnce();
+  });
+
+  it('prevents host access while disclosure permission is pending', () => {
+    const container = mountReact(
+      <AgentDataDisclosurePanel
+        providerLabel="Custom OpenAI-compatible"
+        canonicalOrigin="https://relay.example.com"
+        disclosureAccepted={false}
+        disclosureBusy
+        customHostAccessRequired
+        hostAccessGranted={false}
+        hostAccessBusy={false}
+        onGrantAccess={() => {}}
+        onAcceptDisclosure={() => {}}
+      />,
+      mountedRoots,
+    );
+
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('button')];
+    const accept = buttons.find((button) => button.querySelector('[data-icon="inline-start"]'));
+    const grant = buttons.find((button) => button.textContent?.includes('Allow access'));
+    expect(accept?.disabled).toBe(true);
+    expect(grant?.disabled).toBe(true);
   });
 
   it('does not show host-access actions for a built-in provider', () => {
@@ -72,15 +107,20 @@ describe('Agent data disclosure', () => {
       <AgentDataDisclosurePanel
         providerLabel="OpenAI"
         canonicalOrigin="https://api.openai.com"
+        disclosureAccepted
+        disclosureBusy={false}
         customHostAccessRequired={false}
         hostAccessGranted
         hostAccessBusy={false}
         onGrantAccess={() => {}}
+        onAcceptDisclosure={() => {}}
       />,
       mountedRoots,
     );
 
-    expect(container.textContent).toContain('built-in Chrome access');
-    expect(container.querySelector('button')).toBeNull();
+    expect(container.textContent).toContain('built-in browser access');
+    expect(container.textContent).toContain('Data sharing accepted');
+    expect([...container.querySelectorAll('button')]
+      .some((button) => button.textContent?.includes('Allow access'))).toBe(false);
   });
 });

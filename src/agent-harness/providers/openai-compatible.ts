@@ -1,6 +1,7 @@
 import {
   AGENT_API_KEY_EMPTY,
   AGENT_DATA_DISCLOSURE_REQUIRED,
+  AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
   AGENT_HOST_PERMISSION_DENIED,
   AGENT_MODEL_EMPTY,
   AGENT_PROVIDER_IDENTITY_CHANGED,
@@ -562,6 +563,7 @@ function classifyTransportError(error: unknown, deadline: RequestDeadline): Agen
 function isAuthorityFailure(error: unknown): error is Error {
   if (!(error instanceof Error)) return false;
   return error.message === AGENT_DATA_DISCLOSURE_REQUIRED ||
+    error.message === AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED ||
     error.message === AGENT_HOST_PERMISSION_DENIED ||
     error.message === AGENT_PROVIDER_IDENTITY_CHANGED;
 }

@@ -3,26 +3,55 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { launchExtensionBrowser } from './puppeteer-runtime.mjs';
+import { pathToFileURL } from 'node:url';
+import {
+  FIREFOX_DIST_DIR,
+  FIREFOX_GECKO_ID,
+} from '../../scripts/build-firefox-extension.mjs';
+import { FIREFOX_RUNTIME_SCENARIO_IDS } from '../../scripts/agent-runtime-release-evidence.mjs';
+import {
+  launchExtensionBrowser,
+  openFirefox140ExtensionPage,
+  prepareFirefox140ExtensionPage,
+  normalizeRuntimeTarget,
+  resolveExecutablePath,
+} from './puppeteer-runtime.mjs';
+import {
+  discoverExtension,
+  extensionOrigin,
+  openExtensionPage as openRuntimeExtensionPage,
+} from './extension-runtime-targets.mjs';
+import { buildResponsesSse as buildControlledResponsesSse } from './controlled-responses-provider.mjs';
 
-const DIST = path.resolve(process.cwd(), process.env.GSM_DIST_DIR ?? 'dist');
 const OPTIONS_PATH = '/src/options/index.html';
 const POPUP_PATH = '/src/popup/index.html';
 const INVALID_TOKEN = 'github_pat_invalid_extension_browser_smoke';
 const STARS_URL = 'https://github.com/smoke-user?tab=stars';
 const REPO_URL = 'https://github.com/smoke-user/smoke-repo';
 const DOM_POLLING_MS = 100;
-const STORE_RATING_SMOKE = process.env.GSM_STORE_TARGET === 'chrome';
+const FIREFOX_BACKGROUND_FETCH_BRIDGE = '__gsmFirefoxBackgroundFetch';
+const FIREFOX_BACKGROUND_GUARD_STATE = '__gsmFirefoxBackgroundGuard';
+const FIREFOX_GUARDED_ORIGINS = Object.freeze([
+  'https://api.github.com/',
+  'https://api.openai.com/',
+  'https://api.anthropic.com/',
+  'https://openrouter.ai/',
+]);
 
-if (!existsSync(path.join(DIST, 'manifest.json'))) {
-  console.error(`No dist/manifest.json found at ${DIST}. Run "pnpm build" first.`);
-  process.exit(1);
-}
 
-const profile = mkdtempSync(path.join(os.tmpdir(), 'gsm-extension-smoke-'));
-const failures = [];
-const pageIssues = [];
+export { FIREFOX_RUNTIME_SCENARIO_IDS };
+
+let DIST;
+let STORE_RATING_SMOKE;
+let profile;
+let failures;
+let pageIssues;
 let backgroundGitHubApiGuard = null;
+let backgroundStartupHealthChecks;
+let browser;
+let runtimeTarget;
+let activeExtensionRuntime;
+let extensionPageOpener = null;
 
 function step(message) {
   console.log(`\n${message}`);
@@ -33,356 +62,437 @@ function ok(message) {
 }
 
 function recordPageIssue(label, issue) {
-  pageIssues.push(`[${label}] ${issue}`);
+  if (pageIssues.length >= 24) return;
+  pageIssues.push(`[${label}] ${String(issue).slice(0, 500)}`);
 }
 
-let browser;
-try {
-  browser = await launchExtensionBrowser({ dist: DIST, userDataDir: profile, protocolTimeout: 90_000 });
-  const extId = await detectExtensionId(browser);
-  await installBackgroundGitHubApiGuard(browser, extId);
-  ok(`extension loaded: ${extId}`);
-
-  step('1) Popup no-token path opens Options');
-  const popup = await openExtensionPage(extId, POPUP_PATH, 'popup');
-  await waitForPopupNoTokenState(popup);
-
-  const openedOptions = waitForExtensionPage(`${OPTIONS_PATH}`);
-  await clickButtonByText(popup, /^添加 Classic PAT$/);
-  const optionsFromPopup = await openedOptions;
-  await optionsFromPopup.waitForSelector('textarea', { timeout: 10_000 });
-  await waitForBodyText(optionsFromPopup, 'GitHub Classic PAT');
-  await assertOptionsDefaultChineseAndUseEnglish(optionsFromPopup);
-  await assertScheduledRefreshAlarms(optionsFromPopup, false);
-  ok('Watch and Radar periodic alarms were installed; ineligible recommendation alarm stayed absent');
-  ok('popup and Options defaulted to Chinese, then Options switched to English for the remaining smoke flow');
-
-  step('2) Options rejects invalid token without persisting auth');
-  await interceptGitHubApi(optionsFromPopup, invalidTokenApiResponse);
-  await assertInvalidTokenApiStub(optionsFromPopup);
-  await saveToken(optionsFromPopup, INVALID_TOKEN);
-  await waitForBodyText(
-    optionsFromPopup,
-    'GitHub rejected this Classic PAT.',
-    8_000,
+export async function runExtensionBrowserSmoke(options = {}) {
+  if (browser || profile) throw new Error('Extension browser smoke is already running.');
+  runtimeTarget = normalizeRuntimeTarget(options.target ?? 'chrome');
+  DIST = path.resolve(
+    options.dist
+      ?? process.env.GSM_DIST_DIR
+      ?? (runtimeTarget === 'firefox' ? FIREFOX_DIST_DIR : 'dist'),
   );
-  await assertNoAuthenticatedBanner(optionsFromPopup);
-  ok('invalid token was rejected and no authenticated banner appeared');
+  STORE_RATING_SMOKE = runtimeTarget === 'chrome' && process.env.GSM_STORE_TARGET === 'chrome';
+  failures = [];
+  pageIssues = [];
+  activeExtensionRuntime = null;
+  backgroundStartupHealthChecks = 0;
+  let extensionId = null;
+  let browserVersion = null;
 
-  step('3) Cubby disclosure is collapsed and does not gate Test');
-  await assertAgentDisclosureInfo(optionsFromPopup);
-  ok('real Options kept disclosure collapsed while allowing Test without acceptance');
-
-  step('4) Stars page fixture does not inject panel without owner proof');
-  const noTokenStars = await browser.newPage();
-  await useDeterministicMotion(noTokenStars);
-  hookPageDiagnostics(noTokenStars, 'stars-no-token');
-  await interceptGitHubPages(noTokenStars);
-  await noTokenStars.goto(STARS_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-  await noTokenStars.waitForSelector('main', { timeout: 10_000 });
-  await expectNoManager(noTokenStars);
-  ok('stars fixture loaded and manager stayed absent without token/user identity');
-
-  step('5) Stars page injects panel and toggles FAB when local config has matching owner');
-  await seedConfig(extId, {
-    username: 'smoke-user',
-    tokenEncrypted: 'smoke-ciphertext',
-    tokenCryptoMeta: { iv: 'smoke-iv', salt: 'smoke-salt' },
-    starsPanelDefaultEnabled: true,
-    watchCredentialSource: null,
-    githubCredentialStatus: 'ready',
-  });
-  const ownStars = await browser.newPage();
-  await useDeterministicMotion(ownStars);
-  hookPageDiagnostics(ownStars, 'stars-own');
-  await interceptGitHubPages(ownStars);
-  await ownStars.goto(STARS_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-  await waitForManagerRoot(ownStars);
-  await assertAgentAndAutoTagsRemainSeparate(ownStars);
-  await assertAutoTagAgentFirstClickChoice(ownStars);
-  await assertAgentDrawerA11y(ownStars);
-  await assertScrollLocked(ownStars);
-  await clickShadowButton(ownStars, '[data-coach-target="hide-panel"]');
-  await waitForFab(ownStars);
-  await clickFab(ownStars);
-  await waitForManagerRoot(ownStars);
-  ok('manager injected, first Auto Tags click offered Cubby, drawer opened accessibly, and panel toggle worked');
-
-  if (!STORE_RATING_SMOKE) {
-    step('5b) Manager toolbar keeps one row across responsive widths');
-    await assertToolbarResponsiveLayout(ownStars);
-    ok('toolbar kept one row, compressed search/sort controls, synchronized action labels, and a circular compact account trigger');
+  if (!existsSync(path.join(DIST, 'manifest.json'))) {
+    const missingDist = DIST;
+    const missingTarget = runtimeTarget;
+    cleanupSmokeState();
+    throw new Error(`No ${path.basename(missingDist)}/manifest.json found at ${missingDist}. Build the ${missingTarget} extension first.`);
   }
-
-  step('6) Discover switches from Following to deterministic For You recommendations');
-  const seededWatch = await seedWatchAndRadarFixture(extId);
-  await assertScheduledRefreshAlarms(optionsFromPopup, true);
-  await ownStars.bringToFront();
-  await ownStars.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
-  await waitForManagerRoot(ownStars);
-  await assertManagerSurfaceBadges(ownStars, { watch: '2', radar: '1' });
-  ok('Watch and Radar badges rendered from lightweight stored counts before either surface opened');
-  await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
-  await assertRadarSourceFilters(ownStars);
-  await assertForYouRecommendations(ownStars);
-  ok('Following/For You, source filters, recommendation evidence, and search isolation responded');
-  step('7) Turbo-style navigation does not duplicate extension hosts');
-  await ownStars.evaluate(() => {
-    history.pushState({}, '', '/smoke-user?tab=stars&smoke=turbo');
-    document.dispatchEvent(new Event('turbo:load'));
-    document.dispatchEvent(new Event('turbo:render'));
-  });
-  await ownStars.waitForFunction(
-    () => document.querySelectorAll('#gsm-manager-host').length === 1,
-    { polling: DOM_POLLING_MS, timeout: 10_000 },
-  );
-  const counts = await ownStars.evaluate(() => ({
-    panels: document.querySelectorAll('#gsm-manager-host').length,
-    fabs: document.querySelectorAll('#gsm-fab').length,
-  }));
-  assert.deepEqual(counts, { panels: 1, fabs: 0 });
-  ok('turbo events kept a single manager host and no duplicate FAB');
-
-  step('8) Repo page fixture gets tag-chip host only on repo-shaped path');
-  const repoPage = await browser.newPage();
-  await useDeterministicMotion(repoPage);
-  hookPageDiagnostics(repoPage, 'repo');
-  await interceptGitHubPages(repoPage);
-  await repoPage.goto(REPO_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-  await repoPage.waitForSelector('strong[itemprop="name"]', { timeout: 10_000 });
-  await repoPage.waitForFunction(() => {
-    const name = document.querySelector('strong[itemprop="name"]');
-    let cursor = name?.nextElementSibling;
-    while (cursor) {
-      if (cursor.shadowRoot) return true;
-      cursor = cursor.nextElementSibling;
-    }
-    return false;
-  }, { polling: DOM_POLLING_MS, timeout: 10_000 });
-  ok('repo fixture received a shadow-root tag chip');
-
-  await waitForBackgroundIdle(optionsFromPopup);
-  await optionsFromPopup.close();
-  resetBackgroundGitHubApiCalls(browser, extId);
-  const subjectDetailFixture = installBackgroundWatchSubjectDetailFixture(extId);
-
-  step('9) Watch renders the bounded stored snapshot without GitHub API calls');
-  assert.deepEqual(seededWatch, {
-    databaseVersion: 5,
-    hasMainToken: true,
-    hasNotificationsToken: true,
-    allThreadCount: 3,
-    allGroupCount: 2,
-    customThreadOutsideNativeScopeVisible: true,
-    notificationOutsideLiveStarsVisible: false,
-    radarActivityCount: 1,
-    radarUnseenCount: 1,
-    watchBadgeCount: 2,
-    radarBadgeCount: 1,
-    recommendationCount: 1,
-    recommendationExcludedFromStars: true,
-  });
-  await ownStars.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
-  await waitForManagerRoot(ownStars);
-  await waitForStarsRows(ownStars, 'seeded Stars fixture');
-  await assertRepositoryAvatarLayout(ownStars);
-  ok('repository avatars rendered after deep virtual-list scrolling, and layout edit persisted an explicit opt-out');
-  await waitForBackgroundIdle(popup);
-  await delay(500);
-  await waitForBackgroundIdle(popup);
-  resetBackgroundGitHubApiCalls(browser, extId);
-  await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
-  await openWatchSurface(ownStars, 'Unread issue thread');
-  const unreadSnapshot = await readWatchSnapshot(ownStars);
-  assert.deepEqual(unreadSnapshot, {
-    unreadPressed: true,
-    allPressed: false,
-    unreadTitleVisible: true,
-    readTitleVisible: false,
-    unknownTitleVisible: true,
-    unknownTypeVisible: true,
-    unknownFallbackHref: 'https://github.com/smoke-user/custom-repo',
-    notificationOutsideLiveStarsVisible: false,
-    statusKind: 'stale',
-    listEndTone: 'info',
-    listEndText: 'End of current window · older threads may exist',
-  });
-
-  await clickWatchFilter(ownStars, 'All');
-  const allSnapshot = await readWatchSnapshot(ownStars);
-  assert.equal(allSnapshot.unreadPressed, false);
-  assert.equal(allSnapshot.allPressed, true);
-  assert.equal(allSnapshot.readTitleVisible, true);
-  assert.equal(allSnapshot.notificationOutsideLiveStarsVisible, false);
-  ok('Unread/All changed the stored projection, Custom threads bypassed native scope, and unknown subjects fell back safely');
-  await openWatchSubjectDetail(ownStars, 'Unread issue thread');
-  await assertWatchSubjectDetail(ownStars, subjectDetailFixture);
-  ok('Watch Issue details loaded on demand through the main credential');
-  subjectDetailFixture.setMode('forbidden');
-  await openWatchSubjectDetail(ownStars, 'Read pull request thread', 'error');
-  const detailRecoveryOptionsOpened = waitForExtensionPage(`${OPTIONS_PATH}`);
-  await assertWatchSubjectPermissionRecovery(ownStars);
-  const detailRecoveryOptions = await detailRecoveryOptionsOpened;
-  await assertGitHubOptionsIntent(detailRecoveryOptions);
-  await detailRecoveryOptions.close();
-  ok('Watch permission failure offered focused GitHub authorization recovery while preserving row actions');
-
-  step('10) Watch repository headers open local detail and remain coherent responsively');
-  await openWatchRepositoryDetail(ownStars, 'smoke-user/smoke-repo');
-  await assertWatchRepositoryDetail(ownStars, 'smoke-user/smoke-repo');
-  await assertWatchLayout(ownStars, 'desktop');
-
-  await closeWatchRepositoryDetail(ownStars);
-  await ownStars.setViewport({ width: 360, height: 740, deviceScaleFactor: 1 });
-  await waitForStableLayout(ownStars);
-  await assertWatchLayout(ownStars, 'narrow');
-  ok('Watch detail and responsive layout verified');
-
-  step('11) Returning from Watch or Following restores the Stars repository list');
-  await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
-  await assertStarsRowsAfterSurfaceReturn(ownStars, 'watch');
-  await assertStarsRowsAfterSurfaceReturn(ownStars, 'radar');
-  ok('Stars rows rendered after returning from both Watch and Following');
-
-  if (STORE_RATING_SMOKE) {
-    step('11b) Store rating prompt waits through onboarding, recovery, and active work');
-    await seedConfig(extId, {
-      onboardingStage: 'coach',
-      seenOnboarding: false,
-      storeRatingPrompt: {
-        version: 1,
-        status: 'tracking',
-        activeLocalDays: ['2026-08-13', '2026-08-14', '2026-08-15'],
-        meaningfulActionCount: 2,
-        exposureCount: 0,
-        snoozeUntil: null,
-      },
+  let executablePath;
+  try {
+    executablePath = await resolveExecutablePath({
+      target: runtimeTarget,
+      executablePath: options.executablePath,
+      puppeteerDriver: options.puppeteerDriver,
     });
-    await refreshManagerStatusFromStorage(extId);
-    await waitForManagerRoot(ownStars);
-    await assertStoreRatingSuppressedDuringOnboarding(ownStars);
-    await finishStoreRatingOnboarding(ownStars);
-    await waitForStarsRows(ownStars, 'store-rating fixture');
-
-    const storeRatingSync = installBackgroundStoreRatingSyncFixture(extId);
-    try {
-      await assertStoreRatingSuppressedByVisibleError(ownStars, storeRatingSync);
-      await assertStoreRatingPrompt(ownStars, extId, storeRatingSync);
-    } finally {
-      storeRatingSync.restore();
-    }
-    await assertStoreRatingOptions(extId);
-    ok('prompt stayed suppressed through onboarding, recovery, and active work; keyboard dismissal restored the favorite control and Options could disable/re-enable reminders');
+    profile = mkdtempSync(path.join(os.tmpdir(), `gsm-${runtimeTarget}-extension-smoke-`));
+  } catch (error) {
+    cleanupSmokeState();
+    throw error;
   }
 
-  step('12) Watch recovery opens focused GitHub authorization without clearing the Classic PAT');
-  await markManagerMount(ownStars);
-  const disconnected = await clearWatchNotificationsCredential(extId);
-  assert.deepEqual(disconnected, {
-    mainCredentialPreserved: true,
-    watchNotificationsDisabled: true,
-    watchChangeDelivered: true,
-  });
-  await openWatchSurface(ownStars, 'Open options');
-  await assertWatchSetupState(ownStars);
-  const openedWatchOptions = waitForExtensionPage(`${OPTIONS_PATH}`);
-  await clickWatchRecoveryOptions(ownStars);
-  const watchOptions = await openedWatchOptions;
-  await assertWatchOptionsIntent(watchOptions);
-  assert.deepEqual(await readWatchCredentialState(watchOptions), {
-    watchNotificationsEnabled: false,
-    hasNotificationsToken: false,
-  });
-  await assertNoBackgroundGitHubApiCalls(browser, extId);
-  ok('Watch recovery focused the single Classic PAT authorization flow and kept the credential intact');
-  if (pageIssues.length) {
-    failures.push(`unexpected browser diagnostics:\n${pageIssues.join('\n')}`);
-  }
-} catch (error) {
-  const errorText = error instanceof Error ? error.stack ?? error.message : String(error);
-  const browserState = browser
-    ? await captureDiagnostic(
-        () => describeBrowserState(browser),
-        'browser diagnostic capture',
-        5_000,
-      )
-    : 'browser was not launched';
-  const issueText = pageIssues.length
-    ? `\nPage issues:\n${pageIssues.join('\n')}`
-    : '';
-  failures.push(`${errorText}\n\nBrowser state at failure:\n${browserState}${issueText}`);
-} finally {
-  await browser?.close().catch(() => {});
-  rmSync(profile, { recursive: true, force: true });
-}
-
-if (failures.length) {
-  console.error(`\nExtension browser smoke failed:\n${failures.join('\n')}`);
-  process.exit(1);
-}
-
-console.log('\nExtension browser smoke passed.');
-
-async function detectExtensionId(browser) {
-  const deadline = Date.now() + 20_000;
-  let lastState = 'extension discovery returned no data';
-  while (Date.now() < deadline) {
-    const extensions = await browser.extensions().catch(() => null);
-    const installed = [...(extensions?.values() ?? [])].find((extension) =>
-      extension.enabled && path.resolve(extension.path) === DIST,
-    );
-    const workerTarget = installed
-      ? browser.targets().find((candidate) =>
-          candidate.type() === 'service_worker' &&
-          candidate.url().startsWith(`chrome-extension://${installed.id}/`),
-        )
+  try {
+    browser = await launchExtensionBrowser({
+      target: runtimeTarget,
+      dist: DIST,
+      executablePath,
+      userDataDir: profile,
+      protocolTimeout: 90_000,
+      puppeteerDriver: options.puppeteerDriver,
+    });
+    extensionPageOpener = options.puppeteerDriver === 'firefox_140'
+      ? (url, { timeoutMs }) => openFirefox140ExtensionPage(browser, {
+          executablePath,
+          userDataDir: profile,
+          url,
+          timeoutMs,
+        })
       : null;
-
-    if (installed && workerTarget) {
-      try {
-        const worker = await workerTarget.worker();
-        const runtimeId = await worker?.evaluate(() => chrome.runtime.id);
-        if (runtimeId === installed.id) return installed.id;
-        lastState = `service worker returned unexpected runtime ID: ${String(runtimeId)}`;
-      } catch (error) {
-        lastState = `service worker was present but not executable: ${formatError(error)}`;
-      }
-    } else {
-      lastState = JSON.stringify({
-        extensions: [...(extensions?.values() ?? [])].map((extension) => ({
-          id: extension.id,
-          name: extension.name,
-          path: extension.path,
-          enabled: extension.enabled,
-        })),
-        extensionTargets: browser.targets()
-          .filter((candidate) => candidate.url().startsWith('chrome-extension://'))
-          .map((candidate) => ({ type: candidate.type(), url: candidate.url() })),
-      });
+    const reportedBrowserVersion = await browser.version();
+    browserVersion = runtimeTarget === 'firefox'
+      ? reportedBrowserVersion.replace(/^firefox\//iu, 'Firefox/')
+      : reportedBrowserVersion;
+    extensionId = await detectExtensionId(browser);
+    // Firefox BiDi does not expose the event page before getBackgroundPage resolves,
+    // so startup is a semantic health check and error counts cover only attached intervals.
+    if (runtimeTarget === 'firefox') {
+      const startupStatus = await activeExtensionRuntime.controlPage.evaluate(
+        () => chrome.runtime.sendMessage({ type: 'getStatus' }),
+      );
+      assert.equal(startupStatus?.ok, true, 'Firefox background did not pass its initial semantic health check.');
+      backgroundStartupHealthChecks += 1;
     }
-    await delay(250);
+    await installBackgroundGitHubApiGuard(browser, extensionId);
+    ok(`extension loaded: ${extensionId}`);
+    ok(`browser reported: ${browserVersion}`);
+
+    step('1) Popup no-token path opens Options');
+    const popup = await openExtensionPage(extensionId, POPUP_PATH, 'popup');
+    await waitForPopupNoTokenState(popup);
+
+    const openedOptions = waitForExtensionPage(`${OPTIONS_PATH}`);
+    await clickButtonByText(popup, /^添加 Classic PAT$/);
+    const optionsFromPopup = await openedOptions;
+    await optionsFromPopup.waitForSelector('textarea', { timeout: 10_000 });
+    await waitForBodyText(optionsFromPopup, 'GitHub Classic PAT');
+    await assertOptionsDefaultChineseAndUseEnglish(optionsFromPopup);
+    await assertScheduledRefreshAlarms(optionsFromPopup, false);
+    ok('Watch and Radar periodic alarms were installed; ineligible recommendation alarm stayed absent');
+    ok('popup and Options defaulted to Chinese, then Options switched to English for the remaining smoke flow');
+
+    step('2) Options rejects invalid token without persisting auth');
+    await interceptGitHubApi(optionsFromPopup, invalidTokenApiResponse);
+    await assertInvalidTokenApiStub(optionsFromPopup);
+    await saveToken(optionsFromPopup, INVALID_TOKEN);
+    await waitForBodyText(
+      optionsFromPopup,
+      'GitHub rejected this Classic PAT.',
+      8_000,
+    );
+    await assertNoAuthenticatedBanner(optionsFromPopup);
+    ok('invalid token was rejected and no authenticated banner appeared');
+
+    step('3) Cubby disclosure is explicit and gates Provider traffic');
+    await assertAgentDisclosureInfo(optionsFromPopup);
+    ok('Options required explicit data-sharing acceptance before Cubby testing');
+
+    step('4) Stars page fixture does not inject panel without owner proof');
+    const noTokenStars = await browser.newPage();
+    await useDeterministicMotion(noTokenStars);
+    hookPageDiagnostics(noTokenStars, 'stars-no-token');
+    await interceptGitHubPages(noTokenStars);
+    await noTokenStars.goto(STARS_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await noTokenStars.waitForSelector('main', { timeout: 10_000 });
+    await expectNoManager(noTokenStars);
+    ok('stars fixture loaded and manager stayed absent without token/user identity');
+
+    step('5) Stars page injects panel and toggles FAB when local config has matching owner');
+    await seedConfig(extensionId, {
+      username: 'smoke-user',
+      tokenEncrypted: 'smoke-ciphertext',
+      tokenCryptoMeta: { iv: 'smoke-iv', salt: 'smoke-salt' },
+      starsPanelDefaultEnabled: true,
+      watchCredentialSource: null,
+      githubCredentialStatus: 'ready',
+    });
+    const ownStars = await browser.newPage();
+    await useDeterministicMotion(ownStars);
+    hookPageDiagnostics(ownStars, 'stars-own');
+    await interceptGitHubPages(ownStars);
+    await ownStars.goto(STARS_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await waitForManagerRoot(ownStars);
+    await assertAgentAndAutoTagsRemainSeparate(ownStars);
+    await assertAutoTagAgentFirstClickChoice(ownStars);
+    await assertAgentDrawerA11y(ownStars);
+    await assertScrollLocked(ownStars);
+    await clickShadowButton(ownStars, '[data-coach-target="hide-panel"]');
+    await waitForFab(ownStars);
+    await clickFab(ownStars);
+    await waitForManagerRoot(ownStars);
+    ok('manager injected, first Auto Tags click offered Cubby, drawer opened accessibly, and panel toggle worked');
+
+    if (!STORE_RATING_SMOKE) {
+      step('5b) Manager toolbar keeps one row across responsive widths');
+      await assertToolbarResponsiveLayout(ownStars);
+      ok('toolbar kept one row, compressed search/sort controls, synchronized action labels, and a circular compact account trigger');
+    }
+
+    step('6) Discover switches from Following to deterministic For You recommendations');
+    const seededWatch = await seedWatchAndRadarFixture(extensionId);
+    await assertScheduledRefreshAlarms(optionsFromPopup, true);
+    await ownStars.bringToFront();
+    await ownStars.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await waitForManagerRoot(ownStars);
+    await assertManagerSurfaceBadges(ownStars, { watch: '2', radar: '1' });
+    ok('Watch and Radar badges rendered from lightweight stored counts before either surface opened');
+    await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+    await assertRadarSourceFilters(ownStars);
+    await assertForYouRecommendations(ownStars);
+    ok('Following/For You, source filters, recommendation evidence, and search isolation responded');
+    step('7) Turbo-style navigation does not duplicate extension hosts');
+    await ownStars.evaluate(() => {
+      history.pushState({}, '', '/smoke-user?tab=stars&smoke=turbo');
+      document.dispatchEvent(new Event('turbo:load'));
+      document.dispatchEvent(new Event('turbo:render'));
+    });
+    await ownStars.waitForFunction(
+      () => document.querySelectorAll('#gsm-manager-host').length === 1,
+      { polling: DOM_POLLING_MS, timeout: 10_000 },
+    );
+    const counts = await ownStars.evaluate(() => ({
+      panels: document.querySelectorAll('#gsm-manager-host').length,
+      fabs: document.querySelectorAll('#gsm-fab').length,
+    }));
+    assert.deepEqual(counts, { panels: 1, fabs: 0 });
+    ok('turbo events kept a single manager host and no duplicate FAB');
+
+    step('8) Repo page fixture gets tag-chip host only on repo-shaped path');
+    const repoPage = await browser.newPage();
+    await useDeterministicMotion(repoPage);
+    hookPageDiagnostics(repoPage, 'repo');
+    await interceptGitHubPages(repoPage);
+    await repoPage.goto(REPO_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await repoPage.waitForSelector('strong[itemprop="name"]', { timeout: 10_000 });
+    await repoPage.waitForFunction(() => {
+      const name = document.querySelector('strong[itemprop="name"]');
+      let cursor = name?.nextElementSibling;
+      while (cursor) {
+        if (cursor.shadowRoot) return true;
+        cursor = cursor.nextElementSibling;
+      }
+      return false;
+    }, { polling: DOM_POLLING_MS, timeout: 10_000 });
+    ok('repo fixture received a shadow-root tag chip');
+
+    await waitForBackgroundIdle(optionsFromPopup);
+    await optionsFromPopup.close();
+    resetBackgroundGitHubApiCalls(browser, extensionId);
+    const subjectDetailFixture = installBackgroundWatchSubjectDetailFixture(extensionId);
+
+    step('9) Watch renders the bounded stored snapshot without GitHub API calls');
+    assert.deepEqual(seededWatch, {
+      databaseVersion: 5,
+      hasMainToken: true,
+      hasNotificationsToken: true,
+      allThreadCount: 3,
+      allGroupCount: 2,
+      customThreadOutsideNativeScopeVisible: true,
+      notificationOutsideLiveStarsVisible: false,
+      radarActivityCount: 1,
+      radarUnseenCount: 1,
+      watchBadgeCount: 2,
+      radarBadgeCount: 1,
+      recommendationCount: 1,
+      recommendationExcludedFromStars: true,
+    });
+    await ownStars.bringToFront();
+    await ownStars.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await waitForManagerRoot(ownStars);
+    await waitForStarsRows(ownStars, 'seeded Stars fixture');
+    await assertRepositoryAvatarLayout(ownStars);
+    ok('repository avatars rendered after deep virtual-list scrolling, and layout edit persisted an explicit opt-out');
+    await waitForBackgroundIdle(popup);
+    await delay(500);
+    await waitForBackgroundIdle(popup);
+    resetBackgroundGitHubApiCalls(browser, extensionId);
+    await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+    await openWatchSurface(ownStars, 'Unread issue thread');
+    const unreadSnapshot = await readWatchSnapshot(ownStars);
+    assert.deepEqual(unreadSnapshot, {
+      unreadPressed: true,
+      allPressed: false,
+      unreadTitleVisible: true,
+      readTitleVisible: false,
+      unknownTitleVisible: true,
+      unknownTypeVisible: true,
+      unknownFallbackHref: 'https://github.com/smoke-user/custom-repo',
+      notificationOutsideLiveStarsVisible: false,
+      statusKind: 'stale',
+      listEndTone: 'info',
+      listEndText: 'End of current window · older threads may exist',
+    });
+
+    await clickWatchFilter(ownStars, 'All');
+    const allSnapshot = await readWatchSnapshot(ownStars);
+    assert.equal(allSnapshot.unreadPressed, false);
+    assert.equal(allSnapshot.allPressed, true);
+    assert.equal(allSnapshot.readTitleVisible, true);
+    assert.equal(allSnapshot.notificationOutsideLiveStarsVisible, false);
+    ok('Unread/All changed the stored projection, Custom threads bypassed native scope, and unknown subjects fell back safely');
+    await openWatchSubjectDetail(ownStars, 'Unread issue thread');
+    await assertWatchSubjectDetail(ownStars, subjectDetailFixture);
+    ok('Watch Issue details loaded on demand through the main credential');
+    subjectDetailFixture.setMode('forbidden');
+    await openWatchSubjectDetail(ownStars, 'Read pull request thread', 'error');
+    const detailRecoveryOptionsOpened = waitForExtensionPage(`${OPTIONS_PATH}`);
+    await assertWatchSubjectPermissionRecovery(ownStars);
+    const detailRecoveryOptions = await detailRecoveryOptionsOpened;
+    await assertGitHubOptionsIntent(detailRecoveryOptions);
+    await detailRecoveryOptions.close();
+    ok('Watch permission failure offered focused GitHub authorization recovery while preserving row actions');
+
+    step('10) Watch repository headers open local detail and remain coherent responsively');
+    await openWatchRepositoryDetail(ownStars, 'smoke-user/smoke-repo');
+    await assertWatchRepositoryDetail(ownStars, 'smoke-user/smoke-repo');
+    await assertWatchLayout(ownStars, 'desktop');
+
+    await closeWatchRepositoryDetail(ownStars);
+    await ownStars.setViewport({ width: 360, height: 740, deviceScaleFactor: 1 });
+    await waitForStableLayout(ownStars);
+    await assertWatchLayout(ownStars, 'narrow');
+    ok('Watch detail and responsive layout verified');
+
+    step('11) Returning from Watch or Following restores the Stars repository list');
+    await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+    await assertStarsRowsAfterSurfaceReturn(ownStars, 'watch');
+    await assertStarsRowsAfterSurfaceReturn(ownStars, 'radar');
+    ok('Stars rows rendered after returning from both Watch and Following');
+
+    if (STORE_RATING_SMOKE) {
+      step('11b) Store rating prompt waits through onboarding, recovery, and active work');
+      await seedConfig(extensionId, {
+        onboardingStage: 'coach',
+        seenOnboarding: false,
+        storeRatingPrompt: {
+          version: 1,
+          status: 'tracking',
+          activeLocalDays: ['2026-08-13', '2026-08-14', '2026-08-15'],
+          meaningfulActionCount: 2,
+          exposureCount: 0,
+          snoozeUntil: null,
+        },
+      });
+      await refreshManagerStatusFromStorage(extensionId);
+      await waitForManagerRoot(ownStars);
+      await assertStoreRatingSuppressedDuringOnboarding(ownStars);
+      await finishStoreRatingOnboarding(ownStars);
+      await waitForStarsRows(ownStars, 'store-rating fixture');
+
+      const storeRatingSync = installBackgroundStoreRatingSyncFixture(extensionId);
+      try {
+        await assertStoreRatingSuppressedByVisibleError(ownStars, storeRatingSync);
+        await assertStoreRatingPrompt(ownStars, extensionId, storeRatingSync);
+      } finally {
+        storeRatingSync.restore();
+      }
+      await assertStoreRatingOptions(extensionId);
+      ok('prompt stayed suppressed through onboarding, recovery, and active work; keyboard dismissal restored the favorite control and Options could disable/re-enable reminders');
+    }
+
+    step('12) Watch recovery opens focused GitHub authorization without clearing the Classic PAT');
+    await markManagerMount(ownStars);
+    const disconnected = await clearWatchNotificationsCredential(extensionId);
+    assert.deepEqual(disconnected, {
+      mainCredentialPreserved: true,
+      watchNotificationsDisabled: true,
+      watchChangeDelivered: true,
+    });
+    await openWatchSurface(ownStars, 'Open options');
+    await assertWatchSetupState(ownStars);
+    const openedWatchOptions = waitForExtensionPage(`${OPTIONS_PATH}`);
+    await clickWatchRecoveryOptions(ownStars);
+    const watchOptions = await openedWatchOptions;
+    await assertWatchOptionsIntent(watchOptions);
+    assert.deepEqual(await readWatchCredentialState(watchOptions), {
+      watchNotificationsEnabled: false,
+      hasNotificationsToken: false,
+    });
+    await assertNoBackgroundGitHubApiCalls(browser, extensionId);
+    ok('Watch recovery focused the single Classic PAT authorization flow and kept the credential intact');
+
+    if (runtimeTarget === 'firefox') {
+      await assertFirefoxRuntimeParity(watchOptions, extensionId, ownStars);
+      ok('Firefox messaging, ports, Cubby refusal and live turn, full-library Organize, and background event-page recovery remained operational');
+    }
+    if (pageIssues.length) {
+      failures.push(`unexpected browser diagnostics:\n${pageIssues.join('\n')}`);
+    }
+  } catch (error) {
+    const errorText = error instanceof Error ? error.stack ?? error.message : String(error);
+    const browserState = browser
+      ? await captureDiagnostic(
+          () => describeBrowserState(browser),
+          'browser diagnostic capture',
+          5_000,
+        )
+      : 'browser was not launched';
+    const issueText = pageIssues.length
+      ? `\nPage issues:\n${pageIssues.join('\n')}`
+      : '';
+    failures.push(`${errorText}\n\nBrowser state at failure:\n${browserState}${issueText}`);
+  } finally {
+    await closeBackgroundGitHubApiGuard();
+    await browser?.close().catch(() => {});
+    rmSync(profile, { recursive: true, force: true });
   }
-  throw new Error(
-    `current dist extension did not become ready after waiting for MV3 service worker load. Last state: ${lastState}`,
-  );
+
+  const result = Object.freeze({
+    browserTarget: runtimeTarget,
+    realBrowser: true,
+    browserVersion,
+    executablePath,
+    extensionId,
+    background: Object.freeze({
+      kind: runtimeTarget === 'firefox' ? 'event_page' : 'service_worker',
+      module: true,
+    }),
+    scenarioIds: runtimeTarget === 'firefox' ? FIREFOX_RUNTIME_SCENARIO_IDS : Object.freeze([]),
+    diagnostics: Object.freeze({
+      observedPageErrors: pageIssues.filter((issue) => !issue.includes('[background')).length,
+      observedBackgroundErrors: pageIssues.filter((issue) => issue.includes('[background')).length,
+      observedUncaughtErrors: pageIssues.length,
+      backgroundObservation: runtimeTarget === 'firefox'
+        ? 'post_startup_guarded_intervals'
+        : 'post_guard_install',
+      startupHealthChecks: backgroundStartupHealthChecks,
+    }),
+  });
+  const failureMessage = failures.length
+    ? `Extension browser smoke failed:\n${failures.join('\n')}`
+    : null;
+  const passedTarget = runtimeTarget;
+  cleanupSmokeState();
+  if (failureMessage) throw new Error(failureMessage);
+  console.log(`\n${passedTarget === 'firefox' ? 'Firefox e' : 'E'}xtension browser smoke passed.`);
+  return result;
+}
+
+function cleanupSmokeState() {
+  DIST = undefined;
+  STORE_RATING_SMOKE = undefined;
+  profile = undefined;
+  failures = undefined;
+  pageIssues = undefined;
+  backgroundStartupHealthChecks = undefined;
+  browser = undefined;
+  runtimeTarget = undefined;
+  activeExtensionRuntime = undefined;
+  backgroundGitHubApiGuard = null;
+  extensionPageOpener = null;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runExtensionBrowserSmoke({
+    target: process.env.GSM_RUNTIME_TARGET ?? 'chrome',
+  }).then((result) => {
+    console.log(JSON.stringify(result));
+  }).catch((error) => {
+    console.error(formatError(error));
+    process.exitCode = 1;
+  });
+}
+
+async function detectExtensionId(browserInstance) {
+  activeExtensionRuntime = await discoverExtension(browserInstance, {
+    target: runtimeTarget,
+    dist: DIST,
+    timeoutMs: 20_000,
+    openPage: extensionPageOpener,
+  });
+  return activeExtensionRuntime.extensionId;
 }
 
 async function openExtensionPage(extId, pagePath, label) {
-  const page = await browser.newPage();
-  await useDeterministicMotion(page);
-  hookPageDiagnostics(page, label);
-  const expectedUrl = `chrome-extension://${extId}${pagePath}`;
-  await page.goto(expectedUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  try {
-    await page.waitForFunction(
-      (url) => location.href === url && document.readyState !== 'loading' && !!document.getElementById('root'),
-      { polling: DOM_POLLING_MS, timeout: 10_000 },
-      expectedUrl,
-    );
-  } catch (error) {
-    throw await pageWaitError(page, `extension document did not become ready at ${expectedUrl}`, error);
-  }
-  return page;
+  return openRuntimeExtensionPage(browser, extId, pagePath, label, {
+    target: runtimeTarget,
+    timeoutMs: 30_000,
+    readyTimeoutMs: 10_000,
+    beforeNavigation: async (page) => {
+      await useDeterministicMotion(page);
+      hookPageDiagnostics(page, label);
+    },
+    openPage: extensionPageOpener,
+  });
 }
 async function assertScheduledRefreshAlarms(page, expectRecommendationAlarm) {
   const expectedPeriodic = [
@@ -400,7 +510,7 @@ async function assertScheduledRefreshAlarms(page, expectRecommendationAlarm) {
         )));
         const recommendationReady = alarms.some((alarm) => (
           alarm.name === recommendation
-          && alarm.periodInMinutes === undefined
+          && (alarm.periodInMinutes === undefined || alarm.periodInMinutes === null)
           && new Date(alarm.scheduledTime).getHours() === 8
         ));
         return periodicReady && recommendationReady === expectedRecommendation;
@@ -413,7 +523,12 @@ async function assertScheduledRefreshAlarms(page, expectRecommendationAlarm) {
       },
     );
   } catch (error) {
-    throw await pageWaitError(page, 'scheduled refresh alarms were not installed', error);
+    const alarms = await page.evaluate(async () => chrome.alarms.getAll());
+    throw await pageWaitError(
+      page,
+      `scheduled refresh alarms were not installed: ${JSON.stringify(alarms)}`,
+      error,
+    );
   }
   const actual = await page.evaluate(async (recommendation) => (await chrome.alarms.getAll())
     .filter((alarm) => alarm.name.startsWith('bgsm-') && (alarm.name.includes('auto-refresh') || alarm.name === recommendation))
@@ -435,12 +550,31 @@ async function assertScheduledRefreshAlarms(page, expectRecommendationAlarm) {
 }
 
 async function waitForExtensionPage(pagePath) {
-  const target = await browser.waitForTarget(
-    (candidate) => candidate.url().startsWith('chrome-extension://') && candidate.url().endsWith(pagePath),
-    { timeout: 10_000 },
-  );
-  const page = await target.page();
-  if (!page) throw new Error(`extension page opened without page handle: ${pagePath}`);
+  const prefix = `${extensionOrigin(activeExtensionRuntime.extensionId, runtimeTarget)}/`;
+  let page;
+  if (runtimeTarget === 'firefox') {
+    const deadline = Date.now() + 10_000;
+    while (!page && Date.now() < deadline) {
+      const pages = await browser.pages();
+      for (const candidate of pages) {
+        const actualUrl = await candidate.evaluate(() => location.href).catch(() => null);
+        if (actualUrl?.startsWith(prefix) && actualUrl.endsWith(pagePath)) {
+          page = candidate;
+          break;
+        }
+      }
+      if (!page) await delay(50);
+    }
+    if (!page) throw new Error(`extension page did not open before timeout: ${pagePath}`);
+  } else {
+    const target = await browser.waitForTarget(
+      (candidate) => candidate.url().startsWith(prefix) && candidate.url().endsWith(pagePath),
+      { timeout: 10_000 },
+    );
+    page = await target.page();
+    if (!page) throw new Error(`extension page opened without page handle: ${pagePath}`);
+  }
+  if (extensionPageOpener) prepareFirefox140ExtensionPage(page);
   await useDeterministicMotion(page);
   hookPageDiagnostics(page, pagePath);
   return page;
@@ -453,7 +587,9 @@ async function useDeterministicMotion(page) {
       { name: 'prefers-reduced-motion', value: 'reduce' },
     ]);
   } catch (error) {
-    if (page.isClosed() || /Target closed|Session closed/i.test(formatError(error))) return;
+    const message = formatError(error);
+    if (page.isClosed() || /Target closed|Session closed/i.test(message)) return;
+    if (runtimeTarget === 'firefox' && /unsupported|not supported/i.test(message)) return;
     throw error;
   }
 }
@@ -985,33 +1121,24 @@ function installBackgroundWatchSubjectDetailFixture(extId) {
   assert.ok(guard, `GitHub API guard was not installed for ${extId}`);
   let mode = 'success';
   const requestedUrls = [];
-  guard.handle = async (client, event) => {
-    const url = new URL(event.request.url);
+  guard.handle = async (request) => {
+    const url = new URL(request.url);
     const subjectRoutes = new Set([
       'https://api.github.com/repos/smoke-user/smoke-repo/issues/17',
       'https://api.github.com/repos/smoke-user/smoke-repo/issues/9',
     ]);
-    if (event.request.method !== 'GET' || !subjectRoutes.has(url.href)) return false;
+    if (request.method !== 'GET' || !subjectRoutes.has(url.href)) return false;
     requestedUrls.push({
       url: url.href,
-      authorization: event.request.headers.Authorization ?? event.request.headers.authorization ?? null,
-      accept: event.request.headers.Accept ?? event.request.headers.accept ?? null,
-      apiVersion: event.request.headers['X-GitHub-Api-Version'] ?? event.request.headers['x-github-api-version'] ?? null,
+      authorization: request.headers.Authorization ?? request.headers.authorization ?? null,
+      accept: request.headers.Accept ?? request.headers.accept ?? null,
+      apiVersion: request.headers['X-GitHub-Api-Version'] ?? request.headers['x-github-api-version'] ?? null,
     });
     if (mode === 'forbidden') {
-      const body = JSON.stringify({ message: 'forbidden' });
-      await client.send('Fetch.fulfillRequest', {
-        requestId: event.requestId,
-        responseCode: 403,
-        responseHeaders: [
-          { name: 'content-type', value: 'application/json; charset=utf-8' },
-          { name: 'content-length', value: String(Buffer.byteLength(body)) },
-        ],
-        body: Buffer.from(body).toString('base64'),
-      });
+      await request.respond(403, JSON.stringify({ message: 'forbidden' }));
       return true;
     }
-    const body = JSON.stringify({
+    await request.respond(200, JSON.stringify({
       number: 17,
       title: 'Unread issue thread',
       state: 'open',
@@ -1030,16 +1157,7 @@ function installBackgroundWatchSubjectDetailFixture(extId) {
       milestone: null,
       comments: 2,
       body: '**Runtime** Issue detail loaded only after this thread was expanded.\n\n![blocked](https://attacker.example/image.png)',
-    });
-    await client.send('Fetch.fulfillRequest', {
-      requestId: event.requestId,
-      responseCode: 200,
-      responseHeaders: [
-        { name: 'content-type', value: 'application/json; charset=utf-8' },
-        { name: 'content-length', value: String(Buffer.byteLength(body)) },
-      ],
-      body: Buffer.from(body).toString('base64'),
-    });
+    }));
     return true;
   };
   return {
@@ -1058,29 +1176,20 @@ function installBackgroundStoreRatingSyncFixture(extId) {
   const queued = [];
   let waiter = null;
 
-  guard.handle = async (client, event) => {
-    const url = new URL(event.request.url);
-    const isIncrementalStarsRequest = event.request.method === 'GET'
+  guard.handle = async (guardRequest) => {
+    const url = new URL(guardRequest.url);
+    const isIncrementalStarsRequest = guardRequest.method === 'GET'
       && url.origin === 'https://api.github.com'
       && url.pathname === '/user/starred'
       && url.searchParams.get('per_page') === '100'
       && url.searchParams.get('page') === '1';
     if (!isIncrementalStarsRequest) {
-      return previousHandle ? previousHandle(client, event) : false;
+      return previousHandle ? previousHandle(guardRequest) : false;
     }
 
     const request = {
       async failInvalidResponse() {
-        const body = JSON.stringify({ message: 'store-rating smoke sync failure' });
-        await client.send('Fetch.fulfillRequest', {
-          requestId: event.requestId,
-          responseCode: 400,
-          responseHeaders: [
-            { name: 'content-type', value: 'application/json; charset=utf-8' },
-            { name: 'content-length', value: String(Buffer.byteLength(body)) },
-          ],
-          body: Buffer.from(body).toString('base64'),
-        });
+        await guardRequest.respond(400, JSON.stringify({ message: 'store-rating smoke sync failure' }));
       },
     };
     if (waiter) {
@@ -1119,53 +1228,245 @@ function installBackgroundStoreRatingSyncFixture(extId) {
   };
 }
 
-async function installBackgroundGitHubApiGuard(browser, extId) {
-  const unexpectedUrls = [];
-  const clients = new Set();
+async function installBackgroundGitHubApiGuard(browserInstance, extId) {
+  const guard = {
+    browser: browserInstance,
+    targetListener: null,
+    clients: new Set(),
+    pageInterceptors: new Set(),
+    attachedTargets: new WeakSet(),
+    unexpectedUrls: [],
+    handle: null,
+    firefoxControlPage: null,
+  };
+  backgroundGitHubApiGuard = guard;
+
+  if (runtimeTarget === 'firefox') {
+    const controlPage = activeExtensionRuntime?.controlPage;
+    if (!controlPage || controlPage.isClosed()) {
+      throw new Error('Firefox extension control page was unavailable.');
+    }
+    guard.firefoxControlPage = controlPage;
+    await controlPage.exposeFunction(FIREFOX_BACKGROUND_FETCH_BRIDGE, async (candidate) => {
+      const response = { value: null };
+      const request = createFirefoxGuardRequest(candidate, response);
+      await handleGuardedBackgroundRequest(guard, request);
+      return response.value ?? { action: 'fail' };
+    });
+    await installFirefoxBackgroundGuard(controlPage);
+    return;
+  }
+
   const attach = async (target) => {
-    if (
-      target.type() !== 'service_worker' ||
-      !target.url().startsWith(`chrome-extension://${extId}/`)
-    ) return;
+    if (guard.attachedTargets.has(target)) return;
+    const prefix = `${extensionOrigin(extId, runtimeTarget)}/`;
+    if (!target.url().startsWith(prefix) || target.type() !== 'service_worker') return;
+    guard.attachedTargets.add(target);
     const client = await target.createCDPSession();
-    clients.add(client);
+    guard.clients.add(client);
     await client.send('Fetch.enable', {
       patterns: [{ urlPattern: 'https://api.github.com/*', requestStage: 'Request' }],
     });
     client.on('Fetch.requestPaused', (event) => {
-      void (async () => {
-        if (await backgroundGitHubApiGuard?.handle?.(client, event)) return;
-        unexpectedUrls.push(event.request.url);
-        await client.send('Fetch.failRequest', {
-          requestId: event.requestId,
-          errorReason: 'BlockedByClient',
-        });
-      })().catch((error) => recordPageIssue('background-network-guard', formatError(error)));
+      const request = createCdpGuardRequest(client, event);
+      void handleGuardedBackgroundRequest(guard, request)
+        .catch((error) => recordPageIssue('background-network-guard', formatError(error)));
     });
   };
-  const targetListener = (target) => {
+  guard.targetListener = (target) => {
     void attach(target).catch((error) => {
       recordPageIssue('background-network-guard', formatError(error));
     });
   };
-  browser.on('targetcreated', targetListener);
-  await Promise.all(browser.targets().map(attach));
-  backgroundGitHubApiGuard = { browser, targetListener, clients, unexpectedUrls, handle: null };
+  browserInstance.on('targetcreated', guard.targetListener);
+  await Promise.all(browserInstance.targets().map(attach));
 }
 
-async function assertNoBackgroundGitHubApiCalls(browser, extId) {
+async function assertNoBackgroundGitHubApiCalls(browserInstance, extId) {
   await delay(100);
   const guard = backgroundGitHubApiGuard;
-  assert.equal(guard?.browser, browser, `GitHub API guard was not installed for ${extId}`);
+  assert.equal(guard?.browser, browserInstance, `GitHub API guard was not installed for ${extId}`);
   assert.deepEqual(
     guard.unexpectedUrls,
     [],
-    `background unexpectedly requested GitHub API URLs: ${guard.unexpectedUrls.join(', ')}`,
+    `background unexpectedly requested guarded URLs: ${guard.unexpectedUrls.join(', ')}`,
   );
-  browser.off('targetcreated', guard.targetListener);
+  if (runtimeTarget !== 'firefox') await closeBackgroundGitHubApiGuard();
+}
+
+async function closeBackgroundGitHubApiGuard() {
+  const guard = backgroundGitHubApiGuard;
+  if (!guard) return;
+  if (guard.targetListener) guard.browser.off('targetcreated', guard.targetListener);
   await Promise.all([...guard.clients].map((client) => client.detach().catch(() => {})));
+  await Promise.all([...guard.pageInterceptors].map(async ({ page, onRequest }) => {
+    page.off('request', onRequest);
+    if (!page.isClosed()) await page.setRequestInterception(false).catch(() => {});
+  }));
+  if (guard.firefoxControlPage && !guard.firefoxControlPage.isClosed()) {
+    const diagnostics = await removeFirefoxBackgroundGuard(guard.firefoxControlPage).catch((error) => [{
+      kind: 'teardown',
+      message: formatError(error),
+    }]);
+    for (const diagnostic of diagnostics) {
+      recordPageIssue('background-event-page', `${diagnostic.kind}: ${diagnostic.message}`);
+    }
+    if (typeof guard.firefoxControlPage.removeExposedFunction === 'function') {
+      await guard.firefoxControlPage
+        .removeExposedFunction(FIREFOX_BACKGROUND_FETCH_BRIDGE)
+        .catch(() => {});
+    }
+  }
   backgroundGitHubApiGuard = null;
 }
+
+async function handleGuardedBackgroundRequest(guard, request) {
+  if (await guard.handle?.(request)) return;
+  guard.unexpectedUrls.push(request.url);
+  await request.fail();
+}
+
+function createCdpGuardRequest(client, event) {
+  return {
+    url: event.request.url,
+    method: event.request.method,
+    headers: event.request.headers ?? {},
+    async respond(status, body) {
+      await client.send('Fetch.fulfillRequest', {
+        requestId: event.requestId,
+        responseCode: status,
+        responseHeaders: [
+          { name: 'content-type', value: 'application/json; charset=utf-8' },
+          { name: 'content-length', value: String(Buffer.byteLength(body)) },
+        ],
+        body: Buffer.from(body).toString('base64'),
+      });
+    },
+    fail() {
+      return client.send('Fetch.failRequest', {
+        requestId: event.requestId,
+        errorReason: 'BlockedByClient',
+      });
+    },
+  };
+}
+
+function createFirefoxGuardRequest(candidate, response) {
+  const url = typeof candidate?.url === 'string' ? candidate.url : 'invalid-firefox-request';
+  const method = typeof candidate?.method === 'string' ? candidate.method : 'GET';
+  const headers = candidate?.headers && typeof candidate.headers === 'object'
+    ? Object.fromEntries(Object.entries(candidate.headers).filter((entry) => (
+        typeof entry[0] === 'string' && typeof entry[1] === 'string'
+      )))
+    : {};
+  const postData = typeof candidate?.postData === 'string' ? candidate.postData : '';
+  const settle = (value) => {
+    if (response.value !== null) throw new Error('Firefox background request was already handled.');
+    response.value = value;
+  };
+  return {
+    url,
+    method,
+    headers,
+    postData,
+    async respond(status, body, responseHeaders = { 'content-type': 'application/json; charset=utf-8' }) {
+      const headersValid = responseHeaders
+        && typeof responseHeaders === 'object'
+        && !Array.isArray(responseHeaders)
+        && Object.entries(responseHeaders).every(([name, value]) => (
+          typeof name === 'string' && typeof value === 'string'
+        ));
+      if (
+        !Number.isSafeInteger(status)
+        || status < 100
+        || status > 599
+        || typeof body !== 'string'
+        || !headersValid
+      ) {
+        throw new Error('Firefox background response fixture is invalid.');
+      }
+      settle({ action: 'respond', status, body, headers: responseHeaders });
+    },
+    async fail() {
+      settle({ action: 'fail' });
+    },
+  };
+}
+
+async function installFirefoxBackgroundGuard(controlPage) {
+  await controlPage.evaluate(async ({ bridgeName, stateName, guardedOrigins }) => {
+    const background = await chrome.runtime.getBackgroundPage();
+    if (!background || background[stateName]) {
+      throw new Error('Firefox background guard state is unavailable or already installed.');
+    }
+    const bridge = globalThis[bridgeName];
+    if (typeof bridge !== 'function') throw new Error('Firefox background guard bridge is unavailable.');
+    const originalFetch = background.fetch;
+    const diagnostics = [];
+    const record = (kind, value) => {
+      if (diagnostics.length >= 24) return;
+      diagnostics.push({ kind, message: String(value ?? '').slice(0, 500) });
+    };
+    const onError = (event) => record('error', event.error?.message ?? event.message ?? 'unknown');
+    const onUnhandledRejection = (event) => record(
+      'unhandledrejection',
+      event.reason instanceof Error ? event.reason.message : event.reason,
+    );
+    const guardedFetch = async (input, init) => {
+      const rawUrl = typeof input === 'string' || input instanceof URL
+        ? String(input)
+        : input?.url;
+      const url = new URL(rawUrl, background.location.href).href;
+      if (!guardedOrigins.some((origin) => url.startsWith(origin))) {
+        return Reflect.apply(originalFetch, background, [input, init]);
+      }
+      const rawHeaders = init?.headers ?? input?.headers;
+      const headers = Object.fromEntries(new Headers(rawHeaders).entries());
+      const method = String(init?.method ?? input?.method ?? 'GET').toUpperCase();
+      const result = await bridge({
+        url,
+        method,
+        headers,
+        postData: typeof init?.body === 'string' ? init.body : '',
+      });
+      if (result?.action === 'respond') {
+        return new background.Response(result.body, {
+          status: result.status,
+          headers: result.headers ?? { 'content-type': 'application/json; charset=utf-8' },
+        });
+      }
+      throw new background.TypeError('Failed to fetch');
+    };
+    background.addEventListener('error', onError);
+    background.addEventListener('unhandledrejection', onUnhandledRejection);
+    background.fetch = guardedFetch;
+    background[stateName] = {
+      diagnostics,
+      guardedFetch,
+      onError,
+      onUnhandledRejection,
+      originalFetch,
+    };
+  }, {
+    bridgeName: FIREFOX_BACKGROUND_FETCH_BRIDGE,
+    stateName: FIREFOX_BACKGROUND_GUARD_STATE,
+    guardedOrigins: FIREFOX_GUARDED_ORIGINS,
+  });
+}
+
+async function removeFirefoxBackgroundGuard(controlPage) {
+  return controlPage.evaluate(async (stateName) => {
+    const background = await chrome.runtime.getBackgroundPage();
+    const state = background?.[stateName];
+    if (!state) return [];
+    if (background.fetch === state.guardedFetch) background.fetch = state.originalFetch;
+    background.removeEventListener('error', state.onError);
+    background.removeEventListener('unhandledrejection', state.onUnhandledRejection);
+    delete background[stateName];
+    return state.diagnostics;
+  }, FIREFOX_BACKGROUND_GUARD_STATE);
+}
+
 
 async function waitForBackgroundIdle(page) {
   await page.waitForFunction(
@@ -1177,10 +1478,537 @@ async function waitForBackgroundIdle(page) {
   );
 }
 
+
 function resetBackgroundGitHubApiCalls(browser, extId) {
   const guard = backgroundGitHubApiGuard;
   assert.equal(guard?.browser, browser, `GitHub API guard was not installed for ${extId}`);
   guard.unexpectedUrls.length = 0;
+}
+
+function createFirefoxAgentProviderFixture(guard) {
+  const providerUrl = 'https://api.openai.com/v1/responses';
+  const captures = [];
+  const previousHandle = guard.handle;
+  let sequence = 0;
+
+  const handle = async (request) => {
+    if (request.url !== providerUrl) return previousHandle ? previousHandle(request) : false;
+    if (request.method !== 'POST') throw new Error(`Unexpected Firefox Provider method: ${request.method}.`);
+    const body = JSON.parse(request.postData || '{}');
+    const input = Array.isArray(body.input) ? body.input : [];
+    const priorToolNames = input
+      .filter((entry) => entry?.type === 'function_call')
+      .map((entry) => entry.name)
+      .filter((name) => typeof name === 'string');
+    const hasToolResult = input.some((entry) => entry?.type === 'function_call_output');
+    const user = [...input].reverse().find((entry) => entry?.role === 'user');
+    const userText = Array.isArray(user?.content)
+      ? user.content
+        .filter((part) => part?.type === 'input_text' && typeof part.text === 'string')
+        .map((part) => part.text)
+        .join('')
+      : '';
+    const toolName = body.tool_choice?.type === 'function' ? body.tool_choice.name : null;
+    let kind;
+    let completion;
+    let batchStart = null;
+    let batchEnd = null;
+
+    if (toolName === 'bgsm_connection_probe') {
+      kind = 'firefox-provider-probe';
+      completion = {
+        toolCall: {
+          id: 'call-firefox-runtime-probe',
+          name: toolName,
+          arguments: JSON.stringify({ nonce: 'bgsm' }),
+        },
+      };
+    } else if (hasToolResult && priorToolNames.includes('bgsm_connection_probe')) {
+      kind = 'firefox-provider-probe-ack';
+      completion = { content: 'Firefox runtime provider ready.' };
+    } else if (toolName === 'submit_semantic_tag_batch_proposal') {
+      const payload = JSON.parse(userText || '{}');
+      const batch = payload.batch;
+      if (!batch || !Array.isArray(batch.repositories) || batch.repositories.length === 0) {
+        throw new Error('Firefox Organize Provider request did not contain a repository batch.');
+      }
+      const rows = batch.repositories.map((repository) => ({
+        frozenIndex: repository.frozenIndex,
+        repositoryId: repository.repositoryId,
+        sourceFingerprint: repository.sourceFingerprint,
+        classifications: [{
+          kind: 'unchanged',
+          evidence: 'Synthetic Firefox full-library runtime classification.',
+        }],
+      }));
+      batchStart = rows[0].frozenIndex;
+      batchEnd = rows.at(-1).frozenIndex + 1;
+      kind = 'firefox-organize-batch';
+      completion = {
+        toolCall: {
+          id: `call-firefox-organize-${sequence + 1}`,
+          name: toolName,
+          arguments: JSON.stringify({
+            version: 1,
+            runId: batch.runId,
+            generation: batch.generation,
+            scopeFingerprint: batch.scopeFingerprint,
+            rows,
+          }),
+        },
+      };
+    } else if (toolName === null) {
+      kind = 'firefox-cubby-turn';
+      completion = { content: 'Firefox Cubby runtime turn complete.' };
+    } else {
+      throw new Error(`Unexpected Firefox Provider tool selection: ${String(toolName)}.`);
+    }
+
+    sequence += 1;
+    captures.push(Object.freeze({
+      ordinal: sequence,
+      kind,
+      authorizationPresent: Object.keys(request.headers)
+        .some((name) => name.toLowerCase() === 'authorization'),
+      batchStart,
+      batchEnd,
+    }));
+    await request.respond(
+      200,
+      buildControlledResponsesSse(completion, sequence),
+      { 'content-type': 'text/event-stream' },
+    );
+    return true;
+  };
+
+  guard.handle = handle;
+  return Object.freeze({
+    captures,
+    restore() {
+      if (guard.handle === handle) guard.handle = previousHandle;
+    },
+  });
+}
+
+async function clickTrustedDocumentButtonByText(page, label) {
+  const handle = await page.evaluateHandle((expected) => [...document.querySelectorAll('button')]
+    .find((candidate) => candidate.textContent?.trim() === expected) ?? null, label);
+  const button = handle.asElement();
+  if (!button) {
+    await handle.dispose();
+    throw new Error(`Could not find trusted button labelled ${label}.`);
+  }
+  try {
+    await button.click();
+  } finally {
+    await button.dispose();
+  }
+}
+
+async function grantFirefoxAgentDataPermission(page) {
+  await page.evaluate(async () => {
+    const key = 'gsm_config';
+    const current = (await chrome.storage.local.get(key))[key] ?? {};
+    await chrome.storage.local.set({ [key]: { ...current, agentDataDisclosureAcceptance: null } });
+  });
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 10_000 });
+  } catch (error) {
+    if (!/Navigation timeout/iu.test(formatError(error))) throw error;
+  }
+  await page.waitForSelector('[data-testid="agent-data-disclosure"]', { timeout: 10_000 });
+  await clickTrustedDocumentButtonByText(page, 'Accept data sharing');
+  await page.waitForFunction(
+    async () => {
+      const key = 'gsm_config';
+      const [granted, stored] = await Promise.all([
+        chrome.permissions.contains({ data_collection: ['personalCommunications'] }),
+        chrome.storage.local.get(key),
+      ]);
+      const acceptance = stored[key]?.agentDataDisclosureAcceptance;
+      return granted
+        && acceptance?.provider === 'openai'
+        && acceptance?.origin === 'https://api.openai.com';
+    },
+    { polling: DOM_POLLING_MS, timeout: 20_000 },
+  );
+}
+
+async function configureFirefoxSavedProvider(page) {
+  const apiKey = 'runtime-firefox-provider-key';
+  await page.$eval('#agent-api-key', (input, value) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, apiKey);
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('button')]
+      .some((button) => button.textContent?.trim() === 'Save & test' && !button.disabled),
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+  await clickTrustedDocumentButtonByText(page, 'Save & test');
+  await page.waitForFunction(
+    async () => {
+      const config = (await chrome.storage.local.get('gsm_config')).gsm_config;
+      return typeof config?.agentProvider?.apiKeyEncrypted === 'string'
+        && config.agentProvider.apiKeyEncrypted.length > 0
+        && config.agentProvider.capability?.namedToolRoundTrip === true;
+    },
+    { polling: DOM_POLLING_MS, timeout: 30_000 },
+  );
+  const config = await page.evaluate(async () => (
+    await chrome.storage.local.get('gsm_config')
+  ).gsm_config);
+  assert.equal(JSON.stringify(config).includes(apiKey), false, 'Firefox Provider key was stored in plaintext.');
+  assert.equal(config.agentProvider.capability.contextCapability.source, 'builtin-official');
+}
+
+async function assertFirefoxCubbyTurn(page) {
+  const responseMarker = 'Firefox Cubby runtime turn complete.';
+  await page.bringToFront();
+  await page.waitForFunction(
+    () => !!document.getElementById('gsm-manager-host') || !!document.getElementById('gsm-fab'),
+    { polling: DOM_POLLING_MS, timeout: 20_000 },
+  );
+  const hasManager = await page.evaluate(() => !!document.getElementById('gsm-manager-host'));
+  if (!hasManager) await clickFab(page);
+  await waitForManagerRoot(page);
+  await page.evaluate(() => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+    root?.querySelector('#gsm-stars-surface-tab')?.click();
+  });
+  await page.waitForFunction(
+    () => !!document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('[data-coach-target="agent"]'),
+    { polling: DOM_POLLING_MS, timeout: 20_000 },
+  );
+  await clickShadowButton(page, '[data-coach-target="agent"]');
+  await page.waitForFunction(
+    () => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+      const textarea = root?.querySelector('aside[role="dialog"] textarea');
+      return textarea instanceof HTMLTextAreaElement && !textarea.disabled;
+    },
+    { polling: DOM_POLLING_MS, timeout: 20_000 },
+  );
+  await page.evaluate((prompt) => {
+    const textarea = document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('aside[role="dialog"] textarea');
+    if (!(textarea instanceof HTMLTextAreaElement)) throw new Error('Firefox Cubby composer is unavailable.');
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    setter?.call(textarea, prompt);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+  }, 'Reply with a short confirmation and do not use tools.');
+  await page.waitForFunction(
+    () => {
+      const button = document.getElementById('gsm-manager-host')?.shadowRoot
+        ?.querySelector('aside[role="dialog"] button[type="submit"]');
+      return button instanceof HTMLButtonElement && !button.disabled;
+    },
+    { polling: DOM_POLLING_MS, timeout: 10_000 },
+  );
+  await clickShadowButton(page, 'aside[role="dialog"] button[type="submit"]');
+  await page.waitForFunction(
+    (marker) => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+      const drawer = root?.querySelector('aside[role="dialog"]');
+      const completed = [...(drawer?.querySelectorAll('[data-role="assistant"]') ?? [])]
+        .some((message) => message.textContent?.includes(marker));
+      return completed || !!root?.querySelector('[data-testid="agent-provider-error-card"]');
+    },
+    { polling: DOM_POLLING_MS, timeout: 45_000 },
+    responseMarker,
+  );
+  const result = await page.evaluate((marker) => {
+    const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+    const drawer = root?.querySelector('aside[role="dialog"]');
+    const assistantRows = [...(drawer?.querySelectorAll('[data-role="assistant"]') ?? [])];
+    return {
+      markerCount: assistantRows.filter((row) => row.textContent?.includes(marker)).length,
+      providerError: !!root?.querySelector('[data-testid="agent-provider-error-card"]'),
+      running: drawer?.getAttribute('data-agent-active') === 'true',
+      userMessages: drawer?.querySelectorAll('[data-role="user"]').length ?? 0,
+    };
+  }, responseMarker);
+  assert.deepEqual(result, {
+    markerCount: 1,
+    providerError: false,
+    running: false,
+    userMessages: 1,
+  });
+}
+
+async function runFirefoxFullLibraryOrganize(page) {
+  return page.evaluate(async (timeoutMs) => {
+    const sessionResponse = await chrome.runtime.sendMessage({ type: 'createAgentSession' });
+    const sessionId = sessionResponse?.data?.session?.id;
+    if (!sessionResponse?.ok || typeof sessionId !== 'string') {
+      throw new Error(`Firefox Organize could not create a session: ${JSON.stringify(sessionResponse)}.`);
+    }
+    const port = chrome.runtime.connect({ name: 'bgsm-agent-organize-job' });
+    const messages = [];
+    const deliveries = [];
+    port.onMessage.addListener((delivery) => {
+      if (delivery?.type !== 'bgsmOrganizeJobRunDelivery' || !delivery.message) {
+        messages.push({ type: 'invalid-firefox-organize-delivery' });
+        return;
+      }
+      deliveries.push({
+        connectionEpochId: delivery.connectionEpochId,
+        deliverySequence: delivery.deliverySequence,
+      });
+      messages.push(delivery.message);
+    });
+    const waitFor = async (predicate, label) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const match = [...messages].reverse().find(predicate);
+        if (match) return match;
+        const failure = [...messages].reverse().find((message) => (
+          message.type === 'bgsmOrganizeJobRunError'
+          || (message.type === 'bgsmOrganizeJobRunEvent' && message.event?.state === 'failed')
+        ));
+        if (failure) throw new Error(`Firefox Organize failed: ${JSON.stringify(failure)}.`);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(messages.slice(-8))}.`);
+    };
+    const controllerId = `controller:v1:firefox-runtime-${crypto.randomUUID()}`;
+    const requestId = `firefox-runtime-${crypto.randomUUID()}`;
+    const taskInstruction = 'Organize the complete Firefox runtime library.';
+    try {
+      port.postMessage({
+        type: 'requestBgsmOrganizeJobPreflight',
+        controllerId,
+        sessionId,
+        requestId,
+        taskInstruction,
+      });
+      const preflight = await waitFor(
+        (message) => message.type === 'bgsmOrganizeJobRunPreflightResult' && message.requestId === requestId,
+        'Firefox Organize preflight',
+      );
+      port.postMessage({
+        type: 'startBgsmOrganizeJob',
+        controllerId,
+        sessionId,
+        requestId,
+        preflightToken: preflight.preflightToken,
+        taskInstruction,
+      });
+      const started = await waitFor(
+        (message) => message.type === 'bgsmOrganizeJobRunSnapshot',
+        'Firefox Organize start',
+      );
+      const terminal = await waitFor(
+        (message) => message.type === 'bgsmOrganizeJobRunEvent'
+          && message.event?.type === 'run_terminal'
+          && message.event?.state === 'completed',
+        'Firefox Organize completion',
+      );
+      const snapshots = messages.filter((message) => message.type === 'bgsmOrganizeJobRunSnapshot');
+      return {
+        count: preflight.count,
+        frozenCount: started.snapshot?.frozenScope?.count ?? null,
+        terminalState: terminal.event.state,
+        generationCount: new Set(snapshots.map((message) => message.snapshot?.generation)).size,
+        deliveryCount: deliveries.length,
+        orderedDeliveries: deliveries.every((delivery, index) => delivery.deliverySequence === index),
+        invalidDeliveries: messages.filter((message) => message.type === 'invalid-firefox-organize-delivery').length,
+      };
+    } finally {
+      port.postMessage({ type: 'disconnectBgsmOrganizeJob', controllerId, sessionId });
+      port.disconnect();
+    }
+  }, 120_000);
+}
+
+function assertFirefoxProviderCoverage(captures, organize, captureStart) {
+  const newCaptures = captures.slice(captureStart);
+  const ordinary = newCaptures.filter((entry) => entry.kind === 'firefox-cubby-turn');
+  const batches = newCaptures.filter((entry) => entry.kind === 'firefox-organize-batch');
+  assert.equal(ordinary.length, 1);
+  assert.equal(organize.count >= 200, true, 'Firefox full-library Organize fixture was not library-sized.');
+  assert.equal(organize.frozenCount, organize.count);
+  assert.equal(organize.terminalState, 'completed');
+  assert.equal(organize.generationCount > 0, true);
+  assert.equal(organize.deliveryCount > 0, true);
+  assert.equal(organize.orderedDeliveries, true);
+  assert.equal(organize.invalidDeliveries, 0);
+  assert.equal(batches.length, Math.ceil(organize.count / 25));
+  let nextFrozenIndex = 0;
+  for (const batch of batches) {
+    assert.equal(batch.batchStart, nextFrozenIndex);
+    assert.equal(batch.batchEnd > batch.batchStart, true);
+    nextFrozenIndex = batch.batchEnd;
+  }
+  assert.equal(nextFrozenIndex, organize.count);
+  assert.equal(newCaptures.every((entry) => entry.authorizationPresent), true);
+}
+
+async function assertFirefoxRuntimeParity(page, extId, starsPage) {
+  assert.equal(extId, FIREFOX_GECKO_ID);
+  assert.equal(activeExtensionRuntime?.backgroundKind, 'event_page');
+  const expectedOrigin = `${extensionOrigin(extId, 'firefox')}/`;
+  const expectedBackgroundUrl = `${expectedOrigin}_generated_background_page.html`;
+  const actualPageUrl = await page.evaluate(() => location.href);
+  assert.equal(
+    actualPageUrl.startsWith(expectedOrigin),
+    true,
+    'Firefox extension page did not use the fixed moz-extension UUID.',
+  );
+  const guard = backgroundGitHubApiGuard;
+  assert.ok(guard?.firefoxControlPage, 'Firefox background network guard was unavailable.');
+  const guardedRequestCount = guard.unexpectedUrls.length;
+
+  const permissionState = await page.evaluate(async () => {
+    const backgroundPage = await chrome.runtime.getBackgroundPage();
+    return {
+      personalCommunications: await chrome.permissions.contains({
+        data_collection: ['personalCommunications'],
+      }),
+      runtimeId: chrome.runtime.id,
+      backgroundUrl: backgroundPage?.location.href ?? null,
+    };
+  });
+  assert.deepEqual(permissionState, {
+    personalCommunications: false,
+    runtimeId: FIREFOX_GECKO_ID,
+    backgroundUrl: expectedBackgroundUrl,
+  });
+
+  const probe = await page.evaluate(async () => {
+    const key = 'gsm_config';
+    const current = (await chrome.storage.local.get(key))[key] ?? {};
+    await chrome.storage.local.set({
+      [key]: {
+        ...current,
+        agentDataDisclosureAcceptance: {
+          version: 2,
+          provider: 'openai',
+          origin: 'https://api.openai.com',
+          acceptedAt: 1,
+        },
+      },
+    });
+    const provider = await chrome.runtime.sendMessage({
+      type: 'testAgentProviderConnection',
+      provider: 'openai',
+      protocol: null,
+      baseUrl: null,
+      model: 'gpt-5.4',
+      declaredContextWindow: null,
+      workingContextWindow: null,
+      apiKey: 'runtime-no-network-key',
+    });
+    const status = await chrome.runtime.sendMessage({ type: 'getStatus' });
+    return {
+      providerOk: provider?.ok === true,
+      providerCode: provider?.code ?? null,
+      providerError: provider?.ok === false && typeof provider.error === 'string',
+      statusOk: status?.ok === true,
+    };
+  });
+  assert.deepEqual(probe, {
+    providerOk: false,
+    providerCode: 'AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED',
+    providerError: true,
+    statusOk: true,
+  });
+  assert.equal(
+    guard.unexpectedUrls.length,
+    guardedRequestCount,
+    'Cubby permission refusal reached the Provider network.',
+  );
+
+  const provider = createFirefoxAgentProviderFixture(guard);
+  try {
+    await grantFirefoxAgentDataPermission(page);
+    await configureFirefoxSavedProvider(page);
+    const captureStart = provider.captures.length;
+    await assertFirefoxCubbyTurn(starsPage);
+    const organize = await runFirefoxFullLibraryOrganize(page);
+    assertFirefoxProviderCoverage(provider.captures, organize, captureStart);
+    assert.equal(
+      guard.unexpectedUrls.length,
+      guardedRequestCount,
+      'Firefox Cubby or Organize escaped the controlled Provider fixture.',
+    );
+  } finally {
+    provider.restore();
+  }
+
+  const portResult = await page.evaluate(() => new Promise((resolve) => {
+    const port = chrome.runtime.connect({ name: 'bgsm-agent' });
+    let connected = true;
+    const timeout = setTimeout(() => {
+      port.disconnect();
+      resolve({ connected, disconnectedCleanly: true });
+    }, 100);
+    port.onDisconnect.addListener(() => {
+      clearTimeout(timeout);
+      connected = connected && chrome.runtime.lastError === undefined;
+      resolve({ connected, disconnectedCleanly: true });
+    });
+  }));
+  assert.deepEqual(portResult, { connected: true, disconnectedCleanly: true });
+
+  const issueCountBeforeTeardown = pageIssues.length;
+  await closeBackgroundGitHubApiGuard();
+  assert.equal(
+    pageIssues.length,
+    issueCountBeforeTeardown,
+    'Firefox background emitted an uncaught error before event-page teardown.',
+  );
+  await page.evaluate(async () => {
+    const backgroundPage = await chrome.runtime.getBackgroundPage();
+    backgroundPage.close();
+  });
+  await page.waitForFunction(
+    async () => {
+      try {
+        const response = await chrome.runtime.sendMessage({ type: 'getStatus' });
+        return response?.ok === true;
+      } catch {
+        return false;
+      }
+    },
+    { polling: DOM_POLLING_MS, timeout: 20_000 },
+  );
+  backgroundStartupHealthChecks += 1;
+  const recovered = await page.evaluate(async () => {
+    const backgroundPage = await chrome.runtime.getBackgroundPage();
+    const issues = [];
+    const onError = (event) => issues.push(`error:${event.error?.message ?? event.message ?? 'unknown'}`);
+    const onUnhandledRejection = (event) => issues.push(
+      `unhandledrejection:${event.reason instanceof Error ? event.reason.message : String(event.reason)}`,
+    );
+    backgroundPage.addEventListener('error', onError);
+    backgroundPage.addEventListener('unhandledrejection', onUnhandledRejection);
+    const status = await chrome.runtime.sendMessage({ type: 'getStatus' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    backgroundPage.removeEventListener('error', onError);
+    backgroundPage.removeEventListener('unhandledrejection', onUnhandledRejection);
+    return {
+      backgroundUrl: backgroundPage.location.href,
+      statusOk: status?.ok === true,
+      issues,
+    };
+  });
+  assert.deepEqual(recovered, {
+    backgroundUrl: expectedBackgroundUrl,
+    statusOk: true,
+    issues: [],
+  });
+}
+function settleInterceptAction(action) {
+  void Promise.resolve(action).catch((error) => {
+    const message = formatError(error);
+    if (/no such request|request is already handled|Invalid InterceptionId/iu.test(message)) return;
+    recordPageIssue('request-interception', message);
+  });
 }
 
 async function interceptGitHubApi(page, handler) {
@@ -1188,10 +2016,10 @@ async function interceptGitHubApi(page, handler) {
   page.on('request', (request) => {
     const url = request.url();
     if (!url.startsWith('https://api.github.com/')) {
-      request.continue();
+      settleInterceptAction(request.continue());
       return;
     }
-    void handler(request);
+    settleInterceptAction(handler(request));
   });
 }
 
@@ -1271,8 +2099,15 @@ async function assertAgentDisclosureInfo(page) {
     collapsed: document.querySelector('[data-testid="agent-data-disclosure"] details')?.open === false,
     originVisible: document.querySelector('[data-testid="agent-data-disclosure"]')
       ?.textContent?.includes('https://api.openai.com') ?? false,
+    acceptanceButtonVisible: [...document.querySelectorAll('button')]
+      .some((candidate) => candidate.textContent?.trim() === 'Accept data sharing'),
   }));
-  assert.deepEqual(initial, { categoryCount: 4, collapsed: true, originVisible: true });
+  assert.deepEqual(initial, {
+    categoryCount: 4,
+    collapsed: true,
+    originVisible: true,
+    acceptanceButtonVisible: true,
+  });
 
   await page.$eval('#agent-api-key', (input) => {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
@@ -1285,7 +2120,7 @@ async function assertAgentDisclosureInfo(page) {
       .find((candidate) => candidate.textContent?.includes('Test connection'));
     return button?.disabled ?? null;
   });
-  assert.equal(disabledWithoutAcceptance, false);
+  assert.equal(disabledWithoutAcceptance, true);
 
   const acceptance = await page.evaluate(async () => {
     const stored = await chrome.storage.local.get('gsm_config');
@@ -1309,50 +2144,50 @@ async function interceptGitHubPages(page) {
   page.on('request', (request) => {
     const url = request.url();
     if (url.startsWith('https://github.com/smoke-user?') || url === 'https://github.com/smoke-user') {
-      void request.respond({
+      settleInterceptAction(request.respond({
         status: 200,
         contentType: 'text/html; charset=utf-8',
         body: starsPageHtml(),
-      });
+      }));
       return;
     }
     if (url === REPO_URL) {
-      void request.respond({
+      settleInterceptAction(request.respond({
         status: 200,
         contentType: 'text/html; charset=utf-8',
         body: repoPageHtml(),
-      });
+      }));
       return;
     }
     if (url === 'https://github.com/candidate.png?size=64') {
-      void request.respond({
+      settleInterceptAction(request.respond({
         status: 200,
         contentType: 'image/svg+xml',
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#24292f"/></svg>',
-      });
+      }));
       return;
     }
     if (url === 'https://avatars.githubusercontent.com/u/1?v=4') {
-      void request.respond({
+      settleInterceptAction(request.respond({
         status: 200,
         contentType: 'image/svg+xml',
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="#0969da"/></svg>',
-      });
+      }));
       return;
     }
     if (url === 'https://avatars.githubusercontent.com/u/broken?v=4') {
-      void request.respond({
+      settleInterceptAction(request.respond({
         status: 200,
         contentType: 'image/svg+xml',
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="#cf222e"/></svg>',
-      });
+      }));
       return;
     }
     if (url.startsWith('https://github.com/')) {
-      void request.respond({ status: 204, body: '' });
+      settleInterceptAction(request.respond({ status: 204, body: '' }));
       return;
     }
-    request.continue();
+    settleInterceptAction(request.continue());
   });
 }
 
@@ -2127,7 +2962,7 @@ async function assertRepositoryAvatarLayout(page) {
 
   await page.waitForFunction(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-    return root?.textContent?.includes('Editing layout') === true;
+    return root?.querySelector('.gsm-edit-chrome-wrap')?.getAttribute('aria-hidden') === 'false';
   }, { polling: DOM_POLLING_MS, timeout: 10_000 });
 
   await page.evaluate(() => {
@@ -2165,13 +3000,49 @@ async function assertRepositoryAvatarLayout(page) {
   });
   assert.deepEqual(disabledAvatarState, { slots: 0, images: 0 });
 
-  await page.evaluate(() => {
+  const layoutWarnings = [];
+  const onLayoutConsole = (message) => {
+    if (message.type() === 'warn' && message.text().includes('failed to persist layout preference')) {
+      layoutWarnings.push(message.text());
+    }
+  };
+  page.on('console', onLayoutConsole);
+  const saveState = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
     const save = [...(root?.querySelectorAll('button') ?? [])]
       .find((button) => button.textContent?.trim() === 'Save');
-    if (!(save instanceof HTMLButtonElement)) throw new Error('Layout Save button was unavailable');
+    if (!(save instanceof HTMLButtonElement)) return { present: false, disabled: null };
+    const disabled = save.disabled;
     save.click();
+    return { present: true, disabled };
   });
+  assert.deepEqual(saveState, { present: true, disabled: false });
+  try {
+    await page.waitForFunction(() => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      return root?.querySelector('.gsm-edit-chrome-wrap')?.getAttribute('aria-hidden') === 'true';
+    }, { polling: DOM_POLLING_MS, timeout: 10_000 });
+  } catch (error) {
+    const state = await page.evaluate(async () => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      const locks = typeof navigator.locks?.query === 'function' ? await navigator.locks.query() : null;
+      const editChrome = root?.querySelector('.gsm-edit-chrome-wrap');
+      return {
+        editingLayout: editChrome?.getAttribute('aria-hidden') === 'false',
+        locks,
+      };
+    });
+    const stored = await readStoredConfig(page.browser());
+    page.off('console', onLayoutConsole);
+    throw new Error(
+      `Layout save did not complete: ${JSON.stringify({
+        ...state,
+        storedRepositoryAvatar: stored?.customColumnLayout?.showRepositoryAvatar ?? null,
+        warnings: layoutWarnings,
+      })}: ${formatError(error)}`,
+    );
+  }
+  page.off('console', onLayoutConsole);
   const persisted = await waitForStoredRepositoryAvatar(page.browser(), false);
   assert.equal(persisted.customColumnLayout.showRepositoryAvatar, false);
 }
@@ -2228,6 +3099,17 @@ async function scrollStarsToBottomAndReadAvatarState(page) {
 }
 
 async function readStoredConfig(browserInstance) {
+  if (runtimeTarget === 'firefox') {
+    const controlPage = activeExtensionRuntime?.controlPage;
+    if (!controlPage || controlPage.isClosed()) {
+      throw new Error('Firefox extension control page was unavailable');
+    }
+    return controlPage.evaluate(async () => {
+      const stored = await chrome.storage.local.get('gsm_config');
+      return stored.gsm_config ?? null;
+    });
+  }
+
   const target = browserInstance.targets().find((candidate) => (
     candidate.type() === 'service_worker' && candidate.url().startsWith('chrome-extension://')
   ));
@@ -2587,7 +3469,25 @@ async function openWatchSurface(page, expectedText) {
       { polling: DOM_POLLING_MS, timeout: 20_000 },
     );
   } catch (error) {
-    throw await pageWaitError(page, 'Watch Manager surface switch did not become interactive', error);
+    const state = await page.evaluate(() => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
+      const button = root?.querySelector('#gsm-watch-surface-tab');
+      return {
+        rootPresent: !!root,
+        watchPresent: !!button,
+        watchDisabled: button instanceof HTMLButtonElement ? button.disabled : null,
+        editingLayout: root?.textContent?.includes('Editing layout') ?? null,
+        buttons: [...(root?.querySelectorAll('button') ?? [])]
+          .map((candidate) => candidate.textContent?.trim() ?? '')
+          .filter(Boolean)
+          .slice(0, 20),
+      };
+    });
+    throw await pageWaitError(
+      page,
+      `Watch Manager surface switch did not become interactive: ${JSON.stringify(state)}`,
+      error,
+    );
   }
   const clicked = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
@@ -3212,7 +4112,11 @@ async function assertAgentDrawerA11y(page) {
     animationName: 'none',
     resourceOk: true,
   });
-  assert.match(mascot.assetUrl ?? '', /^chrome-extension:\/\/[^/]+\/assets\/index-agent-atlas-[^/]+\.png$/u);
+  const mascotAssetPrefix = `${extensionOrigin(activeExtensionRuntime.extensionId, runtimeTarget)}/assets/index-agent-atlas-`;
+  assert.equal(
+    mascot.assetUrl?.startsWith(mascotAssetPrefix) === true && mascot.assetUrl.endsWith('.png'),
+    true,
+  );
   assert.equal(mascot.bytes > 0, true);
   await page.waitForFunction(
     () => {
@@ -3307,33 +4211,44 @@ async function clickFab(page) {
 }
 
 function hookPageDiagnostics(page, label) {
-  page.on('console', (message) => {
+  const onConsole = (message) => {
     if (message.type() !== 'error') return;
     const text = message.text();
     const location = message.location();
     if (label === OPTIONS_PATH && text.includes('api.github.com') && text.includes('401')) return;
     if (label === OPTIONS_PATH && text.includes('Failed to load resource') && text.includes('401')) return;
     if (
-      (label === OPTIONS_PATH || label === 'watch-fallback') &&
-      text.includes('Failed to load resource') &&
-      text.includes('403') &&
-      location.url === 'https://api.github.com/notifications?all=true&per_page=1'
+      (label === OPTIONS_PATH || label === 'watch-fallback')
+      && text.includes('Failed to load resource')
+      && text.includes('403')
+      && location.url === 'https://api.github.com/notifications?all=true&per_page=1'
     ) return;
     recordPageIssue(label, `console.error: ${text}${location.url ? ` (${location.url})` : ''}`);
-  });
-  page.on('requestfailed', (request) => {
+  };
+  const onRequestFailed = (request) => {
     const url = request.url();
     if (
-      url.startsWith('chrome-extension://') ||
-      url.startsWith('https://github.com/') ||
-      url.startsWith('https://api.github.com/')
+      url.startsWith('chrome-extension://')
+      || url.startsWith('moz-extension://')
+      || url.startsWith('https://github.com/')
+      || url.startsWith('https://api.github.com/')
     ) {
       recordPageIssue(label, `request failed: ${url} ${request.failure()?.errorText ?? ''}`);
     }
-  });
-  page.on('pageerror', (error) => {
+  };
+  const onPageError = (error) => {
     recordPageIssue(label, `page error: ${formatError(error)}`);
-  });
+  };
+  page.on('console', onConsole);
+  page.on('requestfailed', onRequestFailed);
+  page.on('pageerror', onPageError);
+  return {
+    cleanup() {
+      page.off('console', onConsole);
+      page.off('requestfailed', onRequestFailed);
+      page.off('pageerror', onPageError);
+    },
+  };
 }
 
 async function pageWaitError(page, message, cause) {

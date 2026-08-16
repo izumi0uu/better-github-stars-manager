@@ -20,6 +20,12 @@ import {
   parseMv3WorkerLoader,
   resolvePackagePath,
 } from './package-manifest-closure.mjs';
+import {
+  FIREFOX_GECKO_ID,
+  FIREFOX_MIN_VERSION,
+  FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS,
+  FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS,
+} from './build-firefox-extension.mjs';
 
 export const MAX_RUNTIME_EVIDENCE_BYTES = 32 * 1024;
 
@@ -79,30 +85,48 @@ export function readRuntimeReleaseDistIdentity(distDirectory) {
     if (manifest?.manifest_version !== 3) throw new Error('invalid manifest version');
     parseChromeExtensionVersion(manifest?.version, 'runtime evidence manifest version');
 
-    const loaderPath = resolvePackagePath(
-      distRoot,
-      manifest?.background?.service_worker,
-      'runtime evidence worker loader',
-    );
+    const isFirefox = Array.isArray(manifest?.background?.scripts)
+      && manifest.background.scripts.length === 1
+      && manifest.background.service_worker === undefined;
+    const loaderRelativePath = isFirefox
+      ? manifest.background.scripts[0]
+      : manifest?.background?.service_worker;
+    const loaderPath = resolvePackagePath(distRoot, loaderRelativePath, 'runtime evidence worker loader');
     const loaderBytes = readFileSync(loaderPath);
-    const { loaderRelativePath, workerRelativePath } = parseMv3WorkerLoader({
+    const { workerRelativePath } = parseMv3WorkerLoader({
       manifest,
       loaderText: loaderBytes.toString('utf8'),
     });
     const workerPath = resolvePackagePath(distRoot, workerRelativePath, 'runtime evidence worker');
     const workerBytes = readFileSync(workerPath);
-
-    return Object.freeze({
+    const identity = {
       packageInput: packageInputFingerprint(distRoot),
-      manifest: Object.freeze({
+      manifest: {
         relativePath: 'manifest.json',
         bytes: manifestBytes.byteLength,
         sha256: sha256(manifestBytes),
         manifestVersion: 3,
         extensionVersion: manifest.version,
-      }),
+      },
       loader: fileIdentity(loaderRelativePath, loaderBytes),
       worker: fileIdentity(workerRelativePath, workerBytes),
+    };
+    if (!isFirefox) return Object.freeze(identity);
+
+    const gecko = manifest.browser_specific_settings?.gecko;
+    return Object.freeze({
+      browserTarget: 'firefox',
+      ...identity,
+      background: {
+        kind: 'event_page',
+        module: manifest.background.type === 'module',
+        scripts: [loaderRelativePath],
+      },
+      gecko: {
+        id: gecko?.id,
+        strictMinVersion: gecko?.strict_min_version,
+        dataCollectionPermissions: gecko?.data_collection_permissions,
+      },
     });
   } catch (error) {
     if (error instanceof RuntimeEvidenceError) throw error;
@@ -111,7 +135,35 @@ export function readRuntimeReleaseDistIdentity(distDirectory) {
 }
 
 export function assertRuntimeReleaseDistIdentity(value) {
+  if (value?.browserTarget === undefined) {
+    assertChromeReleaseDistIdentity(value);
+    return;
+  }
+  if (value.browserTarget !== 'firefox') throw new RuntimeEvidenceError('release_dist_target_invalid');
+  exactKeys(value, ['browserTarget', 'packageInput', 'manifest', 'loader', 'worker', 'background', 'gecko']);
+  assertCommonReleaseDistIdentity(value);
+  exactKeys(value.background, ['kind', 'module', 'scripts']);
+  if (value.background.kind !== 'event_page' || value.background.module !== true
+    || !Array.isArray(value.background.scripts) || value.background.scripts.length !== 1
+    || value.background.scripts[0] !== value.loader.relativePath) {
+    throw new RuntimeEvidenceError('release_dist_background_invalid');
+  }
+  exactKeys(value.gecko, ['id', 'strictMinVersion', 'dataCollectionPermissions']);
+  exactKeys(value.gecko.dataCollectionPermissions, ['required', 'optional']);
+  if (
+    value.gecko.id !== FIREFOX_GECKO_ID
+    || value.gecko.strictMinVersion !== FIREFOX_MIN_VERSION
+    || !sameStringArray(value.gecko.dataCollectionPermissions.required, FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS)
+    || !sameStringArray(value.gecko.dataCollectionPermissions.optional, FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS)
+  ) throw new RuntimeEvidenceError('release_dist_gecko_invalid');
+}
+
+function assertChromeReleaseDistIdentity(value) {
   exactKeys(value, ['packageInput', 'manifest', 'loader', 'worker']);
+  assertCommonReleaseDistIdentity(value);
+}
+
+function assertCommonReleaseDistIdentity(value) {
   exactKeys(value.packageInput, ['algorithm', 'fileCount', 'sha256']);
   if (
     value.packageInput.algorithm !== 'sha256'
@@ -138,6 +190,11 @@ export function assertRuntimeReleaseDistIdentity(value) {
   if (value.loader.relativePath === value.worker.relativePath) {
     throw new RuntimeEvidenceError('release_dist_identity_invalid');
   }
+}
+
+function sameStringArray(left, right) {
+  return Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 export function serializeRuntimeEvidence(evidence, {

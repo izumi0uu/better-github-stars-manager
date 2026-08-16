@@ -1,5 +1,6 @@
 import {
   AGENT_DATA_DISCLOSURE_REQUIRED,
+  AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
   AGENT_HOST_PERMISSION_DENIED,
   AGENT_PROVIDER_IDENTITY_CHANGED,
 } from '@/api/errors';
@@ -791,6 +792,7 @@ describe('agent harness agent loop', () => {
   it.each([
     [AGENT_DATA_DISCLOSURE_REQUIRED, 'disclosure'],
     [AGENT_HOST_PERMISSION_DENIED, 'permission'],
+    [AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED, 'permission'],
     [AGENT_PROVIDER_IDENTITY_CHANGED, 'capability'],
   ] as const)('classifies runtime authority failure %s as %s', async (code, category) => {
     const events: AgentEvent[] = [];

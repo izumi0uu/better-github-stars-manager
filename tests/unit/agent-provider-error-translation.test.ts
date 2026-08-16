@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { translateError } from '@/api/errors';
+import {
+  AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
+  translateError,
+} from '@/api/errors';
 import {
   AgentProviderError,
   isStructuredProviderContextOverflow,
@@ -49,6 +52,22 @@ describe('Agent provider error translation', () => {
       expect(translated).not.toContain(secret);
       expect(translated.length).toBeGreaterThan(0);
     }
+  });
+
+  it('maps the Firefox personal-communications gate to stable localized copy', () => {
+    const english = translateError(
+      new Error(AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED),
+      getMessages('en'),
+    );
+    const chinese = translateError(
+      new Error(AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED),
+      getMessages('zh-CN'),
+    );
+    expect(english).toContain("Firefox's personal-communications permission");
+    expect(chinese).toContain('Firefox');
+    expect(chinese).toContain('权限');
+    expect(english).not.toContain(AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED);
+    expect(chinese).not.toContain(AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED);
   });
 
   it.each([

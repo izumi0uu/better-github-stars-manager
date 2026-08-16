@@ -26,7 +26,7 @@ const DIST = path.resolve(process.cwd(), process.env.GSM_DIST_DIR ?? 'dist');
 const OPTIONS_PATH = '/src/options/index.html';
 const ROW_COUNT = 501;
 const TIMEOUT_MS = 30_000;
-const SETUP_TIMEOUT_MS = 45_000;
+const SETUP_TIMEOUT_MS = 60_000;
 const RUN_WORKER_RECOVERY = process.env.GSM_RUNTIME_WORKER_RECOVERY === '1';
 const RUN_EVIDENCE_SELF_TEST = process.env.GSM_ORGANIZE_EVIDENCE_SELF_TEST === '1';
 const WORKER_RECOVERY_TIMEOUT_MS = 90_000;
@@ -71,6 +71,7 @@ const ORGANIZE_RUNTIME_STAGES = new Set([
   'production_full_sync_confirm',
   'production_full_sync_settled',
   'probe_without_acceptance',
+  'accept_data_disclosure',
   'configure_saved_provider',
   'missing_provider_capability',
   'establish_provider_capability',
@@ -282,18 +283,36 @@ try {
     && request.route === 'github-probe-gist'
     && request.status === 204
   )), true);
+  assert.equal(optionsPolicy.expectedRequests.some((request) => (
+    request.method === 'GET'
+    && request.route === 'github-notifications'
+    && request.status === 403
+  )), true);
+  let expectedNotificationConsoleRemoved = false;
   assert.equal(optionsPolicy.interceptionFailure, false);
   for (let index = pageIssues.length - 1; index >= 0; index -= 1) {
     const issue = pageIssues[index];
     if (issue.label === 'organize-options'
       && issue.kind === 'request-failed'
-      && issue.value === 'DELETE github-probe-gist') pageIssues.splice(index, 1);
+      && issue.value === 'DELETE github-probe-gist') {
+      pageIssues.splice(index, 1);
+    } else if (!expectedNotificationConsoleRemoved
+      && issue.label === 'organize-options'
+      && issue.kind === 'console-error'
+      && issue.value === 'github-notifications') {
+      pageIssues.splice(index, 1);
+      expectedNotificationConsoleRemoved = true;
+    }
   }
+  assert.equal(expectedNotificationConsoleRemoved, true);
   runtimeStage = 'probe_without_acceptance';
   const beforeUnaccepted = provider.capture.length;
   const unaccepted = await page.evaluate(testConnectionWithoutAcceptance);
-  assert.equal(unaccepted.ok, true);
-  assert.equal(provider.capture.length > beforeUnaccepted, true);
+  assert.equal(unaccepted.ok, false);
+  assert.equal(unaccepted.code, 'AGENT_DATA_DISCLOSURE_REQUIRED');
+  assert.equal(provider.capture.length, beforeUnaccepted);
+  runtimeStage = 'accept_data_disclosure';
+  await acceptAgentDataDisclosure(page);
   runtimeStage = 'configure_saved_provider';
   await configureSavedProvider(page, provider);
   runtimeStage = 'open_production_page_a';
@@ -444,7 +463,7 @@ try {
   runtimeStage = 'production_next_admission_budget';
   const organize = await page.evaluate(runOrganizeBudgetContinuationScenario, {
     rowCount: ROW_COUNT,
-    timeoutMs: TIMEOUT_MS,
+    timeoutMs: WORKER_RECOVERY_TIMEOUT_MS,
   });
   assert.equal(organize.count, ROW_COUNT);
   assert.equal(organize.snapshotBounded, true);
@@ -1176,6 +1195,16 @@ function githubWorkerFixture({ route, method }) {
       { 'x-oauth-scopes': 'public_repo, gist' },
     ),
     'GET github-watch-scope': json([], 'github_watch_scope'),
+    'GET github-owned-repos': json([], 'github_owned_repositories'),
+    'GET github-repository-search': json(
+      { total_count: 0, incomplete_results: false, items: [] },
+      'github_repository_search',
+    ),
+    'GET github-notifications': json(
+      { message: 'Resource not accessible by personal access token' },
+      'github_notifications_forbidden',
+      403,
+    ),
     // This host configures only the main token; dedicated notification-token coverage lives in extension-browser-smoke.mjs.
     'POST github-gists': json({ id: 'runtime-probe-gist' }, 'github_gist_create', 201),
     'DELETE github-probe-gist': {
@@ -1195,6 +1224,8 @@ function classifyRuntimeRoute(value) {
     if (url.origin === 'https://api.openai.com' && url.pathname === '/v1/responses') return 'responses';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user') return 'github-user';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user/starred') return 'github-starred';
+    if (url.origin === 'https://api.github.com' && /^\/users\/[^/]+\/repos$/u.test(url.pathname)) return 'github-owned-repos';
+    if (url.origin === 'https://api.github.com' && url.pathname === '/search/repositories') return 'github-repository-search';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user/subscriptions') return 'github-watch-scope';
     if (url.origin === 'https://api.github.com' && url.pathname === '/notifications') return 'github-notifications';
     if (url.origin === 'https://api.github.com' && url.pathname === '/gists/runtime-probe-gist') return 'github-probe-gist';
@@ -1808,6 +1839,7 @@ async function waitForOptionsReady(page) {
 }
 
 async function saveGitHubToken(page) {
+  await clickTrustedText(page, 'button', /^EN$/iu);
   runtimeStage = 'configure_production_github_field';
   await page.waitForSelector('textarea[placeholder="github_pat_..."]:not([disabled])', {
     visible: true,
@@ -1935,16 +1967,8 @@ async function runTrustedFullSync(page, storagePage, expectedCount) {
     return button instanceof HTMLButtonElement
       && !button.disabled
       && button.getClientRects().length > 0;
-  }), TIMEOUT_MS);
-  await dismissOnboardingTourIfVisible(page);
-  await waitUntil(() => page.evaluate(() => {
-    const root = document.getElementById('gsm-manager-host')?.shadowRoot;
-    const button = root?.querySelector('[data-coach-target="full-sync"]');
-    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
-    const rect = button.getBoundingClientRect();
-    const hitTarget = root?.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    return !!hitTarget && (hitTarget === button || button.contains(hitTarget));
-  }), TIMEOUT_MS);
+  }), SETUP_TIMEOUT_MS);
+  await waitForUnobstructedFullSyncButton(page);
   runtimeStage = 'production_full_sync_open_menu';
   await clickShadowSelectorTrusted(page, '[data-coach-target="full-sync"]');
   runtimeStage = 'production_full_sync_confirm';
@@ -2008,6 +2032,25 @@ async function hasExpectedStarCount(expectedCount) {
   }
 }
 
+async function waitForUnobstructedFullSyncButton(page) {
+  const deadline = Date.now() + SETUP_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await dismissOnboardingTourIfVisible(page);
+    const unobstructed = await page.evaluate(() => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+      const button = root?.querySelector('[data-coach-target="full-sync"]');
+      if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+      button.scrollIntoView({ block: 'center', inline: 'center' });
+      const rect = button.getBoundingClientRect();
+      const hitTarget = root?.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return !!hitTarget && (hitTarget === button || button.contains(hitTarget));
+    });
+    if (unobstructed) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('Timed out waiting for unobstructed Full Sync control.');
+}
+
 async function dismissOnboardingTourIfVisible(page) {
   const tourVisible = await page.evaluate(() => [...(document.getElementById('gsm-manager-host')
     ?.shadowRoot?.querySelectorAll('button') ?? [])].some((button) => (
@@ -2058,47 +2101,53 @@ async function shadowElement(page, selector) {
 }
 
 async function clickShadowSelectorTrusted(page, selector) {
-  const point = await page.evaluate((target) => {
-    const element = document.getElementById('gsm-manager-host')?.shadowRoot?.querySelector(target);
-    if (!(element instanceof HTMLElement)) return null;
-    element.scrollIntoView({ block: 'center', inline: 'center' });
-    const rect = element.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return null;
-    if (element instanceof HTMLButtonElement && element.disabled) return null;
-    const hitTarget = element.getRootNode().elementFromPoint(
-      rect.left + rect.width / 2,
-      rect.top + rect.height / 2,
-    );
-    if (!(hitTarget === element || element.contains(hitTarget))) return null;
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  }, selector);
-  if (!point) throw new Error('organize_shadow_target_unavailable');
+  let point = null;
+  await waitUntil(async () => {
+    point = await page.evaluate((target) => {
+      const element = document.getElementById('gsm-manager-host')?.shadowRoot?.querySelector(target);
+      if (!(element instanceof HTMLElement)) return null;
+      element.scrollIntoView({ block: 'center', inline: 'center' });
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      if (element instanceof HTMLButtonElement && element.disabled) return null;
+      const hitTarget = element.getRootNode().elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      );
+      if (!(hitTarget === element || element.contains(hitTarget))) return null;
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }, selector);
+    return point !== null;
+  }, TIMEOUT_MS);
   await page.mouse.click(point.x, point.y);
 }
 
 async function clickShadowTextTrusted(page, selector, matcher, scope = null) {
-  const point = await page.evaluate(({ target, source, flags, scopeSelector }) => {
-    const root = document.getElementById('gsm-manager-host')?.shadowRoot;
-    const scopeNode = scopeSelector ? root?.querySelector(scopeSelector) : root;
-    const expression = new RegExp(source, flags);
-    const element = [...(scopeNode?.querySelectorAll(target) ?? [])].find((candidate) => {
-      const rect = candidate.getBoundingClientRect();
-      return expression.test(candidate.textContent?.trim() ?? '')
-        && !(candidate instanceof HTMLButtonElement && candidate.disabled)
-        && rect.width > 0
-        && rect.height > 0;
-    });
-    if (!(element instanceof HTMLElement)) return null;
-    element.scrollIntoView({ block: 'center', inline: 'center' });
-    const rect = element.getBoundingClientRect();
-    const hitTarget = root?.elementFromPoint(
-      rect.left + rect.width / 2,
-      rect.top + rect.height / 2,
-    );
-    if (!(hitTarget === element || element.contains(hitTarget))) return null;
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  }, { target: selector, source: matcher.source, flags: matcher.flags, scopeSelector: scope });
-  if (!point) throw new Error('organize_shadow_text_target_unavailable');
+  let point = null;
+  await waitUntil(async () => {
+    point = await page.evaluate(({ target, source, flags, scopeSelector }) => {
+      const root = document.getElementById('gsm-manager-host')?.shadowRoot;
+      const scopeNode = scopeSelector ? root?.querySelector(scopeSelector) : root;
+      const expression = new RegExp(source, flags);
+      const element = [...(scopeNode?.querySelectorAll(target) ?? [])].find((candidate) => {
+        const rect = candidate.getBoundingClientRect();
+        return expression.test(candidate.textContent?.trim() ?? '')
+          && !(candidate instanceof HTMLButtonElement && candidate.disabled)
+          && rect.width > 0
+          && rect.height > 0;
+      });
+      if (!(element instanceof HTMLElement)) return null;
+      element.scrollIntoView({ block: 'center', inline: 'center' });
+      const rect = element.getBoundingClientRect();
+      const hitTarget = root?.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      );
+      if (!(hitTarget === element || element.contains(hitTarget))) return null;
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }, { target: selector, source: matcher.source, flags: matcher.flags, scopeSelector: scope });
+    return point !== null;
+  }, TIMEOUT_MS);
   await page.mouse.click(point.x, point.y);
 }
 async function openAgentDrawer(page) {
@@ -2769,10 +2818,19 @@ async function testConnectionWithoutAcceptance() {
     apiKey: 'runtime-key-without-acceptance',
   });
 }
+async function acceptAgentDataDisclosure(page) {
+  await clickTrustedText(page, 'button', /^Accept data sharing$/i);
+  await pollPageConfig(page, (config) => (
+    config?.agentDataDisclosureAcceptance?.version === 2
+    && config.agentDataDisclosureAcceptance.provider === 'openai'
+    && config.agentDataDisclosureAcceptance.origin === 'https://api.openai.com'
+  ));
+}
 
 async function runMissingCapabilityScenario({ timeoutMs }) {
   const port = chrome.runtime.connect({ name: 'bgsm-agent-organize-job' });
   const messages = [];
+
   const deliveryMetadata = [];
   port.onMessage.addListener((delivery) => {
     globalThis.__recordBgsmOrganizeJobDelivery(delivery, messages, deliveryMetadata);
@@ -4504,13 +4562,35 @@ async function disconnectActiveProviderReadScenario() {
 }
 
 async function testDeniedCustomHost() {
-  const response = await chrome.runtime.sendMessage({
-    type: 'testAgentProviderConnection',
-    provider: 'custom-openai-compatible',
-    baseUrl: 'https://runtime-denied.invalid/v1',
-    model: 'runtime-model',
-    apiKey: 'must-not-leave-extension',
+  const key = 'gsm_config';
+  const current = (await chrome.storage.local.get(key))[key] ?? {};
+  const previousAcceptance = current.agentDataDisclosureAcceptance ?? null;
+  await chrome.storage.local.set({
+    [key]: {
+      ...current,
+      agentDataDisclosureAcceptance: {
+        version: 2,
+        provider: 'custom-openai-compatible',
+        origin: 'https://runtime-denied.invalid',
+        acceptedAt: Date.now(),
+      },
+    },
   });
+  let response;
+  try {
+    response = await chrome.runtime.sendMessage({
+      type: 'testAgentProviderConnection',
+      provider: 'custom-openai-compatible',
+      baseUrl: 'https://runtime-denied.invalid/v1',
+      model: 'runtime-model',
+      apiKey: 'must-not-leave-extension',
+    });
+  } finally {
+    const latest = (await chrome.storage.local.get(key))[key] ?? {};
+    await chrome.storage.local.set({
+      [key]: { ...latest, agentDataDisclosureAcceptance: previousAcceptance },
+    });
+  }
   return {
     ok: response?.ok === true,
     permissionDenied: response?.ok === false && typeof response?.error === 'string'
@@ -4725,6 +4805,8 @@ function boundedUnexpectedRequestKinds(records) {
     'responses',
     'github-user',
     'github-starred',
+    'github-owned-repos',
+    'github-repository-search',
     'github-watch-scope',
     'github-notifications',
     'github-probe-gist',

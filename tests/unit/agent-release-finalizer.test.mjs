@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'vitest';
+import { writeDeterministicZip } from '../../scripts/deterministic-zip.mjs';
 import { RELEASE_MANUAL_EXCLUSIONS, RUNTIME_EVIDENCE_CONTRACTS } from '../../scripts/agent-runtime-release-evidence.mjs';
 import {
   cleanupOwnedPublicationTemps,
@@ -420,17 +420,19 @@ test('applies the package exact-entry rules before the finalizer reads ZIP membe
   const root = mkdtempSync(path.join(os.tmpdir(), 'bgsm-finalizer-zip-entry-'));
   const artifactsDir = path.join(root, 'artifacts');
   const distDir = path.join(root, 'dist');
-  const stageDir = path.join(root, 'stage');
   mkdirSync(artifactsDir);
   mkdirSync(distDir);
-  mkdirSync(stageDir);
   const zipName = `better-github-stars-manager-${VERSION}.zip`;
   const checksumName = `${zipName}.sha256`;
   const zipPath = path.join(artifactsDir, zipName);
   const checksumPath = path.join(artifactsDir, checksumName);
-  writeFileSync(path.join(stageDir, 'manifest.json'), JSON.stringify({ manifest_version: 3, version: VERSION }));
-  writeFileSync(path.join(stageDir, '-metadata.json'), '{}');
-  execFileSync('zip', ['-X', '-q', zipPath, '--', 'manifest.json', '-metadata.json'], { cwd: stageDir });
+  writeDeterministicZip(zipPath, [
+    { relativePath: '-metadata.json', bytes: Buffer.from('{}') },
+    {
+      relativePath: 'manifest.json',
+      bytes: Buffer.from(JSON.stringify({ manifest_version: 3, version: VERSION })),
+    },
+  ]);
   const zipBytes = readFileSync(zipPath);
   const zipSha256 = createHash('sha256').update(zipBytes).digest('hex');
   writeFileSync(checksumPath, `${zipSha256}  ${zipName}\n`);
@@ -511,6 +513,48 @@ test('enumerates only canonical regular release files and rejects extras or syml
     rmSync(runtimeFile);
     symlinkSync(path.join(artifactsDir, 'agent-runtime-verification.json'), runtimeFile);
     assert.throws(() => listReleaseArtifactFiles({ root, artifactsDir, packageVersion: VERSION }), /must not be a symlink/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('enumerates the exact Firefox extension and reviewer-source artifacts', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'bgsm-firefox-release-list-'));
+  const artifactsDir = path.join(root, 'artifacts', 'firefox');
+  const runtimeEvidenceDir = path.join(artifactsDir, 'runtime-evidence');
+  mkdirSync(runtimeEvidenceDir, { recursive: true });
+  const baseName = `better-github-stars-manager-firefox-${VERSION}`;
+  const topLevel = [
+    'agent-release-gate-evidence.json',
+    'agent-runtime-verification.json',
+    `${baseName}.zip`,
+    `${baseName}.zip.sha256`,
+    `${baseName}-source.zip`,
+    `${baseName}-source.zip.sha256`,
+    `release-evidence-${VERSION}.json`,
+    `release-evidence-${VERSION}.provisional.json`,
+  ];
+  for (const filename of topLevel) {
+    const privateEvidence = filename === `release-evidence-${VERSION}.json`
+      || filename === 'agent-release-gate-evidence.json';
+    writeFileSync(path.join(artifactsDir, filename), filename, privateEvidence ? { mode: 0o600 } : undefined);
+  }
+  for (const { filename } of Object.values(RUNTIME_EVIDENCE_CONTRACTS)) {
+    writeFileSync(path.join(runtimeEvidenceDir, filename), filename);
+  }
+  try {
+    const listed = listReleaseArtifactFiles({
+      root,
+      artifactsDir,
+      packageVersion: VERSION,
+      browserTarget: 'firefox',
+    });
+    assert.equal(listed.some((relativePath) => relativePath.endsWith(`${baseName}-source.zip`)), true);
+    rmSync(path.join(artifactsDir, `${baseName}-source.zip`));
+    assert.throws(
+      () => listReleaseArtifactFiles({ root, artifactsDir, packageVersion: VERSION, browserTarget: 'firefox' }),
+      /inventory contains missing, extra, private, temporary, or nested files/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

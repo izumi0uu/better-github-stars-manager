@@ -210,6 +210,8 @@ test('packages one deterministic inventory into staged files, ZIP, checksum, and
     zipManifestVersion: VERSION,
   });
   assert.equal(evidence.schemaVersion, 2);
+  assert.equal(Object.hasOwn(evidence, 'browserTarget'), false);
+  assert.equal(Object.hasOwn(evidence, 'reviewerSource'), false);
   assert.equal(evidence.package.releaseReady, false);
   assert.equal(evidence.package.dashboardSubmissionClaimed, false);
   assert.deepEqual(evidence.packagedPermissions.optionalPermissions, []);

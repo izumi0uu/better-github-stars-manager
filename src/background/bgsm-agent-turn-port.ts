@@ -37,6 +37,7 @@ import {
   AGENT_CONTEXT_CAPABILITY_REQUIRED,
   AGENT_CONTEXT_CAPABILITY_INFEASIBLE,
   AGENT_DATA_DISCLOSURE_REQUIRED,
+  AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
   AGENT_HOST_PERMISSION_DENIED,
   AGENT_MODEL_EMPTY,
   AGENT_PROVIDER_IDENTITY_CHANGED,
@@ -1038,7 +1039,10 @@ function classifyTurnError(error: unknown): AgentErrorCategory {
   }
   const code = error instanceof Error ? error.message : String(error);
   if (code === AGENT_DATA_DISCLOSURE_REQUIRED) return 'disclosure';
-  if (code === AGENT_HOST_PERMISSION_DENIED) return 'permission';
+  if (
+    code === AGENT_HOST_PERMISSION_DENIED ||
+    code === AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED
+  ) return 'permission';
   if (
     code === AGENT_PROVIDER_IDENTITY_CHANGED ||
     code === AGENT_CONTEXT_CAPABILITY_REQUIRED ||

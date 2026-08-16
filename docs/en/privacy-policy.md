@@ -2,9 +2,9 @@
 
 [简体中文](../zh/privacy-policy.md)
 
-Effective date: 2026-08-12
+Effective date: 2026-08-16
 
-Better GitHub Stars Manager is a Chrome extension for organizing GitHub starred repositories. This policy describes the data the extension processes, where it goes, how long local records remain, and how you can delete them.
+Better GitHub Stars Manager is a browser extension for organizing GitHub starred repositories. It is distributed through Chromium-based browser stores; a Firefox build is being prepared for Firefox Add-ons (AMO). This policy describes the data the extension processes, where it goes, how long local records remain, and how you can delete them.
 
 ## Limited Use disclosure
 
@@ -26,6 +26,24 @@ The extension processes data only to:
 - store and optionally sync your tags and notes through your own secret GitHub Gist
 - test or run Cubby through the AI service and exact origin you select
 - show the optional Watch Inbox after you request it, using the same GitHub credential after its Notifications capability is checked
+
+## Firefox data-collection declaration
+
+The Firefox build declares AMO data-collection categories in the packaged manifest so Firefox can present them when you install the extension. These categories describe the same product behavior as the rest of this policy:
+
+Required:
+
+- `authenticationInfo` — GitHub account identity, plus the encrypted Classic PAT you provide for authenticated GitHub API requests
+- `websiteActivity` — activity on the GitHub pages the extension manages, including starred-repository metadata, watched-repository membership, and notification metadata when you enable Watch Inbox
+- `websiteContent` — page content the extension reads and updates, including repository pages, the stars table, tags, and notes
+
+Optional:
+
+- `personalCommunications` — Cubby conversation messages and task data sent to the AI service you select
+
+The extension requests the optional `personalCommunications` permission only inside the explicit user action that enables or invokes Cubby, and records acceptance only when the browser grants it. Before each Cubby provider request, Firefox checks whether the permission is still granted. Declining or revoking it disables only the dependent Cubby AI request; Stars, sync, Watch, Radar, local organization, and GitHub API features remain usable.
+
+The data-collection permission is independent of the host permissions listed below. Granting or denying one does not grant or deny the other.
 
 ## Data the extension processes
 
@@ -59,7 +77,7 @@ The extension does not run ads, sell data, or send data to a developer-operated 
 
 ## Local and optional Gist storage
 
-- GitHub credentials are stored in `chrome.storage.local` after Advanced Encryption Standard Galois/Counter Mode (AES-GCM) encryption; the single Classic PAT is reused for Stars, Gist, Watch, and Following after capability checks
+- GitHub credentials are stored in the host browser's extension-storage area (`chrome.storage.local`) after Advanced Encryption Standard Galois/Counter Mode (AES-GCM) encryption; the single Classic PAT is reused for Stars, Gist, Watch, and Following after capability checks
 - AI-service API keys are stored in `chrome.storage.local` after AES-GCM encryption and are bound to the selected provider and canonical origin
 - Lightweight configuration, including the bound Gist ID, is stored in `chrome.storage.local`
 - Star metadata, tags, and notes are stored locally in IndexedDB for fast querying
@@ -77,7 +95,7 @@ Large tool results may be split into bounded local pages. Cubby can page them wi
 
 Canonical artifacts remain with their conversation. Re-fetchable artifact cache can expire or be cleared without deleting final answers. The conversation, recovery, and artifact ledger warns at 256 MiB and stops new writes at a 512 MiB logical limit. Re-fetchable cache has 2 MiB of headroom below that limit.
 
-The logical ledger includes conversation headers, attempts, recovery rows, messages, canonical artifacts, and re-fetchable cache. It excludes separately bounded Organize tables and differs from Chrome's browser-level estimate for all extension storage.
+The logical ledger includes conversation headers, attempts, recovery rows, messages, canonical artifacts, and re-fetchable cache. It excludes separately bounded Organize tables and differs from the host browser's whole-extension storage estimate.
 
 Cubby keeps at most one latest completed or cancelled Organize workflow in local IndexedDB. This separate record can include its instruction, frozen scope, proposal, Review and Apply state, receipt, and origin provenance. Starting a replacement Organize workflow removes the previous terminal workflow.
 
@@ -98,7 +116,9 @@ Provider and GitHub requests do not pass through a developer-operated proxy.
 
 ## Cubby data sharing
 
-Options shows a collapsed informational summary naming the selected provider and exact canonical origin. This notice does not grant Chrome host permission or block built-in Provider use.
+Options shows a collapsed informational summary naming the selected provider and exact canonical origin. This notice does not grant host permission or block built-in Provider use.
+
+Cubby runs only after you complete the explicit disclosure action that records the versioned acceptance of the selected provider and exact origin. On Firefox, the same action first requests the optional `personalCommunications` data permission, and acceptance is recorded only when the browser grants it. Declining or revoking that permission disables only the dependent Cubby AI request; Stars, sync, Watch, Radar, local organization, and GitHub API features remain usable.
 
 Cubby may send these task-data categories to your selected AI service when needed:
 
@@ -131,9 +151,9 @@ No analytics software development kit, ad network, tracking service, developer p
 
 ## Host permissions
 
-The current manifest requires GitHub page and API hosts plus the OpenAI, OpenRouter, and Anthropic hosts. Custom compatible services use Chrome optional host permissions.
+The manifest requires GitHub page and API hosts plus the OpenAI, OpenRouter, and Anthropic hosts. Custom compatible services use optional host permissions.
 
-Chrome's host pattern may cover every port for a scheme and hostname. The extension separately binds credentials and requests to the exact configured canonical origin, including its port. Learn how Chrome distinguishes required and optional access in [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions).
+A host match pattern may cover every port for a scheme and hostname. The extension separately binds credentials and requests to the exact configured canonical origin, including its port. Chromium-based browsers document the required and optional access distinction in [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions); Firefox exposes the same distinction through its optional-permissions API.
 
 ## Diagnostics boundary
 
@@ -149,14 +169,14 @@ An unpacked development build can expose an explicitly enabled one-shot raw capt
 - delete a Cubby conversation after cancelling or completing any linked active Organize workflow
 - dismiss the retained completed or cancelled Organize result from the workbench
 - clear re-fetchable Cubby tool cache in Options without deleting final answers or conversation data
-- uninstall the extension to remove Chrome-local extension storage
+- uninstall the extension to remove browser-local extension storage
 - delete the secret sync Gist from your GitHub account
 
 Deleting a conversation removes its transcript, attempt and recovery rows, and conversation-owned artifacts. This includes damaged attempt evidence. Deletion is blocked while the worker owns an active attempt or a linked Organize workflow remains nonterminal.
 
 Deleting the origin conversation does not delete the latest terminal Organize result. That record keeps immutable origin provenance, but provenance is not authorization. It remains until you dismiss it, start a replacement Organize workflow, or uninstall the extension.
 
-Uninstalling removes the extension's Chrome-local storage. A Gist created under your GitHub account remains until you delete it. Requests already sent to an AI service remain subject to that service's retention and deletion controls.
+Uninstalling removes the extension's browser-local storage. A Gist created under your GitHub account remains until you delete it. Requests already sent to an AI service remain subject to that service's retention and deletion controls.
 
 ## Security notes
 

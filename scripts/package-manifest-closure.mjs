@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 import { lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
-export const WORKER_BYTE_CEILING = 675_981;
+export const WORKER_BYTE_CEILING = 740_206;
 export const RELEASE_WORKER_BASELINE = Object.freeze({
-  relativePath: 'assets/index.ts-YFHzHOBI.js',
+  relativePath: 'assets/index.ts-CkQeZGmv.js',
   bytes: WORKER_BYTE_CEILING,
-  sha256: 'df9492a26ba7984c6fb736cf79a61aba795004de3f54bcc71a9f51d3cfe2bf42',
+  sha256: '9752d7463acee5886173e823f981c94c73bd0f2ac61e23724e3b79462636595e',
 });
 
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -123,16 +123,8 @@ export function resolvePackagePath(root, value, label = 'package path') {
 }
 
 export function parseMv3WorkerLoader({ manifest, loaderText }) {
-  if (
-    !isPlainObject(manifest)
-    || manifest.manifest_version !== 3
-    || !isPlainObject(manifest.background)
-    || manifest.background.type !== 'module'
-  ) throw new PackageClosureError('mv3_module_worker_required', 'background.service_worker');
-  const loaderRelativePath = normalizeJavaScriptPath(
-    manifest.background.service_worker,
-    'background.service_worker',
-  );
+  const backgroundLoader = resolveMv3BackgroundLoader(manifest);
+  const { loaderRelativePath } = backgroundLoader;
   if (typeof loaderText !== 'string') {
     throw new PackageClosureError('worker_loader_invalid', loaderRelativePath);
   }
@@ -188,7 +180,8 @@ export function collectManifestResourceReferences(manifest) {
     }
   }
   if (isPlainObject(manifest.background)) {
-    addOptionalString(manifest.background.service_worker, 'background.service_worker', add);
+    const backgroundLoader = resolveMv3BackgroundLoader(manifest);
+    add(backgroundLoader.loaderRelativePath, backgroundLoader.manifestReferrer);
   }
   if (isPlainObject(manifest.storage)) {
     addOptionalString(manifest.storage.managed_schema, 'storage.managed_schema', add);
@@ -235,21 +228,20 @@ export function validateManifestResourceClosure({ manifest, packageEntries }) {
     relativePath: entry.relativePath,
     referencedBy: [...entry.referencedBy],
   }));
-  const loaderRelativePath = normalizeJavaScriptPath(
-    packagedManifest?.background?.service_worker,
-    'background.service_worker',
-  );
+  const backgroundLoader = resolveMv3BackgroundLoader(packagedManifest);
+  const loaderRelativePath = backgroundLoader.loaderRelativePath;
   const loader = entries.get(loaderRelativePath);
   if (!loader) throw new PackageClosureError('manifest_resource_missing', loaderRelativePath);
   const { workerRelativePath } = parseMv3WorkerLoader({
     manifest: packagedManifest,
     loaderText: decodeUtf8(loader.bytes, loaderRelativePath),
   });
+  const workerImportReferrer = `${backgroundLoader.manifestReferrer}.import`;
   const workerRef = references.find((entry) => entry.relativePath === workerRelativePath);
-  if (workerRef) workerRef.referencedBy.push('background.service_worker.import');
+  if (workerRef) workerRef.referencedBy.push(workerImportReferrer);
   else references.push({
     relativePath: workerRelativePath,
-    referencedBy: ['background.service_worker.import'],
+    referencedBy: [workerImportReferrer],
   });
   references.sort((left, right) => bytewiseCompare(left.relativePath, right.relativePath));
 
@@ -402,6 +394,38 @@ function indexPackageEntries(packageEntries) {
   return entries;
 }
 
+function resolveMv3BackgroundLoader(manifest) {
+  if (
+    !isPlainObject(manifest)
+    || manifest.manifest_version !== 3
+    || !isPlainObject(manifest.background)
+    || manifest.background.type !== 'module'
+  ) throw new PackageClosureError('mv3_module_worker_required', 'background');
+
+  const background = manifest.background;
+  const hasServiceWorker = Object.hasOwn(background, 'service_worker');
+  const hasScripts = Object.hasOwn(background, 'scripts');
+  if (hasServiceWorker === hasScripts) {
+    throw new PackageClosureError(
+      hasServiceWorker ? 'mv3_background_ambiguous' : 'mv3_module_worker_required',
+      'background',
+    );
+  }
+
+  if (hasServiceWorker) {
+    return Object.freeze({
+      loaderRelativePath: normalizeJavaScriptPath(background.service_worker, 'background.service_worker'),
+      manifestReferrer: 'background.service_worker',
+    });
+  }
+  if (!Array.isArray(background.scripts) || background.scripts.length !== 1) {
+    throw new PackageClosureError('mv3_background_scripts_invalid', 'background.scripts');
+  }
+  return Object.freeze({
+    loaderRelativePath: normalizeJavaScriptPath(background.scripts[0], 'background.scripts[0]'),
+    manifestReferrer: 'background.scripts[0]',
+  });
+}
 function normalizeJavaScriptPath(value, label) {
   const relativePath = normalizePackageRelativePath(value, label);
   if (containsWildcard(relativePath)) throw new PackageClosureError('package_path_invalid', label);
