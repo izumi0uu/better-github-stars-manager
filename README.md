@@ -32,6 +32,59 @@
 - [参与贡献](#参与贡献) · [许可证](#许可证)
 - [链接](#链接) · [友情链接](#友情链接)
 
+## 开始使用
+
+### 安装
+
+| | 商店 | 适用浏览器 |
+| :---: | --- | --- |
+| [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome、Edge、Brave、Opera 等 Chromium 内核浏览器 |
+| [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · 即将上架 | Microsoft Edge |
+| [<img src="store-assets/store-badges/firefox.svg" alt="Get it on Firefox Add-ons" height="55">](https://addons.mozilla.org/firefox/) | [Firefox Add-ons](https://addons.mozilla.org/firefox/) · 即将上架 | Firefox |
+| [<img src="store-assets/store-badges/opera.svg" alt="Get it on Opera Add-ons" height="55">](https://addons.opera.com/extensions/) | [Opera Add-ons](https://addons.opera.com/extensions/) · 即将上架 | Opera |
+
+<!-- TODO: Edge、Firefox、Opera 上架后，把对应的占位链接替换为扩展页地址 -->
+
+扩展基于 Manifest V3。安装后打开 `https://github.com/{you}?tab=stars`，管理器会出现在 Stars 页面中。
+
+### 首次同步
+
+1. 打开扩展 **Options** 页
+2. 创建 GitHub Classic PAT，并授予 `repo` 与 `gist` scope
+3. 按需追加 `notifications`（Watch）和 `read:user`（Following）权限
+4. 粘贴 Token，点击 **Save & verify**
+5. 打开 `https://github.com/{you}?tab=stars` 自动启动
+6. 首次进入时自动运行 **Full Sync**
+
+打开[预填的 Classic PAT 表单](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager)，按下图完成配置。
+
+<details>
+<summary><strong>展开图文配置 GitHub Token</strong></summary>
+
+<br>
+
+#### 1. 设置有效期
+
+保留 Note，并选择有限有效期。
+
+<img src="store-assets/screenshots/token-guide-create-classic-pat.webp" alt="Classic PAT 的 Note、有效期和 repo scope" width="1568" height="875" />
+
+#### 2. 确认 scopes
+
+保留 `repo`、`gist`、`notifications` 和 `read:user`；不要勾选 `user`。
+
+<img src="store-assets/screenshots/token-guide-select-scopes.webp" alt="已勾选 gist、notifications 和 read:user，未勾选 user" width="1568" height="520" />
+
+#### 3. 生成并保存
+
+点击 **Generate token**，复制 Token，粘贴到 **Options > GitHub Classic PAT**，然后点击 **Save & verify**。
+
+<img src="store-assets/screenshots/token-guide-generate-token.webp" alt="点击 Generate token 生成 GitHub Classic PAT" width="888" height="290" />
+
+GitHub 只显示一次 Token，请妥善保管。
+
+</details>
+
 ## 你的 Stars 可以是一个管理面板
 
 GitHub Stars 可以浏览 star 项目，但是有时候你会忘了你 star 过什么。当 stars 超过几百个后，你难以回忆起你之前的收藏，看到仓库名字，你也忘记它是什么了。
@@ -147,59 +200,6 @@ Github token 会进行本地加密。Cubby 对话、恢复记录和产物以未�
 
 项目没有其他后端服务、GitHub 代理、AI 代理、分析 SDK、广告网络或跟踪服务。完整说明见 [隐私政策](docs/zh/privacy-policy.md)。
 
-## 开始使用
-
-### 安装
-
-| | 商店 | 适用浏览器 |
-| :---: | --- | --- |
-| [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome、Edge、Brave、Opera 等 Chromium 内核浏览器 |
-| [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · 即将上架 | Microsoft Edge |
-| [<img src="store-assets/store-badges/firefox.svg" alt="Get it on Firefox Add-ons" height="55">](https://addons.mozilla.org/firefox/) | [Firefox Add-ons](https://addons.mozilla.org/firefox/) · 即将上架 | Firefox |
-| [<img src="store-assets/store-badges/opera.svg" alt="Get it on Opera Add-ons" height="55">](https://addons.opera.com/extensions/) | [Opera Add-ons](https://addons.opera.com/extensions/) · 即将上架 | Opera |
-
-<!-- TODO: Edge、Firefox、Opera 上架后，把对应的占位链接替换为扩展页地址 -->
-
-扩展基于 Manifest V3。安装后打开 `https://github.com/{you}?tab=stars`，管理器会出现在 Stars 页面中。
-
-### 首次同步
-
-1. 打开扩展 **Options** 页
-2. 创建 GitHub Classic PAT，并授予 `repo` 与 `gist` scope
-3. 按需追加 `notifications`（Watch）和 `read:user`（Following）权限
-4. 粘贴 Token，点击 **Save & verify**
-5. 打开 `https://github.com/{you}?tab=stars` 自动启动
-6. 首次进入时自动运行 **Full Sync**
-
-打开[预填的 Classic PAT 表单](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager)，按下图完成配置。
-
-<details>
-<summary><strong>展开图文配置 GitHub Token</strong></summary>
-
-<br>
-
-#### 1. 设置有效期
-
-保留 Note，并选择有限有效期。
-
-<img src="store-assets/screenshots/token-guide-create-classic-pat.webp" alt="Classic PAT 的 Note、有效期和 repo scope" width="1568" height="875" />
-
-#### 2. 确认 scopes
-
-保留 `repo`、`gist`、`notifications` 和 `read:user`；不要勾选 `user`。
-
-<img src="store-assets/screenshots/token-guide-select-scopes.webp" alt="已勾选 gist、notifications 和 read:user，未勾选 user" width="1568" height="520" />
-
-#### 3. 生成并保存
-
-点击 **Generate token**，复制 Token，粘贴到 **Options > GitHub Classic PAT**，然后点击 **Save & verify**。
-
-<img src="store-assets/screenshots/token-guide-generate-token.webp" alt="点击 Generate token 生成 GitHub Classic PAT" width="888" height="290" />
-
-GitHub 只显示一次 Token，请妥善保管。
-
-</details>
-
 ## 它不会做什么
 
 Better GitHub Stars Manager 是 Stars 页面的增强层，不是另一个平台：
@@ -253,6 +253,8 @@ pnpm test:smoke
 - [隐私政策](docs/zh/privacy-policy.md)
 - [Chrome Web Store 更新说明](docs/zh/chrome-web-store-submission.md)
 - [Firefox Add-ons 提交参考](docs/zh/firefox-amo-submission.md)
+- [Microsoft Edge Add-ons 提交参考](docs/zh/edge-addons-submission.md)
+- [Opera Add-ons 提交参考](docs/zh/opera-addons-submission.md)
 
 ## 参与贡献
 
