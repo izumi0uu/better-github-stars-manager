@@ -394,7 +394,7 @@ export async function runExtensionBrowserSmoke(options = {}) {
         storeRatingSync.restore();
       }
       await assertStoreRatingOptions(extensionId);
-      ok('prompt stayed suppressed through onboarding, recovery, and active work; keyboard dismissal restored the favorite control and Options could disable/re-enable reminders');
+      ok('prompt stayed suppressed through onboarding, recovery, and active work; keyboard dismissal restored the favorite control and Options showed the store link without a reminder toggle');
     }
 
     step('12) Watch recovery opens focused GitHub authorization without clearing the Classic PAT');
@@ -2969,8 +2969,8 @@ async function assertStoreRatingOptions(extId) {
     await page.waitForSelector('[data-testid="store-rating-settings"]', { timeout: 10_000 });
     await page.waitForFunction(() => {
       const settings = document.querySelector('[data-testid="store-rating-settings"]');
-      return settings?.querySelector('#store-rating-reminder')?.getAttribute('aria-checked') === 'true'
-        && settings.textContent?.includes('Paused until');
+      return settings?.querySelector('a') instanceof HTMLAnchorElement
+        && settings.querySelector('#store-rating-reminder') === null;
     }, { polling: DOM_POLLING_MS, timeout: 10_000 });
     const initial = await page.evaluate(async () => {
       const settings = document.querySelector('[data-testid="store-rating-settings"]');
@@ -2991,26 +2991,23 @@ async function assertStoreRatingOptions(extId) {
       hasRatingValue: false,
     });
 
-    await page.click('#store-rating-reminder');
-    await page.waitForFunction(
-      () => document.querySelector('#store-rating-reminder')?.getAttribute('aria-checked') === 'false',
-      { polling: DOM_POLLING_MS, timeout: 5_000 },
-    );
-    const disabled = await page.evaluate(async () => (
-      (await chrome.storage.local.get('gsm_config')).gsm_config?.storeRatingPrompt?.status
-    ));
-    assert.equal(disabled, 'disabled');
-
-    await page.click('#store-rating-reminder');
-    await page.waitForFunction(
-      () => document.querySelector('#store-rating-reminder')?.getAttribute('aria-checked') === 'true',
-      { polling: DOM_POLLING_MS, timeout: 5_000 },
-    );
-    const reenabled = await page.evaluate(async () => {
+    await page.evaluate(() => {
+      const settings = document.querySelector('[data-testid="store-rating-settings"]');
+      const link = settings?.querySelector('a');
+      if (link instanceof HTMLAnchorElement) {
+        link.addEventListener('click', (event) => event.preventDefault());
+        link.click();
+      }
+    });
+    await page.waitForFunction(async () => {
+      const prompt = (await chrome.storage.local.get('gsm_config')).gsm_config?.storeRatingPrompt;
+      return prompt?.status === 'store_opened';
+    }, { polling: DOM_POLLING_MS, timeout: 5_000 });
+    const opened = await page.evaluate(async () => {
       const prompt = (await chrome.storage.local.get('gsm_config')).gsm_config?.storeRatingPrompt;
       return { status: prompt?.status ?? null, exposureCount: prompt?.exposureCount ?? null };
     });
-    assert.deepEqual(reenabled, { status: 'tracking', exposureCount: 0 });
+    assert.deepEqual(opened, { status: 'store_opened', exposureCount: 1 });
   } finally {
     await page.close();
   }

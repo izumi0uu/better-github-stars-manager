@@ -50,9 +50,7 @@ import {
 } from "@/preferences";
 import {
   CURRENT_EXTENSION_STORE_LISTING,
-  DEFAULT_STORE_RATING_PROMPT_STATE,
 } from '@/store-rating';
-import type { StoreRatingPromptState } from "@/types";
 import tokenGuideCreateUrl from "../../store-assets/screenshots/token-guide-create-classic-pat.webp?url";
 import tokenGuideScopesUrl from "../../store-assets/screenshots/token-guide-select-scopes.webp?url";
 import tokenGuideGenerateUrl from "../../store-assets/screenshots/token-guide-generate-token.webp?url";
@@ -105,9 +103,6 @@ export function Options() {
   const persistedMaxTagsPerRepoRef = useRef(String(DEFAULT_AUTO_TAG_LIMIT));
   const persistedMinTopicRepoCountRef = useRef(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
   const [starsPanelDefaultEnabled, setStarsPanelDefaultEnabled] = useState(true);
-  const [storeRatingPrompt, setStoreRatingPrompt] = useState<StoreRatingPromptState>(
-    DEFAULT_STORE_RATING_PROMPT_STATE,
-  );
   const [tokenBusy, setTokenBusy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [msg, setMsg] = useState<OptionsMessage | null>(null);
@@ -137,7 +132,6 @@ export function Options() {
     persistedMaxTagsPerRepoRef.current = String(c.maxTagsPerRepo);
     persistedMinTopicRepoCountRef.current = String(c.minTopicRepoCount);
     setStarsPanelDefaultEnabled(c.starsPanelDefaultEnabled);
-    setStoreRatingPrompt(c.storeRatingPrompt);
     setSyncStatus((current) => mergeStatusSnapshot(current, status));
   };
   useEffect(() => {
@@ -246,22 +240,9 @@ export function Options() {
     await authStore.update({ starsPanelDefaultEnabled: checked });
   };
 
-  const setStoreRatingReminderEnabled = async (enabled: boolean) => {
-    setStoreRatingMessage(null);
-    try {
-      const config = enabled
-        ? await authStore.reenableStoreRatingPrompt()
-        : await authStore.disableStoreRatingPrompt();
-      setStoreRatingPrompt(config.storeRatingPrompt);
-    } catch (error) {
-      setStoreRatingMessage({ kind: "err", text: translateError(error, m) });
-    }
-  };
-
   const markStoreRatingOpened = () => {
     setStoreRatingMessage(null);
     void authStore.recordStoreRatingNavigation()
-      .then((config) => setStoreRatingPrompt(config.storeRatingPrompt))
       .catch((error) => {
         setStoreRatingMessage({ kind: "err", text: translateError(error, m) });
       });
@@ -289,24 +270,6 @@ export function Options() {
     : null;
   const starsUrl =
     hasUsableToken && username ? `https://github.com/${username}?tab=stars` : null;
-  const storeRatingSnoozeActive = storeRatingPrompt.status === 'snoozed'
-    && !!storeRatingPrompt.snoozeUntil
-    && Date.parse(storeRatingPrompt.snoozeUntil) > Date.now();
-  const storeRatingReminderEnabled = storeRatingPrompt.status === 'tracking'
-    || storeRatingPrompt.status === 'snoozed';
-  const storeRatingReminderStatus = storeRatingSnoozeActive
-    ? m.options.storeRatingReminderSnoozed(
-      new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(
-        new Date(storeRatingPrompt.snoozeUntil!),
-      ),
-    )
-    : storeRatingPrompt.status === 'exhausted'
-      ? m.options.storeRatingReminderExhausted
-      : storeRatingPrompt.status === 'store_opened'
-        ? m.options.storeRatingReminderStoreOpened
-        : storeRatingPrompt.status === 'disabled'
-          ? m.options.storeRatingReminderDisabled
-          : m.options.storeRatingReminderTracking;
 
 
   useEffect(() => {
@@ -681,31 +644,6 @@ export function Options() {
                 </Button>
               </div>
 
-              <div className="flex items-start gap-3">
-                <Checkbox
-                  id="store-rating-reminder"
-                  checked={storeRatingReminderEnabled}
-                  onCheckedChange={(checked) => {
-                    void setStoreRatingReminderEnabled(checked === true);
-                  }}
-                  aria-label={storeRatingReminderEnabled
-                    ? m.options.storeRatingReminderDisable
-                    : m.options.storeRatingReminderEnable}
-                  aria-describedby="store-rating-reminder-status"
-                  className="mt-0.5"
-                />
-                <label
-                  htmlFor="store-rating-reminder"
-                  className="grid cursor-pointer gap-1"
-                >
-                  <span className="text-sm font-medium text-foreground">
-                    {m.options.storeRatingReminderLabel}
-                  </span>
-                  <span id="store-rating-reminder-status" className="gsm-body-note">
-                    {storeRatingReminderStatus}
-                  </span>
-                </label>
-              </div>
               {storeRatingMessage && (
                 <StatusNotice
                   message={storeRatingMessage}

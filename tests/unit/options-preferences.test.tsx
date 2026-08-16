@@ -387,7 +387,7 @@ describe('Options preferences', () => {
     expect(clearCache?.disabled).toBe(true);
   });
 
-  it('offers the verified store link and explicit reminder disable/re-enable controls', async () => {
+  it('offers the verified store link without an automatic-reminder toggle', async () => {
     const disabled = config({
       storeRatingPrompt: {
         version: 1,
@@ -398,49 +398,23 @@ describe('Options preferences', () => {
         snoozeUntil: null,
       },
     });
-    const tracking = config({
-      storeRatingPrompt: {
-        ...disabled.storeRatingPrompt,
-        status: 'tracking',
-        exposureCount: 0,
-      },
-    });
     const storeOpened = config({
       storeRatingPrompt: {
-        ...tracking.storeRatingPrompt,
+        ...disabled.storeRatingPrompt,
         status: 'store_opened',
       },
     });
     authMocks.getConfig.mockResolvedValue(disabled);
     authMocks.hasToken.mockResolvedValue(true);
-    authMocks.reenableStoreRatingPrompt.mockResolvedValue(tracking);
-    authMocks.disableStoreRatingPrompt.mockResolvedValue(disabled);
     authMocks.recordStoreRatingNavigation.mockResolvedValue(storeOpened);
 
     await renderOptions();
 
     const panel = document.querySelector('[data-testid="store-rating-settings"]');
     const link = panel?.querySelector<HTMLAnchorElement>('a[href="https://example.com/reviews"]');
-    const reminder = panel?.querySelector<HTMLButtonElement>('#store-rating-reminder');
     expect(link?.textContent).toContain('Rate in Chrome Web Store');
     expect(link?.target).toBe('_blank');
-    expect(reminder?.getAttribute('aria-checked')).toBe('false');
-    expect(panel?.textContent).toContain('Disabled');
-
-    await click(reminder!);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(authMocks.reenableStoreRatingPrompt).toHaveBeenCalledTimes(1);
-    expect(reminder?.getAttribute('aria-checked')).toBe('true');
-    expect(panel?.textContent).toContain('Enabled');
-
-    await click(reminder!);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(authMocks.disableStoreRatingPrompt).toHaveBeenCalledTimes(1);
-    expect(reminder?.getAttribute('aria-checked')).toBe('false');
+    expect(panel?.querySelector('#store-rating-reminder')).toBeNull();
 
     link!.addEventListener('click', (event) => event.preventDefault());
     await act(async () => {
@@ -448,7 +422,6 @@ describe('Options preferences', () => {
       await Promise.resolve();
     });
     expect(authMocks.recordStoreRatingNavigation).toHaveBeenCalledTimes(1);
-    expect(panel?.textContent).toContain('Disabled after opening the store');
   });
 
   it('keeps rating persistence errors local without replacing token feedback', async () => {
@@ -462,15 +435,12 @@ describe('Options preferences', () => {
         snoozeUntil: null,
       },
     });
-    const tracking = config({
-      storeRatingPrompt: { ...disabled.storeRatingPrompt, status: 'tracking' },
-    });
     authMocks.getConfig.mockResolvedValue(disabled);
     authMocks.hasToken.mockResolvedValue(true);
     authMocks.setToken.mockRejectedValue(new Error('token persistence failed'));
-    authMocks.reenableStoreRatingPrompt
+    authMocks.recordStoreRatingNavigation
       .mockRejectedValueOnce(new Error('rating persistence failed'))
-      .mockResolvedValueOnce(tracking);
+      .mockResolvedValueOnce(disabled);
 
     await renderOptions();
 
@@ -482,15 +452,22 @@ describe('Options preferences', () => {
     await click(saveToken!);
 
     const panel = document.querySelector('[data-testid="store-rating-settings"]');
-    const reminder = panel?.querySelector<HTMLButtonElement>('#store-rating-reminder');
-    await click(reminder!);
+    const link = panel?.querySelector<HTMLAnchorElement>('a[href="https://example.com/reviews"]');
+    link!.addEventListener('click', (event) => event.preventDefault());
+    await act(async () => {
+      link!.click();
+      await Promise.resolve();
+    });
 
     expect(document.querySelector('[data-testid="main-token-status"]')?.getAttribute('role')).toBe('alert');
     expect(panel?.querySelector('[data-testid="store-rating-status"]')?.getAttribute('role')).toBe('alert');
 
-    await click(reminder!);
+    await act(async () => {
+      link!.click();
+      await Promise.resolve();
+    });
 
-    expect(authMocks.reenableStoreRatingPrompt).toHaveBeenCalledTimes(2);
+    expect(authMocks.recordStoreRatingNavigation).toHaveBeenCalledTimes(2);
     expect(panel?.querySelector('[data-testid="store-rating-status"]')).toBeNull();
     expect(document.querySelector('[data-testid="main-token-status"]')?.getAttribute('role')).toBe('alert');
   });

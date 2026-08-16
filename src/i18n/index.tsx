@@ -833,14 +833,6 @@ export interface MessageCatalog {
     storeRatingHeading: string;
     storeRatingManualAction: (store: string) => string;
     storeRatingManualHint: (store: string) => string;
-    storeRatingReminderLabel: string;
-    storeRatingReminderTracking: string;
-    storeRatingReminderSnoozed: (date: string) => string;
-    storeRatingReminderDisabled: string;
-    storeRatingReminderExhausted: string;
-    storeRatingReminderStoreOpened: string;
-    storeRatingReminderEnable: string;
-    storeRatingReminderDisable: string;
     agentHeading: string;
     agentIntro: string;
     agentServiceLabel: string;
@@ -2071,14 +2063,6 @@ const messages: Record<Locale, MessageCatalog> = {
       storeRatingManualAction: (store) => `Rate in ${store}`,
       storeRatingManualHint: (store) =>
         `Opens the verified Better GitHub Stars Manager listing in ${store}.`,
-      storeRatingReminderLabel: "Automatic rating reminder",
-      storeRatingReminderTracking: "Enabled",
-      storeRatingReminderSnoozed: (date) => `Paused until ${date}`,
-      storeRatingReminderDisabled: "Disabled",
-      storeRatingReminderExhausted: "Finished after two reminders",
-      storeRatingReminderStoreOpened: "Disabled after opening the store",
-      storeRatingReminderEnable: "Enable reminders",
-      storeRatingReminderDisable: "Disable reminders",
       agentHeading: "2. Cubby",
       agentIntro:
         "Connect an AI service. Cubby sends requests directly to it and shows the results in the extension.",
@@ -3373,14 +3357,6 @@ const messages: Record<Locale, MessageCatalog> = {
       storeRatingManualAction: (store) => `前往 ${store} 评分`,
       storeRatingManualHint: (store) =>
         `打开 Better GitHub Stars Manager 在 ${store} 中已验证的商店页面。`,
-      storeRatingReminderLabel: "自动评分提醒",
-      storeRatingReminderTracking: "已启用",
-      storeRatingReminderSnoozed: (date) => `已暂停至 ${date}`,
-      storeRatingReminderDisabled: "已停用",
-      storeRatingReminderExhausted: "两次提醒已完成",
-      storeRatingReminderStoreOpened: "打开商店后已停用",
-      storeRatingReminderEnable: "启用提醒",
-      storeRatingReminderDisable: "停用提醒",
       tokenHeading: "1. GitHub Classic PAT",
       tokenIntroPrefix: "创建 Stars、Gist、Watch 和 Following 共用的唯一 GitHub token：",
       tokenLinkLabel: "打开已预填的 classic token 表单",
