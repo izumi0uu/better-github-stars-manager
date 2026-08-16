@@ -38,7 +38,7 @@
 
 ### 安装
 
-| | 商店 | 适用浏览器 |
+| 浏览器 | 商店 | 适用浏览器 |
 | :---: | --- | --- |
 | [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome、Edge、Brave、Opera 等 Chromium 内核浏览器 |
 | [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · 即将上架 | Microsoft Edge |
