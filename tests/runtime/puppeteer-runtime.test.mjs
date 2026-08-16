@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildExtensionBrowserLaunchOptions,
   normalizePuppeteerDriver,
+  prepareFirefox140ExtensionPage,
   resolveExecutablePath,
 } from './puppeteer-runtime.mjs';
 import {
@@ -33,9 +34,27 @@ assert.deepEqual(
 );
 assert.equal(firefoxOptions.extraPrefsFirefox['ui.prefersReducedMotion'], 1);
 assert.equal(firefoxOptions.extraPrefsFirefox['extensions.webextOptionalPermissionPrompts'], false);
+const firefoxFailClosedOptions = buildExtensionBrowserLaunchOptions({
+  target: 'firefox',
+  dist: '/tmp/dist-firefox',
+  userDataDir: '/tmp/firefox-profile',
+  executablePath: '/tmp/firefox',
+  failClosedNetwork: true,
+});
+assert.equal(firefoxFailClosedOptions.extraPrefsFirefox['network.proxy.allow_hijacking_localhost'], true);
 assert.equal(normalizePuppeteerDriver(), 'default');
 assert.equal(normalizePuppeteerDriver('firefox_140'), 'firefox_140');
 assert.throws(() => normalizePuppeteerDriver('firefox_141'), /Unsupported Puppeteer driver/u);
+const predicateError = new Error('Firefox 140 predicate failed');
+const preparedPage = prepareFirefox140ExtensionPage({
+  evaluate: async () => {
+    throw predicateError;
+  },
+});
+await assert.rejects(
+  () => preparedPage.waitForFunction(() => true, { polling: 1, timeout: 10 }),
+  (error) => error === predicateError,
+);
 console.log('✓ puppeteer runtime preserves Chrome defaults and configures real Firefox launch');
 
 try {

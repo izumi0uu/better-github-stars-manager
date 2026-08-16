@@ -108,6 +108,8 @@ export async function runExtensionBrowserSmoke(options = {}) {
       executablePath,
       userDataDir: profile,
       protocolTimeout: 90_000,
+      // Firefox BiDi cannot observe event-page replacement, so lost test guards must still fail closed.
+      failClosedNetwork: runtimeTarget === 'firefox',
       puppeteerDriver: options.puppeteerDriver,
     });
     extensionPageOpener = options.puppeteerDriver === 'firefox_140'
@@ -523,10 +525,15 @@ async function assertScheduledRefreshAlarms(page, expectRecommendationAlarm) {
       },
     );
   } catch (error) {
-    const alarms = await page.evaluate(async () => chrome.alarms.getAll());
+    let alarmState;
+    try {
+      alarmState = JSON.stringify(await page.evaluate(async () => chrome.alarms.getAll()));
+    } catch (diagnosticError) {
+      alarmState = `unavailable (${formatError(diagnosticError)})`;
+    }
     throw await pageWaitError(
       page,
-      `scheduled refresh alarms were not installed: ${JSON.stringify(alarms)}`,
+      `scheduled refresh alarms were not installed: ${alarmState}`,
       error,
     );
   }

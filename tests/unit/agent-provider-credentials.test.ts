@@ -503,6 +503,41 @@ describe('agent provider credential persistence', () => {
     expect(await authStore.getAgentApiKey()).toBeNull();
   });
 
+  it('clears saved credential material even when the stored Custom endpoint is invalid', async () => {
+    installChrome({
+      gsm_config: {
+        agentProvider: {
+          provider: 'custom-openai-compatible',
+          protocol: 'responses',
+          baseUrl: 'not a URL',
+          model: 'custom-model',
+          apiKeyEncrypted: 'opaque-cipher:73617665642d736563726574',
+          apiKeyCryptoMeta: { iv: 'iv', salt: 'salt' },
+          credentialScope: {
+            provider: 'custom-openai-compatible',
+            origin: 'https://relay.example.com',
+          },
+          credentialRevision: 'cr:v1:stored',
+          capability: null,
+        },
+      },
+    });
+    const { authStore } = await import('@/auth/auth-store');
+
+    expect((await authStore.getConfig()).agentProvider.apiKeyEncrypted).not.toBeNull();
+    await authStore.clearAgentProviderApiKey();
+
+    expect((await authStore.getConfig()).agentProvider).toEqual(expect.objectContaining({
+      baseUrl: 'not a URL',
+      apiKeyEncrypted: null,
+      apiKeyCryptoMeta: null,
+      credentialScope: null,
+      credentialRevision: null,
+      capability: null,
+    }));
+    expect(await authStore.getAgentApiKey()).toBeNull();
+  });
+
   it('rotates revision/cache on same-origin replacement and returns one atomic ready snapshot', async () => {
     installChrome();
     const { authStore } = await import('@/auth/auth-store');

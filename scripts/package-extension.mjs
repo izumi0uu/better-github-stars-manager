@@ -44,6 +44,7 @@ import {
   FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS,
   FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS,
 } from './build-firefox-extension.mjs';
+import { assertFirefoxManifestContract } from './check-firefox-output-contracts.mjs';
 import {
   parseViteChunkAdvisories,
   validateProvisionalReleaseEvidence,
@@ -123,6 +124,9 @@ export function packageExtension(options = {}) {
 
   const sourceManifest = parseRootManifest(inventory, 'source manifest');
   assertVersionIdentity(packageVersion, sourceManifest.version, approvedVersion);
+  if (target === 'firefox') {
+    assertFirefoxManifestContract(sourceManifest, { expectedVersion: packageVersion });
+  }
   const permissions = readAndValidatePermissions(sourceManifest, target);
   assertProductionDisclosure(inventory);
   if (target === 'firefox') assertRemoteExecutableCodeExcluded(inventory);

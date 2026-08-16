@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { authStore } from "@/auth/auth-store";
 import {
   hasAgentPersonalCommunicationsPermission,
@@ -209,7 +209,9 @@ export function OptionsAgentSettings({
     customAgentSelected ? agentBaseUrl : null,
     customAgentSelected ? agentProtocol : null,
   );
-  agentDisclosureTargetRef.current = agentDisclosureTarget;
+  useLayoutEffect(() => {
+    agentDisclosureTargetRef.current = agentDisclosureTarget;
+  }, [agentDisclosureTarget]);
   const customAgentHostAccessRequired = !!agentDisclosureTarget &&
     getAgentProviderHostAccess(
       agentDisclosureTarget.provider,

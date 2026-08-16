@@ -157,6 +157,8 @@ async function run() {
   );
   scenario.semanticStage = 'setup_hook_page';
   pageDiagnostics = hookPageDiagnostics(page, 'agent-worker-recovery-options', { issues: pageIssues });
+  scenario.semanticStage = 'setup_use_english_locale';
+  await useEnglishLocale(page);
   scenario.semanticStage = 'setup_wait_options';
   await waitForOptionsReady(page);
   scenario.semanticStage = 'setup_save_github';
@@ -1416,6 +1418,20 @@ async function seedRepositoryFixture({ repository }) {
   }
 }
 
+async function useEnglishLocale(targetPage) {
+  await targetPage.evaluate(async () => {
+    const { gsm_config: config = {} } = await chrome.storage.local.get('gsm_config');
+    await chrome.storage.local.set({
+      gsm_config: { ...config, locale: 'en' },
+    });
+  });
+  await targetPage.waitForFunction(
+    () => [...document.querySelectorAll('button')]
+      .some((button) => /^Save & verify$/i.test(button.textContent?.trim() ?? '')),
+    { timeout: SETUP_TIMEOUT_MS },
+  );
+}
+
 async function waitForOptionsReady(targetPage) {
   await targetPage.waitForFunction(() => {
     const refresh = document.querySelector('[data-testid="agent-storage-panel"] button');
@@ -1424,7 +1440,6 @@ async function waitForOptionsReady(targetPage) {
 }
 
 async function saveGitHubToken(targetPage) {
-  await clickTextTrusted(targetPage, /^EN$/i);
   await targetPage.waitForSelector('textarea[placeholder="github_pat_..."]:not([disabled])', { visible: true, timeout: SETUP_TIMEOUT_MS });
   await targetPage.evaluate(() => {
     const element = document.querySelector('textarea[placeholder="github_pat_..."]');

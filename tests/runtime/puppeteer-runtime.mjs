@@ -174,7 +174,7 @@ export function prepareFirefox140ExtensionPage(page) {
     const pollMs = typeof options.polling === 'number' ? options.polling : 100;
     const deadline = Date.now() + timeoutMs;
     do {
-      if (await page.evaluate(pageFunction, ...args).catch(() => false)) return;
+      if (await page.evaluate(pageFunction, ...args)) return;
       await delay(pollMs);
     } while (Date.now() < deadline);
     throw new Error(`Waiting failed: ${timeoutMs}ms exceeded`);
@@ -225,6 +225,7 @@ export function buildExtensionBrowserLaunchOptions({
           'network.proxy.ssl': '127.0.0.1',
           'network.proxy.ssl_port': 9,
           'network.proxy.no_proxies_on': '',
+          'network.proxy.allow_hijacking_localhost': true,
           'network.dns.disablePrefetch': true,
           'network.prefetch-next': false,
         } : {}),

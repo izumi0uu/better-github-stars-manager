@@ -168,7 +168,7 @@ pnpm test:verify-firefox
 
 ## 版本批准前置条件
 
-最终本地验证前，记录明确批准的安装包版本，以及本次发布决策直接观察到的当前公开版本和上次上传版本。`GSM_VERSION_APPROVAL` 必须是只包含 `approvedCandidateVersion`、`observedCurrentPublicVersion` 和 `observedPriorUploadVersion` 的 JSON。候选版本必须等于 `package.json`，并严格高于两个观察值。缺失、多余、过期或编造的值都会失败关闭。
+最终本地验证前，记录明确批准的安装包版本，以及本次发布决策直接观察到的当前公开版本和上次上传版本。`GSM_VERSION_APPROVAL` 必须是只包含 `approvedCandidateVersion`、`observedCurrentPublicVersion` 和 `observedPriorUploadVersion` 的 JSON。候选版本必须等于 `package.json` 中的 `version` 字段，并严格高于两个观察值。缺失、多余、过期或编造的值都会失败关闭。
 
 ## 本地发布门禁
 

@@ -1291,9 +1291,11 @@ export const authStore = {
         (patch.clearApiKey || replacementCredential || targetChanged) &&
         currentMutationIdentity !== initialMutationIdentity
       ) return null;
-      const endpoint = validatedEndpoint ?? resolveAgentProviderEndpoint(
-        nextProvider, nextBaseUrl, nextProtocol,
-      );
+      const endpoint = patch.clearApiKey && !targetChanged
+        ? null
+        : validatedEndpoint ?? resolveAgentProviderEndpoint(
+            nextProvider, nextBaseUrl, nextProtocol,
+          );
 
       let apiKeyEncrypted = currentProvider.apiKeyEncrypted;
       let apiKeyCryptoMeta = currentProvider.apiKeyCryptoMeta;
@@ -1319,7 +1321,7 @@ export const authStore = {
           revision: replacementCredential.revision,
           value: replacementCredential.value,
         };
-      } else {
+      } else if (endpoint) {
         const credentialTargetChanged = credentialScope?.provider !== endpoint.provider ||
           credentialScope?.origin !== endpoint.canonicalOrigin;
         if (credentialTargetChanged) {
@@ -1334,7 +1336,7 @@ export const authStore = {
 
       return {
         ...current,
-        agentDataDisclosureAcceptance: isDisclosureAcceptedFor(
+        agentDataDisclosureAcceptance: !endpoint || isDisclosureAcceptedFor(
           current.agentDataDisclosureAcceptance,
           endpoint.provider,
           endpoint.canonicalOrigin,

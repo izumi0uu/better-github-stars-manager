@@ -10,6 +10,7 @@ import {
   FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS,
   FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS,
 } from '../../scripts/build-firefox-extension.mjs';
+import { FirefoxManifestContractError } from '../../scripts/check-firefox-output-contracts.mjs';
 import { createPackageInputInventory, fingerprintPackageInventory } from '../../scripts/package-input-fingerprint.mjs';
 import { discoverMermaidArtifacts, measureBundleArtifact, validateManifestResourceClosure } from '../../scripts/package-manifest-closure.mjs';
 import {
@@ -111,14 +112,30 @@ function createFirefoxDist(root) {
         },
       },
     },
-    action: { default_popup: 'popup.html' },
+    action: { default_popup: 'src/popup/index.html' },
+    options_ui: { page: 'src/options/index.html', open_in_tab: true },
+    content_scripts: [
+      {
+        matches: ['https://github.com/*'],
+        js: ['assets/stars-page-loader.js'],
+        run_at: 'document_idle',
+      },
+      {
+        matches: ['https://github.com/*'],
+        js: ['assets/repo-chip-loader.js'],
+        run_at: 'document_idle',
+      },
+    ],
   };
   write(root, 'dist-firefox/manifest.json', `${JSON.stringify(manifest)}\n`);
   write(root, 'dist-firefox/service-worker-loader.js', "import './assets/worker.js';\n");
   write(root, 'dist-firefox/assets/worker.js', WORKER_SOURCE);
   write(root, 'dist-firefox/assets/mermaid-renderer.js', 'export const mermaid = true;\n');
   write(root, 'dist-firefox/assets/content.js', "fetch('https://api.github.com/user');\n");
-  write(root, 'dist-firefox/popup.html', '<main>popup</main>');
+  write(root, 'dist-firefox/assets/stars-page-loader.js', 'export const stars = true;\n');
+  write(root, 'dist-firefox/assets/repo-chip-loader.js', 'export const repo = true;\n');
+  write(root, 'dist-firefox/src/popup/index.html', '<main>popup</main>');
+  write(root, 'dist-firefox/src/options/index.html', '<main>options</main>');
 }
 
 function releaseInputs(root) {
@@ -220,6 +237,20 @@ test('packages deterministic Firefox target and reviewer-source artifact names a
     `better-github-stars-manager-firefox-${VERSION}.zip`,
     `better-github-stars-manager-firefox-${VERSION}.zip.sha256`,
   ]);
+}));
+
+test('rejects a malformed Firefox background before creating artifacts', () => withFixture((root) => {
+  const manifestPath = path.join(root, 'dist-firefox/manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  manifest.background = { service_worker: 'service-worker-loader.js', type: 'module' };
+  writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+
+  assert.throws(
+    () => packageFixture(root, 'artifacts/firefox-invalid-background'),
+    (error) => error instanceof FirefoxManifestContractError
+      && error.code === 'background_keys_invalid',
+  );
+  assert.equal(exists(path.join(root, 'artifacts/firefox-invalid-background')), false);
 }));
 
 test('uses the Firefox environment target and passes it to a fresh production build', () => withFixture((root) => {

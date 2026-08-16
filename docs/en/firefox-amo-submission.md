@@ -168,7 +168,7 @@ The reviewer source ZIP contains clean tracked build inputs, the lockfile, and a
 
 ## Version approval prerequisite
 
-Before final local verification, record the explicitly approved package version and the directly observed current-public and prior-upload versions for the release decision. `GSM_VERSION_APPROVAL` must be JSON with exactly `approvedCandidateVersion`, `observedCurrentPublicVersion`, and `observedPriorUploadVersion`. The candidate must equal `package.json` and be strictly newer than both observed versions. Missing, extra, stale, or invented values fail closed.
+Before final local verification, record the explicitly approved package version and the directly observed current-public and prior-upload versions for the release decision. `GSM_VERSION_APPROVAL` must be JSON with exactly `approvedCandidateVersion`, `observedCurrentPublicVersion`, and `observedPriorUploadVersion`. The candidate must equal the `version` field in `package.json` and be strictly newer than both observed versions. Missing, extra, stale, or invented values fail closed.
 
 ## Local release pipeline
 
