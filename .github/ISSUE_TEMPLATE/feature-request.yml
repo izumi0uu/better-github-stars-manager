@@ -1,0 +1,113 @@
+name: Feature request / 功能建议
+description: Propose a user problem and desired behavior / 提出用户问题和期望行为
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem before proposing implementation details. 先说明用户问题，再描述期望行为。
+
+        Significant permission, storage, sync, data-transfer, dependency, or interaction changes need scope agreement before implementation.
+
+        涉及权限、存储、同步、数据传输、依赖或明显交互变化的提案，需要先确认范围再实现。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight / 提交前确认
+      options:
+        - label: I searched existing issues and found no equivalent request. / 我已搜索已有 Issue，没有发现相同建议。
+          required: true
+        - label: This request contains no credentials, private repository data, personal information, or copied private work-item text. / 本建议不含凭据、私人仓库数据、个人信息或私有工作项原文。
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem / 用户问题
+      description: Explain who is blocked, what they are trying to do, and the current limitation. / 说明谁遇到了阻碍、想完成什么，以及当前限制。
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired-behavior
+    attributes:
+      label: Desired behavior / 期望行为
+      description: Describe the observable outcome without prescribing internal implementation. / 描述可观察结果，不要求指定内部实现。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current alternatives / 当前替代方式
+      description: Describe any workaround or existing feature you use today. / 描述目前使用的临时方案或已有功能。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: surfaces
+    attributes:
+      label: Affected surface / 受影响功能
+      description: Select every relevant surface. / 选择所有相关功能。
+      multiple: true
+      options:
+        - Stars manager / Stars 管理
+        - Watch Inbox
+        - Following Radar
+        - Cubby Agent
+        - Options and authentication / 设置与认证
+        - Gist sync / Gist 同步
+        - Browser support / 浏览器支持
+        - Public demo or documentation / 公开演示或文档
+        - Other / 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browsers
+    attributes:
+      label: Browser scope / 浏览器范围
+      multiple: true
+      options:
+        - Google Chrome
+        - Mozilla Firefox
+        - Microsoft Edge
+        - Opera
+        - Cross-browser or not sure / 跨浏览器或不确定
+    validations:
+      required: true
+
+  - type: dropdown
+    id: data-permissions
+    attributes:
+      label: Data or permission impact / 数据或权限影响
+      description: Select the closest answer. The maintainer will verify it. / 选择最接近的答案，维护者会进一步确认。
+      options:
+        - No expected data or permission change / 预计不改变数据或权限
+        - May change extension or host permissions / 可能改变扩展或主机权限
+        - May change local storage, sync, or external data transfer / 可能改变本地存储、同步或外部数据传输
+        - Not sure / 不确定
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Contribution interest / 参与意愿
+      options:
+        - I can implement this after scope agreement / 确认范围后我可以实现
+        - I can help test or document it / 我可以协助测试或编写文档
+        - I am proposing the idea only / 我只提出建议
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context / 补充信息
+      description: Add public references, synthetic mockups, or other context. Do not copy private work-item text. / 添加公开资料、合成数据原型或其他背景，不要复制私有工作项原文。
+    validations:
+      required: false
