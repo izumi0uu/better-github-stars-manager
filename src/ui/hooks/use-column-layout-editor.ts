@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
-import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
+import { useManagerRuntime } from '@/ui/manager-runtime-context';
+import type { ManagerPreferences } from '@/runtime/manager-runtime';
 import { useI18n } from '@/i18n';
 import {
   COLUMN_DEFS,
@@ -109,6 +110,7 @@ export function useColumnLayoutEditor(
   layoutStageRef?: RefObject<HTMLElement | null>,
   layoutResizeLiveAdapterRef?: RefObject<LayoutResizeLiveAdapter | null>,
 ) {
+  const runtime = useManagerRuntime();
   const { m } = useI18n();
   const [layoutMode, setLayoutMode] = useState<ColumnLayoutMode>('default');
   const [savedCustomLayout, setSavedCustomLayout] = useState<ColumnLayout | null>(null);
@@ -190,7 +192,7 @@ export function useColumnLayoutEditor(
   useEffect(() => {
     let cancelled = false;
     const applyConfig = (
-      config: Awaited<ReturnType<typeof authStore.getConfig>>,
+      config: ManagerPreferences,
       options: { hydrate: boolean },
     ) => {
       if (cancelled) return;
@@ -223,18 +225,21 @@ export function useColumnLayoutEditor(
       setLayoutConfigReady(true);
     };
 
-    void authStore.getConfig().then((config) => applyConfig(config, { hydrate: true })).catch(recoverConfigSync);
+    void runtime.readPreferences()
+      .then((config) => applyConfig(config, { hydrate: true }))
+      .catch(recoverConfigSync);
 
-    const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
-      if (areaName !== 'local' || !changes[CONFIG_STORAGE_KEY]?.newValue) return;
-      applyConfig(changes[CONFIG_STORAGE_KEY].newValue, { hydrate: false });
-    };
-    chrome.storage.onChanged.addListener(listener);
+    const unsubscribe = runtime.subscribe((event) => {
+      if (event.kind !== 'preferences' && event.kind !== 'reset') return;
+      void runtime.readPreferences()
+        .then((config) => applyConfig(config, { hydrate: false }))
+        .catch(recoverConfigSync);
+    });
     return () => {
       cancelled = true;
-      chrome.storage.onChanged.removeListener(listener);
+      unsubscribe();
     };
-  }, []);
+  }, [runtime]);
 
   const dismissColumnMenu = useCallback(() => setColumnMenuOpen(false), []);
   const columnMenuPosition = useLayoutColumnMenuPosition({
@@ -331,7 +336,7 @@ export function useColumnLayoutEditor(
     if (layoutResizeRef.current) return;
     setPreviewingCustomLayout(false);
     setLayoutMode(mode);
-    void authStore.update({ columnLayoutMode: mode }).catch((error) => {
+    void runtime.updatePreferences({ columnLayoutMode: mode }).catch((error) => {
       reportLayoutPersistenceFailure('set browse mode', error);
     });
   };
@@ -376,7 +381,7 @@ export function useColumnLayoutEditor(
     const next = normalizeColumnLayout(draftLayout);
     const nextSavedCustomLayout = layoutsEqual(next, DEFAULT_COLUMN_LAYOUT) ? null : next;
     try {
-      await authStore.update({
+      await runtime.updatePreferences({
         columnLayoutMode: 'custom',
         customColumnLayout: nextSavedCustomLayout,
       });

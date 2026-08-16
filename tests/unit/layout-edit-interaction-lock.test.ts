@@ -4,36 +4,36 @@ import { describe, expect, it } from 'vitest';
 const read = (path: string) => readFileSync(path, 'utf8');
 
 describe('layout edit interaction lock invariants', () => {
-  it('keeps the lock owned locally by ManagerPanel and passes it to non-editor regions', () => {
-    const source = read('src/ui/ManagerPanel.tsx');
+  it('keeps the lock owned locally by ManagerWorkspace and passes it to non-editor regions', () => {
+    const source = read('src/ui/ManagerWorkspace.tsx');
 
     expect(source).toMatch(/const\s+interactionLocked\s*=\s*editingLayout;/);
     expect(source).toMatch(/useLayoutEffect\(\(\)\s*=>\s*\{\s*if \(!editingLayout\) return;\s*setSelected\(null\);\s*closeUnstarPopover\(\);\s*\}, \[closeUnstarPopover, editingLayout\]\);/);
-    expect(source).toMatch(/shouldIgnorePanelShortcut\(interactionLocked,\s*e\.target\)/);
+    expect(source).toMatch(/shouldIgnorePanelShortcut\(interactionLocked,\s*event\.target\)/);
     expect(source).toMatch(/<ActiveFilterChips[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
     expect(source).toMatch(/<FloatingLocaleToggle[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
-    expect(source).toMatch(/disabled=\{actionBusy\s*\|\|\s*interactionLocked\}/);
+    expect(source).toContain('layoutEditing={editingLayout}');
   });
 
   it('reuses table restore flash motion for helper text updates', () => {
-    const source = read('src/ui/ManagerPanel.tsx');
+    const source = read('src/ui/ManagerWorkspace.tsx');
     const motion = read('src/ui/styles/motion.css');
 
-    expect(source).toContain('key={helperInfoKey(info, unstarFeedback)}');
+    expect(source).toContain('key={helperInfoKey(displayedInfo, unstarFeedback)}');
     expect(source).toContain('gsm-helper-text-update inline-block min-w-0 rounded-sm px-1 transition-[background-color,opacity,transform] duration-150');
     expect(motion).toContain('.gsm-helper-text-update');
     expect(motion).toContain('gsm-flash-col var(--gsm-duration-flash) var(--gsm-ease-linearized) var(--gsm-delay-flash);');
   });
 
   it('keeps the active-filter row mounted while collapsing it when no filters are selected', () => {
-    const source = read('src/ui/ManagerPanel.tsx');
+    const source = read('src/ui/ManagerWorkspace.tsx');
     const chips = read('src/ui/components/ActiveFilterChips.tsx');
     const motion = read('src/ui/styles/motion.css');
 
     expect(source).toContain("className={cn('gsm-active-filter-row', { open: hasActiveFilter })}");
     expect(source).toContain('aria-hidden={!hasActiveFilter}');
     expect(source).toContain('{...getLockedRegionProps(!hasActiveFilter)}');
-    expect(source).toMatch(/<ActiveFilterChips\b[\s\S]*?\bf=\{f\}[\s\S]*?\bcount=\{visibleTotal\}[\s\S]*?\binteractionLocked=\{interactionLocked\}[\s\S]*?\/>/);
+    expect(source).toMatch(/<ActiveFilterChips\b[\s\S]*?\bf=\{f\}[\s\S]*?\bcount=\{total\}[\s\S]*?\binteractionLocked=\{interactionLocked\}[\s\S]*?\/>/);
     expect(source).not.toContain('{hasActiveFilter && (');
     expect(chips).not.toContain('if (active.length === 0) return null;');
     expect(motion).toContain('.gsm-active-filter-row');
@@ -46,7 +46,7 @@ describe('layout edit interaction lock invariants', () => {
 
   it('uses semantic inert/anchor helpers instead of a global provider', () => {
     const helper = read('src/ui/interaction-lock.ts');
-    const manager = read('src/ui/ManagerPanel.tsx');
+    const manager = read('src/ui/ManagerWorkspace.tsx');
 
     expect(helper).toContain('getLockedRegionProps');
     expect(helper).toContain("inert: ''");
@@ -67,9 +67,9 @@ describe('layout edit interaction lock invariants', () => {
     expect(source).toContain('{layoutEditChrome}');
   });
 
-  it('keeps pencil edit as a single callback while ManagerPanel wires custom edit semantics', () => {
+  it('keeps pencil edit as a single callback while ManagerWorkspace wires custom edit semantics', () => {
     const toolbar = read('src/ui/components/Toolbar.tsx');
-    const manager = read('src/ui/ManagerPanel.tsx');
+    const manager = read('src/ui/ManagerWorkspace.tsx');
     const table = read('src/ui/components/StarsTable.tsx');
     const hook = read('src/ui/hooks/use-column-layout-editor.ts');
 
@@ -127,13 +127,13 @@ describe('layout edit interaction lock invariants', () => {
     expect(hook).toContain('configLoaded.current = true;');
     expect(hook).toContain('setLayoutConfigReady(true);');
     expect(hook).toContain('setLayoutEditReady(true);');
-    expect(hook).toContain('authStore.getConfig().then((config) => applyConfig(config, { hydrate: true }))');
-    expect(hook).toContain('applyConfig(changes[CONFIG_STORAGE_KEY].newValue, { hydrate: false });');
+    expect(hook).toContain('runtime.readPreferences()');
+    expect(hook).toContain("event.kind !== 'preferences' && event.kind !== 'reset'");
     expect(hook).toMatch(/if \(shouldHydrateBrowseLayout\) \{\s+setRenderedBrowseLayout\(cloneColumnLayout\(nextBrowseLayout\)\);\s+setLayoutFaded\(false\);\s+\}/);
   });
 
   it('keeps the Stars column aligned consistently across browse and edit layouts', () => {
-    const manager = read('src/ui/ManagerPanel.tsx');
+    const manager = read('src/ui/ManagerWorkspace.tsx');
     const columns = read('src/ui/column-layout.ts');
     const table = read('src/ui/components/StarsTable.tsx');
     const row = read('src/ui/components/StarRow.tsx');

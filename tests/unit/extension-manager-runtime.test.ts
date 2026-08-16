@@ -1,0 +1,178 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { DEFAULT_LIBRARY_VIEW_PREFS } from '@/preferences';
+import type { Config } from '@/types';
+
+const adapterMocks = vi.hoisted(() => ({
+  bgCall: vi.fn(),
+  getAccount: vi.fn(),
+  getConfig: vi.fn(),
+  update: vi.fn(),
+  updateWatchRepositoryCollapse: vi.fn(),
+}));
+
+vi.mock('@/utils/messaging', () => ({
+  bgCall: adapterMocks.bgCall,
+}));
+
+vi.mock('@/auth/auth-store', () => ({
+  CONFIG_STORAGE_KEY: 'gsm_config',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
+  authStore: {
+    getAccount: adapterMocks.getAccount,
+    getConfig: adapterMocks.getConfig,
+    update: adapterMocks.update,
+    updateWatchRepositoryCollapse: adapterMocks.updateWatchRepositoryCollapse,
+  },
+}));
+
+type RuntimeListener = (message: { type?: string }) => void;
+type StorageListener = (
+  changes: Record<string, chrome.storage.StorageChange>,
+  areaName: string,
+) => void;
+
+const runtimeListeners = new Set<RuntimeListener>();
+const storageListeners = new Set<StorageListener>();
+const runtimeAdd = vi.fn((listener: RuntimeListener) => runtimeListeners.add(listener));
+const runtimeRemove = vi.fn((listener: RuntimeListener) => runtimeListeners.delete(listener));
+const storageAdd = vi.fn((listener: StorageListener) => storageListeners.add(listener));
+const storageRemove = vi.fn((listener: StorageListener) => storageListeners.delete(listener));
+
+const preferences = {
+  theme: 'dark',
+  locale: 'en',
+  libraryView: DEFAULT_LIBRARY_VIEW_PREFS,
+  watchCollapsedRepositories: {},
+  columnLayoutMode: 'default',
+  customColumnLayout: null,
+} satisfies Pick<
+  Config,
+  | 'theme'
+  | 'locale'
+  | 'libraryView'
+  | 'watchCollapsedRepositories'
+  | 'columnLayoutMode'
+  | 'customColumnLayout'
+>;
+
+beforeEach(() => {
+  adapterMocks.bgCall.mockReset();
+  adapterMocks.getAccount.mockReset();
+  adapterMocks.getConfig.mockReset();
+  adapterMocks.update.mockReset();
+  adapterMocks.updateWatchRepositoryCollapse.mockReset();
+  runtimeAdd.mockClear();
+  runtimeRemove.mockClear();
+  storageAdd.mockClear();
+  storageRemove.mockClear();
+  runtimeListeners.clear();
+  storageListeners.clear();
+  adapterMocks.getAccount.mockResolvedValue({
+    username: 'octocat',
+    avatarUrl: 'https://example.test/avatar.png',
+    displayName: 'Octo Cat',
+    gistId: 'extension-only',
+  });
+  adapterMocks.getConfig.mockResolvedValue(preferences as unknown as Config);
+  adapterMocks.update.mockResolvedValue(undefined);
+  adapterMocks.updateWatchRepositoryCollapse.mockResolvedValue(undefined);
+  vi.stubGlobal('chrome', {
+    runtime: {
+      onMessage: { addListener: runtimeAdd, removeListener: runtimeRemove },
+    },
+    storage: {
+      onChanged: { addListener: storageAdd, removeListener: storageRemove },
+    },
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('ExtensionManagerRuntime', () => {
+  it('maps named manager operations to the existing background envelopes without reordering', async () => {
+    adapterMocks.bgCall
+      .mockResolvedValueOnce({ rows: [], total: 0, grandTotal: 0, tagsForRows: {}, languages: [], tagTree: [], tagTotal: 0 })
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ removed: true });
+    const runtime = new ExtensionManagerRuntime();
+    const params = {
+      filter: {
+        query: '',
+        languages: [],
+        tags: [],
+        tagMode: 'any' as const,
+        showTombstone: false,
+        onlyFavorite: false,
+        onlyUntagged: false,
+        onlyArchived: false,
+        onlyOwned: false,
+        sortKey: 'starred_at' as const,
+        sortDir: 'desc' as const,
+      },
+      offset: 0,
+      limit: 25,
+    };
+
+    await runtime.queryStars(params);
+    await runtime.setTags('owner/repo', ['work', 'typescript']);
+    await runtime.removeVisibleTag('owner/repo', 'work');
+
+    expect(adapterMocks.bgCall.mock.calls).toEqual([
+      ['query', { params }],
+      ['setTags', { full_name: 'owner/repo', tags: ['work', 'typescript'] }],
+      ['removeVisibleTag', { full_name: 'owner/repo', name: 'work' }],
+    ]);
+  });
+
+  it('maps lightweight preferences and strips extension-only account fields', async () => {
+    const runtime = new ExtensionManagerRuntime();
+    await expect(runtime.getAccount()).resolves.toEqual({
+      username: 'octocat',
+      avatarUrl: 'https://example.test/avatar.png',
+      displayName: 'Octo Cat',
+    });
+    await expect(runtime.readPreferences()).resolves.toEqual(preferences);
+    await runtime.updatePreferences({ theme: 'light' });
+    await runtime.updateWatchCollapse('Owner/Repo', 'signature');
+    expect(adapterMocks.update).toHaveBeenCalledWith({ theme: 'light' });
+    expect(adapterMocks.updateWatchRepositoryCollapse).toHaveBeenCalledWith('Owner/Repo', 'signature');
+  });
+
+  it('shares ordered invalidations across subscribers and detaches Chrome listeners after the last cleanup', () => {
+    const runtime = new ExtensionManagerRuntime();
+    const first = vi.fn();
+    const second = vi.fn();
+    const unsubscribeFirst = runtime.subscribe(first);
+    const unsubscribeSecond = runtime.subscribe(second);
+
+    expect(runtimeAdd).toHaveBeenCalledTimes(1);
+    expect(storageAdd).toHaveBeenCalledTimes(1);
+    for (const listener of runtimeListeners) listener({ type: 'watchChanged' });
+    expect(first).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 1 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 1 });
+
+    for (const listener of storageListeners) {
+      listener({ gsm_config: { oldValue: {}, newValue: {} } }, 'local');
+    }
+    expect(first).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 2 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 2 });
+
+    for (const listener of storageListeners) {
+      listener({ gsm_github_credentials: { oldValue: {}, newValue: {} } }, 'local');
+    }
+    expect(first).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 3 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 3 });
+
+    unsubscribeFirst();
+    expect(runtimeRemove).not.toHaveBeenCalled();
+    unsubscribeSecond();
+    unsubscribeSecond();
+    expect(runtimeRemove).toHaveBeenCalledTimes(1);
+    expect(storageRemove).toHaveBeenCalledTimes(1);
+    expect(runtimeListeners.size).toBe(0);
+    expect(storageListeners.size).toBe(0);
+  });
+});

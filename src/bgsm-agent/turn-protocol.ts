@@ -4,6 +4,7 @@ import type {
   AgentStopReason,
   ToolRisk,
 } from '@/agent-harness';
+import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/api/errors';
 import type { AgentSessionCommitResult } from '@/storage/agent-session-store';
 import {
   validateBgsmAgentConversationBinding,
@@ -22,8 +23,6 @@ import {
 import type { BgsmAgentOrganizeLibraryHandoff } from './tools';
 
 export const AGENT_ATTEMPT_STATE_LOST_ERROR_CODE = 'agent_attempt_state_lost' as const;
-export const AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE =
-  'agent_artifact_coverage_stalled' as const;
 
 /** Shared producer/consumer authority for typed Agent Port failures. */
 export const AGENT_TURN_ERROR_CODES = Object.freeze([

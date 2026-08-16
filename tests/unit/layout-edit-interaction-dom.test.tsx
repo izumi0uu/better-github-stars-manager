@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs';
 import { act, createRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import { LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import {
   LayoutOverflowIndicator,
@@ -25,6 +27,11 @@ import { fakeStar, fakeTag } from './test-utils';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mountedRoots: Root[] = [];
+const runtime = new ExtensionManagerRuntime();
+
+function withRuntime(element: React.ReactElement): React.ReactElement {
+  return <ManagerRuntimeProvider runtime={runtime}>{element}</ManagerRuntimeProvider>;
+}
 
 function mount(element: React.ReactElement): { container: HTMLDivElement; root: Root } {
   const container = document.createElement('div');
@@ -105,7 +112,7 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
     const onClose = vi.fn();
     const onPrev = vi.fn();
     const onNext = vi.fn();
-    const { root } = mount(
+    const { root } = mount(withRuntime(
       <RepoDetailPanel
         star={fakeStar()}
         tag={fakeTag()}
@@ -119,7 +126,7 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
         hasNext
         interactionLocked
       />,
-    );
+    ));
 
     act(() => {
       keydown(window, 'Escape');
@@ -132,7 +139,7 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
     expect(onNext).not.toHaveBeenCalled();
 
     act(() => {
-      root.render(
+      root.render(withRuntime(
         <RepoDetailPanel
           star={fakeStar()}
           tag={fakeTag()}
@@ -146,7 +153,7 @@ describe('layout edit interaction lock mounted DOM behavior', () => {
           hasNext
           interactionLocked={false}
         />,
-      );
+      ));
     });
 
     const notes = findNotesTextarea();

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { authStore, CONFIG_STORAGE_KEY } from "@/auth/auth-store";
 import { DEFAULT_LOCALE } from "@/preferences";
+import type { ManagerRuntime } from '@/runtime/manager-runtime';
 import type { Locale, SyncProgress } from "@/types";
 import type { RadarPartialReason } from '@/radar/radar-model';
 
@@ -3724,39 +3724,45 @@ export function getMessages(locale: Locale): MessageCatalog {
 
 export const messageFor = getMessages;
 
-export function I18nProvider({ children }: { children: ReactNode }) {
+type I18nPreferenceSource = Pick<ManagerRuntime, 'readPreferences' | 'updatePreferences' | 'subscribe'>;
+
+export function I18nProvider({
+  children,
+  source,
+}: {
+  children: ReactNode;
+  source?: I18nPreferenceSource;
+}) {
   const [locale, setLocaleState] = useState<Locale>(DEFAULT_LOCALE);
 
   useEffect(() => {
-    if (!hasExtensionStorage()) {
+    let cancelled = false;
+    if (!source) {
       setLocaleState(navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en");
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
     const syncLocale = () => {
-      authStore
-        .getLocale()
-        .then((stored) => setLocaleState(stored))
+      void source.readPreferences()
+        .then((preferences) => {
+          if (!cancelled) setLocaleState(preferences.locale);
+        })
         .catch(() => {});
     };
-    const listener = (
-      changes: Record<string, chrome.storage.StorageChange>,
-      areaName: string,
-    ) => {
-      if (areaName !== "local" || !changes[CONFIG_STORAGE_KEY]) return;
-      const oldCfg = changes[CONFIG_STORAGE_KEY].oldValue as Record<string, unknown> | undefined;
-      const newCfg = changes[CONFIG_STORAGE_KEY].newValue as Record<string, unknown> | undefined;
-      if (oldCfg?.locale === newCfg?.locale) return;
-      syncLocale();
-    };
-
     syncLocale();
-    chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
-  }, []);
+    const unsubscribe = source.subscribe((event) => {
+      if (event.kind === 'preferences' || event.kind === 'reset') syncLocale();
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [source]);
 
   const setLocale = async (next: Locale) => {
     setLocaleState(next);
-    if (hasExtensionStorage()) await authStore.setLocale(next);
+    if (source) await source.updatePreferences({ locale: next });
   };
 
   return (
@@ -3768,9 +3774,4 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
 export function useI18n(): I18nValue {
   return useContext(I18nContext);
-}
-
-function hasExtensionStorage(): boolean {
-  return typeof chrome !== "undefined"
-    && chrome.storage?.onChanged !== undefined;
 }

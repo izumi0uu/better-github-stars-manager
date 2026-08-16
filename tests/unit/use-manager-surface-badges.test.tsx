@@ -4,6 +4,8 @@
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useManagerSurfaceBadges } from '@/ui/hooks/use-manager-surface-badges';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import {
   cleanupMountedRootsAndBody,
   mountReact,
@@ -29,9 +31,12 @@ vi.mock('@/utils/messaging', () => ({
 }));
 
 vi.mock('@/auth/auth-store', () => ({
+  CONFIG_STORAGE_KEY: 'gsm_config',
   GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
+  authStore: {},
 }));
 
+const runtime = new ExtensionManagerRuntime();
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((next) => {
@@ -40,15 +45,15 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function Harness() {
+function BadgeProbe() {
   const counts = useManagerSurfaceBadges();
   return (
-    <div
-      data-testid="counts"
-      data-watch={counts.watchUnreadCount}
-      data-radar={counts.radarUnseenCount}
-    />
+    <div data-testid="counts" data-watch={counts.watchUnreadCount} data-radar={counts.radarUnseenCount} />
   );
+}
+
+function Harness() {
+  return <ManagerRuntimeProvider runtime={runtime}><BadgeProbe /></ManagerRuntimeProvider>;
 }
 
 beforeEach(() => {

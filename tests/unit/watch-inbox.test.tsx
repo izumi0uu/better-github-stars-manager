@@ -26,6 +26,8 @@ vi.mock('@tanstack/react-virtual', () => ({
 }));
 import { WatchInbox } from '@/ui/components/WatchInbox';
 import { WatchStatusRibbon } from '@/ui/components/WatchStatusRibbon';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import type { GitHubNotificationThread, WatchSubjectDetail } from '@/watch/watch-model';
 import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
 import { watchGroupContentSignature } from '@/ui/watch-inbox-presentation';
@@ -105,6 +107,7 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
 }
 
 const mountedRoots: MountedRoot[] = [];
+const runtime = new ExtensionManagerRuntime();
 
 function subjectDetail(): WatchSubjectDetail {
   return {
@@ -155,23 +158,25 @@ afterEach(() => {
 
 function renderInbox(props: Partial<React.ComponentProps<typeof WatchInbox>> = {}) {
   return mountReact(
-    <WatchInbox
-      result={result()}
-      loading={false}
-      refreshing={false}
-      error={null}
-      unreadOnly
-      onUnreadOnlyChange={vi.fn()}
-      onRefresh={vi.fn()}
-      onRetryQuery={vi.fn()}
-      onOpenOptions={vi.fn()}
-      onOpenMainTokenOptions={vi.fn()}
-      actionPending={null}
-      actionError={null}
-      onMarkThreadsRead={vi.fn()}
-      onMarkThreadsDone={vi.fn()}
-      {...props}
-    />,
+    <ManagerRuntimeProvider runtime={runtime}>
+      <WatchInbox
+        result={result()}
+        loading={false}
+        refreshing={false}
+        error={null}
+        unreadOnly
+        onUnreadOnlyChange={vi.fn()}
+        onRefresh={vi.fn()}
+        onRetryQuery={vi.fn()}
+        onOpenOptions={vi.fn()}
+        onOpenMainTokenOptions={vi.fn()}
+        actionPending={null}
+        actionError={null}
+        onMarkThreadsRead={vi.fn()}
+        onMarkThreadsDone={vi.fn()}
+        {...props}
+      />
+    </ManagerRuntimeProvider>,
     mountedRoots,
   );
 }

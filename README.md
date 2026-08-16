@@ -94,7 +94,7 @@ Watch 工作区用于获取 GitHub 信箱的通知并整理给你:
 - 将一条通知或整个仓库组标记为已读或完成
 
 <div align="center">
-  <img src="store-assets/chrome-web-store/03-watch-activity-1280x800.png" alt="Watch 工作区按仓库分组查看通知" width="960" />
+  <img src="store-assets/screenshots/readme-watch.webp" alt="Watch 收件箱按仓库分组查看通知与详情" width="960" />
 </div>
 
 Watch Inbox 需要 Classic Personal Access Token (PAT) 的可选 `notifications` scope。完整行为见 [Watch 的工作方式](docs/zh/watch-strategy.md)。

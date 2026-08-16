@@ -8,10 +8,10 @@ describe('Agent workbench ownership and repository selection', () => {
     const panel = readFileSync('src/ui/components/AgentPanel.tsx', 'utf8');
 
     expect(manager).toContain("lazy(() => import('@/ui/components/AgentHost')");
-    expect(manager).toMatch(/const openAgentPanel = \(\) => \{\s*setAgentHostMounted\(true\);\s*setAgentPanelOpen\(true\);\s*\};/u);
+    expect(manager).toMatch(/const openAgentPanel = useCallback\(\(\) => \{\s*setAgentHostMounted\(true\);\s*setAgentPanelOpen\(true\);\s*\}, \[\]\);/u);
     expect(manager).not.toMatch(/openAgentPanel[\s\S]{0,140}setSelected\(null\)/u);
     expect(manager).toContain("kind: 'selected_repository' as const");
-    expect(manager).toContain('selectedRepositoryIdHint: selected');
+    expect(manager).toContain('selectedRepositoryIdHint: snapshot.selectedFullName');
     expect(manager).toContain('chatCandidate={agentCandidate}');
     expect(host).toContain('const agent = useBgsmAgent(onDataChanged, chatCandidate);');
     expect(host).toContain('const workbench = useBgsmAgentWorkbench(onDataChanged, agent.sessionId, agent.sessionReady);');
@@ -21,7 +21,7 @@ describe('Agent workbench ownership and repository selection', () => {
 
   it('keeps deterministic Auto Tags separate from the Agent entry', () => {
     const toolbar = readFileSync('src/ui/components/Toolbar.tsx', 'utf8');
-    expect(toolbar).toContain('onClick={() => onAutoAssignTags()}');
+    expect(toolbar).toContain('onClick={onAutoAssignTags}');
     expect(toolbar).toContain('onClick={() => onOpenAgent()}');
     expect(toolbar).toContain('data-coach-target="agent"');
     expect(toolbar).not.toContain('Retry failed only');

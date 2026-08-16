@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { bgCall } from '@/utils/messaging';
-import type {
-  RecommendationQueryResponse,
-  RecommendationRefreshResult,
-} from '@/recommendations/recommendation-model';
+import { useManagerRuntime } from '@/ui/manager-runtime-context';
+import type { RecommendationQueryResponse } from '@/recommendations/recommendation-model';
 
 export function useRadarRecommendationResource(active: boolean) {
+  const runtime = useManagerRuntime();
   const [recommendations, setRecommendations] = useState<RecommendationQueryResponse | null>(null);
   const [loading, setLoading] = useState(active);
   const [refreshing, setRefreshing] = useState(false);
@@ -38,7 +36,7 @@ export function useRadarRecommendationResource(active: boolean) {
       setRecommendations(null);
     }
     try {
-      const next = await bgCall<RecommendationQueryResponse>('queryRecommendations');
+      const next = await runtime.queryRecommendations();
       if (
         !mountedRef.current
         || !activeRef.current
@@ -59,7 +57,7 @@ export function useRadarRecommendationResource(active: boolean) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [runtime]);
 
   useEffect(() => {
     if (!active) {
@@ -91,7 +89,7 @@ export function useRadarRecommendationResource(active: boolean) {
     if (cooldownProbeRef.current.deadline !== cooldownUntil) {
       cooldownProbeRef.current = { deadline: cooldownUntil, attempts: 0 };
     }
-    const remaining = allowedAt - Date.now();
+    const remaining = allowedAt - runtime.now();
     if (remaining <= 0 && cooldownProbeRef.current.attempts > 0) return;
     const timer = window.setTimeout(() => {
       cooldownProbeRef.current.attempts += 1;
@@ -99,7 +97,7 @@ export function useRadarRecommendationResource(active: boolean) {
       void reload(true);
     }, Math.max(0, remaining) + 25);
     return () => window.clearTimeout(timer);
-  }, [active, cooldownProbeTick, cooldownUntil, reload]);
+  }, [active, cooldownProbeTick, cooldownUntil, reload, runtime]);
 
   const refresh = useCallback(async () => {
     if (!mountedRef.current || refreshingRef.current) return;
@@ -107,7 +105,7 @@ export function useRadarRecommendationResource(active: boolean) {
     setRefreshing(true);
     setError(null);
     try {
-      const refreshResult = await bgCall<RecommendationRefreshResult>('refreshRecommendations');
+      const refreshResult = await runtime.refreshRecommendations();
       await reload(true);
       if (mountedRef.current && !refreshResult.published && refreshResult.status.errorCode) {
         setError('refresh');
@@ -119,7 +117,7 @@ export function useRadarRecommendationResource(active: boolean) {
       refreshingRef.current = false;
       if (mountedRef.current) setRefreshing(false);
     }
-  }, [reload]);
+  }, [reload, runtime]);
 
   return {
     recommendations,

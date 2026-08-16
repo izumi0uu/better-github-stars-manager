@@ -1,6 +1,5 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { ManagerPanel } from '@/ui/ManagerPanel';
-import { I18nProvider } from '@/i18n';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
 import { applyFabLabel } from '@/content/stars-page/fab-label';
 import brandMarkUrl from '@/assets/bgsm-brand-mark.svg?url';
@@ -130,11 +129,7 @@ export function installStarsPageRuntime(pageWindow: Window): void {
     panelHost = host;
 
     panelRoot = createRoot(root);
-    panelRoot.render(
-      <I18nProvider>
-        <ManagerPanel />
-      </I18nProvider>,
-    );
+    panelRoot.render(<ManagerPanel />);
   }
 
   // Unmount first so a half-removed host cannot leave orphaned listeners.

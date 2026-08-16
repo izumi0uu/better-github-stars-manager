@@ -9,6 +9,7 @@ import { Checkbox } from '@/ui/shadcn/checkbox';
 import { Input } from '@/ui/shadcn/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
 import { Spinner } from '@/ui/shadcn/spinner';
+import { ManagerResourceLink } from '@/ui/components/ManagerResource';
 import {
   watchReasonPresetValues,
   type WatchReasonCount,
@@ -326,15 +327,13 @@ export function WatchInboxCommandBar({
           onRefresh={onRefresh}
         />
         <Button asChild variant="ghost" size="icon" className="size-8 shrink-0">
-          <a
-            href="https://github.com/watching"
-            target="_blank"
-            rel="noreferrer"
+          <ManagerResourceLink
+            resource={{ kind: 'subject', label: 'watch-settings', remoteUrl: 'https://github.com/watching' }}
             aria-label={m.watch.manageOnGitHub}
             title={m.watch.manageOnGitHub}
           >
-            <Settings2 className="size-4" />
-          </a>
+            <Settings2 className="size-4" aria-hidden="true" />
+          </ManagerResourceLink>
         </Button>
       </SurfaceWorkCanvas>
     </div>

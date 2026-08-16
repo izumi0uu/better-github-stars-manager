@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { authStore } from '@/auth/auth-store';
-import { I18nProvider } from '@/i18n';
+import { ExtensionI18nProvider } from '@/i18n/extension-provider';
 import '@/ui/styles/index.css';
 import { Options } from './Options';
 import { signalRecommendationEntry } from '@/utils/recommendation-entry';
@@ -15,7 +15,7 @@ authStore.getTheme().then((t) => {
 
 signalRecommendationEntry();
 createRoot(root).render(
-  <I18nProvider>
+  <ExtensionI18nProvider>
     <Options />
-  </I18nProvider>,
+  </ExtensionI18nProvider>,
 );

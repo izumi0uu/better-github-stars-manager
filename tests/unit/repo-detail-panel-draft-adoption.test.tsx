@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import type { ReactElement } from 'react';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import {
   cleanupMountedRootsAndBody,
   click,
@@ -15,6 +17,11 @@ import {
 } from './test-utils';
 
 const mountedRoots: MountedRoot[] = [];
+const runtime = new ExtensionManagerRuntime();
+
+function withRuntime(element: ReactElement): ReactElement {
+  return <ManagerRuntimeProvider runtime={runtime}>{element}</ManagerRuntimeProvider>;
+}
 const sendMessageMock = vi.fn();
 
 function deferred<T>() {
@@ -54,14 +61,13 @@ describe('repository detail editor ownership', () => {
       hasPrev: false,
       hasNext: false,
     };
-    const container = mountReact(
+    const container = mountReact(withRuntime(
       <RepoDetailPanel
         {...commonProps}
         star={fakeStar()}
         tag={fakeTag({ manualTags: ['ui'], notes: 'initial note' })}
       />,
-      mountedRoots,
-    );
+    ), mountedRoots);
 
     await click(removeTagButton(container));
     await setTextareaValue(notesTextarea(container), 'local note');
@@ -115,13 +121,12 @@ describe('repository detail editor ownership', () => {
       hasPrev: false,
       hasNext: false,
     };
-    const container = mountReact(
+    const container = mountReact(withRuntime(
       <RepoDetailPanel
         {...commonProps}
         tag={fakeTag({ manualTags: ['ui'], notes: 'initial note' })}
       />,
-      mountedRoots,
-    );
+    ), mountedRoots);
 
     await renderPanel(
       <RepoDetailPanel
@@ -156,14 +161,13 @@ describe('repository detail editor ownership', () => {
       hasPrev: false,
       hasNext: false,
     };
-    const container = mountReact(
+    const container = mountReact(withRuntime(
       <RepoDetailPanel
         {...commonProps}
         star={fakeStar()}
         tag={fakeTag({ manualTags: ['shared'], notes: 'repo A note' })}
       />,
-      mountedRoots,
-    );
+    ), mountedRoots);
 
     await setTextareaValue(notesTextarea(container), 'pending repo A note');
     await click(notesSaveButton(container));
@@ -199,7 +203,7 @@ describe('repository detail editor ownership', () => {
       if (message.type === 'setNotes') return Promise.resolve({ ok: false, error: 'NOTE_SAVE_FAILED' });
       return Promise.resolve({ ok: true });
     });
-    const container = mountReact(
+    const container = mountReact(withRuntime(
       <RepoDetailPanel
         star={fakeStar()}
         tag={fakeTag({ notes: 'initial note' })}
@@ -211,8 +215,7 @@ describe('repository detail editor ownership', () => {
         hasPrev={false}
         hasNext={false}
       />,
-      mountedRoots,
-    );
+    ), mountedRoots);
 
     await setTextareaValue(notesTextarea(container), 'unsaved note');
     const save = notesSaveButton(container);
@@ -229,7 +232,7 @@ describe('repository detail editor ownership', () => {
 
 async function renderPanel(element: ReactElement) {
   await act(async () => {
-    mountedRoots[0].render(element);
+    mountedRoots[0].render(withRuntime(element));
     await Promise.resolve();
   });
 }

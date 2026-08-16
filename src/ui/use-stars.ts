@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFilterStore } from './filter-store';
 import { useLibraryViewPrefs } from './hooks/use-library-view-prefs';
 import type { Star, Tag } from '@/types';
-import type { QueryResult } from '@/background/query';
+import type { StarsQueryResult } from '@/stars/stars-query';
 import { classifyStarsQueryTrigger } from './stars-refresh';
+import { useManagerRuntime } from '@/ui/manager-runtime-context';
 
 // Transition timings for the list fade-out → swap → fade-in (see FADE_PHASE).
 const FADE_OUT_MS = 120;
@@ -14,10 +15,11 @@ const FADE_IN_MS = 160;
  * old rows out, fetches, then fades new rows in — avoiding a swap jolt and
  * keeping the list mounted so scroll position is preserved.
  */
-export function useStars() {
-  useLibraryViewPrefs();
+export function useStars(allowHashTagOverride = true) {
+  const runtime = useManagerRuntime();
+  useLibraryViewPrefs(allowHashTagOverride);
   const f = useFilterStore();
-  const [committed, setCommitted] = useState<QueryResult | null>(null);
+  const [committed, setCommitted] = useState<StarsQueryResult | null>(null);
   // Transition phase drives the list opacity. 'fading-out' keeps the committed
   // (old) rows visible while dimming; 'fading-in' shows the freshly committed
   // rows brightening back up. 'idle' = fully visible.
@@ -42,11 +44,9 @@ export function useStars() {
   const filterKey = JSON.stringify(filter);
 
   // A pending refresh (from refresh() or a dataChanged broadcast) bypasses the
-  // fade-out — it's a same-filter reload, so there's nothing to transition
-  // away from; we just refetch and fade the new rows in.
-  const refresh = () => {
+  const refresh = useCallback(() => {
     setRefreshKey((key) => key + 1);
-  };
+  }, []);
 
   // Filter changes still use the fade-out → query → fade-in transition.
   // Same-filter reloads (dataChanged broadcasts or explicit refresh()) update
@@ -68,20 +68,17 @@ export function useStars() {
 
     const runQuery = () => {
       if (cancelled) return;
-      chrome.runtime
-        .sendMessage({ type: 'query', params: { filter, offset: 0, limit: Number.MAX_SAFE_INTEGER } })
-        .then((res: { ok: boolean; data?: QueryResult; error?: string }) => {
+      runtime.queryStars({ filter, offset: 0, limit: Number.MAX_SAFE_INTEGER })
+        .then((result) => {
           if (cancelled) return;
-          if (res?.ok && res.data) {
-            setCommitted(res.data);
-            if (shouldFade) {
-              setPhase('fading-in');
-              fadeIn = setTimeout(() => {
-                if (!cancelled) setPhase('idle');
-              }, FADE_IN_MS);
-            } else {
-              setPhase('idle');
-            }
+          setCommitted(result);
+          if (shouldFade) {
+            setPhase('fading-in');
+            fadeIn = setTimeout(() => {
+              if (!cancelled) setPhase('idle');
+            }, FADE_IN_MS);
+          } else {
+            setPhase('idle');
           }
           setLoading(false);
         })
@@ -104,19 +101,13 @@ export function useStars() {
       if (fadeOut) clearTimeout(fadeOut);
       if (fadeIn) clearTimeout(fadeIn);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [f.libraryViewHydrated, filterKey, refreshKey]);
+  }, [f.libraryViewHydrated, filterKey, refreshKey, runtime]);
 
-  // Live refresh when background signals data changed (sync/write).
-  useEffect(() => {
-    const listener = (msg: { type?: string }) => {
-      if (msg.type === 'dataChanged') {
-        setRefreshKey((key) => key + 1);
-      }
-    };
-    chrome.runtime.onMessage.addListener(listener);
-    return () => chrome.runtime.onMessage.removeListener(listener);
-  }, []);
+  useEffect(() => runtime.subscribe((event) => {
+    if (event.kind === 'data' || event.kind === 'reset') {
+      setRefreshKey((key) => key + 1);
+    }
+  }), [runtime]);
 
   const rows: Star[] = committed?.rows ?? [];
 

@@ -9,6 +9,8 @@ import type { SyncStatus } from '@/utils/messaging';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const refreshStars = vi.hoisted(() => vi.fn());
+
 vi.mock('@/ui/use-stars', () => ({
   useStars: () => ({
     rows: [],
@@ -19,7 +21,7 @@ vi.mock('@/ui/use-stars', () => ({
     languages: [],
     tagTree: { tags: [], total: 0 },
     tagsByFullName: new Map(),
-    refresh: vi.fn(),
+    refresh: refreshStars,
   }),
 }));
 
@@ -222,6 +224,16 @@ beforeEach(() => {
       },
     },
     storage: {
+      local: {
+        get: vi.fn().mockResolvedValue({
+          gsm_config: {
+            locale: 'en',
+            username: 'octocat',
+            avatarUrl: 'avatar.png',
+            displayName: 'Octo Cat',
+          },
+        }),
+      },
       onChanged: {
         addListener: vi.fn(),
         removeListener: vi.fn(),
