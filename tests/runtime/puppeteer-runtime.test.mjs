@@ -62,6 +62,32 @@ const previousFirefox140Executable = process.env.FIREFOX_140_EXECUTABLE;
 delete process.env.FIREFOX_EXECUTABLE;
 delete process.env.FIREFOX_140_EXECUTABLE;
 try {
+  const invalidExplicitPath = '/__github_stars_manager_missing__/explicit-firefox';
+  const invalidFirefox140Path = '/__github_stars_manager_missing__/firefox-140';
+  const invalidFirefoxFallbackPath = '/__github_stars_manager_missing__/firefox-fallback';
+  process.env.FIREFOX_140_EXECUTABLE = invalidFirefox140Path;
+  process.env.FIREFOX_EXECUTABLE = invalidFirefoxFallbackPath;
+  await assert.rejects(
+    () => resolveExecutablePath({
+      target: 'firefox',
+      executablePath: invalidExplicitPath,
+      puppeteerDriver: 'firefox_140',
+    }),
+    (error) => error instanceof Error
+      && error.message === `executablePath does not exist: ${invalidExplicitPath}`,
+  );
+  await assert.rejects(
+    () => resolveExecutablePath({ target: 'firefox', puppeteerDriver: 'firefox_140' }),
+    (error) => error instanceof Error
+      && error.message === `FIREFOX_140_EXECUTABLE does not exist: ${invalidFirefox140Path}`,
+  );
+  delete process.env.FIREFOX_140_EXECUTABLE;
+  await assert.rejects(
+    () => resolveExecutablePath({ target: 'firefox', puppeteerDriver: 'firefox_140' }),
+    (error) => error instanceof Error
+      && error.message === `FIREFOX_EXECUTABLE does not exist: ${invalidFirefoxFallbackPath}`,
+  );
+  delete process.env.FIREFOX_EXECUTABLE;
   await assert.rejects(
     () => resolveExecutablePath({ target: 'firefox' }),
     /requires explicit executablePath or FIREFOX_EXECUTABLE.*--format '\{\{path\}\}'/u,

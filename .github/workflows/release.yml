@@ -43,7 +43,6 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
-          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -130,7 +129,6 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
-          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -250,8 +248,19 @@ jobs:
 
       - name: Merge public release assets
         run: |
-          cp release-files/chrome/* release-files/
-          cp release-files/firefox/* release-files/
+          set -euo pipefail
+          shopt -s nullglob
+          for source_dir in release-files/chrome release-files/firefox; do
+            public_assets=("$source_dir"/*)
+            for source_path in "${public_assets[@]}"; do
+              destination_path="release-files/${source_path##*/}"
+              if [[ -e "$destination_path" || -L "$destination_path" ]]; then
+                echo "Duplicate public release filename '${source_path##*/}' from '$source_path'; destination '$destination_path' already exists." >&2
+                exit 1
+              fi
+              cp "$source_path" "$destination_path"
+            done
+          done
           rm -rf release-files/chrome release-files/firefox
 
       - name: Verify exact public release inventory and checksums
@@ -330,7 +339,9 @@ jobs:
           path: chrome-public
 
       - name: Verify exact Chrome public inventory
-        run: node scripts/verify-agent-release-gates.mjs --verify-public-release-directory chrome-public chrome
+        run: |
+          set -euo pipefail
+          node scripts/verify-agent-release-gates.mjs --verify-public-release-directory chrome-public chrome > "$RUNNER_TEMP/chrome-public-assets.txt"
 
       - name: Publish exactly one Chrome ZIP
         env:
@@ -342,18 +353,23 @@ jobs:
           CWS_PUBLISH_TYPE: ${{ vars.CWS_PUBLISH_TYPE }}
           CWS_SKIP_REVIEW: ${{ vars.CWS_SKIP_REVIEW }}
         run: |
-          mapfile -t chrome_assets < <(node scripts/verify-agent-release-gates.mjs --verify-public-release-directory chrome-public chrome)
-          zip_path=""
+          set -euo pipefail
+          mapfile -t chrome_assets < "$RUNNER_TEMP/chrome-public-assets.txt"
+          chrome_zips=()
           for candidate in "${chrome_assets[@]}"; do
             case "$candidate" in
+              *firefox*|*-source.zip)
+                echo "Forbidden Firefox or source ZIP in verified Chrome public inventory: $candidate" >&2
+                exit 1
+                ;;
               *.zip)
-                test -z "$zip_path"
-                zip_path="$candidate"
+                chrome_zips+=("$candidate")
                 ;;
             esac
           done
-          test -n "$zip_path"
-          case "$zip_path" in
-            *firefox*|*-source.zip) exit 1 ;;
-          esac
+          if [[ "${#chrome_zips[@]}" -ne 1 ]]; then
+            echo "Expected exactly one Chrome ZIP in verified public inventory; found ${#chrome_zips[@]}." >&2
+            exit 1
+          fi
+          zip_path="${chrome_zips[0]}"
           node scripts/publish-chrome-web-store.mjs "$zip_path"

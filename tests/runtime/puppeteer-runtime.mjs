@@ -58,20 +58,24 @@ export async function resolveExecutablePath({ target = 'chrome', executablePath,
   if (normalizedTarget !== 'firefox' && normalizedDriver !== 'default') {
     throw new TypeError('The Firefox 140 Puppeteer driver can only launch Firefox.');
   }
-  const configuredPath = executablePath ?? (
-    normalizedTarget === 'firefox'
-      ? normalizedDriver === 'firefox_140'
-        ? process.env.FIREFOX_140_EXECUTABLE ?? process.env.FIREFOX_EXECUTABLE
-        : process.env.FIREFOX_EXECUTABLE
-      : process.env.PUPPETEER_EXECUTABLE_PATH
-  );
-  if (configuredPath) {
-    if (!existsSync(configuredPath)) {
+  const configuredExecutable = executablePath != null
+    ? { path: executablePath, source: 'executablePath' }
+    : normalizedTarget === 'firefox'
+      ? normalizedDriver === 'firefox_140' && process.env.FIREFOX_140_EXECUTABLE != null
+        ? { path: process.env.FIREFOX_140_EXECUTABLE, source: 'FIREFOX_140_EXECUTABLE' }
+        : process.env.FIREFOX_EXECUTABLE != null
+          ? { path: process.env.FIREFOX_EXECUTABLE, source: 'FIREFOX_EXECUTABLE' }
+          : null
+      : process.env.PUPPETEER_EXECUTABLE_PATH != null
+        ? { path: process.env.PUPPETEER_EXECUTABLE_PATH, source: 'PUPPETEER_EXECUTABLE_PATH' }
+        : null;
+  if (configuredExecutable?.path) {
+    if (!existsSync(configuredExecutable.path)) {
       throw new Error(
-        `${normalizedTarget === 'firefox' ? 'FIREFOX_EXECUTABLE' : 'PUPPETEER_EXECUTABLE_PATH'} does not exist: ${configuredPath}`,
+        `${configuredExecutable.source} does not exist: ${configuredExecutable.path}`,
       );
     }
-    return configuredPath;
+    return configuredExecutable.path;
   }
   if (normalizedTarget === 'firefox') {
     const environmentName = normalizedDriver === 'firefox_140'
