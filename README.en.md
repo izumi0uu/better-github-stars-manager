@@ -94,6 +94,10 @@ Watch retrieves notifications from your GitHub inbox and organizes them in one w
 - Fetch an Issue or Pull Request body, state, author, labels, assignees, and milestone on demand
 - Mark one notification or an entire repository group as read or done
 
+<div align="center">
+  <img src="store-assets/chrome-web-store/03-watch-activity-1280x800.png" alt="Watch workspace showing notifications grouped by repository" width="960" />
+</div>
+
 Watch Inbox requires the optional `notifications` scope on your Classic Personal Access Token (PAT). See [How Watch works](docs/en/watch-strategy.md) for its full behavior.
 
 ### Discover projects worth following

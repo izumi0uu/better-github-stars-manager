@@ -100,12 +100,14 @@ describe('Watch background integration contract', () => {
   });
 
   it('validates Watch notification mutations and keeps them inside the Watch queue', () => {
-    assert.match(backgroundSource, /type: ["']markWatchThreadsRead["']; threadIds\?: unknown/);
-    assert.match(backgroundSource, /type: ["']markWatchThreadsDone["']; threadIds\?: unknown/);
+    assert.match(backgroundSource, /type: ["']markWatchThreadsRead["']; accountLogin\?: unknown; threadIds\?: unknown/);
+    assert.match(backgroundSource, /type: ["']markWatchThreadsDone["']; accountLogin\?: unknown; threadIds\?: unknown/);
     const block = caseBlock('markWatchThreadsDone', 'disconnectWatchInbox');
+    assert.match(block, /const accountLogin = parseWatchAccountLogin\(req\.accountLogin\)/);
     assert.match(block, /const threadIds = parseWatchThreadIds\(req\.threadIds\)/);
-    assert.match(block, /watchRefreshCoordinator\.markThreadsRead\(threadIds\)/);
-    assert.match(block, /watchRefreshCoordinator\.markThreadsDone\(threadIds\)/);
+    assert.match(block, /const mutation = \{ accountLogin, threadIds \}/);
+    assert.match(block, /watchRefreshCoordinator\.markThreadsRead\(mutation\)/);
+    assert.match(block, /watchRefreshCoordinator\.markThreadsDone\(mutation\)/);
     assert.match(block, /watchThreadActionInvalid/);
     assert.match(block, /watchThreadActionFailed/);
     assert.doesNotMatch(block, /setProgress|invalidateCache|broadcastDataChanged/);
