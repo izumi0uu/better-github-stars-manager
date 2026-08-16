@@ -9,7 +9,7 @@
 
 直接在 GitHub Stars 页面搜索、筛选、添加标签和笔记。需要时再启用 Watch、Following、For You、Secret Gist 同步和 Cubby AI等功能。
 
-**官方网站：** [betterstars.app](https://betterstars.app/)
+[官网](https://betterstars.app/) · [DEMO](https://better-github-stars-manager.vercel.app/)
 
 [![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-立即安装-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
