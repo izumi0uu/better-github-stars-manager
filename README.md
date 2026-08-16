@@ -9,6 +9,8 @@
 
 直接在 GitHub Stars 页面搜索、筛选、添加标签和笔记。需要时再启用 Watch、Following、For You、Secret Gist 同步和 Cubby AI等功能。
 
+**官方网站：** [betterstars.app](https://betterstars.app/)
+
 [![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-立即安装-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -31,6 +33,59 @@
 - [相关文档](#相关文档)
 - [参与贡献](#参与贡献) · [许可证](#许可证)
 - [链接](#链接) · [友情链接](#友情链接)
+
+## 开始使用
+
+### 安装
+
+| | 商店 | 适用浏览器 |
+| :---: | --- | --- |
+| [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome、Edge、Brave、Opera 等 Chromium 内核浏览器 |
+| [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · 即将上架 | Microsoft Edge |
+| [<img src="store-assets/store-badges/firefox.svg" alt="Get it on Firefox Add-ons" height="55">](https://addons.mozilla.org/firefox/) | [Firefox Add-ons](https://addons.mozilla.org/firefox/) · 即将上架 | Firefox |
+| [<img src="store-assets/store-badges/opera.svg" alt="Get it on Opera Add-ons" height="55">](https://addons.opera.com/extensions/) | [Opera Add-ons](https://addons.opera.com/extensions/) · 即将上架 | Opera |
+
+<!-- TODO: Edge、Firefox、Opera 上架后，把对应的占位链接替换为扩展页地址 -->
+
+扩展基于 Manifest V3。安装后打开 `https://github.com/{you}?tab=stars`，管理器会出现在 Stars 页面中。
+
+### 首次同步
+
+1. 打开扩展 **Options** 页
+2. 创建 GitHub Classic PAT，并授予 `repo` 与 `gist` scope
+3. 按需追加 `notifications`（Watch）和 `read:user`（Following）权限
+4. 粘贴 Token，点击 **Save & verify**
+5. 打开 `https://github.com/{you}?tab=stars` 自动启动
+6. 首次进入时自动运行 **Full Sync**
+
+打开[预填的 Classic PAT 表单](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager)，按下图完成配置。
+
+<details>
+<summary><strong>展开图文配置 GitHub Token</strong></summary>
+
+<br>
+
+#### 1. 设置有效期
+
+保留 Note，并选择有限有效期。
+
+<img src="store-assets/screenshots/token-guide-create-classic-pat.webp" alt="Classic PAT 的 Note、有效期和 repo scope" width="1568" height="875" />
+
+#### 2. 确认 scopes
+
+保留 `repo`、`gist`、`notifications` 和 `read:user`；不要勾选 `user`。
+
+<img src="store-assets/screenshots/token-guide-select-scopes.webp" alt="已勾选 gist、notifications 和 read:user，未勾选 user" width="1568" height="520" />
+
+#### 3. 生成并保存
+
+点击 **Generate token**，复制 Token，粘贴到 **Options > GitHub Classic PAT**，然后点击 **Save & verify**。
+
+<img src="store-assets/screenshots/token-guide-generate-token.webp" alt="点击 Generate token 生成 GitHub Classic PAT" width="888" height="290" />
+
+GitHub 只显示一次 Token，请妥善保管。
+
+</details>
 
 ## 你的 Stars 可以是一个管理面板
 
@@ -151,59 +206,6 @@ Github token 会进行本地加密。Cubby 对话、恢复记录和产物以未�
 
 项目没有其他后端服务、GitHub 代理、AI 代理、分析 SDK、广告网络或跟踪服务。完整说明见 [隐私政策](docs/zh/privacy-policy.md)。
 
-## 开始使用
-
-### 安装
-
-| | 商店 | 适用浏览器 |
-| :---: | --- | --- |
-| [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome、Edge、Brave、Opera 等 Chromium 内核浏览器 |
-| [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · 即将上架 | Microsoft Edge |
-| [<img src="store-assets/store-badges/firefox.svg" alt="Get it on Firefox Add-ons" height="55">](https://addons.mozilla.org/firefox/) | [Firefox Add-ons](https://addons.mozilla.org/firefox/) · 即将上架 | Firefox |
-| [<img src="store-assets/store-badges/opera.svg" alt="Get it on Opera Add-ons" height="55">](https://addons.opera.com/extensions/) | [Opera Add-ons](https://addons.opera.com/extensions/) · 即将上架 | Opera |
-
-<!-- TODO: Edge、Firefox、Opera 上架后，把对应的占位链接替换为扩展页地址 -->
-
-扩展基于 Manifest V3。安装后打开 `https://github.com/{you}?tab=stars`，管理器会出现在 Stars 页面中。
-
-### 首次同步
-
-1. 打开扩展 **Options** 页
-2. 创建 GitHub Classic PAT，并授予 `repo` 与 `gist` scope
-3. 按需追加 `notifications`（Watch）和 `read:user`（Following）权限
-4. 粘贴 Token，点击 **Save & verify**
-5. 打开 `https://github.com/{you}?tab=stars` 自动启动
-6. 首次进入时自动运行 **Full Sync**
-
-打开[预填的 Classic PAT 表单](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager)，按下图完成配置。
-
-<details>
-<summary><strong>展开图文配置 GitHub Token</strong></summary>
-
-<br>
-
-#### 1. 设置有效期
-
-保留 Note，并选择有限有效期。
-
-<img src="store-assets/screenshots/token-guide-create-classic-pat.webp" alt="Classic PAT 的 Note、有效期和 repo scope" width="1568" height="875" />
-
-#### 2. 确认 scopes
-
-保留 `repo`、`gist`、`notifications` 和 `read:user`；不要勾选 `user`。
-
-<img src="store-assets/screenshots/token-guide-select-scopes.webp" alt="已勾选 gist、notifications 和 read:user，未勾选 user" width="1568" height="520" />
-
-#### 3. 生成并保存
-
-点击 **Generate token**，复制 Token，粘贴到 **Options > GitHub Classic PAT**，然后点击 **Save & verify**。
-
-<img src="store-assets/screenshots/token-guide-generate-token.webp" alt="点击 Generate token 生成 GitHub Classic PAT" width="888" height="290" />
-
-GitHub 只显示一次 Token，请妥善保管。
-
-</details>
-
 ## 它不会做什么
 
 Better GitHub Stars Manager 是 Stars 页面的增强层，不是另一个平台：
@@ -271,6 +273,7 @@ Copyright (c) 2026 izumi0uu。
 ## 链接
 
 - [GitHub 仓库](https://github.com/izumi0uu/better-github-stars-manager)
+- [官方网站](https://betterstars.app/)
 - [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 - [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues)
 
