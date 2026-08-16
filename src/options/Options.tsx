@@ -209,6 +209,7 @@ export function Options() {
   };
 
 
+
   const toggleTheme = async () => {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
@@ -306,6 +307,7 @@ export function Options() {
         : storeRatingPrompt.status === 'disabled'
           ? m.options.storeRatingReminderDisabled
           : m.options.storeRatingReminderTracking;
+
 
   useEffect(() => {
     const listener = (

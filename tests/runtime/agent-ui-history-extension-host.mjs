@@ -54,7 +54,7 @@ const PRIVATE_MARKERS = Object.freeze([
   RETRY_RESPONSE_CANARY,
 ]);
 const HISTORY_TURNS = 50;
-const SETUP_TIMEOUT_MS = 45_000;
+const SETUP_TIMEOUT_MS = 60_000;
 const TURN_TIMEOUT_MS = 90_000;
 const HISTORY_TIMEOUT_MS = 45_000;
 const RUN_EVIDENCE_SELF_TEST = process.env.GSM_UI_HISTORY_EVIDENCE_SELF_TEST === '1';
@@ -755,6 +755,16 @@ function githubWorkerFixture({ route, method }) {
     ),
     'GET github-starred': json([], 'github-token-stars'),
     'GET github-watch-scope': json([], 'github-token-watch-scope'),
+    'GET github-owned-repos': json([], 'github-owned-repos'),
+    'GET github-repository-search': json(
+      { total_count: 0, incomplete_results: false, items: [] },
+      'github-repository-search',
+    ),
+    'GET github-notifications': json(
+      { message: 'Resource not accessible by personal access token' },
+      'github-token-notifications-forbidden',
+      403,
+    ),
     'POST github-gists': json({ id: 'runtime-probe-gist' }, 'github-token-gist-create', 201),
     'DELETE github-probe-gist': {
       status: 204,
@@ -807,6 +817,7 @@ async function waitForOptionsReady(page) {
 }
 
 async function saveGitHubToken(page) {
+  await clickTextTrusted(page, 'button', /^EN$/i);
   runtime.configStep = 'github-field';
   await page.waitForSelector('textarea[placeholder="github_pat_..."]:not([disabled])', {
     visible: true,
@@ -849,16 +860,43 @@ function reconcileExpectedTokenProbeRequestFailure() {
     && request.status === 204
   ));
   assert.equal(expectedCleanup, true);
+  const expectedNotificationProbe = optionsPolicy.expectedRequests.some((request) => (
+    request.method === 'GET'
+    && request.route === 'github-notifications'
+    && request.status === 403
+  ));
+  assert.equal(expectedNotificationProbe, true);
+  let expectedNotificationConsoleRemoved = false;
   assert.equal(optionsPolicy.interceptionFailure, false);
   for (let index = pageIssues.length - 1; index >= 0; index -= 1) {
     const issue = pageIssues[index];
-    if (
-      issue.label === 'phase7c-options'
+    if (issue.label === 'phase7c-options'
       && issue.kind === 'request-failed'
-      && issue.value === 'DELETE github-probe-gist'
-    ) pageIssues.splice(index, 1);
+      && issue.value === 'DELETE github-probe-gist') {
+      pageIssues.splice(index, 1);
+    } else if (!expectedNotificationConsoleRemoved
+      && issue.label === 'phase7c-options'
+      && issue.kind === 'console-error') {
+      pageIssues.splice(index, 1);
+      expectedNotificationConsoleRemoved = true;
+    }
   }
+  assert.equal(expectedNotificationConsoleRemoved, true);
 }
+async function acceptAgentDataDisclosure(page, expectedProvider, expectedOrigin) {
+  await clickTextTrusted(page, 'button', /^Accept data sharing$/i);
+  await waitUntil(
+    () => page.evaluate(async ({ provider, origin }) => {
+      const config = (await chrome.storage.local.get('gsm_config')).gsm_config;
+      return config?.agentDataDisclosureAcceptance?.version === 2
+        && config.agentDataDisclosureAcceptance.provider === provider
+        && config.agentDataDisclosureAcceptance.origin === origin;
+    }, { provider: expectedProvider, origin: expectedOrigin }),
+    SETUP_TIMEOUT_MS,
+    'Agent data disclosure acceptance was not persisted.',
+  );
+}
+
 
 async function saveProvider(page) {
   runtime.configStep = 'provider-menu';
@@ -899,6 +937,7 @@ async function saveProvider(page) {
     await waitUntil(() => page.evaluate((details) => chrome.permissions.contains(details), permission),
       SETUP_TIMEOUT_MS, 'Provider host access was not granted.');
   }
+  await acceptAgentDataDisclosure(page, 'custom-openai-compatible', PROVIDER_ORIGIN);
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some((button) => (
     /^Save & test$/i.test(button.textContent?.trim() ?? '') && !button.disabled
   )), { timeout: SETUP_TIMEOUT_MS });
@@ -1056,10 +1095,14 @@ async function clickShadow(page, selector) {
 }
 
 async function waitForAgentEntry(page) {
-  await page.waitForFunction(() => (
-    !!document.getElementById('gsm-manager-host')
-    || !!document.getElementById('gsm-fab')
-  ), { timeout: SETUP_TIMEOUT_MS });
+  await waitUntil(
+    () => page.evaluate(() => (
+      !!document.getElementById('gsm-manager-host')
+      || !!document.getElementById('gsm-fab')
+    )),
+    SETUP_TIMEOUT_MS,
+    'Production Agent entry did not hydrate.',
+  );
   const hasManager = await page.evaluate(() => !!document.getElementById('gsm-manager-host'));
   if (hasManager) return;
   const handle = await page.evaluateHandle(() => (

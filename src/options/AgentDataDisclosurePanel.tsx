@@ -6,16 +6,22 @@ import { Spinner } from '@/ui/shadcn/spinner';
 export function AgentDataDisclosurePanel({
   providerLabel,
   canonicalOrigin,
+  disclosureAccepted,
+  disclosureBusy,
   customHostAccessRequired,
   hostAccessGranted,
   hostAccessBusy,
+  onAcceptDisclosure,
   onGrantAccess,
 }: {
   providerLabel: string;
   canonicalOrigin: string;
+  disclosureAccepted: boolean;
+  disclosureBusy: boolean;
   customHostAccessRequired: boolean;
   hostAccessGranted: boolean;
   hostAccessBusy: boolean;
+  onAcceptDisclosure: () => void;
   onGrantAccess: () => void;
 }) {
   const { m } = useI18n();
@@ -80,6 +86,33 @@ export function AgentDataDisclosurePanel({
         </div>
       </details>
 
+      <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2.5">
+        {disclosureAccepted ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-success" role="status">
+            <Check className="size-4" />
+            {m.options.agentDisclosureAccepted}
+          </span>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onAcceptDisclosure}
+            disabled={disclosureBusy || hostAccessBusy}
+          >
+            {disclosureBusy && <Spinner data-icon="inline-start" />}
+            {disclosureBusy
+              ? m.options.agentDisclosureAccepting
+              : m.options.agentDisclosureAccept}
+          </Button>
+        )}
+        {!disclosureAccepted && (
+          <p className="text-xs text-warning">
+            {m.options.agentDisclosureAcceptanceRequired}
+          </p>
+        )}
+      </div>
+
       {customHostAccessRequired && (
         <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2.5">
           {hostAccessGranted ? (
@@ -93,7 +126,7 @@ export function AgentDataDisclosurePanel({
               variant="outline"
               size="sm"
               onClick={onGrantAccess}
-              disabled={hostAccessBusy}
+              disabled={disclosureBusy || hostAccessBusy}
             >
               {hostAccessBusy && <Spinner data-icon="inline-start" />}
               {m.options.agentGrantAccess}

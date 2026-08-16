@@ -107,6 +107,7 @@ function createHarness(
     recordAgentProviderCapability: vi.fn(async () => true),
   };
   const hasHostPermission = vi.fn(async () => true);
+  const hasDataCollectionPermission = vi.fn(async () => true);
   const testConnection = vi.fn(async (providerConfig: AgentProviderRegistryConfig) => {
     if (providerConfig.hostPermissionCheck && !await providerConfig.hostPermissionCheck()) {
       throw new Error('AGENT_HOST_PERMISSION_DENIED');
@@ -156,6 +157,7 @@ function createHarness(
   const gate = createAgentProviderGate({
     auth,
     hasHostPermission,
+    hasDataCollectionPermission,
     testConnection,
     createProvider,
     assertContextCapabilityFeasible,
@@ -167,6 +169,7 @@ function createHarness(
     createProvider,
     fetchSpy,
     gate,
+    hasDataCollectionPermission,
     hasHostPermission,
     testConnection,
   };
@@ -181,9 +184,20 @@ describe('background Agent provider gate', () => {
     expect(harness.auth.getAgentProviderCredentialSnapshot).toHaveBeenCalledOnce();
     expect(harness.createProvider).not.toHaveBeenCalled();
 
-    const runtime = prepared.create();
+    const runtime = await prepared.create();
     expect(runtime.fingerprint).toBe(prepared.fingerprint);
     expect(harness.createProvider).toHaveBeenCalledOnce();
+  });
+
+  it('rechecks browser consent immediately before actual Provider creation', async () => {
+    const harness = createHarness();
+    const prepared = await harness.gate.prepareRuntimeProvider();
+    harness.hasDataCollectionPermission.mockResolvedValue(false);
+
+    await expect(prepared.create())
+      .rejects.toThrow('AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED');
+    expect(harness.createProvider).not.toHaveBeenCalled();
+    expect(harness.fetchSpy).not.toHaveBeenCalled();
   });
 
   beforeEach(() => {
@@ -343,27 +357,46 @@ describe('background Agent provider gate', () => {
     expect(harness.fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('allows connection tests and runtime setup without disclosure acceptance', async () => {
+  it('blocks connection tests and runtime creation without current disclosure acceptance', async () => {
     const harness = createHarness();
     harness.auth.getConfig.mockResolvedValue({
       agentProvider: savedConfig,
       agentDataDisclosureAcceptance: null,
     });
 
-    await harness.gate.testConnection({
+    await expect(harness.gate.testConnection({
       provider: 'openai',
       apiKey: 'transient-secret',
-    });
-    const runtime = await harness.gate.createRuntimeProvider();
+    })).rejects.toThrow('AGENT_DATA_DISCLOSURE_REQUIRED');
+    await expect(harness.gate.createRuntimeProvider())
+      .rejects.toThrow('AGENT_DATA_DISCLOSURE_REQUIRED');
 
-    expect(harness.testConnection).toHaveBeenCalledOnce();
-    expect(harness.fetchSpy).toHaveBeenCalledTimes(2);
-    expect(runtime.providerId).toBe('openai');
-    expect(harness.createProvider).toHaveBeenCalledOnce();
+    expect(harness.testConnection).not.toHaveBeenCalled();
+    expect(harness.createProvider).not.toHaveBeenCalled();
+    expect(harness.fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('allows a changed custom origin when its Chrome host permission is present', async () => {
+  it('blocks accepted Firefox traffic when its built-in permission is absent', async () => {
     const harness = createHarness();
+    harness.hasDataCollectionPermission.mockResolvedValue(false);
+
+    await expect(harness.gate.testConnection({
+      provider: 'openai',
+      apiKey: 'transient-secret',
+    })).rejects.toThrow('AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED');
+    await expect(harness.gate.createRuntimeProvider())
+      .rejects.toThrow('AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED');
+
+    expect(harness.testConnection).not.toHaveBeenCalled();
+    expect(harness.createProvider).not.toHaveBeenCalled();
+    expect(harness.fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('allows a changed custom origin when host permission and disclosure are current', async () => {
+    const harness = createHarness(savedConfig, {
+      provider: 'custom-openai-compatible',
+      baseUrl: 'https://relay.example/v1',
+    });
 
     await harness.gate.testConnection({
       provider: 'custom-openai-compatible',
@@ -417,7 +450,10 @@ describe('background Agent provider gate', () => {
   });
 
   it('blocks an unknown Custom model without capacity before provider transmission', async () => {
-    const harness = createHarness();
+    const harness = createHarness(savedConfig, {
+      provider: 'custom-openai-compatible',
+      baseUrl: 'https://relay.example/v1',
+    });
 
     await expect(harness.gate.testConnection({
       provider: 'custom-openai-compatible',
@@ -506,6 +542,48 @@ describe('background Agent provider gate', () => {
     expect(harness.auth.validateAgentProviderCredentialSnapshot)
       .toHaveBeenCalledWith(readySnapshot);
     expect(harness.fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('blocks the next runtime request when Firefox permission is revoked after creation', async () => {
+    const harness = createHarness();
+    const runtime = await harness.gate.createRuntimeProvider();
+    harness.hasDataCollectionPermission.mockResolvedValue(false);
+
+    await expect(runtime.provider.generate({
+      messages: [],
+      tools: [],
+      maxOutputTokens: 32,
+    })).rejects.toThrow('AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED');
+    expect(harness.fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('blocks the next runtime request when disclosure acceptance is revoked after creation', async () => {
+    const harness = createHarness();
+    const runtime = await harness.gate.createRuntimeProvider();
+    harness.auth.getConfig.mockResolvedValue({
+      agentProvider: savedConfig,
+      agentDataDisclosureAcceptance: null,
+    });
+
+    await expect(runtime.provider.generate({
+      messages: [],
+      tools: [],
+      maxOutputTokens: 32,
+    })).rejects.toThrow('AGENT_DATA_DISCLOSURE_REQUIRED');
+    expect(harness.fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('stops a multi-request probe when Firefox permission is revoked between fetches', async () => {
+    const harness = createHarness();
+    harness.hasDataCollectionPermission
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+
+    await expect(harness.gate.testConnection({ provider: 'openai' }))
+      .rejects.toThrow('AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED');
+    expect(harness.fetchSpy).toHaveBeenCalledTimes(1);
+    expect(harness.auth.recordAgentProviderCapability).not.toHaveBeenCalled();
   });
 
   it('stops a saved probe when the revision changes between its two fetches', async () => {

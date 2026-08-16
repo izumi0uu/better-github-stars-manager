@@ -16,6 +16,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pkg from '../package.json' with { type: 'json' };
 import {
+  FIREFOX_RELEASE_MANUAL_EXCLUSIONS,
+  normalizeReleaseBrowserTarget,
   planEvidencePublication,
   prepareReleaseFinalization,
   RELEASE_MANUAL_EXCLUSIONS,
@@ -30,8 +32,9 @@ import {
   classifyForbiddenPackageEntry,
   validateManifestResourceClosure,
 } from './package-manifest-closure.mjs';
+import { assertFirefoxManifestContract } from './check-firefox-output-contracts.mjs';
+import { validateFirefoxReviewerSourceArtifact } from './package-firefox-review-source.mjs';
 
-const MANUAL_EXCLUSIONS = RELEASE_MANUAL_EXCLUSIONS;
 const EXPECTED_SCENARIO_IDS = Object.freeze([
   'small-window-multiple-tools',
   'overflow-then-success',
@@ -51,8 +54,9 @@ export function finalizeAgentRelease({
   operations = {},
 } = {}) {
   const resolvedRoot = path.resolve(root);
-  const distDir = path.resolve(resolvedRoot, env.GSM_DIST_DIR ?? 'dist');
-  const artifactsDir = path.resolve(resolvedRoot, env.GSM_ARTIFACTS_DIR ?? 'artifacts');
+  const browserTarget = resolveRequestedBrowserTarget(env);
+  const distDir = path.resolve(resolvedRoot, env.GSM_DIST_DIR ?? (browserTarget === 'firefox' ? 'dist-firefox' : 'dist'));
+  const artifactsDir = path.resolve(resolvedRoot, env.GSM_ARTIFACTS_DIR ?? (browserTarget === 'firefox' ? 'artifacts/firefox' : 'artifacts'));
   const runtimeEvidenceDir = path.resolve(resolvedRoot, env.GSM_RUNTIME_EVIDENCE_DIR ?? path.join(artifactsDir, 'runtime-evidence'));
   const versionApproval = parseVersionApproval(env.GSM_VERSION_APPROVAL);
   validateReleaseVersionApproval(versionApproval, packageVersion);
@@ -76,6 +80,9 @@ export function finalizeAgentRelease({
   const provisional = parseCanonical(provisionalRaw, 'provisional release evidence');
   const runtimeVerification = parseCanonical(runtimeVerificationRaw, 'runtime verification evidence');
   const releaseDist = ops.readReleaseDist(distDir);
+  const sharedRuntimeReleaseDist = browserTarget === 'firefox'
+    ? ops.readReleaseDist(path.resolve(resolvedRoot, 'dist'))
+    : undefined;
   const packageInput = ops.fingerprint(distDir);
   const packageArtifacts = ops.validatePackageArtifacts({
     root: resolvedRoot,
@@ -83,6 +90,7 @@ export function finalizeAgentRelease({
     distDir,
     provisional,
     packageVersion,
+    browserTarget,
   });
   const runtimeEvidenceRaw = {};
   for (const [key, contract] of Object.entries(RUNTIME_EVIDENCE_CONTRACTS)) {
@@ -104,9 +112,11 @@ export function finalizeAgentRelease({
     runtimeVerificationRelativePath: relativePaths.runtime,
     runtimeEvidenceRaw,
     releaseDist,
+    sharedRuntimeReleaseDist,
     sourceCommit,
     packageVersion,
     packageInput,
+    browserTarget,
     versionApproval,
     expectedScenarioIds: EXPECTED_SCENARIO_IDS,
     packagedManifestVersion: packageArtifacts.packagedManifestVersion,
@@ -114,7 +124,7 @@ export function finalizeAgentRelease({
     publicationTimestamp: runtimeVerification.generatedAt,
     finalRelativePath: relativePaths.final,
     gateRelativePath: relativePaths.gate,
-    manualExclusions: MANUAL_EXCLUSIONS,
+    manualExclusions: browserTarget === 'firefox' ? FIREFOX_RELEASE_MANUAL_EXCLUSIONS : RELEASE_MANUAL_EXCLUSIONS,
   });
   const existing = {};
   if (existsSync(paths.final)) {
@@ -135,6 +145,7 @@ export function finalizeAgentRelease({
     releaseDist,
     packagedManifestVersion: packageArtifacts.packagedManifestVersion,
     zipManifestVersion: packageArtifacts.zipManifestVersion,
+    browserTarget,
   });
   assert.deepEqual(readFileSync(paths.provisional), provisionalRaw, 'Finalization must not mutate provisional evidence.');
   cleanupOwnedPublicationTemps({ artifactsDir, paths, prepared, existing });
@@ -143,6 +154,7 @@ export function finalizeAgentRelease({
     artifactsDir,
     packageVersion,
     publicationState: existing.gate ? 'published' : existing.final ? 'final_only' : 'unpublished',
+    browserTarget,
   });
   assertCleanSource(ops.git, 'Release finalization did not end from a clean source tree.');
   assert.equal(ops.git(['rev-parse', 'HEAD']), sourceCommit, 'Source commit changed during release finalization.');
@@ -290,12 +302,14 @@ export function cleanupOwnedPublicationTemps({ artifactsDir, paths, prepared, ex
 
 export function listReleaseArtifactFiles({
   root = process.cwd(),
-  artifactsDir = path.resolve(root, process.env.GSM_ARTIFACTS_DIR ?? 'artifacts'),
+  artifactsDir,
   packageVersion = pkg.version,
   publicationState = 'published',
+  browserTarget = 'chrome',
 } = {}) {
+  const target = normalizeReleaseBrowserTarget(browserTarget);
   const resolvedRoot = path.resolve(root);
-  const resolvedArtifacts = path.resolve(artifactsDir);
+  const resolvedArtifacts = path.resolve(artifactsDir ?? path.join(resolvedRoot, target === 'firefox' ? 'artifacts/firefox' : 'artifacts'));
   if (resolvedArtifacts !== resolvedRoot && !resolvedArtifacts.startsWith(`${resolvedRoot}${path.sep}`)) {
     throw new Error('Release artifact root must stay inside the repository.');
   }
@@ -306,10 +320,14 @@ export function listReleaseArtifactFiles({
   if (!['unpublished', 'final_only', 'published'].includes(publicationState)) {
     throw new Error('Release artifact publication state is invalid.');
   }
+  const baseName = target === 'firefox'
+    ? `better-github-stars-manager-firefox-${packageVersion}`
+    : `better-github-stars-manager-${packageVersion}`;
   const expected = [
     'agent-runtime-verification.json',
-    `better-github-stars-manager-${packageVersion}.zip`,
-    `better-github-stars-manager-${packageVersion}.zip.sha256`,
+    `${baseName}.zip`,
+    `${baseName}.zip.sha256`,
+    ...(target === 'firefox' ? [`${baseName}-source.zip`, `${baseName}-source.zip.sha256`] : []),
     `release-evidence-${packageVersion}.provisional.json`,
     ...(publicationState === 'final_only' || publicationState === 'published'
       ? [`release-evidence-${packageVersion}.json`]
@@ -348,12 +366,20 @@ export function listReleaseArtifactFiles({
   ).split(path.sep).join('/')));
 }
 
-export function validatePackageArtifacts({ root, artifactsDir, distDir, provisional, packageVersion }) {
+export function validatePackageArtifacts({ root, artifactsDir, distDir, provisional, packageVersion, browserTarget = 'chrome' }) {
+  const target = normalizeReleaseBrowserTarget(browserTarget);
+  if ((target === 'firefox') !== (provisional?.schemaVersion === 3 && provisional?.browserTarget === 'firefox')) {
+    throw new Error('Provisional evidence browser target/schema does not match the requested release target.');
+  }
   const generated = provisional.generatedFiles;
   if (!Array.isArray(generated)) throw new Error('Provisional evidence has no generated file inventory.');
+  const baseName = target === 'firefox'
+    ? `better-github-stars-manager-firefox-${packageVersion}`
+    : `better-github-stars-manager-${packageVersion}`;
   const expectedGeneratedFiles = [
-    `better-github-stars-manager-${packageVersion}.zip`,
-    `better-github-stars-manager-${packageVersion}.zip.sha256`,
+    `${baseName}.zip`,
+    `${baseName}.zip.sha256`,
+    ...(target === 'firefox' ? [`${baseName}-source.zip`, `${baseName}-source.zip.sha256`] : []),
   ].sort(bytewiseCompare);
   assert.deepEqual(
     generated.map((file) => file?.relativePath),
@@ -366,14 +392,22 @@ export function validatePackageArtifacts({ root, artifactsDir, distDir, provisio
     assert.equal(bytes.byteLength, file.bytes, `Packaged artifact size is stale: ${file.relativePath}`);
     assert.equal(hash(bytes), file.sha256, `Packaged artifact digest is stale: ${file.relativePath}`);
   }
-  const zipEvidence = generated.find((file) => file.relativePath.endsWith('.zip'));
-  const checksumEvidence = generated.find((file) => file.relativePath.endsWith('.zip.sha256'));
-  assert.ok(zipEvidence && checksumEvidence, 'Release evidence must include exactly one ZIP and checksum pair.');
-  assert.equal(generated.filter((file) => file.relativePath.endsWith('.zip')).length, 1, 'Release evidence must include one ZIP.');
-  assert.equal(generated.filter((file) => file.relativePath.endsWith('.zip.sha256')).length, 1, 'Release evidence must include one checksum.');
+  const zipEvidence = generated.find((file) => file.relativePath === `${baseName}.zip`);
+  const checksumEvidence = generated.find((file) => file.relativePath === `${baseName}.zip.sha256`);
+  assert.ok(zipEvidence && checksumEvidence, 'Release evidence must include the exact extension ZIP and checksum pair.');
   const zipPath = resolveEvidenceFile(artifactsDir, zipEvidence.relativePath);
   const checksumPath = resolveEvidenceFile(artifactsDir, checksumEvidence.relativePath);
   assert.equal(readFileSync(checksumPath, 'utf8'), `${zipEvidence.sha256}  ${path.basename(zipPath)}\n`, 'ZIP checksum contents are stale.');
+
+  if (target === 'firefox') {
+    const sourceZipPath = resolveEvidenceFile(artifactsDir, `${baseName}-source.zip`);
+    const sourceChecksumPath = resolveEvidenceFile(artifactsDir, `${baseName}-source.zip.sha256`);
+    validateFirefoxReviewerSourceArtifact({
+      zipPath: sourceZipPath,
+      checksumPath: sourceChecksumPath,
+      evidence: provisional.reviewerSource,
+    });
+  }
 
   const packageEntries = readZipInventory(zipPath);
   for (const entry of packageEntries) {
@@ -384,6 +418,7 @@ export function validatePackageArtifacts({ root, artifactsDir, distDir, provisio
   const zipManifest = JSON.parse(manifestEntry.bytes.toString('utf8'));
   const distManifestBytes = readFileSync(path.join(distDir, 'manifest.json'));
   const distManifest = JSON.parse(distManifestBytes.toString('utf8'));
+  if (target === 'firefox') assertFirefoxManifestContract(distManifest);
   assert.equal(zipManifest.version, packageVersion, 'ZIP manifest version differs from the approved package version.');
   assert.deepEqual(zipManifest, distManifest, 'ZIP manifest differs from the exercised production manifest.');
   assert.deepEqual(manifestEntry.bytes, distManifestBytes, 'ZIP manifest bytes differ from the exercised production manifest.');
@@ -398,13 +433,29 @@ export function validatePackageArtifacts({ root, artifactsDir, distDir, provisio
   assert.equal(provisional.package.zipRootManifest, true);
   assert.equal(provisional.package.manifestResourcesClosed, true);
   assert.equal(provisional.package.sourceOnlyEntriesExcluded, true);
-  assert.equal(provisional.package.dashboardSubmissionClaimed, false);
-  assert.deepEqual(provisional.packagedPermissions, {
+  if (target === 'firefox') {
+    assert.equal(provisional.package.remoteExecutableCodeExcluded, true);
+    assert.equal(provisional.package.publicationClaimed, false);
+  } else {
+    assert.equal(provisional.package.dashboardSubmissionClaimed, false);
+  }
+  const expectedPermissions = {
     permissions: sortedStrings(distManifest.permissions),
     optionalPermissions: sortedStrings(distManifest.optional_permissions),
     hostPermissions: sortedStrings(distManifest.host_permissions),
     optionalHostPermissions: sortedStrings(distManifest.optional_host_permissions),
-  });
+    ...(target === 'firefox' ? {
+      dataCollectionPermissions: {
+        required: sortedStrings(
+          distManifest.browser_specific_settings.gecko.data_collection_permissions.required,
+        ),
+        optional: sortedStrings(
+          distManifest.browser_specific_settings.gecko.data_collection_permissions.optional,
+        ),
+      },
+    } : {}),
+  };
+  assert.deepEqual(provisional.packagedPermissions, expectedPermissions);
   return Object.freeze({ packagedManifestVersion: distManifest.version, zipManifestVersion: zipManifest.version });
 }
 
@@ -421,6 +472,19 @@ function createDefaultOperations(root) {
     planPublication: planEvidencePublication,
     validatePublishedGate: validatePublishedReleaseGate,
   };
+}
+
+function resolveRequestedBrowserTarget(env) {
+  const packageTarget = env.GSM_PACKAGE_TARGET === undefined
+    ? undefined
+    : normalizeReleaseBrowserTarget(env.GSM_PACKAGE_TARGET);
+  const runtimeTarget = env.GSM_BROWSER_TARGET === undefined
+    ? undefined
+    : normalizeReleaseBrowserTarget(env.GSM_BROWSER_TARGET);
+  if (packageTarget && runtimeTarget && packageTarget !== runtimeTarget) {
+    throw new Error('GSM_PACKAGE_TARGET and GSM_BROWSER_TARGET must identify the same browser.');
+  }
+  return packageTarget ?? runtimeTarget ?? 'chrome';
 }
 
 
@@ -485,7 +549,7 @@ function assertMode0600(filePath, label) {
 }
 
 function sortedStrings(value) {
-  return Array.isArray(value) ? [...value].sort(bytewiseCompare) : [];
+  return Array.isArray(value) ? [...new Set(value)].sort(bytewiseCompare) : [];
 }
 
 function hash(bytes) {

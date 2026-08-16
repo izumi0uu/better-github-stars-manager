@@ -201,6 +201,21 @@ async function run(runtime) {
   );
   await useEnglishLocale(runtime.page);
 
+  await runtime.page.evaluate(async () => {
+    const key = 'gsm_config';
+    const stored = await chrome.storage.local.get(key);
+    await chrome.storage.local.set({
+      [key]: { ...(stored[key] ?? {}), locale: 'en' },
+    });
+  });
+  await runtime.page.reload({ waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+  await runtime.page.waitForSelector('[data-testid="agent-diagnostics-page"]', { timeout: TIMEOUT_MS });
+  await runtime.page.waitForFunction(
+    () => document.querySelector('[data-testid="agent-diagnostics-raw-capture"]')
+      ?.textContent?.includes('repository code and private notes'),
+    { timeout: TIMEOUT_MS },
+  );
+
   runtime.stage = 'raw-capture';
   runtime.rawCapture = await verifyRawCaptureLifecycle(runtime.page);
 

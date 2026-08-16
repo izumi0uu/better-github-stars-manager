@@ -17,7 +17,8 @@ import { fileURLToPath } from 'node:url';
 import pkg from '../package.json' with { type: 'json' };
 import {
   createFileEvidence,
-  FINAL_CHECK_SPECS,
+  finalCheckSpecsForTarget,
+  normalizeReleaseBrowserTarget,
   parseViteChunkAdvisories,
   RUNTIME_EVIDENCE_CONTRACTS,
   validateProvisionalReleaseEvidence,
@@ -33,6 +34,7 @@ import {
   measureBundleArtifact,
   resolvePackagePath,
 } from './package-manifest-closure.mjs';
+import { verifyFirefoxBrowsers } from '../tests/manual/e2e/verify-firefox.mjs';
 
 const EXPECTED_SCENARIO_IDS = Object.freeze([
   'small-window-multiple-tools',
@@ -48,6 +50,16 @@ const EXPECTED_SCENARIO_IDS = Object.freeze([
 const PACKAGE_INPUT_CHECKPOINTS = new Set([
   'runtime',
   'extensionSmoke',
+  'organizeJobExtensionHost',
+  'organizeJobRecovery',
+  'agentDiagnosticsReleaseIsolation',
+  'agentScenariosExtensionHost',
+  'agentArtifactExtensionHost',
+  'agentWorkerRecoveryExtensionHost',
+  'agentUiHistoryExtensionHost',
+  'agentRuntimeComposition',
+]);
+const FIREFOX_SHARED_CHROME_RUNTIME_CHECKS = new Set([
   'organizeJobExtensionHost',
   'organizeJobRecovery',
   'agentDiagnosticsReleaseIsolation',
@@ -75,6 +87,9 @@ export const RELEASE_CHILD_AMBIENT_ENVIRONMENT_ALLOWLIST = Object.freeze([
   'LC_CTYPE',
   'NO_COLOR',
   'PATH',
+  'FIREFOX_140_EXECUTABLE',
+  'FIREFOX_EXECUTABLE',
+  'FIREFOX_STABLE_EXECUTABLE',
   'PNPM_HOME',
   'PUPPETEER_EXECUTABLE_PATH',
   'PUPPETEER_HEADLESS',
@@ -91,6 +106,9 @@ export const RELEASE_CHILD_AMBIENT_ENVIRONMENT_ALLOWLIST = Object.freeze([
   'XDG_DATA_HOME',
 ]);
 export const RELEASE_CHILD_COMMAND_ENVIRONMENT_ALLOWLIST = Object.freeze([
+  'FIREFOX_140_EXECUTABLE',
+  'FIREFOX_EXECUTABLE',
+  'FIREFOX_STABLE_EXECUTABLE',
   'GSM_APPROVED_RELEASE_VERSION',
   'GSM_ARTIFACTS_DIR',
   'GSM_DEV',
@@ -101,6 +119,8 @@ export const RELEASE_CHILD_COMMAND_ENVIRONMENT_ALLOWLIST = Object.freeze([
   'GSM_SKIP_PACKAGE_BUILD',
   'GSM_TESTED_PACKAGE_INPUT',
   'GSM_VERSION_APPROVAL',
+  'GSM_BROWSER_TARGET',
+  'GSM_PACKAGE_TARGET',
 ]);
 
 export async function runAgentRuntimeVerification({
@@ -110,9 +130,12 @@ export async function runAgentRuntimeVerification({
   operations = {},
 } = {}) {
   const resolvedRoot = path.resolve(root);
-  const distDir = path.resolve(resolvedRoot, env.GSM_DIST_DIR ?? 'dist');
+  const browserTarget = resolveRequestedBrowserTarget(env);
+  const distDir = path.resolve(resolvedRoot, env.GSM_DIST_DIR ?? (browserTarget === 'firefox' ? 'dist-firefox' : 'dist'));
+  const sharedRuntimeDistDir = path.resolve(resolvedRoot, 'dist');
   const versionApproval = parseVersionApproval(env.GSM_VERSION_APPROVAL);
   validateReleaseVersionApproval(versionApproval, packageVersion);
+  const firefoxExecutables = browserTarget === 'firefox' ? resolveFirefoxExecutables(env) : null;
 
   const defaults = createDefaultOperations(resolvedRoot, env);
   const ops = { ...defaults, ...operations };
@@ -121,6 +144,7 @@ export async function runAgentRuntimeVerification({
   const { artifactsDir, runtimeEvidenceDir } = createFreshRunDirectories({
     root: resolvedRoot,
     requestedArtifactsDir: env.GSM_ARTIFACTS_DIR,
+    browserTarget,
   });
   const outputPath = path.join(artifactsDir, 'agent-runtime-verification.json');
   const provisionalPath = path.join(artifactsDir, `release-evidence-${packageVersion}.provisional.json`);
@@ -130,6 +154,15 @@ export async function runAgentRuntimeVerification({
     GSM_RUNTIME_EVIDENCE_DIR: runtimeEvidenceDir,
     GSM_VERSION_APPROVAL: canonical(versionApproval).trimEnd(),
     GSM_APPROVED_RELEASE_VERSION: versionApproval.approvedCandidateVersion,
+    ...(browserTarget === 'firefox'
+      ? {
+          FIREFOX_140_EXECUTABLE: firefoxExecutables.minimum,
+          FIREFOX_EXECUTABLE: firefoxExecutables.stable,
+          FIREFOX_STABLE_EXECUTABLE: firefoxExecutables.stable,
+          GSM_BROWSER_TARGET: 'firefox',
+          GSM_PACKAGE_TARGET: 'firefox',
+        }
+      : {}),
   };
 
   const checks = {};
@@ -138,8 +171,10 @@ export async function runAgentRuntimeVerification({
   let testedPackageInput;
   let buildEvidence;
   let runtimeEvidence;
+  let sharedRuntimeReleaseDist;
+  let sharedRuntimePackageInput;
 
-  for (const spec of FINAL_CHECK_SPECS) {
+  for (const spec of finalCheckSpecsForTarget(browserTarget)) {
     if (spec.key === 'bundleBudget') {
       requireBuildState(releaseDist, testedPackageInput, buildEvidence);
       checks[spec.key] = internalCheck(spec, ops.now, {
@@ -162,16 +197,20 @@ export async function runAgentRuntimeVerification({
       continue;
     }
 
+    const baseStepEnvironment = browserTarget === 'firefox'
+      && FIREFOX_SHARED_CHROME_RUNTIME_CHECKS.has(spec.key)
+      ? createSharedChromeRuntimeEnvironment(sharedEnvironment, sharedRuntimeDistDir)
+      : sharedEnvironment;
     const stepEnvironment = spec.key === 'productionBuild'
-      ? { ...sharedEnvironment, GSM_RELEASE: 'true', GSM_DEV: 'false' }
+      ? { ...baseStepEnvironment, GSM_RELEASE: 'true', GSM_DEV: 'false' }
       : spec.key === 'packageExtension'
         ? {
-            ...sharedEnvironment,
+            ...baseStepEnvironment,
             GSM_SKIP_PACKAGE_BUILD: 'true',
             GSM_TESTED_PACKAGE_INPUT: canonical(testedPackageInput).trimEnd(),
             GSM_RELEASE_BUILD_EVIDENCE: canonical(buildEvidence).trimEnd(),
           }
-        : sharedEnvironment;
+        : baseStepEnvironment;
     checks[spec.key] = await ops.runPnpmScript(spec, stepEnvironment, {
       captureOutput: spec.key === 'productionBuild',
     });
@@ -185,13 +224,29 @@ export async function runAgentRuntimeVerification({
         commandOutput: checks[spec.key].capturedOutput,
       });
       checks[spec.key] = withoutCapturedOutput(checks[spec.key]);
+      if (browserTarget === 'firefox') {
+        sharedRuntimeReleaseDist = ops.readReleaseDist(sharedRuntimeDistDir);
+        sharedRuntimePackageInput = ops.fingerprint(sharedRuntimeDistDir);
+        assertFirefoxSharedRuntimeIdentity(releaseDist, sharedRuntimeReleaseDist);
+      }
       fingerprintCheckpoints.push(checkpoint('productionBuild', testedPackageInput));
     } else if (PACKAGE_INPUT_CHECKPOINTS.has(spec.key)) {
       const current = ops.fingerprint(distDir);
       assertFingerprintStable(testedPackageInput, current, `${spec.key} changed the production package input.`);
       fingerprintCheckpoints.push(checkpoint(spec.key, current));
+      if (browserTarget === 'firefox' && FIREFOX_SHARED_CHROME_RUNTIME_CHECKS.has(spec.key)) {
+        requireSharedRuntimeState(sharedRuntimeReleaseDist, sharedRuntimePackageInput);
+        assertFingerprintStable(
+          sharedRuntimePackageInput,
+          ops.fingerprint(sharedRuntimeDistDir),
+          `${spec.key} changed the shared Chrome runtime package input.`,
+        );
+      }
       if (spec.key === 'agentRuntimeComposition') {
-        runtimeEvidence = ops.collectRuntimeEvidence({ runtimeEvidenceDir, releaseDist });
+        runtimeEvidence = ops.collectRuntimeEvidence({
+          runtimeEvidenceDir,
+          releaseDist: sharedRuntimeReleaseDist ?? releaseDist,
+        });
       }
     } else if (spec.key === 'packageExtension') {
       const current = ops.fingerprint(distDir);
@@ -202,8 +257,36 @@ export async function runAgentRuntimeVerification({
 
   requireBuildState(releaseDist, testedPackageInput, buildEvidence);
   if (!runtimeEvidence) throw new Error('Runtime evidence was not collected.');
+  if (browserTarget === 'firefox') {
+    requireSharedRuntimeState(sharedRuntimeReleaseDist, sharedRuntimePackageInput);
+  }
+  let firefox;
+  if (browserTarget === 'firefox') {
+    const verified = await ops.runFirefoxBrowsers({
+      dist: distDir,
+      runs: [
+        { role: 'firefox_140', executablePath: firefoxExecutables.minimum },
+        { role: 'stable', executablePath: firefoxExecutables.stable },
+      ],
+      environment: env,
+    });
+    firefox = {
+      runs: verified.runs.map((run) => firefoxRunEvidence(run.role, {
+        ...run.result,
+        browserVersion: run.reportedVersion,
+        executablePath: run.executablePath,
+      })),
+    };
+  }
   assertSourceUnchanged(ops.git, sourceCommit, 'Agent runtime verification changed tracked, untracked, or committed source.');
   assertFingerprintStable(testedPackageInput, ops.fingerprint(distDir), 'Packaging changed the verified production package input.');
+  if (browserTarget === 'firefox') {
+    assertFingerprintStable(
+      sharedRuntimePackageInput,
+      ops.fingerprint(sharedRuntimeDistDir),
+      'Runtime verification changed the shared Chrome runtime package input.',
+    );
+  }
   const provisionalRaw = ops.readRequiredFile(provisionalPath, 'Missing immutable provisional release evidence.');
   const provisional = parseCanonical(provisionalRaw, 'provisional release evidence');
   ops.validateProvisional(provisional, {
@@ -214,35 +297,61 @@ export async function runAgentRuntimeVerification({
     build: buildEvidence,
   });
   const provisionalReleaseEvidence = createFileEvidence(path.basename(provisionalPath), provisionalRaw);
-  const evidence = {
-    schemaVersion: 2,
+  const evidenceCommon = {
     generatedAt: ops.now(),
     executionAuthority: 'durable_agent_runtime_release_plan',
     source: { commit: sourceCommit, dirty: false },
     packageVersion,
     environment: { node: process.version, platform: process.platform, arch: process.arch },
-    checks: Object.fromEntries(Object.entries(checks).map(([key, value]) => [key, stripPrivateCheckFields(value)])),
-    build: {
-      packageInput: testedPackageInput,
-      worker: buildEvidence.worker,
-      mermaid: buildEvidence.mermaid,
-      advisories: buildEvidence.advisories,
-      outputSha256: buildEvidence.outputSha256,
-    },
-    runtimeEvidence: runtimeEvidence.files,
-    provisionalReleaseEvidence,
-    status: 'agent_runtime_verification_passed',
   };
+  const checksEvidence = Object.fromEntries(Object.entries(checks).map(([key, value]) => [key, stripPrivateCheckFields(value)]));
+  const build = {
+    packageInput: testedPackageInput,
+    worker: buildEvidence.worker,
+    mermaid: buildEvidence.mermaid,
+    advisories: buildEvidence.advisories,
+    outputSha256: buildEvidence.outputSha256,
+  };
+  const evidence = browserTarget === 'firefox'
+    ? {
+        schemaVersion: 3,
+        browserTarget: 'firefox',
+        ...evidenceCommon,
+        firefox,
+        sharedRuntimeReleaseDist,
+        checks: checksEvidence,
+        build,
+        runtimeEvidence: runtimeEvidence.files,
+        provisionalReleaseEvidence,
+        status: 'agent_runtime_verification_passed',
+      }
+    : {
+        schemaVersion: 2,
+        ...evidenceCommon,
+        checks: checksEvidence,
+        build,
+        runtimeEvidence: runtimeEvidence.files,
+        provisionalReleaseEvidence,
+        status: 'agent_runtime_verification_passed',
+      };
   ops.validateRuntimeVerification(evidence, {
     sourceCommit,
     releaseDist,
     packageVersion,
     packageInput: testedPackageInput,
     runtimeEvidence: runtimeEvidence.files,
+    sharedRuntimeReleaseDist,
   });
 
   assertSourceUnchanged(ops.git, sourceCommit, 'Source changed while validating Agent runtime evidence.');
   assertFingerprintStable(testedPackageInput, ops.fingerprint(distDir), 'Package input changed while validating Agent runtime evidence.');
+  if (browserTarget === 'firefox') {
+    assertFingerprintStable(
+      sharedRuntimePackageInput,
+      ops.fingerprint(sharedRuntimeDistDir),
+      'Shared Chrome runtime package input changed while validating Agent runtime evidence.',
+    );
+  }
   const provisionalAfterValidation = ops.readRequiredFile(
     provisionalPath,
     'Immutable provisional release evidence disappeared during validation.',
@@ -256,10 +365,11 @@ export async function runAgentRuntimeVerification({
   return Object.freeze({ artifactsDir, runtimeEvidenceDir, outputPath, evidence });
 }
 
-export function createFreshRunDirectories({ root, requestedArtifactsDir }) {
+export function createFreshRunDirectories({ root, requestedArtifactsDir, browserTarget = 'chrome' }) {
+  const target = normalizeReleaseBrowserTarget(browserTarget);
   const artifactsDir = requestedArtifactsDir
     ? path.resolve(root, requestedArtifactsDir)
-    : path.resolve(root, 'artifacts');
+    : path.resolve(root, target === 'firefox' ? 'artifacts/firefox' : 'artifacts');
   mkdirSync(path.dirname(artifactsDir), { recursive: true, mode: 0o700 });
   if (existsSync(artifactsDir)) {
     const entry = lstatSync(artifactsDir);
@@ -330,6 +440,7 @@ function createDefaultOperations(root, baseEnvironment) {
     writeEvidenceAtomic,
     runPnpmScript: (spec, commandEnv, options) => executePnpmScript(root, baseEnvironment, spec, commandEnv, options),
     runAdapterContracts: (spec, commandEnv) => executeAdapterContracts(root, baseEnvironment, spec, commandEnv),
+    runFirefoxBrowsers: verifyFirefoxBrowsers,
   };
 }
 
@@ -449,6 +560,59 @@ function collectNamedJavaScript(root, filenamePattern) {
   return entries;
 }
 
+function createSharedChromeRuntimeEnvironment(environment, distDir) {
+  const {
+    GSM_BROWSER_TARGET: _browserTarget,
+    GSM_PACKAGE_TARGET: _packageTarget,
+    ...shared
+  } = environment;
+  return { ...shared, GSM_DIST_DIR: distDir };
+}
+
+function resolveRequestedBrowserTarget(env) {
+  const packageTarget = env.GSM_PACKAGE_TARGET === undefined
+    ? undefined
+    : normalizeReleaseBrowserTarget(env.GSM_PACKAGE_TARGET);
+  const runtimeTarget = env.GSM_BROWSER_TARGET === undefined
+    ? undefined
+    : normalizeReleaseBrowserTarget(env.GSM_BROWSER_TARGET);
+  if (packageTarget && runtimeTarget && packageTarget !== runtimeTarget) {
+    throw new Error('GSM_PACKAGE_TARGET and GSM_BROWSER_TARGET must identify the same browser.');
+  }
+  return packageTarget ?? runtimeTarget ?? 'chrome';
+}
+
+function resolveFirefoxExecutables(env) {
+  const minimum = env.FIREFOX_140_EXECUTABLE;
+  const stable = env.FIREFOX_STABLE_EXECUTABLE ?? env.FIREFOX_EXECUTABLE;
+  if (typeof minimum !== 'string' || minimum.length === 0) {
+    throw new Error('FIREFOX_140_EXECUTABLE is required for Firefox 140 release proof.');
+  }
+  if (typeof stable !== 'string' || stable.length === 0) {
+    throw new Error('FIREFOX_STABLE_EXECUTABLE or FIREFOX_EXECUTABLE is required for stable Firefox release proof.');
+  }
+  if (minimum === stable) throw new Error('Firefox 140 and stable release proof require distinct executable inputs.');
+  return Object.freeze({ minimum, stable });
+}
+
+function firefoxRunEvidence(role, result) {
+  const executablePath = result?.executablePath;
+  if (typeof executablePath !== 'string' || executablePath.length === 0) {
+    throw new Error(`Firefox ${role} result is missing its executable path.`);
+  }
+  return Object.freeze({
+    role,
+    browserTarget: result?.browserTarget,
+    realBrowser: result?.realBrowser,
+    browserVersion: result?.browserVersion,
+    executablePathSha256: hash(Buffer.from(executablePath)),
+    extensionId: result?.extensionId,
+    background: result?.background,
+    scenarioIds: result?.scenarioIds,
+    diagnostics: result?.diagnostics,
+  });
+}
+
 function parseCanonical(raw, label) {
   const text = raw.toString('utf8');
   const value = JSON.parse(text);
@@ -498,6 +662,25 @@ function checkpoint(after, fingerprint) {
 function requireBuildState(releaseDist, testedPackageInput, buildEvidence) {
   if (!releaseDist || !testedPackageInput || !buildEvidence) throw new Error('Production build evidence is unavailable.');
 }
+function requireSharedRuntimeState(releaseDist, packageInput) {
+  if (!releaseDist || !packageInput) throw new Error('Shared Chrome runtime build evidence is unavailable.');
+}
+function assertFirefoxSharedRuntimeIdentity(firefoxReleaseDist, sharedRuntimeReleaseDist) {
+  if (sharedRuntimeReleaseDist?.manifest?.manifestVersion !== firefoxReleaseDist?.manifest?.manifestVersion
+    || sharedRuntimeReleaseDist?.manifest?.extensionVersion !== firefoxReleaseDist?.manifest?.extensionVersion
+    || sharedRuntimeReleaseDist?.packageInput?.fileCount !== firefoxReleaseDist?.packageInput?.fileCount
+    || !sameRuntimeArtifact(sharedRuntimeReleaseDist?.loader, firefoxReleaseDist?.loader)
+    || !sameRuntimeArtifact(sharedRuntimeReleaseDist?.worker, firefoxReleaseDist?.worker)) {
+    throw new Error('Firefox and shared Chrome runtime build identities do not match.');
+  }
+}
+
+function sameRuntimeArtifact(left, right) {
+  return left?.relativePath === right?.relativePath
+    && left?.bytes === right?.bytes
+    && left?.sha256 === right?.sha256;
+}
+
 
 function withoutCapturedOutput(check) {
   const { capturedOutput: _capturedOutput, ...publicCheck } = check;

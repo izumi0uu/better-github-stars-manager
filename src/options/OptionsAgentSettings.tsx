@@ -1,7 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { authStore } from "@/auth/auth-store";
+import {
+  hasAgentPersonalCommunicationsPermission,
+  requestAgentPersonalCommunicationsPermission,
+} from "@/auth/agent-data-permission";
 import { BackgroundCallError, bgCall } from "@/utils/messaging";
-import { translateError } from "@/api/errors";
+import {
+  AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
+  translateError,
+} from "@/api/errors";
 import { Button } from "@/ui/shadcn/button";
 import { Spinner } from "@/ui/shadcn/spinner";
 import { Input } from "@/ui/shadcn/input";
@@ -16,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { useI18n } from "@/i18n";
 import {
   getProvider as getAgentProvider,
+  type AgentProviderEndpoint,
   getProviders as getAgentProviders,
   isSavedAgentCredentialEligible,
   resolveAgentModelContextCapability,
@@ -27,6 +35,7 @@ import {
   hasAgentProviderHostPermission,
   requestAgentProviderHostPermission,
 } from "@/agent-harness/provider-access";
+import { isDisclosureAcceptedFor } from "@/bgsm-agent/disclosure";
 import type {
   AgentCustomProviderProtocol,
   AgentProviderConfig,
@@ -106,6 +115,9 @@ export function OptionsAgentSettings({
   );
   const [agentHostAccessGranted, setAgentHostAccessGranted] = useState(false);
   const [agentHostAccessBusy, setAgentHostAccessBusy] = useState(false);
+  const [agentDisclosureAccepted, setAgentDisclosureAccepted] = useState(false);
+  const [agentDisclosureBusy, setAgentDisclosureBusy] = useState(false);
+  const agentDisclosureTargetRef = useRef<AgentProviderEndpoint | null>(null);
   const [agentSaveBusy, setAgentSaveBusy] = useState(false);
   const [agentTestBusy, setAgentTestBusy] = useState(false);
   const [agentStorageUsage, setAgentStorageUsage] =
@@ -197,6 +209,9 @@ export function OptionsAgentSettings({
     customAgentSelected ? agentBaseUrl : null,
     customAgentSelected ? agentProtocol : null,
   );
+  useLayoutEffect(() => {
+    agentDisclosureTargetRef.current = agentDisclosureTarget;
+  }, [agentDisclosureTarget]);
   const customAgentHostAccessRequired = !!agentDisclosureTarget &&
     getAgentProviderHostAccess(
       agentDisclosureTarget.provider,
@@ -206,24 +221,39 @@ export function OptionsAgentSettings({
     !!(agentApiKey.trim() || hasEligibleSavedAgentApiKey) &&
     agentBaseUrlReady &&
     agentContextSettingsValid &&
+    agentDisclosureAccepted &&
     agentHostAccessGranted;
 
   useEffect(() => {
     let current = true;
     if (!agentDisclosureTarget) {
       setAgentHostAccessGranted(false);
+      setAgentDisclosureAccepted(false);
       return () => {
         current = false;
       };
     }
-    const refreshHostAccess = () => hasAgentProviderHostPermission(
-      agentDisclosureTarget.provider,
-      agentDisclosureTarget.canonicalBaseUrl,
-    ).then((granted) => {
-      if (current) setAgentHostAccessGranted(granted);
-    });
+    const refreshPermissions = async () => {
+      const [hostAccessGranted, config, dataCollectionPermissionGranted] = await Promise.all([
+        hasAgentProviderHostPermission(
+          agentDisclosureTarget.provider,
+          agentDisclosureTarget.canonicalBaseUrl,
+        ),
+        authStore.getConfig(),
+        hasAgentPersonalCommunicationsPermission(),
+      ]);
+      if (!current) return;
+      setAgentHostAccessGranted(hostAccessGranted);
+      setAgentDisclosureAccepted(
+        dataCollectionPermissionGranted && isDisclosureAcceptedFor(
+          config.agentDataDisclosureAcceptance,
+          agentDisclosureTarget.provider,
+          agentDisclosureTarget.canonicalOrigin,
+        ),
+      );
+    };
     const handlePermissionChange = () => {
-      void refreshHostAccess();
+      void refreshPermissions();
     };
     const permissionAddedEvent = chrome.permissions.onAdded as chrome.permissions.PermissionsAddedEvent & {
       removeListener?: (listener: typeof handlePermissionChange) => void;
@@ -231,7 +261,7 @@ export function OptionsAgentSettings({
     const permissionRemovedEvent = chrome.permissions.onRemoved as chrome.permissions.PermissionsRemovedEvent & {
       removeListener?: (listener: typeof handlePermissionChange) => void;
     };
-    void refreshHostAccess();
+    void refreshPermissions();
     permissionAddedEvent.addListener(handlePermissionChange);
     permissionRemovedEvent.addListener(handlePermissionChange);
     return () => {
@@ -374,6 +404,41 @@ export function OptionsAgentSettings({
     setAgentMsg(null);
     setAgentProvider(next);
     setAgentModel(getAgentProvider(next).defaultModel);
+  };
+  const acceptAgentDisclosure = async () => {
+    if (!agentDisclosureTarget) return;
+    const target = agentDisclosureTarget;
+    setAgentDisclosureBusy(true);
+    setAgentMsg(null);
+    try {
+      const permission = await requestAgentPersonalCommunicationsPermission();
+      if (permission === "denied") {
+        throw new Error(AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED);
+      }
+      const currentTarget = agentDisclosureTargetRef.current;
+      if (
+        !currentTarget ||
+        currentTarget.provider !== target.provider ||
+        currentTarget.canonicalOrigin !== target.canonicalOrigin
+      ) return;
+      await authStore.acceptAgentDataDisclosure({
+        provider: target.provider,
+        protocol: target.provider === "custom-openai-compatible"
+          ? target.profile.protocol as AgentCustomProviderProtocol
+          : null,
+        baseUrl: target.canonicalBaseUrl,
+      });
+      const acceptedTarget = agentDisclosureTargetRef.current;
+      setAgentDisclosureAccepted(
+        acceptedTarget?.provider === target.provider &&
+        acceptedTarget.canonicalOrigin === target.canonicalOrigin,
+      );
+    } catch (error) {
+      setAgentDisclosureAccepted(false);
+      setAgentMsg({ kind: "err", text: translateError(error, m) });
+    } finally {
+      setAgentDisclosureBusy(false);
+    }
   };
 
   const grantAgentHostAccess = async () => {
@@ -626,11 +691,14 @@ export function OptionsAgentSettings({
           <AgentDataDisclosurePanel
             providerLabel={getAgentProvider(agentDisclosureTarget.provider).label}
             canonicalOrigin={agentDisclosureTarget.canonicalOrigin}
+            disclosureAccepted={agentDisclosureAccepted}
+            disclosureBusy={agentDisclosureBusy}
             customHostAccessRequired={customAgentHostAccessRequired}
             hostAccessGranted={agentHostAccessGranted}
             hostAccessBusy={
-              agentHostAccessBusy || agentSaveBusy || agentTestBusy
+              agentHostAccessBusy || agentDisclosureBusy || agentSaveBusy || agentTestBusy
             }
+            onAcceptDisclosure={() => void acceptAgentDisclosure()}
             onGrantAccess={() => void grantAgentHostAccess()}
           />
         )}
@@ -640,6 +708,7 @@ export function OptionsAgentSettings({
             onClick={saveAgentSettings}
             disabled={
               agentSaveBusy ||
+              agentDisclosureBusy ||
               agentHostAccessBusy ||
               agentTestBusy ||
               !agentModel.trim() ||
@@ -661,6 +730,7 @@ export function OptionsAgentSettings({
             onClick={() => void testAgentConnection()}
             disabled={
               agentTestBusy ||
+              agentDisclosureBusy ||
               agentSaveBusy ||
               agentHostAccessBusy ||
               !agentModel.trim() ||

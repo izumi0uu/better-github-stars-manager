@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AGENT_API_KEY_EMPTY,
   AGENT_DATA_DISCLOSURE_REQUIRED,
+  AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
   AGENT_BASE_URL_EMPTY,
   AGENT_PROVIDER_TIMEOUT,
 } from '@/api/errors';
@@ -918,7 +919,10 @@ describe('openai-compatible agent provider', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('preserves disclosure revocation raised during runtime identity validation', async () => {
+  it.each([
+    AGENT_DATA_DISCLOSURE_REQUIRED,
+    AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
+  ])('preserves %s raised during per-request authority validation', async (code) => {
     const fetchMock = vi.fn();
     const provider = createOpenAICompatibleProvider({
       provider: 'openai',
@@ -926,12 +930,12 @@ describe('openai-compatible agent provider', () => {
       apiKey: 'saved-key',
       fetchImpl: fetchMock as typeof fetch,
       validateRuntimeIdentity: async () => {
-        throw new Error(AGENT_DATA_DISCLOSURE_REQUIRED);
+        throw new Error(code);
       },
     });
 
     await expect(provider.generate({ messages: [], tools: [], maxOutputTokens: 12 }))
-      .rejects.toThrow(AGENT_DATA_DISCLOSURE_REQUIRED);
+      .rejects.toThrow(code);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -17,8 +17,9 @@ function installChromeMock() {
               .map((key) => [key, storageBacking[key]]),
           );
         },
-        async set(items: Record<string, unknown>) {
+        set(items: Record<string, unknown>, callback?: () => void) {
           Object.assign(storageBacking, items);
+          callback?.();
         },
       },
       onChanged: {
@@ -31,6 +32,7 @@ function installChromeMock() {
 
 describe('preferences persistence', () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
     vi.resetModules();
     for (const key of Object.keys(storageBacking)) delete storageBacking[key];
     installChromeMock();
@@ -263,4 +265,19 @@ describe('preferences persistence', () => {
       exposureCount: 1,
     });
   });
+
+  it('does not use page-realm Web Locks from a content-script context', async () => {
+    const request = vi.fn(() => {
+      throw new Error('page-realm lock was used');
+    });
+    vi.stubGlobal('location', { protocol: 'https:' });
+    vi.stubGlobal('navigator', { locks: { request } });
+    const { authStore, CONFIG_STORAGE_KEY } = await import('../src/auth/auth-store');
+
+    await authStore.update({ theme: 'dark' });
+
+    assert.equal(request.mock.calls.length, 0);
+    assert.equal((storageBacking[CONFIG_STORAGE_KEY] as Config).theme, 'dark');
+  });
+
 });

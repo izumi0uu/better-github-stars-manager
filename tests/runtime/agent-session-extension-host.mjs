@@ -198,6 +198,7 @@ async function run() {
 
   await stage('configure-github', async () => {
     await saveGitHubToken(page);
+    reconcileExpectedTokenProbeDiagnostics();
   });
 
   await stage('configure-provider', async () => {
@@ -758,7 +759,12 @@ function githubWorkerFixture({ route, method }) {
       { 'x-oauth-scopes': 'public_repo, gist' },
     ),
     'GET github-starred': json([], 'github-token-stars'),
-    'GET github-notifications': json([], 'github-token-notifications'),
+    'GET github-watch-scope': json([], 'github-token-watch-scope'),
+    'GET github-notifications': json(
+      { message: 'Resource not accessible by personal access token' },
+      'github-token-notifications-forbidden',
+      403,
+    ),
     'POST github-gists': json({ id: 'runtime-probe-gist' }, 'github-token-gist-create', 201),
     'DELETE github-probe-gist': {
       status: 204,
@@ -793,6 +799,7 @@ async function waitForOptionsReady(targetPage) {
 }
 
 async function saveGitHubToken(targetPage) {
+  await clickTextTrusted(targetPage, /^EN$/i);
   await targetPage.waitForSelector('textarea[placeholder="github_pat_..."]:not([disabled])', {
     visible: true,
     timeout: SETUP_TIMEOUT_MS,
@@ -833,6 +840,33 @@ async function saveGitHubToken(targetPage) {
     'GitHub identity was not confirmed by the settled production Options flow.',
   );
 }
+function reconcileExpectedTokenProbeDiagnostics() {
+  assert.equal(pageHttpPolicy.expectedRequests.some((request) => (
+    request.method === 'GET'
+    && request.route === 'github-notifications'
+    && request.status === 403
+  )), true);
+  const consoleIndex = pageIssues.findIndex((issue) => (
+    issue.kind === 'console-error' && issue.value === 'github-notifications'
+  ));
+  assert.notEqual(consoleIndex, -1);
+  pageIssues.splice(consoleIndex, 1);
+}
+async function acceptAgentDataDisclosure(targetPage, expectedProvider, expectedOrigin) {
+  await clickTextTrusted(targetPage, /^Accept data sharing$/i);
+  await waitUntil(
+    () => targetPage.evaluate(async ({ provider, origin }) => {
+      const config = (await chrome.storage.local.get('gsm_config')).gsm_config;
+      return config?.agentDataDisclosureAcceptance?.version === 2
+        && config.agentDataDisclosureAcceptance.provider === provider
+        && config.agentDataDisclosureAcceptance.origin === origin;
+    }, { provider: expectedProvider, origin: expectedOrigin }),
+    SETUP_TIMEOUT_MS,
+    'Agent data disclosure acceptance was not persisted.',
+  );
+}
+
+
 
 async function saveProvider(targetPage) {
   runtime.providerConfigStep = 'open-menu';
@@ -903,6 +937,7 @@ async function saveProvider(targetPage) {
     await waitUntil(hasHostAccess, SETUP_TIMEOUT_MS, 'Provider host permission was not granted.');
   }
   runtime.providerConfigStep = 'host-permission-ready';
+  await acceptAgentDataDisclosure(targetPage, 'custom-openai-compatible', PROVIDER_ORIGIN);
   await targetPage.waitForFunction(
     () => [...document.querySelectorAll('button')].some((button) => (
       /^Save & test$/i.test(button.textContent?.trim() ?? '') && !button.disabled

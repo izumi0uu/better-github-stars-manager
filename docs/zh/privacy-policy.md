@@ -2,9 +2,9 @@
 
 [English](../en/privacy-policy.md)
 
-生效日期：2026-08-12
+生效日期：2026-08-16
 
-Better GitHub Stars Manager 是一个用于整理 GitHub Star 仓库的 Chrome 扩展。本政策说明扩展处理哪些数据、数据会发送到哪里、本地记录保留多久，以及你可以怎样删除这些数据。
+Better GitHub Stars Manager 是一个用于整理 GitHub Star 仓库的浏览器扩展。它通过基于 Chromium 的浏览器商店分发；Firefox 版本正在准备提交至 Firefox Add-ons（AMO）。本政策说明扩展处理哪些数据、数据会发送到哪里、本地记录保留多久，以及你可以怎样删除这些数据。
 
 ## Limited Use 说明
 
@@ -26,6 +26,24 @@ Better GitHub Stars Manager 只会为了你请求的功能访问 GitHub 数据�
 - 将你创建的标签和笔记保存在你自己的 Secret Gist 中，并在你选择时同步；
 - 通过你选择的 AI 服务和精确的服务地址测试或运行 Cubby；
 - 在你主动请求后，检查同一个 GitHub 凭据的 Notifications 能力并显示可选的 Watch Inbox。
+
+## Firefox 数据收集声明
+
+Firefox 构建会在打包后的 manifest 中声明 AMO 数据收集类别，以便 Firefox 在安装扩展时向用户展示。这些类别描述的产品行为与本文其余部分一致：
+
+必需：
+
+- `authenticationInfo`（认证信息）——GitHub 账号信息，以及你提供并用于 GitHub API 认证的加密 Classic PAT；
+- `websiteActivity`（网站活动）——扩展所管理的 GitHub 页面上的活动，包括 Star 仓库元数据、已 Watch 仓库成员关系，以及启用 Watch Inbox 后的通知元数据；
+- `websiteContent`（网站内容）——扩展读取和更新的页面内容，包括仓库页面、Stars 表格、标签和笔记。
+
+可选：
+
+- `personalCommunications`（个人通信）——发送给你选择的 AI 服务的 Cubby 对话消息和任务数据。
+
+扩展只会在你启用或调用 Cubby 的明确用户操作中请求可选的 `personalCommunications` 权限，并且只在浏览器授予后才记录接受。每次 Cubby Provider 请求前，Firefox 都会检查该权限是否仍然授予。拒绝或撤销该权限只会禁用依赖它的 Cubby AI 请求；Stars、同步、Watch、Radar、本地整理和 GitHub API 功能仍然可用。
+
+数据收集权限与下面列出的主机权限相互独立；授予或拒绝其中一项不会授予或拒绝另一项。
 
 ## 扩展处理的数据
 
@@ -62,7 +80,7 @@ Better GitHub Stars Manager 只会为了你请求的功能访问 GitHub 数据�
 
 扩展把数据存放在以下位置：
 
-- 单一 GitHub Classic PAT 使用 AES-GCM 加密后保存到 `chrome.storage.local`，Stars、Gist、Watch 和 Following 在各自能力检查后复用该凭据；
+- 单一 GitHub Classic PAT 使用 AES-GCM 加密后保存到宿主浏览器的扩展存储区域（`chrome.storage.local`），Stars、Gist、Watch 和 Following 在各自能力检查后复用该凭据；
 - AI 服务 API Key 使用 AES-GCM 加密后保存到 `chrome.storage.local`，并绑定到选定的 Provider 和规范化服务地址；
 - 轻量配置，包括绑定的 Gist ID，保存到 `chrome.storage.local`；
 - Star 元数据、标签和笔记保存到 IndexedDB，以便快速查询；
@@ -78,9 +96,9 @@ Cubby 通常会把每个对话中有效且已结束的尝试裁剪到最新 128 
 
 较大的工具结果可能被拆成有界的本地分页。Cubby 可以按对话绑定的不透明游标分页读取，按有界的 UTF-8 字节偏移读取，或定位精确的有界字面量后读取对应区域。每次读取都限定在所属对话内。
 
-规范产物会随对话保留。可重新获取的产物缓存可以过期或被清除，但不会因此删除最终答案。对话、恢复和产物账本在 256 MiB 时发出警告，在 512 MiB 的逻辑上限处停止新写入。可重新获取的缓存会在这个上限下方预留 2 MiB 空间。这个账本不包括单独设置上限的 Organize 表，也不等同于 Chrome 对整个扩展存储的估算。
+规范产物会随对话保留。可重新获取的产物缓存可以过期或被清除，但不会因此删除最终答案。对话、恢复和产物账本在 256 MiB 时发出警告，在 512 MiB 的逻辑上限处停止新写入。可重新获取的缓存会在这个上限下方预留 2 MiB 空间。
 
-账本包括对话头、尝试、恢复行、消息、规范产物和可重新获取的缓存，不包括单独设置上限的 Organize 表。
+账本包括对话头、尝试、恢复行、消息、规范产物和可重新获取的缓存。它不包括单独设置上限的 Organize 表，也不等同于宿主浏览器对整个扩展存储的估算。
 
 Cubby 在本地 IndexedDB 中最多保留一条最近完成或取消的 Organize 工作流记录。该记录可以包含指令、冻结的范围、提案、Review 和 Apply 状态、回执以及来源溯源。开始新的 Organize 工作流会移除上一条终态工作流记录。
 
@@ -101,7 +119,9 @@ Provider 请求和 GitHub 请求不会经过开发者运营的代理。
 
 ## Cubby 数据共享
 
-Options 会显示一个折叠的信息摘要，其中写明选定的 Provider 和精确的规范化服务地址。这个提示不会自动授予 Chrome 主机权限，也不会阻止内置 Provider。
+Options 会显示一个折叠的信息摘要，其中写明选定的 Provider 和精确的规范化服务地址。这个提示不会自动授予主机权限，也不会阻止内置 Provider。
+
+Cubby 只在你完成记录选定 Provider 和精确服务地址的版本化接受的明确披露操作后才会运行。在 Firefox 上，同一个操作会先请求可选的 `personalCommunications` 数据权限，并且只在浏览器授予后才记录接受。拒绝或撤销该权限只会禁用依赖它的 Cubby AI 请求；Stars、同步、Watch、Radar、本地整理和 GitHub API 功能仍然可用。
 
 需要时，Cubby 可能把以下任务数据发送给你选择的 AI 服务：
 
@@ -134,9 +154,9 @@ GitHub 只会收到请求功能所需的数据：
 
 ## 主机权限
 
-当前 manifest 需要 GitHub 页面和 API 主机，以及 OpenAI、OpenRouter 和 Anthropic 主机。自定义兼容服务使用 Chrome 可选主机权限。
+manifest 需要 GitHub 页面和 API 主机，以及 OpenAI、OpenRouter 和 Anthropic 主机。自定义兼容服务使用可选主机权限。
 
-Chrome 的主机匹配模式可能覆盖某个协议和主机名下的所有端口。扩展会另外把凭据和请求绑定到精确的规范化服务地址，包括端口。Chrome 如何区分必需和可选访问权限，见 [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions)。
+主机匹配模式可能覆盖某个协议和主机名下的所有端口。扩展会另外把凭据和请求绑定到精确的规范化服务地址，包括端口。基于 Chromium 的浏览器对必需和可选访问权限的区分见 [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions)；Firefox 通过其可选权限 API 提供同样的区分。
 
 ## 诊断边界
 
@@ -154,14 +174,14 @@ Chrome 的主机匹配模式可能覆盖某个协议和主机名下的所有端�
 - 在取消或完成关联的 Organize 工作流后删除 Cubby 对话；
 - 在 workbench 中关闭保留的已完成或已取消 Organize 结果；
 - 在 Options 中清除可重新获取的 Cubby 工具缓存，不删除最终答案或对话数据；
-- 卸载扩展，删除 Chrome 本地扩展存储；
+- 卸载扩展，删除浏览器本地扩展存储；
 - 从你的 GitHub 账号删除 Secret 同步 Gist。
 
 删除对话会移除其 transcript、尝试和恢复行，以及由对话拥有的产物，包括损坏的尝试证据。如果 worker 仍持有活动尝试，或关联的 Organize 工作流尚未进入终态，删除会被阻止。
 
 删除来源对话不会删除最近的终态 Organize 结果。该记录保留不可变的来源溯源，但来源溯源不等于授权。结果会一直保留到你关闭它、开始替代的 Organize 工作流或卸载扩展。
 
-卸载扩展会删除 Chrome 本地存储。你账号下创建的 Gist 会继续存在，直到你手动删除。已经发送到 AI 服务的请求仍受该服务的保留和删除设置约束。
+卸载扩展会删除浏览器本地存储。你账号下创建的 Gist 会继续存在，直到你手动删除。已经发送到 AI 服务的请求仍受该服务的保留和删除设置约束。
 
 ## 安全说明
 

@@ -186,6 +186,29 @@ describe('agent provider credential persistence', () => {
     })).toBe(false);
   });
 
+  it('preserves same-origin acceptance and clears it when the provider origin changes', async () => {
+    installChrome();
+    const { authStore } = await import('@/auth/auth-store');
+    await authStore.acceptAgentDataDisclosure({
+      provider: 'custom-openai-compatible',
+      baseUrl: 'https://relay.example.com/v1',
+      acceptedAt: 5,
+    });
+
+    await authStore.updateAgentProviderConfig({
+      provider: 'custom-openai-compatible',
+      baseUrl: 'https://relay.example.com/other-path',
+      model: 'custom-model',
+    });
+    expect((await authStore.getConfig()).agentDataDisclosureAcceptance)
+      .toEqual(expect.objectContaining({ origin: 'https://relay.example.com' }));
+
+    await authStore.updateAgentProviderConfig({
+      baseUrl: 'https://other.example.com/v1',
+    });
+    expect((await authStore.getConfig()).agentDataDisclosureAcceptance).toBeNull();
+  });
+
   it('preserves disclosure accepted while provider-key encryption is in flight', async () => {
     installChrome();
     const { authStore } = await import('@/auth/auth-store');
@@ -480,6 +503,41 @@ describe('agent provider credential persistence', () => {
     expect(await authStore.getAgentApiKey()).toBeNull();
   });
 
+  it('clears saved credential material even when the stored Custom endpoint is invalid', async () => {
+    installChrome({
+      gsm_config: {
+        agentProvider: {
+          provider: 'custom-openai-compatible',
+          protocol: 'responses',
+          baseUrl: 'not a URL',
+          model: 'custom-model',
+          apiKeyEncrypted: 'opaque-cipher:73617665642d736563726574',
+          apiKeyCryptoMeta: { iv: 'iv', salt: 'salt' },
+          credentialScope: {
+            provider: 'custom-openai-compatible',
+            origin: 'https://relay.example.com',
+          },
+          credentialRevision: 'cr:v1:stored',
+          capability: null,
+        },
+      },
+    });
+    const { authStore } = await import('@/auth/auth-store');
+
+    expect((await authStore.getConfig()).agentProvider.apiKeyEncrypted).not.toBeNull();
+    await authStore.clearAgentProviderApiKey();
+
+    expect((await authStore.getConfig()).agentProvider).toEqual(expect.objectContaining({
+      baseUrl: 'not a URL',
+      apiKeyEncrypted: null,
+      apiKeyCryptoMeta: null,
+      credentialScope: null,
+      credentialRevision: null,
+      capability: null,
+    }));
+    expect(await authStore.getAgentApiKey()).toBeNull();
+  });
+
   it('rotates revision/cache on same-origin replacement and returns one atomic ready snapshot', async () => {
     installChrome();
     const { authStore } = await import('@/auth/auth-store');
@@ -609,6 +667,7 @@ describe('agent provider credential persistence', () => {
     const gate = createAgentProviderGate({
       auth: authStore,
       hasHostPermission: vi.fn(async () => true),
+      hasDataCollectionPermission: vi.fn(async () => true),
       testConnection: async () => {
         await fetchSpy();
         throw new Error('unexpected probe');
@@ -649,6 +708,7 @@ describe('agent provider credential persistence', () => {
     const gate = createAgentProviderGate({
       auth: authStore,
       hasHostPermission: vi.fn(async () => true),
+      hasDataCollectionPermission: vi.fn(async () => true),
       testConnection: async () => {
         await fetchSpy();
         throw new Error('unexpected probe');

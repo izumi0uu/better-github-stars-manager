@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'vitest';
-import { FINAL_CHECK_SPECS, RUNTIME_EVIDENCE_CONTRACTS } from '../../scripts/agent-runtime-release-evidence.mjs';
+import { FINAL_CHECK_SPECS, FIREFOX_RUNTIME_SCENARIO_IDS, RUNTIME_EVIDENCE_CONTRACTS } from '../../scripts/agent-runtime-release-evidence.mjs';
 import {
   AGENT_PROVIDER_ADAPTER_TEST_FILES,
   createFreshRunDirectories,
@@ -11,6 +12,7 @@ import {
   runAgentRuntimeVerification,
   writeEvidenceAtomic,
 } from '../../scripts/run-agent-runtime-verification.mjs';
+import { FIREFOX_GECKO_ID } from '../../scripts/build-firefox-extension.mjs';
 
 const SHA = 'a'.repeat(64);
 const COMMIT = 'b'.repeat(40);
@@ -22,6 +24,24 @@ const RELEASE_DIST = Object.freeze({
   loader: { relativePath: 'service-worker-loader.js', bytes: 10, sha256: SHA },
   worker: { relativePath: 'assets/worker.js', bytes: 100, sha256: SHA },
 });
+const FIREFOX_FINGERPRINT = Object.freeze({ algorithm: 'sha256', fileCount: 3, sha256: 'c'.repeat(64) });
+const FIREFOX_RELEASE_DIST = Object.freeze({
+  browserTarget: 'firefox',
+  packageInput: FIREFOX_FINGERPRINT,
+  manifest: { ...RELEASE_DIST.manifest, sha256: 'd'.repeat(64) },
+  loader: RELEASE_DIST.loader,
+  worker: RELEASE_DIST.worker,
+});
+const FIREFOX_SHARED_CHROME_RUNTIME_CHECKS = new Set([
+  'organizeJobExtensionHost',
+  'organizeJobRecovery',
+  'agentDiagnosticsReleaseIsolation',
+  'agentScenariosExtensionHost',
+  'agentArtifactExtensionHost',
+  'agentWorkerRecoveryExtensionHost',
+  'agentUiHistoryExtensionHost',
+  'agentRuntimeComposition',
+]);
 const BUILD = Object.freeze({
   worker: { relativePath: 'assets/worker.js', bytes: 100, kib: 100 / 1024, sha256: SHA },
   mermaid: [],
@@ -188,6 +208,102 @@ test('runs the frozen behavior-named checks in order and publishes bounded schem
   }
 });
 
+test('maps the stable Firefox binary into child smoke commands and redacts executable paths from evidence', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'bgsm-runtime-firefox-'));
+  const minimumExecutable = '/opt/firefox-140/firefox';
+  const stableExecutable = '/opt/firefox-stable/firefox';
+  const commandEnvironments = [];
+  let commandIndex = 0;
+  try {
+    const result = await runAgentRuntimeVerification({
+      root,
+      packageVersion: VERSION,
+      env: {
+        GSM_VERSION_APPROVAL: approval(),
+        GSM_BROWSER_TARGET: 'firefox',
+        FIREFOX_140_EXECUTABLE: minimumExecutable,
+        FIREFOX_STABLE_EXECUTABLE: stableExecutable,
+      },
+      operations: successfulOperations({
+        fingerprint: (distDir) => path.basename(distDir) === 'dist-firefox'
+          ? FIREFOX_FINGERPRINT
+          : FINGERPRINT,
+        readReleaseDist: (distDir) => path.basename(distDir) === 'dist-firefox'
+          ? FIREFOX_RELEASE_DIST
+          : RELEASE_DIST,
+        collectRuntimeEvidence: ({ releaseDist }) => {
+          assert.deepEqual(releaseDist, RELEASE_DIST);
+          return { files: RUNTIME_FILES };
+        },
+        validateRuntimeVerification: (evidence, context) => {
+          assert.deepEqual(context.releaseDist, FIREFOX_RELEASE_DIST);
+          assert.deepEqual(context.sharedRuntimeReleaseDist, RELEASE_DIST);
+          return evidence;
+        },
+        runPnpmScript: async (spec, environment, options) => {
+          commandEnvironments.push([spec.key, environment]);
+          return check(spec, commandIndex += 1, options.captureOutput ? { stdout: '', stderr: '' } : undefined);
+        },
+        runAdapterContracts: async (spec, environment) => {
+          commandEnvironments.push([spec.key, environment]);
+          return check(spec, commandIndex += 1);
+        },
+        runFirefoxBrowsers: async ({ runs }) => ({
+          runs: runs.map((run) => {
+            const browserVersion = run.role === 'firefox_140' ? '140.0.4' : '151.0';
+            return {
+              role: run.role,
+              executablePath: run.executablePath,
+              reportedVersion: browserVersion,
+              result: {
+                browserTarget: 'firefox',
+                realBrowser: true,
+                browserVersion,
+                executablePath: run.executablePath,
+                extensionId: FIREFOX_GECKO_ID,
+                background: { kind: 'event_page', module: true },
+                scenarioIds: [...FIREFOX_RUNTIME_SCENARIO_IDS],
+                diagnostics: {
+                  observedPageErrors: 0,
+                  observedBackgroundErrors: 0,
+                  observedUncaughtErrors: 0,
+                  backgroundObservation: 'post_startup_guarded_intervals',
+                  startupHealthChecks: 2,
+                },
+              },
+            };
+          }),
+        }),
+      }),
+    });
+
+    assert.ok(commandEnvironments.length > 0);
+    for (const [key, environment] of commandEnvironments) {
+      assert.equal(environment.FIREFOX_140_EXECUTABLE, minimumExecutable);
+      assert.equal(environment.FIREFOX_EXECUTABLE, stableExecutable);
+      assert.equal(environment.FIREFOX_STABLE_EXECUTABLE, stableExecutable);
+      if (FIREFOX_SHARED_CHROME_RUNTIME_CHECKS.has(key)) {
+        assert.equal(environment.GSM_BROWSER_TARGET, undefined);
+        assert.equal(environment.GSM_PACKAGE_TARGET, undefined);
+        assert.equal(environment.GSM_DIST_DIR, path.join(root, 'dist'));
+      } else {
+        assert.equal(environment.GSM_BROWSER_TARGET, 'firefox');
+        assert.equal(environment.GSM_PACKAGE_TARGET, 'firefox');
+        assert.equal(environment.GSM_DIST_DIR, path.join(root, 'dist-firefox'));
+      }
+    }
+    assert.deepEqual(result.evidence.sharedRuntimeReleaseDist, RELEASE_DIST);
+    assert.deepEqual(result.evidence.build.packageInput, FIREFOX_FINGERPRINT);
+    const [minimum, stable] = result.evidence.firefox.runs;
+    assert.equal(minimum.executablePathSha256, createHash('sha256').update(minimumExecutable).digest('hex'));
+    assert.equal(stable.executablePathSha256, createHash('sha256').update(stableExecutable).digest('hex'));
+    assert.equal(Object.hasOwn(minimum, 'executablePath'), false);
+    assert.equal(Object.hasOwn(stable, 'executablePath'), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('requires explicit version approval before creating evidence or running commands', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'bgsm-runtime-approval-'));
   let commands = 0;
@@ -219,6 +335,12 @@ test('accepts only a fresh empty run root and creates a private nested runtime e
     assert.equal(statSync(created.artifactsDir).mode & 0o777, 0o700);
     assert.equal(statSync(created.runtimeEvidenceDir).mode & 0o777, 0o700);
 
+    const firefoxRoot = path.join(root, 'firefox-root');
+    mkdirSync(firefoxRoot);
+    const firefox = createFreshRunDirectories({ root: firefoxRoot, browserTarget: 'firefox' });
+    assert.equal(firefox.artifactsDir, path.join(firefoxRoot, 'artifacts', 'firefox'));
+    assert.equal(firefox.runtimeEvidenceDir, path.join(firefox.artifactsDir, 'runtime-evidence'));
+
     const reused = path.join(root, 'reused');
     mkdirSync(reused);
     writeFileSync(path.join(reused, 'stale.json'), '{}\n');
@@ -243,6 +365,9 @@ test('passes only allowlisted ambient and runner-owned values to release childre
     GSM_UI_HISTORY_EVIDENCE_SELF_TEST: '1',
     KEEP_ME: 'ambient-but-unapproved',
   }, {
+    FIREFOX_140_EXECUTABLE: '/safe/firefox-140',
+    FIREFOX_EXECUTABLE: '/safe/firefox-stable',
+    FIREFOX_STABLE_EXECUTABLE: '/safe/firefox-stable',
     GSM_DIST_DIR: '/fresh/dist',
     GSM_RUNTIME_EVIDENCE_DIR: '/fresh/runtime-evidence',
   });
@@ -252,6 +377,9 @@ test('passes only allowlisted ambient and runner-owned values to release childre
     HOME: '/safe/home',
     PATH: '/safe/bin',
     PUPPETEER_HEADLESS: 'new',
+    FIREFOX_140_EXECUTABLE: '/safe/firefox-140',
+    FIREFOX_EXECUTABLE: '/safe/firefox-stable',
+    FIREFOX_STABLE_EXECUTABLE: '/safe/firefox-stable',
     GSM_DIST_DIR: '/fresh/dist',
     GSM_RUNTIME_EVIDENCE_DIR: '/fresh/runtime-evidence',
   });

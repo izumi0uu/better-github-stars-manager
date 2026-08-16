@@ -34,7 +34,7 @@ export const SCHEDULED_REFRESHES: readonly PeriodicScheduledRefresh[] = Object.f
 ]);
 
 export interface ScheduledRefreshDependencies {
-  getAlarm(name: string): Promise<{ periodInMinutes?: number; scheduledTime?: number } | undefined>;
+  getAlarm(name: string): Promise<{ periodInMinutes?: number | null; scheduledTime?: number } | undefined>;
   createAlarm(
     name: string,
     info: { delayInMinutes: number; periodInMinutes: number } | { when: number },
@@ -71,7 +71,7 @@ export function createScheduledRefreshController(
     }
     if (
       current
-      && current.periodInMinutes === undefined
+      && (current.periodInMinutes === undefined || current.periodInMinutes === null)
       && current.scheduledTime === scheduledAt
     ) return;
     if (current) await dependencies.clearAlarm(RECOMMENDATION_DAILY_REFRESH_ALARM);

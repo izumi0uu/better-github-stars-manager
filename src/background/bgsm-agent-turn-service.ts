@@ -266,7 +266,7 @@ export function createBgsmAgentTurnService(
       if (liveness.signal.aborted) return settleWithoutTransition(terminalAfterAbort());
       const repositoryCodeReadOnly = recoveryClass === 'statically_read_only';
       options.bind?.(conversation.binding);
-      const runtimeProvider = preparedRuntimeProvider.create();
+      const runtimeProvider = await preparedRuntimeProvider.create();
       const authorization = createBgsmTurnAuthorization({ repositoryCodeReadOnly });
       const repositoryScope = conversation.repositoryIds;
       const scopeLabel = conversation.binding.label;

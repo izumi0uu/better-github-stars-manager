@@ -9,6 +9,9 @@ import {
   assertEvidenceRedacted,
   createFileEvidence,
   FINAL_CHECK_SPECS,
+  finalCheckSpecsForTarget,
+  FIREFOX_RELEASE_MANUAL_EXCLUSIONS,
+  FIREFOX_RUNTIME_SCENARIO_IDS,
   parseViteChunkAdvisories,
   planEvidencePublication,
   prepareReleaseFinalization,
@@ -22,6 +25,12 @@ import {
   validateRuntimeVerificationEvidence,
 } from '../../scripts/agent-runtime-release-evidence.mjs';
 import { RELEASE_WORKER_BASELINE } from '../../scripts/package-manifest-closure.mjs';
+import {
+  FIREFOX_GECKO_ID,
+  FIREFOX_MIN_VERSION,
+  FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS,
+  FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS,
+} from '../../scripts/build-firefox-extension.mjs';
 
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
@@ -216,6 +225,87 @@ function verificationEvidence(files, provisionalFile) {
   };
 }
 
+function firefoxReleaseDist() {
+  return {
+    browserTarget: 'firefox',
+    ...clone(releaseDist),
+    background: { kind: 'event_page', module: true, scripts: [releaseDist.loader.relativePath] },
+    gecko: {
+      id: FIREFOX_GECKO_ID,
+      strictMinVersion: FIREFOX_MIN_VERSION,
+      dataCollectionPermissions: {
+        required: [...FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS],
+        optional: [...FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS],
+      },
+    },
+  };
+}
+
+function firefoxProvisionalEvidence() {
+  const dist = firefoxReleaseDist();
+  const baseName = `better-github-stars-manager-firefox-${VERSION}`;
+  const files = [
+    { relativePath: `${baseName}.zip`, bytes: 100, sha256: SHA_A },
+    { relativePath: `${baseName}.zip.sha256`, bytes: 80, sha256: SHA_B },
+    { relativePath: `${baseName}-source.zip`, bytes: 200, sha256: 'c'.repeat(64) },
+    { relativePath: `${baseName}-source.zip.sha256`, bytes: 90, sha256: 'd'.repeat(64) },
+  ].sort((left, right) => Buffer.compare(Buffer.from(left.relativePath), Buffer.from(right.relativePath)));
+  const sourceArchive = files.find(({ relativePath }) => relativePath === `${baseName}-source.zip`);
+  const sourceChecksum = files.find(({ relativePath }) => relativePath === `${baseName}-source.zip.sha256`);
+  return {
+    schemaVersion: 3,
+    browserTarget: 'firefox',
+    generatedAt: PACKAGE_GENERATED,
+    packageVersion: VERSION,
+    source: { commit: COMMIT, dirty: false },
+    package: { releaseReady: false, releaseReadinessReason: 'agent_runtime_verification_required', publicationClaimed: false, zipRootManifest: true, manifestResourcesClosed: true, sourceOnlyEntriesExcluded: true, remoteExecutableCodeExcluded: true, productionDisclosureMarkers: ['Agent settings'] },
+    packagedPermissions: { permissions: ['alarms', 'storage'], optionalPermissions: [], hostPermissions: ['https://api.github.com/*'], optionalHostPermissions: ['https://*/*'], dataCollectionPermissions: clone(dist.gecko.dataCollectionPermissions) },
+    packageInput: clone(dist.packageInput),
+    build: { worker: { relativePath: dist.worker.relativePath, bytes: dist.worker.bytes, kib: dist.worker.bytes / 1024, sha256: dist.worker.sha256 }, mermaid: [{ relativePath: 'assets/mermaid-a.js', bytes: 10, kib: 10 / 1024, sha256: SHA_B }], advisories: [], outputSha256: SHA_A },
+    generatedFiles: files,
+    packagedManifest: { relativePath: 'manifest.json', bytes: 100, sha256: dist.manifest.sha256, browserTarget: 'firefox', background: clone(dist.background), gecko: clone(dist.gecko) },
+    reviewerSource: { archive: sourceArchive, checksum: sourceChecksum, readme: { relativePath: 'FIREFOX_REVIEWER_BUILD.md', bytes: 300, sha256: 'e'.repeat(64) }, packageInput: { algorithm: 'sha256', fileCount: 20, sha256: 'f'.repeat(64) } },
+    manifestResources: [{ relativePath: dist.worker.relativePath, bytes: dist.worker.bytes, sha256: dist.worker.sha256, referencedBy: ['background.scripts[0].import'] }, { relativePath: dist.loader.relativePath, bytes: dist.loader.bytes, sha256: dist.loader.sha256, referencedBy: ['background.scripts[0]'] }],
+  };
+}
+
+function firefoxVerificationEvidence(files, provisionalFile) {
+  const base = verificationEvidence(files, provisionalFile);
+  const run = (role, browserVersion, executablePathSha256) => ({
+    role,
+    browserTarget: 'firefox',
+    realBrowser: true,
+    browserVersion,
+    executablePathSha256,
+    extensionId: FIREFOX_GECKO_ID,
+    background: { kind: 'event_page', module: true },
+    scenarioIds: [...FIREFOX_RUNTIME_SCENARIO_IDS],
+    diagnostics: {
+      observedPageErrors: 0,
+      observedBackgroundErrors: 0,
+      observedUncaughtErrors: 0,
+      backgroundObservation: 'post_startup_guarded_intervals',
+      startupHealthChecks: 2,
+    },
+  });
+  return {
+    schemaVersion: 3,
+    browserTarget: 'firefox',
+    generatedAt: base.generatedAt,
+    executionAuthority: base.executionAuthority,
+    source: base.source,
+    packageVersion: base.packageVersion,
+    environment: base.environment,
+    firefox: { runs: [run('firefox_140', '140.0.4', SHA_A), run('stable', '142.0.1', SHA_B)] },
+    sharedRuntimeReleaseDist: clone(releaseDist),
+    checks: Object.fromEntries(finalCheckSpecsForTarget('firefox').map(({ key, command }) => [key, { ...base.checks[key], command }])),
+    build: base.build,
+    runtimeEvidence: base.runtimeEvidence,
+    provisionalReleaseEvidence: base.provisionalReleaseEvidence,
+    status: base.status,
+  };
+}
+
 function finalizationFixture() {
   const runtime = runtimeRecords();
   const provisional = provisionalEvidence();
@@ -242,6 +332,42 @@ function finalizationFixture() {
     expectedScenarioIds: SCENARIO_IDS,
   } };
 }
+function firefoxFinalizationFixture() {
+  const runtime = runtimeRecords();
+  const provisional = firefoxProvisionalEvidence();
+  const provisionalRaw = canonical(provisional);
+  const provisionalRelativePath = `release-evidence-${VERSION}.provisional.json`;
+  const verification = firefoxVerificationEvidence(
+    runtime.files,
+    createFileEvidence(provisionalRelativePath, provisionalRaw),
+  );
+  return {
+    runtime,
+    verification,
+    input: {
+      provisionalRaw,
+      provisionalRelativePath,
+      runtimeVerificationRaw: canonical(verification),
+      runtimeVerificationRelativePath: 'agent-runtime-verification.json',
+      runtimeEvidenceRaw: runtime.raws,
+      releaseDist: firefoxReleaseDist(),
+      sharedRuntimeReleaseDist: clone(releaseDist),
+      sourceCommit: COMMIT,
+      packageVersion: VERSION,
+      packageInput: clone(firefoxReleaseDist().packageInput),
+      browserTarget: 'firefox',
+      versionApproval: { approvedCandidateVersion: VERSION, observedCurrentPublicVersion: '1.0.8', observedPriorUploadVersion: '1.0.8' },
+      packagedManifestVersion: VERSION,
+      zipManifestVersion: VERSION,
+      publicationTimestamp: GENERATED,
+      finalRelativePath: `release-evidence-${VERSION}.json`,
+      gateRelativePath: 'agent-release-gate-evidence.json',
+      manualExclusions: [...FIREFOX_RELEASE_MANUAL_EXCLUSIONS],
+      expectedScenarioIds: SCENARIO_IDS,
+    },
+  };
+}
+
 
 function expectCode(fn, code) {
   assert.throws(fn, (error) => error instanceof ReleaseEvidenceError && error.code === code);
@@ -428,6 +554,88 @@ test('keeps provisional evidence immutable and non-ready until finalization', ()
   expectCode(() => validateProvisionalReleaseEvidence(clone(provisional), { packageVersion: '1.0.8' }), 'package_version_mismatch');
   expectCode(() => validateProvisionalReleaseEvidence(clone(provisional), { packageInput: { ...releaseDist.packageInput, fileCount: 10 } }), 'package_fingerprint_mismatch');
 });
+
+test('validates explicit Firefox package evidence without changing the Chrome schema', () => {
+  const dist = firefoxReleaseDist();
+  const provisional = firefoxProvisionalEvidence();
+  assert.equal(validateProvisionalReleaseEvidence(clone(provisional), {
+    browserTarget: 'firefox',
+    releaseDist: dist,
+    sourceCommit: COMMIT,
+    packageVersion: VERSION,
+    packageInput: dist.packageInput,
+  }).browserTarget, 'firefox');
+  assert.equal(validateProvisionalReleaseEvidence(provisionalEvidence()).schemaVersion, 2);
+
+  const crossTarget = clone(provisionalEvidence());
+  crossTarget.browserTarget = 'firefox';
+  expectCode(() => validateProvisionalReleaseEvidence(crossTarget), 'schema_invalid');
+  const wrongArtifact = clone(provisional);
+  wrongArtifact.generatedFiles.find(({ relativePath }) => relativePath.endsWith(`${VERSION}.zip`)).relativePath = `better-github-stars-manager-firefox-${VERSION}.tar`;
+  expectCode(() => validateProvisionalReleaseEvidence(wrongArtifact), 'generated_file_set_mismatch');
+  const serviceWorkerClaim = clone(provisional);
+  serviceWorkerClaim.packagedManifest.background.kind = 'service_worker';
+  expectCode(() => validateProvisionalReleaseEvidence(serviceWorkerClaim), 'schema_invalid');
+  const publicationClaim = clone(provisional);
+  publicationClaim.package.publicationClaimed = true;
+  expectCode(() => validateProvisionalReleaseEvidence(publicationClaim), 'schema_invalid');
+});
+
+test('requires real Firefox 140 and stable scenario evidence', () => {
+  const runtime = runtimeRecords();
+  const provisionalRaw = canonical(firefoxProvisionalEvidence());
+  const verification = firefoxVerificationEvidence(
+    runtime.files,
+    createFileEvidence(`release-evidence-${VERSION}.provisional.json`, provisionalRaw),
+  );
+  assert.equal(validateRuntimeVerificationEvidence(clone(verification), {
+    browserTarget: 'firefox',
+    releaseDist: firefoxReleaseDist(),
+    sharedRuntimeReleaseDist: releaseDist,
+  }).firefox.runs.length, 2);
+
+  const missing140 = clone(verification);
+  missing140.firefox.runs[0].browserVersion = '141.0';
+  expectCode(() => validateRuntimeVerificationEvidence(missing140), 'firefox_140_evidence_missing');
+  const unsupportedStable = clone(verification);
+  unsupportedStable.firefox.runs[1].browserVersion = '140.0.5';
+  expectCode(() => validateRuntimeVerificationEvidence(unsupportedStable), 'firefox_stable_evidence_missing');
+  const substituted = clone(verification);
+  substituted.firefox.runs[1].executablePathSha256 = substituted.firefox.runs[0].executablePathSha256;
+  expectCode(() => validateRuntimeVerificationEvidence(substituted), 'firefox_browser_substitution');
+  const missingScenario = clone(verification);
+  missingScenario.firefox.runs[0].scenarioIds = missingScenario.firefox.runs[0].scenarioIds.slice(1);
+  expectCode(() => validateRuntimeVerificationEvidence(missingScenario), 'schema_invalid');
+  const mismatchedSharedRuntime = clone(verification);
+  mismatchedSharedRuntime.sharedRuntimeReleaseDist.worker.sha256 = '0'.repeat(64);
+  expectCode(
+    () => validateRuntimeVerificationEvidence(mismatchedSharedRuntime, {
+      browserTarget: 'firefox',
+      releaseDist: firefoxReleaseDist(),
+      sharedRuntimeReleaseDist: releaseDist,
+    }),
+    'shared_runtime_release_dist_mismatch',
+  );
+  const missingSharedRuntime = clone(verification);
+  delete missingSharedRuntime.sharedRuntimeReleaseDist;
+  expectCode(() => validateRuntimeVerificationEvidence(missingSharedRuntime), 'schema_invalid');
+});
+test('finalizes Firefox package evidence against the bound shared Chrome runtime', () => {
+  const fixture = firefoxFinalizationFixture();
+  const prepared = prepareReleaseFinalization(fixture.input);
+  assert.equal(prepared.final.value.browserTarget, 'firefox');
+  assert.equal(prepared.final.value.firefox.runs.length, 2);
+  assert.equal(prepared.gate.value.browserTarget, 'firefox');
+
+  const missingSharedRuntime = firefoxFinalizationFixture();
+  delete missingSharedRuntime.input.sharedRuntimeReleaseDist;
+  expectCode(() => prepareReleaseFinalization(missingSharedRuntime.input), 'release_dist_invalid');
+
+  const substitutedSharedRuntime = firefoxFinalizationFixture();
+  substitutedSharedRuntime.input.sharedRuntimeReleaseDist.worker.sha256 = '0'.repeat(64);
+  expectCode(() => prepareReleaseFinalization(substitutedSharedRuntime.input), 'release_dist_mismatch');
+});
+
 
 test('validates exact worker baseline, Mermaid, advisory, output, and optional-permission evidence', () => {
   const overBaseline = provisionalEvidence();
