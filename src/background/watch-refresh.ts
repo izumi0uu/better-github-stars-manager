@@ -32,11 +32,13 @@ import {
   type WatchSubjectIdentity,
 } from '@/watch/watch-model';
 import {
+  parseWatchAccountLogin,
   parseWatchThreadIds,
   type WatchInboxQueryResponse,
   type WatchRefreshResult,
   type WatchStatus,
   type WatchThreadAction,
+  type WatchThreadMutationInput,
   type WatchThreadMutationResult,
 } from '@/watch/watch-contract';
 
@@ -79,8 +81,8 @@ export interface WatchRefreshCoordinator {
   refresh(): Promise<WatchRefreshResult>;
   getSubjectDetail(threadId: string): Promise<WatchSubjectDetail>;
   refreshInbox(): Promise<WatchRefreshResult>;
-  markThreadsRead(threadIds: readonly string[]): Promise<WatchThreadMutationResult>;
-  markThreadsDone(threadIds: readonly string[]): Promise<WatchThreadMutationResult>;
+  markThreadsRead(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult>;
+  markThreadsDone(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult>;
   disconnectInbox(): Promise<WatchStatus>;
   clearData(): Promise<WatchStatus>;
   reconcileAccount(options?: {
@@ -570,12 +572,14 @@ export function createWatchRefreshCoordinator(
   async function performThreadMutation(
     auth: AuthSnapshot,
     action: WatchThreadAction,
-    requestedIds: readonly string[],
+    input: WatchThreadMutationInput,
   ): Promise<WatchThreadMutationResult> {
-    const threadIds = parseWatchThreadIds(requestedIds);
+    const accountLogin = parseWatchAccountLogin(input.accountLogin);
+    const threadIds = parseWatchThreadIds(input.threadIds);
     if (!threadIds) throw new GitHubWatchError('invalid_thread');
     if (
-      !auth.accountLogin ||
+      !accountLogin ||
+      auth.accountLogin !== accountLogin ||
       !auth.mainToken ||
       !auth.notificationsToken ||
       !await sameCredentials(auth, true)
@@ -636,11 +640,11 @@ export function createWatchRefreshCoordinator(
 
   async function mutateThreads(
     action: WatchThreadAction,
-    threadIds: readonly string[],
+    input: WatchThreadMutationInput,
   ): Promise<WatchThreadMutationResult> {
     await reconcileAccount();
     const auth = await readAuth();
-    return dependencies.runSerialized(() => performThreadMutation(auth, action, threadIds));
+    return dependencies.runSerialized(() => performThreadMutation(auth, action, input));
   }
 
   async function disconnectInboxCommand(): Promise<WatchStatus> {
@@ -704,8 +708,8 @@ export function createWatchRefreshCoordinator(
     getSubjectDetail,
     refresh,
     refreshInbox,
-    markThreadsRead: (threadIds) => mutateThreads('read', threadIds),
-    markThreadsDone: (threadIds) => mutateThreads('done', threadIds),
+    markThreadsRead: (input) => mutateThreads('read', input),
+    markThreadsDone: (input) => mutateThreads('done', input),
     disconnectInbox: disconnectInboxCommand,
     clearData: clearDataCommand,
     reconcileAccount,

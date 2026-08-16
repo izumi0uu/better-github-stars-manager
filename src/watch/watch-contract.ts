@@ -4,6 +4,17 @@ import type {
 } from '@/watch/watch-model';
 export type WatchThreadAction = 'read' | 'done';
 
+export interface WatchThreadMutationInput {
+  accountLogin: string;
+  threadIds: readonly string[];
+}
+
+export function parseWatchAccountLogin(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const login = value.trim().toLocaleLowerCase('en-US');
+  return login.length > 0 && login.length <= 39 ? login : null;
+}
+
 export const WATCH_MAX_THREAD_ACTIONS = 500;
 
 export interface WatchThreadMutationResult {

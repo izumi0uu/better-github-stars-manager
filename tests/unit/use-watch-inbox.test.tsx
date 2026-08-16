@@ -52,14 +52,17 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function queryResponse(totalCount: number): WatchInboxQueryResponse {
+function queryResponse(
+  totalCount: number,
+  accountLogin = 'octocat',
+): WatchInboxQueryResponse {
   return {
     threads: [],
     groups: [],
     unreadCount: totalCount,
     totalCount,
     status: {
-      accountLogin: 'octocat',
+      accountLogin,
       hasMainToken: true,
       hasNotificationsToken: true,
       refreshing: false,
@@ -604,13 +607,16 @@ describe('useWatchInbox', () => {
   it('tracks notification mutations and reloads the authoritative projection', async () => {
     const mutation = deferred<unknown>();
     let queryCount = 0;
-    watchMocks.bgCall.mockImplementation((type: string, payload?: { threadIds?: string[] }) => {
+    watchMocks.bgCall.mockImplementation((
+      type: string,
+      payload?: { accountLogin?: string; threadIds?: string[] },
+    ) => {
       if (type === 'queryWatchInbox') {
         queryCount++;
         return Promise.resolve(queryResponse(queryCount === 1 ? 2 : 1));
       }
       if (type === 'markWatchThreadsRead') {
-        expect(payload?.threadIds).toEqual(['1']);
+        expect(payload).toEqual({ accountLogin: 'octocat', threadIds: ['1'] });
         return mutation.promise;
       }
       throw new Error(`Unexpected request: ${type}`);
@@ -637,10 +643,11 @@ describe('useWatchInbox', () => {
 
   it('chunks a repository action with more than one thousand notifications', async () => {
     const mutationBatches: string[][] = [];
+    const mutationAccounts: Array<string | undefined> = [];
     let queryCount = 0;
     watchMocks.bgCall.mockImplementation((
       type: string,
-      payload?: { threadIds?: string[] },
+      payload?: { accountLogin?: string; threadIds?: string[] },
     ) => {
       if (type === 'queryWatchInbox') {
         queryCount += 1;
@@ -648,6 +655,7 @@ describe('useWatchInbox', () => {
       }
       if (type === 'markWatchThreadsDone') {
         const threadIds = payload?.threadIds ?? [];
+        mutationAccounts.push(payload?.accountLogin);
         mutationBatches.push(threadIds);
         return threadIds.length <= WATCH_MAX_THREAD_ACTIONS
           ? Promise.resolve(undefined)
@@ -671,8 +679,76 @@ describe('useWatchInbox', () => {
 
     expect(mutationBatches.map((batch) => batch.length)).toEqual([500, 500, 1]);
     expect(mutationBatches.flat()).toEqual(MANY_THREAD_IDS);
+    expect(mutationAccounts).toEqual(['octocat', 'octocat', 'octocat']);
     expect(container.querySelector('[data-testid="action-error"]')?.textContent).toBe('none');
     expect(queryCount).toBe(2);
+  });
+
+  it('stops remaining chunks when the active GitHub account changes', async () => {
+    const firstBatch = deferred<unknown>();
+    const mutationRequests: Array<{
+      accountLogin: string | undefined;
+      threadIds: string[];
+    }> = [];
+    let activeAccount = 'octocat';
+    let queryCount = 0;
+    watchMocks.bgCall.mockImplementation((
+      type: string,
+      payload?: { accountLogin?: string; threadIds?: string[] },
+    ) => {
+      if (type === 'queryWatchInbox') {
+        queryCount += 1;
+        return Promise.resolve(queryResponse(1_001, activeAccount));
+      }
+      if (type === 'markWatchThreadsDone') {
+        const request = {
+          accountLogin: payload?.accountLogin,
+          threadIds: payload?.threadIds ?? [],
+        };
+        mutationRequests.push(request);
+        if (request.accountLogin !== activeAccount) {
+          return Promise.reject(new Error('Watch account changed'));
+        }
+        return mutationRequests.length === 1 ? firstBatch.promise : Promise.resolve(undefined);
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+    const container = mountReact(<Harness />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="mark-many-done"]')!);
+    await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+    expect(mutationRequests[0]).toMatchObject({ accountLogin: 'octocat' });
+
+    activeAccount = 'another-user';
+    await act(async () => {
+      storageListeners[0]?.({
+        gsm_github_credentials: {
+          oldValue: { accountLogin: 'octocat' },
+          newValue: { accountLogin: activeAccount },
+        },
+      }, 'local');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    firstBatch.resolve(undefined);
+    await act(async () => {
+      await firstBatch.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mutationRequests).toHaveLength(2);
+    expect(mutationRequests.map((request) => request.accountLogin))
+      .toEqual(['octocat', 'octocat']);
+    expect(mutationRequests.map((request) => request.threadIds.length)).toEqual([500, 500]);
+    expect(container.querySelector('[data-testid="action-error"]')?.textContent).toBe('done');
+    expect(queryCount).toBe(3);
   });
 
   it('surfaces a failed done mutation after reloading saved rows', async () => {

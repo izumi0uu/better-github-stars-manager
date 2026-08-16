@@ -186,12 +186,13 @@ export function useWatchInbox({
       if (mountedRef.current) setRefreshing(false);
     }
   }, [load]);
+  const actionAccountLogin = result?.status.accountLogin ?? null;
 
   const mutateThreads = useCallback(async (
     action: WatchThreadAction,
     requestedIds: readonly string[],
   ) => {
-    if (!mountedRef.current || actionPendingRef.current) return;
+    if (!mountedRef.current || actionPendingRef.current || !actionAccountLogin) return;
     const threadIds = [...new Set(requestedIds)];
     if (threadIds.length === 0) return;
     actionPendingRef.current = true;
@@ -201,6 +202,7 @@ export function useWatchInbox({
       const requestType = action === 'read' ? 'markWatchThreadsRead' : 'markWatchThreadsDone';
       for (let offset = 0; offset < threadIds.length; offset += WATCH_MAX_THREAD_ACTIONS) {
         await bgCall<WatchThreadMutationResult>(requestType, {
+          accountLogin: actionAccountLogin,
           threadIds: threadIds.slice(offset, offset + WATCH_MAX_THREAD_ACTIONS),
         });
       }
@@ -213,7 +215,7 @@ export function useWatchInbox({
       actionPendingRef.current = false;
       if (mountedRef.current) setActionPending(null);
     }
-  }, [load, onMeaningfulAction]);
+  }, [actionAccountLogin, load, onMeaningfulAction]);
 
   const markThreadsRead = useCallback((threadIds: readonly string[]) => (
     mutateThreads('read', threadIds)
