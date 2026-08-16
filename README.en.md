@@ -39,7 +39,7 @@ Search, filter, tag, and annotate repositories directly on your GitHub Stars pag
 
 ### Install
 
-| | Store | Works on |
+| Browser | Store | Works on |
 | :---: | --- | --- |
 | [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome, Edge, Brave, Opera, and other Chromium-based browsers |
 | [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · Coming soon | Microsoft Edge |
