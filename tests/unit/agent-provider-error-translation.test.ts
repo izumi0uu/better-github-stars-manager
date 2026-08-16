@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { translateError } from '@/api/errors';
+import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE, translateError } from '@/api/errors';
 import {
   AgentProviderError,
   isStructuredProviderContextOverflow,
   publicAgentProviderErrorMessage,
 } from '@/agent-harness/provider';
 import { getMessages } from '@/i18n';
-import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/turn-protocol';
 
 describe('Agent provider error translation', () => {
   it('uses fixed content-free copy for context overflow', () => {

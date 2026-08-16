@@ -11,6 +11,7 @@ import {
   type RecommendationStatus,
 } from '@/recommendations/recommendation-model';
 import { normalizeRepositoryFullName } from '@/watch/watch-model';
+import { projectRecommendations } from '@/recommendations/recommendation-projector';
 import { db } from './db';
 
 const RECOMMENDATION_STATE_ID = 'singleton' as const;
@@ -250,30 +251,17 @@ export async function recordRecommendationFailure(
 /** Query cache rows for one account, excluding ignored and already-starred repositories. */
 export async function listRecommendations(accountLogin: string): Promise<RecommendationRecord[]> {
   const key = accountKey(accountLogin);
-  const [stored, stars, ignores] = await Promise.all([
+  const [recommendations, stars, ignores] = await Promise.all([
     db.recommendations.where('accountLogin').equals(key).toArray(),
     db.stars.toArray(),
     db.recommendationIgnores.where('accountLogin').equals(key).toArray(),
   ]);
-  const liveLibrary = new Set(stars.flatMap((star) => {
-    if (star.tombstone || star.viewer_has_starred === false) return [];
-    try {
-      return [normalizeRepositoryFullName(star.full_name)];
-    } catch {
-      return [];
-    }
-  }));
-  const ignoredKeys = new Set(ignores.map((row) => row.repositoryKey));
-  return stored
-    .filter((recommendation) => (
-      !liveLibrary.has(recommendation.repositoryKey)
-      && !ignoredKeys.has(recommendation.repositoryKey)
-    ))
-    .sort((left, right) => (
-      right.score - left.score
-        || right.stargazerCount - left.stargazerCount
-        || left.repositoryKey.localeCompare(right.repositoryKey)
-    ));
+  return projectRecommendations({
+    accountLogin: key,
+    recommendations,
+    stars,
+    ignores,
+  });
 }
 
 export async function clearRecommendationData(): Promise<void> {

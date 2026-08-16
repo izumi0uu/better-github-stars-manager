@@ -4,6 +4,8 @@
 import { act, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWatchSubjectDetails } from '@/ui/hooks/use-watch-subject-details';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import { BackgroundCallError } from '@/utils/messaging';
 import type { GitHubNotificationThread, WatchSubjectDetail } from '@/watch/watch-model';
 import {
@@ -20,6 +22,12 @@ vi.mock('@/utils/messaging', async (importOriginal) => {
   return { ...actual, bgCall: subjectMocks.bgCall };
 });
 
+vi.mock('@/auth/auth-store', () => ({
+  CONFIG_STORAGE_KEY: 'gsm_config',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
+  authStore: {},
+}));
+
 type StorageListener = (
   changes: Record<string, chrome.storage.StorageChange>,
   areaName: string,
@@ -27,6 +35,7 @@ type StorageListener = (
 
 const storageListeners: StorageListener[] = [];
 const mountedRoots: MountedRoot[] = [];
+const runtime = new ExtensionManagerRuntime();
 
 const issueThread: GitHubNotificationThread = {
   id: '123',
@@ -75,25 +84,25 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function Harness({
-  thread = issueThread,
-}: {
-  thread?: GitHubNotificationThread;
-}) {
+function SubjectProbe({ thread }: { thread: GitHubNotificationThread }) {
   const [expanded, setExpanded] = useState(false);
   const subject = useWatchSubjectDetails({ thread, expanded });
   return (
     <div>
-      <button type="button" data-testid="toggle" onClick={() => setExpanded((current) => !current)}>
-        Toggle
-      </button>
+      <button type="button" data-testid="toggle" onClick={() => setExpanded((current) => !current)}>Toggle</button>
       <button type="button" data-testid="retry" onClick={subject.retry}>Retry</button>
       <span data-testid="supported">{String(subject.supported)}</span>
       <span data-testid="status">{subject.state.status}</span>
-      <span data-testid="code">
-        {subject.state.status === 'error' ? subject.state.code ?? 'none' : 'none'}
-      </span>
+      <span data-testid="code">{subject.state.status === 'error' ? subject.state.code ?? 'none' : 'none'}</span>
     </div>
+  );
+}
+
+function Harness({ thread = issueThread }: { thread?: GitHubNotificationThread }) {
+  return (
+    <ManagerRuntimeProvider runtime={runtime}>
+      <SubjectProbe thread={thread} />
+    </ManagerRuntimeProvider>
   );
 }
 
@@ -101,6 +110,9 @@ beforeEach(() => {
   subjectMocks.bgCall.mockReset();
   storageListeners.length = 0;
   vi.stubGlobal('chrome', {
+    runtime: {
+      onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
     storage: {
       onChanged: {
         addListener: vi.fn((listener: StorageListener) => storageListeners.push(listener)),

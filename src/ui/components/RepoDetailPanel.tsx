@@ -16,6 +16,7 @@ import { Button } from "@/ui/shadcn/button";
 import { Separator } from "@/ui/shadcn/separator";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/i18n";
+import { ManagerResourceLink } from '@/ui/components/ManagerResource';
 import {
   getLockedAnchorProps,
   getLockedRegionProps,
@@ -110,10 +111,8 @@ export function RepoDetailPanel({
 
       <div className="flex flex-col gap-4 p-3">
         <div>
-          <a
-            href={star.html_url}
-            target="_blank"
-            rel="noreferrer"
+          <ManagerResourceLink
+            resource={{ kind: 'repository', fullName: star.full_name, remoteUrl: star.html_url }}
             className={cn(
               "break-all text-[13px] font-semibold text-primary underline underline-offset-2 hover:underline",
               { "pointer-events-none opacity-70": interactionLocked },
@@ -121,7 +120,7 @@ export function RepoDetailPanel({
             {...getLockedAnchorProps(interactionLocked)}
           >
             {star.full_name}
-          </a>
+          </ManagerResourceLink>
           <div className="mt-0.5 flex gap-2">
             {star.archived && (
               <span

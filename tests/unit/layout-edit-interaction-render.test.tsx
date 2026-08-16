@@ -2,7 +2,10 @@ import { createRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { ActiveFilterChips } from '@/ui/components/ActiveFilterChips';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
+import { AgentMascotIcon } from '@/ui/components/AgentMascot';
 import { LayoutEditChrome } from '@/ui/components/LayoutEditChrome';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { Toolbar } from '@/ui/components/Toolbar';
@@ -12,6 +15,8 @@ import { getLockedAnchorProps, getLockedRegionProps, shouldIgnorePanelShortcut }
 import { REPO_URL } from '@/lib/links';
 import type { FilterState } from '@/ui/filter-store';
 import { fakeStar, fakeTag } from './test-utils';
+
+const runtime = new ExtensionManagerRuntime();
 
 function fakeFilterState(): FilterState {
   return {
@@ -60,7 +65,7 @@ function renderToolbarViewTabs({
   agentActive?: boolean;
   watchUnreadCount?: number;
   radarUnseenCount?: number;
-  account?: { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null };
+  account?: { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null; gistUrl?: string | null };
 }) {
   return renderToStaticMarkup(
     <TooltipProvider>
@@ -79,6 +84,7 @@ function renderToolbarViewTabs({
         onAutoAssignTags={vi.fn()}
         onOpenAgent={agentActive === undefined ? undefined : vi.fn()}
         agentActive={agentActive}
+        agentIcon={agentActive === undefined ? undefined : <AgentMascotIcon running={agentActive} />}
         onToggleTheme={vi.fn()}
         theme="light"
         searchRef={{ current: null }}
@@ -261,6 +267,7 @@ describe('layout edit interaction lock render behavior', () => {
         avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
         displayName: 'The Octocat',
         gistId: '0123456789abcdef',
+        gistUrl: 'https://gist.github.com/octocat/0123456789abcdef',
       },
     });
     const toolbarRow = markup.match(/<div[^>]*data-toolbar-row="true"[^>]*>/)?.[0];
@@ -447,19 +454,21 @@ describe('layout edit interaction lock render behavior', () => {
 
   it('renders the detail drawer visible but inert and makes its repo link unfocusable', () => {
     const markup = renderToStaticMarkup(
-      <RepoDetailPanel
-        star={fakeStar()}
-        tag={fakeTag()}
-        selectedTags={['ui']}
-        onToggleTag={vi.fn()}
-        onDataChanged={vi.fn()}
-        onClose={vi.fn()}
-        onPrev={vi.fn()}
-        onNext={vi.fn()}
-        hasPrev
-        hasNext
-        interactionLocked
-      />,
+      <ManagerRuntimeProvider runtime={runtime}>
+        <RepoDetailPanel
+          star={fakeStar()}
+          tag={fakeTag()}
+          selectedTags={['ui']}
+          onToggleTag={vi.fn()}
+          onDataChanged={vi.fn()}
+          onClose={vi.fn()}
+          onPrev={vi.fn()}
+          onNext={vi.fn()}
+          hasPrev
+          hasNext
+          interactionLocked
+        />
+      </ManagerRuntimeProvider>,
     );
 
     expect(markup).toContain('owner/repo');

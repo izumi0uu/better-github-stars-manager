@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils';
+import { useManagerImage } from '@/ui/components/ManagerResource';
 
 const REPOSITORY_AVATAR_COLOR_COUNT = 9;
 const REPOSITORY_INITIAL_PATTERN = /[\p{L}\p{N}]/u;
@@ -33,6 +34,11 @@ export function RepositoryOwnerAvatar({
   url: string | null | undefined;
   className?: string;
 }) {
+  const resolvedUrl = useManagerImage({
+    kind: 'repository-avatar',
+    identity: fullName,
+    remoteUrl: url ?? null,
+  });
   const fallback = repositoryAvatarFallback(fullName);
   return (
     <span
@@ -50,11 +56,11 @@ export function RepositoryOwnerAvatar({
       >
         {fallback.initial}
       </span>
-      {url ? (
+      {resolvedUrl ? (
         <img
-          key={url}
+          key={resolvedUrl}
           data-repository-avatar
-          src={url}
+          src={resolvedUrl}
           alt=""
           loading="lazy"
           decoding="async"

@@ -1,5 +1,4 @@
 import type { MessageCatalog } from '@/i18n';
-import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/turn-protocol';
 
 /**
  * Errors are thrown at their origin as stable code strings; `translateError`
@@ -59,6 +58,8 @@ export const GIST_PUSH_FAILED = 'GIST_PUSH_FAILED';
 export const GIST_PULL_FAILED = 'GIST_PULL_FAILED';
 
 // Agent provider config / connectivity codes.
+export const AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE =
+  'agent_artifact_coverage_stalled' as const;
 export const AGENT_API_KEY_EMPTY = 'AGENT_API_KEY_EMPTY';
 export const AGENT_MODEL_EMPTY = 'AGENT_MODEL_EMPTY';
 export const AGENT_BASE_URL_EMPTY = 'AGENT_BASE_URL_EMPTY';

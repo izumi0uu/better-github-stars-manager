@@ -24,6 +24,8 @@ import type {
 import { useDelayedHoverIntent } from '@/ui/hooks/use-delayed-hover-intent';
 import { SearchMatchText } from '@/ui/components/SearchMatchText';
 import { RepositoryOwnerAvatar } from '@/ui/components/RepositoryOwnerAvatar';
+import { ManagerResourceLink, useManagerImage } from '@/ui/components/ManagerResource';
+import { useManagerNow } from '@/ui/manager-runtime-context';
 import type {
   RadarActivitySearchResult,
   RadarProjectSearchResult,
@@ -333,16 +335,18 @@ function RadarQuickActions({
         })}
       >
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-          <a
-            href={target.repositoryHtmlUrl}
-            target="_blank"
-            rel="noreferrer"
+          <ManagerResourceLink
+            resource={{
+              kind: 'repository',
+              fullName: target.repositoryFullName,
+              remoteUrl: target.repositoryHtmlUrl,
+            }}
             className="min-w-0 flex-1 truncate rounded-sm font-mono text-xs font-semibold text-foreground underline underline-offset-2 outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
             onPointerDown={stopQuickActionPropagation}
             onClick={stopQuickActionPropagation}
           >
             {target.repositoryDisplayName}
-          </a>
+          </ManagerResourceLink>
           <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] tabular-nums text-muted-foreground">
             <Star className="size-3" aria-hidden="true" />
             {target.displayedStargazerCount.toLocaleString(locale)}
@@ -482,18 +486,20 @@ function ActorChip({
 }) {
   const { m } = useI18n();
   const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
-  const githubAvatarUrl = `https://github.com/${encodeURIComponent(login)}.png?size=48`;
-  const displayedAvatarUrl = avatarUrl && failedAvatarUrl !== avatarUrl
-    ? avatarUrl
-    : failedAvatarUrl !== githubAvatarUrl
-      ? githubAvatarUrl
-      : null;
+  const resolvedAvatarUrl = useManagerImage({
+    kind: 'actor-avatar',
+    identity: login,
+    remoteUrl: avatarUrl ?? `https://github.com/${encodeURIComponent(login)}.png?size=48`,
+  });
+  const displayedAvatarUrl = resolvedAvatarUrl === failedAvatarUrl ? null : resolvedAvatarUrl;
   const label = m.radar.openActorProfile(login);
   return (
-    <a
-      href={`https://github.com/${encodeURIComponent(login)}`}
-      target="_blank"
-      rel="noreferrer"
+    <ManagerResourceLink
+      resource={{
+        kind: 'actor',
+        login,
+        remoteUrl: `https://github.com/${encodeURIComponent(login)}`,
+      }}
       aria-label={label}
       title={label}
       className={cn(
@@ -511,7 +517,7 @@ function ActorChip({
       ) : (
         login.slice(0, 1)
       )}
-    </a>
+    </ManagerResourceLink>
   );
 }
 
@@ -587,6 +593,7 @@ export function RadarFeedRow({
   onMarkSeen: RadarProps['onMarkSeen'];
 }) {
   const { m, locale } = useI18n();
+  const now = useManagerNow();
   const { activity, actorRanges, repositoryRanges } = searchResult;
   const dismissing = pendingAction?.kind === 'dismiss'
     && pendingAction.repositoryKey === activity.repositoryKey;
@@ -637,16 +644,18 @@ export function RadarFeedRow({
                 url={activity.repositoryOwnerAvatarUrl ?? null}
                 className="size-4"
               />
-              <a
-                href={activity.repositoryHtmlUrl}
-                target="_blank"
-                rel="noreferrer"
+              <ManagerResourceLink
+                resource={{
+                  kind: 'repository',
+                  fullName: activity.repositoryFullName,
+                  remoteUrl: activity.repositoryHtmlUrl,
+                }}
                 className="pointer-events-auto min-w-0 truncate rounded-sm font-mono font-semibold text-foreground underline underline-offset-2 outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
                 onPointerDown={stopQuickActionPropagation}
                 onClick={stopQuickActionPropagation}
               >
                 <SearchMatchText text={activity.repositoryDisplayName} ranges={repositoryRanges} />
-              </a>
+              </ManagerResourceLink>
             </span>
             <RepositoryMetadata
               language={activity.repositoryLanguage}
@@ -661,7 +670,7 @@ export function RadarFeedRow({
             title={formatRadarAbsoluteTime(activity.starredAt, locale) ?? undefined}
             className="w-14 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground max-[520px]:hidden"
           >
-            {formatRadarRelativeTime(activity.starredAt, locale)}
+            {formatRadarRelativeTime(activity.starredAt, locale, now)}
           </time>
         </span>
       </div>
@@ -691,6 +700,7 @@ function RadarProjectTimeline({
   actorRangesByLogin: RadarProjectSearchResult['actorRangesByLogin'];
 }) {
   const { m, locale } = useI18n();
+  const now = useManagerNow();
   return (
     <div className="min-w-0" data-radar-project-timeline>
       <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
@@ -699,24 +709,26 @@ function RadarProjectTimeline({
       <ol className="mt-1.5 grid gap-1.5 p-0">
         {activities.map((activity) => (
           <li key={activity.id} className="flex min-w-0 items-baseline gap-x-2 text-[11.5px] text-muted-foreground">
-            <a
-              href={`https://github.com/${encodeURIComponent(activity.actorLogin)}`}
-              target="_blank"
-              rel="noreferrer"
+            <ManagerResourceLink
+              resource={{
+                kind: 'actor',
+                login: activity.actorLogin,
+                remoteUrl: `https://github.com/${encodeURIComponent(activity.actorLogin)}`,
+              }}
               className="shrink-0 rounded-sm font-mono text-[11px] font-semibold text-foreground underline decoration-muted-foreground/45 underline-offset-2 outline-none hover:decoration-current focus-visible:ring-2 focus-visible:ring-ring"
             >
               <SearchMatchText
                 text={activity.actorLogin}
                 ranges={actorRangesByLogin[activity.actorLogin.toLocaleLowerCase('en-US')] ?? []}
               />
-            </a>
+            </ManagerResourceLink>
             <span className="min-w-0 truncate">{m.radar.starredThisRepository}</span>
             <time
               dateTime={activity.starredAt}
               title={formatRadarAbsoluteTime(activity.starredAt, locale) ?? undefined}
               className="ml-auto shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground"
             >
-              {formatRadarRelativeTime(activity.starredAt, locale)}
+              {formatRadarRelativeTime(activity.starredAt, locale, now)}
             </time>
           </li>
         ))}
@@ -806,16 +818,18 @@ function RadarProjectActionBar({
         <Tag className="size-3 shrink-0" aria-hidden="true" />
         <span className="min-w-0 truncate">{m.radar.addTagAction}</span>
       </button>
-      <a
-        href={project.repositoryHtmlUrl}
-        target="_blank"
-        rel="noreferrer"
+      <ManagerResourceLink
+        resource={{
+          kind: 'repository',
+          fullName: project.repositoryFullName,
+          remoteUrl: project.repositoryHtmlUrl,
+        }}
         data-radar-project-action="open"
         className="flex min-w-0 h-[30px] items-center justify-center gap-1.5 overflow-hidden rounded-md border border-border bg-background px-2 text-[11.5px] font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring max-[520px]:whitespace-normal max-[520px]:leading-4"
       >
         <ExternalLink className="size-3 shrink-0" aria-hidden="true" />
         <span className="min-w-0 truncate">{m.radar.openRepository}</span>
-      </a>
+      </ManagerResourceLink>
     </div>
   );
 }
@@ -846,6 +860,7 @@ export function RadarProjectRow({
   onMarkSeen: RadarProps['onMarkSeen'];
 }) {
   const { m, locale } = useI18n();
+  const now = useManagerNow();
   const { project, actorRangesByLogin, repositoryRanges } = searchResult;
   const [composerOpen, setComposerOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
@@ -994,14 +1009,16 @@ export function RadarProjectRow({
               url={project.repositoryOwnerAvatarUrl}
               className="size-4"
             />
-            <a
-              href={project.repositoryHtmlUrl}
-              target="_blank"
-              rel="noreferrer"
+            <ManagerResourceLink
+              resource={{
+                kind: 'repository',
+                fullName: project.repositoryFullName,
+                remoteUrl: project.repositoryHtmlUrl,
+              }}
               className="pointer-events-auto min-w-0 truncate rounded-sm text-[13.5px] font-semibold tracking-[-0.01em] text-foreground underline decoration-muted-foreground/45 underline-offset-2 outline-none hover:decoration-current focus-visible:ring-2 focus-visible:ring-ring"
             >
               <SearchMatchText text={project.repositoryDisplayName} ranges={repositoryRanges} />
-            </a>
+            </ManagerResourceLink>
             {project.viewerHasStarred && (
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-favorite/30 bg-favorite/10 px-2 py-px text-[10px] font-semibold text-favorite">
                 <Star className="size-2.5 fill-current" aria-hidden="true" />
@@ -1030,7 +1047,7 @@ export function RadarProjectRow({
               tags={project.tags}
             />
             <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-              {m.radar.followedStars(project.activityCount)} · {m.radar.latest} {formatRadarRelativeTime(project.latestStarredAt, locale)}
+              {m.radar.followedStars(project.activityCount)} · {m.radar.latest} {formatRadarRelativeTime(project.latestStarredAt, locale, now)}
             </span>
           </div>
         </div>
@@ -1072,7 +1089,7 @@ export function RadarProjectRow({
                 <SearchMatchText
                   text={activity.actorLogin}
                   ranges={actorRangesByLogin[activity.actorLogin.toLocaleLowerCase('en-US')] ?? []}
-                />{' '}{formatRadarRelativeTime(activity.starredAt, locale)}
+                />{' '}{formatRadarRelativeTime(activity.starredAt, locale, now)}
               </span>
             ))}
             {project.activities.length > 3 && <span className="shrink-0"> · +{project.activities.length - 2}</span>}

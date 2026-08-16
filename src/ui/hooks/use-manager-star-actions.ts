@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '@/i18n';
 import type { Star, Tag } from '@/types';
-import { bgCall } from '@/utils/messaging';
+import { useManagerRuntime } from '@/ui/manager-runtime-context';
 import { pruneFavoriteOverrides, type FavoriteOverrideState } from '@/ui/favorite-state';
 import { nextOpenUnstarFullName } from '@/ui/unstar-popover-state';
 
@@ -28,6 +28,7 @@ export function useManagerStarActions({
   onMeaningfulAction,
   onUnstarred,
 }: UseManagerStarActionsOptions) {
+  const runtime = useManagerRuntime();
   const { m } = useI18n();
   const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, FavoriteOverrideState>>({});
   const [unstarFeedback, setUnstarFeedback] = useState<UnstarFeedback | null>(null);
@@ -49,7 +50,7 @@ export function useManagerStarActions({
       [fullName]: { value: favorite, pending: true },
     }));
     try {
-      await bgCall('setFavorite', { full_name: fullName, favorite });
+      await runtime.setFavorite(fullName, favorite);
       setFavoriteOverrides((current) => ({
         ...current,
         [fullName]: { value: favorite, pending: false },
@@ -71,7 +72,7 @@ export function useManagerStarActions({
       ));
       throw error;
     }
-  }, [m, onMeaningfulAction, setInfo]);
+  }, [m, onMeaningfulAction, runtime, setInfo]);
 
   const confirmUnstar = useCallback((fullName: string) => {
     if (interactionLocked) return;
@@ -80,7 +81,7 @@ export function useManagerStarActions({
     setUnstarFeedback(null);
     setInfo(null);
 
-    bgCall('markUnstarred', { full_name: fullName })
+    runtime.markUnstarred(fullName)
       .then(() => {
         onUnstarred(fullName);
         setUnstarFeedback({ kind: 'done', fullName });
@@ -92,7 +93,7 @@ export function useManagerStarActions({
           error: error instanceof Error ? error.message : String(error),
         });
       });
-  }, [interactionLocked, onUnstarred, setInfo]);
+  }, [interactionLocked, onUnstarred, runtime, setInfo]);
 
   const changeUnstarPopover = useCallback((open: boolean, sourceFullName: string) => {
     setOpenUnstarFullName((current) => nextOpenUnstarFullName(

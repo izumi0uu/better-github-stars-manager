@@ -35,11 +35,11 @@ import { MessageResponse } from '@/ui/ai-elements/response';
 import { AgentFunctionMenu } from '@/ui/components/AgentFunctionMenu';
 import { AgentMascot } from '@/ui/components/AgentMascot';
 import { AgentSessionMenu } from '@/ui/components/AgentSessionMenu';
+import { AgentProposalReviewCard } from '@/ui/components/AgentOrganizeReview';
 import {
-  AgentProposalReviewCard,
   AgentRunStepper,
   type AgentRunMode,
-} from '@/ui/components/AgentOrganizeReview';
+} from '@/ui/components/AgentRunStepper';
 import type { BgsmAgentHookState } from '@/ui/hooks/use-bgsm-agent';
 import type { BgsmAgentChatMessage } from '@/ui/bgsm-agent-session-projection';
 import type { useBgsmAgentWorkbench } from '@/ui/hooks/use-bgsm-agent-workbench';

@@ -3,22 +3,21 @@
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FloatingLocaleToggle } from '@/ui/components/FloatingLocaleToggle';
 import { DEV_UI_VISIBLE } from '@/dev';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mountedRoots: Root[] = [];
-const sendMessage = vi.fn();
 
-function mountToggle() {
+function mountToggle(onClearLocalData?: () => Promise<void>) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
 
   act(() => {
-    root.render(<FloatingLocaleToggle drawerOpen={false} />);
+    root.render(<FloatingLocaleToggle drawerOpen={false} onClearLocalData={onClearLocalData} />);
   });
   mountedRoots.push(root);
   return { container };
@@ -38,14 +37,6 @@ function devClearButton(container: HTMLElement): HTMLButtonElement {
   return button;
 }
 
-beforeEach(() => {
-  sendMessage.mockReset();
-  vi.stubGlobal('chrome', {
-    runtime: {
-      sendMessage,
-    },
-  });
-});
 
 afterEach(() => {
   act(() => {
@@ -60,15 +51,15 @@ describe('FloatingLocaleToggle', () => {
     expect(DEV_UI_VISIBLE).toBe(true);
   });
   it('surfaces dev clear failure and clears the error on retry intent', async () => {
-    sendMessage.mockResolvedValueOnce({ ok: false, error: 'network-down' });
-    const { container } = mountToggle();
+    const clearLocalData = vi.fn().mockRejectedValueOnce(new Error('network-down'));
+    const { container } = mountToggle(clearLocalData);
 
     await click(devClearButton(container));
     expect(container.textContent).toContain('Confirm clear');
 
     await click(devClearButton(container));
     expect(container.textContent).toContain('Clear failed: network-down');
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'devClearLocalData' });
+    expect(clearLocalData).toHaveBeenCalledTimes(1);
 
     await click(devClearButton(container));
     expect(container.textContent).toContain('Confirm clear');

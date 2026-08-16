@@ -38,6 +38,41 @@ const managerMocks = vi.hoisted(() => ({
   } satisfies Star,
 }));
 
+vi.mock('@/auth/auth-store', () => ({
+  CONFIG_STORAGE_KEY: 'gsm_config',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
+  authStore: {
+    getConfig: vi.fn(async () => ({
+      theme: 'light',
+      locale: 'en',
+      libraryView: {
+        version: 1,
+        filters: {
+          languages: [],
+          tags: [],
+          tagMode: 'any',
+          showTombstone: false,
+          onlyFavorite: false,
+          onlyUntagged: false,
+          onlyArchived: false,
+          onlyOwned: false,
+        },
+        sort: { sortKey: 'starred_at', sortDir: 'desc' },
+      },
+      watchCollapsedRepositories: {},
+      columnLayoutMode: 'default',
+      customColumnLayout: null,
+    })),
+    getAccount: vi.fn(async () => ({
+      username: 'octocat',
+      avatarUrl: null,
+      displayName: 'Octocat',
+      gistId: null,
+    })),
+    update: vi.fn(async () => {}),
+  },
+}));
+
 vi.mock('@/ui/use-stars', () => ({
   useStars: () => ({
     rows: [managerMocks.row],

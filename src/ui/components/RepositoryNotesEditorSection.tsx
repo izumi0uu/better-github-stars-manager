@@ -4,7 +4,7 @@ import { useI18n } from '@/i18n';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { Separator } from '@/ui/shadcn/separator';
 import { Textarea } from '@/ui/shadcn/textarea';
-import { bgCall } from '@/utils/messaging';
+import { useManagerRuntime } from '@/ui/manager-runtime-context';
 import type { SaveActionPhase } from './SaveActionButton';
 import { shouldAdoptIncomingTextDraft } from './tag-draft';
 import {
@@ -27,6 +27,7 @@ export function RepositoryNotesEditorSection({
   onDataChanged,
   onMeaningfulAction,
 }: RepositoryNotesEditorSectionProps) {
+  const runtime = useManagerRuntime();
   const notes = tag?.notes ?? '';
   const { m } = useI18n();
 
@@ -94,7 +95,7 @@ export function RepositoryNotesEditorSection({
     let ok = false;
     setSavePhase('busy');
     try {
-      await bgCall('setNotes', { full_name: fullName, notes: nextNotes });
+      await runtime.setNotes(fullName, nextNotes);
       if (!ownsCompletion(fullName)) return;
       onDataChanged?.();
       onMeaningfulAction?.();

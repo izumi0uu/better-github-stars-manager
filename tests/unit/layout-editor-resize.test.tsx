@@ -5,6 +5,8 @@ import { act, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '@/types';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import { COLUMN_DEFS, DEFAULT_COLUMN_LAYOUT, type ColumnId } from '@/ui/column-layout';
 import { useColumnLayoutEditor, type LayoutResizeLiveAdapter, type LayoutResizeLiveState } from '@/ui/hooks/use-column-layout-editor';
 
@@ -15,8 +17,10 @@ const authMocks = vi.hoisted(() => ({
 
 vi.mock('@/auth/auth-store', () => ({
   CONFIG_STORAGE_KEY: 'gsm_config',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
   authStore: authMocks,
 }));
+const runtime = new ExtensionManagerRuntime();
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -141,7 +145,7 @@ function mountResizeHarness(
   }
 
   act(() => {
-    root.render(<Harness />);
+    root.render(<ManagerRuntimeProvider runtime={runtime}><Harness /></ManagerRuntimeProvider>);
   });
   mountedRoots.push(root);
 
@@ -212,6 +216,9 @@ describe('layout editor column resize', () => {
     authMocks.getConfig.mockResolvedValue(baseConfig());
     authMocks.update.mockResolvedValue(undefined);
     vi.stubGlobal('chrome', {
+      runtime: {
+        onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
+      },
       storage: {
         onChanged: {
           addListener: vi.fn((listener) => storageListeners.push(listener)),

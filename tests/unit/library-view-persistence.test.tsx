@@ -4,6 +4,8 @@
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStars } from '@/ui/use-stars';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import { useFilterStore } from '@/ui/filter-store';
 import type { Config } from '@/types';
 import {
@@ -19,12 +21,19 @@ const authMocks = vi.hoisted(() => ({
 
 vi.mock('@/auth/auth-store', () => ({
   CONFIG_STORAGE_KEY: 'gsm_config',
-  authStore: authMocks,
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
+  authStore: {
+    getConfig: authMocks.getConfig,
+    update: vi.fn((patch: Partial<Config>) => patch.libraryView
+      ? authMocks.updateLibraryViewPrefs(patch.libraryView)
+      : Promise.resolve()),
+  },
 }));
 
 const mountedRoots: MountedRoot[] = [];
 const storageListeners: Array<(changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void> = [];
 const runtimeListeners: Array<(message: { type?: string }) => void> = [];
+const runtime = new ExtensionManagerRuntime();
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -103,6 +112,38 @@ function baseConfig(): Config {
   };
 }
 
+function externalConfig(): Config {
+  return {
+    ...baseConfig(),
+    libraryView: {
+      version: 1,
+      filters: {
+        languages: ['Rust'],
+        tags: ['systems'],
+        tagMode: 'any',
+        showTombstone: false,
+        onlyFavorite: false,
+        onlyUntagged: true,
+        onlyArchived: false,
+        onlyOwned: false,
+      },
+      sort: {
+        sortKey: 'name',
+        sortDir: 'desc',
+      },
+    },
+  };
+}
+
+function emitConfig(config: Config) {
+  authMocks.getConfig.mockResolvedValue(config);
+  for (const listener of storageListeners) {
+    listener({
+      gsm_config: { newValue: config } as chrome.storage.StorageChange,
+    }, 'local');
+  }
+}
+
 function resetFilterStore() {
   useFilterStore.setState({
     query: '',
@@ -120,9 +161,17 @@ function resetFilterStore() {
   });
 }
 
-function Harness() {
-  useStars();
+function StarsProbe({ allowHashTagOverride = true }: Readonly<{ allowHashTagOverride?: boolean }>) {
+  useStars(allowHashTagOverride);
   return null;
+}
+
+function Harness({ allowHashTagOverride = true }: Readonly<{ allowHashTagOverride?: boolean }> = {}) {
+  return (
+    <ManagerRuntimeProvider runtime={runtime}>
+      <StarsProbe allowHashTagOverride={allowHashTagOverride} />
+    </ManagerRuntimeProvider>
+  );
 }
 
 async function flush() {
@@ -262,6 +311,22 @@ describe('library view preference persistence', () => {
     );
   });
 
+  it('does not apply extension hash state when the host disables it', async () => {
+    window.history.replaceState(null, '', '/stars#gsm-tag=vue');
+    authMocks.getConfig.mockResolvedValue(baseConfig());
+    mountReact(<Harness allowHashTagOverride={false} />, mountedRoots);
+    await flush();
+
+    const message = vi.mocked(chrome.runtime.sendMessage).mock.calls[0][0] as unknown as {
+      params: { filter: { tags: string[]; languages: string[]; sortKey: string } };
+    };
+    expect(message.params.filter.tags).toEqual(['react']);
+    expect(message.params.filter.languages).toEqual(['TypeScript']);
+    expect(message.params.filter.sortKey).toBe('created_at');
+    expect(authMocks.updateLibraryViewPrefs).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe('#gsm-tag=vue');
+  });
+
   it('ignores malformed #gsm-tag values without discarding persisted preferences', async () => {
     window.history.replaceState(null, '', '/stars#gsm-tag=%E0%A4%A');
     authMocks.getConfig.mockResolvedValue(baseConfig());
@@ -289,29 +354,7 @@ describe('library view preference persistence', () => {
     });
 
     act(() => {
-      storageListeners.forEach((listener) => listener({
-        gsm_config: {
-          newValue: {
-            libraryView: {
-              version: 1,
-              filters: {
-                languages: ['Rust'],
-                tags: ['systems'],
-                tagMode: 'any',
-                showTombstone: false,
-                onlyFavorite: false,
-                onlyUntagged: true,
-                onlyArchived: false,
-                onlyOwned: false,
-              },
-              sort: {
-                sortKey: 'name',
-                sortDir: 'desc',
-              },
-            },
-          },
-        } as chrome.storage.StorageChange,
-      }, 'local'));
+      emitConfig(externalConfig());
     });
     await flush();
 
@@ -334,29 +377,7 @@ describe('library view preference persistence', () => {
     mountReact(<Harness />, mountedRoots);
 
     act(() => {
-      storageListeners.forEach((listener) => listener({
-        gsm_config: {
-          newValue: {
-            libraryView: {
-              version: 1,
-              filters: {
-                languages: ['Rust'],
-                tags: ['systems'],
-                tagMode: 'any',
-                showTombstone: false,
-                onlyFavorite: false,
-                onlyUntagged: true,
-                onlyArchived: false,
-                onlyOwned: false,
-              },
-              sort: {
-                sortKey: 'name',
-                sortDir: 'desc',
-              },
-            },
-          },
-        } as chrome.storage.StorageChange,
-      }, 'local'));
+      emitConfig(externalConfig());
     });
     await flush();
 
@@ -383,29 +404,7 @@ describe('library view preference persistence', () => {
     mountReact(<Harness />, mountedRoots);
 
     act(() => {
-      storageListeners.forEach((listener) => listener({
-        gsm_config: {
-          newValue: {
-            libraryView: {
-              version: 1,
-              filters: {
-                languages: ['Rust'],
-                tags: ['systems'],
-                tagMode: 'any',
-                showTombstone: false,
-                onlyFavorite: false,
-                onlyUntagged: true,
-                onlyArchived: false,
-                onlyOwned: false,
-              },
-              sort: {
-                sortKey: 'name',
-                sortDir: 'desc',
-              },
-            },
-          },
-        } as chrome.storage.StorageChange,
-      }, 'local'));
+      emitConfig(externalConfig());
     });
     await flush();
 

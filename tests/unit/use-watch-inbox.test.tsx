@@ -4,6 +4,8 @@
 import { act, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWatchInbox } from '@/ui/hooks/use-watch-inbox';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import {
   WATCH_MAX_THREAD_ACTIONS,
   type WatchInboxQueryResponse,
@@ -40,9 +42,11 @@ vi.mock('@/auth/auth-store', () => ({
   GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
   authStore: {
     getConfig: watchMocks.getConfig,
+    update: vi.fn(),
     updateWatchRepositoryCollapse: watchMocks.updateWatchRepositoryCollapse,
   },
 }));
+const runtime = new ExtensionManagerRuntime();
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -102,7 +106,7 @@ function cooldownResponse(
   return response;
 }
 
-function Harness({ initialActive = true }: { initialActive?: boolean } = {}) {
+function WatchProbe({ initialActive = true }: { initialActive?: boolean } = {}) {
   const [active, setActive] = useState(initialActive);
   const inbox = useWatchInbox({ active });
   return (
@@ -165,6 +169,10 @@ function Harness({ initialActive = true }: { initialActive?: boolean } = {}) {
       <span data-testid="action-error">{inbox.actionError ?? 'none'}</span>
     </div>
   );
+}
+
+function Harness(props: { initialActive?: boolean } = {}) {
+  return <ManagerRuntimeProvider runtime={runtime}><WatchProbe {...props} /></ManagerRuntimeProvider>;
 }
 
 const mountedRoots: MountedRoot[] = [];

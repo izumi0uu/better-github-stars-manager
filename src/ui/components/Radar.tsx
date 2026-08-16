@@ -45,6 +45,7 @@ export function Radar({
   recommendationError,
   actionError,
   pendingAction,
+  recommendationFavorites,
   view,
   sources,
   onDiscoverViewChange,
@@ -138,6 +139,7 @@ export function Radar({
         refreshing={recommendationRefreshing}
         error={recommendationError}
         pendingAction={pendingAction}
+        recommendationFavorites={recommendationFavorites}
         actionError={actionError}
         onDiscoverViewChange={onDiscoverViewChange}
         onRefresh={onRefreshRecommendations}
@@ -146,6 +148,8 @@ export function Radar({
         onStar={onStar}
         onIgnore={onIgnore}
         onRestoreIgnored={onRestoreIgnored}
+        onSetFavorite={onSetFavorite}
+        onAddTag={onAddTag}
       />
     );
   }

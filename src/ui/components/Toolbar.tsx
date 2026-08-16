@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Sun, Moon, Search, RefreshCw, ArrowUpNarrowWide, ArrowDownWideNarrow, X,
   Tags, Upload, Download, AlertTriangle, ExternalLink, Home, EyeOff, RefreshCcw,
@@ -7,17 +7,16 @@ import {
 import { REPO_URL } from '@/lib/links';
 import brandMarkUrl from '@/assets/bgsm-brand-mark.svg?url';
 import type { FilterState } from '@/ui/filter-store';
-import type { SyncStatus } from '@/utils/messaging';
-import { bgCall } from '@/utils/messaging';
+import type { SyncProgress } from '@/types';
+import { presentGistAction, presentSyncProgress } from '@/ui/toolbar-presentation';
 import { Button } from '@/ui/shadcn/button';
 import { Input } from '@/ui/shadcn/input';
 import { Progress } from '@/ui/shadcn/progress';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { SuccessCheck } from '@/ui/shadcn/success-check';
 import { ActionIcon } from '@/ui/shadcn/action-icon';
-import { AgentMascotIcon } from '@/ui/components/AgentMascot';
 import { ManagerSurfaceTabs } from '@/ui/components/ManagerSurfaceTabs';
-import type { AgentToolbarStatusKind } from '@/ui/components/AgentHost';
+import { ManagerResourceLink, useManagerImage } from '@/ui/components/ManagerResource';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/ui/shadcn/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/shadcn/select';
@@ -28,7 +27,26 @@ import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { LAYOUT_PREVIEW_HOVER_DELAY_MS } from '@/ui/layout-edit-constants';
 import type { ManagerSurface } from '@/ui/manager-surface';
-const AGENT_STATUS_ICONS: Record<AgentToolbarStatusKind, typeof Check> = {
+export type ToolbarAgentStatusKind =
+  | 'working'
+  | 'analyzing'
+  | 'applying'
+  | 'review'
+  | 'paused'
+  | 'completed'
+  | 'cancelled'
+  | 'failed'
+  | 'blocked'
+  | 'interrupted';
+
+
+export type ToolbarStatus = Readonly<{
+  hasToken: boolean;
+  inFlight: boolean;
+  seenTooltips: number;
+  progress: SyncProgress;
+}>;
+const AGENT_STATUS_ICONS: Record<ToolbarAgentStatusKind, typeof Check> = {
   working: Loader2,
   analyzing: Loader2,
   applying: Loader2,
@@ -41,7 +59,7 @@ const AGENT_STATUS_ICONS: Record<AgentToolbarStatusKind, typeof Check> = {
   interrupted: AlertTriangle,
 };
 
-function AgentStatusIcon({ kind }: { kind: AgentToolbarStatusKind }) {
+function AgentStatusIcon({ kind }: { kind: ToolbarAgentStatusKind }) {
   const Icon = AGENT_STATUS_ICONS[kind];
   const spinning = kind === 'working' || kind === 'analyzing' || kind === 'applying';
   return (
@@ -53,7 +71,13 @@ function AgentStatusIcon({ kind }: { kind: AgentToolbarStatusKind }) {
 }
 
 /** Top toolbar for the stars page. */
-type Account = { username: string | null; avatarUrl: string | null; displayName: string | null; gistId: string | null };
+type Account = {
+  username: string | null;
+  avatarUrl: string | null;
+  displayName: string | null;
+  gistId?: string | null;
+  gistUrl?: string | null;
+};
 
 /**
  * Button+Tooltip wrapper; MUST be module-scope — defining it inside Toolbar
@@ -63,16 +87,16 @@ function TButton({
   tip,
   firstUseTip,
   bit,
-  seenTooltips,
-  onStatusPatch,
+  seenTooltips = 0,
+  onTooltipSeen,
   children,
   ...btnProps
 }: {
   tip: string;
   firstUseTip?: string;
   bit?: number;
-  seenTooltips: number;
-  onStatusPatch?: (patch: Partial<SyncStatus>) => void;
+  seenTooltips?: number;
+  onTooltipSeen?: (bit: number) => void;
 } & React.ComponentProps<typeof Button>) {
   const showFirst = firstUseTip !== undefined && bit !== undefined && !(seenTooltips & bit);
   const [open, setOpen] = useState(false);
@@ -82,10 +106,7 @@ function TButton({
       onOpenChange={(next) => {
         setOpen(next);
         if (next && showFirst && bit !== undefined) {
-          onStatusPatch?.({ seenTooltips: seenTooltips | bit });
-          bgCall<{ seenTooltips: number }>('markTooltipSeen', { bit })
-            .then((data) => onStatusPatch?.({ seenTooltips: data.seenTooltips }))
-            .catch(() => {});
+          onTooltipSeen?.(bit);
         }
       }}
     >
@@ -189,25 +210,27 @@ function ActionPhaseIcon({
 }
 
 export function Toolbar({
-  account,
+  account = null,
   f,
-  status,
+  status = null,
   loading,
   listPhase,
   total,
   grandTotal,
-  busy,
-  pendingAction,
-  successAction,
+  busy = false,
+  pendingAction = null,
+  successAction = null,
   onSync,
   onAutoAssignTags,
   onOpenAgent,
   agentStatus,
   agentStatusKind,
   agentActive,
-  onStatusPatch,
+  agentIcon,
+  onTooltipSeen,
   onToggleTheme,
   onTogglePanel,
+  showGitHubHome = false,
   theme,
   searchRef,
   layoutMode,
@@ -226,26 +249,27 @@ export function Toolbar({
   watchUnreadCount = 0,
   radarUnseenCount = 0,
 }: {
-  account: Account | null;
+  account?: Account | null;
   f: FilterState;
-  status: SyncStatus | null;
+  status?: ToolbarStatus | null;
   loading: boolean;
   listPhase: 'idle' | 'fading-out' | 'fading-in';
   total: number;
   grandTotal: number;
-  busy: boolean;
-  pendingAction: string | null;
-  successAction: string | null;
-  onSync: (type: string, label: string) => void;
-  onAutoAssignTags: () => void;
+  busy?: boolean;
+  pendingAction?: string | null;
+  successAction?: string | null;
+  onSync?: (type: string, label: string) => void;
+  onAutoAssignTags?: () => void;
   onOpenAgent?: () => void;
   agentStatus?: string | null;
-  agentStatusKind?: AgentToolbarStatusKind | null;
+  agentStatusKind?: ToolbarAgentStatusKind | null;
   agentActive?: boolean;
-  onStatusPatch?: (patch: Partial<SyncStatus>) => void;
+  agentIcon?: ReactNode;
+  onTooltipSeen?: (bit: number) => void;
   onToggleTheme: () => void;
-  /** Retract the panel overlay → native stars list (+ floating re-mount button). */
   onTogglePanel?: () => void;
+  showGitHubHome?: boolean;
   theme: 'dark' | 'light';
   searchRef: React.MutableRefObject<HTMLInputElement | null>;
   layoutMode: 'default' | 'custom';
@@ -264,15 +288,21 @@ export function Toolbar({
   watchUnreadCount?: number;
   radarUnseenCount?: number;
 }) {
+  const accountAvatarUrl = useManagerImage({
+    kind: 'actor-avatar',
+    identity: account?.username ?? '',
+    remoteUrl: account?.avatarUrl ?? null,
+  });
   const { m } = useI18n();
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [gistMenuOpen, setGistMenuOpen] = useState(false);
   const starsSurface = surface === 'stars';
-  const syncing = !!status?.inFlight && status.progress.phase !== 'idle';
-  const phase = syncing ? status!.progress : null;
+  const syncPresentation = presentSyncProgress(status?.progress ?? { phase: 'idle', done: 0, total: null, message: '' }, status?.inFlight ?? false);
+  const syncing = syncPresentation.active;
+  const phase = syncing && status ? status.progress : null;
   const actionBusy = busy || syncing || pendingAction !== null;
-  const progressValue = phase && phase.total ? Math.max(1, Math.min(100, Math.round((phase.done / phase.total) * 100))) : null;
-  const progressCount = phase?.total ? `${phase.done}/${phase.total}` : null;
+  const progressValue = syncPresentation.percent;
+  const progressCount = syncPresentation.count;
   const searchInput = useImeBufferedInput(f.query, f.setQuery);
   const layoutControlsDisabled = layoutEditing || !layoutConfigReady;
   const layoutEditDisabled = !layoutEditReady;
@@ -287,25 +317,21 @@ export function Toolbar({
     { 'bg-background text-foreground shadow-sm': active },
   );
 
-  const gistPhaseAction = pendingAction === 'gistPull' || successAction === 'gistPull'
-    ? 'gistPull'
-    : pendingAction === 'gistPush' || successAction === 'gistPush'
-      ? 'gistPush'
+  const gistPullPresentation = presentGistAction('pull', pendingAction, successAction);
+  const gistPushPresentation = presentGistAction('push', pendingAction, successAction);
+  const gistPhaseAction = gistPullPresentation.phase !== 'idle'
+    ? gistPullPresentation.action
+    : gistPushPresentation.phase !== 'idle'
+      ? gistPushPresentation.action
       : null;
-  const gistLabel = pendingAction === 'gistPush'
+  const gistLabel = gistPushPresentation.phase === 'pending'
     ? m.toolbar.gistPushing
-    : pendingAction === 'gistPull'
+    : gistPullPresentation.phase === 'pending'
       ? m.toolbar.gistPulling
       : m.toolbar.gistButton;
 
 
-  const prevPending = useRef<string | null>(null);
-  useEffect(() => {
-    if ((prevPending.current === 'gistPush' || prevPending.current === 'gistPull') && pendingAction === null) {
-      void bgCall<Account>('fetchAccount').catch(() => {});
-    }
-    prevPending.current = pendingAction;
-  }, [pendingAction]);
+
 
   useEffect(() => {
     if (layoutEditing) {
@@ -326,11 +352,11 @@ export function Toolbar({
 
   const runSync = (type: string, label: string) => {
     setSyncMenuOpen(false);
-    onSync(type, label);
+    onSync?.(type, label);
   };
   const runGist = (type: 'gistPush' | 'gistPull', label: string) => {
     setGistMenuOpen(false);
-    onSync(type, label);
+    onSync?.(type, label);
   };
 
   return (
@@ -340,8 +366,8 @@ export function Toolbar({
         <div className="flex min-w-0 flex-[1_1_auto] items-center gap-1 min-[1281px]:gap-2" data-toolbar-left>
         <Tooltip>
           <TooltipTrigger asChild>
-            <a
-              href={REPO_URL}
+            <ManagerResourceLink
+              resource={{ kind: 'subject', label: 'product-repository', remoteUrl: REPO_URL }}
               target="_blank"
               rel="noreferrer"
               aria-label={m.toolbar.starRepoTitle}
@@ -364,7 +390,7 @@ export function Toolbar({
                   className="size-full object-contain"
                 />
               </span>
-            </a>
+            </ManagerResourceLink>
           </TooltipTrigger>
           <TooltipContent>{m.toolbar.starRepoTitle}</TooltipContent>
         </Tooltip>
@@ -428,8 +454,7 @@ export function Toolbar({
           size="icon"
           className="h-9 w-9 shrink-0 max-[900px]:hidden"
           tip={m.toolbar.toggleSortDir}
-          seenTooltips={seenTooltips}
-          onStatusPatch={onStatusPatch}
+          onTooltipSeen={onTooltipSeen}
           disabled={layoutEditing}
           onClick={() => f.setSort(f.sortKey, f.sortDir === 'asc' ? 'desc' : 'asc')}
         >
@@ -437,8 +462,7 @@ export function Toolbar({
             {f.sortDir === 'asc' ? <ArrowUpNarrowWide className="size-4" /> : <ArrowDownWideNarrow className="size-4" />}
           </ActionIcon>
         </TButton>
-        {/* Sync primary (default style) + Full Sync under caret; menu right-aligns to the split. */}
-        <div className="inline-flex h-9 shrink-0 items-stretch overflow-hidden rounded-md max-[480px]:hidden">
+        {onSync && <div className="inline-flex h-9 shrink-0 items-stretch overflow-hidden rounded-md max-[480px]:hidden">
           <TButton
             className="h-9 rounded-r-none border border-r-0 border-transparent hover:border-primary"
             onClick={() => runSync('syncIncremental', m.toolbar.syncButton)}
@@ -447,7 +471,7 @@ export function Toolbar({
             firstUseTip={m.onboarding.tooltipSyncFirst}
             bit={1}
             seenTooltips={seenTooltips}
-            onStatusPatch={onStatusPatch}
+            onTooltipSeen={onTooltipSeen}
             data-coach-target="sync"
           >
             <ActionPhaseIcon
@@ -472,10 +496,7 @@ export function Toolbar({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className={cn(
-                  'h-9 w-7 rounded-l-none border border-primary hover:bg-primary hover:text-primary-foreground',
-                  { 'bg-muted text-foreground': syncMenuOpen },
-                )}
+                className={cn('h-9 w-7 rounded-l-none border border-primary hover:bg-primary hover:text-primary-foreground', { 'bg-muted text-foreground': syncMenuOpen })}
                 disabled={actionBusy || layoutEditing}
                 aria-label={m.toolbar.fullSyncButton}
                 aria-expanded={syncMenuOpen}
@@ -498,30 +519,23 @@ export function Toolbar({
               onClick={() => runSync('syncFull', m.toolbar.fullSyncButton)}
             >
               <span className="inline-flex items-center gap-1.5 text-[13px] font-medium leading-none text-foreground">
-                <ActionPhaseIcon
-                  action="syncFull"
-                  pendingAction={pendingAction}
-                  successAction={successAction}
-                  idle={<RefreshCcw className="size-3.5 opacity-80" data-icon="inline-start" />}
-                />
+                <ActionPhaseIcon action="syncFull" pendingAction={pendingAction} successAction={successAction} idle={<RefreshCcw className="size-3.5 opacity-80" data-icon="inline-start" />} />
                 {m.toolbar.fullSyncButton}
               </span>
-              <span className="pl-5 text-[11px] font-normal leading-snug text-muted-foreground">
-                {m.toolbar.fullSyncTitle}
-              </span>
+              <span className="pl-5 text-[11px] font-normal leading-snug text-muted-foreground">{m.toolbar.fullSyncTitle}</span>
             </button>
           </ToolHoverBar>
-        </div>
+        </div>}
 
         {/* Deterministic local Auto Tags — never nested with Agent. */}
-        <TButton
+        {onAutoAssignTags && <TButton
           variant="ghost"
           size="sm"
           className="h-9 shrink-0 max-[768px]:hidden"
-          onClick={() => onAutoAssignTags()}
+          onClick={onAutoAssignTags}
           tip={m.toolbar.autoAssignTitle}
           seenTooltips={seenTooltips}
-          onStatusPatch={onStatusPatch}
+          onTooltipSeen={onTooltipSeen}
           data-coach-target="auto-tags"
         >
           <ActionPhaseIcon
@@ -531,7 +545,7 @@ export function Toolbar({
             idle={<Tags data-icon="inline-start" />}
           />
           <span className="max-[1280px]:hidden" data-toolbar-action-label="auto-tags">{m.toolbar.autoAssignButton}</span>
-        </TButton>
+        </TButton>}
           </>
         )}
         </div>
@@ -546,24 +560,24 @@ export function Toolbar({
         {/* Optional AI workbench entry — post-spacer, independent of Auto Tags. */}
         {starsSurface && onOpenAgent && (
           <TButton
+            tip={m.toolbar.agentButton}
             variant="outline"
             size="sm"
             className="h-9 shrink-0 max-[768px]:hidden"
             onClick={() => onOpenAgent()}
-            tip={m.toolbar.agentTitle}
-            seenTooltips={seenTooltips}
+            onTooltipSeen={onTooltipSeen}
             aria-label={agentStatus ? `${m.toolbar.agentButton} · ${agentStatus}` : m.toolbar.agentButton}
             data-coach-target="agent"
             aria-busy={agentActive}
           >
-            <AgentMascotIcon running={agentActive} />
+            {agentIcon}
             {agentStatusKind ? <AgentStatusIcon kind={agentStatusKind} /> : null}
             <span className="max-w-36 truncate max-[1280px]:hidden" data-toolbar-action-label="agent">{m.toolbar.agentButton}</span>
           </TButton>
         )}
 
         {/* Gist hover bar: Push / Pull / Open. */}
-        {starsSurface && (
+        {starsSurface && onSync && (
         <ToolHoverBar
           open={gistMenuOpen}
           onOpenChange={setGistMenuOpen}
@@ -580,68 +594,29 @@ export function Toolbar({
               title={m.toolbar.gistTitle}
             >
               {gistPhaseAction ? (
-                <ActionPhaseIcon
-                  action={gistPhaseAction}
-                  pendingAction={pendingAction}
-                  successAction={successAction}
-                  idle={<Download className="size-4" data-icon="inline-start" />}
-                />
-              ) : (
-                <Download className="size-4" data-icon="inline-start" />
-              )}
+                <ActionPhaseIcon action={gistPhaseAction} pendingAction={pendingAction} successAction={successAction} idle={<Download className="size-4" data-icon="inline-start" />} />
+              ) : <Download className="size-4" data-icon="inline-start" />}
               <span className="max-[1280px]:hidden" data-toolbar-action-label="gist">{gistLabel}</span>
               <ChevronDown className="size-3.5 opacity-70" />
             </Button>
           )}
         >
           <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              disabled={actionBusy || layoutEditing}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
-              title={m.toolbar.gistPushTitle}
-              onClick={() => runGist('gistPush', m.toolbar.gistPushButton)}
-            >
-              <ActionPhaseIcon
-                action="gistPush"
-                pendingAction={pendingAction}
-                successAction={successAction}
-                idle={<Upload className="size-3.5 opacity-80" data-icon="inline-start" />}
-              />
+            <button type="button" disabled={actionBusy || layoutEditing} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50" title={m.toolbar.gistPushTitle} onClick={() => runGist('gistPush', m.toolbar.gistPushButton)}>
+              <ActionPhaseIcon action="gistPush" pendingAction={pendingAction} successAction={successAction} idle={<Upload className="size-3.5 opacity-80" data-icon="inline-start" />} />
               {m.toolbar.gistPushButton}
             </button>
-            <button
-              type="button"
-              disabled={actionBusy || layoutEditing}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
-              title={m.toolbar.gistPullTitle}
-              onClick={() => runGist('gistPull', m.toolbar.gistPullButton)}
-            >
-              <ActionPhaseIcon
-                action="gistPull"
-                pendingAction={pendingAction}
-                successAction={successAction}
-                idle={<Download className="size-3.5 opacity-80" data-icon="inline-start" />}
-              />
+            <button type="button" disabled={actionBusy || layoutEditing} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50" title={m.toolbar.gistPullTitle} onClick={() => runGist('gistPull', m.toolbar.gistPullButton)}>
+              <ActionPhaseIcon action="gistPull" pendingAction={pendingAction} successAction={successAction} idle={<Download className="size-3.5 opacity-80" data-icon="inline-start" />} />
               {m.toolbar.gistPullButton}
             </button>
-            {account?.username && account?.gistId && (
-              <>
-                <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
-                <a
-                  href={`https://gist.github.com/${account.username}/${account.gistId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex h-8 max-w-[150px] items-center gap-1.5 rounded-md px-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-                  title={m.toolbar.gistLinkTitle}
-                  onClick={() => setGistMenuOpen(false)}
-                  {...getLockedAnchorProps(layoutEditing)}
-                >
-                  <ExternalLink className="size-3.5 shrink-0" />
-                  <span className="truncate">gist/{account.gistId.slice(0, 8)}</span>
-                </a>
-              </>
-            )}
+            {account?.gistId && account.gistUrl && <>
+              <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
+              <ManagerResourceLink resource={{ kind: 'subject', label: 'secret-gist', remoteUrl: account.gistUrl }} className="inline-flex h-8 max-w-[150px] items-center gap-1.5 rounded-md px-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground" title={m.toolbar.gistLinkTitle} onClick={() => setGistMenuOpen(false)} {...getLockedAnchorProps(layoutEditing)}>
+                <ExternalLink className="size-3.5 shrink-0" />
+                <span className="truncate">gist/{account.gistId.slice(0, 8)}</span>
+              </ManagerResourceLink>
+            </>}
           </div>
         </ToolHoverBar>
         )}
@@ -657,9 +632,7 @@ export function Toolbar({
           <TooltipContent>{m.toolbar.themeTitle}</TooltipContent>
         </Tooltip>
 
-        {/* Retract the panel overlay → native stars list (the floating
-            "show panel" button then appears so it can be re-mounted). */}
-        <Tooltip>
+        {onTogglePanel && <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
@@ -673,10 +646,9 @@ export function Toolbar({
             </Button>
           </TooltipTrigger>
           <TooltipContent>{m.toolbar.hidePanelTitle}</TooltipContent>
-        </Tooltip>
+        </Tooltip>}
 
-        {/* GitHub home — same-tab jump back to github.com from the stars page. */}
-        <Tooltip>
+        {showGitHubHome && <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
@@ -684,21 +656,21 @@ export function Toolbar({
               className={cn('h-9 w-9 max-[1024px]:hidden', { 'pointer-events-none opacity-50': layoutEditing })}
               asChild
             >
-              <a href="https://github.com" title={m.toolbar.githubHomeTitle} {...getLockedAnchorProps(layoutEditing)}>
+              <ManagerResourceLink resource={{ kind: 'subject', label: 'github-home', remoteUrl: 'https://github.com' }} title={m.toolbar.githubHomeTitle} {...getLockedAnchorProps(layoutEditing)}>
                 <Home className="size-4" />
-              </a>
+              </ManagerResourceLink>
             </Button>
           </TooltipTrigger>
           <TooltipContent>{m.toolbar.githubHomeTitle}</TooltipContent>
-        </Tooltip>
+        </Tooltip>}
 
         {account?.username && (
           <Tooltip>
             <TooltipTrigger asChild>
               <div className="inline-grid size-8 shrink-0 place-items-center rounded-full border border-border bg-background min-[1025px]:flex min-[1025px]:h-8 min-[1025px]:w-auto min-[1025px]:gap-1.5 min-[1025px]:p-0.5" data-toolbar-account>
-                {account.avatarUrl ? (
+                {accountAvatarUrl ? (
                   <img
-                    src={account.avatarUrl}
+                    src={accountAvatarUrl}
                     alt=""
                     className="size-6 rounded-full object-cover ring-1 ring-border"
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
@@ -743,7 +715,7 @@ export function Toolbar({
               {phase.total != null && phase.total > 0 && ` (${phase.done}/${phase.total})`}
             </span>
           )}
-          {!status?.hasToken && (
+          {status && !status.hasToken && (
             <span className="inline-flex items-center gap-1 text-warning">
               <AlertTriangle className="size-3.5" />
               {m.toolbar.noToken}

@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { authStore } from '@/auth/auth-store';
-import { I18nProvider } from '@/i18n';
+import { ExtensionI18nProvider } from '@/i18n/extension-provider';
 import '@/ui/styles/index.css';
 import { AgentDiagnostics } from './AgentDiagnostics';
 
@@ -18,7 +18,7 @@ if (typeof chrome !== 'undefined' && chrome.storage?.local !== undefined) {
 }
 
 createRoot(root).render(
-  <I18nProvider>
+  <ExtensionI18nProvider>
     <AgentDiagnostics />
-  </I18nProvider>,
+  </ExtensionI18nProvider>,
 );

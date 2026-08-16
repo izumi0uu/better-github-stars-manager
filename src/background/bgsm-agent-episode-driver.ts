@@ -35,7 +35,7 @@ import type {
 } from '@/bgsm-agent/tool-result-externalizer';
 import type { BgsmAgentSessionMessage } from '@/bgsm-agent/session';
 import type { AgentSessionLaunchDigest } from '@/bgsm-agent/session-transport';
-import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/bgsm-agent/turn-protocol';
+import { AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE } from '@/api/errors';
 import type {
   AgentArtifactCoverageCheckpointProposal,
   AgentArtifactEnvelopeCheckpointResult,

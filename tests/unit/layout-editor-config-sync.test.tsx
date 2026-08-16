@@ -8,6 +8,8 @@ import type { Config } from '@/types';
 import type { FilterState } from '@/ui/filter-store';
 import { getMessages } from '@/i18n';
 import { ManagerPanel } from '@/ui/ManagerPanel';
+import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
+import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import { Toolbar } from '@/ui/components/Toolbar';
 import { COLUMN_DEFS, DEFAULT_COLUMN_LAYOUT, hideColumn } from '@/ui/column-layout';
 import {
@@ -53,8 +55,10 @@ const managerPanelMocks = vi.hoisted(() => ({
 
 vi.mock('@/auth/auth-store', () => ({
   CONFIG_STORAGE_KEY: 'gsm_config',
+  GITHUB_CREDENTIALS_STORAGE_KEY: 'gsm_github_credentials',
   authStore: authMocks,
 }));
+const runtime = new ExtensionManagerRuntime();
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: () => ({
@@ -274,7 +278,7 @@ function mountLayoutEditor() {
   }
 
   act(() => {
-    root.render(<Probe />);
+    root.render(<ManagerRuntimeProvider runtime={runtime}><Probe /></ManagerRuntimeProvider>);
   });
   mountedRoots.push(root);
 
@@ -332,7 +336,7 @@ function mountLayoutToolbar() {
   const root = createRoot(container);
 
   act(() => {
-    root.render(<LayoutToolbarHarness />);
+    root.render(<ManagerRuntimeProvider runtime={runtime}><LayoutToolbarHarness /></ManagerRuntimeProvider>);
   });
   mountedRoots.push(root);
 
@@ -496,7 +500,7 @@ function mountLayoutResizeHarness() {
   const root = createRoot(container);
 
   act(() => {
-    root.render(<LayoutResizeHarness />);
+    root.render(<ManagerRuntimeProvider runtime={runtime}><LayoutResizeHarness /></ManagerRuntimeProvider>);
   });
   mountedRoots.push(root);
 
@@ -516,6 +520,7 @@ describe('layout editor config sync', () => {
     vi.stubGlobal('chrome', {
       runtime: {
         sendMessage: vi.fn().mockResolvedValue({ ok: true, data: null }),
+        onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
       },
       storage: {
         onChanged: {
@@ -541,7 +546,9 @@ describe('layout editor config sync', () => {
 
   it('lets a storage echo start the browse fade and prevents late hydration from resetting it', async () => {
     const initialConfig = deferred<Config>();
-    authMocks.getConfig.mockReturnValue(initialConfig.promise);
+    authMocks.getConfig
+      .mockReturnValueOnce(initialConfig.promise)
+      .mockResolvedValue(configFor('custom'));
     const editor = mountLayoutEditor();
 
     await act(async () => {

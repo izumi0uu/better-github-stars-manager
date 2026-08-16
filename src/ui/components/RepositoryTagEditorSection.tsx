@@ -7,7 +7,7 @@ import { suggestTags } from '@/ui/suggest';
 import { Badge } from '@/ui/shadcn/badge';
 import { Button } from '@/ui/shadcn/button';
 import { Separator } from '@/ui/shadcn/separator';
-import { bgCall } from '@/utils/messaging';
+import { useManagerRuntime } from '@/ui/manager-runtime-context';
 import { TagEditor } from './TagEditor';
 import type { SaveActionPhase } from './SaveActionButton';
 import {
@@ -39,6 +39,7 @@ export function RepositoryTagEditorSection({
   onDataChanged,
   onMeaningfulAction,
 }: RepositoryTagEditorSectionProps) {
+  const runtime = useManagerRuntime();
   const manualTags = manualTagNames(tag);
   const autoTags = autoTagNames(tag);
   const manualTagsKey = manualTags.join('\u0000');
@@ -56,7 +57,7 @@ export function RepositoryTagEditorSection({
 
   useEffect(() => {
     let cancelled = false;
-    bgCall<string[]>('listExcluded')
+    runtime.listExcludedTags()
       .then((names) => {
         if (!cancelled) setExcluded(names ?? []);
       })
@@ -64,7 +65,7 @@ export function RepositoryTagEditorSection({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [runtime]);
 
   useEffect(() => {
     const repoChanged = loadedRepoRef.current !== star.full_name;
@@ -126,7 +127,7 @@ export function RepositoryTagEditorSection({
     setSavePhase('busy');
     setError(null);
     try {
-      await bgCall('setTags', { full_name: fullName, tags: nextTags });
+      await runtime.setTags(fullName, nextTags);
       if (!ownsCompletion(fullName)) return;
       onDataChanged?.();
       onMeaningfulAction?.();
@@ -149,7 +150,7 @@ export function RepositoryTagEditorSection({
     const fullName = star.full_name;
     setError(null);
     try {
-      await bgCall('removeVisibleTag', { full_name: fullName, name });
+      await runtime.removeVisibleTag(fullName, name);
       if (!ownsCompletion(fullName)) return;
       updateDraftTags(
         draftTagsRef.current.filter(

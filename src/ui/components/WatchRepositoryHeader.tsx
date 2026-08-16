@@ -3,6 +3,8 @@ import { useI18n } from '@/i18n';
 
 import { cn } from '@/lib/utils';
 import { RepositoryOwnerAvatar } from '@/ui/components/RepositoryOwnerAvatar';
+import { ManagerResourceLink } from '@/ui/components/ManagerResource';
+import { useManagerNow } from '@/ui/manager-runtime-context';
 import { Button } from '@/ui/shadcn/button';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { formatWatchRelativeTime } from '@/ui/watch-inbox-presentation';
@@ -33,11 +35,12 @@ export function WatchRepositoryHeader({
   onMarkThreadsDone: (ids: readonly string[]) => void;
 }) {
   const { m } = useI18n();
+  const now = useManagerNow();
   const unreadCount = sourceGroup.threads.reduce(
     (count, thread) => count + Number(thread.unread),
     0,
   );
-  const latest = formatWatchRelativeTime(sourceGroup.latestUpdatedAt);
+  const latest = formatWatchRelativeTime(sourceGroup.latestUpdatedAt, now);
   const allThreadIds = sourceGroup.threads.map((thread) => thread.id);
   const unreadThreadIds = sourceGroup.threads
     .filter((thread) => thread.unread)
@@ -91,14 +94,16 @@ export function WatchRepositoryHeader({
             {group.repositoryFullName}
           </button>
         ) : (
-          <a
-            href={group.repositoryHtmlUrl}
-            target="_blank"
-            rel="noreferrer"
+          <ManagerResourceLink
+            resource={{
+              kind: 'repository',
+              fullName: group.repositoryFullName,
+              remoteUrl: group.repositoryHtmlUrl,
+            }}
             className="min-w-0 truncate rounded-sm text-[13.5px] font-semibold text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {group.repositoryFullName}
-          </a>
+          </ManagerResourceLink>
         )}
         <span className="ml-auto shrink-0 rounded-full border border-border px-2 py-px font-mono text-[11px] tabular-nums text-muted-foreground">
           {expanded

@@ -6,12 +6,14 @@ import {
   Clock3,
   EyeOff,
   ExternalLink,
+  Heart,
   RefreshCw,
   RotateCcw,
   Search,
   Settings2,
   Sparkles,
   Star,
+  Tag,
   X,
 } from 'lucide-react';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
@@ -31,12 +33,14 @@ import { formatRadarAbsoluteTime } from '@/ui/radar-time';
 import { RadarDiscoverSwitcher, RadarEmptyState } from '@/ui/components/RadarCommandBar';
 import { repositoryAvatarFallback } from '@/ui/components/RepositoryOwnerAvatar';
 import { SurfaceListEndMarker } from '@/ui/components/SurfaceListEndMarker';
+import { ManagerResourceLink, useManagerImage } from '@/ui/components/ManagerResource';
 import { SurfaceWorkCanvas } from '@/ui/components/SurfaceWorkCanvas';
 import { useDismissableNotice } from '@/ui/hooks/use-dismissable-notice';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
 import { Button } from '@/ui/shadcn/button';
 import { Input } from '@/ui/shadcn/input';
 import { Spinner } from '@/ui/shadcn/spinner';
+import { Popover, PopoverContent, PopoverTrigger } from '@/ui/shadcn/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/shadcn/tooltip';
 
 function recommendationMatchesQuery(
@@ -57,14 +61,18 @@ function recommendationMatchesQuery(
 
 function RecommendationOwnerAvatar({ owner }: { owner: string }) {
   const [failed, setFailed] = useState(false);
-  const avatarUrl = `https://github.com/${encodeURIComponent(owner)}.png?size=64`;
+  const avatarUrl = useManagerImage({
+    kind: 'actor-avatar',
+    identity: owner,
+    remoteUrl: `https://github.com/${encodeURIComponent(owner)}.png?size=64`,
+  });
   const fallback = repositoryAvatarFallback(owner);
   return (
     <span
       data-avatar-color={fallback.color}
       className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg border border-border text-xs font-semibold uppercase"
     >
-      {failed ? (
+      {failed || !avatarUrl ? (
         <span className="gsm-repository-avatar-fallback grid size-full place-items-center text-primary-foreground dark:text-background">
           {fallback.initial}
         </span>
@@ -82,23 +90,53 @@ function RecommendationOwnerAvatar({ owner }: { owner: string }) {
 
 function RecommendationRow({
   recommendation,
+  favorite,
   pendingAction,
   actionError,
   onStar,
   onIgnore,
+  onSetFavorite,
+  onAddTag,
 }: {
   recommendation: RecommendationRecord;
+  favorite: boolean;
   pendingAction: RadarPendingAction | null;
   actionError: RadarActionError | null;
   onStar: RadarProps['onStar'];
   onIgnore: RadarProps['onIgnore'];
+  onSetFavorite: RadarProps['onSetFavorite'];
+  onAddTag: RadarProps['onAddTag'];
 }) {
   const { m, locale } = useI18n();
-  const starPending = pendingAction?.kind === 'star'
-    && pendingAction.repositoryKey === recommendation.repositoryKey;
-  const ignorePending = pendingAction?.kind === 'ignore'
-    && pendingAction.repositoryKey === recommendation.repositoryKey;
+  const [tagDraft, setTagDraft] = useState('');
+  const [tagOpen, setTagOpen] = useState(false);
+  const pending = pendingAction?.repositoryKey === recommendation.repositoryKey;
+  const starPending = pendingAction?.kind === 'star' && pending;
+  const favoritePending = pendingAction?.kind === 'favorite' && pending;
+  const tagPending = pendingAction?.kind === 'tag' && pending;
+  const ignorePending = pendingAction?.kind === 'ignore' && pending;
   const actionFailed = actionError?.repositoryKey === recommendation.repositoryKey;
+  const toggleFavorite = () => {
+    if (pending) return;
+    void onSetFavorite(
+      recommendation.repositoryKey,
+      recommendation.repositoryFullName,
+      !favorite,
+    );
+  };
+  const addTag = async (rawTag: string) => {
+    const tag = rawTag.trim();
+    if (!tag || pending) return;
+    const result = await onAddTag(
+      recommendation.repositoryKey,
+      recommendation.repositoryFullName,
+      tag,
+    );
+    if (result !== null) {
+      setTagDraft('');
+      setTagOpen(false);
+    }
+  };
   return (
     <article
       className="flex min-w-0 items-start gap-3 px-3.5 py-3 max-[520px]:px-2.5"
@@ -107,14 +145,16 @@ function RecommendationRow({
       <RecommendationOwnerAvatar owner={recommendation.owner} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <a
-            href={recommendation.repositoryHtmlUrl}
-            target="_blank"
-            rel="noreferrer"
+          <ManagerResourceLink
+            resource={{
+              kind: 'repository',
+              fullName: recommendation.repositoryFullName,
+              remoteUrl: recommendation.repositoryHtmlUrl,
+            }}
             className="min-w-0 truncate rounded-sm font-mono text-[13px] font-semibold text-foreground underline underline-offset-2 outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
           >
             {recommendation.repositoryFullName}
-          </a>
+          </ManagerResourceLink>
           {recommendation.topics.slice(0, 2).map((topic) => (
             <span key={topic} className="shrink-0 rounded-md border border-border bg-muted px-1.5 py-px font-mono text-[10px] text-foreground">
               {topic}
@@ -150,13 +190,13 @@ function RecommendationRow({
           </p>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1 max-[520px]:gap-0.5">
         <Button
           type="button"
           variant="outline"
           size="sm"
           className="h-[30px] gap-1.5 px-2.5 text-[11px]"
-          disabled={starPending || ignorePending}
+          disabled={pending}
           aria-label={m.radar.starRecommendation(recommendation.repositoryFullName)}
           onClick={() => { void onStar(recommendation.repositoryKey, recommendation.repositoryFullName); }}
         >
@@ -169,8 +209,89 @@ function RecommendationRow({
               type="button"
               variant="ghost"
               size="icon"
+              className={cn('size-[30px] text-muted-foreground', favorite && 'text-favorite')}
+              data-recommendation-action="favorite"
+              data-active={favorite}
+              aria-label={`${m.radar.favorite}: ${recommendation.repositoryFullName}`}
+              aria-pressed={favorite}
+              disabled={pending}
+              onClick={() => { void toggleFavorite(); }}
+            >
+              {favoritePending
+                ? <Spinner className="size-3.5" />
+                : <Heart className={cn('size-3.5', favorite && 'fill-current')} aria-hidden="true" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{m.radar.favorite}</TooltipContent>
+        </Tooltip>
+        <Popover open={tagOpen} onOpenChange={setTagOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-[30px] text-muted-foreground"
+              data-recommendation-action="tag"
+              aria-label={`${m.radar.addTagAction}: ${recommendation.repositoryFullName}`}
+              disabled={pending}
+            >
+              {tagPending ? <Spinner className="size-3.5" /> : <Tag className="size-3.5" aria-hidden="true" />}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-64 p-3" data-recommendation-tag-composer={recommendation.repositoryKey}>
+            <p className="mb-2 text-[10px] leading-4 text-muted-foreground">{m.radar.addingTagStars}</p>
+            <div className="flex items-center gap-2">
+              <Input
+                value={tagDraft}
+                disabled={pending}
+                onChange={(event) => setTagDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    void addTag(tagDraft);
+                  }
+                }}
+                placeholder={m.radar.addTag}
+                aria-label={m.radar.addTagAction}
+                autoComplete="off"
+                spellCheck={false}
+                className="h-8 min-w-0 text-xs"
+              />
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 shrink-0 px-2 text-[11px]"
+                disabled={pending || tagDraft.trim().length === 0}
+                onClick={() => { void addTag(tagDraft); }}
+              >
+                {m.radar.addTagAction}
+              </Button>
+            </div>
+            {recommendation.topics.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1" aria-label={m.radar.suggestedTags}>
+                {recommendation.topics.slice(0, 6).map((topic) => (
+                  <button
+                    key={topic}
+                    type="button"
+                    disabled={pending}
+                    onClick={() => { void addTag(topic); }}
+                    className="rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+                  >
+                    {topic}
+                  </button>
+                ))}
+              </div>
+            )}
+          </PopoverContent>
+        </Popover>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
               className="size-[30px] text-muted-foreground hover:text-destructive"
-              disabled={starPending || ignorePending}
+              disabled={pending}
               aria-label={m.radar.ignoreRecommendation(recommendation.repositoryFullName)}
               onClick={() => { void onIgnore(recommendation.repositoryKey, recommendation.repositoryFullName); }}
             >
@@ -195,6 +316,7 @@ export function RadarRecommendations({
   refreshing,
   error,
   pendingAction,
+  recommendationFavorites,
   actionError,
   onDiscoverViewChange,
   onRefresh,
@@ -203,6 +325,8 @@ export function RadarRecommendations({
   onStar,
   onIgnore,
   onRestoreIgnored,
+  onSetFavorite,
+  onAddTag,
 }: {
   recommendations: RecommendationQueryResponse | null;
   discoverView: RadarDiscoverView;
@@ -210,6 +334,7 @@ export function RadarRecommendations({
   refreshing: boolean;
   error: 'query' | 'refresh' | null;
   pendingAction: RadarPendingAction | null;
+  recommendationFavorites: Readonly<Record<string, boolean>>;
   actionError: RadarActionError | null;
   onDiscoverViewChange: (view: RadarDiscoverView) => void;
   onRefresh: () => void;
@@ -218,6 +343,8 @@ export function RadarRecommendations({
   onStar: RadarProps['onStar'];
   onIgnore: RadarProps['onIgnore'];
   onRestoreIgnored: RadarProps['onRestoreIgnored'];
+  onSetFavorite: RadarProps['onSetFavorite'];
+  onAddTag: RadarProps['onAddTag'];
 }) {
   const { m, locale } = useI18n();
   const [ignoredOpen, setIgnoredOpen] = useState(false);
@@ -236,7 +363,7 @@ export function RadarRecommendations({
   const refreshDisabled = loading || refreshing || status?.snapshotStatus === 'cooldown'
     || status?.snapshotStatus === 'not_configured';
   const ignoredSection = ignored.length > 0 ? (
-    <div className="border-t border-border/70" data-radar-ignored-section>
+    <div className="border-t border-border/70 pb-16" data-radar-ignored-section>
       <button
         type="button"
         aria-expanded={ignoredOpen}
@@ -302,15 +429,13 @@ export function RadarRecommendations({
               </Button>
             )}
           </div>
-          <a
-            href="https://github.com/trending"
-            target="_blank"
-            rel="noreferrer"
+          <ManagerResourceLink
+            resource={{ kind: 'subject', label: 'github-trending', remoteUrl: 'https://github.com/trending' }}
             className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             <ExternalLink className="size-3" aria-hidden="true" />
             <span className="max-[620px]:hidden">{m.radar.openTrending}</span>
-          </a>
+          </ManagerResourceLink>
           <Button
             variant="outline"
             size="sm"
@@ -432,10 +557,13 @@ export function RadarRecommendations({
           <RecommendationRow
             key={recommendation.id}
             recommendation={recommendation}
+            favorite={recommendationFavorites[recommendation.repositoryKey] ?? false}
             pendingAction={pendingAction}
             actionError={actionError}
             onStar={onStar}
             onIgnore={onIgnore}
+            onSetFavorite={onSetFavorite}
+            onAddTag={onAddTag}
           />
         ))}
         <SurfaceListEndMarker

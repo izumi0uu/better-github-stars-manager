@@ -35,9 +35,8 @@ import {
   invalidateCache,
   resolveLaunchCandidate,
   resolveLiveLaunchCandidate,
-  type QueryParams,
-  type QueryResult,
 } from "./query";
+import type { StarsQueryParams, StarsQueryResult } from '@/stars/stars-query';
 import { countTopicRepoFrequency, reconcileAutoTagAssignments, suggestTags } from "@/ui/suggest";
 import type { AutoTagBulkUpdate } from "@/api/tag-store";
 import { translateError } from "@/api/errors";
@@ -282,7 +281,7 @@ type Req = BgsmAgentSessionRequest
   | { type: "getUsername" }
   | { type: "getAccount" }
   | { type: "fetchAccount" }
-  | { type: "query"; params: QueryParams }
+  | { type: "query"; params: StarsQueryParams }
   | { type: "setTags"; full_name: string; tags: string[] }
   | { type: "setNotes"; full_name: string; notes: string }
   | { type: "setFavorite"; full_name: string; favorite: boolean }
@@ -1969,7 +1968,7 @@ async function handle(req: Req): Promise<Res> {
           data: (await queryStars({
             ...req.params,
             accountLogin: await authStore.getUsername(),
-          })) as QueryResult,
+          })) as StarsQueryResult,
         };
       case "runBackfill": {
         const m = await getLocaleMessages();

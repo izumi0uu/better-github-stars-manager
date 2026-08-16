@@ -21,6 +21,9 @@
     "dev": "vite",
     "dev:agent-diagnostics": "node scripts/start-agent-dev-diagnostics.mjs",
     "build": "tsc --noEmit && vite build",
+    "build:demo": "tsc --noEmit && vite build --config vite.demo.config.ts && node scripts/verify-demo-artifacts.mjs demo",
+    "verify:artifact-isolation": "node scripts/verify-demo-artifacts.mjs both",
+    "test:demo:browser": "node tests/runtime/demo-browser-smoke.mjs",
     "package:extension": "node scripts/package-extension.mjs",
     "build:agent-dev-diagnostics": "node scripts/build-agent-dev-diagnostics.mjs",
     "capture:store-screenshots": "node scripts/capture-store-screenshots.mjs",
@@ -52,7 +55,8 @@
     "test:verify-chrome": "node tests/manual/e2e/verify-chrome.mjs",
     "test:verify-first-run": "node tests/manual/e2e/verify-first-run.mjs",
     "test:reset-gist": "node tests/manual/ops/reset-gist-sync.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "preview:demo": "vite preview --config vite.demo.config.ts"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.11",

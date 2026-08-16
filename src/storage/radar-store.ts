@@ -1,5 +1,3 @@
-import type { Star, Tag } from '@/types';
-import { normalizeRepositoryFullName } from '@/watch/watch-model';
 import type {
   RadarActivityPresentation,
   RadarActivityRecord,
@@ -8,19 +6,14 @@ import type {
 } from '@/radar/radar-model';
 import {
   dedupeRadarActivities,
-  normalizeRadarActivity,
-  normalizeRadarRepositoryTopics,
-  normalizeRadarAvatarUrl,
   normalizeRadarPartialReasons,
-  RADAR_WINDOW_DAYS,
-  sortRadarActivities,
 } from '@/radar/radar-model';
+import { projectRadarActivities } from '@/radar/radar-projector';
 import type {
   RadarSnapshotStatus,
   RadarSourceSnapshot,
   RadarStatus,
 } from '@/radar/radar-contract';
-import { canonicalTagKey, excludedCanonicalTagKeys, visibleTagNames } from '@/tags/tag-model';
 import { db } from './db';
 
 const RADAR_STATE_ID = 'singleton' as const;
@@ -234,119 +227,25 @@ export async function clearRadarData(): Promise<void> {
 }
 
 
-
-async function getTagsByKey(repositoryKeys: ReadonlySet<string>): Promise<Map<string, Tag>> {
-  const result = new Map<string, Tag>();
-  await db.tags.each((tag) => {
-    const key = normalizeRepositoryFullName(tag.full_name);
-    if (repositoryKeys.has(key)) result.set(key, tag);
-  });
-  return result;
-}
-
-function ownStarPresentation(
-  star: Star,
-  accountLogin: string,
-  tag: Tag | undefined,
-  excludedTagKeys: ReadonlySet<string>,
-): RadarActivityPresentation | null {
-  try {
-    const activity = normalizeRadarActivity({
-      actorLogin: accountLogin,
-      actorAvatarUrl: null,
-      repositoryFullName: star.full_name,
-      repositoryDescription: star.description,
-      repositoryLanguage: star.language,
-      repositoryLanguageColor: null,
-      repositoryOwnerLogin: normalizeRepositoryFullName(star.full_name).split('/')[0] ?? null,
-      repositoryOwnerAvatarUrl: star.owner_avatar_url ?? null,
-      repositoryStargazerCount: star.stargazers_count,
-      repositoryTopics: star.topics,
-      viewerHadStarred: true,
-      starredAt: star.starred_at,
-    }, { accountLogin });
-    return {
-      ...activity,
-      source: 'self',
-      seen: true,
-      viewerHasStarred: true,
-      favorite: tag?.favorite === true,
-      tags: tag ? visibleTagNames(tag) : [],
-      suggestedTags: activity.repositoryTopics.filter(
-        (topic) => !excludedTagKeys.has(canonicalTagKey(topic)),
-      ),
-      displayedStargazerCount: star.stargazers_count,
-    };
-  } catch {
-    return null;
-  }
-}
-
 export async function listRadarActivities(
   accountLogin: string,
   nowMillis = Date.now(),
 ): Promise<RadarActivityPresentation[]> {
   const key = accountKey(accountLogin);
-  const [storedActivities, allStars, tagMeta] = await Promise.all([
+  const [activities, stars, tags, tagMeta] = await Promise.all([
     db.radarActivities.where('accountLogin').equals(key).toArray(),
     db.stars.toArray(),
+    db.tags.toArray(),
     db.tagMeta.toArray(),
   ]);
-  const rows = storedActivities.filter((activity) => activity.dismissedAt === null);
-  const cutoffMillis = nowMillis - RADAR_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
-  const ownStars = allStars.filter((star) => {
-    const starredAt = timestamp(star.starred_at);
-    return !star.tombstone
-      && star.viewer_has_starred !== false
-      && starredAt !== null
-      && starredAt >= cutoffMillis
-      && starredAt <= nowMillis;
+  return projectRadarActivities({
+    accountLogin: key,
+    nowMillis,
+    activities,
+    stars,
+    tags,
+    tagMeta,
   });
-  const repositoryKeys = new Set([
-    ...rows.map((row) => row.repositoryKey),
-    ...ownStars.map((star) => normalizeRepositoryFullName(star.full_name)),
-  ]);
-  const stars = new Map(
-    allStars.flatMap((star) => {
-      const repositoryKey = normalizeRepositoryFullName(star.full_name);
-      return repositoryKeys.has(repositoryKey) ? [[repositoryKey, star] as const] : [];
-    }),
-  );
-  const tags = await getTagsByKey(repositoryKeys);
-  const excludedTagKeys = excludedCanonicalTagKeys(tagMeta);
-
-  const following = rows.map((activity): RadarActivityPresentation => {
-    const star = stars.get(activity.repositoryKey);
-    const tag = tags.get(activity.repositoryKey);
-    const seenAt = storedSeenAt(activity.seenAt);
-    const hasLiveStar = !!star && !star.tombstone && star.viewer_has_starred !== false;
-    const repositoryTopics = normalizeRadarRepositoryTopics(
-      hasLiveStar ? star.topics : activity.repositoryTopics,
-    );
-    return {
-      ...activity,
-      source: 'following',
-      seenAt,
-      seen: seenAt !== null,
-      actorAvatarUrl: normalizeRadarAvatarUrl(activity.actorAvatarUrl),
-      repositoryOwnerLogin: activity.repositoryOwnerLogin ?? null,
-      repositoryOwnerAvatarUrl: normalizeRadarAvatarUrl(activity.repositoryOwnerAvatarUrl),
-      repositoryTopics,
-      viewerHasStarred: star ? hasLiveStar : activity.viewerHadStarred,
-      favorite: tag?.favorite === true,
-      tags: tag ? visibleTagNames(tag) : [],
-      suggestedTags: repositoryTopics.filter(
-        (topic) => !excludedTagKeys.has(canonicalTagKey(topic)),
-      ),
-      displayedStargazerCount: star?.stargazers_count ?? activity.repositoryStargazerCount,
-    };
-  });
-  const own = ownStars.flatMap((star) => {
-    const repositoryKey = normalizeRepositoryFullName(star.full_name);
-    const activity = ownStarPresentation(star, key, tags.get(repositoryKey), excludedTagKeys);
-    return activity ? [activity] : [];
-  });
-  return sortRadarActivities([...following, ...own]);
 }
 
 
