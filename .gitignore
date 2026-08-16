@@ -1,6 +1,7 @@
 node_modules
 dist
 dist-demo
+dist-firefox
 dist-zip
 artifacts
 *.local

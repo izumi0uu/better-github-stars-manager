@@ -1,8 +1,10 @@
 import {
   AGENT_API_KEY_EMPTY,
   AGENT_CONTEXT_CAPABILITY_REQUIRED,
+  AGENT_DATA_DISCLOSURE_REQUIRED,
   AGENT_HOST_PERMISSION_DENIED,
   AGENT_PROVIDER_IDENTITY_CHANGED,
+  AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
 } from '@/api/errors';
 import {
   normalizeAgentModel,
@@ -22,6 +24,10 @@ import type {
   AgentModelContextCapability,
 } from '@/types';
 import type { AgentProviderCredentialSnapshot } from '@/auth/auth-store';
+import {
+  isDisclosureAcceptedFor,
+  type AgentDataDisclosureAcceptance,
+} from '@/bgsm-agent/disclosure';
 
 export type AgentProviderConnectionRequest = {
   provider?: AgentProviderId;
@@ -36,6 +42,7 @@ export type AgentProviderConnectionRequest = {
 type AgentProviderGateAuth = {
   getConfig(): Promise<{
     agentProvider: AgentProviderConfig;
+    agentDataDisclosureAcceptance: AgentDataDisclosureAcceptance | null;
   }>;
   getAgentProviderCredentialSnapshot(requested?: {
     provider: AgentProviderId;
@@ -67,6 +74,7 @@ type AgentProviderGateDependencies<TProvider extends ModelProvider> = {
     provider: AgentProviderId,
     baseUrl: string | null | undefined,
   ): Promise<boolean>;
+  hasDataCollectionPermission(): Promise<boolean>;
   testConnection(config: AgentProviderRegistryConfig): Promise<AgentProviderConnectionResult>;
   createProvider(config: AgentProviderRegistryConfig): TProvider;
   assertContextCapabilityFeasible?(input: Readonly<{
@@ -88,7 +96,7 @@ export type GatedAgentRuntimeProvider<TProvider extends ModelProvider = ModelPro
 
 export type PreparedGatedAgentRuntimeProvider<TProvider extends ModelProvider = ModelProvider> = Readonly<{
   fingerprint: string;
-  create(): GatedAgentRuntimeProvider<TProvider>;
+  create(): Promise<GatedAgentRuntimeProvider<TProvider>>;
 }>;
 
 export function createAgentProviderGate<TProvider extends ModelProvider>(
@@ -100,6 +108,28 @@ export function createAgentProviderGate<TProvider extends ModelProvider>(
     snapshot: AgentProviderCredentialSnapshot,
   ): Promise<boolean> {
     return dependencies.auth.validateAgentProviderCredentialSnapshot(snapshot);
+  }
+
+  async function assertProviderConsent(endpoint: AgentProviderEndpoint): Promise<void> {
+    const { agentDataDisclosureAcceptance } = await dependencies.auth.getConfig();
+    if (!isDisclosureAcceptedFor(
+      agentDataDisclosureAcceptance,
+      endpoint.provider,
+      endpoint.canonicalOrigin,
+    )) {
+      throw new Error(AGENT_DATA_DISCLOSURE_REQUIRED);
+    }
+    if (!await dependencies.hasDataCollectionPermission()) {
+      throw new Error(AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED);
+    }
+  }
+
+  async function validateProviderRequestAuthority(
+    endpoint: AgentProviderEndpoint,
+    snapshot: AgentProviderCredentialSnapshot | null,
+  ): Promise<boolean> {
+    await assertProviderConsent(endpoint);
+    return snapshot ? validateSavedRuntimeIdentity(snapshot) : true;
   }
 
   async function resolveConnectionInput(request: AgentProviderConnectionRequest) {
@@ -173,6 +203,7 @@ export function createAgentProviderGate<TProvider extends ModelProvider>(
         ? snapshot.protocol as AgentCustomProviderProtocol
         : null,
     );
+    await assertProviderConsent(endpoint);
     if (!await dependencies.hasHostPermission(endpoint.provider, endpoint.canonicalBaseUrl)) {
       throw new Error(AGENT_HOST_PERMISSION_DENIED);
     }
@@ -185,29 +216,38 @@ export function createAgentProviderGate<TProvider extends ModelProvider>(
     });
     return Object.freeze({
       fingerprint: snapshot.fingerprint,
-      create: () => ({
-        provider: dependencies.createProvider({
-          provider: endpoint.provider,
-          protocol: endpoint.provider === 'custom-openai-compatible'
-            ? endpoint.profile.protocol as AgentCustomProviderProtocol
-            : null,
-          baseUrl: endpoint.canonicalBaseUrl,
+      create: async () => {
+        await assertProviderConsent(endpoint);
+        if (!await dependencies.hasHostPermission(
+          endpoint.provider,
+          endpoint.canonicalBaseUrl,
+        )) {
+          throw new Error(AGENT_HOST_PERMISSION_DENIED);
+        }
+        return {
+          provider: dependencies.createProvider({
+            provider: endpoint.provider,
+            protocol: endpoint.provider === 'custom-openai-compatible'
+              ? endpoint.profile.protocol as AgentCustomProviderProtocol
+              : null,
+            baseUrl: endpoint.canonicalBaseUrl,
+            model: snapshot.model,
+            apiKey: snapshot.apiKey,
+            expectedOrigin: endpoint.canonicalOrigin,
+            validateRuntimeIdentity: () => validateProviderRequestAuthority(endpoint, snapshot),
+            hostPermissionCheck: () => dependencies.hasHostPermission(
+              endpoint.provider,
+              endpoint.canonicalBaseUrl,
+            ),
+          }),
+          providerId: endpoint.provider,
           model: snapshot.model,
-          apiKey: snapshot.apiKey,
-          expectedOrigin: endpoint.canonicalOrigin,
-          validateRuntimeIdentity: () => validateSavedRuntimeIdentity(snapshot),
-          hostPermissionCheck: () => dependencies.hasHostPermission(
-            endpoint.provider,
-            endpoint.canonicalBaseUrl,
-          ),
-        }),
-        providerId: endpoint.provider,
-        model: snapshot.model,
-        endpoint,
-        fingerprint: snapshot.fingerprint,
-        contextCapability: snapshot.contextCapability!,
-        workingContextWindow: snapshot.workingContextWindow ?? null,
-      }),
+          endpoint,
+          fingerprint: snapshot.fingerprint,
+          contextCapability: snapshot.contextCapability!,
+          workingContextWindow: snapshot.workingContextWindow ?? null,
+        };
+      },
     });
   }
 
@@ -217,6 +257,7 @@ export function createAgentProviderGate<TProvider extends ModelProvider>(
     ): Promise<AgentProviderConnectionResult> {
       const input = await resolveConnectionInput(request);
       if (!input.apiKey) throw new Error(AGENT_API_KEY_EMPTY);
+      await assertProviderConsent(input.endpoint);
       if (!await dependencies.hasHostPermission(
         input.endpoint.provider,
         input.endpoint.canonicalBaseUrl,
@@ -237,9 +278,10 @@ export function createAgentProviderGate<TProvider extends ModelProvider>(
         model: input.model,
         apiKey: input.apiKey,
         expectedOrigin: input.endpoint.canonicalOrigin,
-        validateRuntimeIdentity: input.snapshot
-          ? () => validateSavedRuntimeIdentity(input.snapshot!)
-          : undefined,
+        validateRuntimeIdentity: () => validateProviderRequestAuthority(
+          input.endpoint,
+          input.snapshot,
+        ),
         hostPermissionCheck: () => dependencies.hasHostPermission(
           input.endpoint.provider,
           input.endpoint.canonicalBaseUrl,
@@ -267,7 +309,7 @@ export function createAgentProviderGate<TProvider extends ModelProvider>(
     prepareRuntimeProvider,
 
     async createRuntimeProvider(): Promise<GatedAgentRuntimeProvider<TProvider>> {
-      return (await prepareRuntimeProvider()).create();
+      return await (await prepareRuntimeProvider()).create();
     },
   };
 }

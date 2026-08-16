@@ -39,6 +39,11 @@ const manifest = {
   }],
 };
 
+const firefoxManifest = {
+  ...manifest,
+  background: { scripts: ['service-worker-loader.js'], type: 'module' },
+};
+
 function entries(overrides = []) {
   const defaults = [
     ['manifest.json', JSON.stringify(manifest)],
@@ -112,6 +117,53 @@ test('resolves the single static relative MV3 worker import', () => {
   });
 });
 
+test('resolves the single Firefox module event-page loader without changing closure shape', () => {
+  assert.deepEqual(parseMv3WorkerLoader({
+    manifest: firefoxManifest,
+    loaderText: "import './assets/worker.js';\n",
+  }), {
+    loaderRelativePath: 'service-worker-loader.js',
+    workerRelativePath: 'assets/worker.js',
+  });
+  const closure = validateManifestResourceClosure({
+    manifest: firefoxManifest,
+    packageEntries: entries([{ relativePath: 'manifest.json', bytes: JSON.stringify(firefoxManifest) }]),
+  });
+  assert.deepEqual(Object.keys(closure), ['manifestResourcesClosed', 'workerRelativePath', 'resources']);
+  assert.deepEqual(
+    closure.resources.find(({ relativePath }) => relativePath === 'assets/worker.js').referencedBy,
+    ['background.scripts[0].import'],
+  );
+});
+
+test('rejects ambiguous and malformed MV3 background loader contracts', () => {
+  expectCode(() => parseMv3WorkerLoader({
+    manifest: {
+      ...manifest,
+      background: {
+        service_worker: 'service-worker-loader.js',
+        scripts: ['service-worker-loader.js'],
+        type: 'module',
+      },
+    },
+    loaderText: "import './assets/worker.js';\n",
+  }), 'mv3_background_ambiguous');
+  for (const scripts of [undefined, 'service-worker-loader.js', [], ['one.js', 'two.js']]) {
+    expectCode(() => parseMv3WorkerLoader({
+      manifest: { ...manifest, background: { scripts, type: 'module' } },
+      loaderText: "import './assets/worker.js';\n",
+    }), 'mv3_background_scripts_invalid');
+  }
+  expectCode(() => parseMv3WorkerLoader({
+    manifest: { ...manifest, background: { type: 'module' } },
+    loaderText: "import './assets/worker.js';\n",
+  }), 'mv3_module_worker_required');
+  expectCode(() => parseMv3WorkerLoader({
+    manifest: { ...manifest, background: { scripts: ['../service-worker-loader.js'], type: 'module' } },
+    loaderText: "import './assets/worker.js';\n",
+  }), 'package_path_invalid');
+});
+
 test('rejects missing, multiple, external, data, dynamic, absolute, traversal, and decorated worker imports', () => {
   const invalidLoaders = [
     '',
@@ -160,7 +212,7 @@ test('measures bundle identities and enforces the frozen release worker exactly'
     ...RELEASE_WORKER_BASELINE,
     kib: RELEASE_WORKER_BASELINE.bytes / 1024,
   };
-  assert.equal(exact.bytes, 675_981);
+  assert.equal(exact.bytes, 740_206);
   assert.equal(WORKER_BYTE_CEILING, exact.bytes);
   assert.equal(enforceWorkerByteCeiling(exact).withinCeiling, true);
   assert.deepEqual(enforceWorkerReleaseBaseline(exact), exact);

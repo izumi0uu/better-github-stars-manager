@@ -1,5 +1,6 @@
 import {
   AGENT_DATA_DISCLOSURE_REQUIRED,
+  AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
   AGENT_HOST_PERMISSION_DENIED,
   AGENT_PROVIDER_IDENTITY_CHANGED,
 } from '@/api/errors';
@@ -537,7 +538,10 @@ export function providerErrorCategory(error: unknown): AgentErrorCategory {
   }
   const code = error instanceof Error ? error.message : '';
   if (code === AGENT_DATA_DISCLOSURE_REQUIRED) return 'disclosure';
-  if (code === AGENT_HOST_PERMISSION_DENIED) return 'permission';
+  if (
+    code === AGENT_HOST_PERMISSION_DENIED ||
+    code === AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED
+  ) return 'permission';
   if (code === AGENT_PROVIDER_IDENTITY_CHANGED) return 'capability';
   return 'provider';
 }

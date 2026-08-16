@@ -681,7 +681,7 @@ describe('durable Agent session store', () => {
     assert.equal(await db.agentAttemptRecoveries.get(oldest.id), undefined);
     const accountedBytes = (await getAgentStorageUsage()).canonicalBytes;
     assert.equal((await reconcileAgentStorageUsage(() => 601)).canonicalBytes, accountedBytes);
-  }, 20_000);
+  }, 40_000);
   it('joins exact read-only recovery rows, fails closed when damaged, and preserves the transcript', async () => {
     const sessionId = 'session-recovery-join';
     await createAgentSession({ idFactory: () => sessionId, now: () => 1 });

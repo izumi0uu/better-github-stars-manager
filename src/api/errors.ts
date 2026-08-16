@@ -70,6 +70,8 @@ export const AGENT_PROVIDER_TIMEOUT = 'AGENT_PROVIDER_TIMEOUT';
 export const AGENT_PROVIDER_ORIGIN_MISMATCH = 'AGENT_PROVIDER_ORIGIN_MISMATCH';
 export const AGENT_PROVIDER_IDENTITY_CHANGED = 'AGENT_PROVIDER_IDENTITY_CHANGED';
 export const AGENT_DATA_DISCLOSURE_REQUIRED = 'AGENT_DATA_DISCLOSURE_REQUIRED';
+export const AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED =
+  'AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED';
 export const AGENT_CONTEXT_CAPABILITY_REQUIRED = 'AGENT_CONTEXT_CAPABILITY_REQUIRED';
 export const AGENT_CONTEXT_CAPABILITY_INFEASIBLE = 'AGENT_CONTEXT_CAPABILITY_INFEASIBLE';
 
@@ -122,6 +124,9 @@ export function translateError(e: unknown, m: MessageCatalog): string {
   if (raw === AGENT_PROVIDER_TIMEOUT) return m.errors.agentProviderTimeout;
   if (raw === AGENT_PROVIDER_IDENTITY_CHANGED) return m.errors.agentProviderIdentityChanged;
   if (raw === AGENT_DATA_DISCLOSURE_REQUIRED) return m.errors.agentDataDisclosureRequired;
+  if (raw === AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED) {
+    return m.errors.agentPersonalCommunicationsPermissionRequired;
+  }
   if (raw === AGENT_CONTEXT_CAPABILITY_REQUIRED) return m.errors.agentContextCapabilityRequired;
   if (raw === AGENT_CONTEXT_CAPABILITY_INFEASIBLE) return m.errors.agentContextCapabilityInfeasible;
   if (providerErrorCode === AGENT_ARTIFACT_COVERAGE_STALLED_ERROR_CODE) return m.errors.agentArtifactCoverageStalled;

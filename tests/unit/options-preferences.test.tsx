@@ -188,6 +188,8 @@ async function renderOptions() {
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
   });
 }
 
@@ -237,6 +239,7 @@ describe('Options preferences', () => {
     permissionRemovedListeners.length = 0;
     vi.stubGlobal('chrome', {
       runtime: {
+        getManifest: vi.fn(() => ({ manifest_version: 3 })),
         sendMessage: vi.fn((message: unknown) => {
           const request = (message ?? {}) as { type?: string; model?: string };
           if (request.type === 'getAgentStorageUsage') return agentStorageResponse();
@@ -856,7 +859,7 @@ describe('Options preferences', () => {
       apiKey: 'sk-custom',
     });
     expect(document.querySelector('[data-testid="agent-connection-status"]')?.textContent)
-      .toContain('Settings saved. Allow Chrome access, then test the connection.');
+      .toContain('Settings saved. Allow browser access, then test the connection.');
   });
 
   it('uses an exact Custom model preset without requiring capacity and allows an override', async () => {
@@ -1019,7 +1022,12 @@ describe('Options preferences', () => {
         credentialRevision: 'cr:v1:saved',
         capability: null,
       },
-      agentDataDisclosureAcceptance: null,
+      agentDataDisclosureAcceptance: {
+        version: 2,
+        provider: 'custom-openai-compatible',
+        origin: 'https://relay.example.com',
+        acceptedAt: 1,
+      },
     }));
     authMocks.hasToken.mockResolvedValue(true);
     authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
@@ -1294,10 +1302,19 @@ describe('Options preferences', () => {
     const keyInput = document.querySelector<HTMLInputElement>('#agent-api-key');
     const testButton = [...document.querySelectorAll('button')]
       .find((button) => button.textContent?.includes('Test connection'));
+    const acceptDisclosureButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Accept data sharing'));
 
     expect(keyInput).not.toBeNull();
     expect(testButton).toBeInstanceOf(HTMLButtonElement);
+    expect(acceptDisclosureButton).toBeInstanceOf(HTMLButtonElement);
 
+    await click(acceptDisclosureButton as HTMLButtonElement);
+    expect(authMocks.acceptAgentDataDisclosure).toHaveBeenCalledWith({
+      provider: 'openai',
+      protocol: null,
+      baseUrl: 'https://api.openai.com/v1',
+    });
     await setInputValue(keyInput!, 'sk-live');
     await click(testButton as HTMLButtonElement);
 
@@ -1368,6 +1385,35 @@ describe('Options preferences', () => {
     });
     expect(modelInput?.value).toBe('gpt-5-nano');
     expect(apiKeyInput?.value).toBe('synthetic-unsaved-key');
+  });
+
+  it('does not persist disclosure acceptance when Firefox denies its browser permission', async () => {
+    authMocks.getConfig.mockResolvedValue(config({ agentDataDisclosureAcceptance: null }));
+    authMocks.hasToken.mockResolvedValue(true);
+    Object.assign(chrome.runtime, {
+      getManifest: vi.fn(() => ({ browser_specific_settings: { gecko: { id: 'test@example.com' } } })),
+    });
+    vi.mocked(chrome.permissions.request).mockResolvedValue(false as never);
+
+    await renderOptions();
+    const acceptDisclosureButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Accept data sharing'));
+    const testButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Test connection')) as HTMLButtonElement;
+
+    expect(acceptDisclosureButton).toBeInstanceOf(HTMLButtonElement);
+    await click(acceptDisclosureButton as HTMLButtonElement);
+
+    expect(chrome.permissions.request).toHaveBeenCalledWith({
+      data_collection: ['personalCommunications'],
+    });
+    expect(authMocks.acceptAgentDataDisclosure).not.toHaveBeenCalled();
+    expect(testButton.disabled).toBe(true);
+    const status = document.querySelector('[data-testid="agent-connection-status"]');
+    expect(status?.getAttribute('role')).toBe('alert');
+    expect(status?.textContent).toContain(
+      "Allow Firefox's personal-communications permission before testing or using Cubby.",
+    );
   });
 
   it('ignores legacy disclosure acceptance changes without resetting provider drafts', async () => {

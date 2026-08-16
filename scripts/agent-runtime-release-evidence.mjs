@@ -11,6 +11,12 @@ import {
   parseChromeExtensionVersion,
   RELEASE_WORKER_BASELINE,
 } from './package-manifest-closure.mjs';
+import {
+  FIREFOX_GECKO_ID,
+  FIREFOX_MIN_VERSION,
+  FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS,
+  FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS,
+} from './build-firefox-extension.mjs';
 
 const SHA256 = /^[0-9a-f]{64}$/u;
 const COMMIT = /^[0-9a-f]{40}$/u;
@@ -37,6 +43,14 @@ export const RELEASE_MANUAL_EXCLUSIONS = deepFreeze([
   'chrome_web_store_upload',
   'live_provider_credential_check',
 ]);
+export const FIREFOX_RELEASE_MANUAL_EXCLUSIONS = deepFreeze([
+  'amo_approval',
+  'amo_dashboard_upload',
+  'amo_publication',
+  'amo_review',
+  'amo_signing',
+  'live_provider_credential_check',
+]);
 const EXPECTED_SCENARIO_IDS = deepFreeze([
   'small-window-multiple-tools',
   'overflow-then-success',
@@ -48,6 +62,21 @@ const EXPECTED_SCENARIO_IDS = deepFreeze([
   'organize-port-reconnect',
   'cubby-artifact-continuation-coverage',
 ]);
+export const FIREFOX_RUNTIME_SCENARIO_IDS = deepFreeze([
+  'popup-options',
+  'options-storage-permissions',
+  'stars-content',
+  'repo-chip-content',
+  'sync-watch-radar',
+  'cubby-consent-refusal-no-network',
+  'cubby-provider-turn',
+  'organize-full-library',
+  'background-messaging',
+  'background-alarms',
+  'runtime-port',
+  'background-suspension-recovery',
+  'observed-error-containment',
+]);
 
 export class ReleaseEvidenceError extends Error {
   constructor(code, jsonPath = '$') {
@@ -56,6 +85,12 @@ export class ReleaseEvidenceError extends Error {
     this.code = code;
     this.jsonPath = jsonPath;
   }
+}
+export function normalizeReleaseBrowserTarget(value = 'chrome') {
+  if (value !== 'chrome' && value !== 'firefox') {
+    throw new ReleaseEvidenceError('browser_target_invalid', '$.browserTarget');
+  }
+  return value;
 }
 
 export const FINAL_CHECK_SPECS = deepFreeze([
@@ -79,6 +114,16 @@ export const FINAL_CHECK_SPECS = deepFreeze([
   { key: 'packageInputStable', command: 'internal:package-input-stable' },
   { key: 'packageExtension', command: 'GSM_SKIP_PACKAGE_BUILD=true pnpm package:extension' },
 ]);
+export function finalCheckSpecsForTarget(browserTarget = 'chrome') {
+  const target = normalizeReleaseBrowserTarget(browserTarget);
+  if (target === 'chrome') return FINAL_CHECK_SPECS;
+  return deepFreeze(FINAL_CHECK_SPECS.map((spec) => {
+    if (spec.key === 'productionBuild') return { ...spec, command: 'GSM_RELEASE=true GSM_DEV=false pnpm build:firefox' };
+    if (spec.key === 'extensionSmoke') return { ...spec, command: 'pnpm test:smoke:firefox' };
+    if (spec.key === 'packageExtension') return { ...spec, command: 'GSM_SKIP_PACKAGE_BUILD=true pnpm package:firefox' };
+    return { ...spec };
+  }));
+}
 
 const RUNTIME_CONTRACT_LIST = [
   ['artifact', 'agent-artifact.schema.json', 'packaged_durable_artifact', 'agentArtifactExtensionHost', true, 'artifactFlow'],
@@ -115,7 +160,7 @@ const CLEANUP_SHAPE = {
   browserClosed: exact(true),
   temporaryStateRemoved: exact(true),
 };
-const RELEASE_DIST_SHAPE = {
+const CHROME_RELEASE_DIST_SHAPE = {
   packageInput: { algorithm: exact('sha256'), fileCount: integer(0), sha256: digest() },
   manifest: {
     relativePath: exact('manifest.json'), bytes: integer(1), sha256: digest(),
@@ -124,6 +169,29 @@ const RELEASE_DIST_SHAPE = {
   loader: { relativePath: relativeJsPath(), bytes: integer(1), sha256: digest() },
   worker: { relativePath: relativeJsPath(), bytes: integer(1), sha256: digest() },
 };
+const FIREFOX_RELEASE_DIST_SHAPE = {
+  browserTarget: exact('firefox'),
+  packageInput: { algorithm: exact('sha256'), fileCount: integer(0), sha256: digest() },
+  manifest: {
+    relativePath: exact('manifest.json'), bytes: integer(1), sha256: digest(),
+    manifestVersion: exact(3), extensionVersion: version(),
+  },
+  loader: { relativePath: relativeJsPath(), bytes: integer(1), sha256: digest() },
+  worker: { relativePath: relativeJsPath(), bytes: integer(1), sha256: digest() },
+  background: {
+    kind: exact('event_page'), module: exact(true), scripts: arrayOf(relativeJsPath(), 1, 1),
+  },
+  gecko: {
+    id: exact(FIREFOX_GECKO_ID), strictMinVersion: exact(FIREFOX_MIN_VERSION),
+    dataCollectionPermissions: {
+      required: arrayOf(identifier(), FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS.length, FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS.length),
+      optional: arrayOf(identifier(), FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS.length, FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS.length),
+    },
+  },
+};
+function releaseDistShape(target = 'chrome') {
+  return target === 'firefox' ? FIREFOX_RELEASE_DIST_SHAPE : CHROME_RELEASE_DIST_SHAPE;
+}
 const ARTIFACT_SHAPE = {
   provider: numericObject(['requests', 'sourceRequests', 'locatingReads', 'exhaustivePageReads', 'ordinaryBoundaries', 'provisionalFinals', 'correctiveReprompts', 'finalResponses']),
   coverage: {
@@ -208,24 +276,26 @@ const SCENARIO_SHAPE = {
 const INPUT_FILE_SHAPE = {
   filename: identifier(), bytes: integer(1), sha256: digest(), schemaVersion: exact(1), status: exact('passed'), proofScope: identifier(),
 };
-const COMPOSITION_SHAPE = {
-  schemaVersion: exact(1), status: exact('passed'), proofScope: exact('runtime_composition'),
-  releaseDist: RELEASE_DIST_SHAPE,
-  inputs: {
-    artifact: INPUT_FILE_SHAPE, workerRecovery: INPUT_FILE_SHAPE, uiHistory: INPUT_FILE_SHAPE,
-    organize: INPUT_FILE_SHAPE, organizeRecovery: INPUT_FILE_SHAPE, scenarioLab: INPUT_FILE_SHAPE,
-  },
-  organizeOutcomes: {
-    ownerObserverConverged: exact(true), ownerLossRequiredExplicitTakeover: exact(true), takeoverProviderRequestDelta: exact(0),
-    terminalPagesConverged: exact(true), nonterminalDeletionBlocked: exact(true), originDeletedAfterCommit: exact(true),
-    terminalEvidenceRetained: exact(true), originProvenanceRetained: exact(true), deletedPagesInvalidated: exact(true),
-    replacementSessionSelected: exact(true), unsentDraftPreservedExactly: exact(true), nextAdmissionPagesConverged: exact(true),
-    dismissPagesConverged: exact(true), workerRecoveryCompleted: exact(true),
-  },
-  containment: CONTAINMENT_SHAPE,
-  cleanup: CLEANUP_SHAPE,
-  evidenceBytes: integer(1, MAX_RUNTIME_EVIDENCE_BYTES),
-};
+function compositionShape(target) {
+  return {
+    schemaVersion: exact(1), status: exact('passed'), proofScope: exact('runtime_composition'),
+    releaseDist: releaseDistShape(target),
+    inputs: {
+      artifact: INPUT_FILE_SHAPE, workerRecovery: INPUT_FILE_SHAPE, uiHistory: INPUT_FILE_SHAPE,
+      organize: INPUT_FILE_SHAPE, organizeRecovery: INPUT_FILE_SHAPE, scenarioLab: INPUT_FILE_SHAPE,
+    },
+    organizeOutcomes: {
+      ownerObserverConverged: exact(true), ownerLossRequiredExplicitTakeover: exact(true), takeoverProviderRequestDelta: exact(0),
+      terminalPagesConverged: exact(true), nonterminalDeletionBlocked: exact(true), originDeletedAfterCommit: exact(true),
+      terminalEvidenceRetained: exact(true), originProvenanceRetained: exact(true), deletedPagesInvalidated: exact(true),
+      replacementSessionSelected: exact(true), unsentDraftPreservedExactly: exact(true), nextAdmissionPagesConverged: exact(true),
+      dismissPagesConverged: exact(true), workerRecoveryCompleted: exact(true),
+    },
+    containment: CONTAINMENT_SHAPE,
+    cleanup: CLEANUP_SHAPE,
+    evidenceBytes: integer(1, MAX_RUNTIME_EVIDENCE_BYTES),
+  };
+}
 const FACT_SHAPES = {
   artifact: ARTIFACT_SHAPE,
   workerRecovery: WORKER_SHAPE,
@@ -414,13 +484,14 @@ export function validateRuntimeEvidenceFile(contract, raw, context = {}) {
   if (context.relativePath !== undefined && context.relativePath !== resolvedContract.filename) {
     throw new ReleaseEvidenceError('runtime_evidence_path_mismatch', '$.relativePath');
   }
+  const target = resolveBrowserTarget(context.browserTarget, context.releaseDist?.browserTarget, value.releaseDist?.browserTarget);
   if (resolvedContract.key === 'runtimeComposition') {
-    validateShape(value, COMPOSITION_SHAPE, '$');
+    validateShape(value, compositionShape(target), '$');
     validateCompositionInputs(value, context.runtimeFiles);
   } else {
     const factsShape = FACT_SHAPES[resolvedContract.key];
     if (!factsShape) throw new ReleaseEvidenceError('runtime_contract_shape_required');
-    validateShape(value, producerShape(resolvedContract, factsShape), '$');
+    validateShape(value, producerShape(resolvedContract, factsShape, target), '$');
     validatePassingProducerFacts(resolvedContract.key, value);
     if (resolvedContract.key === 'scenarioLab') {
       if (deepEqual(value.releaseDist, value.diagnosticsBuild)) {
@@ -448,26 +519,8 @@ export function validateRuntimeEvidenceFile(contract, raw, context = {}) {
 }
 
 export function validateRuntimeVerificationEvidence(value, context = {}) {
-  const shape = {
-    schemaVersion: exact(2), generatedAt: timestamp(), executionAuthority: exact('durable_agent_runtime_release_plan'),
-    source: { commit: commit(), dirty: exact(false) }, packageVersion: version(),
-    environment: environment(),
-    checks: Object.fromEntries(FINAL_CHECK_SPECS.map(({ key, command }) => [key, {
-      status: exact('passed'), command: exact(command), startedAt: timestamp(), finishedAt: timestamp(), outputSha256: digest(),
-    }])),
-    build: {
-      packageInput: packageFingerprintShape(),
-      worker: bundleArtifactShape(),
-      mermaid: arrayOf(bundleArtifactShape(), 0, 128),
-      advisories: arrayOf(string(1, DEFAULT_ADVISORY_LIMITS.maxBlockBytes), 0, DEFAULT_ADVISORY_LIMITS.maxBlocks),
-      outputSha256: digest(),
-    },
-    runtimeEvidence: Object.fromEntries(RUNTIME_CONTRACT_LIST.map(([key, filename]) => [key, {
-      relativePath: exact(filename), bytes: integer(1), sha256: digest(),
-    }])),
-    provisionalReleaseEvidence: fileEvidenceShape(),
-    status: exact('agent_runtime_verification_passed'),
-  };
+  const target = resolveBrowserTarget(context.browserTarget, context.releaseDist?.browserTarget, value?.browserTarget);
+  const shape = runtimeVerificationShape(target);
   validateShape(value, shape, '$');
   assertEvidenceRedacted(value, {
     forbiddenValues: context.forbiddenValues,
@@ -478,6 +531,14 @@ export function validateRuntimeVerificationEvidence(value, context = {}) {
     }],
   });
   assertTimestampOrder(value.generatedAt, Object.values(value.checks), '$.checks');
+  if (target === 'firefox') {
+    validateFirefoxBrowserEvidence(value.firefox);
+    validateFirefoxSharedRuntimeReleaseDist(value, context.releaseDist);
+    if (context.sharedRuntimeReleaseDist
+      && !deepEqual(value.sharedRuntimeReleaseDist, context.sharedRuntimeReleaseDist)) {
+      throw new ReleaseEvidenceError('shared_runtime_release_dist_mismatch', '$.sharedRuntimeReleaseDist');
+    }
+  }
   validateBuildEvidence(value.build, context);
   if (context.releaseDist) assertReleaseVersionIdentity({
     packageVersion: value.packageVersion,
@@ -503,26 +564,8 @@ export function validateRuntimeVerificationEvidence(value, context = {}) {
 }
 
 export function validateProvisionalReleaseEvidence(value, context = {}) {
-  const shape = {
-    schemaVersion: exact(2), generatedAt: timestamp(), packageVersion: version(),
-    source: { commit: commit(), dirty: exact(false) },
-    package: {
-      releaseReady: exact(false), releaseReadinessReason: exact('agent_runtime_verification_required'),
-      dashboardSubmissionClaimed: exact(false), zipRootManifest: exact(true), manifestResourcesClosed: exact(true),
-      sourceOnlyEntriesExcluded: exact(true), productionDisclosureMarkers: arrayOf(string(1, 256), 0, 128),
-    },
-    packagedPermissions: {
-      permissions: arrayOf(identifier(), 0, 64), optionalPermissions: arrayOf(identifier(), 0, 64),
-      hostPermissions: arrayOf(hostPermission(), 0, 128), optionalHostPermissions: arrayOf(hostPermission(), 0, 128),
-    },
-    packageInput: packageFingerprintShape(),
-    build: provisionalBuildShape(),
-    generatedFiles: arrayOf(fileEvidenceShape(), 2, 2),
-    packagedManifest: fileEvidenceShape(),
-    manifestResources: arrayOf({
-      relativePath: relativePath(), bytes: integer(0), sha256: digest(), referencedBy: arrayOf(string(1, 256), 1, 128),
-    }, 1, MAX_COLLECTION_ITEMS),
-  };
+  const target = resolveBrowserTarget(context.browserTarget, context.releaseDist?.browserTarget, value?.browserTarget);
+  const shape = provisionalReleaseEvidenceShape(target, false);
   validateShape(value, shape, '$');
   assertEvidenceRedacted(value, {
     forbiddenValues: context.forbiddenValues,
@@ -539,6 +582,10 @@ export function validateProvisionalReleaseEvidence(value, context = {}) {
   assertSortedUnique(value.packagedPermissions.hostPermissions, '$.packagedPermissions.hostPermissions');
   assertSortedUnique(value.packagedPermissions.optionalHostPermissions, '$.packagedPermissions.optionalHostPermissions');
   validatePackageEvidenceRelationships(value, context);
+  if (target === 'firefox') {
+    assertSortedUnique(value.packagedPermissions.dataCollectionPermissions.required, '$.packagedPermissions.dataCollectionPermissions.required');
+    assertSortedUnique(value.packagedPermissions.dataCollectionPermissions.optional, '$.packagedPermissions.dataCollectionPermissions.optional');
+  }
   if (context.sourceCommit && value.source.commit !== context.sourceCommit) throw new ReleaseEvidenceError('source_commit_mismatch', '$.source.commit');
   if (context.packageVersion && value.packageVersion !== context.packageVersion) throw new ReleaseEvidenceError('package_version_mismatch', '$.packageVersion');
   if (context.releaseDist) assertReleaseVersionIdentity({
@@ -560,10 +607,12 @@ export function prepareReleaseFinalization(input) {
   if (!commit()(input.sourceCommit)) throw new ReleaseEvidenceError('source_commit_invalid', '$.sourceCommit');
   validateShape(input.packageInput, packageFingerprintShape(), '$.packageInput');
   assertReleaseIdentity(input.releaseDist, '$.releaseDist');
+  const target = resolveBrowserTarget(input.browserTarget, input.releaseDist?.browserTarget);
+  const expectedManualExclusions = target === 'firefox' ? FIREFOX_RELEASE_MANUAL_EXCLUSIONS : RELEASE_MANUAL_EXCLUSIONS;
   const manualExclusions = Array.isArray(input.manualExclusions)
     ? [...input.manualExclusions].sort(bytewiseCompare)
     : null;
-  if (!manualExclusions || !deepEqual(manualExclusions, RELEASE_MANUAL_EXCLUSIONS)) {
+  if (!manualExclusions || !deepEqual(manualExclusions, expectedManualExclusions)) {
     throw new ReleaseEvidenceError('manual_exclusions_invalid', '$.manualExclusions');
   }
   if (!version()(input.packagedManifestVersion)) {
@@ -588,6 +637,9 @@ export function prepareReleaseFinalization(input) {
   const runtimeBytes = asBuffer(input.runtimeVerificationRaw, '$.runtimeVerificationRaw');
   const provisional = parseCanonicalEvidence(provisionalBytes, '$.provisionalRaw');
   const runtimeVerification = parseCanonicalEvidence(runtimeBytes, '$.runtimeVerificationRaw');
+  const sharedRuntimeReleaseDist = target === 'firefox' ? input.sharedRuntimeReleaseDist : undefined;
+  if (target === 'firefox') assertReleaseIdentity(sharedRuntimeReleaseDist, '$.sharedRuntimeReleaseDist');
+  const runtimeReleaseDist = sharedRuntimeReleaseDist ?? input.releaseDist;
   const now = input.publicationTimestamp;
   validateTimestamp(now, '$.publicationTimestamp');
   if (now !== runtimeVerification.generatedAt) {
@@ -598,7 +650,7 @@ export function prepareReleaseFinalization(input) {
   const runtimeDocuments = {};
   for (const [key] of RUNTIME_CONTRACT_LIST) {
     const validated = validateRuntimeEvidenceFile(key, input.runtimeEvidenceRaw[key], {
-      releaseDist: input.releaseDist,
+      releaseDist: runtimeReleaseDist,
       relativePath: RUNTIME_EVIDENCE_CONTRACTS[key].filename,
       forbiddenValues: input.forbiddenValues,
       runtimeFiles,
@@ -619,6 +671,7 @@ export function prepareReleaseFinalization(input) {
   validateRuntimeVerificationEvidence(runtimeVerification, {
     sourceCommit: input.sourceCommit,
     releaseDist: input.releaseDist,
+    sharedRuntimeReleaseDist,
     packageVersion: input.packageVersion,
     packageInput: input.packageInput,
     runtimeEvidence: runtimeFiles,
@@ -660,10 +713,10 @@ export function prepareReleaseFinalization(input) {
     releaseReadinessReason: 'agent_runtime_verification_passed',
     finalizedAt: now,
   };
+  if (target === 'firefox') finalValue.firefox = deepClone(runtimeVerification.firefox);
   const finalBytes = canonicalBytes(finalValue);
   const finalFile = createFileEvidence(input.finalRelativePath, finalBytes);
-  const gateValue = {
-    schemaVersion: 2,
+  const gateCommon = {
     generatedAt: now,
     executionAuthority: 'durable_agent_runtime_release_plan',
     source: { commit: input.sourceCommit, dirty: false },
@@ -676,15 +729,34 @@ export function prepareReleaseFinalization(input) {
       advisorySha256: sha256(Buffer.from(runtimeVerification.build.advisories.join('\n'))),
     },
     runtimeEvidence: runtimeFiles,
-    claims: {
-      sourceVerified: true,
-      packageReleaseReady: true,
-      liveProviderManuallyChecked: false,
-      dashboardSubmissionClaimed: false,
-    },
-    manualExclusions,
-    status: 'release_ready_verified',
   };
+  const gateValue = target === 'firefox'
+    ? {
+        schemaVersion: 3,
+        browserTarget: 'firefox',
+        ...gateCommon,
+        firefox: deepClone(runtimeVerification.firefox),
+        claims: {
+          sourceVerified: true,
+          packageReleaseReady: true,
+          liveProviderManuallyChecked: false,
+          publicationClaimed: false,
+        },
+        manualExclusions,
+        status: 'release_ready_verified',
+      }
+    : {
+        schemaVersion: 2,
+        ...gateCommon,
+        claims: {
+          sourceVerified: true,
+          packageReleaseReady: true,
+          liveProviderManuallyChecked: false,
+          dashboardSubmissionClaimed: false,
+        },
+        manualExclusions,
+        status: 'release_ready_verified',
+      };
   assertReleaseVersionIdentity({
     packageVersion: input.packageVersion,
     releaseDist: input.releaseDist,
@@ -791,8 +863,9 @@ export function validatePublishedReleaseGate(input) {
   const gateBytes = asBuffer(input.gateRaw, '$.gateRaw');
   const finalValue = parseCanonicalEvidence(finalBytes, '$.finalRaw');
   const gateValue = parseCanonicalEvidence(gateBytes, '$.gateRaw');
-  validateShape(finalValue, finalReleaseEvidenceShape(), '$.finalRaw');
-  validateShape(gateValue, publishedGateShape(), '$.gateRaw');
+  const target = resolveBrowserTarget(input.browserTarget, input.releaseDist?.browserTarget, finalValue.browserTarget, gateValue.browserTarget);
+  validateShape(finalValue, finalReleaseEvidenceShape(target), '$.finalRaw');
+  validateShape(gateValue, publishedGateShape(target), '$.gateRaw');
   assertReleaseVersionIdentity({
     packageVersion: input.packageVersion ?? finalValue.packageVersion,
     releaseDist: input.releaseDist,
@@ -836,18 +909,32 @@ export function validatePublishedReleaseGate(input) {
     Date.parse(finalValue.generatedAt) > Date.parse(finalValue.package.finalizedAt)
     || finalValue.package.finalizedAt !== gateValue.generatedAt
   ) throw new ReleaseEvidenceError('published_timestamp_mismatch', '$.gateRaw.generatedAt');
-  if (finalValue.package?.releaseReady !== true || finalValue.package?.dashboardSubmissionClaimed !== false) {
+  const publicationClaimed = target === 'firefox'
+    ? finalValue.package?.publicationClaimed
+    : finalValue.package?.dashboardSubmissionClaimed;
+  if (finalValue.package?.releaseReady !== true || publicationClaimed !== false) {
     throw new ReleaseEvidenceError('final_release_state_invalid', '$.finalRaw.package');
   }
   if (gateValue.status !== 'release_ready_verified') throw new ReleaseEvidenceError('release_gate_status_invalid', '$.gateRaw.status');
   if (!sameFileEvidence(gateValue.evidence?.final, createFileEvidence(input.finalRelativePath, finalBytes))) {
     throw new ReleaseEvidenceError('final_digest_mismatch', '$.gateRaw.evidence.final');
   }
-  if (gateValue.claims?.packageReleaseReady !== true || gateValue.claims?.dashboardSubmissionClaimed !== false) {
+  const gatePublicationClaimed = target === 'firefox'
+    ? gateValue.claims?.publicationClaimed
+    : gateValue.claims?.dashboardSubmissionClaimed;
+  if (gateValue.claims?.packageReleaseReady !== true || gatePublicationClaimed !== false) {
     throw new ReleaseEvidenceError('release_gate_claim_invalid', '$.gateRaw.claims');
   }
-  if (!deepEqual(gateValue.manualExclusions, RELEASE_MANUAL_EXCLUSIONS)) {
+  const expectedManualExclusions = target === 'firefox' ? FIREFOX_RELEASE_MANUAL_EXCLUSIONS : RELEASE_MANUAL_EXCLUSIONS;
+  if (!deepEqual(gateValue.manualExclusions, expectedManualExclusions)) {
     throw new ReleaseEvidenceError('manual_exclusions_invalid', '$.gateRaw.manualExclusions');
+  }
+  if (target === 'firefox') {
+    validateFirefoxBrowserEvidence(finalValue.firefox);
+    validateFirefoxBrowserEvidence(gateValue.firefox);
+    if (!deepEqual(finalValue.firefox, gateValue.firefox)) {
+      throw new ReleaseEvidenceError('firefox_runtime_evidence_mismatch', '$.gateRaw.firefox');
+    }
   }
   assertEvidenceRedacted({ finalValue, gateValue }, {
     forbiddenValues: input.forbiddenValues,
@@ -861,54 +948,58 @@ export function validatePublishedReleaseGate(input) {
   return deepFreeze({ finalValue, gateValue });
 }
 
-function finalReleaseEvidenceShape() {
-  return {
-    schemaVersion: exact(2), generatedAt: timestamp(), packageVersion: version(),
-    source: { commit: commit(), dirty: exact(false) },
-    package: {
-      releaseReady: exact(true), releaseReadinessReason: exact('agent_runtime_verification_passed'),
-      dashboardSubmissionClaimed: exact(false), zipRootManifest: exact(true), manifestResourcesClosed: exact(true),
-      sourceOnlyEntriesExcluded: exact(true), productionDisclosureMarkers: arrayOf(string(1, 256), 0, 128),
-      finalizedAt: timestamp(),
-    },
-    packagedPermissions: {
-      permissions: arrayOf(identifier(), 0, 64), optionalPermissions: arrayOf(identifier(), 0, 64),
-      hostPermissions: arrayOf(hostPermission(), 0, 128), optionalHostPermissions: arrayOf(hostPermission(), 0, 128),
-    },
-    packageInput: packageFingerprintShape(),
-    build: provisionalBuildShape(),
-    generatedFiles: arrayOf(fileEvidenceShape(), 2, 2),
-    packagedManifest: fileEvidenceShape(),
-    manifestResources: arrayOf({
-      relativePath: relativePath(), bytes: integer(0), sha256: digest(), referencedBy: arrayOf(string(1, 256), 1, 128),
-    }, 1, MAX_COLLECTION_ITEMS),
-  };
+function finalReleaseEvidenceShape(target) {
+  const shape = provisionalReleaseEvidenceShape(target, true);
+  if (target === 'firefox') shape.firefox = firefoxVerificationShape();
+  return shape;
 }
 
-function publishedGateShape() {
-  return {
-    schemaVersion: exact(2), generatedAt: timestamp(), executionAuthority: exact('durable_agent_runtime_release_plan'),
-    source: { commit: commit(), dirty: exact(false) }, packageVersion: version(), packageInput: packageFingerprintShape(),
+function publishedGateShape(target) {
+  const common = {
+    generatedAt: timestamp(),
+    executionAuthority: exact('durable_agent_runtime_release_plan'),
+    source: { commit: commit(), dirty: exact(false) },
+    packageVersion: version(),
+    packageInput: packageFingerprintShape(),
     evidence: { provisional: fileEvidenceShape(), runtime: fileEvidenceShape(), final: fileEvidenceShape() },
     build: { worker: bundleArtifactShape(), mermaid: arrayOf(bundleArtifactShape(), 0, 128), advisorySha256: digest() },
     runtimeEvidence: Object.fromEntries(RUNTIME_CONTRACT_LIST.map(([key, filename]) => [key, {
       relativePath: exact(filename), bytes: integer(1), sha256: digest(),
     }])),
-    claims: {
-      sourceVerified: exact(true), packageReleaseReady: exact(true), liveProviderManuallyChecked: exact(false),
-      dashboardSubmissionClaimed: exact(false),
-    },
+  };
+  const claims = target === 'firefox'
+    ? {
+        sourceVerified: exact(true), packageReleaseReady: exact(true), liveProviderManuallyChecked: exact(false),
+        publicationClaimed: exact(false),
+      }
+    : {
+        sourceVerified: exact(true), packageReleaseReady: exact(true), liveProviderManuallyChecked: exact(false),
+        dashboardSubmissionClaimed: exact(false),
+      };
+  if (target === 'chrome') return {
+    schemaVersion: exact(2),
+    ...common,
+    claims,
+    manualExclusions: arrayOf(identifier(), 1, 32),
+    status: exact('release_ready_verified'),
+  };
+  return {
+    schemaVersion: exact(3),
+    browserTarget: exact('firefox'),
+    ...common,
+    firefox: firefoxVerificationShape(),
+    claims,
     manualExclusions: arrayOf(identifier(), 1, 32),
     status: exact('release_ready_verified'),
   };
 }
 
-function producerShape(contract, factsShape) {
+function producerShape(contract, factsShape, target) {
   const shape = {
     schemaVersion: exact(1), status: exact('passed'), proofScope: exact(contract.proofScope),
-    productionDistExercised: exact(contract.productionDistExercised), releaseDist: RELEASE_DIST_SHAPE,
+    productionDistExercised: exact(contract.productionDistExercised), releaseDist: releaseDistShape(target),
   };
-  if (contract.key === 'scenarioLab') shape.diagnosticsBuild = RELEASE_DIST_SHAPE;
+  if (contract.key === 'scenarioLab') shape.diagnosticsBuild = releaseDistShape(target);
   shape[contract.factsKey] = factsShape;
   shape.containment = CONTAINMENT_SHAPE;
   shape.cleanup = CLEANUP_SHAPE;
@@ -1056,6 +1147,29 @@ function assertReleaseIdentity(value, jsonPath) {
     throw new ReleaseEvidenceError('release_dist_invalid', jsonPath);
   }
 }
+function validateFirefoxSharedRuntimeReleaseDist(value, firefoxReleaseDist) {
+  const shared = value.sharedRuntimeReleaseDist;
+  assertReleaseIdentity(shared, '$.sharedRuntimeReleaseDist');
+  if (shared.manifest.extensionVersion !== value.packageVersion
+    || !sameBundleIdentity(shared.worker, value.build.worker)) {
+    throw new ReleaseEvidenceError('shared_runtime_release_dist_mismatch', '$.sharedRuntimeReleaseDist');
+  }
+  if (!firefoxReleaseDist) return;
+  if (shared.manifest.manifestVersion !== firefoxReleaseDist.manifest.manifestVersion
+    || shared.manifest.extensionVersion !== firefoxReleaseDist.manifest.extensionVersion
+    || shared.packageInput.fileCount !== firefoxReleaseDist.packageInput.fileCount
+    || !deepEqual(shared.loader, firefoxReleaseDist.loader)
+    || !deepEqual(shared.worker, firefoxReleaseDist.worker)) {
+    throw new ReleaseEvidenceError('shared_runtime_release_dist_mismatch', '$.sharedRuntimeReleaseDist');
+  }
+}
+
+function sameBundleIdentity(left, right) {
+  return left?.relativePath === right?.relativePath
+    && left?.bytes === right?.bytes
+    && left?.sha256 === right?.sha256;
+}
+
 function expectedEvidencePaths(packageVersion) {
   return {
     provisional: `release-evidence-${packageVersion}.provisional.json`,
@@ -1072,10 +1186,16 @@ function assertExactKeys(value, expected, jsonPath) {
 }
 
 function validatePackageEvidenceRelationships(value, context) {
+  const target = resolveBrowserTarget(context.browserTarget, context.releaseDist?.browserTarget, value.browserTarget);
   const generatedPaths = value.generatedFiles.map(({ relativePath }) => relativePath);
   assertSortedUnique(generatedPaths, '$.generatedFiles');
-  const baseName = `better-github-stars-manager-${value.packageVersion}.zip`;
-  if (!deepEqual(generatedPaths, [`${baseName}.sha256`, baseName].sort(bytewiseCompare))) {
+  const baseName = target === 'firefox'
+    ? `better-github-stars-manager-firefox-${value.packageVersion}`
+    : `better-github-stars-manager-${value.packageVersion}`;
+  const expectedGenerated = target === 'firefox'
+    ? [`${baseName}.zip`, `${baseName}.zip.sha256`, `${baseName}-source.zip`, `${baseName}-source.zip.sha256`]
+    : [`${baseName}.zip`, `${baseName}.zip.sha256`];
+  if (!deepEqual(generatedPaths, expectedGenerated.sort(bytewiseCompare))) {
     throw new ReleaseEvidenceError('generated_file_set_mismatch', '$.generatedFiles');
   }
   const resourcePaths = value.manifestResources.map(({ relativePath }) => relativePath);
@@ -1083,6 +1203,22 @@ function validatePackageEvidenceRelationships(value, context) {
   value.manifestResources.forEach((resource, index) => {
     assertSortedUnique(resource.referencedBy, `$.manifestResources[${index}].referencedBy`);
   });
+  if (target === 'firefox') {
+    const archive = value.generatedFiles.find(({ relativePath }) => relativePath === `${baseName}-source.zip`);
+    const checksum = value.generatedFiles.find(({ relativePath }) => relativePath === `${baseName}-source.zip.sha256`);
+    if (!sameFileEvidence(value.reviewerSource.archive, archive)
+      || !sameFileEvidence(value.reviewerSource.checksum, checksum)) {
+      throw new ReleaseEvidenceError('reviewer_source_identity_mismatch', '$.reviewerSource');
+    }
+    if (value.reviewerSource.readme.relativePath !== 'FIREFOX_REVIEWER_BUILD.md') {
+      throw new ReleaseEvidenceError('reviewer_readme_path_mismatch', '$.reviewerSource.readme.relativePath');
+    }
+    if (!deepEqual(value.packagedPermissions.dataCollectionPermissions.required, FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS)
+      || !deepEqual(value.packagedPermissions.dataCollectionPermissions.optional, FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS)
+      || !deepEqual(value.packagedManifest.gecko.dataCollectionPermissions, value.packagedPermissions.dataCollectionPermissions)) {
+      throw new ReleaseEvidenceError('firefox_data_collection_mismatch', '$.packagedPermissions.dataCollectionPermissions');
+    }
+  }
   if (!context.releaseDist) return;
   if (!sameFingerprint(value.packageInput, context.releaseDist.packageInput)) {
     throw new ReleaseEvidenceError('release_dist_fingerprint_mismatch', '$.packageInput');
@@ -1090,6 +1226,11 @@ function validatePackageEvidenceRelationships(value, context) {
   if (!sameFileEvidence(value.packagedManifest, context.releaseDist.manifest)) {
     throw new ReleaseEvidenceError('packaged_manifest_identity_mismatch', '$.packagedManifest');
   }
+  if (target === 'firefox' && (
+    value.packagedManifest.background.scripts[0] !== context.releaseDist.loader.relativePath
+    || !deepEqual(value.packagedManifest.background, context.releaseDist.background)
+    || !deepEqual(value.packagedManifest.gecko, context.releaseDist.gecko)
+  )) throw new ReleaseEvidenceError('firefox_manifest_identity_mismatch', '$.packagedManifest');
   for (const key of ['loader', 'worker']) {
     const resource = value.manifestResources.find(({ relativePath }) => relativePath === context.releaseDist[key].relativePath);
     if (!resource || !sameFileEvidence(resource, context.releaseDist[key])) {
@@ -1270,6 +1411,12 @@ function deepEqual(left, right) {
   }
   return false;
 }
+function resolveBrowserTarget(...candidates) {
+  const explicit = candidates.filter((candidate) => candidate !== undefined);
+  const targets = explicit.map((candidate) => normalizeReleaseBrowserTarget(candidate));
+  if (new Set(targets).size > 1) throw new ReleaseEvidenceError('browser_target_mismatch', '$.browserTarget');
+  return targets[0] ?? 'chrome';
+}
 
 function deepFreeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -1364,6 +1511,182 @@ function provisionalBuildShape() {
     advisories: arrayOf(string(1, DEFAULT_ADVISORY_LIMITS.maxBlockBytes), 0, DEFAULT_ADVISORY_LIMITS.maxBlocks),
     outputSha256: digest(),
   };
+}
+
+function provisionalReleaseEvidenceShape(target, finalized) {
+  const packageShape = target === 'firefox'
+    ? {
+        releaseReady: exact(finalized),
+        releaseReadinessReason: exact(finalized ? 'agent_runtime_verification_passed' : 'agent_runtime_verification_required'),
+        publicationClaimed: exact(false),
+        zipRootManifest: exact(true),
+        manifestResourcesClosed: exact(true),
+        sourceOnlyEntriesExcluded: exact(true),
+        remoteExecutableCodeExcluded: exact(true),
+        productionDisclosureMarkers: arrayOf(string(1, 256), 0, 128),
+      }
+    : {
+        releaseReady: exact(finalized),
+        releaseReadinessReason: exact(finalized ? 'agent_runtime_verification_passed' : 'agent_runtime_verification_required'),
+        dashboardSubmissionClaimed: exact(false),
+        zipRootManifest: exact(true),
+        manifestResourcesClosed: exact(true),
+        sourceOnlyEntriesExcluded: exact(true),
+        productionDisclosureMarkers: arrayOf(string(1, 256), 0, 128),
+      };
+  if (finalized) packageShape.finalizedAt = timestamp();
+  const permissionsShape = {
+    permissions: arrayOf(identifier(), 0, 64),
+    optionalPermissions: arrayOf(identifier(), 0, 64),
+    hostPermissions: arrayOf(hostPermission(), 0, 128),
+    optionalHostPermissions: arrayOf(hostPermission(), 0, 128),
+  };
+  if (target === 'firefox') {
+    permissionsShape.dataCollectionPermissions = {
+      required: arrayOf(identifier(), FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS.length, FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS.length),
+      optional: arrayOf(identifier(), FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS.length, FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS.length),
+    };
+  }
+  const common = {
+    generatedAt: timestamp(),
+    packageVersion: version(),
+    source: { commit: commit(), dirty: exact(false) },
+    package: packageShape,
+    packagedPermissions: permissionsShape,
+    packageInput: packageFingerprintShape(),
+    build: provisionalBuildShape(),
+    generatedFiles: arrayOf(fileEvidenceShape(), target === 'firefox' ? 4 : 2, target === 'firefox' ? 4 : 2),
+    packagedManifest: target === 'firefox' ? firefoxPackagedManifestShape() : fileEvidenceShape(),
+  };
+  const manifestResources = arrayOf({
+    relativePath: relativePath(), bytes: integer(0), sha256: digest(), referencedBy: arrayOf(string(1, 256), 1, 128),
+  }, 1, MAX_COLLECTION_ITEMS);
+  if (target === 'chrome') return { schemaVersion: exact(2), ...common, manifestResources };
+  return {
+    schemaVersion: exact(3),
+    browserTarget: exact('firefox'),
+    ...common,
+    reviewerSource: {
+      archive: fileEvidenceShape(),
+      checksum: fileEvidenceShape(),
+      readme: fileEvidenceShape(),
+      packageInput: packageFingerprintShape(),
+    },
+    manifestResources,
+  };
+}
+
+function firefoxPackagedManifestShape() {
+  return {
+    relativePath: exact('manifest.json'),
+    bytes: integer(1),
+    sha256: digest(),
+    browserTarget: exact('firefox'),
+    background: {
+      kind: exact('event_page'),
+      module: exact(true),
+      scripts: arrayOf(relativeJsPath(), 1, 1),
+    },
+    gecko: {
+      id: exact(FIREFOX_GECKO_ID),
+      strictMinVersion: exact(FIREFOX_MIN_VERSION),
+      dataCollectionPermissions: {
+        required: arrayOf(identifier(), FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS.length, FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS.length),
+        optional: arrayOf(identifier(), FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS.length, FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS.length),
+      },
+    },
+  };
+}
+
+function runtimeVerificationShape(target) {
+  const common = {
+    generatedAt: timestamp(),
+    executionAuthority: exact('durable_agent_runtime_release_plan'),
+    source: { commit: commit(), dirty: exact(false) },
+    packageVersion: version(),
+    environment: environment(),
+    checks: Object.fromEntries(finalCheckSpecsForTarget(target).map(({ key, command }) => [key, {
+      status: exact('passed'), command: exact(command), startedAt: timestamp(), finishedAt: timestamp(), outputSha256: digest(),
+    }])),
+    build: {
+      packageInput: packageFingerprintShape(),
+      worker: bundleArtifactShape(),
+      mermaid: arrayOf(bundleArtifactShape(), 0, 128),
+      advisories: arrayOf(string(1, DEFAULT_ADVISORY_LIMITS.maxBlockBytes), 0, DEFAULT_ADVISORY_LIMITS.maxBlocks),
+      outputSha256: digest(),
+    },
+    runtimeEvidence: Object.fromEntries(RUNTIME_CONTRACT_LIST.map(([key, filename]) => [key, {
+      relativePath: exact(filename), bytes: integer(1), sha256: digest(),
+    }])),
+    provisionalReleaseEvidence: fileEvidenceShape(),
+    status: exact('agent_runtime_verification_passed'),
+  };
+  if (target === 'chrome') return { schemaVersion: exact(2), ...common };
+  const firefox = firefoxVerificationShape();
+  return {
+    schemaVersion: exact(3),
+    browserTarget: exact('firefox'),
+    generatedAt: common.generatedAt,
+    executionAuthority: common.executionAuthority,
+    source: common.source,
+    packageVersion: common.packageVersion,
+    environment: common.environment,
+    firefox,
+    sharedRuntimeReleaseDist: CHROME_RELEASE_DIST_SHAPE,
+    checks: common.checks,
+    build: common.build,
+    runtimeEvidence: common.runtimeEvidence,
+    provisionalReleaseEvidence: common.provisionalReleaseEvidence,
+    status: common.status,
+  };
+}
+
+function firefoxVerificationShape() {
+  return {
+    runs: arrayOf({
+      role: (value) => value === 'firefox_140' || value === 'stable',
+      browserTarget: exact('firefox'),
+      realBrowser: exact(true),
+      browserVersion: firefoxVersion(),
+      executablePathSha256: digest(),
+      extensionId: exact(FIREFOX_GECKO_ID),
+      background: { kind: exact('event_page'), module: exact(true) },
+      scenarioIds: arrayOf(identifier(), FIREFOX_RUNTIME_SCENARIO_IDS.length, FIREFOX_RUNTIME_SCENARIO_IDS.length),
+      diagnostics: {
+        observedPageErrors: exact(0),
+        observedBackgroundErrors: exact(0),
+        observedUncaughtErrors: exact(0),
+        backgroundObservation: exact('post_startup_guarded_intervals'),
+        startupHealthChecks: exact(2),
+      },
+    }, 2, 2),
+  };
+}
+
+function validateFirefoxBrowserEvidence(value) {
+  const [minimum, stable] = value.runs;
+  if (minimum.role !== 'firefox_140' || stable.role !== 'stable') {
+    throw new ReleaseEvidenceError('firefox_browser_role_mismatch', '$.firefox.runs');
+  }
+  if (!minimum.browserVersion.startsWith('140.')) {
+    throw new ReleaseEvidenceError('firefox_140_evidence_missing', '$.firefox.runs[0].browserVersion');
+  }
+  const stableMajor = Number.parseInt(stable.browserVersion.split('.')[0], 10);
+  if (!Number.isSafeInteger(stableMajor) || stableMajor <= 140) {
+    throw new ReleaseEvidenceError('firefox_stable_evidence_missing', '$.firefox.runs[1].browserVersion');
+  }
+  if (minimum.executablePathSha256 === stable.executablePathSha256 || minimum.browserVersion === stable.browserVersion) {
+    throw new ReleaseEvidenceError('firefox_browser_substitution', '$.firefox.runs');
+  }
+  for (const [index, run] of value.runs.entries()) {
+    if (!deepEqual(run.scenarioIds, FIREFOX_RUNTIME_SCENARIO_IDS)) {
+      throw new ReleaseEvidenceError('firefox_scenario_coverage_mismatch', `$.firefox.runs[${index}].scenarioIds`);
+    }
+  }
+}
+
+function firefoxVersion() {
+  return (value) => typeof value === 'string' && /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))*$/u.test(value);
 }
 
 function relativePath() {

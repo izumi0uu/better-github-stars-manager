@@ -24,6 +24,10 @@ import {
   fingerprintPackageInventory,
 } from './package-input-fingerprint.mjs';
 import {
+  readDeterministicZip,
+  writeDeterministicZip,
+} from './deterministic-zip.mjs';
+import {
   compareChromeExtensionVersions,
   discoverMermaidArtifacts,
   enforceWorkerReleaseBaseline,
@@ -34,9 +38,18 @@ import {
   RELEASE_WORKER_BASELINE,
 } from './package-manifest-closure.mjs';
 import {
+  FIREFOX_DIST_DIR,
+  FIREFOX_GECKO_ID,
+  FIREFOX_MIN_VERSION,
+  FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS,
+  FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS,
+} from './build-firefox-extension.mjs';
+import { assertFirefoxManifestContract } from './check-firefox-output-contracts.mjs';
+import {
   parseViteChunkAdvisories,
   validateProvisionalReleaseEvidence,
 } from './agent-runtime-release-evidence.mjs';
+import { packageFirefoxReviewerSource } from './package-firefox-review-source.mjs';
 
 const PUBLIC_EXTENSION_VERSION = '1.0.8';
 const ZIP_EPOCH = new Date('1980-01-01T00:00:00.000Z');
@@ -83,8 +96,9 @@ export class PackageExtensionError extends Error {
 export function packageExtension(options = {}) {
   const environment = options.environment ?? process.env;
   const root = path.resolve(options.root ?? process.cwd());
-  const distDir = path.resolve(root, options.distDir ?? environment.GSM_DIST_DIR ?? 'dist');
-  const artifactsDir = path.resolve(root, options.artifactsDir ?? environment.GSM_ARTIFACTS_DIR ?? 'artifacts');
+  const target = resolvePackageTarget(options.target, environment.GSM_PACKAGE_TARGET);
+  const distDir = path.resolve(root, options.distDir ?? environment.GSM_DIST_DIR ?? (target === 'firefox' ? FIREFOX_DIST_DIR : 'dist'));
+  const artifactsDir = path.resolve(root, options.artifactsDir ?? environment.GSM_ARTIFACTS_DIR ?? (target === 'firefox' ? path.join('artifacts', 'firefox') : 'artifacts'));
   const packageVersion = options.packageVersion ?? pkg.version;
   const approvedVersion = options.approvedVersion ?? environment.GSM_APPROVED_RELEASE_VERSION;
   const workerBaseline = options.workerBaseline ?? RELEASE_WORKER_BASELINE;
@@ -100,7 +114,7 @@ export function packageExtension(options = {}) {
     || environment.GSM_RELEASE_BUILD_EVIDENCE !== undefined
   )) throw new PackageExtensionError('fresh_build_external_evidence_forbidden');
   let capturedBuildEvidence = null;
-  if (!skipBuild) capturedBuildEvidence = runProductionBuild({ root, environment, runner: options.buildRunner });
+  if (!skipBuild) capturedBuildEvidence = runProductionBuild({ root, environment, target, runner: options.buildRunner });
 
   const inventory = createPackageInputInventory(distDir);
   const packageInput = fingerprintPackageInventory(inventory);
@@ -110,11 +124,17 @@ export function packageExtension(options = {}) {
 
   const sourceManifest = parseRootManifest(inventory, 'source manifest');
   assertVersionIdentity(packageVersion, sourceManifest.version, approvedVersion);
-  const permissions = readAndValidatePermissions(sourceManifest);
+  if (target === 'firefox') {
+    assertFirefoxManifestContract(sourceManifest, { expectedVersion: packageVersion });
+  }
+  const permissions = readAndValidatePermissions(sourceManifest, target);
   assertProductionDisclosure(inventory);
+  if (target === 'firefox') assertRemoteExecutableCodeExcluded(inventory);
 
   ensureArtifactDirectory(artifactsDir);
-  const baseName = `better-github-stars-manager-${packageVersion}`;
+  const baseName = target === 'firefox'
+    ? `better-github-stars-manager-firefox-${packageVersion}`
+    : `better-github-stars-manager-${packageVersion}`;
   const zipPath = path.join(artifactsDir, `${baseName}.zip`);
   const finalEvidencePath = path.join(artifactsDir, `release-evidence-${packageVersion}.json`);
   const gatePath = path.join(artifactsDir, 'agent-release-gate-evidence.json');
@@ -128,6 +148,7 @@ export function packageExtension(options = {}) {
   mkdirSync(stageDir);
   const zipTempPath = path.join(workDir, `${baseName}.zip`);
   const createdPaths = new Set();
+  let reviewerSource = null;
   try {
     stagePackageInventory(inventory, stageDir);
     const stagedInventory = createPackageInputInventory(stageDir);
@@ -139,7 +160,7 @@ export function packageExtension(options = {}) {
       packageEntries: stagedInventory,
     });
 
-    createZipFromInventory({ zipPath: zipTempPath, stageDir, inventory });
+    createZipFromInventory({ zipPath: zipTempPath, inventory: stagedInventory });
     const zipInventory = readZipInventory(zipTempPath);
     assertSameInventory(inventory, zipInventory, 'ZIP package');
     const zipManifest = parseRootManifest(zipInventory, 'ZIP manifest');
@@ -148,11 +169,9 @@ export function packageExtension(options = {}) {
       manifest: zipManifest,
       packageEntries: zipInventory,
     });
-    if (!isDeepStrictEqual(stagedClosure, zipClosure)) {
-      throw new PackageExtensionError('manifest_closure_mismatch');
-    }
+    if (!isDeepStrictEqual(stagedClosure, zipClosure)) throw new PackageExtensionError('manifest_closure_mismatch');
     assertVersionIdentity(packageVersion, zipManifest.version, approvedVersion);
-    readAndValidatePermissions(zipManifest);
+    readAndValidatePermissions(zipManifest, target);
 
     const suppliedBuildEvidence = options.buildEvidence
       ?? parseJsonInput(environment.GSM_RELEASE_BUILD_EVIDENCE, 'GSM_RELEASE_BUILD_EVIDENCE');
@@ -168,10 +187,22 @@ export function packageExtension(options = {}) {
     writeOwnedFile(checksumPath, checksumBytes, createdPaths, 0o600);
     assertChecksum(checksumPath, zipPath);
 
+    if (target === 'firefox') {
+      reviewerSource = packageFirefoxReviewerSource({
+        ...options.reviewerSourceOptions,
+        root,
+        artifactsDir,
+        packageVersion,
+        source,
+        extensionZipPath: zipPath,
+        reuseExisting: options.reuseReviewerSource === true,
+      });
+    }
     const generatedAt = options.generatedAt ?? new Date().toISOString();
     const evidence = createProvisionalReleaseEvidence({
       generatedAt,
       packageVersion,
+      target,
       source,
       permissions,
       packageInput,
@@ -181,6 +212,8 @@ export function packageExtension(options = {}) {
       artifactsDir,
       manifestEntry: zipInventory.find(({ relativePath }) => relativePath === 'manifest.json'),
       manifestResources: zipClosure.resources,
+      reviewerSource,
+      manifest: zipManifest,
     });
     validateProvisionalReleaseEvidence(evidence, {
       sourceCommit: source.commit,
@@ -190,19 +223,16 @@ export function packageExtension(options = {}) {
       workerBaseline,
       packagedManifestVersion: zipManifest.version,
       zipManifestVersion: zipManifest.version,
+      browserTarget: target,
     });
     writeOwnedFile(evidencePath, canonicalJson(evidence), createdPaths, 0o600);
 
-    return Object.freeze({
-      zipPath,
-      checksumPath,
-      evidencePath,
-      packageInput,
-      build,
-      evidence,
-    });
+    return Object.freeze({ zipPath, checksumPath, evidencePath, packageInput, build, evidence, reviewerSource });
   } catch (error) {
     for (const createdPath of createdPaths) rmSync(createdPath, { force: true });
+    if (reviewerSource?.ownedPaths) {
+      for (const createdPath of reviewerSource.ownedPaths) rmSync(createdPath, { force: true });
+    }
     throw error;
   } finally {
     rmSync(workDir, { recursive: true, force: true });
@@ -259,34 +289,60 @@ export function findDevelopmentBuildHashes(javascriptSources) {
 }
 
 export function readZipInventory(zipPath) {
-  const resolvedZipPath = path.resolve(zipPath);
-  const names = execFileSync('unzip', ['-Z1', resolvedZipPath], {
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  }).split(/\r?\n/u).filter(Boolean);
-  const relativePaths = validateZipEntryNames(names);
-  return Object.freeze(relativePaths.map((relativePath) => {
-    const bytes = execFileSync('unzip', ['-p', resolvedZipPath, relativePath], {
-      encoding: 'buffer',
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return Object.freeze({ relativePath, bytes, sha256: hash(bytes) });
+  const entries = readDeterministicZip(path.resolve(zipPath));
+  const relativePaths = validateZipEntryNames(entries.map(({ relativePath }) => relativePath));
+  return Object.freeze(entries.map((entry, index) => {
+    const bytes = Buffer.from(entry.bytes);
+    return Object.freeze({ relativePath: relativePaths[index], bytes, sha256: hash(bytes) });
   }));
 }
 
 export function createProvisionalReleaseEvidence(input) {
+  if (input.target !== 'firefox') {
+    return Object.freeze({
+      schemaVersion: 2,
+      generatedAt: input.generatedAt,
+      packageVersion: input.packageVersion,
+      source: Object.freeze({ commit: input.source.commit, dirty: false }),
+      package: Object.freeze({
+        releaseReady: false,
+        releaseReadinessReason: 'agent_runtime_verification_required',
+        dashboardSubmissionClaimed: false,
+        zipRootManifest: true,
+        manifestResourcesClosed: true,
+        sourceOnlyEntriesExcluded: true,
+        productionDisclosureMarkers: disclosureBundleMarkers,
+      }),
+      packagedPermissions: input.permissions,
+      packageInput: input.packageInput,
+      build: input.build,
+      generatedFiles: Object.freeze([
+        fileEvidence(input.artifactsDir, input.checksumPath),
+        fileEvidence(input.artifactsDir, input.zipPath),
+      ].sort((left, right) => bytewiseCompare(left.relativePath, right.relativePath))),
+      packagedManifest: Object.freeze({
+        relativePath: 'manifest.json',
+        bytes: input.manifestEntry.bytes.byteLength,
+        sha256: input.manifestEntry.sha256,
+      }),
+      manifestResources: input.manifestResources,
+    });
+  }
+  const gecko = input.manifest.browser_specific_settings.gecko;
   return Object.freeze({
-    schemaVersion: 2,
+    schemaVersion: 3,
+    browserTarget: 'firefox',
     generatedAt: input.generatedAt,
     packageVersion: input.packageVersion,
     source: Object.freeze({ commit: input.source.commit, dirty: false }),
     package: Object.freeze({
       releaseReady: false,
       releaseReadinessReason: 'agent_runtime_verification_required',
-      dashboardSubmissionClaimed: false,
+      publicationClaimed: false,
       zipRootManifest: true,
       manifestResourcesClosed: true,
       sourceOnlyEntriesExcluded: true,
+      remoteExecutableCodeExcluded: true,
       productionDisclosureMarkers: disclosureBundleMarkers,
     }),
     packagedPermissions: input.permissions,
@@ -295,16 +351,43 @@ export function createProvisionalReleaseEvidence(input) {
     generatedFiles: Object.freeze([
       fileEvidence(input.artifactsDir, input.checksumPath),
       fileEvidence(input.artifactsDir, input.zipPath),
+      input.reviewerSource.archive,
+      input.reviewerSource.checksum,
     ].sort((left, right) => bytewiseCompare(left.relativePath, right.relativePath))),
     packagedManifest: Object.freeze({
       relativePath: 'manifest.json',
       bytes: input.manifestEntry.bytes.byteLength,
       sha256: input.manifestEntry.sha256,
+      browserTarget: 'firefox',
+      background: Object.freeze({
+        kind: 'event_page',
+        module: true,
+        scripts: Object.freeze([...input.manifest.background.scripts]),
+      }),
+      gecko: Object.freeze({
+        id: gecko.id,
+        strictMinVersion: gecko.strict_min_version,
+        dataCollectionPermissions: Object.freeze({
+          required: Object.freeze([...gecko.data_collection_permissions.required]),
+          optional: Object.freeze([...gecko.data_collection_permissions.optional]),
+        }),
+      }),
+    }),
+    reviewerSource: Object.freeze({
+      archive: input.reviewerSource.archive,
+      checksum: input.reviewerSource.checksum,
+      readme: input.reviewerSource.readme,
+      packageInput: input.reviewerSource.packageInput,
     }),
     manifestResources: input.manifestResources,
   });
 }
 
+function resolvePackageTarget(option, environmentValue) {
+  const target = option ?? environmentValue ?? 'chrome';
+  if (target !== 'chrome' && target !== 'firefox') throw new PackageExtensionError('package_target_invalid', String(target));
+  return target;
+}
 function resolveSkipBuild(option, environmentValue) {
   if (option !== undefined) {
     if (typeof option !== 'boolean') throw new PackageExtensionError('skip_build_invalid');
@@ -315,22 +398,27 @@ function resolveSkipBuild(option, environmentValue) {
   return true;
 }
 
-function runProductionBuild({ root, environment, runner }) {
-  if (runner) return runner();
+function runProductionBuild({ root, environment, target, runner }) {
+  if (runner) return runner(target);
   const pnpmExecPath = environment.npm_execpath;
   const command = pnpmExecPath ? process.execPath : 'corepack';
-  const args = pnpmExecPath ? [pnpmExecPath, 'build'] : ['pnpm', 'build'];
+  const script = target === 'firefox' ? 'build:firefox' : 'build';
+  const args = pnpmExecPath ? [pnpmExecPath, script] : ['pnpm', script];
   const result = spawnSync(command, args, {
     cwd: root,
-    env: { ...environment, GSM_RELEASE: 'true', GSM_DEV: 'false' },
+    env: {
+      ...environment,
+      GSM_RELEASE: 'true',
+      GSM_DEV: 'false',
+      GSM_PACKAGE_TARGET: target,
+      ...(target === 'firefox' ? { GSM_DIST_DIR: FIREFOX_DIST_DIR } : {}),
+    },
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-  if (result.error || result.status !== 0 || result.signal) {
-    throw new PackageExtensionError('production_build_failed');
-  }
+  if (result.error || result.status !== 0 || result.signal) throw new PackageExtensionError('production_build_failed');
   const parsed = parseViteChunkAdvisories({ stdout: result.stdout ?? '', stderr: result.stderr ?? '' });
   return Object.freeze({ advisories: parsed.advisories, outputSha256: parsed.outputSha256 });
 }
@@ -379,13 +467,9 @@ function validateBuildEvidence(value, inventory, workerRelativePath, workerBasel
   });
 }
 
-function createZipFromInventory({ zipPath, stageDir, inventory }) {
+function createZipFromInventory({ zipPath, inventory }) {
   if (inventory.length === 0) throw new PackageExtensionError('package_inventory_empty');
-  execFileSync('zip', ['-X', '-q', zipPath, '--', ...inventory.map(({ relativePath }) => relativePath)], {
-    cwd: stageDir,
-    env: { ...process.env, TZ: 'UTC' },
-    stdio: 'inherit',
-  });
+  writeDeterministicZip(zipPath, inventory);
 }
 
 function assertSameInventory(expected, actual, label) {
@@ -421,17 +505,56 @@ function assertExactManifestBytes(expected, actual, label) {
   }
 }
 
-function readAndValidatePermissions(manifest) {
-  const permissions = Object.freeze({
+function readAndValidatePermissions(manifest, target = 'chrome') {
+  const permissions = {
     permissions: sortedUniqueStrings(manifest.permissions),
     optionalPermissions: sortedUniqueStrings(manifest.optional_permissions),
     hostPermissions: sortedUniqueStrings(manifest.host_permissions),
     optionalHostPermissions: sortedUniqueStrings(manifest.optional_host_permissions),
-  });
-  if (!isDeepStrictEqual(permissions, reviewedPermissions)) {
-    throw new PackageExtensionError('packaged_permissions_unreviewed');
+  };
+  if (!isDeepStrictEqual(permissions, reviewedPermissions)) throw new PackageExtensionError('packaged_permissions_unreviewed');
+  if (target === 'chrome') return Object.freeze(permissions);
+  if (target !== 'firefox') throw new PackageExtensionError('package_target_invalid');
+  const gecko = manifest.browser_specific_settings?.gecko;
+  const dataCollectionPermissions = {
+    required: sortedUniqueStrings(gecko?.data_collection_permissions?.required),
+    optional: sortedUniqueStrings(gecko?.data_collection_permissions?.optional),
+  };
+  if (
+    !isPlainObject(gecko)
+    || gecko.id !== FIREFOX_GECKO_ID
+    || gecko.strict_min_version !== FIREFOX_MIN_VERSION
+    || !isDeepStrictEqual(dataCollectionPermissions.required, [...FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS].sort(bytewiseCompare))
+    || !isDeepStrictEqual(dataCollectionPermissions.optional, [...FIREFOX_OPTIONAL_DATA_COLLECTION_PERMISSIONS].sort(bytewiseCompare))
+
+  ) throw new PackageExtensionError('firefox_permissions_unreviewed');
+  return Object.freeze({ ...permissions, dataCollectionPermissions: Object.freeze(dataCollectionPermissions) });
+}
+export function assertRemoteExecutableCodeExcluded(inventory) {
+  const executableEntries = inventory.filter(({ relativePath }) => /\.(?:html|js|mjs)$/u.test(relativePath));
+  const remoteCodePatterns = [
+    /\bimport\s*(?:\(\s*|(?:[^'"\n]*\bfrom\s*)?)["']\s*(?:https?:|data:|blob:)/u,
+    /\bimportScripts\s*\(\s*["']\s*(?:https?:|data:|blob:)/u,
+    /\bnew\s+(?:SharedWorker|Worker)\s*\(\s*["']\s*(?:https?:|data:|blob:)/u,
+    /<script\b[^>]*\bsrc\s*=\s*["']\s*(?:https?:|data:|blob:)/iu,
+    /\bWebAssembly\.(?:compileStreaming|instantiateStreaming)\s*\(\s*(?:await\s+)?fetch\s*\(/u,
+    /\b(?:eval|Function)\s*\(\s*(?:await\s+)?fetch\s*\(/u,
+  ];
+  for (const entry of executableEntries) {
+    let source;
+    try {
+      source = new TextDecoder('utf-8', { fatal: true }).decode(entry.bytes);
+    } catch {
+      throw new PackageExtensionError('remote_executable_code_scan_invalid', entry.relativePath);
+    }
+    if (remoteCodePatterns.some((pattern) => pattern.test(source))) {
+      throw new PackageExtensionError('remote_executable_code_present', entry.relativePath);
+    }
   }
-  return permissions;
+  return Object.freeze({
+    remoteExecutableCodeExcluded: true,
+    scannedEntries: Object.freeze(executableEntries.map(({ relativePath }) => relativePath)),
+  });
 }
 
 function assertProductionDisclosure(inventory) {

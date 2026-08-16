@@ -889,6 +889,10 @@ export interface MessageCatalog {
     agentDisclosureLocalHistory: string;
     agentDisclosureBuiltInAccess: string;
     agentDisclosureCustomAccess: string;
+    agentDisclosureAccept: string;
+    agentDisclosureAccepting: string;
+    agentDisclosureAccepted: string;
+    agentDisclosureAcceptanceRequired: string;
     agentGrantAccess: string;
     agentAccessGranted: string;
     agentHostAccessRequired: string;
@@ -1052,6 +1056,7 @@ export interface MessageCatalog {
     agentProviderIdentityChanged: string;
     agentProviderResponseInvalid: string;
     agentDataDisclosureRequired: string;
+    agentPersonalCommunicationsPermissionRequired: string;
     agentContextCapabilityRequired: string;
     agentContextCapabilityInfeasible: string;
     agentArtifactCoverageStalled: string;
@@ -1656,7 +1661,7 @@ const messages: Record<Locale, MessageCatalog> = {
       staleSourceBody: "Cubby skipped suggestions based on older data. Refresh only those conflicts.",
       providerAuthHeader: "AI service authorization failed",
       providerAuthTitle: "AI service authorization failed",
-      providerAuthSubtitle: "API key rejected or Chrome access missing",
+      providerAuthSubtitle: "API key rejected or browser access missing",
       providerAuthBody: "Cubby couldn't reach your configured AI service. Your message and scope are saved, and no secrets are shown here.",
       providerAuthOpenOptions: "Open options",
       providerAuthRetry: "Retry after updating settings",
@@ -2112,7 +2117,7 @@ const messages: Record<Locale, MessageCatalog> = {
       agentSavedTestFailed: (error) =>
         `Settings saved, but the connection test failed: ${error}`,
       agentSavedNeedsHostAccess:
-        "Settings saved. Allow Chrome access, then test the connection.",
+        "Settings saved. Allow browser access, then test the connection.",
       agentTest: "Test connection",
       agentTesting: "Testing…",
       agentTestOk: (provider, model, latencyMs) =>
@@ -2133,12 +2138,17 @@ const messages: Record<Locale, MessageCatalog> = {
       agentDisclosureLocalHistory:
         "Committed conversation history, recent attempt rows that include the admitted prompt, bounded continuation-recovery projections, and paged artifacts may be stored unencrypted in this browser's extension storage. They are not synced, exported, or included in release diagnostics. Deleting a conversation removes its transcript, attempt and recovery data, and conversation-owned artifacts; re-fetchable tool cache can also be cleared separately. Unpacked development builds disclose raw capture separately before it can be enabled.",
       agentDisclosureBuiltInAccess:
-        "This service is covered by the extension's built-in Chrome access.",
+        "This service is covered by the extension's built-in browser access.",
       agentDisclosureCustomAccess:
-        "Custom services also require separate Chrome access.",
+        "Custom services also require separate browser access.",
+      agentDisclosureAccept: "Accept data sharing",
+      agentDisclosureAccepting: "Requesting permission…",
+      agentDisclosureAccepted: "Data sharing accepted",
+      agentDisclosureAcceptanceRequired:
+        "Accept this disclosure before testing or using Cubby. Required browser permission will be requested when applicable.",
       agentGrantAccess: "Allow access",
       agentAccessGranted: "Access allowed",
-      agentHostAccessRequired: "Allow Chrome access to test or use this custom service.",
+      agentHostAccessRequired: "Allow browser access to test or use this custom service.",
       agentStorageHeading: "Local Cubby conversation, recovery & artifact ledger",
       agentStorageIntro:
         "This ledger covers conversation transcripts, attempt and recovery state, saved conversation artifacts, and re-fetchable tool cache on this device. It does not represent all Cubby or extension storage.",
@@ -2351,7 +2361,9 @@ const messages: Record<Locale, MessageCatalog> = {
       agentProviderResponseInvalid:
         "The AI service returned a response Cubby can't use. Check the protocol and model, then retry.",
       agentDataDisclosureRequired:
-        "Review Cubby's data-sharing details in Options, then save the AI service settings again.",
+        "Accept Cubby's data-sharing disclosure in Options before testing or using the AI service.",
+      agentPersonalCommunicationsPermissionRequired:
+        "Allow Firefox's personal-communications permission before testing or using Cubby.",
       agentContextCapabilityRequired:
         "Check the context window, then test the connection before using Cubby.",
       agentContextCapabilityInfeasible:
@@ -2952,7 +2964,7 @@ const messages: Record<Locale, MessageCatalog> = {
       staleSourceBody: "Cubby 已跳过基于旧数据的建议，只需刷新这些冲突项。",
       providerAuthHeader: "AI 服务验证失败",
       providerAuthTitle: "AI 服务验证失败",
-      providerAuthSubtitle: "API 密钥无效或缺少 Chrome 访问权限",
+      providerAuthSubtitle: "API 密钥无效或缺少浏览器访问权限",
       providerAuthBody: "Cubby 无法连接你配置的 AI 服务。消息和范围已保存，此处不会显示任何密钥。",
       providerAuthOpenOptions: "打开选项",
       providerAuthRetry: "更新设置后重试",
@@ -3411,7 +3423,7 @@ const messages: Record<Locale, MessageCatalog> = {
       agentSavedTestFailed: (error) =>
         `设置已保存，但连接测试失败：${error}`,
       agentSavedNeedsHostAccess:
-        "设置已保存。请先允许 Chrome 访问，然后测试连接。",
+        "设置已保存。请先允许浏览器访问，然后测试连接。",
       agentTest: "测试连接",
       agentTesting: "测试中…",
       agentTestOk: (provider, model, latencyMs) =>
@@ -3432,12 +3444,17 @@ const messages: Record<Locale, MessageCatalog> = {
       agentDisclosureLocalHistory:
         "已提交的对话历史、包含已提交提示词的近期尝试记录、有界续接恢复投影，以及分页工件，可能会以明文保存在本机浏览器的扩展存储中，不会同步、导出或进入发布版诊断。删除对话会移除对应对话记录、尝试与恢复数据，以及归该对话所有的工件；可重新获取的工具缓存也可单独清理。解压加载的开发版会在启用原始捕获前另行披露风险。",
       agentDisclosureBuiltInAccess:
-        "此服务已包含在扩展内置的 Chrome 访问范围中。",
+        "此服务已包含在扩展内置的浏览器访问范围中。",
       agentDisclosureCustomAccess:
-        "自定义服务还需要单独允许 Chrome 访问。",
+        "自定义服务还需要单独允许浏览器访问。",
+      agentDisclosureAccept: "接受数据共享",
+      agentDisclosureAccepting: "正在请求权限…",
+      agentDisclosureAccepted: "已接受数据共享",
+      agentDisclosureAcceptanceRequired:
+        "测试或使用 Cubby 前，请先接受此说明；如适用，浏览器会同时请求所需权限。",
       agentGrantAccess: "允许访问",
       agentAccessGranted: "已允许访问",
-      agentHostAccessRequired: "测试或使用此自定义服务前，请先允许 Chrome 访问。",
+      agentHostAccessRequired: "测试或使用此自定义服务前，请先允许浏览器访问。",
       agentStorageHeading: "本机 Cubby 对话、恢复与工件账本",
       agentStorageIntro:
         "此账本涵盖本机的对话记录、尝试与恢复状态、已保存的对话工件，以及可重新获取的工具缓存；不代表 Cubby 或扩展的全部存储。",
@@ -3638,7 +3655,9 @@ const messages: Record<Locale, MessageCatalog> = {
       agentProviderResponseInvalid:
         "AI 服务返回了 Cubby 无法使用的响应。请检查协议和模型后重试。",
       agentDataDisclosureRequired:
-        "请在选项中查看 Cubby 的数据共享说明，然后重新保存 AI 服务设置。",
+        "测试或使用 AI 服务前，请先在选项中接受 Cubby 的数据共享说明。",
+      agentPersonalCommunicationsPermissionRequired:
+        "测试或使用 Cubby 前，请先允许 Firefox 的个人通信数据权限。",
       agentContextCapabilityRequired:
         "请检查上下文窗口并测试连接后再使用 Cubby。",
       agentContextCapabilityInfeasible:

@@ -11,6 +11,7 @@ import {
   serializeRuntimeEvidence,
   writeRuntimeEvidenceAtomic,
 } from '../../scripts/agent-runtime-evidence-contract.mjs';
+import { createFirefoxManifest, FIREFOX_GECKO_ID, FIREFOX_MIN_VERSION } from '../../scripts/build-firefox-extension.mjs';
 
 function exactKeys(value, keys) {
   assert.deepEqual(Object.keys(value), keys);
@@ -39,6 +40,18 @@ function createReleaseFixture(root, version = '1.2.3') {
   writeFileSync(path.join(root, 'assets/worker.js'), 'globalThis.fixtureWorker = true;\n');
 }
 
+function createFirefoxReleaseFixture(root, version = '1.2.3') {
+  mkdirSync(path.join(root, 'assets'), { recursive: true });
+  const manifest = createFirefoxManifest({
+    manifest_version: 3,
+    version,
+    background: { service_worker: 'service-worker-loader.js', type: 'module' },
+  });
+  writeFileSync(path.join(root, 'manifest.json'), JSON.stringify(manifest));
+  writeFileSync(path.join(root, 'service-worker-loader.js'), "import './assets/worker.js';\n");
+  writeFileSync(path.join(root, 'assets/worker.js'), 'globalThis.fixtureWorker = true;\n');
+}
+
 test('binds evidence to the manifest loader, worker, and complete package input', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'runtime-evidence-identity-'));
   try {
@@ -53,6 +66,36 @@ test('binds evidence to the manifest loader, worker, and complete package input'
     assert.equal(identity.loader.relativePath, 'service-worker-loader.js');
     assert.equal(identity.worker.relativePath, 'assets/worker.js');
     assert.notEqual(identity.loader.sha256, identity.worker.sha256);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('binds Firefox evidence to an event-page module and permanent Gecko identity', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'runtime-evidence-firefox-'));
+  try {
+    createFirefoxReleaseFixture(root);
+    const identity = readRuntimeReleaseDistIdentity(root);
+    assertRuntimeReleaseDistIdentity(identity);
+    exactKeys(identity, ['browserTarget', 'packageInput', 'manifest', 'loader', 'worker', 'background', 'gecko']);
+    assert.equal(identity.browserTarget, 'firefox');
+    assert.deepEqual(identity.background, {
+      kind: 'event_page',
+      module: true,
+      scripts: ['service-worker-loader.js'],
+    });
+    assert.equal(identity.gecko.id, FIREFOX_GECKO_ID);
+    assert.equal(identity.gecko.strictMinVersion, FIREFOX_MIN_VERSION);
+
+    const serviceWorkerClaim = { ...identity, background: { ...identity.background, kind: 'service_worker' } };
+    assert.throws(
+      () => assertRuntimeReleaseDistIdentity(serviceWorkerClaim),
+      (error) => error instanceof RuntimeEvidenceError && error.code === 'release_dist_background_invalid',
+    );
+    assert.throws(
+      () => assertRuntimeReleaseDistIdentity({ ...identity, browserTarget: 'chrome' }),
+      (error) => error instanceof RuntimeEvidenceError && error.code === 'release_dist_target_invalid',
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

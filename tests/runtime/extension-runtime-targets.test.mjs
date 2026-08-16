@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import { hookPageDiagnostics } from './extension-runtime-targets.mjs';
+import {
+  discoverExtension,
+  extensionOrigin,
+  extensionUrl,
+  hookPageDiagnostics,
+} from './extension-runtime-targets.mjs';
+import {
+  FIREFOX_GECKO_ID,
+  FIREFOX_TEST_UUID,
+} from '../../scripts/build-firefox-extension.mjs';
 
 class FakePage {
   constructor() {
@@ -41,10 +50,18 @@ test('page diagnostics retain extension and HTTP failures but ignore lifecycle-o
   const issues = [];
   const diagnostics = hookPageDiagnostics(page, 'runtime-target', { issues });
 
+  page.emit('console', {
+    type: () => 'error',
+    text: () => 'Failed to load resource: 403',
+    location: () => ({ url: 'https://api.github.com/notifications?all=true&per_page=1' }),
+  });
+
   page.emit('requestfailed', failedRequest('chrome-extension://abcdefghijklmnop/assets/content.js'));
+  page.emit('requestfailed', failedRequest(`moz-extension://${FIREFOX_TEST_UUID}/assets/content.js`));
   page.emit('requestfailed', failedRequest('chrome-extension://abcdefghijklmnop/assets/replaced.png', {
     errorText: 'net::ERR_ABORTED',
   }));
+
   page.emit('requestfailed', failedRequest('https://api.github.com/user', { method: 'delete' }));
   page.emit('requestfailed', failedRequest('https://api.github.com/user', {
     errorText: 'net::ERR_ABORTED',
@@ -61,6 +78,8 @@ test('page diagnostics retain extension and HTTP failures but ignore lifecycle-o
   }));
 
   assert.deepEqual(issues, [
+    { label: 'runtime-target', kind: 'console-error', value: 'github-notifications' },
+    { label: 'runtime-target', kind: 'request-failed', value: 'GET extension-resource' },
     { label: 'runtime-target', kind: 'request-failed', value: 'GET extension-resource' },
     { label: 'runtime-target', kind: 'request-failed', value: 'DELETE github-user' },
     { label: 'runtime-target', kind: 'request-failed', value: 'GET github-user' },
@@ -71,5 +90,80 @@ test('page diagnostics retain extension and HTTP failures but ignore lifecycle-o
 
   diagnostics.cleanup();
   page.emit('requestfailed', failedRequest('https://api.github.com/user'));
-  assert.equal(issues.length, 6);
+  assert.equal(issues.length, 8);
+});
+
+test('Firefox extension URLs use the fixed test UUID while runtime discovery keeps the Gecko ID', async () => {
+  assert.equal(
+    extensionOrigin(FIREFOX_GECKO_ID, 'firefox'),
+    `moz-extension://${FIREFOX_TEST_UUID}`,
+  );
+  assert.equal(
+    extensionUrl(FIREFOX_GECKO_ID, '/src/options/index.html', 'firefox'),
+    `moz-extension://${FIREFOX_TEST_UUID}/src/options/index.html`,
+  );
+
+  const navigationOptions = [];
+  const controlTarget = { type: () => 'page', url: () => 'about:blank' };
+  const controlPage = {
+    goto: async (_url, options) => {
+      navigationOptions.push(options);
+      throw new Error('Firefox BiDi navigation lifecycle timeout');
+    },
+    waitForFunction: async () => {},
+    evaluate: async () => ({
+      runtimeId: FIREFOX_GECKO_ID,
+      backgroundUrl: `moz-extension://${FIREFOX_TEST_UUID}/_generated_background_page.html`,
+    }),
+    target: () => controlTarget,
+    close: async () => {},
+  };
+  const browser = {
+    newPage: async () => controlPage,
+  };
+
+  const discovered = await discoverExtension(browser, {
+    target: 'firefox',
+    dist: '/ignored-for-fixed-firefox-id',
+    timeoutMs: 5_000,
+    pollMs: 1,
+  });
+  assert.equal(discovered.extensionId, FIREFOX_GECKO_ID);
+  assert.equal(discovered.backgroundKind, 'event_page');
+  assert.equal(discovered.backgroundPage, null);
+  assert.equal(discovered.controlPage, controlPage);
+  assert.equal(discovered.target, null);
+  assert.deepEqual(navigationOptions, [{ waitUntil: 'domcontentloaded', timeout: 1_000 }]);
+});
+
+test('Firefox discovery accepts an externally opened extension control page', async () => {
+  const expectedPageUrl = `moz-extension://${FIREFOX_TEST_UUID}/src/popup/index.html`;
+  const openCalls = [];
+  const controlPage = {
+    waitForFunction: async (_predicate, _options, actualUrl) => {
+      assert.equal(actualUrl, expectedPageUrl);
+    },
+    evaluate: async () => ({
+      runtimeId: FIREFOX_GECKO_ID,
+      backgroundUrl: `moz-extension://${FIREFOX_TEST_UUID}/_generated_background_page.html`,
+    }),
+    close: async () => {},
+  };
+
+  const discovered = await discoverExtension({}, {
+    target: 'firefox',
+    dist: '/ignored-for-fixed-firefox-id',
+    timeoutMs: 5_000,
+    openPage: async (url, options) => {
+      openCalls.push({ url, options });
+      return controlPage;
+    },
+  });
+
+  assert.equal(discovered.controlPage, controlPage);
+  assert.equal(discovered.target, null);
+  assert.deepEqual(openCalls, [{
+    url: expectedPageUrl,
+    options: { timeoutMs: 5_000, readyTimeoutMs: 5_000 },
+  }]);
 });

@@ -758,7 +758,7 @@ function appendFailure(control, code) {
   control.failures.push(normalized);
 }
 
-function buildResponsesSse(completion, sequence) {
+export function buildResponsesSse(completion, sequence) {
   const responseId = `resp_runtime_${sequence}`;
   const events = [{ type: 'response.created', response: { id: responseId, status: 'in_progress' } }];
   if (completion.toolCall) {
@@ -912,6 +912,8 @@ function classifyHttpRoute(control, value) {
     if (/^\/repos\/[^/]+\/[^/]+\/contents$/u.test(url.pathname)) return 'github-contents';
     if (/^\/repos\/[^/]+\/[^/]+\/contents\/.+$/u.test(url.pathname)) return 'github-contents-file';
     if (url.pathname === '/user/starred') return 'github-starred';
+    if (/^\/users\/[^/]+\/repos$/u.test(url.pathname)) return 'github-owned-repos';
+    if (url.pathname === '/search/repositories') return 'github-repository-search';
     if (url.pathname === '/user/subscriptions') return 'github-watch-scope';
     if (url.pathname === '/notifications') return 'github-notifications';
     if (/^\/repos\/[^/]+\/[^/]+\/issues\/\d+$/u.test(url.pathname)) return 'github-watch-subject';

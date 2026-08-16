@@ -12,7 +12,7 @@ import {
 const NOW = new Date(2026, 7, 13, 6, 30, 0, 0).getTime();
 const NEXT_EIGHT = new Date(2026, 7, 13, 8, 0, 0, 0).getTime();
 
-type StoredAlarm = { periodInMinutes?: number; scheduledTime?: number };
+type StoredAlarm = { periodInMinutes?: number | null; scheduledTime?: number };
 
 function harness(seed: Record<string, StoredAlarm> = {}) {
   const alarms = new Map(Object.entries(seed));
@@ -90,6 +90,23 @@ describe('scheduled Watch, Radar, and recommendation refresh', () => {
 
     h.createAlarm.mockClear();
     await h.controller.ensure();
+    expect(h.createAlarm).not.toHaveBeenCalled();
+  });
+
+  it('keeps Firefox one-shot alarms whose period is reported as null', async () => {
+    const h = harness({
+      [WATCH_INBOX_AUTO_REFRESH_ALARM]: { periodInMinutes: 1 },
+      [WATCH_SCOPE_AUTO_REFRESH_ALARM]: { periodInMinutes: 60 },
+      [RADAR_AUTO_REFRESH_ALARM]: { periodInMinutes: 60 },
+      [RECOMMENDATION_DAILY_REFRESH_ALARM]: {
+        periodInMinutes: null,
+        scheduledTime: NEXT_EIGHT,
+      },
+    });
+
+    await h.controller.ensure();
+
+    expect(h.clearAlarm).not.toHaveBeenCalled();
     expect(h.createAlarm).not.toHaveBeenCalled();
   });
 
