@@ -231,12 +231,12 @@ pnpm build
 pnpm build:agent-dev-diagnostics
 ```
 
-在 Chrome 中加载构建结果：
+在 Chrome 中加载对应构建：
 
 1. 打开 `chrome://extensions`
 2. 开启 **开发者模式**
 3. 点击 **加载已解压的扩展程序**
-4. 选择项目中的 `dist/` 目录
+4. 常规构建选择项目中的 `dist/`；Cubby Agent 诊断构建选择 `artifacts/agent-diagnostics-dev-dist/`
 5. 打开 **Options**，按上文配置 GitHub Token
 
 常用验证命令：
@@ -264,7 +264,7 @@ pnpm test:smoke
 
 ## 参与贡献
 
-欢迎在 [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues) 报告问题或提交功能建议。Pull request 也可以直接提交到本仓库。
+欢迎在 [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues) 报告问题或提交功能建议。Pull request 也可以直接提交到本仓库；提交前请阅读 [贡献指南](CONTRIBUTING.md)，其中包含 Cubby Agent 的诊断构建与调试流程。
 
 ## 许可证
 

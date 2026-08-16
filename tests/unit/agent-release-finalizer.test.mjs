@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 import { writeDeterministicZip } from '../../scripts/deterministic-zip.mjs';
 import { RELEASE_MANUAL_EXCLUSIONS, RUNTIME_EVIDENCE_CONTRACTS } from '../../scripts/agent-runtime-release-evidence.mjs';
@@ -10,8 +12,10 @@ import {
   cleanupOwnedPublicationTemps,
   finalizeAgentRelease,
   listReleaseArtifactFiles,
+  listPublicReleaseAssetFiles,
   publishFinalEvidence,
   validatePackageArtifacts,
+  verifyPublicReleaseAssetDirectory,
 } from '../../scripts/verify-agent-release-gates.mjs';
 
 const VERSION = '1.0.9';
@@ -19,6 +23,7 @@ const COMMIT = 'a'.repeat(40);
 const SHA = 'b'.repeat(64);
 const FINGERPRINT = Object.freeze({ algorithm: 'sha256', fileCount: 3, sha256: SHA });
 const RELEASE_DIST = Object.freeze({ packageInput: FINGERPRINT });
+const RELEASE_GATE_SCRIPT = fileURLToPath(new URL('../../scripts/verify-agent-release-gates.mjs', import.meta.url));
 
 function approval() {
   return JSON.stringify({
@@ -61,6 +66,15 @@ function publicationPaths(artifactsDir) {
     final: path.join(artifactsDir, `release-evidence-${VERSION}.json`),
     gate: path.join(artifactsDir, 'agent-release-gate-evidence.json'),
   };
+}
+
+function writePublicPair(directory, zipName, contents) {
+  const bytes = Buffer.from(contents);
+  writeFileSync(path.join(directory, zipName), bytes);
+  writeFileSync(
+    path.join(directory, `${zipName}.sha256`),
+    `${createHash('sha256').update(bytes).digest('hex')}  ${zipName}\n`,
+  );
 }
 
 
@@ -558,6 +572,228 @@ test('enumerates the exact Firefox extension and reviewer-source artifacts', () 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('lists target packages and verifies the combined public release directory', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'bgsm-public-release-list-'));
+  const chromeDir = path.join(root, 'artifacts');
+  const firefoxDir = path.join(chromeDir, 'firefox');
+  const combinedDir = path.join(root, 'release-files');
+  const chromeOnlyDir = path.join(root, 'chrome-release-files');
+  mkdirSync(firefoxDir, { recursive: true });
+  mkdirSync(combinedDir);
+  mkdirSync(chromeOnlyDir);
+  const chromeZip = `better-github-stars-manager-${VERSION}.zip`;
+  const firefoxZip = `better-github-stars-manager-firefox-${VERSION}.zip`;
+  const firefoxSourceZip = `better-github-stars-manager-firefox-${VERSION}-source.zip`;
+  writePublicPair(chromeDir, chromeZip, 'chrome');
+  writePublicPair(firefoxDir, firefoxZip, 'firefox');
+  writePublicPair(firefoxDir, firefoxSourceZip, 'firefox-source');
+  writePublicPair(combinedDir, chromeZip, 'chrome');
+  writePublicPair(chromeOnlyDir, chromeZip, 'chrome-only');
+  writePublicPair(combinedDir, firefoxZip, 'firefox');
+  writePublicPair(combinedDir, firefoxSourceZip, 'firefox-source');
+
+  try {
+    assert.deepEqual(
+      listPublicReleaseAssetFiles({ root, artifactsDir: chromeDir, packageVersion: VERSION }),
+      [`artifacts/${chromeZip}`, `artifacts/${chromeZip}.sha256`],
+    );
+    assert.deepEqual(
+      listPublicReleaseAssetFiles({
+        root,
+        artifactsDir: firefoxDir,
+        packageVersion: VERSION,
+        browserTarget: 'firefox',
+      }),
+      [
+        `artifacts/firefox/${firefoxSourceZip}`,
+        `artifacts/firefox/${firefoxSourceZip}.sha256`,
+        `artifacts/firefox/${firefoxZip}`,
+        `artifacts/firefox/${firefoxZip}.sha256`,
+      ],
+    );
+    const combined = verifyPublicReleaseAssetDirectory({
+      root,
+      directory: combinedDir,
+      packageVersion: VERSION,
+    });
+    assert.equal(combined.length, 6);
+    assert.equal(combined.every((relativePath) => relativePath.startsWith('release-files/')), true);
+    assert.deepEqual(
+      verifyPublicReleaseAssetDirectory({
+        root,
+        directory: chromeOnlyDir,
+        packageVersion: VERSION,
+        browserTarget: 'chrome',
+      }),
+      [`chrome-release-files/${chromeZip}`, `chrome-release-files/${chromeZip}.sha256`],
+    );
+    writePublicPair(chromeOnlyDir, firefoxZip, 'unexpected-firefox');
+    writePublicPair(chromeOnlyDir, firefoxSourceZip, 'unexpected-firefox-source');
+    assert.throws(
+      () => verifyPublicReleaseAssetDirectory({
+        root,
+        directory: chromeOnlyDir,
+        packageVersion: VERSION,
+        browserTarget: 'chrome',
+      }),
+      /contains missing, extra, or nested files/,
+    );
+
+    writeFileSync(path.join(combinedDir, `${chromeZip}.sha256`), `${'0'.repeat(64)}  ${chromeZip}\n`);
+    assert.throws(
+      () => verifyPublicReleaseAssetDirectory({ root, directory: combinedDir, packageVersion: VERSION }),
+      /Public release checksum is stale/,
+    );
+    writePublicPair(combinedDir, chromeZip, 'chrome');
+    writeFileSync(path.join(combinedDir, 'unexpected.txt'), 'unexpected');
+    assert.throws(
+      () => verifyPublicReleaseAssetDirectory({ root, directory: combinedDir, packageVersion: VERSION }),
+      /contains missing, extra, or nested files/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('public release listing honors explicit, environment, and target-default artifact directories', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'bgsm-public-release-roots-'));
+  const defaultDir = path.join(root, 'artifacts');
+  const envDir = path.join(root, 'selected-artifacts');
+  const explicitDir = path.join(root, 'explicit-artifacts');
+  const chromeZip = `better-github-stars-manager-${VERSION}.zip`;
+  for (const [directory, contents] of [
+    [defaultDir, 'default'],
+    [envDir, 'environment'],
+    [explicitDir, 'explicit'],
+  ]) {
+    mkdirSync(directory);
+    writePublicPair(directory, chromeZip, contents);
+  }
+
+  try {
+    assert.deepEqual(
+      listPublicReleaseAssetFiles({ root, env: {}, packageVersion: VERSION }),
+      [`artifacts/${chromeZip}`, `artifacts/${chromeZip}.sha256`],
+    );
+    assert.deepEqual(
+      listPublicReleaseAssetFiles({
+        root,
+        env: { GSM_ARTIFACTS_DIR: 'selected-artifacts' },
+        packageVersion: VERSION,
+      }),
+      [`selected-artifacts/${chromeZip}`, `selected-artifacts/${chromeZip}.sha256`],
+    );
+    assert.deepEqual(
+      listPublicReleaseAssetFiles({
+        root,
+        artifactsDir: explicitDir,
+        env: { GSM_ARTIFACTS_DIR: 'selected-artifacts' },
+        packageVersion: VERSION,
+      }),
+      [`explicit-artifacts/${chromeZip}`, `explicit-artifacts/${chromeZip}.sha256`],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('public release listing rejects out-of-root, symlinked, and non-directory roots', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'bgsm-public-release-root-safety-'));
+  const externalRoot = mkdtempSync(path.join(os.tmpdir(), 'bgsm-public-release-ancestor-'));
+  const realDir = path.join(root, 'real-artifacts');
+  const symlinkDir = path.join(root, 'redirected-artifacts');
+  const ancestorLink = path.join(root, 'linked');
+  const linkedArtifactsDir = path.join(ancestorLink, 'artifacts');
+  const linkedReleaseDir = path.join(ancestorLink, 'release-files');
+  const externalArtifactsDir = path.join(externalRoot, 'artifacts');
+  const externalReleaseDir = path.join(externalRoot, 'release-files');
+  const fileRoot = path.join(root, 'artifact-file');
+  const chromeZip = `better-github-stars-manager-${VERSION}.zip`;
+  const firefoxZip = `better-github-stars-manager-firefox-${VERSION}.zip`;
+  const firefoxSourceZip = `better-github-stars-manager-firefox-${VERSION}-source.zip`;
+  mkdirSync(realDir);
+  mkdirSync(externalArtifactsDir);
+  mkdirSync(externalReleaseDir);
+  writePublicPair(externalArtifactsDir, chromeZip, 'external-chrome');
+  writePublicPair(externalReleaseDir, chromeZip, 'external-chrome');
+  writePublicPair(externalReleaseDir, firefoxZip, 'external-firefox');
+  writePublicPair(externalReleaseDir, firefoxSourceZip, 'external-firefox-source');
+  symlinkSync(realDir, symlinkDir);
+  symlinkSync(externalRoot, ancestorLink);
+  writeFileSync(fileRoot, 'not a directory');
+
+  try {
+    assert.throws(
+      () => listPublicReleaseAssetFiles({
+        root,
+        env: { GSM_ARTIFACTS_DIR: '../redirected-artifacts' },
+        packageVersion: VERSION,
+      }),
+      /must stay inside the repository/,
+    );
+    assert.throws(
+      () => listPublicReleaseAssetFiles({
+        root,
+        env: { GSM_ARTIFACTS_DIR: 'redirected-artifacts' },
+        packageVersion: VERSION,
+      }),
+      /must be a real directory/,
+    );
+    assert.equal(lstatSync(symlinkDir).isSymbolicLink(), true);
+    assert.throws(
+      () => listPublicReleaseAssetFiles({
+        root,
+        env: { GSM_ARTIFACTS_DIR: 'artifact-file' },
+        packageVersion: VERSION,
+      }),
+      /must be a real directory/,
+    );
+    assert.throws(
+      () => listPublicReleaseAssetFiles({
+        root,
+        artifactsDir: linkedArtifactsDir,
+        packageVersion: VERSION,
+      }),
+      /must be a real directory/,
+    );
+    assert.throws(
+      () => verifyPublicReleaseAssetDirectory({
+        root,
+        directory: linkedReleaseDir,
+        packageVersion: VERSION,
+      }),
+      /must be a real directory/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(externalRoot, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  ['--list-release-artifacts', ['chrome', 'extra']],
+  ['--list-public-release-assets', ['chrome', 'extra']],
+  ['--verify-public-release-directory', ['release-files', 'all', 'extra']],
+])('recognized CLI command %s rejects excess operands', (command, operands) => {
+  const result = spawnSync(process.execPath, [RELEASE_GATE_SCRIPT, command, ...operands], {
+    cwd: path.dirname(RELEASE_GATE_SCRIPT),
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Too many release artifact arguments\./);
+});
+
+test('unknown CLI commands retain the usage error even with excess operands', () => {
+  const result = spawnSync(
+    process.execPath,
+    [RELEASE_GATE_SCRIPT, '--unknown-release-command', 'one', 'two', 'three'],
+    { cwd: path.dirname(RELEASE_GATE_SCRIPT), encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Usage: verify-agent-release-gates\.mjs/);
+  assert.doesNotMatch(result.stderr, /Too many release artifact arguments/);
 });
 
 test('finalizer blocks without explicit approval before reading or writing the run root', () => {

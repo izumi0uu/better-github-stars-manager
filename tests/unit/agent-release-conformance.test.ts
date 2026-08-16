@@ -33,7 +33,7 @@ describe('Agent release conformance', () => {
   });
 
 
-  it('wires one behavior-named, approval-gated, immutable release flow without legacy aliases', () => {
+  it('wires independent browser packaging, public-only assembly, and Chrome-only publication', () => {
     const packageJson = JSON.parse(read('package.json')) as {
       scripts: Record<string, string>;
     };
@@ -46,105 +46,122 @@ describe('Agent release conformance', () => {
     expect(existsSync(path.join(root, 'scripts/run-agent-phase5-verification.mjs'))).toBe(false);
 
     const workflow = read('.github/workflows/release.yml');
-    const checkout = workflow.indexOf('uses: actions/checkout@');
-    const pnpmSetup = workflow.indexOf('uses: pnpm/action-setup@');
-    const nodeSetup = workflow.indexOf('uses: actions/setup-node@');
-    const tagVersionCheck = workflow.indexOf('test "$TAG_NAME" = "v$package_version"');
-    const chromeInstallation = workflow.indexOf('pnpm exec puppeteer browsers install chrome');
-    const runtimeVerification = workflow.indexOf('pnpm verify:agent-runtime');
-    const gateFinalization = workflow.indexOf('pnpm verify:agent-release-gates');
-    const canonicalEnumeration = workflow.indexOf('--list-release-artifacts');
-    const artifactUpload = workflow.indexOf('uses: actions/upload-artifact@');
-    const existingReleaseCheck = workflow.indexOf('gh release view "$TAG_NAME"');
-    const existingAssetInventory = workflow.indexOf(
-      'gh release view "$TAG_NAME" --json assets --jq',
-    );
-    const assetSetVerification = workflow.indexOf(
-      'cmp -s "$expected_asset_names" "$actual_asset_names"',
-    );
-    const existingAssetDownload = workflow.indexOf('gh release download "$TAG_NAME"');
-    const assetByteVerification = workflow.indexOf(
-      'cmp -s "$release_file" "$existing_release_dir/downloaded/$asset_name"',
-    );
-    const githubRelease = workflow.indexOf('gh release create');
-    const chromeWebStore = workflow.indexOf('node scripts/publish-chrome-web-store.mjs');
+    const packageChrome = topLevelJob(workflow, 'package-chrome');
+    const packageFirefox = topLevelJob(workflow, 'package-firefox');
+    const assemble = topLevelJob(workflow, 'assemble-release');
+    const publish = topLevelJob(workflow, 'publish-chrome-web-store');
 
-    expect(workflow).toContain('GSM_VERSION_APPROVAL');
+    expect(workflow).toMatch(/^permissions:\n  contents: read\n/m);
+    expect(assemble).toContain('permissions:\n      contents: write');
+    expect(workflow).not.toMatch(/^permissions:\n  contents: write\n/m);
+    expect(workflow).toContain('GSM_VERSION_APPROVAL: ${{ vars.GSM_VERSION_APPROVAL }}');
     expect(workflow).not.toContain('verify:agent-phase5');
-    expect(workflow).toContain(
+
+    for (const action of [
       'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7',
-    );
-    expect(workflow).toContain(
       'uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6',
-    );
-    expect(workflow).toContain(
       'uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7',
-    );
-    expect(workflow).toContain(
       'uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7',
-    );
-    expect(workflow).not.toContain('uses: actions/checkout@v7');
-    expect(workflow).not.toContain('uses: pnpm/action-setup@v6');
-    expect(workflow).not.toContain('uses: actions/setup-node@v7');
-    expect(workflow).not.toContain('uses: actions/upload-artifact@v7');
+      'uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8',
+    ]) {
+      expect(workflow).toContain(action);
+    }
+    expect(workflow).not.toMatch(/uses: actions\/(?:checkout|upload-artifact|download-artifact)@v\d/gu);
+    expect(workflow).not.toMatch(/uses: pnpm\/action-setup@v\d/gu);
+    expect(workflow).not.toMatch(/uses: actions\/setup-node@v\d/gu);
+    expect(workflow.match(/uses: actions\/checkout@/gu) ?? []).toHaveLength(4);
+    expect(workflow.match(/uses: pnpm\/action-setup@/gu) ?? []).toHaveLength(2);
+    expect(workflow.match(/uses: actions\/setup-node@/gu) ?? []).toHaveLength(4);
+    expect(workflow.match(/uses: actions\/upload-artifact@/gu) ?? []).toHaveLength(5);
+    expect(workflow.match(/uses: actions\/download-artifact@/gu) ?? []).toHaveLength(3);
+    expect(workflow.match(/persist-credentials: false/gu) ?? []).toHaveLength(4);
+    expect(workflow.match(/fetch-depth: 0/gu) ?? []).toHaveLength(4);
 
-    const checkoutStep = workflow.slice(checkout, pnpmSetup);
-    expect(checkoutStep).toContain('persist-credentials: false');
-    expect(checkoutStep).toContain('fetch-depth: 0');
-    expect(workflow.match(/uses: actions\/checkout@/gu) ?? []).toHaveLength(1);
-    expect(workflow.match(/uses: pnpm\/action-setup@/gu) ?? []).toHaveLength(1);
-    expect(workflow.match(/uses: actions\/setup-node@/gu) ?? []).toHaveLength(1);
-    expect(workflow.match(/uses: actions\/upload-artifact@/gu) ?? []).toHaveLength(1);
-    expect(workflow).toContain(
-      '      - name: Install Chrome for Testing\n' +
-        '        run: pnpm exec puppeteer browsers install chrome\n\n' +
-        '      - name: Run integrated Agent runtime verification\n' +
-        '        run: pnpm verify:agent-runtime',
-    );
+    for (const job of [packageChrome, packageFirefox]) {
+      expect(job).toContain('pnpm install --frozen-lockfile');
+      expect(job).not.toMatch(/^[ \t]+cache:[ \t]*pnpm[ \t]*$/m);
+      expect(job).toContain('test "$TAG_NAME" = "v$package_version"');
+      expect(job).toContain('pnpm verify:agent-runtime');
+      expect(job).toContain('pnpm verify:agent-release-gates');
+      expect(job).toContain('--list-release-artifacts');
+      expect(job).toContain('--list-public-release-assets');
+      expect(job).toContain('if-no-files-found: error');
+      expect(job).toContain('release-private-');
+      expect(job).toContain('release-public-');
+    }
+    expect(packageChrome).toContain('GSM_ARTIFACTS_DIR: artifacts');
+    expect(packageChrome).not.toContain('GSM_PACKAGE_TARGET: firefox');
+    expect(packageFirefox).toContain('GSM_BROWSER_TARGET: firefox');
+    expect(packageFirefox).toContain('GSM_PACKAGE_TARGET: firefox');
+    expect(packageFirefox).toContain('GSM_DIST_DIR: dist-firefox');
+    expect(packageFirefox).toContain('GSM_ARTIFACTS_DIR: artifacts/firefox');
+    expect(packageFirefox).toContain("PUPPETEER_HEADLESS: 'false'");
+    expect(packageFirefox).toContain('xvfb-run -a pnpm verify:agent-runtime');
+    expect(packageFirefox).toContain('pnpm exec puppeteer browsers install chrome');
+    expect(packageFirefox).toContain('pnpm exec puppeteer browsers install firefox');
+    expect(packageFirefox).toContain('pnpm exec puppeteer browsers install firefox@stable_140.0.4');
+    expect(packageFirefox).toContain("pnpm exec puppeteer browsers install firefox --format '{{path}}'");
+    expect(packageFirefox).toContain("pnpm exec puppeteer browsers install firefox@stable_140.0.4 --format '{{path}}'");
+    expect(packageFirefox).toContain("printf 'FIREFOX_STABLE_EXECUTABLE=%s\\n'");
+    expect(packageFirefox).toContain("printf 'FIREFOX_140_EXECUTABLE=%s\\n'");
+    const runtimeVerification = packageFirefox.indexOf('pnpm verify:agent-runtime');
+    const outputCheck = packageFirefox.indexOf('pnpm check:firefox-output');
+    const firefoxLint = packageFirefox.indexOf('pnpm lint:firefox');
+    const gateFinalization = packageFirefox.indexOf('pnpm verify:agent-release-gates');
+    expect(runtimeVerification).toBeGreaterThan(-1);
+    expect(outputCheck).toBeGreaterThan(runtimeVerification);
+    expect(firefoxLint).toBeGreaterThan(outputCheck);
+    expect(gateFinalization).toBeGreaterThan(firefoxLint);
+    expect(packageFirefox).not.toContain('pnpm build:firefox');
+    expect(packageFirefox).not.toContain('pnpm test:smoke:firefox');
+    expect(packageFirefox).not.toContain('pnpm test:verify-firefox');
 
-    expect(checkout).toBeGreaterThan(-1);
-    expect(checkout).toBeLessThan(pnpmSetup);
-    expect(pnpmSetup).toBeLessThan(nodeSetup);
-    expect(tagVersionCheck).toBeGreaterThan(-1);
-    expect(tagVersionCheck).toBeLessThan(chromeInstallation);
-    expect(chromeInstallation).toBeLessThan(runtimeVerification);
-    expect(runtimeVerification).toBeLessThan(gateFinalization);
-    expect(gateFinalization).toBeLessThan(canonicalEnumeration);
-    expect(canonicalEnumeration).toBeLessThan(artifactUpload);
-    expect(artifactUpload).toBeLessThan(existingReleaseCheck);
-    expect(existingReleaseCheck).toBeLessThan(existingAssetInventory);
-    expect(existingAssetInventory).toBeLessThan(assetSetVerification);
-    expect(assetSetVerification).toBeLessThan(existingAssetDownload);
-    expect(existingAssetDownload).toBeLessThan(assetByteVerification);
-    expect(assetByteVerification).toBeLessThan(githubRelease);
-    expect(githubRelease).toBeLessThan(chromeWebStore);
+    expect(assemble).toContain('needs:\n      - package-chrome\n      - package-firefox');
+    expect(assemble).toContain("needs.package-chrome.result == 'success'");
+    expect(assemble).toContain("needs.package-firefox.result == 'success'");
+    expect(assemble).toContain('name: release-public-chrome-${{ github.sha }}');
+    expect(assemble).toContain('name: release-public-firefox-${{ github.sha }}');
+    expect(assemble).toContain('path: release-files/chrome');
+    expect(assemble).toContain('path: release-files/firefox');
+    expect(assemble).toContain('set -euo pipefail');
+    expect(assemble).toContain('for source_dir in release-files/chrome release-files/firefox; do');
+    expect(assemble).toContain('if [[ -e "$destination_path" || -L "$destination_path" ]]');
+    expect(assemble).toContain('Duplicate public release filename');
+    expect(assemble).toContain('cp "$source_path" "$destination_path"');
+    expect(assemble).not.toContain('cp -n');
+    expect(assemble).toContain('--verify-public-release-directory release-files all');
+    expect(assemble).toContain('test "$(wc -l < "$asset_list")" -eq 6');
+    expect(assemble).toContain('name: release-public-${{ github.sha }}');
+    expect(assemble).toContain('node-version: 24');
+    expect(assemble).toContain('Create or verify immutable GitHub release');
+    expect(assemble).toContain('mapfile -t release_files');
+    expect(assemble).toContain('test "${#release_files[@]}" -eq 6');
+    expect(assemble).toContain('gh release view "$TAG_NAME" --json assets --jq');
+    expect(assemble).toContain('gh release download "$TAG_NAME"');
+    expect(assemble).toContain('gh release create "$TAG_NAME" "${release_files[@]}"');
+    expect(assemble).toContain('cmp -s "$release_file" "$existing_release_dir/downloaded/$asset_name"');
+    expect(assemble).not.toMatch(/\bgh release (?:upload|edit|delete)\b/gu);
+    expect(assemble).not.toContain('--clobber');
+    expect(assemble).not.toContain('release-private-');
 
-    expect(workflow).toContain('scripts/verify-agent-release-gates.mjs --list-release-artifacts');
-    expect(workflow).toContain('path: ${{ steps.release-artifacts.outputs.files }}');
-    expect(workflow).toContain('mapfile -t release_files');
-    expect(workflow).toContain('"${release_files[@]}"');
-    expect(workflow).not.toContain('artifacts/*');
-
-    expect(workflow).toContain('Create or verify immutable GitHub release');
-    expect(workflow).toContain(
-      'printf \'%s\\n\' "${release_files[@]##*/}" | LC_ALL=C sort > "$expected_asset_names"',
-    );
-    expect(workflow).toContain('mktemp -d "$RUNNER_TEMP/existing-release.XXXXXX"');
-    expect(workflow).toContain('Existing GitHub Release asset inventory differs');
-    expect(workflow).toContain('Existing GitHub Release asset $asset_name differs');
-    expect(workflow.match(/gh release create/gu) ?? []).toHaveLength(1);
-    expect(workflow.match(/gh release download/gu) ?? []).toHaveLength(1);
-    expect(workflow.match(/cmp -s /gu) ?? []).toHaveLength(2);
-    expect(workflow).not.toMatch(/\bgh release (?:upload|edit|delete)\b/gu);
-    expect(workflow).not.toContain('--clobber');
-    expect(workflow).not.toContain('Create or update GitHub release');
-
-    expect(workflow).toContain('publish_to_chrome_web_store:');
-    expect(workflow).toContain(
-      "if: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/') && inputs.publish_to_chrome_web_store == true && vars.CWS_DEPLOY_ENABLED == 'true' }}",
-    );
-    expect(workflow).toContain('CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}');
-    expect(workflow).toContain('CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}');
+    expect(publish).toContain('needs: assemble-release');
+    expect(publish).toContain("needs.assemble-release.result == 'success'");
+    expect(publish).toContain('inputs.publish_to_chrome_web_store == true');
+    expect(publish).toContain("vars.CWS_DEPLOY_ENABLED == 'true'");
+    expect(publish).toContain('name: release-public-chrome-${{ github.sha }}');
+    expect(publish).toContain('path: chrome-public');
+    expect(publish).toContain('--verify-public-release-directory chrome-public chrome > "$RUNNER_TEMP/chrome-public-assets.txt"');
+    expect(publish.match(/--verify-public-release-directory chrome-public chrome/gu) ?? []).toHaveLength(1);
+    expect(publish).toContain('set -euo pipefail');
+    expect(publish).toContain('mapfile -t chrome_assets < "$RUNNER_TEMP/chrome-public-assets.txt"');
+    expect(publish).not.toContain('< <(');
+    expect(publish).toContain('if [[ "${#chrome_zips[@]}" -ne 1 ]]');
+    expect(publish).toContain('Expected exactly one Chrome ZIP in verified public inventory');
+    expect(publish).toContain('node scripts/publish-chrome-web-store.mjs "$zip_path"');
+    expect(publish).toContain('node-version: 24');
+    expect(publish).not.toContain('release-public-firefox');
+    expect(publish).not.toContain('release-private-');
+    expect(publish).toContain('*firefox*|*-source.zip');
 
     const packaging = read('scripts/package-extension.mjs');
     expect(packaging).toContain('releaseReady: false');
@@ -263,6 +280,23 @@ describe('Agent release conformance', () => {
 
 function read(relativePath: string): string {
   return readFileSync(path.join(root, relativePath), 'utf8');
+}
+
+function topLevelJob(workflow: string, name: string): string {
+  const jobsHeading = /^jobs:[ \t]*\r?$/m.exec(workflow);
+  if (!jobsHeading) throw new Error('Missing top-level jobs mapping');
+
+  const jobs = workflow.slice(jobsHeading.index + jobsHeading[0].length);
+  const heading = new RegExp(
+    String.raw`^  ${name}:[ \t]*\r?\n`,
+    'm',
+  ).exec(jobs);
+  if (!heading) throw new Error(`Missing top-level workflow job: ${name}`);
+
+  const contentStart = heading.index + heading[0].length;
+  const remainder = jobs.slice(contentStart);
+  const followingJob = remainder.search(/^  [A-Za-z0-9_-]+:[ \t]*\r?$/m);
+  return followingJob === -1 ? remainder : remainder.slice(0, followingJob);
 }
 
 function readSourceTree(relativeDirectory: string): string {

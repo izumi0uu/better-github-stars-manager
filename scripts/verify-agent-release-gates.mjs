@@ -56,7 +56,7 @@ export function finalizeAgentRelease({
   const resolvedRoot = path.resolve(root);
   const browserTarget = resolveRequestedBrowserTarget(env);
   const distDir = path.resolve(resolvedRoot, env.GSM_DIST_DIR ?? (browserTarget === 'firefox' ? 'dist-firefox' : 'dist'));
-  const artifactsDir = path.resolve(resolvedRoot, env.GSM_ARTIFACTS_DIR ?? (browserTarget === 'firefox' ? 'artifacts/firefox' : 'artifacts'));
+  const artifactsDir = resolveReleaseArtifactsDirectory(resolvedRoot, undefined, env, browserTarget);
   const runtimeEvidenceDir = path.resolve(resolvedRoot, env.GSM_RUNTIME_EVIDENCE_DIR ?? path.join(artifactsDir, 'runtime-evidence'));
   const versionApproval = parseVersionApproval(env.GSM_VERSION_APPROVAL);
   validateReleaseVersionApproval(versionApproval, packageVersion);
@@ -303,26 +303,22 @@ export function cleanupOwnedPublicationTemps({ artifactsDir, paths, prepared, ex
 export function listReleaseArtifactFiles({
   root = process.cwd(),
   artifactsDir,
+  env = process.env,
   packageVersion = pkg.version,
   publicationState = 'published',
   browserTarget = 'chrome',
 } = {}) {
   const target = normalizeReleaseBrowserTarget(browserTarget);
   const resolvedRoot = path.resolve(root);
-  const resolvedArtifacts = path.resolve(artifactsDir ?? path.join(resolvedRoot, target === 'firefox' ? 'artifacts/firefox' : 'artifacts'));
+  const resolvedArtifacts = resolveReleaseArtifactsDirectory(resolvedRoot, artifactsDir, env, target);
   if (resolvedArtifacts !== resolvedRoot && !resolvedArtifacts.startsWith(`${resolvedRoot}${path.sep}`)) {
     throw new Error('Release artifact root must stay inside the repository.');
   }
-  const artifactsStats = lstatSync(resolvedArtifacts);
-  if (artifactsStats.isSymbolicLink() || !artifactsStats.isDirectory()) {
-    throw new Error('Release artifact root must be a real directory.');
-  }
+  assertRealDirectory(resolvedRoot, resolvedArtifacts, 'Release artifact root');
   if (!['unpublished', 'final_only', 'published'].includes(publicationState)) {
     throw new Error('Release artifact publication state is invalid.');
   }
-  const baseName = target === 'firefox'
-    ? `better-github-stars-manager-firefox-${packageVersion}`
-    : `better-github-stars-manager-${packageVersion}`;
+  const baseName = canonicalReleaseBaseName(packageVersion, target);
   const expected = [
     'agent-runtime-verification.json',
     `${baseName}.zip`,
@@ -366,6 +362,122 @@ export function listReleaseArtifactFiles({
   ).split(path.sep).join('/')));
 }
 
+export function listPublicReleaseAssetFiles({
+  root = process.cwd(),
+  artifactsDir,
+  env = process.env,
+  packageVersion = pkg.version,
+  browserTarget = 'chrome',
+} = {}) {
+  const target = normalizeReleaseBrowserTarget(browserTarget);
+  const resolvedRoot = path.resolve(root);
+  const resolvedArtifacts = resolveReleaseArtifactsDirectory(resolvedRoot, artifactsDir, env, target);
+  assertDirectoryInsideRoot(resolvedRoot, resolvedArtifacts, 'Public release artifact root');
+  assertRealDirectory(resolvedRoot, resolvedArtifacts, 'Public release artifact root');
+  const names = publicReleaseAssetNames(packageVersion, target);
+  const files = names.map((name) => resolveEvidenceFile(resolvedArtifacts, name));
+  assertPublicReleaseChecksums(resolvedArtifacts, names);
+  return Object.freeze(files.map((filePath) => path.relative(resolvedRoot, filePath).split(path.sep).join('/')));
+}
+
+export function verifyPublicReleaseAssetDirectory({
+  root = process.cwd(),
+  directory = 'release-files',
+  packageVersion = pkg.version,
+  browserTarget = 'all',
+} = {}) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedDirectory = path.resolve(resolvedRoot, directory);
+  assertDirectoryInsideRoot(resolvedRoot, resolvedDirectory, 'Combined public release directory');
+  assertRealDirectory(resolvedRoot, resolvedDirectory, 'Combined public release directory');
+  const expected = publicReleaseTargets(browserTarget)
+    .flatMap((target) => publicReleaseAssetNames(packageVersion, target))
+    .sort(bytewiseCompare);
+  const actual = readdirSync(resolvedDirectory, { withFileTypes: true }).map((entry) => {
+    if (entry.isSymbolicLink() || !entry.isFile()) {
+      throw new Error(`Public release asset must be a regular file: ${entry.name}`);
+    }
+    return entry.name;
+  }).sort(bytewiseCompare);
+  assert.deepEqual(actual, expected, 'Public release asset directory contains missing, extra, or nested files.');
+  assertPublicReleaseChecksums(resolvedDirectory, expected);
+  return Object.freeze(expected.map((name) => path.relative(
+    resolvedRoot,
+    path.join(resolvedDirectory, name),
+  ).split(path.sep).join('/')));
+}
+
+function canonicalReleaseBaseName(packageVersion, browserTarget) {
+  const target = normalizeReleaseBrowserTarget(browserTarget);
+  return target === 'firefox'
+    ? `better-github-stars-manager-firefox-${packageVersion}`
+    : `better-github-stars-manager-${packageVersion}`;
+}
+
+function publicReleaseAssetNames(packageVersion, browserTarget) {
+  const target = normalizeReleaseBrowserTarget(browserTarget);
+  const baseName = canonicalReleaseBaseName(packageVersion, target);
+  return [
+    `${baseName}.zip`,
+    `${baseName}.zip.sha256`,
+    ...(target === 'firefox' ? [`${baseName}-source.zip`, `${baseName}-source.zip.sha256`] : []),
+  ].sort(bytewiseCompare);
+}
+
+function publicReleaseTargets(browserTarget) {
+  if (browserTarget === 'all') return Object.freeze(['chrome', 'firefox']);
+  return Object.freeze([normalizeReleaseBrowserTarget(browserTarget)]);
+}
+
+function resolveReleaseArtifactsDirectory(root, artifactsDir, env, browserTarget) {
+  const target = normalizeReleaseBrowserTarget(browserTarget);
+  const configuredDirectory = artifactsDir
+    ?? env?.GSM_ARTIFACTS_DIR
+    ?? (target === 'firefox' ? 'artifacts/firefox' : 'artifacts');
+  return path.resolve(root, configuredDirectory);
+}
+
+function assertRealDirectory(root, directory, label) {
+  const relativeSegments = path.relative(root, directory).split(path.sep).filter(Boolean);
+  let currentDirectory = root;
+  if (relativeSegments.length === 0) {
+    assertRealDirectoryEntry(currentDirectory, label);
+    return;
+  }
+  for (const segment of relativeSegments) {
+    currentDirectory = path.join(currentDirectory, segment);
+    assertRealDirectoryEntry(currentDirectory, label);
+  }
+}
+
+function assertRealDirectoryEntry(directory, label) {
+  const stats = lstatSync(directory);
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new Error(`${label} must be a real directory.`);
+  }
+}
+
+function assertDirectoryInsideRoot(root, directory, label) {
+  if (directory === root || !directory.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`${label} must stay inside the repository.`);
+  }
+}
+
+function assertPublicReleaseChecksums(directory, names) {
+  for (const checksumName of names.filter((name) => name.endsWith('.zip.sha256'))) {
+    const zipName = checksumName.slice(0, -'.sha256'.length);
+    const zipPath = resolveEvidenceFile(directory, zipName);
+    const checksumPath = resolveEvidenceFile(directory, checksumName);
+    const zipBytes = readFileSync(zipPath);
+    assert.ok(zipBytes.byteLength > 0, `Public release ZIP is empty: ${zipName}`);
+    assert.equal(
+      readFileSync(checksumPath, 'utf8'),
+      `${hash(zipBytes)}  ${zipName}\n`,
+      `Public release checksum is stale: ${checksumName}`,
+    );
+  }
+}
+
 export function validatePackageArtifacts({ root, artifactsDir, distDir, provisional, packageVersion, browserTarget = 'chrome' }) {
   const target = normalizeReleaseBrowserTarget(browserTarget);
   if ((target === 'firefox') !== (provisional?.schemaVersion === 3 && provisional?.browserTarget === 'firefox')) {
@@ -373,9 +485,7 @@ export function validatePackageArtifacts({ root, artifactsDir, distDir, provisio
   }
   const generated = provisional.generatedFiles;
   if (!Array.isArray(generated)) throw new Error('Provisional evidence has no generated file inventory.');
-  const baseName = target === 'firefox'
-    ? `better-github-stars-manager-firefox-${packageVersion}`
-    : `better-github-stars-manager-${packageVersion}`;
+  const baseName = canonicalReleaseBaseName(packageVersion, target);
   const expectedGeneratedFiles = [
     `${baseName}.zip`,
     `${baseName}.zip.sha256`,
@@ -562,11 +672,33 @@ function bytewiseCompare(left, right) {
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  if (process.argv[2] === '--list-release-artifacts' && process.argv.length === 3) {
-    process.stdout.write(`${listReleaseArtifactFiles().join('\n')}\n`);
-  } else if (process.argv.length === 2) {
+  const [command, ...operands] = process.argv.slice(2);
+  const maximumOperands = command === '--verify-public-release-directory'
+    ? 2
+    : command === '--list-release-artifacts' || command === '--list-public-release-assets'
+      ? 1
+      : undefined;
+  if (maximumOperands !== undefined && operands.length > maximumOperands) {
+    throw new Error('Too many release artifact arguments.');
+  }
+  const [firstArgument, secondArgument] = operands;
+  if (command === '--list-release-artifacts') {
+    const browserTarget = firstArgument ?? 'chrome';
+    process.stdout.write(`${listReleaseArtifactFiles({ browserTarget }).join('\n')}\n`);
+  } else if (command === '--list-public-release-assets') {
+    const browserTarget = firstArgument ?? 'chrome';
+    process.stdout.write(`${listPublicReleaseAssetFiles({ browserTarget }).join('\n')}\n`);
+  } else if (command === '--verify-public-release-directory' && firstArgument) {
+    const browserTarget = secondArgument ?? 'all';
+    process.stdout.write(`${verifyPublicReleaseAssetDirectory({
+      directory: firstArgument,
+      browserTarget,
+    }).join('\n')}\n`);
+  } else if (command === undefined) {
     finalizeAgentRelease();
   } else {
-    throw new Error('Usage: verify-agent-release-gates.mjs [--list-release-artifacts]');
+    throw new Error(
+      'Usage: verify-agent-release-gates.mjs [--list-release-artifacts [chrome|firefox] | --list-public-release-assets [chrome|firefox] | --verify-public-release-directory <directory> [chrome|firefox|all]]',
+    );
   }
 }

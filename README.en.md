@@ -231,12 +231,12 @@ Build the extension with Cubby Agent development diagnostics enabled (output: `a
 pnpm build:agent-dev-diagnostics
 ```
 
-Load the build in Chrome:
+Load the desired build in Chrome:
 
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
 3. Click **Load unpacked**
-4. Select the project's `dist/` directory
+4. Select `dist/` for a normal build or `artifacts/agent-diagnostics-dev-dist/` for an Agent diagnostics build
 5. Open **Options** and configure the GitHub token described above
 
 Common verification commands:
@@ -264,7 +264,7 @@ pnpm test:smoke
 
 ## Contributing
 
-Report bugs and request features through [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues). Pull requests are welcome.
+Report bugs and request features through [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues). Pull requests are welcome; read the [contribution guide](CONTRIBUTING.en.md) first for the Cubby Agent diagnostics build and debugging workflow.
 
 ## License
 

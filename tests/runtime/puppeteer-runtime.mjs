@@ -58,30 +58,42 @@ export async function resolveExecutablePath({ target = 'chrome', executablePath,
   if (normalizedTarget !== 'firefox' && normalizedDriver !== 'default') {
     throw new TypeError('The Firefox 140 Puppeteer driver can only launch Firefox.');
   }
-  const configuredPath = executablePath ?? (
-    normalizedTarget === 'firefox'
-      ? process.env.FIREFOX_EXECUTABLE
-      : process.env.PUPPETEER_EXECUTABLE_PATH
-  );
-  if (configuredPath) {
-    if (!existsSync(configuredPath)) {
+  const configuredExecutable = executablePath != null
+    ? { path: executablePath, source: 'executablePath' }
+    : normalizedTarget === 'firefox'
+      ? normalizedDriver === 'firefox_140' && process.env.FIREFOX_140_EXECUTABLE != null
+        ? { path: process.env.FIREFOX_140_EXECUTABLE, source: 'FIREFOX_140_EXECUTABLE' }
+        : process.env.FIREFOX_EXECUTABLE != null
+          ? { path: process.env.FIREFOX_EXECUTABLE, source: 'FIREFOX_EXECUTABLE' }
+          : null
+      : process.env.PUPPETEER_EXECUTABLE_PATH != null
+        ? { path: process.env.PUPPETEER_EXECUTABLE_PATH, source: 'PUPPETEER_EXECUTABLE_PATH' }
+        : null;
+  if (configuredExecutable?.path) {
+    if (!existsSync(configuredExecutable.path)) {
       throw new Error(
-        `${normalizedTarget === 'firefox' ? 'FIREFOX_EXECUTABLE' : 'PUPPETEER_EXECUTABLE_PATH'} does not exist: ${configuredPath}`,
+        `${configuredExecutable.source} does not exist: ${configuredExecutable.path}`,
       );
     }
-    return configuredPath;
+    return configuredExecutable.path;
+  }
+  if (normalizedTarget === 'firefox') {
+    const environmentName = normalizedDriver === 'firefox_140'
+      ? 'FIREFOX_140_EXECUTABLE'
+      : 'FIREFOX_EXECUTABLE';
+    const installCommand = normalizedDriver === 'firefox_140'
+      ? "pnpm exec puppeteer browsers install firefox@stable_140.0.4 --format '{{path}}'"
+      : "pnpm exec puppeteer browsers install firefox --format '{{path}}'";
+    throw new Error(
+      `Firefox verification requires explicit executablePath or ${environmentName}. Resolve it with "${installCommand}".`,
+    );
   }
 
   const driver = await loadPuppeteerDriver(normalizedDriver);
   const executable = await driver.executablePath({ browser: normalizedTarget });
   if (!existsSync(executable)) {
-    const installCommand = normalizedDriver === 'firefox_140'
-      ? 'pnpm exec puppeteer browsers install firefox@stable_140.0.4'
-      : normalizedTarget === 'firefox'
-        ? 'pnpm exec puppeteer browsers install firefox'
-        : 'pnpm exec puppeteer browsers install chrome';
     throw new Error(
-      `Puppeteer ${normalizedTarget} browser not installed at ${executable}. Run "${installCommand}" or set ${normalizedTarget === 'firefox' ? 'FIREFOX_EXECUTABLE' : 'PUPPETEER_EXECUTABLE_PATH'}.`,
+      `Puppeteer chrome browser not installed at ${executable}. Run "pnpm exec puppeteer browsers install chrome" or set PUPPETEER_EXECUTABLE_PATH.`,
     );
   }
   return executable;
@@ -123,11 +135,13 @@ export async function launchExtensionBrowser(input = {}) {
   }
 }
 
-export async function openFirefox140ExtensionPage(browser, {
+export async function openFirefoxExtensionPage(browser, {
   executablePath,
   userDataDir,
   url,
   timeoutMs = 20_000,
+  preparePage = null,
+  reuseExistingPage = false,
 }) {
   if (!browser || typeof browser.pages !== 'function') {
     throw new TypeError('Firefox browser must expose its open pages.');
@@ -140,32 +154,68 @@ export async function openFirefox140ExtensionPage(browser, {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new TypeError('timeoutMs must be positive.');
   }
+  if (preparePage !== null && typeof preparePage !== 'function') {
+    throw new TypeError('preparePage must be a function when provided.');
+  }
+  if (typeof reuseExistingPage !== 'boolean') {
+    throw new TypeError('reuseExistingPage must be a boolean.');
+  }
 
   const pagesBefore = new Map();
   for (const page of await browser.pages()) {
     pagesBefore.set(page, await page.evaluate(() => location.href).catch(() => null));
   }
-  try {
-    await execFileAsync(executablePath, ['--profile', userDataDir, '--new-tab', url], {
-      timeout: timeoutMs,
-    });
-  } catch (error) {
-    throw new Error('Firefox 140 could not request an extension tab from the running profile.', {
-      cause: error,
-    });
+  if (reuseExistingPage) {
+    for (const [page, actualUrl] of pagesBefore) {
+      if (actualUrl !== url) continue;
+      return preparePage ? preparePage(page) : page;
+    }
   }
-  const deadline = Date.now() + timeoutMs;
 
-  while (Date.now() < deadline) {
+  const deadline = Date.now() + timeoutMs;
+  const firstObservationMs = Math.max(1, Math.floor(timeoutMs / 2));
+  let successfulRequest = false;
+  let lastRequestError;
+
+  const findRequestedPage = async () => {
     for (const page of await browser.pages()) {
       const actualUrl = await page.evaluate(() => location.href).catch(() => null);
-      if (actualUrl === url && (!pagesBefore.has(page) || pagesBefore.get(page) !== url)) {
-        return prepareFirefox140ExtensionPage(page);
-      }
+      if (actualUrl === url && (
+        !pagesBefore.has(page)
+        || pagesBefore.get(page) !== url
+      )) return page;
     }
-    await delay(50);
+    return null;
+  };
+
+  for (let attempt = 0; attempt < 2 && Date.now() < deadline; attempt += 1) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    try {
+      await execFileAsync(executablePath, ['--profile', userDataDir, '--new-tab', url], {
+        timeout: Math.min(5_000, remainingMs),
+      });
+      successfulRequest = true;
+    } catch (error) {
+      lastRequestError = error;
+      continue;
+    }
+
+    const observationDeadline = attempt === 0
+      ? Math.min(deadline, Date.now() + firstObservationMs)
+      : deadline;
+    while (Date.now() < observationDeadline) {
+      const page = await findRequestedPage();
+      if (page) return preparePage ? preparePage(page) : page;
+      await delay(50);
+    }
   }
-  throw new Error('Firefox 140 did not expose the requested extension tab before timeout.');
+
+  if (!successfulRequest && lastRequestError) {
+    throw new Error('Firefox could not request an extension tab from the running profile.', {
+      cause: lastRequestError,
+    });
+  }
+  throw new Error('Firefox did not expose the requested extension tab after two requests.');
 }
 
 export function prepareFirefox140ExtensionPage(page) {

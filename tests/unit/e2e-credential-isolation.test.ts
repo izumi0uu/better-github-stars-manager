@@ -101,6 +101,119 @@ describe('E2E credential isolation', () => {
     ) ?? [];
     expect(packagedHostCommands).toEqual(['pnpm test:runtime:agent-session']);
   });
+
+  it('keeps Firefox verification credential-free and event-scoped', () => {
+    const workflow = read('.github/workflows/e2e-firefox.yml');
+    expect(workflow).toMatch(/^name: E2E Firefox Verification[ \t]*$/m);
+
+    const triggerStart = workflow.indexOf('on:');
+    const triggerEnd = workflow.indexOf('\nconcurrency:');
+    expect(triggerStart).toBeGreaterThan(-1);
+    expect(triggerEnd).toBeGreaterThan(triggerStart);
+    expect(workflow.slice(triggerStart, triggerEnd).replace(/\r/g, '').trim()).toBe([
+      'on:',
+      '  pull_request:',
+      '  push:',
+      '    branches:',
+      '      - master',
+      '  workflow_dispatch:',
+      '  schedule:',
+      "    - cron: '0 4 * * 1'",
+    ].join('\n'));
+    expect(workflow).toMatch(/^concurrency:\r?\n  group: e2e-firefox-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\r?\n  cancel-in-progress: true[ \t]*$/m);
+    expect(workflow).toMatch(/^permissions:\r?\n  contents: read[ \t]*$/m);
+
+    const jobsStart = workflow.indexOf('\njobs:\n');
+    expect(jobsStart).toBeGreaterThan(-1);
+    const jobNames = Array.from(
+      workflow.slice(jobsStart + '\njobs:\n'.length).matchAll(/^  ([A-Za-z0-9_-]+):[ \t]*\r?$/gm),
+      ([, name]) => name,
+    );
+    expect(jobNames).toEqual(['verify-firefox-stable', 'verify-firefox-versions']);
+
+    const stableJob = jobBlock(workflow, 'verify-firefox-stable');
+    const versionsJob = jobBlock(workflow, 'verify-firefox-versions');
+    expect(jobField(stableJob, 'if').replace(/\s+/g, ' ').trim()).toBe(
+      "github.event_name == 'pull_request' || github.event_name == 'push'",
+    );
+    expect(jobField(versionsJob, 'if').replace(/\s+/g, ' ').trim()).toBe(
+      "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
+    );
+
+    expect(workflow).not.toMatch(/\bsecrets\./);
+    expect(workflow).not.toMatch(/\$\{\{\s*github\.token\s*\}\}/);
+    expect(workflow).not.toMatch(
+      /\b(?:GH_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|AI_INPUT_API_KEY|CUBBY_API_KEY)\b/,
+    );
+    expect(workflow.match(/xvfb-run -a pnpm test:(?:smoke:firefox|verify-firefox)/gu) ?? []).toHaveLength(2);
+    expectCheckoutCredentialPersistenceDisabled(stableJob);
+    expectCheckoutCredentialPersistenceDisabled(versionsJob);
+    expectActionsPinned(workflow, [
+      'actions/checkout',
+      'pnpm/action-setup',
+      'actions/setup-node',
+      'actions/upload-artifact',
+    ]);
+
+    for (const job of [stableJob, versionsJob]) {
+      expect(job).toMatch(/^[ \t]*version:[ \t]*10\.33\.2[ \t]*$/m);
+      expect(job).toMatch(/^[ \t]*node-version:[ \t]*24[ \t]*$/m);
+      expect(job).toContain('pnpm install --frozen-lockfile');
+      expect(job.match(/^[ \t]*PUPPETEER_HEADLESS:[ \t]*'false'[ \t]*$/gm) ?? []).toHaveLength(1);
+      expect(job).not.toMatch(/^[ \t]*PUPPETEER_HEADLESS:[ \t]*'(?:true|new)'[ \t]*$/m);
+      expect(job.match(/uses: actions\/upload-artifact@/g) ?? []).toHaveLength(1);
+      expect(job).toMatch(/^[ \t]*path:[ \t]*dist-firefox[ \t]*$/m);
+    }
+
+    expectInOrder(stableJob, [
+      'pnpm install --frozen-lockfile',
+      'pnpm exec puppeteer browsers install firefox',
+      "pnpm exec puppeteer browsers install firefox --format '{{path}}'",
+      'pnpm build:firefox',
+      'pnpm check:firefox-output',
+      'pnpm lint:firefox',
+      'pnpm test:smoke:firefox',
+      'uses: actions/upload-artifact@',
+    ]);
+    expect(stableJob).not.toContain('firefox@stable_140.0.4');
+    expect(stableJob).not.toContain('pnpm test:verify-firefox');
+    expect(stableJob).toContain("printf 'FIREFOX_EXECUTABLE=%s\\n'");
+
+    expectInOrder(versionsJob, [
+      'pnpm install --frozen-lockfile',
+      'pnpm exec puppeteer browsers install firefox',
+      'pnpm exec puppeteer browsers install firefox@stable_140.0.4',
+      'Resolve Firefox executable paths',
+      'pnpm build:firefox',
+      'pnpm check:firefox-output',
+      'pnpm test:verify-firefox',
+      'uses: actions/upload-artifact@',
+    ]);
+    expect(versionsJob.match(/pnpm build:firefox/g) ?? []).toHaveLength(1);
+    expect(versionsJob.match(/pnpm check:firefox-output/g) ?? []).toHaveLength(1);
+    expect(versionsJob).not.toContain('pnpm lint:firefox');
+    expect(versionsJob).not.toContain('pnpm test:smoke:firefox');
+    expect(versionsJob).toContain(
+      "pnpm exec puppeteer browsers install firefox --format '{{path}}'",
+    );
+    expect(versionsJob).toContain(
+      "pnpm exec puppeteer browsers install firefox@stable_140.0.4 --format '{{path}}'",
+    );
+    expect(versionsJob).not.toContain('resolveExecutablePath');
+    expect(versionsJob).toMatch(/^[ \t]*id:[ \t]*firefox-paths[ \t]*$/m);
+    expect(versionsJob).toContain(
+      "printf 'stable=%s\\n' \"$stable_executable\" >> \"$GITHUB_OUTPUT\"",
+    );
+    expect(versionsJob).toContain(
+      "printf 'minimum=%s\\n' \"$minimum_executable\" >> \"$GITHUB_OUTPUT\"",
+    );
+    expect(versionsJob).toMatch(
+      /^[ \t]*FIREFOX_STABLE_EXECUTABLE:[ \t]*\$\{\{ steps\.firefox-paths\.outputs\.stable \}\}[ \t]*$/m,
+    );
+    expect(versionsJob).toMatch(
+      /^[ \t]*FIREFOX_140_EXECUTABLE:[ \t]*\$\{\{ steps\.firefox-paths\.outputs\.minimum \}\}[ \t]*$/m,
+    );
+  });
 });
 
 function read(relativePath: string): string {
@@ -250,4 +363,13 @@ function stepBlock(job: string, name: string): string {
   );
 
   return followingStep === -1 ? remainder : remainder.slice(0, followingStep);
+}
+
+function expectInOrder(source: string, values: readonly string[]): void {
+  let cursor = 0;
+  for (const value of values) {
+    const index = source.indexOf(value, cursor);
+    expect(index, `Missing or out-of-order workflow source: ${value}`).toBeGreaterThanOrEqual(cursor);
+    cursor = index + value.length;
+  }
 }

@@ -23,6 +23,11 @@ Keep this file short and practical. Add rules here only when they are core to th
 - `src/background/index.ts`: backfill orchestration and sync entrypoints.
 - `tests/unit`, `tests/integration`, `tests/regressions`, `tests/runtime`: test layers.
 
+## Contributor Workflow
+
+- Before implementation or debugging, consult `CONTRIBUTING.en.md` (or `CONTRIBUTING.md`) for the current build and verification commands.
+- Cubby Agent work must also consult `docs/en/cubby-agent.md` (or `docs/zh/cubby-agent.md`) and use the documented diagnostics entry points. Development diagnostics builds are never release evidence.
+
 ## Source Of Truth
 
 - IndexedDB is the source of truth for bulk repo data and annotations: `stars`, `tags`, `tagMeta`.

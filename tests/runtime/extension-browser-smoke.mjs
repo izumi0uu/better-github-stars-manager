@@ -11,7 +11,7 @@ import {
 import { FIREFOX_RUNTIME_SCENARIO_IDS } from '../../scripts/agent-runtime-release-evidence.mjs';
 import {
   launchExtensionBrowser,
-  openFirefox140ExtensionPage,
+  openFirefoxExtensionPage,
   prepareFirefox140ExtensionPage,
   normalizeRuntimeTarget,
   resolveExecutablePath,
@@ -52,6 +52,7 @@ let browser;
 let runtimeTarget;
 let activeExtensionRuntime;
 let extensionPageOpener = null;
+let prepareLegacyFirefoxPage = false;
 
 function step(message) {
   console.log(`\n${message}`);
@@ -69,6 +70,7 @@ function recordPageIssue(label, issue) {
 export async function runExtensionBrowserSmoke(options = {}) {
   if (browser || profile) throw new Error('Extension browser smoke is already running.');
   runtimeTarget = normalizeRuntimeTarget(options.target ?? 'chrome');
+  prepareLegacyFirefoxPage = runtimeTarget === 'firefox' && options.puppeteerDriver === 'firefox_140';
   DIST = path.resolve(
     options.dist
       ?? process.env.GSM_DIST_DIR
@@ -112,12 +114,15 @@ export async function runExtensionBrowserSmoke(options = {}) {
       failClosedNetwork: runtimeTarget === 'firefox',
       puppeteerDriver: options.puppeteerDriver,
     });
-    extensionPageOpener = options.puppeteerDriver === 'firefox_140'
-      ? (url, { timeoutMs }) => openFirefox140ExtensionPage(browser, {
+    // Firefox BiDi cannot navigate directly to moz-extension:// pages.
+    extensionPageOpener = runtimeTarget === 'firefox'
+      ? (url, { timeoutMs }) => openFirefoxExtensionPage(browser, {
           executablePath,
           userDataDir: profile,
           url,
           timeoutMs,
+          preparePage: prepareLegacyFirefoxPage ? prepareFirefox140ExtensionPage : null,
+          reuseExistingPage: !prepareLegacyFirefoxPage,
         })
       : null;
     const reportedBrowserVersion = await browser.version();
@@ -142,9 +147,18 @@ export async function runExtensionBrowserSmoke(options = {}) {
     const popup = await openExtensionPage(extensionId, POPUP_PATH, 'popup');
     await waitForPopupNoTokenState(popup);
 
-    const openedOptions = waitForExtensionPage(`${OPTIONS_PATH}`);
+    const openedOptions = runtimeTarget === 'firefox'
+      ? null
+      : waitForExtensionPage(`${OPTIONS_PATH}`);
+    if (runtimeTarget === 'firefox') await interceptFirefoxOpenOptionsRequest(popup);
     await clickButtonByText(popup, /^添加 Classic PAT$/);
-    const optionsFromPopup = await openedOptions;
+    let optionsFromPopup;
+    if (runtimeTarget === 'firefox') {
+      await waitForFirefoxOpenOptionsRequest(popup);
+      optionsFromPopup = await openExtensionPage(extensionId, OPTIONS_PATH, 'options-from-popup');
+    } else {
+      optionsFromPopup = await openedOptions;
+    }
     await optionsFromPopup.waitForSelector('textarea', { timeout: 10_000 });
     await waitForBodyText(optionsFromPopup, 'GitHub Classic PAT');
     await assertOptionsDefaultChineseAndUseEnglish(optionsFromPopup);
@@ -167,6 +181,7 @@ export async function runExtensionBrowserSmoke(options = {}) {
     step('3) Cubby disclosure is explicit and gates Provider traffic');
     await assertAgentDisclosureInfo(optionsFromPopup);
     ok('Options required explicit data-sharing acceptance before Cubby testing');
+    if (runtimeTarget === 'firefox') await optionsFromPopup.close().catch(() => {});
 
     step('4) Stars page fixture does not inject panel without owner proof');
     const noTokenStars = await browser.newPage();
@@ -211,7 +226,10 @@ export async function runExtensionBrowserSmoke(options = {}) {
 
     step('6) Discover switches from Following to deterministic For You recommendations');
     const seededWatch = await seedWatchAndRadarFixture(extensionId);
-    await assertScheduledRefreshAlarms(optionsFromPopup, true);
+    await assertScheduledRefreshAlarms(
+      runtimeTarget === 'firefox' ? activeExtensionRuntime.controlPage : optionsFromPopup,
+      true,
+    );
     await ownStars.bringToFront();
     await ownStars.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
     await waitForManagerRoot(ownStars);
@@ -256,8 +274,10 @@ export async function runExtensionBrowserSmoke(options = {}) {
     }, { polling: DOM_POLLING_MS, timeout: 10_000 });
     ok('repo fixture received a shadow-root tag chip');
 
-    await waitForBackgroundIdle(optionsFromPopup);
-    await optionsFromPopup.close();
+    await waitForBackgroundIdle(
+      runtimeTarget === 'firefox' ? activeExtensionRuntime.controlPage : optionsFromPopup,
+    );
+    if (runtimeTarget !== 'firefox') await optionsFromPopup.close();
     resetBackgroundGitHubApiCalls(browser, extensionId);
     const subjectDetailFixture = installBackgroundWatchSubjectDetailFixture(extensionId);
 
@@ -316,11 +336,17 @@ export async function runExtensionBrowserSmoke(options = {}) {
     ok('Watch Issue details loaded on demand through the main credential');
     subjectDetailFixture.setMode('forbidden');
     await openWatchSubjectDetail(ownStars, 'Read pull request thread', 'error');
-    const detailRecoveryOptionsOpened = waitForExtensionPage(`${OPTIONS_PATH}`);
+    await interceptFirefoxBackgroundOpenOptionsRequest();
+    const detailRecoveryOptionsOpened = runtimeTarget === 'firefox'
+      ? null
+      : waitForExtensionPage(`${OPTIONS_PATH}`);
     await assertWatchSubjectPermissionRecovery(ownStars);
-    const detailRecoveryOptions = await detailRecoveryOptionsOpened;
-    await assertGitHubOptionsIntent(detailRecoveryOptions);
-    await detailRecoveryOptions.close();
+    await waitForFirefoxBackgroundOpenOptionsRequest('github');
+    if (runtimeTarget !== 'firefox') {
+      const detailRecoveryOptions = await detailRecoveryOptionsOpened;
+      await assertGitHubOptionsIntent(detailRecoveryOptions);
+      await detailRecoveryOptions.close();
+    }
     ok('Watch permission failure offered focused GitHub authorization recovery while preserving row actions');
 
     step('10) Watch repository headers open local detail and remain coherent responsively');
@@ -381,10 +407,16 @@ export async function runExtensionBrowserSmoke(options = {}) {
     });
     await openWatchSurface(ownStars, 'Open options');
     await assertWatchSetupState(ownStars);
-    const openedWatchOptions = waitForExtensionPage(`${OPTIONS_PATH}`);
+    await interceptFirefoxBackgroundOpenOptionsRequest();
+    const openedWatchOptions = runtimeTarget === 'firefox'
+      ? null
+      : waitForExtensionPage(`${OPTIONS_PATH}`);
     await clickWatchRecoveryOptions(ownStars);
-    const watchOptions = await openedWatchOptions;
-    await assertWatchOptionsIntent(watchOptions);
+    await waitForFirefoxBackgroundOpenOptionsRequest('watch');
+    const watchOptions = runtimeTarget === 'firefox'
+      ? activeExtensionRuntime.controlPage
+      : await openedWatchOptions;
+    if (runtimeTarget !== 'firefox') await assertWatchOptionsIntent(watchOptions);
     assert.deepEqual(await readWatchCredentialState(watchOptions), {
       watchNotificationsEnabled: false,
       hasNotificationsToken: false,
@@ -461,6 +493,7 @@ function cleanupSmokeState() {
   activeExtensionRuntime = undefined;
   backgroundGitHubApiGuard = null;
   extensionPageOpener = null;
+  prepareLegacyFirefoxPage = false;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -496,6 +529,65 @@ async function openExtensionPage(extId, pagePath, label) {
     openPage: extensionPageOpener,
   });
 }
+
+
+// Observe the product's API call without depending on headless Firefox window management.
+async function interceptFirefoxOpenOptionsRequest(page) {
+  await page.evaluate(() => {
+    globalThis.__gsmFirefoxOpenOptionsRequests = 0;
+    chrome.runtime.openOptionsPage = async () => {
+      globalThis.__gsmFirefoxOpenOptionsRequests += 1;
+    };
+  });
+}
+
+async function waitForFirefoxOpenOptionsRequest(page, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const calls = await page.evaluate(() => globalThis.__gsmFirefoxOpenOptionsRequests ?? 0);
+    if (calls === 1) return;
+    await delay(50);
+  }
+  throw new Error('Firefox popup did not request the Options page before timeout.');
+}
+
+async function interceptFirefoxBackgroundOpenOptionsRequest() {
+  if (runtimeTarget !== 'firefox') return;
+  await activeExtensionRuntime.controlPage.evaluate(async () => {
+    const backgroundPage = await chrome.runtime.getBackgroundPage();
+    if (!backgroundPage) throw new Error('Firefox background page is unavailable.');
+    backgroundPage.__gsmFirefoxOpenOptionsRequest = { calls: 0, section: null };
+    backgroundPage.chrome.runtime.openOptionsPage = async () => {
+      const values = await backgroundPage.chrome.storage.session.get('gsm_options_intent');
+      const intent = values.gsm_options_intent;
+      backgroundPage.__gsmFirefoxOpenOptionsRequest = {
+        calls: backgroundPage.__gsmFirefoxOpenOptionsRequest.calls + 1,
+        section: intent?.section ?? null,
+      };
+    };
+  });
+}
+
+async function waitForFirefoxBackgroundOpenOptionsRequest(expectedSection, timeoutMs = 10_000) {
+  if (runtimeTarget !== 'firefox') return;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = await activeExtensionRuntime.controlPage.evaluate(async () => {
+      const backgroundPage = await chrome.runtime.getBackgroundPage();
+      return backgroundPage?.__gsmFirefoxOpenOptionsRequest ?? { calls: 0, section: null };
+    });
+    if (state.calls > 1) throw new Error(`Firefox background requested Options ${state.calls} times.`);
+    if (state.calls === 1) {
+      if (state.section !== expectedSection) {
+        throw new Error(`Firefox background requested Options section ${String(state.section)}; expected ${expectedSection}.`);
+      }
+      return;
+    }
+    await delay(50);
+  }
+  throw new Error(`Firefox background did not request the ${expectedSection} Options intent before timeout.`);
+}
+
 async function assertScheduledRefreshAlarms(page, expectRecommendationAlarm) {
   const expectedPeriodic = [
     { name: 'bgsm-radar-auto-refresh', periodInMinutes: 60 },
@@ -556,6 +648,7 @@ async function assertScheduledRefreshAlarms(page, expectRecommendationAlarm) {
   assert.deepEqual(actual, expected);
 }
 
+
 async function waitForExtensionPage(pagePath) {
   const prefix = `${extensionOrigin(activeExtensionRuntime.extensionId, runtimeTarget)}/`;
   let page;
@@ -581,7 +674,7 @@ async function waitForExtensionPage(pagePath) {
     page = await target.page();
     if (!page) throw new Error(`extension page opened without page handle: ${pagePath}`);
   }
-  if (extensionPageOpener) prepareFirefox140ExtensionPage(page);
+  if (prepareLegacyFirefoxPage) prepareFirefox140ExtensionPage(page);
   await useDeterministicMotion(page);
   hookPageDiagnostics(page, pagePath);
   return page;
@@ -1932,8 +2025,13 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
 
   const provider = createFirefoxAgentProviderFixture(guard);
   try {
-    await grantFirefoxAgentDataPermission(page);
-    await configureFirefoxSavedProvider(page);
+    const permissionPage = await openExtensionPage(extId, OPTIONS_PATH, 'options-agent-permission');
+    try {
+      await grantFirefoxAgentDataPermission(permissionPage);
+      await configureFirefoxSavedProvider(permissionPage);
+    } finally {
+      await permissionPage.close().catch(() => {});
+    }
     const captureStart = provider.captures.length;
     await assertFirefoxCubbyTurn(starsPage);
     const organize = await runFirefoxFullLibraryOrganize(page);
@@ -2041,7 +2139,7 @@ async function invalidTokenApiResponse(request) {
 
 
 async function assertWatchOptionsIntent(page) {
-  await page.bringToFront();
+  if (runtimeTarget !== 'firefox') await page.bringToFront();
   await page.waitForFunction(
     () => document.activeElement?.id === 'github-connection-heading',
     { polling: DOM_POLLING_MS, timeout: 20_000 },
@@ -2059,7 +2157,7 @@ async function assertWatchOptionsIntent(page) {
 }
 
 async function assertGitHubOptionsIntent(page) {
-  await page.bringToFront();
+  if (runtimeTarget !== 'firefox') await page.bringToFront();
   await page.waitForFunction(
     () => document.activeElement?.id === 'github-connection-heading',
     { polling: DOM_POLLING_MS, timeout: 20_000 },

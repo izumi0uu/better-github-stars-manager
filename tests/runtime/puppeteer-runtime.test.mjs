@@ -57,6 +57,53 @@ await assert.rejects(
 );
 console.log('✓ puppeteer runtime preserves Chrome defaults and configures real Firefox launch');
 
+const previousFirefoxExecutable = process.env.FIREFOX_EXECUTABLE;
+const previousFirefox140Executable = process.env.FIREFOX_140_EXECUTABLE;
+delete process.env.FIREFOX_EXECUTABLE;
+delete process.env.FIREFOX_140_EXECUTABLE;
+try {
+  const invalidExplicitPath = '/__github_stars_manager_missing__/explicit-firefox';
+  const invalidFirefox140Path = '/__github_stars_manager_missing__/firefox-140';
+  const invalidFirefoxFallbackPath = '/__github_stars_manager_missing__/firefox-fallback';
+  process.env.FIREFOX_140_EXECUTABLE = invalidFirefox140Path;
+  process.env.FIREFOX_EXECUTABLE = invalidFirefoxFallbackPath;
+  await assert.rejects(
+    () => resolveExecutablePath({
+      target: 'firefox',
+      executablePath: invalidExplicitPath,
+      puppeteerDriver: 'firefox_140',
+    }),
+    (error) => error instanceof Error
+      && error.message === `executablePath does not exist: ${invalidExplicitPath}`,
+  );
+  await assert.rejects(
+    () => resolveExecutablePath({ target: 'firefox', puppeteerDriver: 'firefox_140' }),
+    (error) => error instanceof Error
+      && error.message === `FIREFOX_140_EXECUTABLE does not exist: ${invalidFirefox140Path}`,
+  );
+  delete process.env.FIREFOX_140_EXECUTABLE;
+  await assert.rejects(
+    () => resolveExecutablePath({ target: 'firefox', puppeteerDriver: 'firefox_140' }),
+    (error) => error instanceof Error
+      && error.message === `FIREFOX_EXECUTABLE does not exist: ${invalidFirefoxFallbackPath}`,
+  );
+  delete process.env.FIREFOX_EXECUTABLE;
+  await assert.rejects(
+    () => resolveExecutablePath({ target: 'firefox' }),
+    /requires explicit executablePath or FIREFOX_EXECUTABLE.*--format '\{\{path\}\}'/u,
+  );
+  await assert.rejects(
+    () => resolveExecutablePath({ target: 'firefox', puppeteerDriver: 'firefox_140' }),
+    /requires explicit executablePath or FIREFOX_140_EXECUTABLE.*stable_140\.0\.4/u,
+  );
+} finally {
+  if (previousFirefoxExecutable === undefined) delete process.env.FIREFOX_EXECUTABLE;
+  else process.env.FIREFOX_EXECUTABLE = previousFirefoxExecutable;
+  if (previousFirefox140Executable === undefined) delete process.env.FIREFOX_140_EXECUTABLE;
+  else process.env.FIREFOX_140_EXECUTABLE = previousFirefox140Executable;
+}
+console.log('✓ puppeteer runtime requires explicit Firefox executable provenance');
+
 try {
   const executablePath = await resolveExecutablePath();
 
