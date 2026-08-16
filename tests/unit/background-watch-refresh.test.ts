@@ -348,6 +348,212 @@ describe('Watch background refresh coordinator', () => {
     expect(mutateNotification).not.toHaveBeenCalled();
   });
 
+  it('applies the successful part of an oversized done batch', async () => {
+    const threads = Array.from({ length: 500 }, (_, index) => thread(String(index + 1)));
+    await db.watchNotificationThreads.bulkPut(threads);
+    await db.watchState.put({
+      id: 'singleton',
+      accountLogin: ACCOUNT,
+      scope: {
+        lastAttemptAt: null,
+        lastSuccessfulAt: null,
+        errorCode: null,
+        repositoryCount: 0,
+      },
+      inbox: {
+        lastAttemptAt: null,
+        lastSuccessfulAt: null,
+        errorCode: null,
+        lastModified: null,
+        nextAllowedAt: null,
+        candidateCount: 0,
+        matchedCount: 0,
+        truncated: false,
+      },
+    });
+    const mutateNotification = vi.fn(async ({ threadId }: { threadId: string }) => {
+      if (threadId === '250') throw new GitHubWatchError('rate_limited');
+    });
+    const h = harness({ mutateNotification });
+    await h.coordinator.reconcileAccount();
+    h.broadcastChanged.mockClear();
+
+    const result = await h.coordinator.markThreadsDone({
+      accountLogin: ACCOUNT,
+      threadIds: threads.map((item) => item.id),
+    });
+
+    expect(mutateNotification).toHaveBeenCalledTimes(500);
+    expect(result).toEqual({ action: 'done', requestedCount: 500, changedCount: 499 });
+    const remaining = await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT });
+    expect(remaining.threads.map((item) => item.id)).toEqual(['250']);
+    expect(h.broadcastChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a done batch when every thread mutation fails', async () => {
+    await db.watchNotificationThreads.bulkPut([thread('1'), thread('2')]);
+    await db.watchState.put({
+      id: 'singleton',
+      accountLogin: ACCOUNT,
+      scope: {
+        lastAttemptAt: null,
+        lastSuccessfulAt: null,
+        errorCode: null,
+        repositoryCount: 0,
+      },
+      inbox: {
+        lastAttemptAt: null,
+        lastSuccessfulAt: null,
+        errorCode: null,
+        lastModified: null,
+        nextAllowedAt: null,
+        candidateCount: 0,
+        matchedCount: 0,
+        truncated: false,
+      },
+    });
+    const mutateNotification = vi.fn(async () => {
+      throw new GitHubWatchError('rate_limited');
+    });
+    const h = harness({ mutateNotification });
+    await h.coordinator.reconcileAccount();
+    h.broadcastChanged.mockClear();
+
+    await expect(h.coordinator.markThreadsDone({
+      accountLogin: ACCOUNT,
+      threadIds: ['1', '2'],
+    })).rejects.toMatchObject({ code: 'rate_limited' });
+    expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads)
+      .toHaveLength(2);
+    expect(h.broadcastChanged).not.toHaveBeenCalled();
+  });
+
+  it('revalidates credentials before applying completed thread mutations', async () => {
+    await watchStore.replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread('1')],
+      attemptedAt: new Date(NOW).toISOString(),
+      lastModified: null,
+      nextAllowedAt: null,
+      candidateCount: 1,
+      truncated: false,
+      mode: 'replace',
+    });
+    const pendingMutation = deferred<void>();
+    const mutateNotification = vi.fn(async () => pendingMutation.promise);
+    const h = harness({ mutateNotification });
+
+    const mutation = h.coordinator.markThreadsDone({
+      accountLogin: ACCOUNT,
+      threadIds: ['1'],
+    });
+    const rejected = expect(mutation).rejects.toMatchObject({ code: 'authentication_required' });
+    await vi.waitFor(() => expect(mutateNotification).toHaveBeenCalledTimes(1));
+    h.changeAccount('another-user');
+    pendingMutation.resolve();
+
+    await rejected;
+    expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads)
+      .toHaveLength(1);
+    expect(h.broadcastChanged).not.toHaveBeenCalled();
+  });
+
+  it('caps thread mutations at four workers and consumes every target once', async () => {
+    const threads = Array.from({ length: 9 }, (_, index) => thread(String(index + 1)));
+    await watchStore.replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads,
+      attemptedAt: new Date(NOW).toISOString(),
+      lastModified: null,
+      nextAllowedAt: null,
+      candidateCount: threads.length,
+      truncated: false,
+      mode: 'replace',
+    });
+    const releaseMutations = deferred<void>();
+    const seen: string[] = [];
+    let active = 0;
+    let peakActive = 0;
+    const mutateNotification = vi.fn(async ({ threadId }: { threadId: string }) => {
+      seen.push(threadId);
+      active += 1;
+      peakActive = Math.max(peakActive, active);
+      await releaseMutations.promise;
+      active -= 1;
+    });
+    const h = harness({ mutateNotification });
+
+    const mutation = h.coordinator.markThreadsDone({
+      accountLogin: ACCOUNT,
+      threadIds: threads.map((item) => item.id),
+    });
+    await vi.waitFor(() => expect(mutateNotification).toHaveBeenCalledTimes(4));
+    expect(active).toBe(4);
+    expect(peakActive).toBe(4);
+
+    releaseMutations.resolve();
+    const result = await mutation;
+
+    expect(result).toEqual({ action: 'done', requestedCount: 9, changedCount: 9 });
+    expect(mutateNotification).toHaveBeenCalledTimes(9);
+    expect([...seen].sort((left, right) => Number(left) - Number(right)))
+      .toEqual(threads.map((item) => item.id));
+    expect(peakActive).toBe(4);
+    expect(h.broadcastChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes overlapping thread mutation commands', async () => {
+    await watchStore.replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread('1'), thread('2')],
+      attemptedAt: new Date(NOW).toISOString(),
+      lastModified: null,
+      nextAllowedAt: null,
+      candidateCount: 2,
+      truncated: false,
+      mode: 'replace',
+    });
+    const releaseFirstMutation = deferred<void>();
+    let mutationCalls = 0;
+    const mutateNotification = vi.fn(async () => {
+      mutationCalls += 1;
+      if (mutationCalls === 1) await releaseFirstMutation.promise;
+    });
+    const runner = createSerializedRunner();
+    let serializedRuns = 0;
+    let activeRuns = 0;
+    let peakActiveRuns = 0;
+    const runSerialized: WatchRefreshCoordinatorDependencies['runSerialized'] = (operation) => {
+      serializedRuns += 1;
+      return runner.run(async () => {
+        activeRuns += 1;
+        peakActiveRuns = Math.max(peakActiveRuns, activeRuns);
+        try {
+          return await operation();
+        } finally {
+          activeRuns -= 1;
+        }
+      });
+    };
+    const h = harness({ mutateNotification, runSerialized });
+
+    const first = h.coordinator.markThreadsDone({ accountLogin: ACCOUNT, threadIds: ['1'] });
+    const second = h.coordinator.markThreadsDone({ accountLogin: ACCOUNT, threadIds: ['2'] });
+    await vi.waitFor(() => expect(mutateNotification).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    expect(mutateNotification).toHaveBeenCalledTimes(1);
+
+    releaseFirstMutation.resolve();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { action: 'done', requestedCount: 1, changedCount: 1 },
+      { action: 'done', requestedCount: 1, changedCount: 1 },
+    ]);
+    expect(mutateNotification).toHaveBeenCalledTimes(2);
+    expect(serializedRuns).toBe(4);
+    expect(peakActiveRuns).toBe(1);
+    expect(h.broadcastChanged).toHaveBeenCalledTimes(2);
+  });
+
   it('publishes live-star Notifications even when native scope omits the repository', async () => {
     const h = harness({
       fetchScope: vi.fn(async () => ({
