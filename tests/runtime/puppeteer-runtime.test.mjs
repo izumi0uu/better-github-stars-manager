@@ -57,6 +57,27 @@ await assert.rejects(
 );
 console.log('✓ puppeteer runtime preserves Chrome defaults and configures real Firefox launch');
 
+const previousFirefoxExecutable = process.env.FIREFOX_EXECUTABLE;
+const previousFirefox140Executable = process.env.FIREFOX_140_EXECUTABLE;
+delete process.env.FIREFOX_EXECUTABLE;
+delete process.env.FIREFOX_140_EXECUTABLE;
+try {
+  await assert.rejects(
+    () => resolveExecutablePath({ target: 'firefox' }),
+    /requires explicit executablePath or FIREFOX_EXECUTABLE.*--format '\{\{path\}\}'/u,
+  );
+  await assert.rejects(
+    () => resolveExecutablePath({ target: 'firefox', puppeteerDriver: 'firefox_140' }),
+    /requires explicit executablePath or FIREFOX_140_EXECUTABLE.*stable_140\.0\.4/u,
+  );
+} finally {
+  if (previousFirefoxExecutable === undefined) delete process.env.FIREFOX_EXECUTABLE;
+  else process.env.FIREFOX_EXECUTABLE = previousFirefoxExecutable;
+  if (previousFirefox140Executable === undefined) delete process.env.FIREFOX_140_EXECUTABLE;
+  else process.env.FIREFOX_140_EXECUTABLE = previousFirefox140Executable;
+}
+console.log('✓ puppeteer runtime requires explicit Firefox executable provenance');
+
 try {
   const executablePath = await resolveExecutablePath();
 

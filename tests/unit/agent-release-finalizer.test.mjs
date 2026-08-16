@@ -10,8 +10,10 @@ import {
   cleanupOwnedPublicationTemps,
   finalizeAgentRelease,
   listReleaseArtifactFiles,
+  listPublicReleaseAssetFiles,
   publishFinalEvidence,
   validatePackageArtifacts,
+  verifyPublicReleaseAssetDirectory,
 } from '../../scripts/verify-agent-release-gates.mjs';
 
 const VERSION = '1.0.9';
@@ -554,6 +556,74 @@ test('enumerates the exact Firefox extension and reviewer-source artifacts', () 
     assert.throws(
       () => listReleaseArtifactFiles({ root, artifactsDir, packageVersion: VERSION, browserTarget: 'firefox' }),
       /inventory contains missing, extra, private, temporary, or nested files/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lists target packages and verifies the combined public release directory', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'bgsm-public-release-list-'));
+  const chromeDir = path.join(root, 'artifacts');
+  const firefoxDir = path.join(chromeDir, 'firefox');
+  const combinedDir = path.join(root, 'release-files');
+  mkdirSync(firefoxDir, { recursive: true });
+  mkdirSync(combinedDir);
+  const writePair = (directory, zipName, contents) => {
+    const bytes = Buffer.from(contents);
+    writeFileSync(path.join(directory, zipName), bytes);
+    writeFileSync(
+      path.join(directory, `${zipName}.sha256`),
+      `${createHash('sha256').update(bytes).digest('hex')}  ${zipName}\n`,
+    );
+  };
+  const chromeZip = `better-github-stars-manager-${VERSION}.zip`;
+  const firefoxZip = `better-github-stars-manager-firefox-${VERSION}.zip`;
+  const firefoxSourceZip = `better-github-stars-manager-firefox-${VERSION}-source.zip`;
+  writePair(chromeDir, chromeZip, 'chrome');
+  writePair(firefoxDir, firefoxZip, 'firefox');
+  writePair(firefoxDir, firefoxSourceZip, 'firefox-source');
+  writePair(combinedDir, chromeZip, 'chrome');
+  writePair(combinedDir, firefoxZip, 'firefox');
+  writePair(combinedDir, firefoxSourceZip, 'firefox-source');
+
+  try {
+    assert.deepEqual(
+      listPublicReleaseAssetFiles({ root, artifactsDir: chromeDir, packageVersion: VERSION }),
+      [`artifacts/${chromeZip}`, `artifacts/${chromeZip}.sha256`],
+    );
+    assert.deepEqual(
+      listPublicReleaseAssetFiles({
+        root,
+        artifactsDir: firefoxDir,
+        packageVersion: VERSION,
+        browserTarget: 'firefox',
+      }),
+      [
+        `artifacts/firefox/${firefoxSourceZip}`,
+        `artifacts/firefox/${firefoxSourceZip}.sha256`,
+        `artifacts/firefox/${firefoxZip}`,
+        `artifacts/firefox/${firefoxZip}.sha256`,
+      ],
+    );
+    const combined = verifyPublicReleaseAssetDirectory({
+      root,
+      directory: combinedDir,
+      packageVersion: VERSION,
+    });
+    assert.equal(combined.length, 6);
+    assert.equal(combined.every((relativePath) => relativePath.startsWith('release-files/')), true);
+
+    writeFileSync(path.join(combinedDir, `${chromeZip}.sha256`), `${'0'.repeat(64)}  ${chromeZip}\n`);
+    assert.throws(
+      () => verifyPublicReleaseAssetDirectory({ root, directory: combinedDir, packageVersion: VERSION }),
+      /Public release checksum is stale/,
+    );
+    writePair(combinedDir, chromeZip, 'chrome');
+    writeFileSync(path.join(combinedDir, 'unexpected.txt'), 'unexpected');
+    assert.throws(
+      () => verifyPublicReleaseAssetDirectory({ root, directory: combinedDir, packageVersion: VERSION }),
+      /contains missing, extra, or nested files/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

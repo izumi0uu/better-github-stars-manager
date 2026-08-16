@@ -366,6 +366,92 @@ export function listReleaseArtifactFiles({
   ).split(path.sep).join('/')));
 }
 
+export function listPublicReleaseAssetFiles({
+  root = process.cwd(),
+  artifactsDir,
+  packageVersion = pkg.version,
+  browserTarget = 'chrome',
+} = {}) {
+  const target = normalizeReleaseBrowserTarget(browserTarget);
+  const resolvedRoot = path.resolve(root);
+  const resolvedArtifacts = path.resolve(
+    artifactsDir ?? path.join(resolvedRoot, target === 'firefox' ? 'artifacts/firefox' : 'artifacts'),
+  );
+  assertDirectoryInsideRoot(resolvedRoot, resolvedArtifacts, 'Public release artifact root');
+  const names = publicReleaseAssetNames(packageVersion, target);
+  const files = names.map((name) => resolveEvidenceFile(resolvedArtifacts, name));
+  assertPublicReleaseChecksums(resolvedArtifacts, names);
+  return Object.freeze(files.map((filePath) => path.relative(resolvedRoot, filePath).split(path.sep).join('/')));
+}
+
+export function verifyPublicReleaseAssetDirectory({
+  root = process.cwd(),
+  directory = 'release-files',
+  packageVersion = pkg.version,
+  browserTarget = 'all',
+} = {}) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedDirectory = path.resolve(resolvedRoot, directory);
+  assertDirectoryInsideRoot(resolvedRoot, resolvedDirectory, 'Combined public release directory');
+  const directoryStats = lstatSync(resolvedDirectory);
+  if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
+    throw new Error('Combined public release directory must be a real directory.');
+  }
+  const expected = publicReleaseTargets(browserTarget)
+    .flatMap((target) => publicReleaseAssetNames(packageVersion, target))
+    .sort(bytewiseCompare);
+  const actual = readdirSync(resolvedDirectory, { withFileTypes: true }).map((entry) => {
+    if (entry.isSymbolicLink() || !entry.isFile()) {
+      throw new Error(`Public release asset must be a regular file: ${entry.name}`);
+    }
+    return entry.name;
+  }).sort(bytewiseCompare);
+  assert.deepEqual(actual, expected, 'Public release asset directory contains missing, extra, or nested files.');
+  assertPublicReleaseChecksums(resolvedDirectory, expected);
+  return Object.freeze(expected.map((name) => path.relative(
+    resolvedRoot,
+    path.join(resolvedDirectory, name),
+  ).split(path.sep).join('/')));
+}
+
+function publicReleaseAssetNames(packageVersion, browserTarget) {
+  const target = normalizeReleaseBrowserTarget(browserTarget);
+  const baseName = target === 'firefox'
+    ? `better-github-stars-manager-firefox-${packageVersion}`
+    : `better-github-stars-manager-${packageVersion}`;
+  return [
+    `${baseName}.zip`,
+    `${baseName}.zip.sha256`,
+    ...(target === 'firefox' ? [`${baseName}-source.zip`, `${baseName}-source.zip.sha256`] : []),
+  ].sort(bytewiseCompare);
+}
+
+function publicReleaseTargets(browserTarget) {
+  if (browserTarget === 'all') return Object.freeze(['chrome', 'firefox']);
+  return Object.freeze([normalizeReleaseBrowserTarget(browserTarget)]);
+}
+
+function assertDirectoryInsideRoot(root, directory, label) {
+  if (directory === root || !directory.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`${label} must stay inside the repository.`);
+  }
+}
+
+function assertPublicReleaseChecksums(directory, names) {
+  for (const checksumName of names.filter((name) => name.endsWith('.zip.sha256'))) {
+    const zipName = checksumName.slice(0, -'.sha256'.length);
+    const zipPath = resolveEvidenceFile(directory, zipName);
+    const checksumPath = resolveEvidenceFile(directory, checksumName);
+    const zipBytes = readFileSync(zipPath);
+    assert.ok(zipBytes.byteLength > 0, `Public release ZIP is empty: ${zipName}`);
+    assert.equal(
+      readFileSync(checksumPath, 'utf8'),
+      `${hash(zipBytes)}  ${zipName}\n`,
+      `Public release checksum is stale: ${checksumName}`,
+    );
+  }
+}
+
 export function validatePackageArtifacts({ root, artifactsDir, distDir, provisional, packageVersion, browserTarget = 'chrome' }) {
   const target = normalizeReleaseBrowserTarget(browserTarget);
   if ((target === 'firefox') !== (provisional?.schemaVersion === 3 && provisional?.browserTarget === 'firefox')) {
@@ -562,11 +648,25 @@ function bytewiseCompare(left, right) {
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  if (process.argv[2] === '--list-release-artifacts' && process.argv.length === 3) {
-    process.stdout.write(`${listReleaseArtifactFiles().join('\n')}\n`);
-  } else if (process.argv.length === 2) {
+  const [command, firstArgument, secondArgument, ...extraArguments] = process.argv.slice(2);
+  if (extraArguments.length > 0) throw new Error('Too many release artifact arguments.');
+  if (command === '--list-release-artifacts' && secondArgument === undefined) {
+    const browserTarget = firstArgument ?? 'chrome';
+    process.stdout.write(`${listReleaseArtifactFiles({ browserTarget }).join('\n')}\n`);
+  } else if (command === '--list-public-release-assets' && secondArgument === undefined) {
+    const browserTarget = firstArgument ?? 'chrome';
+    process.stdout.write(`${listPublicReleaseAssetFiles({ browserTarget }).join('\n')}\n`);
+  } else if (command === '--verify-public-release-directory' && firstArgument) {
+    const browserTarget = secondArgument ?? 'all';
+    process.stdout.write(`${verifyPublicReleaseAssetDirectory({
+      directory: firstArgument,
+      browserTarget,
+    }).join('\n')}\n`);
+  } else if (command === undefined) {
     finalizeAgentRelease();
   } else {
-    throw new Error('Usage: verify-agent-release-gates.mjs [--list-release-artifacts]');
+    throw new Error(
+      'Usage: verify-agent-release-gates.mjs [--list-release-artifacts [chrome|firefox] | --list-public-release-assets [chrome|firefox] | --verify-public-release-directory <directory> [chrome|firefox|all]]',
+    );
   }
 }

@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 import { lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
-export const WORKER_BYTE_CEILING = 740_206;
+export const WORKER_BYTE_CEILING = 741_659;
 export const RELEASE_WORKER_BASELINE = Object.freeze({
-  relativePath: 'assets/index.ts-CkQeZGmv.js',
+  relativePath: 'assets/index.ts-CHNZH7ng.js',
   bytes: WORKER_BYTE_CEILING,
-  sha256: '9752d7463acee5886173e823f981c94c73bd0f2ac61e23724e3b79462636595e',
+  sha256: '7c49deaba704b115e510e60a34fadc10b027e007f1f594011c7535df74c17263',
 });
 
 const SHA256 = /^[0-9a-f]{64}$/u;

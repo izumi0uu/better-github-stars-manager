@@ -17,10 +17,10 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  package-and-release:
+  package-chrome:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -65,22 +65,212 @@ jobs:
       - name: Finalize release evidence
         run: pnpm verify:agent-release-gates
 
-      - name: Enumerate canonical release files
+      - name: Enumerate canonical release evidence
         id: release-artifacts
         run: |
           artifact_list="$RUNNER_TEMP/release-artifacts.txt"
-          node scripts/verify-agent-release-gates.mjs --list-release-artifacts > "$artifact_list"
+          node scripts/verify-agent-release-gates.mjs --list-release-artifacts chrome > "$artifact_list"
           {
             echo 'files<<EOF'
             cat "$artifact_list"
             echo EOF
           } >> "$GITHUB_OUTPUT"
 
-      - name: Upload packaged artifacts
+      - name: Upload private Chrome release evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: release-artifacts-${{ github.sha }}
+          name: release-private-chrome-${{ github.sha }}
           path: ${{ steps.release-artifacts.outputs.files }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Enumerate public Chrome release assets
+        id: public-assets
+        run: |
+          asset_list="$RUNNER_TEMP/public-assets.txt"
+          node scripts/verify-agent-release-gates.mjs --list-public-release-assets chrome > "$asset_list"
+          {
+            echo 'files<<EOF'
+            cat "$asset_list"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload public Chrome release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-public-chrome-${{ github.sha }}
+          path: ${{ steps.public-assets.outputs.files }}
+          if-no-files-found: error
+          retention-days: 14
+
+  package-firefox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      GSM_BROWSER_TARGET: firefox
+      GSM_PACKAGE_TARGET: firefox
+      GSM_DIST_DIR: dist-firefox
+      GSM_ARTIFACTS_DIR: artifacts/firefox
+      GSM_VERSION_APPROVAL: ${{ vars.GSM_VERSION_APPROVAL }}
+      PUPPETEER_HEADLESS: 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 10.33.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release tag matches package version
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          package_version="$(node -p "require('./package.json').version")"
+          test "$TAG_NAME" = "v$package_version"
+
+      - name: Install Chrome and Firefox for Testing
+        run: |
+          pnpm exec puppeteer browsers install chrome
+          pnpm exec puppeteer browsers install firefox
+          pnpm exec puppeteer browsers install firefox@stable_140.0.4
+
+      - name: Resolve Firefox executable paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          firefox_stable="$(pnpm exec puppeteer browsers install firefox --format '{{path}}')"
+          firefox_140="$(pnpm exec puppeteer browsers install firefox@stable_140.0.4 --format '{{path}}')"
+          test -n "$firefox_stable"
+          test -n "$firefox_140"
+          test "$firefox_stable" != "$firefox_140"
+          {
+            printf 'FIREFOX_STABLE_EXECUTABLE=%s\n' "$firefox_stable"
+            printf 'FIREFOX_EXECUTABLE=%s\n' "$firefox_stable"
+            printf 'FIREFOX_140_EXECUTABLE=%s\n' "$firefox_140"
+          } >> "$GITHUB_ENV"
+
+      - name: Run integrated Agent runtime verification
+        run: pnpm verify:agent-runtime
+
+      - name: Check Firefox output
+        run: pnpm check:firefox-output
+
+      - name: Lint Firefox extension
+        run: pnpm lint:firefox
+
+      - name: Finalize release evidence
+        run: pnpm verify:agent-release-gates
+
+      - name: Enumerate canonical release evidence
+        id: release-artifacts
+        run: |
+          artifact_list="$RUNNER_TEMP/release-artifacts.txt"
+          node scripts/verify-agent-release-gates.mjs --list-release-artifacts firefox > "$artifact_list"
+          {
+            echo 'files<<EOF'
+            cat "$artifact_list"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload private Firefox release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-private-firefox-${{ github.sha }}
+          path: ${{ steps.release-artifacts.outputs.files }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Enumerate public Firefox release assets
+        id: public-assets
+        run: |
+          asset_list="$RUNNER_TEMP/public-assets.txt"
+          node scripts/verify-agent-release-gates.mjs --list-public-release-assets firefox > "$asset_list"
+          {
+            echo 'files<<EOF'
+            cat "$asset_list"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload public Firefox release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-public-firefox-${{ github.sha }}
+          path: ${{ steps.public-assets.outputs.files }}
+          if-no-files-found: error
+          retention-days: 14
+
+  assemble-release:
+    needs:
+      - package-chrome
+      - package-firefox
+    if: ${{ needs.package-chrome.result == 'success' && needs.package-firefox.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+
+      - name: Download public Chrome assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-public-chrome-${{ github.sha }}
+          path: release-files/chrome
+
+      - name: Download public Firefox assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-public-firefox-${{ github.sha }}
+          path: release-files/firefox
+
+      - name: Merge public release assets
+        run: |
+          cp release-files/chrome/* release-files/
+          cp release-files/firefox/* release-files/
+          rm -rf release-files/chrome release-files/firefox
+
+      - name: Verify exact public release inventory and checksums
+        id: public-assets
+        run: |
+          asset_list="$RUNNER_TEMP/public-release-assets.txt"
+          node scripts/verify-agent-release-gates.mjs --verify-public-release-directory release-files all > "$asset_list"
+          test "$(wc -l < "$asset_list")" -eq 6
+          {
+            echo 'files<<EOF'
+            cat "$asset_list"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload combined public release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-public-${{ github.sha }}
+          path: ${{ steps.public-assets.outputs.files }}
           if-no-files-found: error
           retention-days: 14
 
@@ -90,8 +280,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          mapfile -t release_files < "$RUNNER_TEMP/release-artifacts.txt"
-          test "${#release_files[@]}" -gt 0
+          mapfile -t release_files < "$RUNNER_TEMP/public-release-assets.txt"
+          test "${#release_files[@]}" -eq 6
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             existing_release_dir="$(mktemp -d "$RUNNER_TEMP/existing-release.XXXXXX")"
             expected_asset_names="$existing_release_dir/expected-asset-names.txt"
@@ -100,14 +290,14 @@ jobs:
             gh release view "$TAG_NAME" --json assets --jq '.assets[].name' |
               LC_ALL=C sort > "$actual_asset_names"
             if ! cmp -s "$expected_asset_names" "$actual_asset_names"; then
-              echo "Existing GitHub Release asset inventory differs from the canonical release artifacts; refusing to mutate immutable assets." >&2
+              echo "Existing GitHub Release asset inventory differs from the exact public release assets; refusing to mutate immutable assets." >&2
               exit 1
             fi
             gh release download "$TAG_NAME" --dir "$existing_release_dir/downloaded"
             for release_file in "${release_files[@]}"; do
               asset_name="${release_file##*/}"
               if ! cmp -s "$release_file" "$existing_release_dir/downloaded/$asset_name"; then
-                echo "Existing GitHub Release asset $asset_name differs from the canonical release artifact; refusing to mutate immutable assets." >&2
+                echo "Existing GitHub Release asset $asset_name differs from the exact public release asset; refusing to mutate immutable assets." >&2
                 exit 1
               fi
             done
@@ -115,8 +305,34 @@ jobs:
             gh release create "$TAG_NAME" "${release_files[@]}" --generate-notes --title "$TAG_NAME"
           fi
 
-      - name: Conditionally publish to Chrome Web Store
-        if: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/') && inputs.publish_to_chrome_web_store == true && vars.CWS_DEPLOY_ENABLED == 'true' }}
+  publish-chrome-web-store:
+    needs: assemble-release
+    if: ${{ needs.assemble-release.result == 'success' && github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/') && inputs.publish_to_chrome_web_store == true && vars.CWS_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+
+      - name: Download Chrome public assets only
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-public-chrome-${{ github.sha }}
+          path: chrome-public
+
+      - name: Verify exact Chrome public inventory
+        run: node scripts/verify-agent-release-gates.mjs --verify-public-release-directory chrome-public chrome
+
+      - name: Publish exactly one Chrome ZIP
         env:
           CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
           CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
@@ -126,11 +342,18 @@ jobs:
           CWS_PUBLISH_TYPE: ${{ vars.CWS_PUBLISH_TYPE }}
           CWS_SKIP_REVIEW: ${{ vars.CWS_SKIP_REVIEW }}
         run: |
+          mapfile -t chrome_assets < <(node scripts/verify-agent-release-gates.mjs --verify-public-release-directory chrome-public chrome)
           zip_path=""
-          while IFS= read -r candidate; do
+          for candidate in "${chrome_assets[@]}"; do
             case "$candidate" in
-              *.zip) test -z "$zip_path"; zip_path="$candidate" ;;
+              *.zip)
+                test -z "$zip_path"
+                zip_path="$candidate"
+                ;;
             esac
-          done < "$RUNNER_TEMP/release-artifacts.txt"
+          done
           test -n "$zip_path"
+          case "$zip_path" in
+            *firefox*|*-source.zip) exit 1 ;;
+          esac
           node scripts/publish-chrome-web-store.mjs "$zip_path"
