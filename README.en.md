@@ -259,6 +259,8 @@ pnpm test:smoke
 - [Privacy policy](docs/en/privacy-policy.md)
 - [Chrome Web Store update notes](docs/en/chrome-web-store-submission.md)
 - [Firefox Add-ons submission reference](docs/en/firefox-amo-submission.md)
+- [Microsoft Edge Add-ons submission reference](docs/en/edge-addons-submission.md)
+- [Opera Add-ons submission reference](docs/en/opera-addons-submission.md)
 
 ## Contributing
 
