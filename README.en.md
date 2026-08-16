@@ -9,6 +9,8 @@
 
 Search, filter, tag, and annotate repositories directly on your GitHub Stars page. Enable Watch, Following, For You, Secret Gist sync, or Cubby AI when you need them.
 
+**Official website:** [betterstars.app](https://betterstars.app/)
+
 [![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Install%20Now-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome Web Store users](https://img.shields.io/chrome-web-store/users/jbiacpcceoffcnmpepifoegagjopjpfa?logo=googlechrome&label=Chrome%20Web%20Store%20users)](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
@@ -32,6 +34,59 @@ Search, filter, tag, and annotate repositories directly on your GitHub Stars pag
 - [Related documentation](#related-documentation)
 - [Contributing](#contributing) · [License](#license)
 - [Links](#links) · [Friendly links](#friendly-links)
+
+## Get started
+
+### Install
+
+| | Store | Works on |
+| :---: | --- | --- |
+| [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome, Edge, Brave, Opera, and other Chromium-based browsers |
+| [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · Coming soon | Microsoft Edge |
+| [<img src="store-assets/store-badges/firefox.svg" alt="Get it on Firefox Add-ons" height="55">](https://addons.mozilla.org/firefox/) | [Firefox Add-ons](https://addons.mozilla.org/firefox/) · Coming soon | Firefox |
+| [<img src="store-assets/store-badges/opera.svg" alt="Get it on Opera Add-ons" height="55">](https://addons.opera.com/extensions/) | [Opera Add-ons](https://addons.opera.com/extensions/) · Coming soon | Opera |
+
+<!-- TODO: replace the placeholder links above with the extension listing URLs once Edge, Firefox, and Opera are published -->
+
+The extension uses Manifest V3. After installing, open `https://github.com/{you}?tab=stars`. The manager appears inside the Stars page.
+
+### Run the first sync
+
+1. Open the extension **Options** page
+2. Create a GitHub Classic PAT with the `repo` and `gist` scopes
+3. Add `notifications` for Watch and `read:user` for Following if you need those features
+4. Paste the token and click **Save & verify**
+5. Open `https://github.com/{you}?tab=stars` to start the extension automatically
+6. On the first visit, **Full Sync** starts automatically
+
+Open the prefilled [Classic PAT form](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager) and follow the steps below.
+
+<details>
+<summary><strong>Open the illustrated GitHub token setup guide</strong></summary>
+
+<br>
+
+#### 1. Set the expiration
+
+Keep the Note and choose a finite expiration.
+
+<img src="store-assets/screenshots/token-guide-create-classic-pat.webp" alt="Classic PAT Note, expiration, and repo scope" width="1568" height="875" />
+
+#### 2. Check the scopes
+
+Keep `repo`, `gist`, `notifications`, and `read:user` selected. Leave `user` unselected.
+
+<img src="store-assets/screenshots/token-guide-select-scopes.webp" alt="gist, notifications, and read:user selected; user unselected" width="1568" height="520" />
+
+#### 3. Generate and save
+
+Select **Generate token**, copy the token, paste it into **Options > GitHub Classic PAT**, then select **Save & verify**.
+
+<img src="store-assets/screenshots/token-guide-generate-token.webp" alt="Select Generate token to create the GitHub Classic PAT" width="888" height="290" />
+
+GitHub shows the token once. Keep it private.
+
+</details>
 
 ## Your Stars can be a personal dashboard
 
@@ -151,59 +206,6 @@ The GitHub token is encrypted locally; this protection is not equivalent to an o
 
 The project operates no application backend, GitHub proxy, AI proxy, analytics SDK, ad network, or tracking service. Read the complete [privacy policy](docs/en/privacy-policy.md).
 
-## Get started
-
-### Install
-
-| | Store | Works on |
-| :---: | --- | --- |
-| [<img src="store-assets/store-badges/chrome.svg" alt="Get it on Chrome Web Store" height="55">](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa) | Chrome, Edge, Brave, Opera, and other Chromium-based browsers |
-| [<img src="store-assets/store-badges/edge.svg" alt="Get it on Edge Add-ons" height="55">](https://microsoftedge.microsoft.com/addons) | [Edge Add-ons](https://microsoftedge.microsoft.com/addons) · Coming soon | Microsoft Edge |
-| [<img src="store-assets/store-badges/firefox.svg" alt="Get it on Firefox Add-ons" height="55">](https://addons.mozilla.org/firefox/) | [Firefox Add-ons](https://addons.mozilla.org/firefox/) · Coming soon | Firefox |
-| [<img src="store-assets/store-badges/opera.svg" alt="Get it on Opera Add-ons" height="55">](https://addons.opera.com/extensions/) | [Opera Add-ons](https://addons.opera.com/extensions/) · Coming soon | Opera |
-
-<!-- TODO: replace the placeholder links above with the extension listing URLs once Edge, Firefox, and Opera are published -->
-
-The extension uses Manifest V3. After installing, open `https://github.com/{you}?tab=stars`. The manager appears inside the Stars page.
-
-### Run the first sync
-
-1. Open the extension **Options** page
-2. Create a GitHub Classic PAT with the `repo` and `gist` scopes
-3. Add `notifications` for Watch and `read:user` for Following if you need those features
-4. Paste the token and click **Save & verify**
-5. Open `https://github.com/{you}?tab=stars` to start the extension automatically
-6. On the first visit, **Full Sync** starts automatically
-
-Open the prefilled [Classic PAT form](https://github.com/settings/tokens/new?scopes=repo,gist,notifications,read:user&description=Better%20GitHub%20Stars%20Manager) and follow the steps below.
-
-<details>
-<summary><strong>Open the illustrated GitHub token setup guide</strong></summary>
-
-<br>
-
-#### 1. Set the expiration
-
-Keep the Note and choose a finite expiration.
-
-<img src="store-assets/screenshots/token-guide-create-classic-pat.webp" alt="Classic PAT Note, expiration, and repo scope" width="1568" height="875" />
-
-#### 2. Check the scopes
-
-Keep `repo`, `gist`, `notifications`, and `read:user` selected. Leave `user` unselected.
-
-<img src="store-assets/screenshots/token-guide-select-scopes.webp" alt="gist, notifications, and read:user selected; user unselected" width="1568" height="520" />
-
-#### 3. Generate and save
-
-Select **Generate token**, copy the token, paste it into **Options > GitHub Classic PAT**, then select **Save & verify**.
-
-<img src="store-assets/screenshots/token-guide-generate-token.webp" alt="Select Generate token to create the GitHub Classic PAT" width="888" height="290" />
-
-GitHub shows the token once. Keep it private.
-
-</details>
-
 ## What it does not do
 
 Better GitHub Stars Manager enhances the Stars page rather than replacing GitHub:
@@ -271,6 +273,7 @@ Copyright (c) 2026 izumi0uu.
 ## Links
 
 - [GitHub repository](https://github.com/izumi0uu/better-github-stars-manager)
+- [Official website](https://betterstars.app/)
 - [Chrome Web Store](https://chromewebstore.google.com/detail/better-github-stars-manag/jbiacpcceoffcnmpepifoegagjopjpfa)
 - [GitHub Issues](https://github.com/izumi0uu/better-github-stars-manager/issues)
 
