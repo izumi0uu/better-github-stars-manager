@@ -8,6 +8,11 @@ Keep this file short and practical. Add rules here only when they are core to th
 - Prefer repo-specific facts over generic browser-extension assumptions.
 - If an API behavior is unclear or recently changed, check official docs before editing code.
 
+## Branch Policy
+
+- `master` is the sole long-lived development and release branch.
+- Feature branches, including `feat/firefox`, are temporary integration branches and must merge back into `master`; do not treat them as future development lines.
+
 ## Key Paths
 
 - `src/storage/db.ts`: IndexedDB schema and version bumps.
