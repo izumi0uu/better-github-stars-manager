@@ -69,7 +69,11 @@ import {
   type ScheduledRefreshKind,
 } from './scheduled-refresh';
 import { GitHubWatchError, canonicalRepositoryFullName } from '@/watch/watch-model';
-import { parseWatchThreadId, parseWatchThreadIds } from '@/watch/watch-contract';
+import {
+  parseWatchAccountLogin,
+  parseWatchThreadId,
+  parseWatchThreadIds,
+} from '@/watch/watch-contract';
 import { RADAR_MAX_FOLLOWING } from '@/radar/radar-model';
 import {
   createOrganizeApplyPump,
@@ -257,8 +261,8 @@ type Req = BgsmAgentSessionRequest
   | { type: "getWatchSubjectDetail"; threadId?: unknown }
   | { type: "getWatchRepositoryDetail"; fullName?: unknown }
   | { type: "refreshWatchInbox" }
-  | { type: "markWatchThreadsRead"; threadIds?: unknown }
-  | { type: "markWatchThreadsDone"; threadIds?: unknown }
+  | { type: "markWatchThreadsRead"; accountLogin?: unknown; threadIds?: unknown }
+  | { type: "markWatchThreadsDone"; accountLogin?: unknown; threadIds?: unknown }
   | { type: "disconnectWatchInbox" }
   | { type: "clearWatchData" }
   | { type: 'getRecommendationStatus' }
@@ -1795,14 +1799,18 @@ async function handle(req: Req): Promise<Res> {
       case 'markWatchThreadsRead':
       case 'markWatchThreadsDone': {
         const m = await getLocaleMessages();
+        const accountLogin = parseWatchAccountLogin(req.accountLogin);
         const threadIds = parseWatchThreadIds(req.threadIds);
-        if (!threadIds) return { ok: false, error: m.background.watchThreadActionInvalid };
+        if (!accountLogin || !threadIds) {
+          return { ok: false, error: m.background.watchThreadActionInvalid };
+        }
+        const mutation = { accountLogin, threadIds };
         try {
           return {
             ok: true,
             data: req.type === 'markWatchThreadsRead'
-              ? await watchRefreshCoordinator.markThreadsRead(threadIds)
-              : await watchRefreshCoordinator.markThreadsDone(threadIds),
+              ? await watchRefreshCoordinator.markThreadsRead(mutation)
+              : await watchRefreshCoordinator.markThreadsDone(mutation),
           };
         } catch {
           return { ok: false, error: m.background.watchThreadActionFailed };

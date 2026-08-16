@@ -111,6 +111,7 @@ export function Options() {
   const [tokenBusy, setTokenBusy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [msg, setMsg] = useState<OptionsMessage | null>(null);
+  const [storeRatingMessage, setStoreRatingMessage] = useState<OptionsMessage | null>(null);
   const { locale, setLocale, m } = useI18n();
   const tokenInput = useImeBufferedInput("");
   const refreshGeneration = useRef(0);
@@ -245,21 +246,23 @@ export function Options() {
   };
 
   const setStoreRatingReminderEnabled = async (enabled: boolean) => {
+    setStoreRatingMessage(null);
     try {
       const config = enabled
         ? await authStore.reenableStoreRatingPrompt()
         : await authStore.disableStoreRatingPrompt();
       setStoreRatingPrompt(config.storeRatingPrompt);
     } catch (error) {
-      setMsg({ kind: "err", text: translateError(error, m) });
+      setStoreRatingMessage({ kind: "err", text: translateError(error, m) });
     }
   };
 
   const markStoreRatingOpened = () => {
+    setStoreRatingMessage(null);
     void authStore.recordStoreRatingNavigation()
       .then((config) => setStoreRatingPrompt(config.storeRatingPrompt))
       .catch((error) => {
-        setMsg({ kind: "err", text: translateError(error, m) });
+        setStoreRatingMessage({ kind: "err", text: translateError(error, m) });
       });
   };
 
@@ -701,6 +704,12 @@ export function Options() {
                   </span>
                 </label>
               </div>
+              {storeRatingMessage && (
+                <StatusNotice
+                  message={storeRatingMessage}
+                  testId="store-rating-status"
+                />
+              )}
             </div>
           )}
         </div>
