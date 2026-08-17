@@ -7,7 +7,8 @@ import pkg from './package.json';
  *  - stars-page runs only when location.search includes `tab=stars`
  *  - repo-chip  runs only on paths shaped `/{owner}/{repo}` (excluded stars/settings/etc.)
  */
-export default defineManifest({
+export function createProductManifest() {
+  return defineManifest({
   manifest_version: 3,
   name: 'Better GitHub Stars Manager',
   version: pkg.version,
@@ -65,4 +66,7 @@ export default defineManifest({
   // web_accessible_resources: needed if we ever load an iframe for the manager UI,
   // but we mount into the page DOM directly, so none required for MVP.
   web_accessible_resources: [],
-});
+  });
+}
+
+export default createProductManifest();

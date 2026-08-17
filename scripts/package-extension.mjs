@@ -30,6 +30,7 @@ import {
 import {
   compareChromeExtensionVersions,
   discoverMermaidArtifacts,
+  EDGE_RELEASE_WORKER_BASELINE,
   enforceWorkerReleaseBaseline,
   measureBundleArtifact,
   normalizePackageRelativePath,
@@ -45,6 +46,11 @@ import {
   FIREFOX_REQUIRED_DATA_COLLECTION_PERMISSIONS,
 } from './build-firefox-extension.mjs';
 import { assertFirefoxManifestContract } from './check-firefox-output-contracts.mjs';
+import {
+  assertEdgeManifestContract,
+} from './check-edge-output-contracts.mjs';
+import { EDGE_DIST_DIR } from './build-edge-extension.mjs';
+import { isProductStoreTarget } from '../product-target.config.ts';
 import {
   parseViteChunkAdvisories,
   validateProvisionalReleaseEvidence,
@@ -97,11 +103,22 @@ export function packageExtension(options = {}) {
   const environment = options.environment ?? process.env;
   const root = path.resolve(options.root ?? process.cwd());
   const target = resolvePackageTarget(options.target, environment.GSM_PACKAGE_TARGET);
-  const distDir = path.resolve(root, options.distDir ?? environment.GSM_DIST_DIR ?? (target === 'firefox' ? FIREFOX_DIST_DIR : 'dist'));
-  const artifactsDir = path.resolve(root, options.artifactsDir ?? environment.GSM_ARTIFACTS_DIR ?? (target === 'firefox' ? path.join('artifacts', 'firefox') : 'artifacts'));
+  assertMatchingStoreTarget(target, options.storeTarget ?? environment.GSM_STORE_TARGET);
+  const distDir = path.resolve(root, options.distDir ?? environment.GSM_DIST_DIR ?? (
+    target === 'firefox' ? FIREFOX_DIST_DIR : target === 'edge' ? EDGE_DIST_DIR : 'dist'
+  ));
+  const artifactsDir = path.resolve(root, options.artifactsDir ?? environment.GSM_ARTIFACTS_DIR ?? (
+    target === 'firefox' ? path.join('artifacts', 'firefox') : target === 'edge' ? path.join('artifacts', 'edge') : 'artifacts'
+  ));
+  if (target === 'edge' && distDir === path.resolve(root, 'dist')) {
+    throw new PackageExtensionError('edge_dist_directory_not_isolated');
+  }
+  if (target === 'edge' && artifactsDir === path.resolve(root, 'artifacts')) {
+    throw new PackageExtensionError('edge_artifact_directory_not_isolated');
+  }
   const packageVersion = options.packageVersion ?? pkg.version;
   const approvedVersion = options.approvedVersion ?? environment.GSM_APPROVED_RELEASE_VERSION;
-  const workerBaseline = options.workerBaseline ?? RELEASE_WORKER_BASELINE;
+  const workerBaseline = options.workerBaseline ?? (target === 'edge' ? EDGE_RELEASE_WORKER_BASELINE : RELEASE_WORKER_BASELINE);
   assertApprovedCandidateVersion(packageVersion, approvedVersion);
 
   const source = options.source ?? readCleanSource(root);
@@ -127,14 +144,19 @@ export function packageExtension(options = {}) {
   if (target === 'firefox') {
     assertFirefoxManifestContract(sourceManifest, { expectedVersion: packageVersion });
   }
+  if (target === 'edge') {
+    assertEdgeManifestContract(sourceManifest, { expectedVersion: packageVersion });
+  }
   const permissions = readAndValidatePermissions(sourceManifest, target);
   assertProductionDisclosure(inventory);
-  if (target === 'firefox') assertRemoteExecutableCodeExcluded(inventory);
+  if (target === 'firefox' || target === 'edge') assertRemoteExecutableCodeExcluded(inventory);
 
   ensureArtifactDirectory(artifactsDir);
   const baseName = target === 'firefox'
     ? `better-github-stars-manager-firefox-${packageVersion}`
-    : `better-github-stars-manager-${packageVersion}`;
+    : target === 'edge'
+      ? `better-github-stars-manager-edge-${packageVersion}`
+      : `better-github-stars-manager-${packageVersion}`;
   const zipPath = path.join(artifactsDir, `${baseName}.zip`);
   const finalEvidencePath = path.join(artifactsDir, `release-evidence-${packageVersion}.json`);
   const gatePath = path.join(artifactsDir, 'agent-release-gate-evidence.json');
@@ -172,13 +194,14 @@ export function packageExtension(options = {}) {
     if (!isDeepStrictEqual(stagedClosure, zipClosure)) throw new PackageExtensionError('manifest_closure_mismatch');
     assertVersionIdentity(packageVersion, zipManifest.version, approvedVersion);
     readAndValidatePermissions(zipManifest, target);
+    if (target === 'edge') assertEdgeManifestContract(zipManifest, { expectedVersion: packageVersion });
 
     const suppliedBuildEvidence = options.buildEvidence
       ?? parseJsonInput(environment.GSM_RELEASE_BUILD_EVIDENCE, 'GSM_RELEASE_BUILD_EVIDENCE');
     const measuredBuildEvidence = skipBuild
       ? suppliedBuildEvidence
       : completeCapturedBuildEvidence(capturedBuildEvidence, zipInventory, zipClosure.workerRelativePath);
-    const build = validateBuildEvidence(measuredBuildEvidence, zipInventory, zipClosure.workerRelativePath, workerBaseline);
+    const build = validateBuildEvidence(measuredBuildEvidence, zipInventory, zipClosure.workerRelativePath, workerBaseline, target);
 
     const zipBytes = readFileSync(zipTempPath);
     writeOwnedFile(zipPath, zipBytes, createdPaths, 0o600);
@@ -298,6 +321,40 @@ export function readZipInventory(zipPath) {
 }
 
 export function createProvisionalReleaseEvidence(input) {
+  if (input.target === 'edge') {
+    return Object.freeze({
+      schemaVersion: 4,
+      browserTarget: 'edge',
+      capabilities: Object.freeze({ gistSync: true, agent: true, organizeProvider: true }),
+      generatedAt: input.generatedAt,
+      packageVersion: input.packageVersion,
+      source: Object.freeze({ commit: input.source.commit, dirty: false }),
+      package: Object.freeze({
+        releaseReady: false,
+        releaseReadinessReason: 'edge_runtime_verification_required',
+        publicationClaimed: false,
+        zipRootManifest: true,
+        manifestResourcesClosed: true,
+        sourceOnlyEntriesExcluded: true,
+        remoteExecutableCodeExcluded: true,
+        productionDisclosureMarkers: disclosureBundleMarkers,
+      }),
+      packagedPermissions: input.permissions,
+      packageInput: input.packageInput,
+      build: input.build,
+      generatedFiles: Object.freeze([
+        fileEvidence(input.artifactsDir, input.checksumPath),
+        fileEvidence(input.artifactsDir, input.zipPath),
+      ].sort((left, right) => bytewiseCompare(left.relativePath, right.relativePath))),
+      packagedManifest: Object.freeze({
+        relativePath: 'manifest.json',
+        bytes: input.manifestEntry.bytes.byteLength,
+        sha256: input.manifestEntry.sha256,
+        browserTarget: 'edge',
+      }),
+      manifestResources: input.manifestResources,
+    });
+  }
   if (input.target !== 'firefox') {
     return Object.freeze({
       schemaVersion: 2,
@@ -383,10 +440,30 @@ export function createProvisionalReleaseEvidence(input) {
   });
 }
 
-function resolvePackageTarget(option, environmentValue) {
+export function resolvePackageTarget(option, environmentValue) {
+  if (option !== undefined && !isProductStoreTarget(option)) {
+    throw new PackageExtensionError('package_target_invalid', String(option));
+  }
+  if (environmentValue !== undefined && !isProductStoreTarget(environmentValue)) {
+    throw new PackageExtensionError('package_target_invalid', String(environmentValue));
+  }
+  if (option !== undefined && environmentValue !== undefined && option !== environmentValue) {
+    throw new PackageExtensionError('package_target_mismatch', `${String(option)} != ${String(environmentValue)}`);
+  }
   const target = option ?? environmentValue ?? 'chrome';
-  if (target !== 'chrome' && target !== 'firefox') throw new PackageExtensionError('package_target_invalid', String(target));
+  if (target !== 'chrome' && target !== 'firefox' && target !== 'edge') {
+    throw new PackageExtensionError('package_target_invalid', String(target));
+  }
   return target;
+}
+function assertMatchingStoreTarget(packageTarget, storeTargetValue) {
+  if (storeTargetValue === undefined) return;
+  if (!isProductStoreTarget(storeTargetValue)) {
+    throw new PackageExtensionError('package_store_target_invalid', String(storeTargetValue));
+  }
+  if (storeTargetValue !== packageTarget) {
+    throw new PackageExtensionError('package_store_target_mismatch', `${String(storeTargetValue)} != ${packageTarget}`);
+  }
 }
 function resolveSkipBuild(option, environmentValue) {
   if (option !== undefined) {
@@ -402,7 +479,7 @@ function runProductionBuild({ root, environment, target, runner }) {
   if (runner) return runner(target);
   const pnpmExecPath = environment.npm_execpath;
   const command = pnpmExecPath ? process.execPath : 'corepack';
-  const script = target === 'firefox' ? 'build:firefox' : 'build';
+  const script = target === 'firefox' ? 'build:firefox' : target === 'edge' ? 'build:edge' : 'build';
   const args = pnpmExecPath ? [pnpmExecPath, script] : ['pnpm', script];
   const result = spawnSync(command, args, {
     cwd: root,
@@ -411,7 +488,8 @@ function runProductionBuild({ root, environment, target, runner }) {
       GSM_RELEASE: 'true',
       GSM_DEV: 'false',
       GSM_PACKAGE_TARGET: target,
-      ...(target === 'firefox' ? { GSM_DIST_DIR: FIREFOX_DIST_DIR } : {}),
+      GSM_STORE_TARGET: target,
+      ...(target === 'firefox' ? { GSM_DIST_DIR: FIREFOX_DIST_DIR } : target === 'edge' ? { GSM_DIST_DIR: EDGE_DIST_DIR } : {}),
     },
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
@@ -434,7 +512,7 @@ function completeCapturedBuildEvidence(captured, inventory, workerRelativePath) 
 }
 
 
-function validateBuildEvidence(value, inventory, workerRelativePath, workerBaseline) {
+function validateBuildEvidence(value, inventory, workerRelativePath, workerBaseline, target) {
   if (!isPlainObject(value)) throw new PackageExtensionError('release_build_evidence_required');
   const expectedKeys = ['advisories', 'mermaid', 'outputSha256', 'worker'];
   if (!isDeepStrictEqual(Object.keys(value).sort(bytewiseCompare), expectedKeys)) {
@@ -512,8 +590,9 @@ function readAndValidatePermissions(manifest, target = 'chrome') {
     hostPermissions: sortedUniqueStrings(manifest.host_permissions),
     optionalHostPermissions: sortedUniqueStrings(manifest.optional_host_permissions),
   };
-  if (!isDeepStrictEqual(permissions, reviewedPermissions)) throw new PackageExtensionError('packaged_permissions_unreviewed');
-  if (target === 'chrome') return Object.freeze(permissions);
+  const expectedPermissions = reviewedPermissions;
+  if (!isDeepStrictEqual(permissions, expectedPermissions)) throw new PackageExtensionError('packaged_permissions_unreviewed');
+  if (target === 'chrome' || target === 'edge') return Object.freeze(permissions);
   if (target !== 'firefox') throw new PackageExtensionError('package_target_invalid');
   const gecko = manifest.browser_specific_settings?.gecko;
   const dataCollectionPermissions = {

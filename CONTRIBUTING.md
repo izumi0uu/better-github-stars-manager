@@ -68,7 +68,17 @@ pnpm lint:firefox
 pnpm test:smoke:firefox
 ```
 
-Firefox 构建输出位于 `dist-firefox/`。不要直接编辑 `dist/`、`dist-firefox/`、`dist-demo/` 或 `artifacts/` 中的生成文件。
+Firefox 构建输出位于 `dist-firefox/`。不要直接编辑 `dist/`、`dist-edge/`、`dist-firefox/`、`dist-demo/` 或 `artifacts/` 中的生成文件。
+
+Microsoft Edge 目标使用以下命令：
+
+```bash
+pnpm build:edge
+pnpm check:edge-output
+EDGE_EXECUTABLE="/path/to/Microsoft Edge" pnpm test:smoke:edge
+```
+
+Edge 目标只是构建、打包和浏览器身份：它提供与 Chrome 相同的完整产品，包括 Gist 同步、Cubby、AI Provider 和 Provider 驱动的 Organize。构建输出位于 `dist-edge/`，`pnpm package:edge` 输出到 `artifacts/edge/`。真实浏览器 smoke 运行共享的完整产品场景，必须使用报告 `Edg/<version>` 身份的 Microsoft Edge 可执行文件；发布证据不能用 Chrome 代替。
 
 ## 调试 Cubby Agent
 
@@ -130,6 +140,7 @@ pnpm dev:agent-diagnostics
 | 扩展运行时行为 | `pnpm test:runtime` 或 `pnpm test:smoke` |
 | Cubby Agent 逻辑或运行时 | `pnpm test:logic`、`pnpm test:runtime:agent-diagnostics` 或 `pnpm test:runtime:agent-scenarios` |
 | Firefox 专用行为 | `pnpm build:firefox`、`pnpm lint:firefox` 和 `pnpm test:smoke:firefox` |
+| Microsoft Edge 目标 | `pnpm build:edge`、`pnpm check:edge-output` 和 `EDGE_EXECUTABLE="/path/to/Microsoft Edge" pnpm test:smoke:edge` |
 | 文档 | 检查链接、命令和中英文内容；代码测试可省略 |
 
 Bug 修复需要能在修复前失败、修复后通过的回归测试。同步语义、存储兼容、迁移和 backfill 变化必须增加回归覆盖。

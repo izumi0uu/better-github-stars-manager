@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createReadStream, existsSync, realpathSync, statSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { existsSync } from 'node:fs';
 import puppeteer from 'puppeteer';
 import {
   FIREFOX_GECKO_ID,
@@ -21,7 +22,7 @@ export const FAIL_CLOSED_NETWORK_ARGUMENTS = Object.freeze([
   '--no-pings',
 ]);
 
-export const RUNTIME_TARGETS = Object.freeze(['chrome', 'firefox']);
+export const RUNTIME_TARGETS = Object.freeze(['chrome', 'edge', 'firefox']);
 export const PUPPETEER_DRIVERS = Object.freeze(['default', 'firefox_140']);
 
 export function normalizePuppeteerDriver(driver = 'default') {
@@ -42,6 +43,78 @@ export function normalizeRuntimeTarget(target = 'chrome') {
     throw new TypeError(`Unsupported runtime target: ${String(target)}.`);
   }
   return target;
+}
+
+export function classifyEdgeBrowserIdentity(input = {}) {
+  const observedIdentity = [input.product, input.userAgent, input.reportedVersion]
+    .map((value) => typeof value === 'string' ? value.slice(0, 512) : '');
+  const commandLineObserved = Array.isArray(input.commandLineArguments);
+  const commandLineArguments = commandLineObserved
+    ? input.commandLineArguments.filter((value) => typeof value === 'string').slice(0, 256)
+    : [];
+  const userAgentOverridden = commandLineArguments.some((argument) => (
+    argument === '--user-agent' || argument.startsWith('--user-agent=')
+  ));
+  const executableVerified = typeof input.executableSha256 === 'string'
+    && /^[0-9a-f]{64}$/u.test(input.executableSha256);
+  const edgeVersion = firstMatchingVersion(/\bEdg\/([0-9]+(?:\.[0-9]+)*)/u, observedIdentity);
+  if (edgeVersion && executableVerified && commandLineObserved && !userAgentOverridden) {
+    return Object.freeze({
+      name: 'Microsoft Edge',
+      version: edgeVersion,
+      releaseProofEligible: true,
+    });
+  }
+
+  const chromiumVersion = firstMatchingVersion(
+    /\b(?:Chrome|Chromium)\/([0-9]+(?:\.[0-9]+)*)/u,
+    observedIdentity,
+  );
+  return Object.freeze({
+    name: 'Non-Edge Chromium (test-only local mode)',
+    version: edgeVersion ?? chromiumVersion ?? 'unknown',
+    releaseProofEligible: false,
+  });
+}
+
+export async function readEdgeBrowserIdentity(browser, options = {}) {
+  if (!browser || typeof browser.target !== 'function' || typeof browser.version !== 'function') {
+    throw new TypeError('Edge browser identity requires a Puppeteer browser.');
+  }
+  const client = await browser.target().createCDPSession();
+  try {
+    const [versionMetadata, reportedVersion, commandLine] = await Promise.all([
+      client.send('Browser.getVersion'),
+      browser.version(),
+      client.send('Browser.getBrowserCommandLine'),
+    ]);
+    return classifyEdgeBrowserIdentity({
+      product: versionMetadata?.product,
+      userAgent: versionMetadata?.userAgent,
+      reportedVersion,
+      commandLineArguments: commandLine?.arguments,
+      executableSha256: options.executableSha256,
+    });
+  } finally {
+    await client.detach();
+  }
+}
+
+export async function sha256Executable(executablePath) {
+  const resolvedPath = realpathSync(executablePath);
+  if (!statSync(resolvedPath).isFile()) {
+    throw new Error(`Executable path is not a regular file: ${executablePath}`);
+  }
+  const digest = createHash('sha256');
+  for await (const chunk of createReadStream(resolvedPath)) digest.update(chunk);
+  return digest.digest('hex');
+}
+function firstMatchingVersion(pattern, candidates) {
+  for (const candidate of candidates) {
+    const match = pattern.exec(candidate);
+    if (match) return match[1];
+  }
+  return null;
 }
 
 function resolveHeadlessMode(target) {
@@ -66,9 +139,13 @@ export async function resolveExecutablePath({ target = 'chrome', executablePath,
         : process.env.FIREFOX_EXECUTABLE != null
           ? { path: process.env.FIREFOX_EXECUTABLE, source: 'FIREFOX_EXECUTABLE' }
           : null
-      : process.env.PUPPETEER_EXECUTABLE_PATH != null
-        ? { path: process.env.PUPPETEER_EXECUTABLE_PATH, source: 'PUPPETEER_EXECUTABLE_PATH' }
-        : null;
+      : normalizedTarget === 'edge'
+        ? process.env.EDGE_EXECUTABLE != null
+          ? { path: process.env.EDGE_EXECUTABLE, source: 'EDGE_EXECUTABLE' }
+          : null
+        : process.env.PUPPETEER_EXECUTABLE_PATH != null
+          ? { path: process.env.PUPPETEER_EXECUTABLE_PATH, source: 'PUPPETEER_EXECUTABLE_PATH' }
+          : null;
   if (configuredExecutable?.path) {
     if (!existsSync(configuredExecutable.path)) {
       throw new Error(
@@ -88,6 +165,12 @@ export async function resolveExecutablePath({ target = 'chrome', executablePath,
       `Firefox verification requires explicit executablePath or ${environmentName}. Resolve it with "${installCommand}".`,
     );
   }
+  if (normalizedTarget === 'edge') {
+    throw new Error(
+      'Microsoft Edge verification requires explicit executablePath or EDGE_EXECUTABLE. Install Microsoft Edge, then set EDGE_EXECUTABLE to its full executable path (for example, "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" on macOS).',
+    );
+  }
+
 
   const driver = await loadPuppeteerDriver(normalizedDriver);
   const executable = await driver.executablePath({ browser: normalizedTarget });

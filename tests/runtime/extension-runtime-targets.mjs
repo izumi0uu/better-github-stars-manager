@@ -14,7 +14,7 @@ const FIREFOX_DISCOVERY_PAGE_PATH = '/src/popup/index.html';
 const MAX_LABEL_LENGTH = 160;
 
 export function normalizeRuntimeTarget(target = 'chrome') {
-  if (target !== 'chrome' && target !== 'firefox') {
+  if (target !== 'chrome' && target !== 'edge' && target !== 'firefox') {
     throw new TypeError(`Unsupported runtime target: ${String(target)}.`);
   }
   return target;
@@ -113,7 +113,7 @@ export async function discoverExtension(browser, {
       throw new TypeError('Firefox browser must create an extension control page.');
     }
   } else if (typeof browser.targets !== 'function' || typeof browser.extensions !== 'function') {
-    throw new TypeError('Chrome browser must expose Puppeteer extension discovery.');
+    throw new TypeError(`${normalizedTarget === 'edge' ? 'Edge' : 'Chrome'} browser must expose Puppeteer extension discovery.`);
   }
   assertPositiveTimeout(timeoutMs, 'timeoutMs');
   assertPositiveTimeout(pollMs, 'pollMs');
@@ -192,7 +192,7 @@ export async function discoverExtension(browser, {
       candidate.enabled === true
       && (!expectedDist || path.resolve(candidate.path) === expectedDist)
     ));
-    const background = extension ? await findChromeBackgroundRuntime(browser, extension) : null;
+    const background = extension ? await findChromiumBackgroundRuntime(browser, extension, normalizedTarget) : null;
     if (extension && background) {
       const runtimeId = await background.executionContext
         .evaluate(() => chrome.runtime.id)
@@ -209,7 +209,7 @@ export async function discoverExtension(browser, {
           backgroundKind: 'service_worker',
         });
       }
-      lastDiagnostic = `Chrome service worker returned unexpected extension ID: ${boundedLabel(runtimeId)}`;
+      lastDiagnostic = `${normalizedTarget === 'edge' ? 'Edge' : 'Chrome'} service worker returned unexpected extension ID: ${boundedLabel(runtimeId)}`;
     } else {
       lastDiagnostic = JSON.stringify(candidates.slice(0, MAX_DIAGNOSTIC_ITEMS).map((candidate) => ({
         id: boundedLabel(candidate.id),
@@ -220,7 +220,7 @@ export async function discoverExtension(browser, {
     await delay(pollMs);
   }
   throw new Error(
-    `Packaged Chrome background did not become ready before the discovery timeout. Last state: ${lastDiagnostic}`,
+    `Packaged ${normalizedTarget === 'edge' ? 'Edge' : 'Chrome'} background did not become ready before the discovery timeout. Last state: ${lastDiagnostic}`,
   );
 }
 
@@ -349,14 +349,15 @@ export async function openHttpFixturePage(browser, url, label = 'http-fixture-pa
     throw new Error(`Packaged HTTP fixture page ${safeLabel} did not become ready before its timeout.`);
   }
 }
-async function findChromeBackgroundRuntime(browser, extension) {
-  const target = browser.targets().find((candidate) => (
+async function findChromiumBackgroundRuntime(browser, extension, target) {
+  const extensionBaseUrl = extensionOrigin(extension.id, target);
+  const backgroundTarget = browser.targets().find((candidate) => (
     candidate.type() === 'service_worker'
-    && candidate.url().startsWith(`${extensionOrigin(extension.id, 'chrome')}/`)
+    && candidate.url().startsWith(`${extensionBaseUrl}/`)
   ));
-  if (!target) return null;
-  const executionContext = await target.worker().catch(() => null);
-  return executionContext ? { target, executionContext, backgroundPage: null } : null;
+  if (!backgroundTarget) return null;
+  const executionContext = await backgroundTarget.worker().catch(() => null);
+  return executionContext ? { target: backgroundTarget, executionContext, backgroundPage: null } : null;
 }
 
 

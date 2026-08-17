@@ -15,6 +15,8 @@ import {
   prepareFirefox140ExtensionPage,
   normalizeRuntimeTarget,
   resolveExecutablePath,
+  readEdgeBrowserIdentity,
+  sha256Executable,
 } from './puppeteer-runtime.mjs';
 import {
   discoverExtension,
@@ -38,6 +40,20 @@ const FIREFOX_GUARDED_ORIGINS = Object.freeze([
   'https://openrouter.ai/',
 ]);
 
+export const CHROMIUM_FULL_PRODUCT_SCENARIO_IDS = Object.freeze([
+  'popup-options-navigation',
+  'classic-pat-rejection',
+  'cubby-provider-disclosure',
+  'stars-owner-gating',
+  'stars-manager-full-product-controls',
+  'watch-radar-discovery',
+  'turbo-navigation-idempotence',
+  'repository-tag-chip',
+  'watch-stored-projection',
+  'watch-repository-detail-responsive',
+  'stars-surface-recovery',
+  'watch-credential-recovery',
+]);
 
 export { FIREFOX_RUNTIME_SCENARIO_IDS };
 
@@ -74,7 +90,9 @@ export async function runExtensionBrowserSmoke(options = {}) {
   DIST = path.resolve(
     options.dist
       ?? process.env.GSM_DIST_DIR
-      ?? (runtimeTarget === 'firefox' ? FIREFOX_DIST_DIR : 'dist'),
+      ?? (runtimeTarget === 'firefox'
+        ? FIREFOX_DIST_DIR
+        : runtimeTarget === 'edge' ? 'dist-edge' : 'dist'),
   );
   STORE_RATING_SMOKE = runtimeTarget === 'chrome' && process.env.GSM_STORE_TARGET === 'chrome';
   failures = [];
@@ -83,6 +101,8 @@ export async function runExtensionBrowserSmoke(options = {}) {
   backgroundStartupHealthChecks = 0;
   let extensionId = null;
   let browserVersion = null;
+  let edgeBrowserIdentity = null;
+  let edgeExecutableSha256 = null;
 
   if (!existsSync(path.join(DIST, 'manifest.json'))) {
     const missingDist = DIST;
@@ -97,6 +117,7 @@ export async function runExtensionBrowserSmoke(options = {}) {
       executablePath: options.executablePath,
       puppeteerDriver: options.puppeteerDriver,
     });
+    if (runtimeTarget === 'edge') edgeExecutableSha256 = await sha256Executable(executablePath);
     profile = mkdtempSync(path.join(os.tmpdir(), `gsm-${runtimeTarget}-extension-smoke-`));
   } catch (error) {
     cleanupSmokeState();
@@ -114,6 +135,19 @@ export async function runExtensionBrowserSmoke(options = {}) {
       failClosedNetwork: runtimeTarget === 'firefox',
       puppeteerDriver: options.puppeteerDriver,
     });
+    if (runtimeTarget === 'edge') {
+      edgeBrowserIdentity = await readEdgeBrowserIdentity(browser, {
+        executableSha256: edgeExecutableSha256,
+      });
+      if (
+        edgeBrowserIdentity.releaseProofEligible !== true
+        && options.allowNonEdgeExecutableForLocalTest !== true
+      ) {
+        throw new Error(
+          'EDGE_EXECUTABLE did not satisfy Microsoft Edge release identity proof: require Edg/<version>, a hashed executable, and no --user-agent override. Set EDGE_EXECUTABLE to Microsoft Edge. Non-Edge Chromium is available only through the explicit allowNonEdgeExecutableForLocalTest mode and never produces release proof.',
+        );
+      }
+    }
     // Firefox BiDi cannot navigate directly to moz-extension:// pages.
     extensionPageOpener = runtimeTarget === 'firefox'
       ? (url, { timeoutMs }) => openFirefoxExtensionPage(browser, {
@@ -128,7 +162,9 @@ export async function runExtensionBrowserSmoke(options = {}) {
     const reportedBrowserVersion = await browser.version();
     browserVersion = runtimeTarget === 'firefox'
       ? reportedBrowserVersion.replace(/^firefox\//iu, 'Firefox/')
-      : reportedBrowserVersion;
+      : runtimeTarget === 'edge'
+        ? `${edgeBrowserIdentity.name}/${edgeBrowserIdentity.version}`
+        : reportedBrowserVersion;
     extensionId = await detectExtensionId(browser);
     // Firefox BiDi does not expose the event page before getBackgroundPage resolves,
     // so startup is a semantic health check and error counts cover only attached intervals.
@@ -454,13 +490,18 @@ export async function runExtensionBrowserSmoke(options = {}) {
     browserTarget: runtimeTarget,
     realBrowser: true,
     browserVersion,
-    executablePath,
+    ...(runtimeTarget === 'edge' ? {
+      executable: Object.freeze({ algorithm: 'sha256', sha256: edgeExecutableSha256 }),
+      browserIdentity: edgeBrowserIdentity,
+    } : { executablePath }),
     extensionId,
     background: Object.freeze({
       kind: runtimeTarget === 'firefox' ? 'event_page' : 'service_worker',
       module: true,
     }),
-    scenarioIds: runtimeTarget === 'firefox' ? FIREFOX_RUNTIME_SCENARIO_IDS : Object.freeze([]),
+    scenarioIds: runtimeTarget === 'firefox'
+      ? FIREFOX_RUNTIME_SCENARIO_IDS
+      : runtimeTarget === 'edge' ? CHROMIUM_FULL_PRODUCT_SCENARIO_IDS : Object.freeze([]),
     diagnostics: Object.freeze({
       observedPageErrors: pageIssues.filter((issue) => !issue.includes('[background')).length,
       observedBackgroundErrors: pageIssues.filter((issue) => issue.includes('[background')).length,
@@ -477,7 +518,10 @@ export async function runExtensionBrowserSmoke(options = {}) {
   const passedTarget = runtimeTarget;
   cleanupSmokeState();
   if (failureMessage) throw new Error(failureMessage);
-  console.log(`\n${passedTarget === 'firefox' ? 'Firefox e' : 'E'}xtension browser smoke passed.`);
+  const passedBrowser = passedTarget === 'firefox'
+    ? 'Firefox extension'
+    : passedTarget === 'edge' ? 'Edge extension' : 'Extension';
+  console.log(`\n${passedBrowser} browser smoke passed.`);
   return result;
 }
 

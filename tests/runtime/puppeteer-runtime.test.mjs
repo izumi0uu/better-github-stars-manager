@@ -1,10 +1,18 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   buildExtensionBrowserLaunchOptions,
+  classifyEdgeBrowserIdentity,
   normalizePuppeteerDriver,
+  normalizeRuntimeTarget,
   prepareFirefox140ExtensionPage,
+  readEdgeBrowserIdentity,
   resolveExecutablePath,
+  sha256Executable,
 } from './puppeteer-runtime.mjs';
 import {
   FIREFOX_GECKO_ID,
@@ -19,6 +27,71 @@ const chromeOptions = buildExtensionBrowserLaunchOptions({
 assert.equal(chromeOptions.browser, undefined);
 assert.equal(chromeOptions.args.includes('--load-extension=/tmp/dist'), true);
 assert.equal(chromeOptions.extraPrefsFirefox, undefined);
+const edgeOptions = buildExtensionBrowserLaunchOptions({
+  target: 'edge',
+  dist: '/tmp/dist-edge',
+  userDataDir: '/tmp/edge-profile',
+  executablePath: '/tmp/edge',
+});
+assert.equal(edgeOptions.browser, undefined);
+assert.equal(edgeOptions.args.includes('--load-extension=/tmp/dist-edge'), true);
+assert.equal(edgeOptions.extraPrefsFirefox, undefined);
+assert.equal(normalizeRuntimeTarget('edge'), 'edge');
+const edgeIdentity = classifyEdgeBrowserIdentity({
+  product: 'Chrome/140.0.0.0',
+  userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0',
+  reportedVersion: 'Chrome/140.0.0.0',
+  commandLineArguments: ['Microsoft Edge', '--remote-debugging-pipe'],
+  executableSha256: 'a'.repeat(64),
+});
+assert.deepEqual(edgeIdentity, {
+  name: 'Microsoft Edge',
+  version: '140.0.0.0',
+  releaseProofEligible: true,
+});
+let edgeIdentityClientDetached = false;
+const observedEdgeIdentity = await readEdgeBrowserIdentity({
+  target: () => ({
+    createCDPSession: async () => ({
+      send: async (command) => {
+        if (command === 'Browser.getVersion') {
+          return {
+            product: 'Chrome/140.0.0.0',
+            userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Edg/140.0.0.0',
+          };
+        }
+        if (command === 'Browser.getBrowserCommandLine') {
+          return { arguments: ['Microsoft Edge', '--remote-debugging-pipe'] };
+        }
+        throw new Error(`Unexpected CDP command: ${command}`);
+      },
+      detach: async () => { edgeIdentityClientDetached = true; },
+    }),
+  }),
+  version: async () => 'Chrome/140.0.0.0',
+}, { executableSha256: 'a'.repeat(64) });
+assert.deepEqual(observedEdgeIdentity, edgeIdentity);
+assert.equal(edgeIdentityClientDetached, true);
+
+const spoofedEdgeIdentity = classifyEdgeBrowserIdentity({
+  product: 'Chrome/140.0.0.0',
+  userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Edg/140.0.0.0',
+  commandLineArguments: ['Chromium', '--user-agent=Mozilla/5.0 Edg/140.0.0.0'],
+  executableSha256: 'a'.repeat(64),
+});
+assert.equal(spoofedEdgeIdentity.releaseProofEligible, false);
+
+const executableFixtureDir = mkdtempSync(path.join(os.tmpdir(), 'gsm-edge-executable-'));
+try {
+  const executableFixture = path.join(executableFixtureDir, 'msedge');
+  writeFileSync(executableFixture, 'verified-edge-executable');
+  const expectedDigest = createHash('sha256').update(readFileSync(executableFixture)).digest('hex');
+  assert.equal(await sha256Executable(executableFixture), expectedDigest);
+} finally {
+  rmSync(executableFixtureDir, { recursive: true, force: true });
+}
+
+
 
 const firefoxOptions = buildExtensionBrowserLaunchOptions({
   target: 'firefox',
@@ -56,6 +129,34 @@ await assert.rejects(
   (error) => error === predicateError,
 );
 console.log('✓ puppeteer runtime preserves Chrome defaults and configures real Firefox launch');
+const previousEdgeExecutable = process.env.EDGE_EXECUTABLE;
+delete process.env.EDGE_EXECUTABLE;
+try {
+  assert.equal(
+    await resolveExecutablePath({ target: 'edge', executablePath: process.execPath }),
+    process.execPath,
+  );
+  process.env.EDGE_EXECUTABLE = process.execPath;
+  assert.equal(await resolveExecutablePath({ target: 'edge' }), process.execPath);
+
+  const invalidEdgePath = '/__github_stars_manager_missing__/microsoft-edge';
+  process.env.EDGE_EXECUTABLE = invalidEdgePath;
+  await assert.rejects(
+    () => resolveExecutablePath({ target: 'edge' }),
+    (error) => error instanceof Error
+      && error.message === `EDGE_EXECUTABLE does not exist: ${invalidEdgePath}`,
+  );
+  delete process.env.EDGE_EXECUTABLE;
+  await assert.rejects(
+    () => resolveExecutablePath({ target: 'edge' }),
+    /Microsoft Edge verification requires explicit executablePath or EDGE_EXECUTABLE.*Install Microsoft Edge/u,
+  );
+} finally {
+  if (previousEdgeExecutable === undefined) delete process.env.EDGE_EXECUTABLE;
+  else process.env.EDGE_EXECUTABLE = previousEdgeExecutable;
+}
+console.log('✓ puppeteer runtime requires explicit Microsoft Edge executable provenance and verifies Edg/version identity');
+
 
 const previousFirefoxExecutable = process.env.FIREFOX_EXECUTABLE;
 const previousFirefox140Executable = process.env.FIREFOX_140_EXECUTABLE;
