@@ -68,6 +68,8 @@ function createRuntime(resources: ManagerRuntime['resources'] = {
     getWatchRepositoryDetail: unused,
     getWatchSubjectDetail: unused,
     refreshWatch: unused,
+    loadOlderWatch: unused,
+    markWatchLoaded: async () => null,
     markWatchThreadsRead: unused,
     markWatchThreadsDone: unused,
     updateWatchCollapse: async () => {},

@@ -163,12 +163,12 @@ vi.mock('@/ui/hooks/use-theme', () => ({
 }));
 
 vi.mock('@/ui/hooks/use-watch-inbox', () => ({
-  useWatchInbox: () => ({
+  useWatchInbox: ({ active = true }: { active?: boolean } = {}) => ({
     unreadOnly: true,
     setUnreadOnly: vi.fn(),
     collapsedRepositories: {},
     updateRepositoryCollapse: vi.fn(),
-    result: { unreadCount: 3, status: { inboxStatus: 'fresh' } },
+    result: active ? { unreadCount: 3, status: { inboxStatus: 'fresh' } } : null,
     loading: false,
     refreshing: false,
     error: null,
@@ -176,9 +176,9 @@ vi.mock('@/ui/hooks/use-watch-inbox', () => ({
     reload: vi.fn(),
   }),
 }));
-vi.mock('@/ui/hooks/use-radar', () => {
-  const radar = {
-    result: null,
+vi.mock('@/ui/hooks/use-radar', () => ({
+  useRadar: ({ active = true }: { active?: boolean } = {}) => ({
+    result: active ? { unseenCount: 4 } : null,
     view: 'feed' as const,
     setView: managerMocks.radarSetView,
     loading: false,
@@ -192,12 +192,11 @@ vi.mock('@/ui/hooks/use-radar', () => {
     setFavorite: vi.fn(),
     addTag: vi.fn(),
     dismiss: vi.fn(),
-  };
-  return { useRadar: () => radar };
-});
+  }),
+}));
 
 vi.mock('@/ui/hooks/use-manager-surface-badges', () => ({
-  useManagerSurfaceBadges: () => ({ watchUnreadCount: 3, radarUnseenCount: 0 }),
+  useManagerSurfaceBadges: () => ({ watchUnreadCount: 0, radarUnseenCount: 0 }),
 }));
 
 
@@ -266,12 +265,18 @@ vi.mock('@/ui/components/Toolbar', () => ({
     surface,
     onSurfaceChange,
     watchUnreadCount,
+    radarUnseenCount,
   }: {
     surface: 'stars' | 'watch' | 'radar';
     onSurfaceChange: (surface: 'stars' | 'watch' | 'radar') => void;
     watchUnreadCount: number;
+    radarUnseenCount: number;
   }) => (
-    <div data-testid="toolbar" data-watch-unread={watchUnreadCount}>
+    <div
+      data-testid="toolbar"
+      data-watch-unread={watchUnreadCount}
+      data-radar-unseen={radarUnseenCount}
+    >
       <button type="button" data-testid="stars-surface" onClick={() => onSurfaceChange('stars')}>
         Stars
       </button>
@@ -419,6 +424,14 @@ afterEach(() => {
 });
 
 describe('ManagerPanel unstar flow', () => {
+  it('starts Watch and Following resources on the initial Stars surface', () => {
+    const { container } = mountPanel();
+    const toolbar = container.querySelector('[data-testid="toolbar"]');
+
+    expect(toolbar?.getAttribute('data-watch-unread')).toBe('3');
+    expect(toolbar?.getAttribute('data-radar-unseen')).toBe('4');
+  });
+
   it('keeps row action commands stable across unrelated Manager surface rerenders', () => {
     const { container } = mountPanel();
     const initial = managerMocks.starsTableProps.at(-1);

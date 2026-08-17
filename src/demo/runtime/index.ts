@@ -14,6 +14,7 @@ import { projectStarsQuery, type StarsQueryParams, type StarsQueryResult } from 
 import { projectWatchInbox, normalizeRepositoryFullName, type WatchSubjectDetail } from '@/watch/watch-model';
 import type {
   WatchInboxQueryResponse,
+  WatchLoadOlderResult,
   WatchRefreshResult,
   WatchStatus,
   WatchThreadMutationInput,
@@ -382,6 +383,20 @@ class DemoManagerRuntime implements ManagerRuntime {
       inboxPublished: true,
       notModified: true,
     });
+  }
+
+  async loadOlderWatch(): Promise<WatchLoadOlderResult> {
+    return cloneMutable({
+      status: this.watchStatus(),
+      addedCount: 0,
+      hasMore: false,
+    });
+  }
+
+  async markWatchLoaded(): Promise<string | null> {
+    const loadedAt = timestamp(this.state.now);
+    this.state.watchState.inbox.newerThan = loadedAt;
+    return loadedAt;
   }
 
   async markWatchThreadsRead(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult> {

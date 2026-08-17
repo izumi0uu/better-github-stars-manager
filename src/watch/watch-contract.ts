@@ -77,3 +77,9 @@ export interface WatchRefreshResult {
   inboxPublished: boolean;
   notModified: boolean;
 }
+
+export interface WatchLoadOlderResult {
+  status: WatchStatus;
+  addedCount: number;
+  hasMore: boolean;
+}

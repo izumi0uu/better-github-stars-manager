@@ -265,6 +265,8 @@ type Req = BgsmAgentSessionRequest
   | { type: "getWatchSubjectDetail"; threadId?: unknown }
   | { type: "getWatchRepositoryDetail"; fullName?: unknown }
   | { type: "refreshWatchInbox" }
+  | { type: "loadOlderWatchInbox" }
+  | { type: "markWatchInboxLoaded" }
   | { type: "markWatchThreadsRead"; accountLogin?: unknown; threadIds?: unknown }
   | { type: "markWatchThreadsDone"; accountLogin?: unknown; threadIds?: unknown }
   | { type: "disconnectWatchInbox" }
@@ -349,8 +351,11 @@ const watchRefreshCoordinator = createWatchRefreshCoordinator({
     replaceScope: watchStore.replaceWatchScope,
     recordScopeFailure: watchStore.recordWatchScopeFailure,
     replaceInbox: watchStore.replaceWatchInbox,
+    appendHistory: watchStore.appendWatchInboxHistory,
+    markLoaded: watchStore.markWatchInboxLoaded,
     revalidateInbox: watchStore.revalidateWatchInbox,
     recordInboxFailure: watchStore.recordWatchInboxFailure,
+    recordHistoryFailure: watchStore.recordWatchHistoryFailure,
     applyThreadMutation: watchStore.applyWatchThreadMutation,
     disconnectInbox: watchStore.disconnectWatchInbox,
     clearData: watchStore.clearWatchData,
@@ -1801,6 +1806,23 @@ async function handle(req: Req): Promise<Res> {
           return { ok: false, error: m.background.watchRefreshFailed };
         }
       }
+      case 'loadOlderWatchInbox': {
+        const m = await getLocaleMessages();
+        try {
+          return { ok: true, data: await watchRefreshCoordinator.loadOlder() };
+        } catch {
+          return { ok: false, error: m.background.watchRefreshFailed };
+        }
+      }
+      case 'markWatchInboxLoaded': {
+        const m = await getLocaleMessages();
+        try {
+          return { ok: true, data: await watchRefreshCoordinator.markLoaded() };
+        } catch {
+          return { ok: false, error: m.background.watchInboxUnavailable };
+        }
+      }
+
       case 'markWatchThreadsRead':
       case 'markWatchThreadsDone': {
         const m = await getLocaleMessages();

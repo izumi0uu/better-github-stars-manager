@@ -100,6 +100,11 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
           candidateCount: threads.length,
           matchedCount: threads.length,
           truncated: false,
+          newerThan: null,
+          historyBefore: '2026-08-05T00:00:00Z',
+          historyNextPage: null,
+          historyExhausted: true,
+          historyErrorCode: null,
         },
       },
     },
@@ -161,13 +166,17 @@ function renderInbox(props: Partial<React.ComponentProps<typeof WatchInbox>> = {
     <ManagerRuntimeProvider runtime={runtime}>
       <WatchInbox
         result={result()}
+        newerThan={null}
         loading={false}
         refreshing={false}
+        loadingOlder={false}
+        loadOlderError={false}
         error={null}
         unreadOnly
         onUnreadOnlyChange={vi.fn()}
         onRefresh={vi.fn()}
         onRetryQuery={vi.fn()}
+        onLoadOlder={vi.fn()}
         onOpenOptions={vi.fn()}
         onOpenMainTokenOptions={vi.fn()}
         actionPending={null}
@@ -227,7 +236,7 @@ describe('WatchInbox', () => {
     expect(container.querySelector('[data-watch-thread-list]')
       ?.closest('[data-surface-work-canvas="watch"]')).not.toBeNull();
     expect(container.querySelector('[data-surface-list-end="timeline"]')?.textContent)
-      .toContain('End of current snapshot · 1 thread');
+      .toContain('All caught up · 1 thread');
 
     await click(findButtonByText(commandBar!, 'All'));
     const refresh = Array.from(commandBar?.querySelectorAll<HTMLButtonElement>('button') ?? [])
@@ -242,11 +251,76 @@ describe('WatchInbox', () => {
   it('uses an info tone when the fetched window is truncated', () => {
     const truncated = result();
     truncated.status.state!.inbox.truncated = true;
+    truncated.status.state!.inbox.historyNextPage = 11;
+    truncated.status.state!.inbox.historyExhausted = false;
     const container = renderInbox({ result: truncated });
     const marker = container.querySelector<HTMLElement>('[data-surface-list-end="timeline"]');
 
     expect(marker?.textContent).toContain('End of current window · older threads may exist');
     expect(marker?.getAttribute('data-surface-list-end-tone')).toBe('info');
+  });
+
+  it('groups threads by day and marks only updates after the prior visible load', () => {
+    const timelineResult = result({
+      threads: [
+        thread(1, { updatedAt: '2026-08-05T12:00:00Z' }),
+        thread(2, { updatedAt: '2026-08-04T12:00:00Z' }),
+      ],
+    });
+    const container = renderInbox({
+      result: timelineResult,
+      newerThan: '2026-08-05T11:30:00Z',
+    });
+
+    expect(Array.from(container.querySelectorAll('[data-watch-day]'), (node) => (
+      node.getAttribute('data-watch-day')
+    ))).toEqual(['2026-08-05', '2026-08-04']);
+    expect(container.querySelector('[data-watch-thread-row="1"]')?.getAttribute('data-watch-new'))
+      .toBe('true');
+    expect(container.querySelector('[data-watch-thread-row="2"]')?.hasAttribute('data-watch-new'))
+      .toBe(false);
+    expect(container.textContent).toContain('New');
+  });
+
+  it('loads history when intersection arrives after the scroll that revealed the sentinel', async () => {
+    let revealSentinel = () => {};
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: (entries: Array<{ isIntersecting: boolean }>) => void) {
+        revealSentinel = () => callback([{ isIntersecting: true }]);
+      }
+      observe() {}
+      disconnect() {}
+    });
+    const paged = result();
+    paged.status.state!.inbox.truncated = true;
+    paged.status.state!.inbox.historyNextPage = 11;
+    paged.status.state!.inbox.historyExhausted = false;
+    const onLoadOlder = vi.fn();
+
+    const container = renderInbox({ result: paged, onLoadOlder });
+    await act(async () => { await Promise.resolve(); });
+    expect(onLoadOlder).not.toHaveBeenCalled();
+
+    await act(async () => { window.dispatchEvent(new Event('scroll')); });
+    expect(onLoadOlder).not.toHaveBeenCalled();
+    await act(async () => { revealSentinel(); });
+
+    expect(container.querySelector('[data-watch-history-sentinel="more"]')).not.toBeNull();
+    expect(onLoadOlder).toHaveBeenCalledOnce();
+  });
+
+  it('keeps failed historical loads retryable without hiding saved rows', async () => {
+    const paged = result();
+    paged.status.state!.inbox.truncated = true;
+    paged.status.state!.inbox.historyNextPage = 11;
+    paged.status.state!.inbox.historyExhausted = false;
+    const onLoadOlder = vi.fn();
+    const container = renderInbox({ result: paged, loadOlderError: true, onLoadOlder });
+
+    expect(container.textContent).toContain('Your saved timeline is unchanged.');
+    expect(container.textContent).toContain('Thread 0');
+    await click(findButtonByText(container, 'Retry'));
+    expect(onLoadOlder).toHaveBeenCalledOnce();
   });
 
   it('distinguishes a query failure from missing main-token setup', () => {

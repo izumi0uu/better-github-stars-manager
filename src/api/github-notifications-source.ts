@@ -1,5 +1,6 @@
 import {
   GitHubWatchError,
+  isValidWatchHistoryPage,
   dedupeNotificationThreads,
   normalizeNotificationThread,
   type GitHubNotificationThread,
@@ -20,6 +21,7 @@ export interface FetchGitHubNotificationsOptions {
   token: string;
   before?: Date | string | number;
   lastModified?: string | null;
+  startPage?: number;
   fetchImpl?: FetchLike;
   now?: () => Date | string | number;
   maxPages?: number;
@@ -63,7 +65,7 @@ function lastModifiedValidator(value: string | null | undefined): string | null 
   return validator && Number.isFinite(Date.parse(validator)) ? validator : null;
 }
 
-function nextPage(linkHeader: string | null, currentPage: number): number | null {
+function nextPage(linkHeader: string | null, currentPage: number, before: string): number | null {
   if (!linkHeader) return null;
   const parts = linkHeader.split(',');
   const nextParts = parts.filter((part) => /\brel="[^"]*\bnext\b[^"]*"/u.test(part));
@@ -93,7 +95,13 @@ function nextPage(linkHeader: string | null, currentPage: number): number | null
     page !== currentPage + 1 ||
     url.searchParams.getAll('page').length !== 1 ||
     url.searchParams.get('per_page') !== String(PER_PAGE) ||
-    url.searchParams.getAll('per_page').length !== 1
+    url.searchParams.getAll('per_page').length !== 1 ||
+    url.searchParams.get('all') !== 'true' ||
+    url.searchParams.getAll('all').length !== 1 ||
+    url.searchParams.get('participating') !== 'false' ||
+    url.searchParams.getAll('participating').length !== 1 ||
+    url.searchParams.get('before') !== before ||
+    url.searchParams.getAll('before').length !== 1
   ) {
     throw new GitHubWatchError('invalid_pagination', undefined, { page: currentPage });
   }
@@ -176,7 +184,7 @@ async function requestPage(input: {
         page: input.page,
       });
     }
-    const pageAfter = nextPage(response.headers.get('link'), input.page);
+    const pageAfter = nextPage(response.headers.get('link'), input.page, input.before);
     if (threads.length === 0 && pageAfter !== null) {
       throw new GitHubWatchError('invalid_pagination', undefined, { page: input.page });
     }
@@ -210,11 +218,17 @@ export async function fetchGitHubNotifications(
     ? Math.max(1, Math.floor(options.timeoutMs!))
     : DEFAULT_TIMEOUT_MS;
   const fetchImpl = options.fetchImpl ?? fetch;
-  const conditionalLastModified = lastModifiedValidator(options.lastModified);
+  const startPage = options.startPage === undefined ? 1 : options.startPage;
+  if (!isValidWatchHistoryPage(startPage)) {
+    throw new GitHubWatchError('invalid_pagination');
+  }
+  const conditionalLastModified = startPage === 1
+    ? lastModifiedValidator(options.lastModified)
+    : null;
   const allThreads: GitHubNotificationThread[] = [];
-  let page = 1;
+  let page = startPage;
   let pageCount = 0;
-  let truncated = false;
+  let nextPageNumber: number | null = null;
   let lastModified: string | null = null;
   let pollSeconds = WATCH_DEFAULT_POLL_INTERVAL_SECONDS;
   for (;;) {
@@ -240,6 +254,7 @@ export async function fetchGitHubNotifications(
           matchedCount: 0,
           pageCount,
           truncated: false,
+          nextPage: null,
           notModified: true,
           before,
           fetchedAt,
@@ -249,12 +264,9 @@ export async function fetchGitHubNotifications(
       }
     }
     allThreads.push(...result.threads);
-    if (result.nextPage === null) break;
-    if (pageCount >= maxPages) {
-      truncated = true;
-      break;
-    }
-    page = result.nextPage;
+    nextPageNumber = result.nextPage;
+    if (nextPageNumber === null || pageCount >= maxPages) break;
+    page = nextPageNumber;
   }
   const threads = dedupeNotificationThreads(allThreads);
   return {
@@ -262,7 +274,8 @@ export async function fetchGitHubNotifications(
     candidateCount: threads.length,
     matchedCount: threads.length,
     pageCount,
-    truncated,
+    truncated: nextPageNumber !== null,
+    nextPage: nextPageNumber,
     notModified: false,
     before,
     fetchedAt,

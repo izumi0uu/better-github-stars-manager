@@ -2,6 +2,7 @@ import type { Config, Star, Tag } from '@/types';
 import type { StarsQueryParams, StarsQueryResult } from '@/stars/stars-query';
 import type {
   WatchInboxQueryResponse,
+  WatchLoadOlderResult,
   WatchRefreshResult,
   WatchThreadMutationInput,
   WatchThreadMutationResult,
@@ -103,6 +104,8 @@ export interface ManagerRuntime {
   getWatchRepositoryDetail(fullName: string): Promise<WatchRepositoryDetail>;
   getWatchSubjectDetail(threadId: string): Promise<WatchSubjectDetail>;
   refreshWatch(): Promise<WatchRefreshResult>;
+  loadOlderWatch(): Promise<WatchLoadOlderResult>;
+  markWatchLoaded(): Promise<string | null>;
   markWatchThreadsRead(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult>;
   markWatchThreadsDone(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult>;
   updateWatchCollapse(repositoryFullName: string, contentSignature: string | null): Promise<void>;

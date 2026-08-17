@@ -21,9 +21,12 @@ export interface WatchInboxSearchInput {
 
 export interface WatchInboxProps {
   result: WatchInboxQueryResponse | null;
+  newerThan: string | null;
   scrollElement?: HTMLElement | null;
   loading: boolean;
   refreshing: boolean;
+  loadingOlder: boolean;
+  loadOlderError: boolean;
   error: 'query' | 'refresh' | null;
   actionPending: WatchThreadActionPending | null;
   actionError: WatchThreadAction | null;
@@ -31,6 +34,7 @@ export interface WatchInboxProps {
   onUnreadOnlyChange: (unreadOnly: boolean) => void;
   onRefresh: () => void;
   onRetryQuery: () => void;
+  onLoadOlder: () => void;
   onOpenOptions: () => void;
   onOpenMainTokenOptions: () => void;
   onMarkThreadsRead: (ids: readonly string[]) => void;

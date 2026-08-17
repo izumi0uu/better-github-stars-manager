@@ -24,6 +24,7 @@ import type { StarsQueryParams, StarsQueryResult } from '@/stars/stars-query';
 import type { Config, Star } from '@/types';
 import type {
   WatchInboxQueryResponse,
+  WatchLoadOlderResult,
   WatchRefreshResult,
   WatchThreadMutationInput,
   WatchThreadMutationResult,
@@ -198,6 +199,14 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
 
   refreshWatch(): Promise<WatchRefreshResult> {
     return bgCall<WatchRefreshResult>('refreshWatchInbox');
+  }
+
+  loadOlderWatch(): Promise<WatchLoadOlderResult> {
+    return bgCall<WatchLoadOlderResult>('loadOlderWatchInbox');
+  }
+
+  markWatchLoaded(): Promise<string | null> {
+    return bgCall<string | null>('markWatchInboxLoaded');
   }
 
   markWatchThreadsRead(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult> {

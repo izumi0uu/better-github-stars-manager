@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useI18n } from '@/i18n';
+import { useManagerNow } from '@/ui/manager-runtime-context';
 
 import { cn } from '@/lib/utils';
 import { useImeBufferedInput } from '@/ui/hooks/use-ime-input';
@@ -46,6 +47,29 @@ function isWatchCredentialError(code: string | null | undefined): boolean {
   return code === 'authentication_required' || code === 'permission_denied';
 }
 
+function formatWatchTimelineDay(
+  value: string,
+  locale: string,
+  now: number,
+  todayLabel: string,
+  yesterdayLabel: string,
+): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  const today = new Date(now);
+  const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if (dayStart === todayStart.getTime()) return todayLabel;
+  todayStart.setDate(todayStart.getDate() - 1);
+  if (dayStart === todayStart.getTime()) return yesterdayLabel;
+  return new Intl.DateTimeFormat(locale, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    ...(date.getFullYear() === today.getFullYear() ? {} : { year: 'numeric' }),
+  }).format(date);
+}
+
 function EmptyState({
   icon,
   title,
@@ -79,15 +103,19 @@ function EmptyState({
 
 export function WatchInbox({
   result,
+  newerThan,
   scrollElement,
   loading,
   refreshing,
+  loadingOlder,
+  loadOlderError,
   actionPending,
   actionError,
   unreadOnly,
   onUnreadOnlyChange,
   onRefresh,
   onRetryQuery,
+  onLoadOlder,
   onOpenOptions,
   onOpenMainTokenOptions,
   onMarkThreadsRead,
@@ -97,6 +125,7 @@ export function WatchInbox({
   onSelectRepository,
 }: WatchInboxProps) {
   const { m, locale } = useI18n();
+  const now = useManagerNow();
   const [query, setQuery] = useState('');
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
   const [manualRepositoryExpansions, setManualRepositoryExpansions] = useState<
@@ -108,9 +137,20 @@ export function WatchInbox({
   const [pendingFocusThreadId, setPendingFocusThreadId] = useState<string | null>(null);
   const [autoExpandedRepositories, setAutoExpandedRepositories] = useState<Record<string, true>>({});
   const reconciledCollapseSignatures = useRef<Record<string, string>>({});
+  const historySentinelRef = useRef<HTMLDivElement | null>(null);
+  const historySentinelVisibleRef = useRef(false);
+  const historyScrollIntentRef = useRef(false);
+  const requestedHistoryKeyRef = useRef<string | null>(null);
   const searchInput = useImeBufferedInput(query, setQuery);
   const status = result?.status;
   const state = status?.state;
+  const historyNextPage = state?.inbox.historyNextPage ?? null;
+  const historyExhausted = state?.inbox.historyExhausted ?? true;
+  const canLoadOlder = historyNextPage !== null && !historyExhausted;
+  const historyRequestKey = canLoadOlder
+    ? `${status?.accountLogin ?? ''}:${state?.inbox.historyBefore ?? ''}:${historyNextPage}`
+    : null;
+  const newerThanMs = Date.parse(newerThan ?? '');
   const modeProjection = useMemo(
     () => result ? projectWatchInbox(result.threads, { unreadOnly }) : null,
     [result, unreadOnly],
@@ -156,18 +196,65 @@ export function WatchInbox({
     sourceGroupsByRepository,
   ]);
   const flatRows = useMemo(
-    () => buildWatchInboxRows(groups, expandedRepositories),
-    [expandedRepositories, groups],
+    () => buildWatchInboxRows(visibleProjection?.threads ?? [], expandedRepositories),
+    [expandedRepositories, visibleProjection?.threads],
   );
   const rowVirtualizer = useVirtualizer({
     count: flatRows.length,
     getScrollElement: () => scrollElement ?? null,
     getItemKey: (index) => flatRows[index]?.key ?? index,
-    estimateSize: (index) => flatRows[index]?.kind === 'repository'
-      ? WATCH_REPOSITORY_ROW_ESTIMATE
-      : WATCH_THREAD_ROW_ESTIMATE,
+    estimateSize: (index) => flatRows[index]?.kind === 'day'
+      ? 32
+      : flatRows[index]?.kind === 'repository'
+        ? WATCH_REPOSITORY_ROW_ESTIMATE
+        : WATCH_THREAD_ROW_ESTIMATE,
     overscan: WATCH_ROW_OVERSCAN,
   });
+
+  useEffect(() => {
+    const sentinel = historySentinelRef.current;
+    if (
+      !sentinel
+      || !historyRequestKey
+      || loadingOlder
+      || loadOlderError
+      || refreshing
+      || typeof IntersectionObserver === 'undefined'
+    ) return;
+    historySentinelVisibleRef.current = false;
+    historyScrollIntentRef.current = false;
+    const requestOlder = () => {
+      if (!historyScrollIntentRef.current || !historySentinelVisibleRef.current) return;
+      if (requestedHistoryKeyRef.current === historyRequestKey) return;
+      requestedHistoryKeyRef.current = historyRequestKey;
+      onLoadOlder();
+    };
+    const handleScroll = () => {
+      historyScrollIntentRef.current = true;
+      requestOlder();
+    };
+    const observer = new IntersectionObserver((entries) => {
+      historySentinelVisibleRef.current = entries.some((entry) => entry.isIntersecting);
+      requestOlder();
+    }, {
+      root: scrollElement ?? null,
+      rootMargin: '320px 0px',
+    });
+    const scrollTarget: EventTarget = scrollElement ?? window;
+    scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
+    observer.observe(sentinel);
+    return () => {
+      historySentinelVisibleRef.current = false;
+      historyScrollIntentRef.current = false;
+      scrollTarget.removeEventListener('scroll', handleScroll);
+      observer.disconnect();
+    };
+  }, [historyRequestKey, loadOlderError, loadingOlder, onLoadOlder, refreshing, scrollElement]);
+
+  const handleLoadOlder = useCallback(() => {
+    if (historyRequestKey) requestedHistoryKeyRef.current = historyRequestKey;
+    onLoadOlder();
+  }, [historyRequestKey, onLoadOlder]);
   const refreshDisabled = refreshing || actionPending !== null || status?.inboxStatus === 'cooldown';
 
   const handleRepositoryToggle = useCallback((
@@ -345,11 +432,33 @@ export function WatchInbox({
   const rowSpacingClass = (index: number) => {
     const row = flatRows[index];
     const nextRow = flatRows[index + 1];
+    if (row.kind === 'day') return index === 0 ? 'pb-1.5' : 'pb-1.5 pt-3';
     if (row.kind === 'repository' && nextRow?.kind === 'thread') return 'pb-1';
-    return !nextRow || nextRow.kind === 'repository' ? 'pb-3.5' : undefined;
+    return !nextRow || nextRow.kind !== 'thread' ? 'pb-3.5' : undefined;
   };
 
   const renderRowContent = (row: (typeof flatRows)[number]) => {
+    if (row.kind === 'day') {
+      return (
+        <div
+          className="relative z-10 flex min-h-7 items-center bg-background"
+          data-watch-day={row.dayKey}
+        >
+          <time
+            dateTime={row.updatedAt}
+            className="rounded-full border border-border bg-muted/40 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+          >
+            {formatWatchTimelineDay(
+              row.updatedAt,
+              locale,
+              now,
+              m.watch.timelineToday,
+              m.watch.timelineYesterday,
+            )}
+          </time>
+        </div>
+      );
+    }
     if (row.kind === 'repository') {
       const repository = row.group.repositoryFullName.toLowerCase();
       const sourceGroup = sourceGroupsByRepository.get(repository) ?? row.group;
@@ -368,10 +477,15 @@ export function WatchInbox({
         />
       );
     }
+    const updatedAt = Date.parse(row.thread.updatedAt);
+    const newSinceLastVisit = Number.isFinite(updatedAt)
+      && Number.isFinite(newerThanMs)
+      && updatedAt > newerThanMs;
     return (
       <WatchThreadRow
         thread={row.thread}
         locale={locale}
+        newSinceLastVisit={newSinceLastVisit}
         expanded={expandedThreadIds.has(row.thread.id)}
         focusRequested={pendingFocusThreadId === row.thread.id}
         actionPending={actionPending}
@@ -381,6 +495,61 @@ export function WatchInbox({
         onMarkThreadsRead={onMarkThreadsRead}
         onMarkThreadsDone={onMarkThreadsDone}
       />
+    );
+  };
+
+  const renderHistoryBoundary = (
+    visibleThreadCount: number,
+    variant: 'plain' | 'timeline' = 'timeline',
+  ) => {
+    const stale = status.inboxStatus === 'error'
+      || status.inboxStatus === 'stale'
+      || status.inboxStatus === 'cooldown';
+    const boundaryState = loadOlderError
+      ? 'error'
+      : loadingOlder
+        ? 'loading'
+        : canLoadOlder ? 'more' : 'complete';
+    const tone: 'muted' | 'info' | 'warning' = loadOlderError
+      ? 'warning'
+      : canLoadOlder ? 'info' : stale ? 'warning' : 'muted';
+    const text = loadOlderError
+      ? m.watch.loadOlderFailed
+      : loadingOlder
+        ? m.watch.loadingOlder
+        : canLoadOlder
+          ? m.watch.listEndWindow
+          : stale
+            ? m.watch.listEndSaved(visibleThreadCount)
+            : hasPresentationFilters
+              ? m.watch.listEndMatches(visibleThreadCount)
+              : m.watch.historyComplete(visibleThreadCount);
+    return (
+      <div
+        ref={historySentinelRef}
+        data-watch-history-sentinel={boundaryState}
+        aria-busy={loadingOlder}
+      >
+        <SurfaceListEndMarker variant={variant} tone={tone} text={text} />
+        {canLoadOlder && (
+          <div className={cn('flex pb-1', {
+            'pl-[23px]': variant === 'timeline',
+            'justify-center px-3': variant === 'plain',
+          })}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              disabled={loadingOlder || refreshing}
+              onClick={handleLoadOlder}
+            >
+              {loadingOlder && <Spinner data-icon="inline-start" aria-label={m.watch.loadingOlder} />}
+              {loadOlderError ? m.watch.retry : loadingOlder ? m.watch.loadingOlder : m.watch.loadOlder}
+            </Button>
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -416,32 +585,22 @@ export function WatchInbox({
       />
     );
   } else if (groups.length === 0) {
+    const visibleThreadCount = visibleProjection?.threads.length ?? 0;
     content = (
-      <EmptyState
-        icon={<Inbox className="size-4" />}
-        title={hasPresentationFilters ? m.watch.reasonPresetAll : m.watch.watchSurface}
-        text={(modeProjection?.threads.length ?? 0) > 0 && hasPresentationFilters
-          ? m.watch.noMatchingThreads
-          : unreadOnly ? m.watch.noUnreadThreads : m.watch.noThreads}
-        tone={hasPresentationFilters ? 'muted' : 'success'}
-      />
+      <>
+        <EmptyState
+          icon={<Inbox className="size-4" />}
+          title={hasPresentationFilters ? m.watch.reasonPresetAll : m.watch.watchSurface}
+          text={(modeProjection?.threads.length ?? 0) > 0 && hasPresentationFilters
+            ? m.watch.noMatchingThreads
+            : unreadOnly ? m.watch.noUnreadThreads : m.watch.noThreads}
+          tone={hasPresentationFilters ? 'muted' : 'success'}
+        />
+        {(canLoadOlder || loadOlderError) && renderHistoryBoundary(visibleThreadCount, 'plain')}
+      </>
     );
   } else {
-    const listEndTone = state?.inbox.truncated
-      ? 'info'
-      : status.inboxStatus === 'error'
-        || status.inboxStatus === 'stale'
-        || status.inboxStatus === 'cooldown'
-        ? 'warning'
-        : 'muted';
     const visibleThreadCount = visibleProjection?.threads.length ?? 0;
-    const listEndText = state?.inbox.truncated
-      ? m.watch.listEndWindow
-      : listEndTone === 'warning'
-        ? m.watch.listEndSaved(visibleThreadCount)
-        : hasPresentationFilters
-          ? m.watch.listEndMatches(visibleThreadCount)
-          : m.watch.listEndSnapshot(visibleThreadCount);
     content = (
       <SurfaceWorkCanvas variant="watch" className="px-4 py-3 max-sm:px-3">
         <div
@@ -480,11 +639,7 @@ export function WatchInbox({
               </div>
             ))
           )}
-          <SurfaceListEndMarker
-            variant="timeline"
-            tone={listEndTone}
-            text={listEndText}
-          />
+          {renderHistoryBoundary(visibleThreadCount)}
         </div>
       </SurfaceWorkCanvas>
     );

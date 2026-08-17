@@ -8,16 +8,19 @@ import {
 import type { fetchGitHubWatchScope } from '@/api/github-watch-scope-source';
 import type { fetchGitHubWatchSubjectDetail } from '@/api/github-watch-subject-source';
 import type {
+  appendWatchInboxHistory,
   clearWatchData,
   applyWatchThreadMutation,
   disconnectWatchInbox,
   getWatchNotificationThread,
   getWatchRepositories,
   getWatchState,
+  markWatchInboxLoaded,
   queryStoredWatchInbox,
   reconcileWatchAccount,
   reconcileWatchLiveStars,
   recordWatchInboxFailure,
+  recordWatchHistoryFailure,
   recordWatchScopeFailure,
   replaceWatchInbox,
   replaceWatchScope,
@@ -26,6 +29,7 @@ import type {
 import {
   GitHubWatchError,
   canonicalRepositoryFullName,
+  isValidWatchHistoryPage,
   projectWatchInbox,
   watchSubjectIdentity,
   type WatchSubjectDetail,
@@ -35,6 +39,7 @@ import {
   parseWatchAccountLogin,
   parseWatchThreadIds,
   type WatchInboxQueryResponse,
+  type WatchLoadOlderResult,
   type WatchRefreshResult,
   type WatchStatus,
   type WatchThreadAction,
@@ -65,8 +70,11 @@ export interface WatchRefreshCoordinatorDependencies {
     replaceScope: typeof replaceWatchScope;
     recordScopeFailure: typeof recordWatchScopeFailure;
     replaceInbox: typeof replaceWatchInbox;
+    appendHistory: typeof appendWatchInboxHistory;
+    markLoaded: typeof markWatchInboxLoaded;
     revalidateInbox: typeof revalidateWatchInbox;
     recordInboxFailure: typeof recordWatchInboxFailure;
+    recordHistoryFailure: typeof recordWatchHistoryFailure;
     applyThreadMutation: typeof applyWatchThreadMutation;
     disconnectInbox: typeof disconnectWatchInbox;
     clearData: typeof clearWatchData;
@@ -80,6 +88,8 @@ export interface WatchRefreshCoordinator {
   queryInbox(unreadOnly: boolean): Promise<WatchInboxQueryResponse>;
   refresh(): Promise<WatchRefreshResult>;
   getSubjectDetail(threadId: string): Promise<WatchSubjectDetail>;
+  loadOlder(): Promise<WatchLoadOlderResult>;
+  markLoaded(): Promise<string | null>;
   refreshInbox(): Promise<WatchRefreshResult>;
   markThreadsRead(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult>;
   markThreadsDone(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult>;
@@ -110,6 +120,7 @@ function nextAllowedAt(attemptedAtMs: number, pollIntervalSeconds: number): stri
 
 const THREAD_MUTATION_CONCURRENCY = 4;
 const SUBJECT_DETAIL_CACHE_LIMIT = 100;
+const HISTORY_PAGE_BATCH = 2;
 
 function sameSubjectIdentity(
   left: WatchSubjectIdentity,
@@ -128,6 +139,7 @@ export function createWatchRefreshCoordinator(
   const now = dependencies.now ?? Date.now;
   let inFlight: { identity: string; promise: Promise<WatchRefreshResult> } | null = null;
   let inboxInFlight: { identity: string; promise: Promise<WatchRefreshResult> } | null = null;
+  let historyInFlight: { identity: string; promise: Promise<WatchLoadOlderResult> } | null = null;
   const subjectDetails = new Map<string, WatchSubjectDetail>();
   const subjectDetailInFlight = new Map<string, Promise<WatchSubjectDetail>>();
   let subjectAuthority = '';
@@ -387,6 +399,12 @@ export function createWatchRefreshCoordinator(
           credentialsChanged: false,
         };
       }
+      const previousSuccessfulAt = Date.parse(state?.inbox.lastSuccessfulAt ?? '');
+      const headOverlapsPreviousRefresh = Number.isFinite(previousSuccessfulAt)
+        && snapshot.threads.some((thread) => Date.parse(thread.updatedAt) <= previousSuccessfulAt);
+      const resetHistory = snapshot.nextPage !== null
+        && Number.isFinite(previousSuccessfulAt)
+        && !headOverlapsPreviousRefresh;
       await dependencies.store.replaceInbox({
         accountLogin: auth.accountLogin!,
         threads: snapshot.threads,
@@ -396,7 +414,10 @@ export function createWatchRefreshCoordinator(
         nextAllowedAt: allowedAt,
         candidateCount: snapshot.candidateCount,
         truncated: snapshot.truncated,
-        mode: state?.inbox.lastModified ? 'merge' : 'replace',
+        historyBefore: snapshot.before,
+        historyNextPage: snapshot.nextPage,
+        resetHistory,
+        mode: state?.inbox.lastSuccessfulAt ? 'merge' : 'replace',
         requireLiveStars: true,
       });
       return {
@@ -425,6 +446,69 @@ export function createWatchRefreshCoordinator(
         changed: true,
         credentialsChanged: false,
       };
+    }
+  }
+
+  async function performLoadOlder(auth: AuthSnapshot): Promise<{
+    addedCount: number;
+    hasMore: boolean;
+  }> {
+    if (
+      !auth.accountLogin
+      || !auth.mainToken
+      || !auth.notificationsToken
+      || !await sameCredentials(auth, true)
+    ) throw new GitHubWatchError('authentication_required');
+
+    const state = await dependencies.store.getState(auth.accountLogin);
+    const historyBefore = state?.inbox.historyBefore ?? null;
+    const historyPage = state?.inbox.historyNextPage ?? null;
+    if (!historyBefore || historyPage === null || state?.inbox.historyExhausted) {
+      return { addedCount: 0, hasMore: false };
+    }
+
+    try {
+      if (!isValidWatchHistoryPage(historyPage)) {
+        throw new GitHubWatchError('invalid_pagination');
+      }
+      const snapshot = await dependencies.fetchNotifications({
+        token: auth.notificationsToken,
+        before: historyBefore,
+        startPage: historyPage,
+        maxPages: HISTORY_PAGE_BATCH,
+        now: () => now(),
+      });
+      if (!await sameCredentials(auth, true)) {
+        throw new GitHubWatchError('credential_changed');
+      }
+      if (snapshot.notModified || snapshot.before !== historyBefore) {
+        throw new GitHubWatchError('invalid_pagination', undefined, { page: historyPage });
+      }
+      const committed = await dependencies.store.appendHistory({
+        accountLogin: auth.accountLogin,
+        historyBefore,
+        historyPage,
+        threads: snapshot.threads,
+        candidateCount: snapshot.candidateCount,
+        nextPage: snapshot.nextPage,
+        requireLiveStars: true,
+      });
+      if (committed.applied) dependencies.broadcastChanged();
+      return {
+        addedCount: committed.addedCount,
+        hasMore: committed.state?.inbox.historyExhausted === false,
+      };
+    } catch (error) {
+      if (await sameCredentials(auth, true)) {
+        const recorded = await dependencies.store.recordHistoryFailure({
+          accountLogin: auth.accountLogin,
+          historyBefore,
+          historyPage,
+          errorCode: stableErrorCode(error),
+        });
+        if (recorded) dependencies.broadcastChanged();
+      }
+      throw error;
     }
   }
 
@@ -569,6 +653,34 @@ export function createWatchRefreshCoordinator(
     return promise;
   }
 
+  async function loadOlder(): Promise<WatchLoadOlderResult> {
+    await reconcileAccount();
+    const requestedAuth = await readAuth();
+    const identity = refreshIdentity(requestedAuth);
+    const current = historyInFlight;
+    if (current) {
+      if (current.identity === identity) return current.promise;
+      try {
+        await current.promise;
+      } catch {
+        // A changed credential identity gets its own queued history attempt.
+      }
+      if (historyInFlight === current) historyInFlight = null;
+      return loadOlder();
+    }
+
+    const operation = dependencies.runSerialized(() => performLoadOlder(requestedAuth));
+    const promise = operation.then(async (outcome) => ({
+      ...outcome,
+      status: await deriveStatus(false),
+    }));
+    historyInFlight = { identity, promise };
+    void promise.finally(() => {
+      if (historyInFlight?.promise === promise) historyInFlight = null;
+    }).catch(() => {});
+    return promise;
+  }
+
   async function performThreadMutation(
     auth: AuthSnapshot,
     action: WatchThreadAction,
@@ -650,6 +762,19 @@ export function createWatchRefreshCoordinator(
     return dependencies.runSerialized(() => performThreadMutation(auth, action, input));
   }
 
+  async function markLoaded(): Promise<string | null> {
+    await reconcileAccount();
+    const auth = await readAuth();
+    if (!auth.accountLogin || !auth.mainToken) return null;
+    const accountLogin = auth.accountLogin;
+    const loadedAt = new Date(now()).toISOString();
+    return dependencies.runSerialized(async () => {
+      if (!await sameCredentials(auth, false)) return null;
+      const state = await dependencies.store.markLoaded({ accountLogin, loadedAt });
+      return state?.inbox.newerThan ?? null;
+    });
+  }
+
   async function disconnectInboxCommand(): Promise<WatchStatus> {
     await reconcileAccount();
     await dependencies.runSerialized(async () => {
@@ -711,6 +836,8 @@ export function createWatchRefreshCoordinator(
     getSubjectDetail,
     refresh,
     refreshInbox,
+    loadOlder,
+    markLoaded,
     markThreadsRead: (input) => mutateThreads('read', input),
     markThreadsDone: (input) => mutateThreads('done', input),
     disconnectInbox: disconnectInboxCommand,

@@ -123,9 +123,9 @@ export class StarsDB extends Dexie {
       watchState: 'id',
     });
     // v5 adds account-bound Radar activity, the optional
-    // `Star.viewer_has_starred` source marker and owner avatar URL, and the
-    // derived For You cache. Neither Star field nor recommendation score is
-    // queried by an index; legacy Star rows remain valid when either is absent.
+    // `Star.viewer_has_starred` source marker and owner avatar URL, the
+    // derived For You cache, and Watch head/history pagination checkpoints.
+    // Non-indexed legacy fields remain valid when absent.
     this.version(5).stores({
       stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
       tags: 'full_name, mtime',

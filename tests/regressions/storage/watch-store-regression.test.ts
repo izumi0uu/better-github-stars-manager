@@ -4,16 +4,19 @@ import { afterAll, beforeEach, describe, it, vi } from 'vitest';
 import { db } from '@/storage/db';
 import { createChromeMock } from '../../helpers/chrome-mock';
 import {
+  appendWatchInboxHistory,
   applyWatchThreadMutation,
   clearWatchData,
   countUnreadWatchThreads,
   disconnectWatchInbox,
   getWatchRepositories,
   getWatchState,
+  markWatchInboxLoaded,
   queryStoredWatchInbox,
   reconcileWatchAccount,
   reconcileWatchLiveStars,
   recordWatchInboxFailure,
+  recordWatchHistoryFailure,
   recordWatchScopeFailure,
   replaceWatchInbox,
   replaceWatchScope,
@@ -331,6 +334,8 @@ describe('Watch snapshot storage', () => {
       nextAllowedAt: null,
       candidateCount: 4,
       truncated: true,
+      historyBefore: FIRST,
+      historyNextPage: 11,
       mode: 'replace',
     });
 
@@ -350,6 +355,108 @@ describe('Watch snapshot storage', () => {
     assert.equal(result.state?.inbox.matchedCount, 2);
     assert.equal(result.state?.inbox.candidateCount, 5);
     assert.equal(result.state?.inbox.truncated, true);
+  });
+
+  it('keeps the head refresh boundary independent while appending frozen history pages', async () => {
+    await db.stars.put(star('owner/repo'));
+    await replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread('1')],
+      attemptedAt: FIRST,
+      successfulAt: FIRST,
+      lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
+      nextAllowedAt: null,
+      candidateCount: 1,
+      truncated: true,
+      historyBefore: FIRST,
+      historyNextPage: 11,
+      mode: 'replace',
+      requireLiveStars: true,
+    });
+    await markWatchInboxLoaded({ accountLogin: ACCOUNT, loadedAt: FIRST });
+    const refreshed = await replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread('2')],
+      attemptedAt: SECOND,
+      successfulAt: SECOND,
+      lastModified: 'Wed, 05 Aug 2026 02:00:00 GMT',
+      nextAllowedAt: null,
+      candidateCount: 1,
+      truncated: true,
+      historyBefore: SECOND,
+      historyNextPage: 11,
+      mode: 'merge',
+      requireLiveStars: true,
+    });
+
+    assert.equal(refreshed.inbox.newerThan, FIRST);
+    assert.equal(refreshed.inbox.historyBefore, FIRST);
+    assert.equal(refreshed.inbox.historyNextPage, 11);
+
+    const appended = await appendWatchInboxHistory({
+      accountLogin: ACCOUNT,
+      historyBefore: FIRST,
+      historyPage: 11,
+      threads: [thread('3')],
+      candidateCount: 1,
+      nextPage: 13,
+      requireLiveStars: true,
+    });
+    assert.equal(appended.applied, true);
+    assert.equal(appended.addedCount, 1);
+    assert.equal(appended.state?.inbox.lastSuccessfulAt, SECOND);
+    assert.equal(appended.state?.inbox.newerThan, FIRST);
+    assert.equal(appended.state?.inbox.historyNextPage, 13);
+    assert.equal(appended.state?.inbox.historyExhausted, false);
+
+    await recordWatchHistoryFailure({
+      accountLogin: ACCOUNT,
+      historyBefore: FIRST,
+      historyPage: 13,
+      errorCode: 'rate_limited',
+    });
+    const failed = await getWatchState(ACCOUNT);
+    assert.equal(failed?.inbox.errorCode, null);
+    assert.equal(failed?.inbox.historyErrorCode, 'rate_limited');
+    assert.equal(failed?.inbox.historyNextPage, 13);
+  });
+
+  it('rejects malformed history cursors before committing Watch state', async () => {
+    const replaceInput = {
+      accountLogin: ACCOUNT,
+      threads: [thread('1')],
+      attemptedAt: FIRST,
+      lastModified: null,
+      nextAllowedAt: null,
+      candidateCount: 1,
+      truncated: true,
+      historyBefore: FIRST,
+      mode: 'replace' as const,
+    };
+    await assert.rejects(
+      replaceWatchInbox({ ...replaceInput, historyNextPage: 1.5 }),
+      /positive safe integer/u,
+    );
+    await replaceWatchInbox({ ...replaceInput, historyNextPage: 11 });
+
+    await assert.rejects(appendWatchInboxHistory({
+      accountLogin: ACCOUNT,
+      historyBefore: FIRST,
+      historyPage: 11,
+      threads: [thread('2')],
+      candidateCount: 1,
+      nextPage: 12.5,
+    }), /positive safe integer/u);
+    await assert.rejects(appendWatchInboxHistory({
+      accountLogin: ACCOUNT,
+      historyBefore: FIRST,
+      historyPage: 1.5,
+      threads: [thread('2')],
+      candidateCount: 1,
+      nextPage: 13,
+    }), /positive safe integer/u);
+
+    assert.equal((await getWatchState(ACCOUNT))?.inbox.historyNextPage, 11);
   });
 
   it('atomically removes cached rows that leave live Stars during a conditional merge', async () => {

@@ -104,6 +104,11 @@ function queryResponse(): WatchInboxQueryResponse {
           candidateCount: 4,
           matchedCount: 4,
           truncated: false,
+          newerThan: null,
+          historyBefore: '2026-08-05T12:00:00Z',
+          historyNextPage: null,
+          historyExhausted: true,
+          historyErrorCode: null,
         },
       },
     },
@@ -170,44 +175,37 @@ describe('Watch inbox presentation filters', () => {
 });
 
 describe('Watch inbox flat rows', () => {
-  const groups: WatchInboxProjection['groups'] = [{
-    repositoryFullName: 'owner/alpha',
-    repositoryHtmlUrl: 'https://github.com/owner/alpha',
-    repositoryOwnerLogin: 'owner',
-    repositoryOwnerAvatarUrl: null,
-    latestUpdatedAt: threads[1].updatedAt,
-    threads: [threads[0], threads[1]],
-  }, {
-    repositoryFullName: 'owner/security',
-    repositoryHtmlUrl: 'https://github.com/owner/security',
-    repositoryOwnerLogin: 'owner',
-    repositoryOwnerAvatarUrl: null,
-    latestUpdatedAt: threads[2].updatedAt,
-    threads: [threads[2]],
-  }];
+  const timelineThreads: GitHubNotificationThread[] = [
+    { ...threads[2], updatedAt: '2026-08-05T12:00:00Z' },
+    { ...threads[1], updatedAt: '2026-08-05T11:00:00Z' },
+    { ...threads[0], updatedAt: '2026-08-04T12:00:00Z' },
+  ];
 
-  it('emits one stable header/thread stream and excludes collapsed repository threads', () => {
-    const rows = buildWatchInboxRows(groups, new Set(['owner/alpha']));
+  it('emits day, repository, and thread rows while excluding collapsed threads', () => {
+    const rows = buildWatchInboxRows(timelineThreads, new Set(['owner/security']));
 
     expect(rows.map((row) => row.key)).toEqual([
-      'repository:owner/alpha',
-      'thread:1',
-      'thread:2',
-      'repository:owner/security',
+      'day:2026-08-05',
+      'repository:2026-08-05:owner/security',
+      'thread:3',
+      'repository:2026-08-05:owner/alpha',
+      'day:2026-08-04',
+      'repository:2026-08-04:owner/alpha',
     ]);
     expect(rows.filter((row) => row.kind === 'thread').map((row) => row.thread.id))
-      .toEqual(['1', '2']);
-    expect(buildWatchInboxRows(groups, new Set()).map((row) => row.kind))
-      .toEqual(['repository', 'repository']);
+      .toEqual(['3']);
   });
 
-  it('finds adjacent logical threads across repository header boundaries', () => {
-    const rows = buildWatchInboxRows(groups, new Set(['owner/alpha', 'owner/security']));
+  it('finds adjacent logical threads across repository and day boundaries', () => {
+    const rows = buildWatchInboxRows(
+      timelineThreads,
+      new Set(['owner/alpha', 'owner/security']),
+    );
 
-    expect(adjacentWatchThreadRowIndex(rows, '2', 'ArrowDown')).toBe(4);
-    expect(adjacentWatchThreadRowIndex(rows, '3', 'ArrowUp')).toBe(2);
-    expect(adjacentWatchThreadRowIndex(rows, '2', 'Home')).toBe(1);
-    expect(adjacentWatchThreadRowIndex(rows, '1', 'End')).toBe(4);
+    expect(adjacentWatchThreadRowIndex(rows, '2', 'ArrowDown')).toBe(7);
+    expect(adjacentWatchThreadRowIndex(rows, '1', 'ArrowUp')).toBe(4);
+    expect(adjacentWatchThreadRowIndex(rows, '2', 'Home')).toBe(2);
+    expect(adjacentWatchThreadRowIndex(rows, '3', 'End')).toBe(7);
   });
 });
 

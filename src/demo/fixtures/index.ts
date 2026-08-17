@@ -202,7 +202,7 @@ const WATCH_THREADS: GitHubNotificationThread[] = WATCH_TITLES.map((title, index
     subjectApiUrl: null,
     subjectHtmlUrl: '#',
     unread: index % 4 !== 3,
-    updatedAt: beforeNow(1, index),
+    updatedAt: beforeNow(index < 5 ? 0 : index < 10 ? 1 : 3, index % 5),
     lastReadAt: index % 4 === 3 ? beforeNow(2, index) : null,
     fetchedAt: beforeNow(1),
   };
@@ -249,14 +249,19 @@ const WATCH_STATE: GitHubWatchStateRecord = {
     repositoryCount: WATCH_REPOSITORIES.length,
   },
   inbox: {
-    lastAttemptAt: beforeNow(1),
-    lastSuccessfulAt: beforeNow(1),
+    lastAttemptAt: beforeNow(0),
+    lastSuccessfulAt: beforeNow(0),
     errorCode: null,
     lastModified: null,
     nextAllowedAt: null,
     candidateCount: WATCH_THREADS.length,
     matchedCount: WATCH_THREADS.length,
     truncated: false,
+    newerThan: beforeNow(1),
+    historyBefore: beforeNow(0),
+    historyNextPage: null,
+    historyExhausted: true,
+    historyErrorCode: null,
   },
 };
 

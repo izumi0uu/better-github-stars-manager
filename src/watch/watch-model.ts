@@ -42,6 +42,10 @@ export class GitHubWatchError extends Error {
   }
 }
 
+export function isValidWatchHistoryPage(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+}
+
 /** A native watched repository, reduced to the identity needed by Watch. */
 export interface GitHubWatchRepository {
   full_name: string;
@@ -138,6 +142,13 @@ export interface WatchInboxRefreshSnapshot extends WatchRefreshSnapshot {
   candidateCount: number;
   matchedCount: number;
   truncated: boolean;
+  /** Previous Watch-surface load; rows after this boundary are newly updated. */
+  newerThan: string | null;
+  /** Frozen Notifications `before` boundary for stable historical pagination. */
+  historyBefore: string | null;
+  historyNextPage: number | null;
+  historyExhausted: boolean;
+  historyErrorCode: string | null;
 }
 
 export interface GitHubWatchStateRecord {
@@ -161,6 +172,8 @@ export interface WatchNotificationSnapshot {
   matchedCount: number;
   pageCount: number;
   truncated: boolean;
+  /** Next page inside the frozen `before` epoch, or null when exhausted. */
+  nextPage: number | null;
   notModified: boolean;
   before: string;
   fetchedAt: string;
