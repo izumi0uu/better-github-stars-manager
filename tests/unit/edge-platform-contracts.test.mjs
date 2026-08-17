@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'vitest';
 import { createProductManifest } from '../../manifest.config.ts';
+import { parseProductStoreTarget } from '../../product-target.config.ts';
 import {
   finalCheckSpecsForTarget,
   normalizeReleaseBrowserTarget,
@@ -167,6 +168,11 @@ test('normalizes the package target without changing Chrome and Firefox defaults
   expectCode(() => resolvePackageTarget('EDGE'), 'package_target_invalid');
   expectCode(() => resolvePackageTarget('opera'), 'package_target_invalid');
   assert.equal(normalizeReleaseBrowserTarget('edge'), 'edge');
+  assert.equal(parseProductStoreTarget('edge'), 'edge');
+  assert.throws(
+    () => parseProductStoreTarget('chorme'),
+    /Unsupported product store target: chorme/u,
+  );
   assert.throws(
     () => finalCheckSpecsForTarget('edge'),
     (error) => error instanceof ReleaseEvidenceError && error.code === 'edge_final_release_gate_unsupported',
@@ -177,6 +183,13 @@ test('normalizes the package target without changing Chrome and Firefox defaults
       target: 'edge',
       environment: { GSM_STORE_TARGET: 'chrome' },
     }), 'package_store_target_mismatch');
+  });
+  withFixture((root) => {
+    expectCode(() => packageExtension({
+      root,
+      target: 'edge',
+      environment: { GSM_STORE_TARGET: 'chorme' },
+    }), 'package_store_target_invalid');
   });
   withFixture((root) => {
     expectCode(() => packageExtension({ root, target: 'edge', distDir: 'dist', environment: {} }), 'edge_dist_directory_not_isolated');

@@ -139,21 +139,24 @@ Set `EDGE_EXECUTABLE` to the full Microsoft Edge executable path and run:
 EDGE_EXECUTABLE="/full/path/to/Microsoft Edge" pnpm test:smoke:edge
 ```
 
-The command loads `dist-edge/` in a fresh profile and runs the shared full-product Chromium scenario set. It verifies:
+The command loads `dist-edge/` in a fresh profile and runs the shared Chromium runtime scenario set. It verifies:
 
 - MV3 service-worker startup
-- popup and Options availability
-- the full manifest permission set, including required Provider hosts and optional custom hosts
-- Gist Push/Pull and the Gist capability probe
-- Cubby, Provider settings, and Provider-backed Organize
-- the Stars manager with Sync, search, filters, tags, notes, favorites, deterministic Auto Tags, Watch Inbox, and Following Radar
-- no requests outside the admitted GitHub, Gist, and configured Provider origins during the guarded interval
+- popup and Options navigation, including invalid-PAT rejection
+- the full manifest permission declarations, including required Provider hosts and optional custom hosts
+- the Cubby data-sharing disclosure gate before any Provider traffic
+- Stars owner gating, manager injection, panel controls, responsive toolbar behavior, and the Auto Tags chooser
+- Following and For You discovery, Watch stored projections, repository details, credential recovery, and return to Stars
+- idempotent Turbo navigation and the repository tag chip
+- bounded page/background diagnostics and no unintended GitHub API calls during guarded fixture intervals
 
-The command launches only the explicitly supplied Microsoft Edge executable, verifies that the launched browser reports an `Edg/<version>` identity, and fails with an actionable message when Edge is missing or Chrome is substituted. The result includes the sanitized Edge identity, executable-path SHA-256 digest, extension ID, exercised scenario IDs, bounded diagnostic counts, package-input fingerprint, and capability object. It excludes the executable path, credentials, request payloads, authentication headers, personal account data, and private repository content.
+The automated smoke does not execute Gist Push/Pull, a live Cubby Provider turn, a Provider connection test, or Organize Review/Apply. Those remain packaged product capabilities and manual reviewer scenarios; they are not runtime-verified capability claims.
+
+The command launches only the explicitly supplied Microsoft Edge executable, reads the browser command line, rejects a `--user-agent` override, hashes the executable binary contents, and requires an observed `Edg/<version>` identity for release proof. The result includes the sanitized Edge identity, executable-binary SHA-256 digest, extension ID, verified scenario IDs, bounded diagnostic counts, package-input fingerprint, and packaged capability declarations. It excludes the executable path, credentials, request payloads, authentication headers, personal account data, and private repository content.
 
 `EDGE_EXECUTABLE` is required for release proof. A clearly labelled non-release Chromium executable may exercise local contracts through the exported smoke helper, but the result must say `releaseProof: false` and cannot satisfy the Edge checklist.
 
-The smoke does not prove retained features it did not exercise. Complete the manual reviewer path below on the same fingerprinted package when those scenarios are required.
+Complete the manual reviewer path below on the same fingerprinted package for every retained feature that the automated scenarios do not execute.
 
 ## Manual reviewer path
 

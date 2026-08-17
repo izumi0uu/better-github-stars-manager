@@ -543,7 +543,7 @@ export function validateRuntimeVerificationEvidence(value, context = {}) {
       throw new ReleaseEvidenceError('shared_runtime_release_dist_mismatch', '$.sharedRuntimeReleaseDist');
     }
   }
-  validateBuildEvidence(value.build, context);
+  validateBuildEvidence(value.build, context, target);
   if (context.releaseDist) assertReleaseVersionIdentity({
     packageVersion: value.packageVersion,
     releaseDist: context.releaseDist,
@@ -580,7 +580,7 @@ export function validateProvisionalReleaseEvidence(value, context = {}) {
       value: /^https:\/\/rollupjs\.org\/configuration-options\/#output-manualchunks$/u,
     }],
   });
-  validateBuildEvidence(value.build, context);
+  validateBuildEvidence(value.build, context, target);
   assertSortedUnique(value.packagedPermissions.permissions, '$.packagedPermissions.permissions');
   assertSortedUnique(value.packagedPermissions.optionalPermissions, '$.packagedPermissions.optionalPermissions');
   assertSortedUnique(value.packagedPermissions.hostPermissions, '$.packagedPermissions.hostPermissions');
@@ -909,7 +909,7 @@ export function validatePublishedReleaseGate(input) {
     throw new ReleaseEvidenceError('release_dist_fingerprint_mismatch', '$.finalRaw.packageInput');
   }
   validatePackageEvidenceRelationships(finalValue, { releaseDist: input.releaseDist });
-  validateBuildEvidence(finalValue.build, { releaseDist: input.releaseDist });
+  validateBuildEvidence(finalValue.build, { releaseDist: input.releaseDist }, target);
   if (
     !deepEqual(gateValue.build.worker, finalValue.build.worker)
     || !deepEqual(gateValue.build.mermaid, finalValue.build.mermaid)
@@ -959,6 +959,9 @@ export function validatePublishedReleaseGate(input) {
 }
 
 function finalReleaseEvidenceShape(target) {
+  if (target === 'edge') {
+    throw new ReleaseEvidenceError('edge_final_release_gate_unsupported', '$.browserTarget');
+  }
   const shape = provisionalReleaseEvidenceShape(target, true);
   if (target === 'firefox') shape.firefox = firefoxVerificationShape();
   return shape;
@@ -1305,11 +1308,10 @@ function assertTimestampOrder(generatedAt, checks, jsonPath) {
   }
 }
 
-function validateBuildEvidence(build, context) {
+function validateBuildEvidence(build, context, browserTarget = context.browserTarget) {
   try {
-    const baseline = context.browserTarget === 'edge'
-      ? context.workerBaseline ?? EDGE_RELEASE_WORKER_BASELINE
-      : context.workerBaseline ?? RELEASE_WORKER_BASELINE;
+    const baseline = context.workerBaseline
+      ?? (browserTarget === 'edge' ? EDGE_RELEASE_WORKER_BASELINE : RELEASE_WORKER_BASELINE);
     enforceWorkerReleaseBaseline(build.worker, baseline);
   } catch {
     throw new ReleaseEvidenceError('worker_release_baseline_mismatch', '$.build.worker');

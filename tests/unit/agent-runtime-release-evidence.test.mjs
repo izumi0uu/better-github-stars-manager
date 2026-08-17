@@ -24,7 +24,10 @@ import {
   validateReleaseVersionApproval,
   validateRuntimeVerificationEvidence,
 } from '../../scripts/agent-runtime-release-evidence.mjs';
-import { RELEASE_WORKER_BASELINE } from '../../scripts/package-manifest-closure.mjs';
+import {
+  EDGE_RELEASE_WORKER_BASELINE,
+  RELEASE_WORKER_BASELINE,
+} from '../../scripts/package-manifest-closure.mjs';
 import {
   FIREFOX_GECKO_ID,
   FIREFOX_MIN_VERSION,
@@ -200,6 +203,57 @@ function provisionalEvidence() {
     generatedFiles: [{ relativePath: 'better-github-stars-manager-1.0.9.zip', bytes: 100, sha256: SHA_A }, { relativePath: 'better-github-stars-manager-1.0.9.zip.sha256', bytes: 80, sha256: SHA_B }],
     packagedManifest: { relativePath: 'manifest.json', bytes: 100, sha256: releaseDist.manifest.sha256 },
     manifestResources: [{ relativePath: releaseDist.worker.relativePath, bytes: releaseDist.worker.bytes, sha256: releaseDist.worker.sha256, referencedBy: ['background.service_worker.import'] }, { relativePath: 'service-worker-loader.js', bytes: releaseDist.loader.bytes, sha256: releaseDist.loader.sha256, referencedBy: ['background.service_worker'] }],
+  };
+}
+
+function edgeProvisionalEvidence() {
+  const provisional = provisionalEvidence();
+  return {
+    schemaVersion: 4,
+    browserTarget: 'edge',
+    capabilities: { gistSync: true, agent: true, organizeProvider: true },
+    generatedAt: provisional.generatedAt,
+    packageVersion: provisional.packageVersion,
+    source: provisional.source,
+    package: {
+      releaseReady: false,
+      releaseReadinessReason: 'edge_runtime_verification_required',
+      publicationClaimed: false,
+      zipRootManifest: true,
+      manifestResourcesClosed: true,
+      sourceOnlyEntriesExcluded: true,
+      remoteExecutableCodeExcluded: true,
+      productionDisclosureMarkers: provisional.package.productionDisclosureMarkers,
+    },
+    packagedPermissions: provisional.packagedPermissions,
+    packageInput: provisional.packageInput,
+    build: {
+      ...provisional.build,
+      worker: {
+        relativePath: EDGE_RELEASE_WORKER_BASELINE.relativePath,
+        bytes: EDGE_RELEASE_WORKER_BASELINE.bytes,
+        kib: EDGE_RELEASE_WORKER_BASELINE.bytes / 1024,
+        sha256: EDGE_RELEASE_WORKER_BASELINE.sha256,
+      },
+    },
+    generatedFiles: provisional.generatedFiles.map((entry) => ({
+      ...entry,
+      relativePath: entry.relativePath.replace(
+        `better-github-stars-manager-${VERSION}`,
+        `better-github-stars-manager-edge-${VERSION}`,
+      ),
+    })),
+    packagedManifest: { ...provisional.packagedManifest, browserTarget: 'edge' },
+    manifestResources: provisional.manifestResources.map((entry) => (
+      entry.relativePath === RELEASE_WORKER_BASELINE.relativePath
+        ? {
+            relativePath: EDGE_RELEASE_WORKER_BASELINE.relativePath,
+            bytes: EDGE_RELEASE_WORKER_BASELINE.bytes,
+            sha256: EDGE_RELEASE_WORKER_BASELINE.sha256,
+            referencedBy: entry.referencedBy,
+          }
+        : entry
+    )),
   };
 }
 
@@ -555,6 +609,23 @@ test('keeps provisional evidence immutable and non-ready until finalization', ()
   expectCode(() => validateProvisionalReleaseEvidence(clone(provisional), { packageInput: { ...releaseDist.packageInput, fileCount: 10 } }), 'package_fingerprint_mismatch');
 });
 
+
+test('infers the Edge worker baseline from provisional evidence', () => {
+  const edge = edgeProvisionalEvidence();
+  assert.equal(validateProvisionalReleaseEvidence(clone(edge)).browserTarget, 'edge');
+
+  const chromeWorker = clone(edge);
+  chromeWorker.build.worker = {
+    relativePath: RELEASE_WORKER_BASELINE.relativePath,
+    bytes: RELEASE_WORKER_BASELINE.bytes,
+    kib: RELEASE_WORKER_BASELINE.bytes / 1024,
+    sha256: RELEASE_WORKER_BASELINE.sha256,
+  };
+  expectCode(
+    () => validateProvisionalReleaseEvidence(chromeWorker),
+    'worker_release_baseline_mismatch',
+  );
+});
 test('validates explicit Firefox package evidence without changing the Chrome schema', () => {
   const dist = firefoxReleaseDist();
   const provisional = firefoxProvisionalEvidence();

@@ -31,13 +31,13 @@ const fullProductManifest = Object.freeze({
 function evidenceInput(browserIdentity) {
   return {
     proofScope: browserIdentity.releaseProofEligible
-      ? 'microsoft_edge_full_product_runtime'
-      : 'test_only_local_chromium_full_product',
+      ? 'microsoft_edge_shared_chromium_runtime'
+      : 'test_only_local_chromium_runtime',
     browserIdentity,
-    executablePathSha256: 'a'.repeat(64),
+    executableSha256: 'a'.repeat(64),
     extensionId: 'b'.repeat(32),
     manifestEvidence: assertFullProductEdgeManifest(fullProductManifest),
-    scenarioIds: CHROMIUM_FULL_PRODUCT_SCENARIO_IDS,
+    verifiedScenarioIds: CHROMIUM_FULL_PRODUCT_SCENARIO_IDS,
     diagnostics: Object.freeze({
       observedPageErrors: 0,
       observedBackgroundErrors: 0,
@@ -46,7 +46,7 @@ function evidenceInput(browserIdentity) {
       startupHealthChecks: 0,
     }),
     packageInput: Object.freeze({ algorithm: 'sha256', fileCount: 7, sha256: 'c'.repeat(64) }),
-    capabilities: EDGE_FULL_PRODUCT_CAPABILITIES,
+    packagedCapabilities: EDGE_FULL_PRODUCT_CAPABILITIES,
   };
 }
 
@@ -92,52 +92,73 @@ test('Edge manifest projects the exact full Chrome permission surface', () => {
   );
 });
 
-test('browser identity never labels Chrome substitution as Microsoft Edge proof', () => {
-  const edge = classifyEdgeBrowserIdentity({
+test('release proof requires a hashed executable and rejects User-Agent substitution', () => {
+  const verifiedEdge = classifyEdgeBrowserIdentity({
     product: 'Chrome/140.0.0.0',
     userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0',
     reportedVersion: 'Chrome/140.0.0.0',
+    commandLineArguments: ['Microsoft Edge', '--remote-debugging-pipe'],
+    executableSha256: 'a'.repeat(64),
   });
-  assert.deepEqual(edge, {
+  assert.deepEqual(verifiedEdge, {
     name: 'Microsoft Edge',
     version: '140.0.0.0',
     releaseProofEligible: true,
   });
 
-  const chrome = classifyEdgeBrowserIdentity({
-    product: 'Chrome/140.0.0.0',
-    userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36',
-    reportedVersion: 'Chrome/140.0.0.0',
-  });
-  assert.deepEqual(chrome, {
-    name: 'Non-Edge Chromium (test-only local mode)',
-    version: '140.0.0.0',
-    releaseProofEligible: false,
-  });
+  for (const unverified of [
+    classifyEdgeBrowserIdentity({
+      product: 'Chrome/140.0.0.0',
+      userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Edg/140.0.0.0',
+      commandLineArguments: ['Chromium', '--user-agent=Mozilla/5.0 Edg/140.0.0.0'],
+      executableSha256: 'a'.repeat(64),
+    }),
+    classifyEdgeBrowserIdentity({
+      product: 'Chrome/140.0.0.0',
+      userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Edg/140.0.0.0',
+      commandLineArguments: ['Microsoft Edge'],
+    }),
+    classifyEdgeBrowserIdentity({
+      product: 'Chrome/140.0.0.0',
+      userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Edg/140.0.0.0',
+      executableSha256: 'a'.repeat(64),
+    }),
+    classifyEdgeBrowserIdentity({
+      product: 'Chrome/140.0.0.0',
+      userAgent: 'Mozilla/5.0 Chrome/140.0.0.0',
+      commandLineArguments: ['Chromium'],
+      executableSha256: 'a'.repeat(64),
+    }),
+  ]) {
+    assert.equal(unverified.name, 'Non-Edge Chromium (test-only local mode)');
+    assert.equal(unverified.releaseProofEligible, false);
+  }
 });
 
-test('test-only local Chromium evidence is bounded and cannot become release proof', () => {
+test('test-only local Chromium evidence separates package declarations from verified scenarios', () => {
   const browserIdentity = classifyEdgeBrowserIdentity({
     product: 'Chrome/140.0.0.0',
     userAgent: 'Chrome/140.0.0.0',
+    commandLineArguments: ['Chromium'],
+    executableSha256: 'a'.repeat(64),
   });
   const evidence = createEdgeFullProductEvidence(evidenceInput(browserIdentity));
 
   assert.equal(evidence.browserTarget, 'edge');
   assert.equal(evidence.releaseProof, false);
-  assert.equal(evidence.proofScope, 'test_only_local_chromium_full_product');
+  assert.equal(evidence.proofScope, 'test_only_local_chromium_runtime');
   assert.deepEqual(evidence.browserIdentity, {
     name: 'Non-Edge Chromium (test-only local mode)',
     version: '140.0.0.0',
   });
-  assert.deepEqual(evidence.capabilities, {
+  assert.deepEqual(evidence.packagedCapabilities, {
     gistSync: true,
     agent: true,
     organizeProvider: true,
   });
-  assert.equal(evidence.executable.pathSha256, 'a'.repeat(64));
+  assert.equal(evidence.executable.sha256, 'a'.repeat(64));
   assert.equal(Object.hasOwn(evidence.executable, 'path'), false);
-  assert.deepEqual(evidence.scenarioIds, CHROMIUM_FULL_PRODUCT_SCENARIO_IDS);
+  assert.deepEqual(evidence.verifiedScenarioIds, CHROMIUM_FULL_PRODUCT_SCENARIO_IDS);
   assert.deepEqual(evidence.diagnostics, {
     observedPageErrors: 0,
     observedBackgroundErrors: 0,
@@ -147,31 +168,35 @@ test('test-only local Chromium evidence is bounded and cannot become release pro
   });
 });
 
-test('only an observed Edg/version identity can produce full-product release proof', () => {
-  const browserIdentity = classifyEdgeBrowserIdentity({ userAgent: 'Edg/140.0.0.0' });
+test('only a verified Edge identity can produce shared Chromium runtime proof', () => {
+  const browserIdentity = classifyEdgeBrowserIdentity({
+    userAgent: 'Edg/140.0.0.0',
+    commandLineArguments: ['Microsoft Edge'],
+    executableSha256: 'a'.repeat(64),
+  });
   const evidence = createEdgeFullProductEvidence(evidenceInput(browserIdentity));
   assert.equal(evidence.releaseProof, true);
-  assert.equal(evidence.proofScope, 'microsoft_edge_full_product_runtime');
+  assert.equal(evidence.proofScope, 'microsoft_edge_shared_chromium_runtime');
 
   assert.throws(
     () => createEdgeFullProductEvidence({
       ...evidenceInput(browserIdentity),
-      proofScope: 'test_only_local_chromium_full_product',
+      proofScope: 'test_only_local_chromium_runtime',
     }),
     /proof scope does not match/u,
   );
   assert.throws(
     () => createEdgeFullProductEvidence({
       ...evidenceInput(browserIdentity),
-      capabilities: { ...EDGE_FULL_PRODUCT_CAPABILITIES, agent: false },
+      packagedCapabilities: { ...EDGE_FULL_PRODUCT_CAPABILITIES, agent: false },
     }),
-    /capability evidence is not exact/u,
+    /packaged capability declaration is not exact/u,
   );
   assert.throws(
     () => createEdgeFullProductEvidence({
       ...evidenceInput(browserIdentity),
-      scenarioIds: CHROMIUM_FULL_PRODUCT_SCENARIO_IDS.slice(0, -1),
+      verifiedScenarioIds: CHROMIUM_FULL_PRODUCT_SCENARIO_IDS.slice(0, -1),
     }),
-    /shared full-product Chromium scenario set/u,
+    /scenarios it actually executed/u,
   );
 });

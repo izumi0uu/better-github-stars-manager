@@ -139,21 +139,24 @@ ZIP 根目录必须直接包含 `manifest.json`。schema version 4 临时证据�
 EDGE_EXECUTABLE="/Microsoft Edge/的完整路径" pnpm test:smoke:edge
 ```
 
-命令会用新 profile 加载 `dist-edge/`，并运行共享的完整产品 Chromium 场景集。它验证：
+命令会用新 profile 加载 `dist-edge/`，并运行共享的 Chromium runtime 场景集。它验证：
 
 - MV3 service worker 启动；
-- popup 和 Options 可用；
-- 完整的 manifest 权限集合，包括必需 Provider 主机和可选自定义主机；
-- Gist Push/Pull 和 Gist 能力探测；
-- Cubby、Provider 设置和 Provider 驱动的全库 Organize；
-- Stars 管理器保留 Sync、搜索、筛选、标签、笔记、收藏、确定性 Auto Tags、Watch Inbox 和 Following Radar；
-- 受保护的检查期间，除已获准的 GitHub、Gist 和已配置 Provider 地址外，没有其他请求。
+- popup 和 Options 导航，包括无效 PAT 拒绝路径；
+- 完整的 manifest 权限声明，包括必需 Provider 主机和可选自定义主机；
+- 在任何 Provider 流量之前显示 Cubby 数据共享披露门；
+- Stars owner 门禁、管理器注入、面板控件、响应式工具栏和 Auto Tags 选择器；
+- Following、For You、Watch 已存投影、仓库详情、凭据恢复和返回 Stars；
+- Turbo 导航幂等性和仓库标签 chip；
+- 有界页面/后台诊断，以及受保护 fixture 区间内没有非预期 GitHub API 请求。
 
-命令只启动显式提供的 Microsoft Edge 可执行文件，确认启动的浏览器报告 `Edg/<version>` 身份；缺少 Edge 或替换为 Chrome 时，命令会以可操作的消息失败。结果包含脱敏的 Edge 身份、可执行文件路径 SHA-256 摘要、扩展 ID、实际执行的场景 ID、有界诊断计数、安装包输入指纹和能力对象。结果不包含可执行文件路径、凭据、请求载荷、认证 Header、个人账号数据或私有仓库内容。
+自动 smoke 不会执行 Gist Push/Pull、真实 Cubby Provider turn、Provider 连接测试或 Organize Review/Apply。这些仍是安装包内的产品能力和手动审核场景，不属于 runtime 已验证能力声明。
+
+命令只启动显式提供的 Microsoft Edge 可执行文件，读取浏览器命令行，拒绝 `--user-agent` 覆盖，计算可执行二进制内容的 SHA-256，并要求观察到 `Edg/<version>` 身份后才生成发布证明。结果包含脱敏的 Edge 身份、可执行二进制 SHA-256、扩展 ID、已验证场景 ID、有界诊断计数、安装包输入指纹和安装包能力声明。结果不包含可执行文件路径、凭据、请求载荷、认证 Header、个人账号数据或私有仓库内容。
 
 发布证明必须提供 `EDGE_EXECUTABLE`。导出的 smoke helper 可以用明确标记的非发布 Chromium 可执行文件测试本地契约，但结果必须写明 `releaseProof: false`，且不能满足 Edge 发布清单。
 
-smoke 不会证明它没有实际执行的保留功能。如果审核要求这些场景，必须在同一指纹的安装包上完成下面的手动审核路径。
+对于自动场景没有执行的所有保留功能，必须在同一指纹的安装包上完成下面的手动审核路径。
 
 ## 手动审核路径
 

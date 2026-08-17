@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath, URL } from 'node:url';
 import manifest from './manifest.config';
 import { providerDiagnosticsBridgePlugin } from './src/dev-agent/provider-diagnostics-server';
-import { normalizeProductStoreTarget } from './product-target.config';
+import { parseProductStoreTarget } from './product-target.config';
 
 function git(args: string[], fallback = ''): string {
   try {
@@ -34,7 +34,10 @@ export default defineConfig(({ command }) => {
   // Screenshot and QA runs may hide manager-only dev chrome without disabling diagnostics.
   const DEV_UI_VISIBLE = DEV && process.env.GSM_HIDE_DEV_UI !== 'true';
   const VERSION_HASH = versionHash();
-  const STORE_TARGET = normalizeProductStoreTarget(process.env.GSM_STORE_TARGET ?? (RELEASE ? 'chrome' : 'none'));
+  const configuredStoreTarget = process.env.GSM_STORE_TARGET;
+  const STORE_TARGET = configuredStoreTarget === undefined
+    ? (RELEASE ? 'chrome' : 'none')
+    : parseProductStoreTarget(configuredStoreTarget);
   const outDir = process.env.GSM_DIST_DIR ?? (STORE_TARGET === 'edge' ? 'dist-edge' : 'dist');
 
   return {

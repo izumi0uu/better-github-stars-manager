@@ -16,6 +16,7 @@ import {
   normalizeRuntimeTarget,
   resolveExecutablePath,
   readEdgeBrowserIdentity,
+  sha256Executable,
 } from './puppeteer-runtime.mjs';
 import {
   discoverExtension,
@@ -101,6 +102,7 @@ export async function runExtensionBrowserSmoke(options = {}) {
   let extensionId = null;
   let browserVersion = null;
   let edgeBrowserIdentity = null;
+  let edgeExecutableSha256 = null;
 
   if (!existsSync(path.join(DIST, 'manifest.json'))) {
     const missingDist = DIST;
@@ -115,6 +117,7 @@ export async function runExtensionBrowserSmoke(options = {}) {
       executablePath: options.executablePath,
       puppeteerDriver: options.puppeteerDriver,
     });
+    if (runtimeTarget === 'edge') edgeExecutableSha256 = await sha256Executable(executablePath);
     profile = mkdtempSync(path.join(os.tmpdir(), `gsm-${runtimeTarget}-extension-smoke-`));
   } catch (error) {
     cleanupSmokeState();
@@ -133,13 +136,15 @@ export async function runExtensionBrowserSmoke(options = {}) {
       puppeteerDriver: options.puppeteerDriver,
     });
     if (runtimeTarget === 'edge') {
-      edgeBrowserIdentity = await readEdgeBrowserIdentity(browser);
+      edgeBrowserIdentity = await readEdgeBrowserIdentity(browser, {
+        executableSha256: edgeExecutableSha256,
+      });
       if (
         edgeBrowserIdentity.releaseProofEligible !== true
         && options.allowNonEdgeExecutableForLocalTest !== true
       ) {
         throw new Error(
-          'EDGE_EXECUTABLE did not launch Microsoft Edge: no Edg/<version> identity was observed. Set EDGE_EXECUTABLE to Microsoft Edge. Non-Edge Chromium is available only through the explicit allowNonEdgeExecutableForLocalTest mode and never produces release proof.',
+          'EDGE_EXECUTABLE did not satisfy Microsoft Edge release identity proof: require Edg/<version>, a hashed executable, and no --user-agent override. Set EDGE_EXECUTABLE to Microsoft Edge. Non-Edge Chromium is available only through the explicit allowNonEdgeExecutableForLocalTest mode and never produces release proof.',
         );
       }
     }
@@ -485,9 +490,11 @@ export async function runExtensionBrowserSmoke(options = {}) {
     browserTarget: runtimeTarget,
     realBrowser: true,
     browserVersion,
-    ...(runtimeTarget === 'edge' ? {} : { executablePath }),
+    ...(runtimeTarget === 'edge' ? {
+      executable: Object.freeze({ algorithm: 'sha256', sha256: edgeExecutableSha256 }),
+      browserIdentity: edgeBrowserIdentity,
+    } : { executablePath }),
     extensionId,
-    ...(runtimeTarget === 'edge' ? { browserIdentity: edgeBrowserIdentity } : {}),
     background: Object.freeze({
       kind: runtimeTarget === 'firefox' ? 'event_page' : 'service_worker',
       module: true,

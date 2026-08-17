@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -97,16 +95,16 @@ export function createEdgeFullProductEvidence(input) {
   }
   const releaseProof = input.browserIdentity?.releaseProofEligible === true;
   const expectedProofScope = releaseProof
-    ? 'microsoft_edge_full_product_runtime'
-    : 'test_only_local_chromium_full_product';
+    ? 'microsoft_edge_shared_chromium_runtime'
+    : 'test_only_local_chromium_runtime';
   if (input.proofScope !== expectedProofScope) {
     throw new Error('Edge full-product proof scope does not match the observed browser identity.');
   }
   if (!/^[a-z]{32}$/u.test(input.extensionId)) {
     throw new Error('Edge full-product smoke extension ID is invalid.');
   }
-  if (!/^[0-9a-f]{64}$/u.test(input.executablePathSha256)) {
-    throw new Error('Edge full-product executable-path digest is invalid.');
+  if (!/^[0-9a-f]{64}$/u.test(input.executableSha256)) {
+    throw new Error('Edge full-product executable content digest is invalid.');
   }
   validatePackageInputFingerprint(input.packageInput);
   assert.equal(input.manifestEvidence.manifestVersion, 3);
@@ -130,14 +128,14 @@ export function createEdgeFullProductEvidence(input) {
     throw new Error('Microsoft Edge release proof requires an observed Edg/<version> identity.');
   }
   assert.deepEqual(
-    input.capabilities,
+    input.packagedCapabilities,
     EDGE_FULL_PRODUCT_CAPABILITIES,
-    'Edge full-product capability evidence is not exact.',
+    'Edge packaged capability declaration is not exact.',
   );
   assert.deepEqual(
-    input.scenarioIds,
+    input.verifiedScenarioIds,
     CHROMIUM_FULL_PRODUCT_SCENARIO_IDS,
-    'Edge must report the shared full-product Chromium scenario set.',
+    'Edge must report the shared Chromium scenarios it actually executed.',
   );
 
   return deepFreeze({
@@ -152,7 +150,7 @@ export function createEdgeFullProductEvidence(input) {
     },
     executable: {
       algorithm: 'sha256',
-      pathSha256: input.executablePathSha256,
+      sha256: input.executableSha256,
     },
     extensionId: input.extensionId,
     background: input.manifestEvidence.background,
@@ -162,10 +160,10 @@ export function createEdgeFullProductEvidence(input) {
       hostPermissions: input.manifestEvidence.hostPermissions,
       optionalHostPermissions: input.manifestEvidence.optionalHostPermissions,
     },
-    scenarioIds: input.scenarioIds,
+    verifiedScenarioIds: input.verifiedScenarioIds,
     diagnostics: projectEdgeDiagnostics(input.diagnostics),
     packageInput: input.packageInput,
-    capabilities: input.capabilities,
+    packagedCapabilities: input.packagedCapabilities,
   });
 }
 
@@ -180,7 +178,6 @@ export async function runEdgeFullProductSmoke(options = {}) {
     parseManifest(packagedWorker.manifestBytes),
   );
   const packageInput = packageInputFingerprint(dist);
-  const executablePathSha256 = sha256(Buffer.from(realpathSync(executablePath)));
   const smoke = await runExtensionBrowserSmoke({
     target: 'edge',
     dist,
@@ -190,16 +187,16 @@ export async function runEdgeFullProductSmoke(options = {}) {
 
   return createEdgeFullProductEvidence({
     proofScope: smoke.browserIdentity.releaseProofEligible
-      ? 'microsoft_edge_full_product_runtime'
-      : 'test_only_local_chromium_full_product',
+      ? 'microsoft_edge_shared_chromium_runtime'
+      : 'test_only_local_chromium_runtime',
     browserIdentity: smoke.browserIdentity,
-    executablePathSha256,
+    executableSha256: smoke.executable.sha256,
     extensionId: smoke.extensionId,
     manifestEvidence,
-    scenarioIds: smoke.scenarioIds,
+    verifiedScenarioIds: smoke.scenarioIds,
     diagnostics: smoke.diagnostics,
     packageInput,
-    capabilities: EDGE_FULL_PRODUCT_CAPABILITIES,
+    packagedCapabilities: EDGE_FULL_PRODUCT_CAPABILITIES,
   });
 }
 
@@ -246,10 +243,6 @@ function assertExactStringSet(actual, expected, label) {
   const normalized = [...new Set(actual)].sort();
   assert.equal(normalized.length, actual.length, `${label} must not contain duplicates.`);
   assert.deepEqual(normalized, expected, `${label} is not the full-product Edge set.`);
-}
-
-function sha256(value) {
-  return createHash('sha256').update(value).digest('hex');
 }
 
 function deepFreeze(value) {

@@ -124,12 +124,6 @@ function assertExactStringSet(actual, expected, code, label) {
   assert(sameSortedStrings(actual, expected), code, `${label} must equal the reviewed set`);
 }
 
-function artifactBasenameMatches(relativePath, expectedBasename) {
-  const basename = path.posix.basename(relativePath);
-  return basename === expectedBasename
-    || basename.startsWith(`${expectedBasename}.`)
-    || basename.startsWith(`${expectedBasename}-`);
-}
 
 function isPackageFilePath(value) {
   return typeof value === 'string'

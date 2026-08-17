@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   buildExtensionBrowserLaunchOptions,
   classifyEdgeBrowserIdentity,
@@ -8,6 +12,7 @@ import {
   prepareFirefox140ExtensionPage,
   readEdgeBrowserIdentity,
   resolveExecutablePath,
+  sha256Executable,
 } from './puppeteer-runtime.mjs';
 import {
   FIREFOX_GECKO_ID,
@@ -36,6 +41,8 @@ const edgeIdentity = classifyEdgeBrowserIdentity({
   product: 'Chrome/140.0.0.0',
   userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0',
   reportedVersion: 'Chrome/140.0.0.0',
+  commandLineArguments: ['Microsoft Edge', '--remote-debugging-pipe'],
+  executableSha256: 'a'.repeat(64),
 });
 assert.deepEqual(edgeIdentity, {
   name: 'Microsoft Edge',
@@ -47,19 +54,42 @@ const observedEdgeIdentity = await readEdgeBrowserIdentity({
   target: () => ({
     createCDPSession: async () => ({
       send: async (command) => {
-        assert.equal(command, 'Browser.getVersion');
-        return {
-          product: 'Chrome/140.0.0.0',
-          userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Edg/140.0.0.0',
-        };
+        if (command === 'Browser.getVersion') {
+          return {
+            product: 'Chrome/140.0.0.0',
+            userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Edg/140.0.0.0',
+          };
+        }
+        if (command === 'Browser.getBrowserCommandLine') {
+          return { arguments: ['Microsoft Edge', '--remote-debugging-pipe'] };
+        }
+        throw new Error(`Unexpected CDP command: ${command}`);
       },
       detach: async () => { edgeIdentityClientDetached = true; },
     }),
   }),
   version: async () => 'Chrome/140.0.0.0',
-});
+}, { executableSha256: 'a'.repeat(64) });
 assert.deepEqual(observedEdgeIdentity, edgeIdentity);
 assert.equal(edgeIdentityClientDetached, true);
+
+const spoofedEdgeIdentity = classifyEdgeBrowserIdentity({
+  product: 'Chrome/140.0.0.0',
+  userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Edg/140.0.0.0',
+  commandLineArguments: ['Chromium', '--user-agent=Mozilla/5.0 Edg/140.0.0.0'],
+  executableSha256: 'a'.repeat(64),
+});
+assert.equal(spoofedEdgeIdentity.releaseProofEligible, false);
+
+const executableFixtureDir = mkdtempSync(path.join(os.tmpdir(), 'gsm-edge-executable-'));
+try {
+  const executableFixture = path.join(executableFixtureDir, 'msedge');
+  writeFileSync(executableFixture, 'verified-edge-executable');
+  const expectedDigest = createHash('sha256').update(readFileSync(executableFixture)).digest('hex');
+  assert.equal(await sha256Executable(executableFixture), expectedDigest);
+} finally {
+  rmSync(executableFixtureDir, { recursive: true, force: true });
+}
 
 
 

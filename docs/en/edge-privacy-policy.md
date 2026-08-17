@@ -124,7 +124,7 @@ Denied optional access makes no Provider request.
 
 ## Diagnostics and release evidence
 
-Runtime and release evidence is bounded and redacted. It may contain a sanitized browser identity, an executable-path digest, extension ID, scenario identifiers, diagnostic counts, package fingerprints, manifest permission facts, and the capability object.
+Runtime and release evidence is bounded and redacted. It may contain a sanitized browser identity, an executable-binary digest, extension ID, verified scenario identifiers, diagnostic counts, package fingerprints, manifest permission facts, and packaged capability declarations.
 
 Evidence does not contain the executable path, PAT, API keys, authentication headers, request bodies, notes, prompts, personal account data, private repository content, or raw GitHub or Provider responses. The extension does not send release evidence to a developer server.
 
@@ -154,5 +154,5 @@ Keep your PAT and AI-service keys private, use only the scopes you need, and rev
 
 ## Contact
 
-- [Project homepage](https://github.com/izumi0uu/better-github-stars-manager)
-- [Support and privacy issue tracker](https://github.com/izumi0uu/better-github-stars-manager/issues)
+- [Project overview](../../README.en.md)
+- [Security and support](../../SECURITY.md)

@@ -50,7 +50,7 @@ import {
   assertEdgeManifestContract,
 } from './check-edge-output-contracts.mjs';
 import { EDGE_DIST_DIR } from './build-edge-extension.mjs';
-import { normalizeProductStoreTarget } from '../product-target.config.ts';
+import { isProductStoreTarget } from '../product-target.config.ts';
 import {
   parseViteChunkAdvisories,
   validateProvisionalReleaseEvidence,
@@ -441,12 +441,16 @@ export function createProvisionalReleaseEvidence(input) {
 }
 
 export function resolvePackageTarget(option, environmentValue) {
-  const optionTarget = option === undefined ? undefined : normalizeProductStoreTarget(option);
-  const environmentTarget = environmentValue === undefined ? undefined : normalizeProductStoreTarget(environmentValue);
-  if (optionTarget !== undefined && environmentTarget !== undefined && optionTarget !== environmentTarget) {
+  if (option !== undefined && !isProductStoreTarget(option)) {
+    throw new PackageExtensionError('package_target_invalid', String(option));
+  }
+  if (environmentValue !== undefined && !isProductStoreTarget(environmentValue)) {
+    throw new PackageExtensionError('package_target_invalid', String(environmentValue));
+  }
+  if (option !== undefined && environmentValue !== undefined && option !== environmentValue) {
     throw new PackageExtensionError('package_target_mismatch', `${String(option)} != ${String(environmentValue)}`);
   }
-  const target = optionTarget ?? environmentTarget ?? 'chrome';
+  const target = option ?? environmentValue ?? 'chrome';
   if (target !== 'chrome' && target !== 'firefox' && target !== 'edge') {
     throw new PackageExtensionError('package_target_invalid', String(target));
   }
@@ -454,8 +458,10 @@ export function resolvePackageTarget(option, environmentValue) {
 }
 function assertMatchingStoreTarget(packageTarget, storeTargetValue) {
   if (storeTargetValue === undefined) return;
-  const storeTarget = normalizeProductStoreTarget(storeTargetValue);
-  if (storeTarget !== packageTarget) {
+  if (!isProductStoreTarget(storeTargetValue)) {
+    throw new PackageExtensionError('package_store_target_invalid', String(storeTargetValue));
+  }
+  if (storeTargetValue !== packageTarget) {
     throw new PackageExtensionError('package_store_target_mismatch', `${String(storeTargetValue)} != ${packageTarget}`);
   }
 }
