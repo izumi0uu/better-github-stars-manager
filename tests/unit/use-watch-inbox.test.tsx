@@ -101,14 +101,40 @@ function cooldownResponse(
       candidateCount: totalCount,
       matchedCount: totalCount,
       truncated: false,
+      newerThan: null,
+      historyBefore: '2026-08-05T11:59:00Z',
+      historyNextPage: null,
+      historyExhausted: true,
+      historyErrorCode: null,
     },
   };
   return response;
 }
 
-function WatchProbe({ initialActive = true }: { initialActive?: boolean } = {}) {
+function loadedResponse(
+  totalCount: number,
+  newerThan: string,
+  historyNextPage: number | null = 11,
+): WatchInboxQueryResponse {
+  const response = cooldownResponse(totalCount, '2026-08-05T12:00:00Z');
+  response.status.inboxStatus = 'fresh';
+  response.status.state!.inbox.nextAllowedAt = null;
+  response.status.state!.inbox.newerThan = newerThan;
+  response.status.state!.inbox.historyNextPage = historyNextPage;
+  response.status.state!.inbox.historyExhausted = historyNextPage === null;
+  return response;
+}
+
+function WatchProbe({
+  initialActive = true,
+  initialVisible = false,
+}: {
+  initialActive?: boolean;
+  initialVisible?: boolean;
+} = {}) {
   const [active, setActive] = useState(initialActive);
-  const inbox = useWatchInbox({ active });
+  const [visible, setVisible] = useState(initialVisible);
+  const inbox = useWatchInbox({ active, visible });
   return (
     <div>
       <button type="button" data-testid="activate" onClick={() => setActive(true)}>
@@ -116,6 +142,12 @@ function WatchProbe({ initialActive = true }: { initialActive?: boolean } = {}) 
       </button>
       <button type="button" data-testid="deactivate" onClick={() => setActive(false)}>
         Deactivate
+      </button>
+      <button type="button" data-testid="show" onClick={() => setVisible(true)}>
+        Show Watch
+      </button>
+      <button type="button" data-testid="hide" onClick={() => setVisible(false)}>
+        Hide Watch
       </button>
       <button type="button" data-testid="all" onClick={() => inbox.setUnreadOnly(false)}>
         All
@@ -125,6 +157,9 @@ function WatchProbe({ initialActive = true }: { initialActive?: boolean } = {}) 
       </button>
       <button type="button" data-testid="refresh" onClick={() => void inbox.refresh()}>
         Refresh
+      </button>
+      <button type="button" data-testid="load-older" onClick={() => void inbox.loadOlder()}>
+        Load older
       </button>
       <button
         type="button"
@@ -158,6 +193,9 @@ function WatchProbe({ initialActive = true }: { initialActive?: boolean } = {}) 
       <span data-testid="active">{active ? 'active' : 'dormant'}</span>
       <span data-testid="loading">{inbox.loading ? 'loading' : 'ready'}</span>
       <span data-testid="count">{inbox.result?.totalCount ?? 'none'}</span>
+      <span data-testid="boundary">{inbox.newerThan ?? 'none'}</span>
+      <span data-testid="loading-older">{inbox.loadingOlder ? 'loading' : 'ready'}</span>
+      <span data-testid="load-older-error">{inbox.loadOlderError ? 'error' : 'none'}</span>
       <span data-testid="collapsed">
         {Object.keys(inbox.collapsedRepositories).length}
       </span>
@@ -171,7 +209,7 @@ function WatchProbe({ initialActive = true }: { initialActive?: boolean } = {}) 
   );
 }
 
-function Harness(props: { initialActive?: boolean } = {}) {
+function Harness(props: { initialActive?: boolean; initialVisible?: boolean } = {}) {
   return <ManagerRuntimeProvider runtime={runtime}><WatchProbe {...props} /></ManagerRuntimeProvider>;
 }
 
@@ -256,6 +294,95 @@ describe('useWatchInbox', () => {
     expect(watchMocks.bgCall).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+  });
+
+  it('holds the previous Watch-load boundary stable for one visible visit', async () => {
+    const firstBoundary = '2026-08-04T10:00:00.000Z';
+    const nextBoundary = '2026-08-05T10:00:00.000Z';
+    let queryCount = 0;
+    watchMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'markWatchInboxLoaded') return Promise.resolve(nextBoundary);
+      if (type === 'queryWatchInbox') {
+        queryCount++;
+        return Promise.resolve(loadedResponse(
+          2,
+          queryCount === 1 ? firstBoundary : nextBoundary,
+        ));
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+    const container = mountReact(<Harness initialVisible />, mountedRoots);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="boundary"]')?.textContent).toBe(firstBoundary);
+    expect(watchMocks.bgCall.mock.calls.filter(([type]) => type === 'markWatchInboxLoaded'))
+      .toHaveLength(1);
+
+    await act(async () => {
+      runtimeListeners[0]?.({ type: 'watchChanged' });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="boundary"]')?.textContent).toBe(firstBoundary);
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="hide"]')!);
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="show"]')!);
+    expect(container.querySelector('[data-testid="boundary"]')?.textContent).toBe(nextBoundary);
+    expect(watchMocks.bgCall.mock.calls.filter(([type]) => type === 'markWatchInboxLoaded'))
+      .toHaveLength(2);
+  });
+
+  it('loads an older page and then reloads the saved Watch projection', async () => {
+    const older = deferred<unknown>();
+    let queryCount = 0;
+    watchMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryWatchInbox') {
+        queryCount++;
+        return Promise.resolve(loadedResponse(queryCount, '2026-08-04T10:00:00.000Z'));
+      }
+      if (type === 'loadOlderWatchInbox') return older.promise;
+      throw new Error(`Unexpected request: ${type}`);
+    });
+    const container = mountReact(<Harness />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await click(container.querySelector<HTMLButtonElement>('[data-testid="load-older"]')!);
+    expect(container.querySelector('[data-testid="loading-older"]')?.textContent).toBe('loading');
+    await act(async () => {
+      older.resolve({});
+      await older.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(queryCount).toBe(2);
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
+    expect(container.querySelector('[data-testid="loading-older"]')?.textContent).toBe('ready');
+    expect(container.querySelector('[data-testid="load-older-error"]')?.textContent).toBe('none');
+  });
+
+  it('restores a persisted historical-load failure on a new hook mount', async () => {
+    const persistedFailure = loadedResponse(1, '2026-08-04T10:00:00.000Z');
+    persistedFailure.status.state!.inbox.historyErrorCode = 'rate_limited';
+    watchMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryWatchInbox') return Promise.resolve(persistedFailure);
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="load-older-error"]')?.textContent)
+      .toBe('error');
   });
 
   it('clears dormant cached rows on credential change and visibly reloads on activation', async () => {

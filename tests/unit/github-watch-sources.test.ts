@@ -228,6 +228,7 @@ describe('GitHub Watch API sources', () => {
     expect(result.lastModified).toBe('Wed, 05 Aug 2026 03:04:05 GMT');
     expect(result.pollIntervalSeconds).toBe(90);
     expect(result.truncated).toBe(false);
+    expect(result.nextPage).toBeNull();
     expect(result.threads.map((thread) => [thread.id, thread.reason, thread.subjectType]))
       .toEqual([
         ['1', 'future_reason', 'PullRequest'],
@@ -260,6 +261,7 @@ describe('GitHub Watch API sources', () => {
     });
 
     expect(result.notModified).toBe(true);
+    expect(result.nextPage).toBeNull();
     expect(result.threads).toEqual([]);
     expect(result.lastModified).toBe('Wed, 05 Aug 2026 03:04:05 GMT');
     expect(result.pollIntervalSeconds).toBe(120);
@@ -365,9 +367,60 @@ describe('GitHub Watch API sources', () => {
 
     expect(result.pageCount).toBe(3);
     expect(result.truncated).toBe(true);
+    expect(result.nextPage).toBe(4);
     expect(result.candidateCount).toBe(3);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
+
+  it('resumes a frozen Notifications epoch from its persisted next page', async () => {
+    const calls: Array<{ page: number; before: string | null; validator: string | null }> = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      const page = Number(url.searchParams.get('page'));
+      calls.push({
+        page,
+        before: url.searchParams.get('before'),
+        validator: new Headers(init?.headers).get('if-modified-since'),
+      });
+      return jsonResponse([notification(String(page))], {
+        headers: {
+          link: `<https://api.github.com/notifications?all=true&participating=false&per_page=50&before=${encodeURIComponent(NOW)}&page=${page + 1}>; rel="next"`,
+        },
+      });
+    });
+
+    const result = await fetchGitHubNotifications({
+      token: 'classic_notifications',
+      before: NOW,
+      startPage: 11,
+      maxPages: 2,
+      lastModified: 'Wed, 05 Aug 2026 03:04:05 GMT',
+      fetchImpl,
+      now: () => NOW,
+    });
+
+    expect(calls).toEqual([
+      { page: 11, before: NOW, validator: null },
+      { page: 12, before: NOW, validator: null },
+    ]);
+    expect(result.nextPage).toBe(13);
+    expect(result.truncated).toBe(true);
+    expect(result.threads.map((item) => item.id)).toEqual(['11', '12']);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects malformed persisted Notifications page %s before fetching',
+    async (startPage) => {
+      const fetchImpl = vi.fn<typeof fetch>();
+      await expect(fetchGitHubNotifications({
+        token: 'classic_notifications',
+        before: NOW,
+        startPage,
+        fetchImpl,
+      })).rejects.toMatchObject({ code: 'invalid_pagination' });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
 
   it('classifies malformed thread payloads with a stable error code', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse([{ id: 'bad' }]));

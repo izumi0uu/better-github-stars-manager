@@ -102,6 +102,8 @@ describe('Status/token regressions', () => {
       backfills: {},
       activeBackfillId: null,
       inFlight: true,
+      progressInFlight: true,
+      starsSyncInFlight: false,
       organizeJobActive: true,
     };
     const next = mergeStatusPatch(current, { seenTooltips: 2 });
@@ -112,7 +114,7 @@ describe('Status/token regressions', () => {
     assert.equal(next.organizeJobActive, true);
   });
 
-  it('mergeStatusSnapshot keeps live progress when a restored snapshot is idle', () => {
+  it('mergeStatusSnapshot clears stale progress when only unrelated work remains', () => {
     const current: SyncStatus = {
       progress: { phase: 'full', done: 8, total: 20, message: 'Fetching…' },
       hasToken: true,
@@ -122,6 +124,8 @@ describe('Status/token regressions', () => {
       backfills: {},
       activeBackfillId: null,
       inFlight: true,
+      progressInFlight: true,
+      starsSyncInFlight: true,
       organizeJobActive: true,
     };
     const snapshot: SyncStatus = {
@@ -132,13 +136,16 @@ describe('Status/token regressions', () => {
       seenTooltips: 3,
       backfills: {},
       activeBackfillId: null,
-      inFlight: false,
+      inFlight: true,
+      progressInFlight: false,
+      starsSyncInFlight: false,
       organizeJobActive: false,
     };
     const merged = mergeStatusSnapshot(current, snapshot);
     assert.ok(merged);
-    assert.deepEqual(merged!.progress, current.progress);
+    assert.deepEqual(merged!.progress, snapshot.progress);
     assert.equal(merged!.inFlight, true);
+    assert.equal(merged!.progressInFlight, false);
     assert.equal(merged!.organizeJobActive, false);
   });
 

@@ -1,6 +1,8 @@
 import { db } from '@/storage/db';
 import {
   canonicalRepositoryFullName,
+  dedupeNotificationThreads,
+  isValidWatchHistoryPage,
   projectWatchInbox,
   type GitHubNotificationThread,
   type GitHubWatchRepository,
@@ -134,6 +136,11 @@ function emptyInbox(): WatchInboxRefreshSnapshot {
     candidateCount: 0,
     matchedCount: 0,
     truncated: false,
+    newerThan: null,
+    historyBefore: null,
+    historyNextPage: null,
+    historyExhausted: true,
+    historyErrorCode: null,
   };
 }
 
@@ -146,10 +153,30 @@ function emptyState(accountLogin: string): GitHubWatchStateRecord {
   };
 }
 
+function normalizeWatchState(state: GitHubWatchStateRecord): GitHubWatchStateRecord {
+  const inbox = state.inbox as Partial<WatchInboxRefreshSnapshot>;
+  const historyBefore = inbox.historyBefore ?? null;
+  const historyNextPage = inbox.historyNextPage ?? null;
+  return {
+    ...state,
+    inbox: {
+      ...emptyInbox(),
+      ...inbox,
+      newerThan: inbox.newerThan ?? null,
+      historyBefore,
+      historyNextPage,
+      historyExhausted: inbox.historyExhausted ?? (
+        historyBefore === null || historyNextPage === null
+      ),
+      historyErrorCode: inbox.historyErrorCode ?? null,
+    },
+  };
+}
+
 async function replaceAccountIfNeeded(accountLogin: string): Promise<GitHubWatchStateRecord> {
   const normalizedLogin = normalizeAccountLogin(accountLogin);
   const current = await db.watchState.get(WATCH_STATE_ID);
-  if (current?.accountLogin === normalizedLogin) return current;
+  if (current?.accountLogin === normalizedLogin) return normalizeWatchState(current);
 
   // Tables without their account-bound state are orphaned and must never be
   // adopted by the next account that writes a refresh result.
@@ -199,7 +226,7 @@ export async function getWatchState(
   if (!accountLogin?.trim()) return null;
   const normalizedLogin = normalizeAccountLogin(accountLogin);
   const state = await db.watchState.get(WATCH_STATE_ID);
-  return state?.accountLogin === normalizedLogin ? state : null;
+  return state?.accountLogin === normalizedLogin ? normalizeWatchState(state) : null;
 }
 
 export async function countUnreadWatchThreads(
@@ -276,7 +303,7 @@ export async function queryStoredWatchInbox(input: {
           await db.watchNotificationThreads.toArray(),
           { unreadOnly: input.unreadOnly },
         ),
-        state,
+        state: normalizeWatchState(state),
       };
     },
   );
@@ -293,8 +320,9 @@ export async function applyWatchThreadMutation(input: {
     throw new TypeError('Watch thread mutation contains an invalid thread id.');
   }
   return db.transaction('rw', db.watchNotificationThreads, db.watchState, async () => {
-    const state = await db.watchState.get(WATCH_STATE_ID);
-    if (state?.accountLogin !== accountLogin) return 0;
+    const storedState = await db.watchState.get(WATCH_STATE_ID);
+    if (storedState?.accountLogin !== accountLogin) return 0;
+    const state = normalizeWatchState(storedState);
     const rows = (await db.watchNotificationThreads.bulkGet(threadIds))
       .filter((row): row is GitHubNotificationThread => row !== undefined);
     if (input.action === 'done') {
@@ -389,9 +417,19 @@ export async function replaceWatchInbox(input: {
   nextAllowedAt: string | null;
   candidateCount: number;
   truncated: boolean;
+  historyBefore?: string;
+  historyNextPage?: number | null;
+  resetHistory?: boolean;
   mode: 'replace' | 'merge';
   requireLiveStars?: boolean;
 }): Promise<GitHubWatchStateRecord> {
+  if (
+    input.historyNextPage !== undefined
+    && input.historyNextPage !== null
+    && !isValidWatchHistoryPage(input.historyNextPage)
+  ) {
+    throw new TypeError('Watch next history page must be a positive safe integer.');
+  }
   const normalizedThreads = normalizeThreads(input.threads);
   return db.transaction(
     'rw',
@@ -415,6 +453,11 @@ export async function replaceWatchInbox(input: {
         if (staleThreadIds.length) await db.watchNotificationThreads.bulkDelete(staleThreadIds);
       }
       if (publishedThreads.length) await db.watchNotificationThreads.bulkPut(publishedThreads);
+      const initializeHistory = input.mode === 'replace'
+        || current.inbox.historyBefore === null
+        || input.resetHistory === true;
+      const historyBefore = input.historyBefore ?? input.successfulAt ?? input.attemptedAt;
+      const historyNextPage = input.historyNextPage ?? null;
       const matchedCount = await db.watchNotificationThreads.count();
       const next: GitHubWatchStateRecord = {
         ...current,
@@ -428,15 +471,148 @@ export async function replaceWatchInbox(input: {
             ? current.inbox.candidateCount + input.candidateCount
             : input.candidateCount,
           matchedCount,
-          truncated: input.mode === 'merge'
-            ? current.inbox.truncated || input.truncated
-            : input.truncated,
+          truncated: initializeHistory ? input.truncated : current.inbox.truncated,
+          newerThan: current.inbox.newerThan,
+          historyBefore: initializeHistory ? historyBefore : current.inbox.historyBefore,
+          historyNextPage: initializeHistory ? historyNextPage : current.inbox.historyNextPage,
+          historyExhausted: initializeHistory
+            ? historyNextPage === null
+            : current.inbox.historyExhausted,
+          historyErrorCode: initializeHistory ? null : current.inbox.historyErrorCode,
         },
       };
       await db.watchState.put(next);
       return next;
     },
   );
+}
+
+export async function markWatchInboxLoaded(input: {
+  accountLogin: string;
+  loadedAt: string;
+}): Promise<GitHubWatchStateRecord | null> {
+  const accountLogin = normalizeAccountLogin(input.accountLogin);
+  const loadedAtMs = Date.parse(input.loadedAt);
+  if (!Number.isFinite(loadedAtMs)) throw new TypeError('Watch load time is invalid.');
+  return db.transaction('rw', db.watchState, async () => {
+    const storedState = await db.watchState.get(WATCH_STATE_ID);
+    if (storedState?.accountLogin !== accountLogin) return null;
+    const current = normalizeWatchState(storedState);
+    const currentMs = Date.parse(current.inbox.newerThan ?? '');
+    const newerThan = Number.isFinite(currentMs) && currentMs > loadedAtMs
+      ? current.inbox.newerThan
+      : new Date(loadedAtMs).toISOString();
+    if (current.inbox.newerThan === newerThan) return current;
+    const next: GitHubWatchStateRecord = {
+      ...current,
+      inbox: { ...current.inbox, newerThan },
+    };
+    await db.watchState.put(next);
+    return next;
+  });
+}
+
+export async function appendWatchInboxHistory(input: {
+  accountLogin: string;
+  historyBefore: string;
+  historyPage: number;
+  threads: readonly GitHubNotificationThread[];
+  candidateCount: number;
+  nextPage: number | null;
+  requireLiveStars?: boolean;
+}): Promise<{
+  state: GitHubWatchStateRecord | null;
+  addedCount: number;
+  applied: boolean;
+}> {
+  if (!isValidWatchHistoryPage(input.historyPage)) {
+    throw new TypeError('Watch history page must be a positive safe integer.');
+  }
+  if (input.nextPage !== null && !isValidWatchHistoryPage(input.nextPage)) {
+    throw new TypeError('Watch next history page must be a positive safe integer.');
+  }
+  const accountLogin = normalizeAccountLogin(input.accountLogin);
+  const normalizedThreads = normalizeThreads(input.threads);
+  return db.transaction(
+    'rw',
+    db.stars,
+    db.watchNotificationThreads,
+    db.watchState,
+    async () => {
+      const storedState = await db.watchState.get(WATCH_STATE_ID);
+      if (storedState?.accountLogin !== accountLogin) {
+        return { state: null, addedCount: 0, applied: false };
+      }
+      const current = normalizeWatchState(storedState);
+      if (
+        current.inbox.historyExhausted
+        || current.inbox.historyBefore !== input.historyBefore
+        || current.inbox.historyNextPage !== input.historyPage
+      ) return { state: current, addedCount: 0, applied: false };
+
+      const liveNames = input.requireLiveStars
+        ? liveRepositoryNames(await db.stars.toArray())
+        : null;
+      const publishedThreads = liveNames
+        ? normalizedThreads.filter((thread) => liveNames.has(thread.repositoryFullName))
+        : normalizedThreads;
+      const existingRows = publishedThreads.length
+        ? await db.watchNotificationThreads.bulkGet(publishedThreads.map((thread) => thread.id))
+        : [];
+      const existingIds = new Set(existingRows.flatMap((thread) => thread ? [thread.id] : []));
+      const mergedRows = dedupeNotificationThreads([
+        ...existingRows.flatMap((thread) => thread ? [thread] : []),
+        ...publishedThreads,
+      ]);
+      if (mergedRows.length) await db.watchNotificationThreads.bulkPut(mergedRows);
+      const addedCount = publishedThreads.reduce(
+        (count, thread) => count + Number(!existingIds.has(thread.id)),
+        0,
+      );
+      const next: GitHubWatchStateRecord = {
+        ...current,
+        inbox: {
+          ...current.inbox,
+          candidateCount: current.inbox.candidateCount + input.candidateCount,
+          matchedCount: await db.watchNotificationThreads.count(),
+          truncated: input.nextPage !== null,
+          historyNextPage: input.nextPage,
+          historyExhausted: input.nextPage === null,
+          historyErrorCode: null,
+        },
+      };
+      await db.watchState.put(next);
+      return { state: next, addedCount, applied: true };
+    },
+  );
+}
+
+export async function recordWatchHistoryFailure(input: {
+  accountLogin: string;
+  historyBefore: string;
+  historyPage: number;
+  errorCode: string;
+}): Promise<GitHubWatchStateRecord | null> {
+  const accountLogin = normalizeAccountLogin(input.accountLogin);
+  return db.transaction('rw', db.watchState, async () => {
+    const storedState = await db.watchState.get(WATCH_STATE_ID);
+    if (storedState?.accountLogin !== accountLogin) return null;
+    const current = normalizeWatchState(storedState);
+    if (
+      current.inbox.historyExhausted
+      || current.inbox.historyBefore !== input.historyBefore
+      || current.inbox.historyNextPage !== input.historyPage
+    ) return current;
+    const next: GitHubWatchStateRecord = {
+      ...current,
+      inbox: {
+        ...current.inbox,
+        historyErrorCode: input.errorCode,
+      },
+    };
+    await db.watchState.put(next);
+    return next;
+  });
 }
 
 export async function revalidateWatchInbox(input: {

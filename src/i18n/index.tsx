@@ -109,6 +109,14 @@ export interface MessageCatalog {
     listEndMatches: (count: number) => string;
     listEndWindow: string;
     listEndSaved: (count: number) => string;
+    timelineToday: string;
+    timelineYesterday: string;
+    newBadge: string;
+    newSinceLastVisit: string;
+    loadOlder: string;
+    loadingOlder: string;
+    loadOlderFailed: string;
+    historyComplete: (count: number) => string;
     staleSnapshot: string;
     credentialStaleSnapshot: string;
     scopeFailed: string;
@@ -1215,6 +1223,14 @@ const messages: Record<Locale, MessageCatalog> = {
       listEndMatches: (count) => `End of matching results · ${count} ${count === 1 ? "thread" : "threads"}`,
       listEndWindow: "End of current window · older threads may exist",
       listEndSaved: (count) => `End of saved snapshot · ${count} ${count === 1 ? "thread" : "threads"}`,
+      timelineToday: "Today",
+      timelineYesterday: "Yesterday",
+      newBadge: "New",
+      newSinceLastVisit: "Updated since your last Watch visit",
+      loadOlder: "Load older notifications",
+      loadingOlder: "Loading older notifications…",
+      loadOlderFailed: "Couldn’t load older notifications. Your saved timeline is unchanged.",
+      historyComplete: (count) => `All caught up · ${count} ${count === 1 ? "thread" : "threads"}`,
       staleSnapshot: "Showing the last successful snapshot because the latest refresh failed.",
       scopeFailed: "Watched-repository membership could not be refreshed; Inbox coverage is unaffected.",
       inboxFailed: "Inbox threads could not be refreshed.",
@@ -2516,6 +2532,14 @@ const messages: Record<Locale, MessageCatalog> = {
       listEndMatches: (count) => `匹配结果末尾 · 共 ${count} 个 thread`,
       listEndWindow: "当前窗口末尾 · 可能还有更早的 thread",
       listEndSaved: (count) => `已保存快照末尾 · 共 ${count} 个 thread`,
+      timelineToday: "今天",
+      timelineYesterday: "昨天",
+      newBadge: "新",
+      newSinceLastVisit: "自上次查看 Watch 后有更新",
+      loadOlder: "加载更早的通知",
+      loadingOlder: "正在加载更早的通知…",
+      loadOlderFailed: "无法加载更早的通知，已保存的时间线未受影响。",
+      historyComplete: (count) => `已看完 · 共 ${count} 个 thread`,
       staleSnapshot: "最近一次刷新失败，当前仍显示上一次成功快照。",
       scopeFailed: "无法刷新已 Watch 仓库成员关系；不影响 Inbox 覆盖范围。",
       inboxFailed: "无法刷新 Inbox threads。",

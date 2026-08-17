@@ -219,12 +219,12 @@ export function ManagerWorkspace({
   const reportMeaningfulAction = useCallback(() => {
     onMeaningfulAction?.();
   }, [onMeaningfulAction]);
+  // Prime Watch and Following on manager entry; switching tabs must not be their first query.
   const watchInbox = useWatchInbox({
-    active: surface === 'watch',
+    visible: surface === 'watch',
     onMeaningfulAction: reportMeaningfulAction,
   });
   const radar = useRadar({
-    active: surface === 'radar',
     onMeaningfulAction: reportMeaningfulAction,
   });
   const surfaceBadges = useManagerSurfaceBadges();
@@ -608,12 +608,10 @@ export function ManagerWorkspace({
             layoutEditChrome={layoutEditChrome}
             surface={surface}
             onSurfaceChange={handleSurfaceChange}
-            watchUnreadCount={watchSurface
-              ? watchInbox.result?.unreadCount ?? surfaceBadges.watchUnreadCount
-              : surfaceBadges.watchUnreadCount}
-            radarUnseenCount={radarSurface
-              ? radar.result?.unseenCount ?? surfaceBadges.radarUnseenCount
-              : surfaceBadges.radarUnseenCount}
+            watchUnreadCount={watchInbox.result?.unreadCount
+              ?? surfaceBadges.watchUnreadCount}
+            radarUnseenCount={radar.result?.unseenCount
+              ?? surfaceBadges.radarUnseenCount}
             {...extension?.toolbar}
           />
           {watchSurface && (
@@ -692,14 +690,18 @@ export function ManagerWorkspace({
               {watchSurface ? (
                 <WatchInbox
                   result={watchInbox.result}
+                  newerThan={watchInbox.newerThan}
                   scrollElement={listElement}
                   loading={watchInbox.loading}
                   refreshing={watchInbox.refreshing}
                   error={watchInbox.error}
+                  loadingOlder={watchInbox.loadingOlder}
+                  loadOlderError={watchInbox.loadOlderError}
                   unreadOnly={watchInbox.unreadOnly}
                   onUnreadOnlyChange={watchInbox.setUnreadOnly}
                   onRefresh={() => { void watchInbox.refresh(); }}
                   onRetryQuery={() => { void watchInbox.reload(); }}
+                  onLoadOlder={() => { void watchInbox.loadOlder(); }}
                   actionPending={watchInbox.actionPending}
                   actionError={watchInbox.actionError}
                   onMarkThreadsRead={(threadIds) => { void watchInbox.markThreadsRead(threadIds); }}

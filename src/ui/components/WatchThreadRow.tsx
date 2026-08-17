@@ -295,6 +295,7 @@ function SubjectDetailSlot({
 export function WatchThreadRow({
   thread,
   locale,
+  newSinceLastVisit,
   expanded,
   focusRequested,
   actionPending,
@@ -306,6 +307,7 @@ export function WatchThreadRow({
 }: {
   thread: GitHubNotificationThread;
   locale: string;
+  newSinceLastVisit: boolean;
   expanded: boolean;
   focusRequested: boolean;
   actionPending: WatchThreadActionPending | null;
@@ -346,7 +348,11 @@ export function WatchThreadRow({
   };
 
   return (
-    <article className="min-w-0" data-watch-thread-row={thread.id}>
+    <article
+      className="min-w-0"
+      data-watch-thread-row={thread.id}
+      data-watch-new={newSinceLastVisit || undefined}
+    >
       <button
         ref={buttonRef}
         id={disclosureId}
@@ -359,6 +365,7 @@ export function WatchThreadRow({
         onClick={toggleExpanded}
         className={cn('group flex h-[37px] w-full min-w-0 items-center gap-[9px] rounded-md pr-2 text-left text-foreground outline-none transition-colors hover:bg-muted/55 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', {
           'bg-muted/45': expanded,
+          'bg-info/[0.08] hover:bg-info/[0.12]': newSinceLastVisit && !expanded,
         })}
       >
         <span className="relative z-10 flex w-[15px] shrink-0 justify-center bg-background" aria-hidden="true">
@@ -386,8 +393,16 @@ export function WatchThreadRow({
         >
           {thread.subjectTitle}
         </span>
+        {newSinceLastVisit && (
+          <span
+            className="shrink-0 rounded-full border border-info/35 bg-info/[0.08] px-1.5 py-px font-mono text-[10px] font-semibold text-info"
+            title={m.watch.newSinceLastVisit}
+          >
+            {m.watch.newBadge}
+          </span>
+        )}
         <span id={metadataId} className="sr-only">
-          {subjectType}. {thread.reason}. {thread.unread ? m.watch.unreadStatus : m.watch.readStatus}. {updatedTitle ?? ''}
+          {subjectType}. {thread.reason}. {thread.unread ? m.watch.unreadStatus : m.watch.readStatus}. {newSinceLastVisit ? m.watch.newSinceLastVisit : ''} {updatedTitle ?? ''}
         </span>
         <code
           className="max-w-44 truncate rounded-sm bg-muted px-1.5 py-px font-mono text-[11px] text-muted-foreground max-[720px]:hidden"

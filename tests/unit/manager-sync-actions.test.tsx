@@ -28,6 +28,8 @@ function baseStatus(patch: Partial<SyncStatus> = {}): SyncStatus {
     backfills,
     activeBackfillId: null,
     inFlight: false,
+    progressInFlight: false,
+    starsSyncInFlight: false,
     organizeJobActive: false,
     ...patch,
   };
@@ -174,18 +176,27 @@ describe('useManagerSyncActions', () => {
     expect(storageListeners).toHaveLength(0);
   });
 
-  it('runs the initial sync and advances onboarding after data appears', async () => {
+  it('runs initial sync during unrelated work and uses the background terminal stage', async () => {
     const refreshStars = vi.fn();
-    const queryGrandTotals = [0, 3];
-    sendMessage.mockImplementation((message: { type: string }) => {
+    let onboardingStage: SyncStatus['onboardingStage'] = 'awaiting_sync';
+    sendMessage.mockImplementation((message: { type: string; stage?: SyncStatus['onboardingStage'] }) => {
       if (message.type === 'getStatus') {
-        return ok(baseStatus({ hasToken: true, onboardingStage: 'awaiting_sync' }));
+        return ok(baseStatus({
+          hasToken: true,
+          onboardingStage,
+          inFlight: true,
+          starsSyncInFlight: false,
+        }));
       }
-      if (message.type === 'query') {
-        return ok({ grandTotal: queryGrandTotals.shift() ?? 3 });
+      if (message.type === 'query') return ok({ grandTotal: 0 });
+      if (message.type === 'setOnboardingStage') {
+        onboardingStage = message.stage ?? onboardingStage;
+        return ok();
       }
-      if (message.type === 'setOnboardingStage') return ok();
-      if (message.type === 'syncFull') return ok();
+      if (message.type === 'syncFull') {
+        onboardingStage = 'coach';
+        return ok();
+      }
       throw new Error(`Unexpected message: ${message.type}`);
     });
 
@@ -199,13 +210,18 @@ describe('useManagerSyncActions', () => {
     });
 
     expect(sendMessage).toHaveBeenCalledWith({ type: 'setOnboardingStage', stage: 'syncing' });
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'setOnboardingStage', stage: 'coach' });
+    expect(sendMessage).not.toHaveBeenCalledWith({ type: 'setOnboardingStage', stage: 'coach' });
   });
 
   it('keeps sync failure visible and marks onboarding as failed', async () => {
     sendMessage.mockImplementation((message: { type: string }) => {
       if (message.type === 'getStatus') {
-        return ok(baseStatus({ hasToken: true, onboardingStage: 'awaiting_sync', inFlight: true }));
+        return ok(baseStatus({
+          hasToken: true,
+          onboardingStage: 'awaiting_sync',
+          inFlight: true,
+          starsSyncInFlight: true,
+        }));
       }
       if (message.type === 'setOnboardingStage') return ok();
       if (message.type === 'syncFull') return fail('network-down');

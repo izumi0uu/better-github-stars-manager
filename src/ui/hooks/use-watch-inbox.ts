@@ -10,10 +10,13 @@ import type { WatchThreadActionPending } from '@/ui/watch-inbox-types';
 
 export function useWatchInbox({
   active = true,
+  visible = false,
   onMeaningfulAction,
 }: {
   /** Dormant resources preserve cached data and perform no background query work. */
   active?: boolean;
+  /** Marks a user-visible Watch visit without disabling background prefetch. */
+  visible?: boolean;
   onMeaningfulAction?: () => void;
 } = {}) {
   const runtime = useManagerRuntime();
@@ -21,18 +24,24 @@ export function useWatchInbox({
   const [collapsedRepositories, setCollapsedRepositories] =
     useState<WatchCollapsedRepositorySignatures>({});
   const [result, setResult] = useState<WatchInboxQueryResponse | null>(null);
+  const [newerThan, setNewerThan] = useState<string | null>(null);
   const [loading, setLoading] = useState(active);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<'query' | 'refresh' | null>(null);
   const [actionPending, setActionPending] = useState<WatchThreadActionPending | null>(null);
   const [actionError, setActionError] = useState<WatchThreadAction | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [loadOlderError, setLoadOlderError] = useState(false);
   const generation = useRef(0);
   const refreshingRef = useRef(false);
   const actionPendingRef = useRef(false);
+  const loadingOlderRef = useRef(false);
   const mountedRef = useRef(true);
   const activeRef = useRef(active);
   activeRef.current = active;
   const hasLoadedRef = useRef(false);
+  const acknowledgedLoadRef = useRef<string | null>(null);
+  const lastAcknowledgedLoadRef = useRef<{ accountLogin: string; loadedAt: string } | null>(null);
   const cooldownProbeRef = useRef<{ deadline: string | null; attempts: number }>({
     deadline: null,
     attempts: 0,
@@ -103,6 +112,9 @@ export function useWatchInbox({
       if (event.kind === 'reset') {
         generation.current += 1;
         hasLoadedRef.current = false;
+        acknowledgedLoadRef.current = null;
+        lastAcknowledgedLoadRef.current = null;
+        setNewerThan(null);
         setResult(null);
         setError(null);
         setLoading(activeRef.current);
@@ -118,6 +130,40 @@ export function useWatchInbox({
       unsubscribe();
     };
   }, [load, runtime]);
+
+  useEffect(() => {
+    if (!visible) {
+      acknowledgedLoadRef.current = null;
+      setNewerThan(null);
+      return;
+    }
+    const accountLogin = result?.status.accountLogin ?? null;
+    const inbox = result?.status.state?.inbox ?? null;
+    if (!accountLogin || !inbox || acknowledgedLoadRef.current === accountLogin) return;
+    acknowledgedLoadRef.current = accountLogin;
+    const localBoundary = lastAcknowledgedLoadRef.current?.accountLogin === accountLogin
+      ? lastAcknowledgedLoadRef.current.loadedAt
+      : null;
+    const persistedBoundaryMs = Date.parse(inbox.newerThan ?? '');
+    const localBoundaryMs = Date.parse(localBoundary ?? '');
+    setNewerThan(Number.isFinite(localBoundaryMs) && (
+      !Number.isFinite(persistedBoundaryMs) || localBoundaryMs > persistedBoundaryMs
+    )
+      ? localBoundary
+      : inbox.newerThan);
+
+    const optimisticLoadedAt = new Date(runtime.now()).toISOString();
+    lastAcknowledgedLoadRef.current = { accountLogin, loadedAt: optimisticLoadedAt };
+    void runtime.markWatchLoaded().then((loadedAt) => {
+      if (loadedAt && lastAcknowledgedLoadRef.current?.accountLogin === accountLogin) {
+        lastAcknowledgedLoadRef.current = { accountLogin, loadedAt };
+      }
+    }).catch(() => {
+      if (lastAcknowledgedLoadRef.current?.loadedAt === optimisticLoadedAt) {
+        lastAcknowledgedLoadRef.current = null;
+      }
+    });
+  }, [result, runtime, visible]);
 
   const cooldownUntil = result?.status.inboxStatus === 'cooldown'
     ? result.status.state?.inbox.nextAllowedAt ?? null
@@ -150,6 +196,7 @@ export function useWatchInbox({
     refreshingRef.current = true;
     setRefreshing(true);
     setError(null);
+    setLoadOlderError(false);
     try {
       await runtime.refreshWatch();
       await load(true);
@@ -161,6 +208,23 @@ export function useWatchInbox({
       if (mountedRef.current) setRefreshing(false);
     }
   }, [load, runtime]);
+  const loadOlder = useCallback(async () => {
+    if (!mountedRef.current || loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    setLoadOlderError(false);
+    try {
+      await runtime.loadOlderWatch();
+      await load(true);
+    } catch {
+      await load(true);
+      if (mountedRef.current) setLoadOlderError(true);
+    } finally {
+      loadingOlderRef.current = false;
+      if (mountedRef.current) setLoadingOlder(false);
+    }
+  }, [load, runtime]);
+
   const actionAccountLogin = result?.status.accountLogin ?? null;
 
   const mutateThreads = useCallback(async (
@@ -230,16 +294,24 @@ export function useWatchInbox({
     });
   }, [runtime]);
 
+  const visibleLoadOlderError = !loadingOlder && (
+    loadOlderError || result?.status.state?.inbox.historyErrorCode != null
+  );
+
   return {
     unreadOnly,
     setUnreadOnly: changeUnreadOnly,
     collapsedRepositories,
     updateRepositoryCollapse,
     result,
+    newerThan,
     loading,
     refreshing: refreshing || result?.status.refreshing === true,
     error,
     refresh,
+    loadingOlder,
+    loadOlderError: visibleLoadOlderError,
+    loadOlder,
     reload: load,
     actionPending,
     actionError,

@@ -127,6 +127,21 @@ describe('ExtensionManagerRuntime', () => {
     ]);
   });
 
+  it('maps Watch history and visible-load commands to dedicated envelopes', async () => {
+    const historyResult = { addedCount: 2, hasMore: true, status: {} };
+    adapterMocks.bgCall
+      .mockResolvedValueOnce(historyResult)
+      .mockResolvedValueOnce('2026-08-16T12:00:00.000Z');
+    const runtime = new ExtensionManagerRuntime();
+
+    await expect(runtime.loadOlderWatch()).resolves.toBe(historyResult);
+    await expect(runtime.markWatchLoaded()).resolves.toBe('2026-08-16T12:00:00.000Z');
+    expect(adapterMocks.bgCall.mock.calls).toEqual([
+      ['loadOlderWatchInbox'],
+      ['markWatchInboxLoaded'],
+    ]);
+  });
+
   it('maps lightweight preferences and strips extension-only account fields', async () => {
     const runtime = new ExtensionManagerRuntime();
     await expect(runtime.getAccount()).resolves.toEqual({

@@ -158,6 +158,8 @@ function status(stage: SyncStatus['onboardingStage']): SyncStatus {
     backfills: {},
     activeBackfillId: null,
     inFlight: true,
+    progressInFlight: false,
+    starsSyncInFlight: true,
     organizeJobActive: false,
   };
 }

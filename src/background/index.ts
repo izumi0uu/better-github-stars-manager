@@ -112,6 +112,7 @@ import type {
 } from "@/types";
 import {
   normalizeOnboardingStage,
+  resolveOnboardingStageAfterSync,
   stageMarksOnboardingSeen,
 } from "@/onboarding/state";
 import { createAgentProviderGate } from "./agent-provider-gate";
@@ -265,6 +266,8 @@ type Req = BgsmAgentSessionRequest
   | { type: "getWatchSubjectDetail"; threadId?: unknown }
   | { type: "getWatchRepositoryDetail"; fullName?: unknown }
   | { type: "refreshWatchInbox" }
+  | { type: "loadOlderWatchInbox" }
+  | { type: "markWatchInboxLoaded" }
   | { type: "markWatchThreadsRead"; accountLogin?: unknown; threadIds?: unknown }
   | { type: "markWatchThreadsDone"; accountLogin?: unknown; threadIds?: unknown }
   | { type: "disconnectWatchInbox" }
@@ -349,8 +352,11 @@ const watchRefreshCoordinator = createWatchRefreshCoordinator({
     replaceScope: watchStore.replaceWatchScope,
     recordScopeFailure: watchStore.recordWatchScopeFailure,
     replaceInbox: watchStore.replaceWatchInbox,
+    appendHistory: watchStore.appendWatchInboxHistory,
+    markLoaded: watchStore.markWatchInboxLoaded,
     revalidateInbox: watchStore.revalidateWatchInbox,
     recordInboxFailure: watchStore.recordWatchInboxFailure,
+    recordHistoryFailure: watchStore.recordWatchHistoryFailure,
     applyThreadMutation: watchStore.applyWatchThreadMutation,
     disconnectInbox: watchStore.disconnectWatchInbox,
     clearData: watchStore.clearWatchData,
@@ -1480,6 +1486,8 @@ async function getStatusPayload() {
       seenOnboarding: stageMarksOnboardingSeen(onboardingStage),
     });
   }
+  const starsSyncInFlight = jobQueue.isRunning("stars-sync");
+  const progressInFlight = starsSyncInFlight || jobQueue.isRunning("progress");
   return {
     progress:
       lastProgress.phase === "idle" && !lastProgress.message
@@ -1492,6 +1500,8 @@ async function getStatusPayload() {
     backfills,
     activeBackfillId: selectActiveBackfillId(backfills),
     inFlight: jobQueue.isRunning(),
+    progressInFlight,
+    starsSyncInFlight,
     organizeJobActive: !!activeOrganizeJob,
   };
 }
@@ -1507,12 +1517,13 @@ async function performFullSyncJob() {
   const result = await githubStarSource.syncFull((p) => setProgress(p));
   await reconcileWatchScopeAfterStarsChange();
   broadcastDataAndRecommendationsChanged();
+  await finalizeTrackedOnboardingSync();
   setIdleMessage(m.background.fullDone(result.added));
   return result;
 }
 
 async function performFullSync() {
-  return run(performFullSyncJob);
+  return run(performFullSyncJob, { kind: "stars-sync" });
 }
 
 const backfillExecutor = createBackfillExecutor({
@@ -1576,6 +1587,29 @@ async function setStoredOnboardingStage(stage: OnboardingStage): Promise<void> {
   });
 }
 
+async function finalizeTrackedOnboardingSync(): Promise<void> {
+  const config = await authStore.getConfig();
+  if (config.onboardingStage !== "syncing") return;
+  const [hasToken, grandTotal] = await Promise.all([
+    authStore.hasToken(),
+    db.stars.count(),
+  ]);
+  await setStoredOnboardingStage(resolveOnboardingStageAfterSync(hasToken, grandTotal));
+}
+
+async function failTrackedOnboardingSync(): Promise<void> {
+  try {
+    const config = await authStore.getConfig();
+    if (config.onboardingStage !== "syncing") return;
+    await setStoredOnboardingStage("sync_failed");
+  } catch (error) {
+    console.error(
+      "[GSM] failed to persist onboarding sync failure:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
 function recordProviderProbeStarted(requestId: string, startedAt: number): Promise<void> {
   return Promise.resolve(providerDiagnosticsRuntime?.recordProbeStarted(requestId, startedAt))
     .then(() => undefined)
@@ -1619,8 +1653,10 @@ async function handle(req: Req): Promise<Res> {
     switch (req.type) {
       case "syncIncremental": {
         const m = await getLocaleMessages();
-        if (!(await authStore.hasToken()))
+        if (!(await authStore.hasToken())) {
+          await failTrackedOnboardingSync();
           return { ok: false, error: m.background.noToken };
+        }
         const result = await run(async () => {
           setProgress({
             phase: "incremental",
@@ -1630,16 +1666,19 @@ async function handle(req: Req): Promise<Res> {
           });
           const syncResult = await githubStarSource.syncIncremental();
           await reconcileWatchScopeAfterStarsChange();
+          broadcastDataAndRecommendationsChanged();
+          await finalizeTrackedOnboardingSync();
+          setIdleMessage(m.background.incrementalDone(syncResult.added));
           return syncResult;
-        });
-        broadcastDataAndRecommendationsChanged();
-        setIdleMessage(m.background.incrementalDone(result.added));
+        }, { kind: "stars-sync" });
         return { ok: true, data: { ...result, tagged: 0 } };
       }
       case "syncFull": {
         const m = await getLocaleMessages();
-        if (!(await authStore.hasToken()))
+        if (!(await authStore.hasToken())) {
+          await failTrackedOnboardingSync();
           return { ok: false, error: m.background.noToken };
+        }
         const result = await performFullSync();
         return { ok: true, data: { ...result, tagged: 0 } };
       }
@@ -1656,12 +1695,12 @@ async function handle(req: Req): Promise<Res> {
           });
           const syncResult = await githubStarSource.syncRescan((p) => setProgress(p));
           await reconcileWatchScopeAfterStarsChange();
+          broadcastDataAndRecommendationsChanged();
+          setIdleMessage(
+            m.background.rescanDone(syncResult.tombstoned, syncResult.revived),
+          );
           return syncResult;
-        });
-        broadcastDataAndRecommendationsChanged();
-        setIdleMessage(
-          m.background.rescanDone(result.tombstoned, result.revived),
-        );
+        }, { kind: "stars-sync" });
         return { ok: true, data: result };
       }
       case "autoAssignTags": {
@@ -1673,14 +1712,15 @@ async function handle(req: Req): Promise<Res> {
             total: null,
             message: m.background.autoAssignTagging,
           });
-          return autoTagAll(
+          const result = await autoTagAll(
             m.background.autoAssignTagging,
             (p) => setProgress(p),
             "incremental",
           );
-        });
-        broadcastDataChanged();
-        setIdleMessage(m.background.autoAssignDone(t.tagged));
+          broadcastDataChanged();
+          setIdleMessage(m.background.autoAssignDone(result.tagged));
+          return result;
+        }, { kind: "progress" });
         return { ok: true, data: t };
       }
       case "gistPush": {
@@ -1706,7 +1746,7 @@ async function handle(req: Req): Promise<Res> {
             setIdleMessage(m.background.gistPushRecreated);
           else setIdleMessage(m.background.gistPushNoChanges);
           return result;
-        });
+        }, { kind: "progress" });
         return { ok: true, data: r };
       }
       case "gistPull": {
@@ -1718,7 +1758,7 @@ async function handle(req: Req): Promise<Res> {
             total: null,
             message: m.background.pullingTags,
           });
-          return idbTagStore.syncPull((done, total) => {
+          const result = await idbTagStore.syncPull((done, total) => {
             setProgress({
               phase: "gist",
               done,
@@ -1726,10 +1766,11 @@ async function handle(req: Req): Promise<Res> {
               message: m.background.pullingTags,
             });
           });
-        });
-        broadcastDataChanged();
-        if (r.missing) setIdleMessage(m.background.gistPullMissing);
-        else setIdleMessage(m.background.gistPullDone(r.merged, r.total));
+          broadcastDataChanged();
+          if (result.missing) setIdleMessage(m.background.gistPullMissing);
+          else setIdleMessage(m.background.gistPullDone(result.merged, result.total));
+          return result;
+        }, { kind: "progress" });
         return { ok: true, data: r };
       }
       case "getStatus":
@@ -1801,6 +1842,23 @@ async function handle(req: Req): Promise<Res> {
           return { ok: false, error: m.background.watchRefreshFailed };
         }
       }
+      case 'loadOlderWatchInbox': {
+        const m = await getLocaleMessages();
+        try {
+          return { ok: true, data: await watchRefreshCoordinator.loadOlder() };
+        } catch {
+          return { ok: false, error: m.background.watchRefreshFailed };
+        }
+      }
+      case 'markWatchInboxLoaded': {
+        const m = await getLocaleMessages();
+        try {
+          return { ok: true, data: await watchRefreshCoordinator.markLoaded() };
+        } catch {
+          return { ok: false, error: m.background.watchInboxUnavailable };
+        }
+      }
+
       case 'markWatchThreadsRead':
       case 'markWatchThreadsDone': {
         const m = await getLocaleMessages();
@@ -2212,6 +2270,9 @@ async function handle(req: Req): Promise<Res> {
     }
     return { ok: false, error: 'Unsupported background request.' };
   } catch (e) {
+    if (req.type === "syncIncremental" || req.type === "syncFull") {
+      await failTrackedOnboardingSync();
+    }
     const msg = translateError(e, await getLocaleMessages());
     const agentSessionFailure = bgsmAgentRuntime.sessionRpc.describeFailure(e);
     if (!agentSessionRequest) {

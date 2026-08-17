@@ -72,7 +72,7 @@ export function createBackfillExecutor<TFullSyncResult extends object>({
         }));
         throw error;
       }
-    });
+    }, { kind: 'stars-sync' });
 
     queuedById.set(task.id, promise);
     promise.finally(() => {

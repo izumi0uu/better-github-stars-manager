@@ -121,6 +121,7 @@ function inboxSnapshot(overrides: Partial<WatchNotificationSnapshot> = {}): Watc
     matchedCount: 1,
     pageCount: 1,
     truncated: false,
+    nextPage: null,
     notModified: false,
     before: new Date(NOW).toISOString(),
     fetchedAt: new Date(NOW).toISOString(),
@@ -250,9 +251,12 @@ function harness(input: {
       replaceScope: watchStore.replaceWatchScope,
       recordScopeFailure: watchStore.recordWatchScopeFailure,
       replaceInbox: watchStore.replaceWatchInbox,
+      appendHistory: watchStore.appendWatchInboxHistory,
+      markLoaded: watchStore.markWatchInboxLoaded,
       getNotificationThread: watchStore.getWatchNotificationThread,
       revalidateInbox: watchStore.revalidateWatchInbox,
       recordInboxFailure: watchStore.recordWatchInboxFailure,
+      recordHistoryFailure: watchStore.recordWatchHistoryFailure,
       disconnectInbox: input.disconnectInbox ?? watchStore.disconnectWatchInbox,
       applyThreadMutation: watchStore.applyWatchThreadMutation,
       clearData: watchStore.clearWatchData,
@@ -369,6 +373,11 @@ describe('Watch background refresh coordinator', () => {
         candidateCount: 0,
         matchedCount: 0,
         truncated: false,
+        newerThan: null,
+        historyBefore: null,
+        historyNextPage: null,
+        historyExhausted: true,
+        historyErrorCode: null,
       },
     });
     const mutateNotification = vi.fn(async ({ threadId }: { threadId: string }) => {
@@ -410,6 +419,11 @@ describe('Watch background refresh coordinator', () => {
         candidateCount: 0,
         matchedCount: 0,
         truncated: false,
+        newerThan: null,
+        historyBefore: null,
+        historyNextPage: null,
+        historyExhausted: true,
+        historyErrorCode: null,
       },
     });
     const mutateNotification = vi.fn(async () => {
@@ -636,6 +650,128 @@ describe('Watch background refresh coordinator', () => {
     expect((await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT })).threads).toHaveLength(1);
     expect(h.broadcastChanged).toHaveBeenCalledTimes(1);
   });
+
+  it('loads older Notifications from the persisted frozen epoch without advancing head refresh state', async () => {
+    const historyBefore = new Date(NOW).toISOString();
+    let request = 0;
+    const fetchNotifications = vi.fn(async () => {
+      request++;
+      return request === 1
+        ? inboxSnapshot({
+          threads: [thread('new')],
+          truncated: true,
+          nextPage: 11,
+          before: historyBefore,
+        })
+        : inboxSnapshot({
+          threads: [thread('old')],
+          pageCount: 2,
+          truncated: false,
+          nextPage: null,
+          before: historyBefore,
+        });
+    });
+    const h = harness({ fetchNotifications });
+
+    await h.coordinator.refresh();
+    const headState = await watchStore.getWatchState(ACCOUNT);
+    const result = await h.coordinator.loadOlder();
+
+    expect(fetchNotifications).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      token: 'watch-token',
+      before: historyBefore,
+      startPage: 11,
+      maxPages: 2,
+    }));
+    expect(result.addedCount).toBe(1);
+    expect(result.hasMore).toBe(false);
+    const stored = await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT });
+    expect(stored.threads.map((item) => item.id).sort()).toEqual(['new', 'old']);
+    expect(stored.state?.inbox.lastSuccessfulAt).toBe(headState?.inbox.lastSuccessfulAt);
+    expect(stored.state?.inbox.historyBefore).toBe(historyBefore);
+    expect(stored.state?.inbox.historyNextPage).toBeNull();
+    expect(stored.state?.inbox.historyExhausted).toBe(true);
+    expect(stored.state?.inbox.truncated).toBe(false);
+  });
+
+  it('keeps the historical cursor retryable when an older-page request fails', async () => {
+    let request = 0;
+    const fetchNotifications = vi.fn(async () => {
+      request++;
+      if (request === 1) {
+        return inboxSnapshot({ truncated: true, nextPage: 11 });
+      }
+      throw new GitHubWatchError('rate_limited');
+    });
+    const h = harness({ fetchNotifications });
+    await h.coordinator.refresh();
+
+    await expect(h.coordinator.loadOlder()).rejects.toMatchObject({ code: 'rate_limited' });
+
+    const state = await watchStore.getWatchState(ACCOUNT);
+    expect(state?.inbox.errorCode).toBeNull();
+    expect(state?.inbox.historyNextPage).toBe(11);
+    expect(state?.inbox.historyExhausted).toBe(false);
+    expect(state?.inbox.historyErrorCode).toBe('rate_limited');
+  });
+
+  it('rejects a malformed persisted history page before issuing a request', async () => {
+    await watchStore.replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread()],
+      attemptedAt: new Date(NOW).toISOString(),
+      lastModified: null,
+      nextAllowedAt: null,
+      candidateCount: 1,
+      truncated: true,
+      historyBefore: new Date(NOW).toISOString(),
+      historyNextPage: 11,
+      mode: 'replace',
+    });
+    const stored = await db.watchState.get('singleton');
+    if (!stored) throw new Error('Expected seeded Watch state.');
+    await db.watchState.put({
+      ...stored,
+      inbox: {
+        ...stored.inbox,
+        historyNextPage: 1.5,
+        historyExhausted: false,
+      },
+    });
+    const h = harness();
+
+    await expect(h.coordinator.loadOlder()).rejects.toMatchObject({ code: 'invalid_pagination' });
+
+    expect(h.fetchNotifications).not.toHaveBeenCalled();
+    expect((await watchStore.getWatchState(ACCOUNT))?.inbox.historyErrorCode)
+      .toBe('invalid_pagination');
+  });
+
+  it('merges unvalidated head polls without advancing the visible-load watermark', async () => {
+    let clock = NOW;
+    let request = 0;
+    const fetchNotifications = vi.fn(async () => {
+      request++;
+      return inboxSnapshot({
+        threads: [thread(String(request))],
+        lastModified: null,
+        before: new Date(clock).toISOString(),
+        fetchedAt: new Date(clock).toISOString(),
+      });
+    });
+    const h = harness({ fetchNotifications, now: () => clock });
+    await h.coordinator.refresh();
+    const acknowledgedAt = await h.coordinator.markLoaded();
+
+    clock += 61_000;
+    await h.coordinator.refreshInbox();
+
+    const stored = await watchStore.queryStoredWatchInbox({ accountLogin: ACCOUNT });
+    expect(stored.threads.map((item) => item.id).sort()).toEqual(['1', '2']);
+    expect(stored.state?.inbox.lastModified).toBeNull();
+    expect(stored.state?.inbox.newerThan).toBe(acknowledgedAt);
+  });
+
   it('refreshes native membership but skips Notifications during Inbox cooldown', async () => {
     await watchStore.replaceWatchScope({
       accountLogin: ACCOUNT,

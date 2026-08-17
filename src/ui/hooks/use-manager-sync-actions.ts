@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { GITHUB_CREDENTIALS_STORAGE_KEY } from '@/auth/auth-store';
 import type { BackfillId } from '@/types';
 import { useI18n } from '@/i18n';
-import { isOnboardingCardStage, resolveOnboardingStageAfterSync, shouldTrackOnboardingSync } from '@/onboarding/state';
+import { isOnboardingCardStage, shouldTrackOnboardingSync } from '@/onboarding/state';
 import { pickInitialSyncAction } from '@/ui/initial-sync';
 import { ACTION_SUCCESS_FEEDBACK_MS } from '@/ui/ui-feedback-constants';
 import { bgCall, mergeProgressStatus, mergeStatusPatch, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
@@ -51,13 +51,6 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
     setStatus((cur) => mergeStatusPatch(cur, patch));
   };
 
-  const finalizeOnboardingAfterSync = async (hasToken: boolean) => {
-    const q = await bgCall<{ grandTotal: number }>('query', {
-      params: { filter: emptyFilter(), offset: 0, limit: 1 },
-    }).catch(() => null);
-    if (!q) return;
-    await setOnboardingStage(resolveOnboardingStageAfterSync(hasToken, q.grandTotal));
-  };
 
   const flashSuccess = (type: string) => {
     if (successTimer.current) clearTimeout(successTimer.current);
@@ -79,7 +72,6 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
       const result = await bgCall<{ missing?: boolean }>(type);
       refreshStars();
       await refreshStatus();
-      if (tracksOnboarding) await finalizeOnboardingAfterSync(!!status?.hasToken);
       if (type === 'gistPull' && result?.missing) {
         setInfo(m.background.gistPullMissing);
       } else {
@@ -158,7 +150,6 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
         .then(async () => {
           refreshStars();
           await refreshStatus();
-          if (tracksOnboarding) await finalizeOnboardingAfterSync(true);
         })
         .catch(async (e) => {
           await refreshStatus();
@@ -192,14 +183,6 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
     if (successTimer.current) clearTimeout(successTimer.current);
   }, []);
 
-  const progressActive = !!status?.inFlight && status.progress.phase !== 'idle';
-  const syncingNow = !!pendingAction || progressActive;
-  useEffect(() => {
-    if (!statusLoaded || !status) return;
-    if (status.onboardingStage !== 'syncing' || syncingNow) return;
-    void finalizeOnboardingAfterSync(status.hasToken);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusLoaded, status?.onboardingStage, status?.hasToken, syncingNow]);
 
   return {
     status,

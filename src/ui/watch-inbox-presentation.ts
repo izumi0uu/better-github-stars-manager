@@ -123,40 +123,89 @@ export function filterWatchInboxProjection(
 
 export type WatchInboxFlatRow =
   | {
+    kind: 'day';
+    key: string;
+    dayKey: string;
+    updatedAt: string;
+  }
+  | {
     kind: 'repository';
     key: string;
+    dayKey: string;
     group: WatchInboxProjection['groups'][number];
   }
   | {
     kind: 'thread';
     key: string;
+    dayKey: string;
     repositoryFullName: string;
     thread: GitHubNotificationThread;
   };
 
 export type WatchThreadNavigationKey = 'ArrowUp' | 'ArrowDown' | 'Home' | 'End';
 
-/** One logical row stream keeps repository size from defining the render batch. */
+function watchLocalDayKey(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return 'unknown';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/** A newest-first timeline grouped only within each local calendar day. */
 export function buildWatchInboxRows(
-  groups: WatchInboxProjection['groups'],
+  threads: readonly GitHubNotificationThread[],
   expandedRepositories: ReadonlySet<string>,
 ): WatchInboxFlatRow[] {
-  const rows: WatchInboxFlatRow[] = [];
-  for (const group of groups) {
-    const repository = group.repositoryFullName.toLowerCase();
-    rows.push({
-      kind: 'repository',
-      key: `repository:${repository}`,
-      group,
-    });
-    if (!expandedRepositories.has(repository)) continue;
-    for (const thread of group.threads) {
-      rows.push({
-        kind: 'thread',
-        key: `thread:${thread.id}`,
-        repositoryFullName: group.repositoryFullName,
-        thread,
+  type RepositoryGroup = WatchInboxProjection['groups'][number];
+  const days = new Map<string, {
+    updatedAt: string;
+    repositories: Map<string, RepositoryGroup>;
+  }>();
+  for (const thread of threads) {
+    const dayKey = watchLocalDayKey(thread.updatedAt);
+    let day = days.get(dayKey);
+    if (!day) {
+      day = { updatedAt: thread.updatedAt, repositories: new Map() };
+      days.set(dayKey, day);
+    }
+    const repositoryKey = thread.repositoryFullName.toLowerCase();
+    const group = day.repositories.get(repositoryKey);
+    if (group) {
+      group.threads.push(thread);
+    } else {
+      day.repositories.set(repositoryKey, {
+        repositoryFullName: thread.repositoryFullName,
+        repositoryHtmlUrl: thread.repositoryHtmlUrl,
+        repositoryOwnerLogin: thread.repositoryOwnerLogin ?? null,
+        repositoryOwnerAvatarUrl: thread.repositoryOwnerAvatarUrl ?? null,
+        latestUpdatedAt: thread.updatedAt,
+        threads: [thread],
       });
+    }
+  }
+
+  const rows: WatchInboxFlatRow[] = [];
+  for (const [dayKey, day] of days) {
+    rows.push({ kind: 'day', key: `day:${dayKey}`, dayKey, updatedAt: day.updatedAt });
+    for (const [repository, group] of day.repositories) {
+      rows.push({
+        kind: 'repository',
+        key: `repository:${dayKey}:${repository}`,
+        dayKey,
+        group,
+      });
+      if (!expandedRepositories.has(repository)) continue;
+      for (const thread of group.threads) {
+        rows.push({
+          kind: 'thread',
+          key: `thread:${thread.id}`,
+          dayKey,
+          repositoryFullName: group.repositoryFullName,
+          thread,
+        });
+      }
     }
   }
   return rows;

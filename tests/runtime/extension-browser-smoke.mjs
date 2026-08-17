@@ -1004,6 +1004,11 @@ async function seedWatchAndRadarFixture(extId) {
         candidateCount: 4,
         matchedCount: 3,
         truncated: true,
+        newerThan: '2026-08-05T12:00:00.000Z',
+        historyBefore: '2026-08-05T12:05:00.000Z',
+        historyNextPage: 11,
+        historyExhausted: false,
+        historyErrorCode: null,
       },
     });
     radarActivities.put({
