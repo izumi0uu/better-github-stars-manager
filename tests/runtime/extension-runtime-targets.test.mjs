@@ -5,6 +5,7 @@ import {
   extensionOrigin,
   extensionUrl,
   hookPageDiagnostics,
+  normalizeRuntimeTarget,
 } from './extension-runtime-targets.mjs';
 import {
   FIREFOX_GECKO_ID,
@@ -92,6 +93,48 @@ test('page diagnostics retain extension and HTTP failures but ignore lifecycle-o
   page.emit('requestfailed', failedRequest('https://api.github.com/user'));
   assert.equal(issues.length, 8);
 });
+test('Chrome and Edge share Chromium extension URLs while unknown targets fail', () => {
+  const extensionId = 'a'.repeat(32);
+  assert.equal(normalizeRuntimeTarget('edge'), 'edge');
+  assert.equal(extensionOrigin(extensionId, 'edge'), `chrome-extension://${extensionId}`);
+  assert.equal(extensionOrigin(extensionId, 'edge'), extensionOrigin(extensionId, 'chrome'));
+  assert.equal(
+    extensionUrl(extensionId, '/src/popup/index.html', 'edge'),
+    `chrome-extension://${extensionId}/src/popup/index.html`,
+  );
+  assert.equal(
+    extensionUrl(extensionId, '/src/popup/index.html', 'edge'),
+    extensionUrl(extensionId, '/src/popup/index.html', 'chrome'),
+  );
+  assert.throws(() => normalizeRuntimeTarget('opera'), /Unsupported runtime target: opera/u);
+});
+
+test('Edge shares Chrome MV3 service-worker discovery behavior', async () => {
+  const extensionId = 'b'.repeat(32);
+  const dist = '/tmp/dist-edge';
+  const executionContext = { evaluate: async () => extensionId };
+  const backgroundTarget = {
+    type: () => 'service_worker',
+    url: () => `chrome-extension://${extensionId}/service-worker-loader.js`,
+    worker: async () => executionContext,
+  };
+  const extension = { id: extensionId, enabled: true, path: dist };
+  const discovered = await discoverExtension({
+    extensions: async () => new Map([[extensionId, extension]]),
+    targets: () => [backgroundTarget],
+  }, {
+    target: 'edge',
+    dist,
+    timeoutMs: 100,
+    pollMs: 1,
+  });
+
+  assert.equal(discovered.extensionId, extensionId);
+  assert.equal(discovered.backgroundKind, 'service_worker');
+  assert.equal(discovered.target, backgroundTarget);
+  assert.equal(discovered.worker, executionContext);
+});
+
 
 test('Firefox extension URLs use the fixed test UUID while runtime discovery keeps the Gecko ID', async () => {
   assert.equal(

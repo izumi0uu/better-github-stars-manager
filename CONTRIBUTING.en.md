@@ -68,7 +68,17 @@ pnpm lint:firefox
 pnpm test:smoke:firefox
 ```
 
-The Firefox build writes to `dist-firefox/`. Do not edit generated files in `dist/`, `dist-firefox/`, `dist-demo/`, or `artifacts/`.
+The Firefox build writes to `dist-firefox/`. Do not edit generated files in `dist/`, `dist-edge/`, `dist-firefox/`, `dist-demo/`, or `artifacts/`.
+
+Use these commands for Microsoft Edge work:
+
+```bash
+pnpm build:edge
+pnpm check:edge-output
+EDGE_EXECUTABLE="/path/to/Microsoft Edge" pnpm test:smoke:edge
+```
+
+The Edge target is a build, package, and browser identity only: it ships the same full product as Chrome, including Gist sync, Cubby, AI Providers, and Provider-backed Organize. Its build writes to `dist-edge/`, and `pnpm package:edge` writes `artifacts/edge/`. The real-browser smoke runs the shared full-product scenarios and requires an explicit Microsoft Edge executable that reports an `Edg/<version>` identity; Chrome substitution is never Edge release proof.
 
 ## Debug Cubby Agent
 
@@ -130,6 +140,7 @@ Run the smallest test that owns the changed behavior first. Every code change mu
 | Extension runtime behavior | `pnpm test:runtime` or `pnpm test:smoke` |
 | Cubby Agent logic or runtime | `pnpm test:logic`, `pnpm test:runtime:agent-diagnostics`, or `pnpm test:runtime:agent-scenarios` |
 | Firefox-specific behavior | `pnpm build:firefox`, `pnpm lint:firefox`, and `pnpm test:smoke:firefox` |
+| Microsoft Edge target | `pnpm build:edge`, `pnpm check:edge-output`, and `EDGE_EXECUTABLE="/path/to/Microsoft Edge" pnpm test:smoke:edge` |
 | Documentation | Check links, commands, and both languages; code tests are optional |
 
 A bug fix needs a regression test that fails before the fix and passes after it. Sync semantics, storage compatibility, migrations, and backfills require regression coverage.
