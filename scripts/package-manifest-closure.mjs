@@ -9,9 +9,9 @@ export const RELEASE_WORKER_BASELINE = Object.freeze({
   sha256: '902c0726442c96d00674910ae245ade7f1ad153ac4bbe742d3a3e366d7b41ea2',
 });
 export const EDGE_RELEASE_WORKER_BASELINE = Object.freeze({
-  relativePath: 'assets/index.ts-Byps2g7n.js',
-  bytes: WORKER_BYTE_CEILING,
-  sha256: '7b8c0ec9b60e7ee8c78f2c935e35192d37c0b7a5a2b2e566d347ad1ac7b9e21b',
+  relativePath: 'assets/index.ts-BpdUArVM.js',
+  bytes: 748_582,
+  sha256: '22478177c6493c22ae09fa730d24d0d72cd221b4c48fc543fc99b7e0ba457642',
 });
 
 const SHA256 = /^[0-9a-f]{64}$/u;
