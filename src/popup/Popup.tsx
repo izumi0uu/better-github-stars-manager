@@ -89,7 +89,7 @@ export function Popup() {
 
   const p = status?.progress;
   const hasToken = status?.hasToken;
-  const syncing = !!(status?.inFlight && p && p.phase !== 'idle');
+  const syncing = !!(status?.progressInFlight && p && p.phase !== 'idle');
   const actionBusy = syncing || pendingAction !== null;
   const progressValue = p?.total ? Math.max(1, Math.min(100, Math.round((p.done / p.total) * 100))) : null;
   const progressCount = p?.total ? `${p.done}/${p.total}` : null;

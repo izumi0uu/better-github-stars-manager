@@ -249,7 +249,7 @@ export function Options() {
   };
 
   const syncing = !!(
-    syncStatus?.inFlight && syncStatus.progress && syncStatus.progress.phase !== "idle"
+    syncStatus?.progressInFlight && syncStatus.progress && syncStatus.progress.phase !== "idle"
   );
   const progressValue = syncStatus?.progress.total
     ? Math.max(

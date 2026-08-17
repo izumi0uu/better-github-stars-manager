@@ -44,6 +44,26 @@ describe('Background queue regressions', () => {
     assert.equal(runner.isRunning(), false);
   });
 
+  it('tracks queued Stars sync separately from unrelated work', async () => {
+    const runner = createSerializedRunner();
+    let releaseUnrelated!: () => void;
+    const unrelatedDone = new Promise<void>((resolve) => {
+      releaseUnrelated = resolve;
+    });
+
+    const unrelated = runner.run(() => unrelatedDone);
+    const starsSync = runner.run(async () => {}, { kind: 'stars-sync' });
+
+    assert.equal(runner.isRunning(), true);
+    assert.equal(runner.isRunning('stars-sync'), true);
+    assert.equal(runner.isRunning('progress'), false);
+
+    releaseUnrelated();
+    await Promise.all([unrelated, starsSync]);
+    assert.equal(runner.isRunning(), false);
+    assert.equal(runner.isRunning('stars-sync'), false);
+  });
+
   it('continues the queue after a rejected job', async () => {
     const runner = createSerializedRunner();
     const events: string[] = [];
@@ -124,6 +144,7 @@ describe('Background queue regressions', () => {
 
     await Promise.resolve();
     assert.deepEqual(states, []);
+    assert.equal(jobQueue.isRunning('stars-sync'), true);
 
     releaseFirst();
     await fullSyncStartedPromise;
@@ -136,6 +157,7 @@ describe('Background queue regressions', () => {
     });
     await first;
     assert.deepEqual(states, ['running', 'done']);
+    assert.equal(jobQueue.isRunning('stars-sync'), false);
   });
 
   it('joins duplicate backfill requests onto one queued promise', async () => {

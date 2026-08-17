@@ -19,6 +19,8 @@ function status(patch: Partial<SyncStatus> = {}): SyncStatus {
     backfills: {},
     activeBackfillId: null,
     inFlight: false,
+    progressInFlight: false,
+    starsSyncInFlight: false,
     organizeJobActive: false,
     ...patch,
   };
@@ -62,18 +64,23 @@ describe('onboarding first-run invariants', () => {
       hasToken: true,
       onboardingStage: 'syncing',
       inFlight: true,
+      progressInFlight: true,
+      starsSyncInFlight: true,
     });
     const snapshot = status({
       progress: { phase: 'idle', done: 0, total: null, message: '' },
       hasToken: true,
       onboardingStage: 'syncing',
-      inFlight: false,
+      inFlight: true,
+      progressInFlight: true,
+      starsSyncInFlight: true,
     });
 
     const merged = mergeStatusSnapshot(current, snapshot);
     assert.deepEqual(merged?.progress, current.progress);
     assert.equal(merged?.onboardingStage, 'syncing');
     assert.equal(merged?.inFlight, true);
+    assert.equal(merged?.progressInFlight, true);
   });
 
   it('turns onboarding stage patches into normalized terminal/runtime status', () => {
@@ -82,12 +89,20 @@ describe('onboarding first-run invariants', () => {
       hasToken: true,
       onboardingStage: 'syncing',
       inFlight: true,
+      progressInFlight: true,
+      starsSyncInFlight: true,
     });
 
-    const failed = mergeStatusPatch(syncing, { onboardingStage: 'sync_failed', inFlight: false });
+    const failed = mergeStatusPatch(syncing, {
+      onboardingStage: 'sync_failed',
+      inFlight: false,
+      progressInFlight: false,
+      starsSyncInFlight: false,
+    });
     assert.equal(failed.onboardingStage, 'sync_failed');
     assert.equal(failed.seenOnboarding, false);
     assert.equal(failed.inFlight, false);
+    assert.equal(failed.progressInFlight, false);
     assert.deepEqual(failed.progress, syncing.progress);
 
     const done = mergeStatusPatch(failed, { onboardingStage: 'done' });

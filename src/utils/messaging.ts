@@ -81,8 +81,12 @@ export interface SyncStatus {
   backfills: BackfillMap;
   /** Highest-priority backfill that still needs user attention. */
   activeBackfillId: BackfillId | null;
-  /** True while the background is still holding an active serialized job. */
+  /** True while any serialized background job is queued or running. */
   inFlight: boolean;
+  /** True only while a job that owns the shared progress channel is queued or running. */
+  progressInFlight: boolean;
+  /** True only while a Stars full, incremental, rescan, or backfill sync is queued or running. */
+  starsSyncInFlight: boolean;
   /** Authoritative durable Organize job activity from the background store. */
   organizeJobActive: boolean;
 }
@@ -1393,6 +1397,7 @@ export function mergeProgressStatus(
     hasToken,
   );
   const backfills = normalizeBackfillMap(current?.backfills);
+  const progressInFlight = progress.phase !== 'idle';
   return {
     progress,
     hasToken,
@@ -1401,7 +1406,9 @@ export function mergeProgressStatus(
     seenTooltips: current?.seenTooltips ?? 0,
     backfills,
     activeBackfillId: selectActiveBackfillId(backfills),
-    inFlight: progress.phase !== 'idle',
+    inFlight: progressInFlight,
+    progressInFlight,
+    starsSyncInFlight: progressInFlight ? current?.starsSyncInFlight ?? false : false,
     organizeJobActive: current?.organizeJobActive ?? false,
   };
 }
@@ -1420,6 +1427,8 @@ export function mergeStatusPatch(
     backfills: {},
     activeBackfillId: null,
     inFlight: false,
+    progressInFlight: false,
+    starsSyncInFlight: false,
     organizeJobActive: false,
   };
   const hasToken = patch.hasToken ?? base.hasToken;
@@ -1446,11 +1455,11 @@ export function mergeStatusSnapshot(current: SyncStatus | null, snapshot: SyncSt
   const activeProgress = current?.progress;
   const keepLiveProgress =
     !!activeProgress &&
-    !!current?.inFlight &&
+    snapshot.progressInFlight &&
     activeProgress.phase !== 'idle' &&
     snapshot.progress.phase === 'idle';
-  // Preserve the live progress (and seenOnboarding/seenTooltips) from `current`
-  // when the snapshot is idle — a fresh getStatus shouldn't clobber an in-flight phase.
+  // Preserve a live progress event only when the authoritative snapshot says a
+  // progress-owning job is still active. Unrelated Watch work must not keep it alive.
   const merged: SyncStatus = {
     ...snapshot,
     progress: keepLiveProgress ? activeProgress : snapshot.progress,
@@ -1463,7 +1472,9 @@ export function mergeStatusSnapshot(current: SyncStatus | null, snapshot: SyncSt
     seenTooltips: snapshot.seenTooltips ?? current?.seenTooltips ?? 0,
     backfills: normalizeBackfillMap(snapshot.backfills ?? current?.backfills),
     activeBackfillId: selectActiveBackfillId(snapshot.backfills ?? current?.backfills),
-    inFlight: keepLiveProgress ? true : snapshot.inFlight ?? current?.inFlight ?? snapshot.progress.phase !== 'idle',
+    inFlight: snapshot.inFlight,
+    progressInFlight: snapshot.progressInFlight,
+    starsSyncInFlight: snapshot.starsSyncInFlight,
     organizeJobActive: snapshot.organizeJobActive ?? current?.organizeJobActive ?? false,
   };
   merged.seenOnboarding = stageMarksOnboardingSeen(merged.onboardingStage);

@@ -42,7 +42,7 @@ export type ToolbarAgentStatusKind =
 
 export type ToolbarStatus = Readonly<{
   hasToken: boolean;
-  inFlight: boolean;
+  progressInFlight: boolean;
   seenTooltips: number;
   progress: SyncProgress;
 }>;
@@ -297,7 +297,7 @@ export function Toolbar({
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [gistMenuOpen, setGistMenuOpen] = useState(false);
   const starsSurface = surface === 'stars';
-  const syncPresentation = presentSyncProgress(status?.progress ?? { phase: 'idle', done: 0, total: null, message: '' }, status?.inFlight ?? false);
+  const syncPresentation = presentSyncProgress(status?.progress ?? { phase: 'idle', done: 0, total: null, message: '' }, status?.progressInFlight ?? false);
   const syncing = syncPresentation.active;
   const phase = syncing && status ? status.progress : null;
   const actionBusy = busy || syncing || pendingAction !== null;

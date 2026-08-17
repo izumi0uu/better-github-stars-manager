@@ -248,20 +248,25 @@ describe('Stars refresh policy', () => {
 });
 
 describe('Manager auto-sync gate', () => {
-  it('empty library without in-flight job triggers full sync', () => {
-    assert.equal(pickInitialSyncAction({ hasToken: true, inFlight: false }, 0), 'syncFull');
+  it('empty library without a Stars sync triggers full sync', () => {
+    assert.equal(pickInitialSyncAction({ hasToken: true, starsSyncInFlight: false }, 0), 'syncFull');
   });
 
-  it('existing library without in-flight job triggers incremental sync', () => {
-    assert.equal(pickInitialSyncAction({ hasToken: true, inFlight: false }, 12), 'syncIncremental');
+  it('existing library without a Stars sync triggers incremental sync', () => {
+    assert.equal(pickInitialSyncAction({ hasToken: true, starsSyncInFlight: false }, 12), 'syncIncremental');
   });
 
-  it('existing in-flight job blocks duplicate auto-sync on reopen', () => {
-    assert.equal(pickInitialSyncAction({ hasToken: true, inFlight: true }, 12), null);
+  it('unrelated background work does not block Stars startup', () => {
+    const watchOnlyStatus = { hasToken: true, inFlight: true, starsSyncInFlight: false };
+    assert.equal(pickInitialSyncAction(watchOnlyStatus, 12), 'syncIncremental');
+  });
+
+  it('an existing Stars sync blocks duplicate auto-sync on reopen', () => {
+    assert.equal(pickInitialSyncAction({ hasToken: true, starsSyncInFlight: true }, 12), null);
   });
 
   it('no token blocks auto-sync', () => {
-    assert.equal(pickInitialSyncAction({ hasToken: false, inFlight: false }, 12), null);
+    assert.equal(pickInitialSyncAction({ hasToken: false, starsSyncInFlight: false }, 12), null);
   });
 });
 
