@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { canonicalJson } from '@/agent-harness/canonical-json';
 import type { BgsmAgentConversationCandidate } from '@/bgsm-agent/conversation-binding';
 import type { LaunchCandidateContract } from '@/bgsm-agent/scope';
 import { useI18n } from '@/i18n';
@@ -90,18 +91,22 @@ export function AgentHost({
     m.agentPanel,
     uiPresentation,
   ]);
-  const candidateContextKey = conversationCandidateContextKey(chatCandidate);
+  const candidateContextKey = useMemo(
+    () => conversationCandidateContextKey(chatCandidate),
+    [chatCandidate],
+  );
   const previousCandidateContextKeyRef = useRef(candidateContextKey);
-  const pendingCandidateContextKeyRef = useRef<string | null>(null);
+  const pendingCandidateContextKeyRef = useRef<string | null>(candidateContextKey);
   const pendingContextKey = candidateContextKey !== previousCandidateContextKeyRef.current
     ? candidateContextKey
     : pendingCandidateContextKeyRef.current;
-  const boundContextKey = agent.conversationBinding
+  const boundContextKey = useMemo(() => agent.conversationBinding
     ? conversationCandidateContextKey(agent.conversationBinding.candidateContract)
-    : null;
+    : null, [agent.conversationBinding]);
   // Organize ownership implies !canSwitchSession; while a candidate is blocked,
   // the effect cannot consume its pending switch before ownership releases and rerenders.
-  const blockedConversationCandidate = !organizeView.capabilities.canSwitchSession
+  const blockedConversationCandidate = agent.conversationBinding
+    && !organizeView.capabilities.canSwitchSession
     && pendingContextKey !== null
     && pendingContextKey !== boundContextKey
     ? chatCandidate
@@ -116,7 +121,7 @@ export function AgentHost({
     const queuedCandidateContextKey = pendingCandidateContextKeyRef.current;
     if (!queuedCandidateContextKey) return;
     if (!agent.conversationBinding) {
-      if (uiPresentation.sessionPolicy.canSwitchSession) {
+      if (agent.sessionReady && uiPresentation.sessionPolicy.canSwitchSession) {
         pendingCandidateContextKeyRef.current = null;
       }
       return;
@@ -137,6 +142,7 @@ export function AgentHost({
     agent.activeSessionId,
     agent.conversationBinding,
     agent.createSession,
+    agent.sessionReady,
     candidateContextKey,
     uiPresentation.sessionPolicy.canSwitchSession,
   ]);
@@ -162,9 +168,7 @@ export function AgentHost({
 }
 
 function conversationCandidateContextKey(candidate: BgsmAgentConversationCandidate): string {
-  return candidate.kind === 'selected_repository'
-    ? `selected_repository:${candidate.selectedRepositoryIdHint}`
-    : 'current_view';
+  return canonicalJson(candidate);
 }
 
 function resolveToolbarStatus(

@@ -11,7 +11,10 @@ import { parseScopeFingerprint } from '@/bgsm-agent/scope';
 import type { BgsmAgentTurnInput } from '@/bgsm-agent/session';
 import { AgentHost } from '@/ui/components/AgentHost';
 import type { BgsmAgentTurnHandlers } from '@/utils/messaging';
-import type { AgentSessionCommitResult } from '@/storage/agent-session-store';
+import type {
+  AgentSessionCommitResult,
+  LoadedAgentSession,
+} from '@/storage/agent-session-store';
 import {
   cleanupMountedRootsAndBody,
   click,
@@ -21,6 +24,12 @@ import {
 
 const messagingMocks = vi.hoisted(() => ({
   startBgsmAgentTurn: vi.fn(),
+  inspectCatalog: vi.fn(),
+  inspectActive: vi.fn(),
+  loadSession: vi.fn(),
+  getOrCreateSession: vi.fn(),
+  createSession: vi.fn(),
+  retryDraft: vi.fn(),
 }));
 const presentationMocks = vi.hoisted(() => ({
   ownsWorkbench: false,
@@ -34,6 +43,12 @@ vi.mock('@/utils/messaging', async (importOriginal) => {
   return {
     ...actual,
     startBgsmAgentTurn: messagingMocks.startBgsmAgentTurn,
+    inspectBgsmAgentSessionCatalog: messagingMocks.inspectCatalog,
+    inspectActiveBgsmAgentSessionTurn: messagingMocks.inspectActive,
+    loadDurableBgsmAgentSession: messagingMocks.loadSession,
+    getOrCreateInitialDurableBgsmAgentSession: messagingMocks.getOrCreateSession,
+    createDurableBgsmAgentSession: messagingMocks.createSession,
+    readDurableAgentRetryDraftCandidate: messagingMocks.retryDraft,
   };
 });
 
@@ -87,6 +102,17 @@ beforeEach(() => {
   presentationMocks.ownsWorkbench = false;
   workbenchMocks.releaseOwnership = null;
   messagingMocks.startBgsmAgentTurn.mockReset();
+  messagingMocks.inspectCatalog.mockReset();
+  messagingMocks.inspectActive.mockReset();
+  messagingMocks.inspectActive.mockResolvedValue(null);
+  messagingMocks.loadSession.mockReset();
+  messagingMocks.getOrCreateSession.mockReset();
+  messagingMocks.createSession.mockReset();
+  messagingMocks.createSession.mockImplementation(async (sessionId: string) => (
+    loadedEmptySession(sessionId)
+  ));
+  messagingMocks.retryDraft.mockReset();
+  messagingMocks.retryDraft.mockResolvedValue(null);
   messagingMocks.startBgsmAgentTurn.mockImplementation((
     input: BgsmAgentTurnInput,
     handlers: BgsmAgentTurnHandlers,
@@ -120,6 +146,46 @@ describe('AgentHost repository selection', () => {
     expect(turn.input.binding).toBeUndefined();
     expect(turn.input.baseRevision).toBe(0);
     expect(turn.input.history).toEqual([]);
+  });
+
+  it('starts a fresh conversation when the selected repository differs from the hydrated conversation', async () => {
+    const staleView = currentView('');
+    const hydrated = loadedBoundSession(
+      'session-stale-current-view',
+      conversationBinding(staleView, 'h'),
+    );
+    enableDurableSessions(hydrated);
+
+    const container = await mountHarness(selectedRepository('owner/repo-b'));
+    await flushEffects();
+
+    await expectSessionCount(container, 2);
+    expect(composerText(container)).toContain('owner/repo-b');
+    const turn = await sendPrompt(container, 'Inspect the selected repository');
+    expect(turn.input.sessionId).not.toBe(hydrated.session.id);
+    expect(turn.input.baseRevision).toBe(0);
+    expect(turn.input.candidateContract).toEqual(selectedRepository('owner/repo-b'));
+    expect(turn.input.binding).toBeUndefined();
+  });
+
+  it('starts a fresh conversation when the tag-filtered view differs from the hydrated conversation', async () => {
+    const staleView = currentView('');
+    const hydrated = loadedBoundSession(
+      'session-stale-unfiltered-view',
+      conversationBinding(staleView, 'i'),
+    );
+    enableDurableSessions(hydrated);
+    const taggedView = currentView('', ['agents']);
+
+    const container = await mountHarness(taggedView);
+    await flushEffects();
+
+    await expectSessionCount(container, 2);
+    const turn = await sendPrompt(container, 'Inspect the tagged view');
+    expect(turn.input.sessionId).not.toBe(hydrated.session.id);
+    expect(turn.input.baseRevision).toBe(0);
+    expect(turn.input.candidateContract).toEqual(taggedView);
+    expect(turn.input.binding).toBeUndefined();
   });
 
   it('starts a fresh conversation when an idle bound repository changes', async () => {
@@ -186,22 +252,22 @@ describe('AgentHost repository selection', () => {
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
   });
 
-  it('does not rotate a bound current-view conversation when its filters change', async () => {
-    const initialView = currentView('alpha');
+  it('starts a fresh conversation when bound current-view tags change', async () => {
+    const initialView = currentView('');
     const container = await mountHarness(initialView);
     const first = await sendPrompt(container, 'Inspect this view');
-    const binding = conversationBinding(initialView, 'c');
-    await bindAndComplete(first, binding);
+    await bindAndComplete(first, conversationBinding(initialView, 'c'));
 
-    await click(actionButton(container, 'update-current-view'));
+    await click(actionButton(container, 'select-tag-agents'));
     await flushEffects();
 
-    await expectSessionCount(container, 1);
-    const second = await sendPrompt(container, 'Continue inspecting this view');
-    expect(second.input.sessionId).toBe(first.input.sessionId);
-    expect(second.input.baseRevision).toBe(1);
-    expect(second.input.candidateContract).toBeUndefined();
-    expect(second.input.binding).toEqual(binding);
+    await expectSessionCount(container, 2);
+    const second = await sendPrompt(container, 'Inspect the tagged view');
+    expect(second.input.sessionId).not.toBe(first.input.sessionId);
+    expect(second.input.baseRevision).toBe(0);
+    expect(second.input.history).toEqual([]);
+    expect(second.input.candidateContract).toEqual(currentView('', ['agents']));
+    expect(second.input.binding).toBeUndefined();
   });
 });
 
@@ -225,10 +291,10 @@ function Harness({ initialCandidate }: { initialCandidate: BgsmAgentConversation
       </button>
       <button
         type="button"
-        data-testid="update-current-view"
-        onClick={() => setCandidate(currentView('beta'))}
+        data-testid="select-tag-agents"
+        onClick={() => setCandidate(currentView('', ['agents']))}
       >
-        Update view
+        Select agents tag
       </button>
       <AgentHost
         open
@@ -400,13 +466,16 @@ function selectedRepository(selectedRepositoryIdHint: string): BgsmAgentConversa
   return { kind: 'selected_repository', selectedRepositoryIdHint };
 }
 
-function currentView(query: string): BgsmAgentConversationCandidate {
+function currentView(
+  query: string,
+  tags: readonly string[] = [],
+): BgsmAgentConversationCandidate {
   return {
     kind: 'current_view',
     filter: {
       query,
       languages: [],
-      tags: [],
+      tags,
       tagMode: 'any',
       showTombstone: false,
       onlyFavorite: false,
@@ -417,6 +486,47 @@ function currentView(query: string): BgsmAgentConversationCandidate {
       sortDir: 'desc',
     },
   };
+}
+
+function loadedBoundSession(
+  id: string,
+  binding: BgsmAgentConversationBinding,
+): LoadedAgentSession {
+  return {
+    session: { id, revision: 1, binding },
+    transcript: { sessionId: id, messages: [], nextBeforeSequence: null },
+    summary: { id, title: 'Previous conversation', createdAt: 1, updatedAt: 1 },
+    lastAppliedTurnAttemptId: `${id}:attempt`,
+    appliedTurnReceipts: [],
+  };
+}
+
+function loadedEmptySession(id: string): LoadedAgentSession {
+  return {
+    session: { id, revision: 0 },
+    transcript: { sessionId: id, messages: [], nextBeforeSequence: null },
+    summary: { id, title: '', createdAt: 1, updatedAt: 1 },
+    lastAppliedTurnAttemptId: null,
+    appliedTurnReceipts: [],
+  };
+}
+
+function enableDurableSessions(hydrated: LoadedAgentSession): void {
+  messagingMocks.inspectCatalog.mockResolvedValue({
+    summaries: [hydrated.summary],
+    corruptions: [],
+  });
+  messagingMocks.loadSession.mockResolvedValue(hydrated);
+  messagingMocks.getOrCreateSession.mockResolvedValue(hydrated);
+  vi.stubGlobal('chrome', {
+    runtime: { sendMessage: vi.fn() },
+    storage: {
+      local: {
+        get: vi.fn(async () => ({})),
+        set: vi.fn(async () => {}),
+      },
+    },
+  });
 }
 
 function actionButton(container: HTMLElement, testId: string): HTMLButtonElement {

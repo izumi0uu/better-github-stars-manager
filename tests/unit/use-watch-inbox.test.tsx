@@ -307,6 +307,7 @@ describe('useWatchInbox', () => {
         return Promise.resolve(loadedResponse(
           2,
           queryCount === 1 ? firstBoundary : nextBoundary,
+          null,
         ));
       }
       throw new Error(`Unexpected request: ${type}`);
@@ -335,6 +336,57 @@ describe('useWatchInbox', () => {
       .toHaveLength(2);
   });
 
+  it('fills up to 1,000 notification candidates when Watch is visible', async () => {
+    let historyNextPage = 11;
+    let totalCount = 500;
+    let queryCount = 0;
+    let historyLoadCount = 0;
+    const loadedPages: number[] = [];
+    const historyLoads = Array.from({ length: 5 }, () => deferred<unknown>());
+    watchMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'markWatchInboxLoaded') {
+        return Promise.resolve('2026-08-05T12:00:00.000Z');
+      }
+      if (type === 'queryWatchInbox') {
+        queryCount += 1;
+        return Promise.resolve(loadedResponse(
+          totalCount,
+          '2026-08-04T10:00:00.000Z',
+          historyNextPage,
+        ));
+      }
+      if (type === 'loadOlderWatchInbox') {
+        loadedPages.push(historyNextPage);
+        return historyLoads[historyLoadCount++]!.promise;
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness initialVisible />, mountedRoots);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(historyLoadCount).toBe(1);
+
+    for (const [index, historyLoad] of historyLoads.entries()) {
+      await act(async () => {
+        historyNextPage += 2;
+        totalCount += 100;
+        historyLoad.resolve({});
+        await historyLoad.promise;
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(historyLoadCount).toBe(Math.min(index + 2, historyLoads.length));
+    }
+
+    expect(queryCount).toBe(6);
+    expect(loadedPages).toEqual([11, 13, 15, 17, 19]);
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1000');
+    expect(container.querySelector('[data-testid="loading-older"]')?.textContent).toBe('ready');
+  });
+
   it('loads an older page and then reloads the saved Watch projection', async () => {
     const older = deferred<unknown>();
     let queryCount = 0;
@@ -351,6 +403,7 @@ describe('useWatchInbox', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(watchMocks.bgCall).not.toHaveBeenCalledWith('loadOlderWatchInbox');
 
     await click(container.querySelector<HTMLButtonElement>('[data-testid="load-older"]')!);
     expect(container.querySelector('[data-testid="loading-older"]')?.textContent).toBe('loading');
@@ -367,15 +420,18 @@ describe('useWatchInbox', () => {
     expect(container.querySelector('[data-testid="load-older-error"]')?.textContent).toBe('none');
   });
 
-  it('restores a persisted historical-load failure on a new hook mount', async () => {
+  it('shows a persisted history failure without automatically retrying it', async () => {
     const persistedFailure = loadedResponse(1, '2026-08-04T10:00:00.000Z');
     persistedFailure.status.state!.inbox.historyErrorCode = 'rate_limited';
     watchMocks.bgCall.mockImplementation((type: string) => {
       if (type === 'queryWatchInbox') return Promise.resolve(persistedFailure);
+      if (type === 'markWatchInboxLoaded') {
+        return Promise.resolve('2026-08-05T12:00:00.000Z');
+      }
       throw new Error(`Unexpected request: ${type}`);
     });
 
-    const container = mountReact(<Harness />, mountedRoots);
+    const container = mountReact(<Harness initialVisible />, mountedRoots);
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
@@ -383,6 +439,7 @@ describe('useWatchInbox', () => {
 
     expect(container.querySelector('[data-testid="load-older-error"]')?.textContent)
       .toBe('error');
+    expect(watchMocks.bgCall).not.toHaveBeenCalledWith('loadOlderWatchInbox');
   });
 
   it('clears dormant cached rows on credential change and visibly reloads on activation', async () => {

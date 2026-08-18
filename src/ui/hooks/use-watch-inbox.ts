@@ -8,6 +8,8 @@ import {
 import type { WatchCollapsedRepositorySignatures } from '@/types';
 import type { WatchThreadActionPending } from '@/ui/watch-inbox-types';
 
+const WATCH_EAGER_HISTORY_MAX_PAGE = 20;
+
 export function useWatchInbox({
   active = true,
   visible = false,
@@ -224,6 +226,26 @@ export function useWatchInbox({
       if (mountedRef.current) setLoadingOlder(false);
     }
   }, [load, runtime]);
+
+  const historyInbox = result?.status.state?.inbox ?? null;
+  const historyNextPage = historyInbox?.historyNextPage ?? null;
+  const shouldEagerlyLoadOlder = active
+    && visible
+    && historyNextPage != null
+    && historyNextPage <= WATCH_EAGER_HISTORY_MAX_PAGE
+    && historyInbox?.historyExhausted !== true
+    && historyInbox?.historyErrorCode == null
+    && error === null
+    && !refreshing
+    && result?.status.refreshing !== true
+    && !loadingOlder
+    && !loadOlderError;
+  useEffect(() => {
+    if (!shouldEagerlyLoadOlder) return;
+    // Pages 1-20 cover about 1,000 GitHub notification candidates. Fill that
+    // range on a visible visit; only larger histories need manual pagination.
+    void loadOlder();
+  }, [historyNextPage, loadOlder, shouldEagerlyLoadOlder]);
 
   const actionAccountLogin = result?.status.accountLogin ?? null;
 

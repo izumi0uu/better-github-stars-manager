@@ -18,6 +18,8 @@ const DEFAULT_STARS_PER_FOLLOWER = RADAR_STARS_PER_FOLLOWER;
 const DEFAULT_RATE_LIMIT_LOW_WATER = 50;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_DEADLINE_MS = 120_000;
+const REQUEST_MAX_ATTEMPTS = 3;
+const REQUEST_RETRY_BASE_DELAY_MS = 500;
 
 const FOLLOWING_QUERY = `
   query RadarFollowing($cursor: String) {
@@ -188,6 +190,35 @@ function responseError(response: Response): GitHubRadarError {
     return new GitHubRadarError('github_unavailable', { status: response.status });
   }
   return new GitHubRadarError('invalid_response', { status: response.status });
+}
+
+async function retryTransientRequest<T>(
+  request: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  for (let attempt = 1; attempt <= REQUEST_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await request();
+    } catch (error) {
+      const retryable = error instanceof GitHubRadarError
+        && (error.code === 'github_unavailable' || error.code === 'network_error');
+      if (!retryable || attempt === REQUEST_MAX_ATTEMPTS) throw error;
+
+      if (signal?.aborted) throw new GitHubRadarError('request_aborted');
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new GitHubRadarError('request_aborted'));
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, REQUEST_RETRY_BASE_DELAY_MS * attempt);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+    }
+  }
+  throw new GitHubRadarError('github_unavailable');
 }
 
 async function fetchGraphql(
@@ -546,7 +577,10 @@ export async function fetchGitHubRadar(
   const partialReasons = new Set<RadarPartialReason>();
 
   while (hasNextPage && followingLogins.length < maxFollowing) {
-    const page = await fetchFollowingPage(fetchImpl, token, cursor, requestOptions());
+    const page = await retryTransientRequest(
+      () => fetchFollowingPage(fetchImpl, token, cursor, requestOptions()),
+      options.signal,
+    );
     if (accountLogin !== null && accountLogin !== page.accountLogin) {
       throw new GitHubRadarError('invalid_response');
     }
@@ -586,14 +620,17 @@ export async function fetchGitHubRadar(
     const targets = pending.slice(0, batchSize);
     let batch: ActivityBatch;
     try {
-      batch = await fetchActivityBatch(
-        fetchImpl,
-        token,
-        accountLogin,
-        targets,
-        starsPerFollower,
-        cutoffMillis,
-        requestOptions(),
+      batch = await retryTransientRequest(
+        () => fetchActivityBatch(
+          fetchImpl,
+          token,
+          accountLogin,
+          targets,
+          starsPerFollower,
+          cutoffMillis,
+          requestOptions(),
+        ),
+        options.signal,
       );
     } catch (error) {
       if (error instanceof GitHubRadarError && error.code === 'deadline_exceeded') {

@@ -1050,7 +1050,7 @@ async function seedWatchAndRadarFixture(extId) {
         truncated: true,
         newerThan: '2026-08-05T12:00:00.000Z',
         historyBefore: '2026-08-05T12:05:00.000Z',
-        historyNextPage: 11,
+        historyNextPage: 21, // Exercise manual history beyond eager pages 1-20.
         historyExhausted: false,
         historyErrorCode: null,
       },

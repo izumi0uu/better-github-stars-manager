@@ -312,9 +312,164 @@ describe('useRadar', () => {
     });
 
     expect(radarMocks.bgCall).toHaveBeenCalledTimes(2);
+    expect(radarMocks.bgCall.mock.calls.some(([type]) => type === 'refreshRadar')).toBe(false);
     expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
     expect(container.querySelector('[data-testid="recommendation-loading"]')?.textContent)
       .toBe('ready');
+  });
+
+  it('automatically scans a configured first-use projection and reloads authoritative activity', async () => {
+    const firstUse = response({ snapshotStatus: 'never_loaded' });
+    const authoritative = {
+      ...response(),
+      activities: [unseenActivity],
+      unseenCount: 1,
+    };
+    let radarQueries = 0;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        radarQueries += 1;
+        return Promise.resolve(radarQueries === 1 ? firstUse : authoritative);
+      }
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      if (type === 'refreshRadar') return Promise.resolve(refreshResponse());
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+    await settle();
+
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(1);
+    expect(radarQueries).toBe(2);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('fresh');
+    expect(container.querySelector('[data-testid="unseen"]')?.textContent).toBe('1');
+  });
+
+  it('does not start a first-use scan while the background is already refreshing', async () => {
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        return Promise.resolve(response({ snapshotStatus: 'never_loaded', refreshing: true }));
+      }
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+    await settle();
+
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(0);
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('refreshing');
+  });
+
+  it('ignores a first-use refresh completion after credentials invalidate the projection', async () => {
+    const pendingRefresh = deferred<RadarRefreshResult>();
+    let radarQueries = 0;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        radarQueries += 1;
+        return Promise.resolve(radarQueries === 1 ? response({ snapshotStatus: 'never_loaded' }) : response());
+      }
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      if (type === 'refreshRadar') return pendingRefresh.promise;
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+    await settle();
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(1);
+
+    act(() => {
+      storageListeners[0]?.({
+        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+      }, 'local');
+    });
+    await settle();
+    await settle();
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('fresh');
+
+    await act(async () => {
+      pendingRefresh.resolve(refreshResponse({
+        published: false,
+        status: response({ snapshotStatus: 'error', errorCode: 'network_error' }).status,
+      }));
+      await pendingRefresh.promise;
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(radarQueries).toBe(2);
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('fresh');
+    expect(container.querySelector('[data-testid="error"]')?.textContent).toBe('none');
+  });
+
+  it('does not repeat the first-use scan when publication leaves the projection never loaded', async () => {
+    const firstUse = response({ snapshotStatus: 'never_loaded' });
+    let radarQueries = 0;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        radarQueries += 1;
+        return Promise.resolve(firstUse);
+      }
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      if (type === 'refreshRadar') {
+        return Promise.resolve(refreshResponse({ published: false, status: firstUse.status }));
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+    await settle();
+    await settle();
+
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(1);
+    expect(radarQueries).toBe(2);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('never_loaded');
+
+    await act(async () => {
+      runtimeListeners[0]?.({ type: 'radarChanged' });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(radarQueries).toBe(3);
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(1);
+  });
+
+  it('allows one new first-use scan after credentials invalidate the projection', async () => {
+    const firstUse = response({ snapshotStatus: 'never_loaded' });
+    let radarQueries = 0;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        radarQueries += 1;
+        return Promise.resolve(firstUse);
+      }
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      if (type === 'refreshRadar') {
+        return Promise.resolve(refreshResponse({ published: false, status: firstUse.status }));
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    mountReact(<Harness />, mountedRoots);
+    await settle();
+    await settle();
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(1);
+
+    act(() => {
+      storageListeners[0]?.({
+        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+      }, 'local');
+    });
+    await settle();
+    await settle();
+
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(2);
+    expect(radarQueries).toBe(4);
   });
 
   it('clears both account-bound projections when credential reloads fail', async () => {

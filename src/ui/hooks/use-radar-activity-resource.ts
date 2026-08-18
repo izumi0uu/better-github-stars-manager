@@ -14,6 +14,8 @@ export function useRadarActivityResource(active: boolean) {
   const loadedRef = useRef(false);
   const generation = useRef(0);
   const refreshingRef = useRef(false);
+  const refreshEpoch = useRef(0);
+  const initialRefreshAttemptedRef = useRef(false);
   const cooldownProbeRef = useRef<{ deadline: string | null; attempts: number }>({
     deadline: null,
     attempts: 0,
@@ -25,6 +27,7 @@ export function useRadarActivityResource(active: boolean) {
     return () => {
       mountedRef.current = false;
       generation.current += 1;
+      refreshEpoch.current += 1;
     };
   }, []);
 
@@ -62,7 +65,9 @@ export function useRadarActivityResource(active: boolean) {
   useEffect(() => {
     if (!active) {
       generation.current += 1;
+      refreshEpoch.current += 1;
       setLoading(false);
+      setRefreshing(false);
       return;
     }
     void reload(loadedRef.current);
@@ -70,7 +75,9 @@ export function useRadarActivityResource(active: boolean) {
 
   const invalidateCredentials = useCallback(() => {
     generation.current += 1;
+    refreshEpoch.current += 1;
     loadedRef.current = false;
+    initialRefreshAttemptedRef.current = false;
     setResult(null);
     setError(null);
     setLoading(activeRef.current);
@@ -101,23 +108,44 @@ export function useRadarActivityResource(active: boolean) {
 
   const refresh = useCallback(async () => {
     if (!mountedRef.current || refreshingRef.current) return;
+    const requestEpoch = refreshEpoch.current;
+    const isCurrent = () => mountedRef.current && activeRef.current
+      && refreshEpoch.current === requestEpoch;
     refreshingRef.current = true;
+    initialRefreshAttemptedRef.current = true;
     setRefreshing(true);
     setError(null);
     try {
       const refreshResult = await runtime.refreshRadar();
+      if (!isCurrent()) return;
       await reload(true);
-      if (mountedRef.current && !refreshResult.published && refreshResult.status.errorCode) {
+      if (!isCurrent()) return;
+      if (!refreshResult.published && refreshResult.status.errorCode) {
         setError('refresh');
       }
     } catch {
+      if (!isCurrent()) return;
       await reload(true);
-      if (mountedRef.current) setError('refresh');
+      if (isCurrent()) setError('refresh');
     } finally {
       refreshingRef.current = false;
       if (mountedRef.current) setRefreshing(false);
     }
   }, [reload, runtime]);
+
+  useEffect(() => {
+    const status = result?.status;
+    if (
+      !active
+      || refreshing
+      || refreshingRef.current
+      || status?.refreshing === true
+      || initialRefreshAttemptedRef.current
+      || !status?.hasMainToken
+      || status.snapshotStatus !== 'never_loaded'
+    ) return;
+    void refresh();
+  }, [active, refresh, refreshing, result]);
 
   const markSeen = useCallback((activityIds: readonly string[]) => {
     const ids = [...new Set(activityIds)];
