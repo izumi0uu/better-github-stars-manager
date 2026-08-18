@@ -194,6 +194,144 @@ describe('GitHub Radar source', () => {
     expect(new Headers(calls[0]?.init.headers).get('authorization')).toBe('Bearer secret');
   });
 
+  it('retries only the failed Following page after a transient GitHub failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const followingCursors: unknown[] = [];
+      let secondPageAttempts = 0;
+      const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          query: string;
+          variables: Record<string, unknown>;
+        };
+        if (body.query.includes('RadarFollowing')) {
+          followingCursors.push(body.variables.cursor);
+          if (body.variables.cursor === null) {
+            return jsonResponse(followingEnvelope({
+              logins: ['alice'],
+              totalCount: 2,
+              hasNextPage: true,
+              endCursor: 'following-page-2',
+            }));
+          }
+          secondPageAttempts += 1;
+          if (secondPageAttempts === 1) return new Response('', { status: 503 });
+          return jsonResponse(followingEnvelope({ logins: ['bob'], totalCount: 2 }));
+        }
+        return jsonResponse(activityEnvelope([
+          { login: 'alice', edges: [] },
+          { login: 'bob', edges: [] },
+        ]));
+      }) as typeof fetch;
+
+      const result = fetchGitHubRadar({ token: 'token', fetchImpl, now: () => NOW });
+      await vi.advanceTimersByTimeAsync(500);
+      const snapshot = await result;
+
+      expect(followingCursors).toEqual([null, 'following-page-2', 'following-page-2']);
+      expect(snapshot.scannedFollowingCount).toBe(2);
+      expect(fetchImpl).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries only the failed activity batch after a transient network failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const logins = ['one', 'two', 'three', 'four', 'five', 'six'];
+      const activityVariables: Record<string, unknown>[] = [];
+      let followingRequests = 0;
+      let finalBatchAttempts = 0;
+      const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          query: string;
+          variables: Record<string, unknown>;
+        };
+        if (body.query.includes('RadarFollowing')) {
+          followingRequests += 1;
+          return jsonResponse(followingEnvelope({ logins }));
+        }
+        activityVariables.push(body.variables);
+        const batchLogins = Object.entries(body.variables)
+          .filter(([name]) => name.startsWith('login'))
+          .map(([, login]) => String(login));
+        if (batchLogins.length === 1) {
+          finalBatchAttempts += 1;
+          if (finalBatchAttempts === 1) throw new TypeError('synthetic network failure');
+        }
+        return jsonResponse(activityEnvelope(batchLogins.map((login) => ({ login, edges: [] }))));
+      }) as typeof fetch;
+
+      const result = fetchGitHubRadar({ token: 'token', fetchImpl, now: () => NOW });
+      await vi.advanceTimersByTimeAsync(500);
+      const snapshot = await result;
+
+      expect(followingRequests).toBe(1);
+      expect(activityVariables).toHaveLength(3);
+      expect(activityVariables[1]).toEqual({ login0: 'six', cursor0: null });
+      expect(activityVariables[2]).toEqual(activityVariables[1]);
+      expect(snapshot.batchCount).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds persistent transient failures to three attempts', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(async () => new Response('', { status: 503 })) as typeof fetch;
+      const rejection = expect(fetchGitHubRadar({ token: 'token', fetchImpl, now: () => NOW }))
+        .rejects.toMatchObject({ code: 'github_unavailable', status: 503 });
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      await rejection;
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-evaluates the global deadline before a transient retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(async () => new Response('', { status: 503 })) as typeof fetch;
+      const rejection = expect(fetchGitHubRadar({
+        token: 'token',
+        fetchImpl,
+        now: () => NOW,
+        deadlineMs: 100,
+      })).rejects.toMatchObject({ code: 'deadline_exceeded' });
+
+      await vi.advanceTimersByTimeAsync(500);
+      await rejection;
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves caller abort while waiting to retry a transient failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const fetchImpl = vi.fn(async () => new Response('', { status: 503 })) as typeof fetch;
+      const rejection = expect(fetchGitHubRadar({
+        token: 'token',
+        fetchImpl,
+        now: () => NOW,
+        signal: controller.signal,
+      })).rejects.toMatchObject({ code: 'request_aborted' });
+
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await rejection;
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps valid activity aliases when a followed account is missing', async () => {
     let request = 0;
     const fetchImpl = vi.fn(async () => {
@@ -474,6 +612,8 @@ describe('GitHub Radar source', () => {
         code: 'rate_limited',
         status: 403,
       });
+
+    expect(rateLimitedFetch).toHaveBeenCalledTimes(1);
 
     const controller = new AbortController();
     controller.abort();
