@@ -461,11 +461,9 @@ export function WatchInbox({
     }
     if (row.kind === 'repository') {
       const repository = row.group.repositoryFullName.toLowerCase();
-      const sourceGroup = sourceGroupsByRepository.get(repository) ?? row.group;
       return (
         <WatchRepositoryHeader
           group={row.group}
-          sourceGroup={sourceGroup}
           expanded={expandedRepositories.has(repository)}
           revealMatches={hasPresentationFilters}
           autoExpanded={autoExpandedRepositories[repository] === true}

@@ -733,7 +733,7 @@ describe('WatchInbox', () => {
     expect(Array.from(details?.querySelectorAll('button') ?? [])
       .some((button) => button.textContent?.trim() === 'Open options')).toBe(false);
   });
-  it('routes bulk actions to one complete repository group, never the global inbox', async () => {
+  it('routes bulk actions to one visible repository group, never the global inbox', async () => {
     const repositoryUnread = thread(0, {
       repositoryFullName: 'owner/repository-a',
       repositoryHtmlUrl: 'https://github.com/owner/repository-a',
@@ -788,9 +788,65 @@ describe('WatchInbox', () => {
     await click(findButtonByText(repository, 'Mark all as done'));
 
     expect(onMarkThreadsRead).toHaveBeenCalledWith(['0']);
-    expect(onMarkThreadsDone).toHaveBeenCalledWith(['0', '1']);
+    expect(onMarkThreadsDone).toHaveBeenCalledWith(['0']);
     expect(onMarkThreadsRead).not.toHaveBeenCalledWith(['2']);
     expect(onMarkThreadsDone).not.toHaveBeenCalledWith(expect.arrayContaining(['2']));
+  });
+
+  it('scopes repeated repository headers and bulk actions to each timeline day', async () => {
+    const repositoryFullName = 'owner/repeated-repository';
+    const newest = thread(0, {
+      id: 'newest-day',
+      repositoryFullName,
+      repositoryHtmlUrl: `https://github.com/${repositoryFullName}`,
+      updatedAt: '2026-08-05T12:00:00Z',
+    });
+    const older = thread(1, {
+      id: 'older-day',
+      repositoryFullName,
+      repositoryHtmlUrl: `https://github.com/${repositoryFullName}`,
+      updatedAt: '2026-08-04T12:00:00Z',
+    });
+    const repositoryGroup = {
+      repositoryFullName,
+      repositoryHtmlUrl: `https://github.com/${repositoryFullName}`,
+      repositoryOwnerLogin: 'owner',
+      repositoryOwnerAvatarUrl: null,
+      latestUpdatedAt: newest.updatedAt,
+      threads: [newest, older],
+    };
+    const onMarkThreadsRead = vi.fn();
+    const container = renderInbox({
+      result: result({
+        threads: repositoryGroup.threads,
+        groups: [repositoryGroup],
+        unreadCount: 2,
+        totalCount: 2,
+      }),
+      collapsedRepositories: {
+        [repositoryFullName]: watchGroupContentSignature(repositoryGroup.threads),
+      },
+      onMarkThreadsRead,
+    });
+    const dailyRepositories = container.querySelectorAll<HTMLElement>(
+      `[data-watch-repository="${repositoryFullName}"]`,
+    );
+
+    expect(dailyRepositories).toHaveLength(2);
+    expect(container.querySelectorAll('button[data-watch-thread]')).toHaveLength(0);
+    for (const dailyRepository of dailyRepositories) {
+      expect(dailyRepository.textContent).toContain('1 thread');
+      expect(dailyRepository.textContent).not.toContain('2 threads');
+      expect(dailyRepository.textContent).toContain('1 unread');
+      expect(dailyRepository.textContent).not.toContain('2 unread');
+    }
+
+    const firstDateRepository = dailyRepositories.item(0);
+    if (!firstDateRepository) throw new Error('Expected the first daily repository row');
+    await click(findButtonByText(firstDateRepository, 'Mark all as read'));
+
+    expect(onMarkThreadsRead).toHaveBeenCalledOnce();
+    expect(onMarkThreadsRead).toHaveBeenCalledWith(['newest-day']);
   });
 
   it('shows pending state only on the matching repository action and disables conflicts', () => {

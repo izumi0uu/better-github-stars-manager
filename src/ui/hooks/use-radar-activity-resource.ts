@@ -66,6 +66,7 @@ export function useRadarActivityResource(active: boolean) {
     if (!active) {
       generation.current += 1;
       refreshEpoch.current += 1;
+      refreshingRef.current = false;
       setLoading(false);
       setRefreshing(false);
       return;
@@ -76,11 +77,13 @@ export function useRadarActivityResource(active: boolean) {
   const invalidateCredentials = useCallback(() => {
     generation.current += 1;
     refreshEpoch.current += 1;
+    refreshingRef.current = false;
     loadedRef.current = false;
     initialRefreshAttemptedRef.current = false;
     setResult(null);
     setError(null);
     setLoading(activeRef.current);
+    setRefreshing(false);
   }, []);
 
   const cooldownUntil = result?.status.snapshotStatus === 'cooldown'
@@ -128,8 +131,10 @@ export function useRadarActivityResource(active: boolean) {
       await reload(true);
       if (isCurrent()) setError('refresh');
     } finally {
-      refreshingRef.current = false;
-      if (mountedRef.current) setRefreshing(false);
+      if (isCurrent()) {
+        refreshingRef.current = false;
+        setRefreshing(false);
+      }
     }
   }, [reload, runtime]);
 

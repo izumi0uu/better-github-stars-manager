@@ -13,7 +13,6 @@ import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
 
 export function WatchRepositoryHeader({
   group,
-  sourceGroup,
   expanded,
   revealMatches,
   autoExpanded,
@@ -24,7 +23,6 @@ export function WatchRepositoryHeader({
   onMarkThreadsDone,
 }: {
   group: WatchInboxQueryResponse['groups'][number];
-  sourceGroup: WatchInboxQueryResponse['groups'][number];
   expanded: boolean;
   revealMatches: boolean;
   autoExpanded: boolean;
@@ -36,13 +34,13 @@ export function WatchRepositoryHeader({
 }) {
   const { m } = useI18n();
   const now = useManagerNow();
-  const unreadCount = sourceGroup.threads.reduce(
+  const unreadCount = group.threads.reduce(
     (count, thread) => count + Number(thread.unread),
     0,
   );
-  const latest = formatWatchRelativeTime(sourceGroup.latestUpdatedAt, now);
-  const allThreadIds = sourceGroup.threads.map((thread) => thread.id);
-  const unreadThreadIds = sourceGroup.threads
+  const latest = formatWatchRelativeTime(group.latestUpdatedAt, now);
+  const allThreadIds = group.threads.map((thread) => thread.id);
+  const unreadThreadIds = group.threads
     .filter((thread) => thread.unread)
     .map((thread) => thread.id);
   const actionDisabled = actionPending !== null;
@@ -108,7 +106,7 @@ export function WatchRepositoryHeader({
         <span className="ml-auto shrink-0 rounded-full border border-border px-2 py-px font-mono text-[11px] tabular-nums text-muted-foreground">
           {expanded
             ? m.watch.repositoryUnreadCount(unreadCount)
-            : `${m.watch.threadCount(sourceGroup.threads.length)} · ${latest ?? '—'} · ${m.watch.repositoryUnreadCount(unreadCount)}`}
+            : `${m.watch.threadCount(group.threads.length)} · ${latest ?? '—'} · ${m.watch.repositoryUnreadCount(unreadCount)}`}
         </span>
         <div className="flex shrink-0 items-center gap-1" role="group" aria-label={group.repositoryFullName}>
           <Button

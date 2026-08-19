@@ -215,7 +215,10 @@ try {
   await page.click('#gsm-watch-surface-tab');
   await page.waitForSelector('[data-watch-thread-row="1001"]', { timeout: 10_000 });
   await clickPressedChoice(page, '[data-surface="watch"]', 'All');
-  await page.waitForFunction(() => document.querySelectorAll('[data-watch-thread-row]').length === 15, { timeout: 10_000 });
+  await page.waitForFunction(() => (
+    document.querySelector('[data-watch-history-sentinel]')?.textContent?.includes('15 threads')
+    && document.querySelectorAll('[data-watch-thread-row]').length > 0
+  ), { timeout: 10_000 });
   await page.click('button[aria-label="Collapse aurora-workshop/atlas-notes"]');
   await page.waitForFunction(() => document.querySelector('button[aria-label="Expand aurora-workshop/atlas-notes"]'), { timeout: 10_000 });
   await page.click('button[aria-label="Expand aurora-workshop/atlas-notes"]');
@@ -229,7 +232,7 @@ try {
   }, { timeout: 10_000 });
   await clickEnabledButtonByText(page, '[data-watch-thread-row="1001"]', 'Mark as done');
   await page.waitForFunction(() => !document.querySelector('[data-watch-thread-row="1001"]'), { timeout: 10_000 });
-  ok('Watch rendered all 15 threads across four repositories and committed collapse/read/done changes');
+  ok('Watch exposed all 15 threads across four repositories and committed collapse/read/done changes');
 
   step('4) Following and For You mutations update badges and Stars');
   await page.click('#gsm-radar-surface-tab');
