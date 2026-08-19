@@ -173,7 +173,8 @@ function normalizeWatchState(state: GitHubWatchStateRecord): GitHubWatchStateRec
       scanId: hasCurrentScanShape ? inbox.scanId! : null,
       scanStatus,
       scanStartedAt: hasCurrentScanShape ? inbox.scanStartedAt! : null,
-      scanPageCount: Number.isSafeInteger(inbox.scanPageCount) && inbox.scanPageCount! >= 0
+      scanPageCount: scanStatus !== 'pending'
+        && Number.isSafeInteger(inbox.scanPageCount) && inbox.scanPageCount! >= 0
         ? inbox.scanPageCount!
         : 0,
       lastConvergedAt: inbox.lastConvergedAt ?? null,

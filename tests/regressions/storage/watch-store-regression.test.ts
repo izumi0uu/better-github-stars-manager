@@ -316,6 +316,57 @@ describe('Watch snapshot storage', () => {
     assert.equal(result.state?.inbox.errorCode, null);
   });
 
+  it('normalizes malformed active scan progress to pending without hiding cached rows', async () => {
+    await replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread('cached-a'), thread('cached-b')],
+      attemptedAt: FIRST,
+      lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
+      nextAllowedAt: SECOND,
+      candidateCount: 2,
+      truncated: false,
+      mode: 'replace',
+    });
+    const stored = await db.watchState.get('singleton');
+    assert.ok(stored);
+    const malformedActiveState = {
+      ...stored,
+      inbox: {
+        ...stored.inbox,
+        historyBefore: FIRST,
+        historyNextPage: null,
+        historyExhausted: false,
+        scanId: 'scan-with-missing-cursor',
+        scanStatus: 'scanning' as const,
+        scanStartedAt: FIRST,
+        scanPageCount: 7,
+      },
+    };
+    await db.watchState.put(malformedActiveState);
+
+    const normalized = await queryStoredWatchInbox({
+      accountLogin: ACCOUNT,
+      unreadOnly: false,
+    });
+    assert.deepEqual(
+      normalized.threads.map((row) => row.id).sort(),
+      ['cached-a', 'cached-b'],
+    );
+    assert.equal(normalized.state?.inbox.scanStatus, 'pending');
+    assert.equal(normalized.state?.inbox.scanPageCount, 0);
+
+    await db.watchState.put({
+      ...malformedActiveState,
+      inbox: {
+        ...malformedActiveState.inbox,
+        historyNextPage: 2,
+      },
+    });
+    const validActiveState = await getWatchState(ACCOUNT);
+    assert.equal(validActiveState?.inbox.scanStatus, 'scanning');
+    assert.equal(validActiveState?.inbox.scanPageCount, 7);
+  });
+
   it('keeps the last Inbox on failure and 304-style revalidation', async () => {
     await replaceWatchScope({
       accountLogin: ACCOUNT,

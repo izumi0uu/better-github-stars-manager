@@ -326,7 +326,7 @@ describe('useWatchInbox', () => {
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
   });
 
-  it('renders pushed scan progress while the follow-up query is queued behind refresh', async () => {
+  it('merges status-only progress without querying while durable Watch changes reload', async () => {
     const initial = cooldownResponse(2_162, '2026-08-05T12:01:00Z');
     const blockedQuery = deferred<WatchInboxQueryResponse>();
     let queryCount = 0;
@@ -363,13 +363,28 @@ describe('useWatchInbox', () => {
     };
 
     await act(async () => {
-      runtimeListeners[0]?.({ type: 'watchChanged', status: progressStatus });
+      runtimeListeners[0]?.({ type: 'watchStatusChanged', status: progressStatus });
       await Promise.resolve();
     });
 
     expect(container.querySelector('[data-testid="scan-status"]')?.textContent).toBe('scanning');
     expect(container.querySelector('[data-testid="scan-pages"]')?.textContent).toBe('20');
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2162');
+    expect(queryCount).toBe(1);
+
+    const durableStatus: WatchStatus = {
+      ...progressStatus,
+      state: {
+        ...progressStatus.state!,
+        inbox: { ...progressStatus.state!.inbox, scanPageCount: 21 },
+      },
+    };
+    await act(async () => {
+      runtimeListeners[0]?.({ type: 'watchChanged', status: durableStatus });
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="scan-pages"]')?.textContent).toBe('21');
     expect(queryCount).toBe(2);
   });
 

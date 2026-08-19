@@ -123,7 +123,11 @@ export function useWatchInbox({
         if (activeRef.current) void load(false);
         return;
       }
-      if (activeRef.current && event.kind === 'watch' && event.watchStatus) {
+      if (
+        activeRef.current
+        && (event.kind === 'watch' || event.kind === 'watch-status')
+        && event.watchStatus
+      ) {
         const pushedStatus = event.watchStatus;
         setResult((current) => (
           current?.status.accountLogin === pushedStatus.accountLogin

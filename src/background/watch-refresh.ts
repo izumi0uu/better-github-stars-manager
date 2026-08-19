@@ -208,22 +208,15 @@ export function createWatchRefreshCoordinator(
     ]);
   }
 
-  function activeRefreshPhase(auth: AuthSnapshot): WatchRefreshPhase {
-    return activeRefreshExecution?.identity === refreshIdentity(auth)
-      ? activeRefreshExecution.phase
+  function activeRefreshPhase(
+    auth: AuthSnapshot,
+    execution = activeRefreshExecution,
+  ): WatchRefreshPhase {
+    return execution?.identity === refreshIdentity(auth)
+      ? execution.phase
       : null;
   }
 
-  function setExecutingRefreshPhase(auth: AuthSnapshot, phase: ActiveWatchRefreshPhase): void {
-    const identity = refreshIdentity(auth);
-    if (
-      !activeRefreshExecution
-      || activeRefreshExecution.identity !== identity
-      || activeRefreshExecution.phase === phase
-    ) return;
-    activeRefreshExecution.phase = phase;
-    dependencies.broadcastStatusChanged();
-  }
 
   function runRefreshOperation<T>(
     auth: AuthSnapshot,
@@ -345,10 +338,11 @@ export function createWatchRefreshCoordinator(
     auth: AuthSnapshot,
     refreshing: boolean,
     stateOverride?: WatchStatus['state'],
+    execution = activeRefreshExecution,
   ): Promise<WatchStatus> {
     const hasMainToken = !!(auth.accountLogin && auth.mainToken);
     const hasNotificationsToken = !!auth.notificationsToken;
-    const refreshPhase = refreshing ? activeRefreshPhase(auth) : null;
+    const refreshPhase = refreshing ? activeRefreshPhase(auth, execution) : null;
     const state = stateOverride === undefined && hasMainToken && auth.accountLogin
       ? await dependencies.store.getState(auth.accountLogin)
       : stateOverride ?? null;
@@ -387,8 +381,9 @@ export function createWatchRefreshCoordinator(
 
   async function deriveStatus(
     refreshing = inFlight !== null || inboxInFlight !== null || scopeInFlight !== null,
+    execution = activeRefreshExecution,
   ): Promise<WatchStatus> {
-    return deriveStatusForAuth(await readAuth(), refreshing);
+    return deriveStatusForAuth(await readAuth(), refreshing, undefined, execution);
   }
 
   async function queryInbox(unreadOnly: boolean): Promise<WatchInboxQueryResponse> {
@@ -710,23 +705,18 @@ export function createWatchRefreshCoordinator(
       || !auth.notificationsToken
       || !await sameCredentials(auth, true)
     ) throw new GitHubWatchError('authentication_required');
-    const before = await dependencies.store.queryInbox({
-      accountLogin: auth.accountLogin,
-      unreadOnly: false,
-    });
-    if (before.state?.inbox.scanStatus === 'complete') {
+    const before = await dependencies.store.getState(auth.accountLogin);
+    if (before?.inbox.scanStatus === 'complete') {
       return { addedCount: 0, hasMore: false };
     }
+    const beforeCount = before?.inbox.matchedCount ?? 0;
     const batch = await performInboxBatch(auth, 'scheduled');
     if (batch.failure) throw batch.failure;
     if (batch.changed) dependencies.broadcastChanged();
-    const after = await dependencies.store.queryInbox({
-      accountLogin: auth.accountLogin,
-      unreadOnly: false,
-    });
+    const after = await dependencies.store.getState(auth.accountLogin);
     return {
-      addedCount: Math.max(0, after.totalCount - before.totalCount),
-      hasMore: after.state?.inbox.scanStatus !== 'complete',
+      addedCount: Math.max(0, (after?.inbox.matchedCount ?? 0) - beforeCount),
+      hasMore: after?.inbox.scanStatus !== 'complete',
     };
   }
 
@@ -778,21 +768,25 @@ export function createWatchRefreshCoordinator(
     if (!auth.accountLogin || !auth.mainToken || !await sameCredentials(auth, false)) {
       return empty;
     }
-    const scope = await performScopeRefresh(auth);
+    const scope = await runRefreshOperation(
+      auth,
+      'scope',
+      () => performScopeRefresh(auth),
+    );
     const stabilityBudget: SnapshotStabilityBudget = { restarts: 0 };
     let changed = scope.changed;
     let changedBroadcast = false;
     let inboxPublished = false;
     if (auth.notificationsToken && await sameCredentials(auth, true)) {
-      setExecutingRefreshPhase(auth, 'inbox');
       for (;;) {
-        const batch = await performInboxBatch(auth, 'manual', stabilityBudget);
+        const batch = await runRefreshOperation(auth, 'inbox', async () => {
+          const outcome = await performInboxBatch(auth, 'manual', stabilityBudget);
+          if (outcome.changed) dependencies.broadcastChanged();
+          return outcome;
+        });
         changed ||= batch.changed;
         inboxPublished ||= batch.inboxPublished;
-        if (batch.changed) {
-          dependencies.broadcastChanged();
-          changedBroadcast = true;
-        }
+        if (batch.changed) changedBroadcast = true;
         if (batch.credentialsChanged || batch.failure) break;
         const state = await dependencies.store.getState(auth.accountLogin);
         if (state?.inbox.scanStatus === 'complete') break;
@@ -851,11 +845,7 @@ export function createWatchRefreshCoordinator(
       return refresh();
     }
 
-    const operation = runRefreshOperation(
-      requestedAuth,
-      'scope',
-      () => performRefresh(requestedAuth),
-    );
+    const operation = performRefresh(requestedAuth);
     const promise = operation.then(async (outcome) => ({
       ...outcome,
       status: await deriveStatus(false),
@@ -872,11 +862,21 @@ export function createWatchRefreshCoordinator(
   }
 
   async function refreshScope(): Promise<WatchRefreshResult> {
-    const active = inFlight ?? scopeInFlight;
-    if (active) return active.promise;
     await reconcileAccount();
     const requestedAuth = await readAuth();
     const identity = refreshIdentity(requestedAuth);
+    const current = inFlight ?? scopeInFlight;
+    if (current) {
+      if (current.identity === identity) return current.promise;
+      try {
+        await current.promise;
+      } catch {
+        // The new credential identity still deserves its own queued attempt.
+      }
+      if (inFlight === current) inFlight = null;
+      if (scopeInFlight === current) scopeInFlight = null;
+      return refreshScope();
+    }
     const operation = runRefreshOperation(
       requestedAuth,
       'scope',

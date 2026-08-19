@@ -270,7 +270,7 @@ const WATCH_STATE: GitHubWatchStateRecord = {
     lastAttemptAt: beforeNow(0),
     lastSuccessfulAt: beforeNow(0),
     errorCode: null,
-    lastModified: null,
+    lastModified: new Date(FIXED_NOW).toUTCString(),
     nextAllowedAt: null,
     candidateCount: WATCH_THREADS.length,
     matchedCount: WATCH_THREADS.length,

@@ -19,6 +19,7 @@ export type ManagerRuntimeEventKind =
   | 'data'
   | 'preferences'
   | 'watch'
+  | 'watch-status'
   | 'radar'
   | 'recommendations'
   | 'reset';

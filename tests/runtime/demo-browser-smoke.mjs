@@ -131,7 +131,7 @@ try {
     notice: assertStringIncludes(entry.notice, 'Not connected to GitHub'),
     featurePreviews: 0,
     starsSurface: 'true',
-    watchBadge: '12',
+    watchBadge: '13',
     radarBadge: '9',
     extensionControls: 0,
     credentialInputs: 0,
@@ -216,7 +216,7 @@ try {
   await page.waitForSelector('[data-watch-thread-row="1001"]', { timeout: 10_000 });
   await clickPressedChoice(page, '[data-surface="watch"]', 'All');
   await page.waitForFunction(() => (
-    document.querySelector('[data-watch-history-sentinel]')?.textContent?.includes('15 threads')
+    document.querySelector('[data-watch-history-sentinel]')?.textContent?.trim() === 'All caught up · 16 threads'
     && document.querySelectorAll('[data-watch-thread-row]').length > 0
   ), { timeout: 10_000 });
   await page.click('button[aria-label="Collapse aurora-workshop/atlas-notes"]');
@@ -228,11 +228,11 @@ try {
   await page.waitForFunction(() => {
     const row = document.querySelector('[data-watch-thread-row="1001"]');
     return !!row && !row.querySelector('[title="Unread at the time of this snapshot"]')
-      && document.querySelector('[data-watch-unread-badge]')?.textContent?.trim() === '11';
+      && document.querySelector('[data-watch-unread-badge]')?.textContent?.trim() === '12';
   }, { timeout: 10_000 });
   await clickEnabledButtonByText(page, '[data-watch-thread-row="1001"]', 'Mark as done');
   await page.waitForFunction(() => !document.querySelector('[data-watch-thread-row="1001"]'), { timeout: 10_000 });
-  ok('Watch exposed all 15 threads across four repositories and committed collapse/read/done changes');
+  ok('Watch exposed all 16 threads across five repositories and committed collapse/read/done changes');
 
   step('4) Following and For You mutations update badges and Stars');
   await page.click('#gsm-radar-surface-tab');
@@ -370,7 +370,7 @@ function assertStringIncludes(value, expected) {
 async function waitForStars(page) {
   await page.waitForFunction(() => document.querySelector('#gsm-stars-surface-tab')?.getAttribute('aria-selected') === 'true'
     && document.querySelectorAll('[data-layout-row-grid]').length > 0
-    && document.querySelector('[data-watch-unread-badge]')?.textContent?.trim() === '12'
+    && document.querySelector('[data-watch-unread-badge]')?.textContent?.trim() === '13'
     && document.querySelector('[data-radar-unseen-badge]')?.textContent?.trim() === '9', { timeout: 20_000 });
 }
 
@@ -379,7 +379,7 @@ async function waitForBaseline(page) {
     && document.querySelector('[data-demo-theme]')?.getAttribute('data-demo-theme') === 'light'
     && document.querySelector('[data-testid="demo-shell"]')?.getAttribute('data-demo-locale') === 'en'
     && document.querySelector('input[placeholder^="Search name"]')?.value === ''
-    && document.querySelector('[data-watch-unread-badge]')?.textContent?.trim() === '12'
+    && document.querySelector('[data-watch-unread-badge]')?.textContent?.trim() === '13'
     && document.querySelector('[data-radar-unseen-badge]')?.textContent?.trim() === '9'
     && document.querySelectorAll('[data-layout-row-grid]').length > 0, { timeout: 20_000 });
 }

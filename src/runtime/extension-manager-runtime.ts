@@ -93,6 +93,9 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
       case 'watchChanged':
         this.publish('watch', message.status);
         break;
+      case 'watchStatusChanged':
+        this.publish('watch-status', message.status);
+        break;
       case 'radarChanged':
         this.publish('radar');
         break;

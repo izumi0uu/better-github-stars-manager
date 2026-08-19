@@ -154,6 +154,7 @@ function harness(input: {
   currentTime?: number;
   now?: () => number;
   runSerialized?: WatchRefreshCoordinatorDependencies['runSerialized'];
+  beforeCredentialSnapshot?: () => void | Promise<void>;
 } = {}) {
   let currentConfig: Config = {
     ...config(),
@@ -235,23 +236,26 @@ function harness(input: {
   const coordinator = createWatchRefreshCoordinator({
     runSerialized,
     auth: {
-      getGitHubCredentialSnapshot: async () => ({
-        watchCredentialSource: currentConfig.watchCredentialSource,
-        accountLogin: currentConfig.username?.trim().toLowerCase() ?? null,
-        mainToken,
-        notificationsToken: currentConfig.watchCredentialSource === 'main'
-          ? mainToken
-          : currentConfig.watchCredentialSource === 'dedicated'
-            ? dedicatedNotificationsToken
-            : null,
-        notificationsConfigured: selectedNotificationsConfigured(),
-        mainIdentity: JSON.stringify([
-          currentConfig.username?.trim().toLowerCase() ?? null,
-          currentConfig.tokenEncrypted,
-          currentConfig.tokenCryptoMeta,
-        ]),
-        notificationsIdentity: selectedNotificationsIdentity(),
-      }),
+      getGitHubCredentialSnapshot: async () => {
+        await input.beforeCredentialSnapshot?.();
+        return {
+          watchCredentialSource: currentConfig.watchCredentialSource,
+          accountLogin: currentConfig.username?.trim().toLowerCase() ?? null,
+          mainToken,
+          notificationsToken: currentConfig.watchCredentialSource === 'main'
+            ? mainToken
+            : currentConfig.watchCredentialSource === 'dedicated'
+              ? dedicatedNotificationsToken
+              : null,
+          notificationsConfigured: selectedNotificationsConfigured(),
+          mainIdentity: JSON.stringify([
+            currentConfig.username?.trim().toLowerCase() ?? null,
+            currentConfig.tokenEncrypted,
+            currentConfig.tokenCryptoMeta,
+          ]),
+          notificationsIdentity: selectedNotificationsIdentity(),
+        };
+      },
       clearWatchNotificationsToken,
     },
     fetchScope,
@@ -708,6 +712,48 @@ describe('Watch background refresh coordinator', () => {
     expect(h.broadcastChanged).toHaveBeenCalledTimes(1);
   });
 
+  it('coalesces scope refreshes that overlap during account reconciliation', async () => {
+    const reconciliationGate = deferred<void>();
+    const pendingScope = deferred<WatchScopeSnapshot>();
+    const runner = createSerializedRunner();
+    const runSerialized: WatchRefreshCoordinatorDependencies['runSerialized'] = (operation) => (
+      runner.run(operation)
+    );
+    const blocker = runSerialized(() => reconciliationGate.promise);
+    const fetchScope = vi.fn(async () => pendingScope.promise);
+    const h = harness({ fetchScope, runSerialized });
+
+    const first = h.coordinator.refreshScope();
+    const second = h.coordinator.refreshScope();
+    reconciliationGate.resolve(undefined);
+    await blocker;
+    await vi.waitFor(() => expect(fetchScope).toHaveBeenCalledTimes(1));
+    pendingScope.resolve(scopeSnapshot());
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(secondResult).toEqual(firstResult);
+    expect(fetchScope).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues a scope refresh when the credential identity changes in flight', async () => {
+    const firstScope = deferred<WatchScopeSnapshot>();
+    const fetchScope = vi.fn(async () => (
+      fetchScope.mock.calls.length === 1 ? firstScope.promise : scopeSnapshot()
+    ));
+    const h = harness({ fetchScope });
+
+    const first = h.coordinator.refreshScope();
+    await vi.waitFor(() => expect(fetchScope).toHaveBeenCalledTimes(1));
+    h.changeAccount('another-user');
+    const second = h.coordinator.refreshScope();
+    firstScope.resolve(scopeSnapshot());
+    await Promise.all([first, second]);
+
+    expect(fetchScope).toHaveBeenCalledTimes(2);
+    expect((await watchStore.getWatchState('another-user'))?.scope.lastSuccessfulAt)
+      .toBe(new Date(NOW).toISOString());
+  });
+
   it('publishes scope then Inbox phases during manual refresh', async () => {
     const pendingScope = deferred<WatchScopeSnapshot>();
     const pendingInbox = deferred<WatchNotificationSnapshot>();
@@ -730,7 +776,7 @@ describe('Watch background refresh coordinator', () => {
       refreshing: true,
       refreshPhase: 'inbox',
     });
-    expect(h.broadcastStatusChanged).toHaveBeenCalledTimes(3);
+    expect(h.broadcastStatusChanged).toHaveBeenCalledTimes(4);
 
     pendingInbox.resolve(inboxSnapshot());
     await expect(refresh).resolves.toMatchObject({
@@ -739,7 +785,46 @@ describe('Watch background refresh coordinator', () => {
         refreshPhase: null,
       },
     });
-    await vi.waitFor(() => expect(h.broadcastStatusChanged).toHaveBeenCalledTimes(5));
+    await vi.waitFor(() => expect(h.broadcastStatusChanged).toHaveBeenCalledTimes(6));
+  });
+
+  it('captures the executing phase before an asynchronous credential read', async () => {
+    const pendingScope = deferred<WatchScopeSnapshot>();
+    const pendingInbox = deferred<WatchNotificationSnapshot>();
+    const credentialReadStarted = deferred<void>();
+    const credentialReadGate = deferred<void>();
+    let pauseNextCredentialRead = false;
+    const h = harness({
+      beforeCredentialSnapshot: async () => {
+        if (!pauseNextCredentialRead) return;
+        pauseNextCredentialRead = false;
+        credentialReadStarted.resolve(undefined);
+        await credentialReadGate.promise;
+      },
+      fetchScope: vi.fn(async () => pendingScope.promise),
+      fetchNotifications: vi.fn(async () => pendingInbox.promise),
+    });
+
+    const refresh = h.coordinator.refresh();
+    await vi.waitFor(() => expect(h.fetchScope).toHaveBeenCalledTimes(1));
+    pauseNextCredentialRead = true;
+    const scopeStatus = h.coordinator.snapshotStatus();
+    await credentialReadStarted.promise;
+
+    pendingScope.resolve(scopeSnapshot());
+    await vi.waitFor(() => expect(h.fetchNotifications).toHaveBeenCalledTimes(1));
+    credentialReadGate.resolve(undefined);
+    await expect(scopeStatus).resolves.toMatchObject({
+      refreshing: true,
+      refreshPhase: 'scope',
+    });
+    await expect(h.coordinator.snapshotStatus()).resolves.toMatchObject({
+      refreshing: true,
+      refreshPhase: 'inbox',
+    });
+
+    pendingInbox.resolve(inboxSnapshot());
+    await refresh;
   });
 
   it('keeps the executing scope phase while an Inbox refresh waits in the queue', async () => {
@@ -867,6 +952,75 @@ describe('Watch background refresh coordinator', () => {
       lastModified: 'Wed, 05 Aug 2026 03:04:05 GMT',
     }));
     expect(h.broadcastChanged).toHaveBeenCalledTimes(5);
+  });
+
+  it('runs queued serialized work before the next durable manual Inbox batch', async () => {
+    const historyBefore = new Date(NOW).toISOString();
+    const firstBatch = deferred<WatchNotificationSnapshot>();
+    const unrelatedGate = deferred<void>();
+    const order: string[] = [];
+    const runner = createSerializedRunner();
+    const runSerialized: WatchRefreshCoordinatorDependencies['runSerialized'] = (operation) => (
+      runner.run(operation)
+    );
+    const fetchNotifications = vi.fn(async (options: FetchNotificationsOptions) => {
+      const startPage = options.startPage ?? 1;
+      order.push(`batch-${startPage}`);
+      if (startPage === 1) return firstBatch.promise;
+      return inboxSnapshot({
+        threads: [thread('older')],
+        before: historyBefore,
+      });
+    });
+    const h = harness({ fetchNotifications, runSerialized });
+
+    const refresh = h.coordinator.refresh();
+    await vi.waitFor(() => expect(fetchNotifications).toHaveBeenCalledTimes(1));
+    const unrelated = runSerialized(async () => {
+      order.push('unrelated');
+      expect(h.coordinator.isRefreshing()).toBe(true);
+      await unrelatedGate.promise;
+    });
+    firstBatch.resolve(inboxSnapshot({
+      threads: [thread('newer')],
+      pageCount: 10,
+      truncated: true,
+      nextPage: 11,
+      before: historyBefore,
+    }));
+
+    await vi.waitFor(() => expect(order).toEqual(['batch-1', 'unrelated']));
+    expect(fetchNotifications).toHaveBeenCalledTimes(1);
+    expect(h.coordinator.isRefreshing()).toBe(true);
+    unrelatedGate.resolve(undefined);
+    await Promise.all([refresh, unrelated]);
+    expect(order).toEqual(['batch-1', 'unrelated', 'batch-11']);
+    expect(fetchNotifications.mock.calls.map(([options]) => options.startPage ?? 1))
+      .toEqual([1, 11]);
+    expect((await watchStore.getWatchState(ACCOUNT))?.inbox.scanStatus).toBe('complete');
+  });
+
+  it('loads older from durable counts without materializing the Inbox projection', async () => {
+    const queryInbox = vi.fn(async () => {
+      throw new Error('Inbox projection should not be queried');
+    }) as typeof watchStore.queryStoredWatchInbox;
+    const fetchNotifications = vi.fn(async () => inboxSnapshot({
+      threads: [thread('new')],
+      pageCount: 10,
+      truncated: true,
+      nextPage: 11,
+    }));
+    const h = harness({ fetchNotifications, queryInbox });
+
+    await expect(h.coordinator.loadOlder()).resolves.toEqual(expect.objectContaining({
+      addedCount: 1,
+      hasMore: true,
+    }));
+    expect(queryInbox).not.toHaveBeenCalled();
+    expect((await watchStore.getWatchState(ACCOUNT))?.inbox).toEqual(expect.objectContaining({
+      matchedCount: 1,
+      scanStatus: 'scanning',
+    }));
   });
 
   it('preserves a moving thread until a restarted snapshot is stably confirmed', async () => {

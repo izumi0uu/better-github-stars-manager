@@ -134,7 +134,6 @@ export interface MessageCatalog {
     credentialStaleSnapshot: string;
     scopeFailed: string;
     inboxFailed: string;
-    truncated: string;
     cooldownUntil: (time: string) => string;
     watchedRepositoryCount: (count: number) => string;
     threadCount: (count: number) => string;
@@ -1259,7 +1258,6 @@ const messages: Record<Locale, MessageCatalog> = {
       staleSnapshot: "Showing the last successful snapshot because the latest refresh failed.",
       scopeFailed: "Watched-repository membership could not be refreshed; Inbox coverage is unaffected.",
       inboxFailed: "The full Inbox scan could not continue.",
-      truncated: "The full Inbox scan has not reached the end yet.",
       cooldownUntil: (time) => `Background polling resumes at ${time}; manual refresh remains available.`,
       watchedRepositoryCount: (count) => `${count} confirmed watched ${count === 1 ? "Star" : "Stars"}`,
       threadCount: (count) => `${count} ${count === 1 ? "thread" : "threads"}`,
@@ -2581,7 +2579,6 @@ const messages: Record<Locale, MessageCatalog> = {
       staleSnapshot: "最近一次刷新失败，当前仍显示上一次成功快照。",
       scopeFailed: "无法刷新已 Watch 仓库成员关系；不影响 Inbox 覆盖范围。",
       inboxFailed: "无法继续完整扫描收件箱。",
-      truncated: "完整收件箱扫描尚未到达末尾。",
       cooldownUntil: (time) => `后台轮询将在 ${time} 恢复；仍可手动刷新。`,
       watchedRepositoryCount: (count) => `${count} 个已确认 Watch 的 Star 仓库`,
       threadCount: (count) => `${count} 个 threads`,

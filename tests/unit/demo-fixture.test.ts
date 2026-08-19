@@ -42,6 +42,8 @@ describe('public Demo fixture', () => {
     expect(DEMO_FIXTURE.watchState.accountLogin).toBe('demo-scout');
     expect(DEMO_FIXTURE.radarState.accountLogin).toBe('demo-scout');
     expect(DEMO_FIXTURE.recommendationState.accountLogin).toBe('demo-scout');
+    expect(DEMO_FIXTURE.watchState.inbox.lastModified)
+      .toBe(new Date(DEMO_FIXTURE.now).toUTCString());
   });
 
   it('deep-freezes the canonical snapshot', () => {

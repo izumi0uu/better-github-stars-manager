@@ -364,7 +364,7 @@ const watchRefreshCoordinator = createWatchRefreshCoordinator({
     clearData: watchStore.clearWatchData,
   },
   broadcastChanged: broadcastWatchChanged,
-  broadcastStatusChanged: broadcastWatchChanged,
+  broadcastStatusChanged: broadcastWatchStatusChanged,
 });
 const radarRefreshCoordinator = createRadarRefreshCoordinator({
   runSerialized: (operation) => jobQueue.run(operation),
@@ -1254,12 +1254,12 @@ function scheduleProgressPersist(prev: SyncProgress, next: SyncProgress) {
 
 type ManagerBroadcastMessage =
   | { type: 'progress'; progress: SyncProgress }
-  | { type: 'watchChanged'; status?: WatchStatus }
+  | { type: 'watchChanged' | 'watchStatusChanged'; status?: WatchStatus }
   | { type: 'dataChanged' | 'recommendationsChanged' | 'radarChanged' };
 
 function broadcastManagerMessage(message: ManagerBroadcastMessage): void {
   void chrome.runtime.sendMessage(message).catch(() => {});
-  if (message.type !== 'watchChanged') return;
+  if (message.type !== 'watchChanged' && message.type !== 'watchStatusChanged') return;
 
   // The Watch UI is a content script, so tab messaging exposes committed scan
   // progress before the original refresh request sends its final response.
@@ -1290,14 +1290,21 @@ function broadcastDataChanged() {
 
 let watchBroadcastTail: Promise<void> = Promise.resolve();
 
-function broadcastWatchChanged() {
+function queueWatchBroadcast(type: 'watchChanged' | 'watchStatusChanged') {
+  // Capture at request time so queued delivery preserves phase order.
   const statusPromise = watchRefreshCoordinator.snapshotStatus().catch(() => null);
   watchBroadcastTail = watchBroadcastTail.then(async () => {
     const status = await statusPromise;
-    broadcastManagerMessage(status
-      ? { type: 'watchChanged', status }
-      : { type: 'watchChanged' });
+    broadcastManagerMessage(status ? { type, status } : { type });
   }).catch(() => {});
+}
+
+function broadcastWatchChanged() {
+  queueWatchBroadcast('watchChanged');
+}
+
+function broadcastWatchStatusChanged() {
+  queueWatchBroadcast('watchStatusChanged');
 }
 function broadcastRecommendationChanged() {
   broadcastManagerMessage({ type: 'recommendationsChanged' });

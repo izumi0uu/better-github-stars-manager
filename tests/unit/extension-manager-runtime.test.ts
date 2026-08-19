@@ -157,7 +157,7 @@ describe('ExtensionManagerRuntime', () => {
     expect(adapterMocks.updateWatchRepositoryCollapse).toHaveBeenCalledWith('Owner/Repo', 'signature');
   });
 
-  it('shares ordered invalidations across subscribers and detaches Chrome listeners after the last cleanup', () => {
+  it('shares ordered Watch status and invalidations across subscribers and cleans up listeners', () => {
     const runtime = new ExtensionManagerRuntime();
     const first = vi.fn();
     const second = vi.fn();
@@ -176,15 +176,21 @@ describe('ExtensionManagerRuntime', () => {
       inboxStatus: 'fresh',
       state: null,
     };
+    for (const listener of runtimeListeners) {
+      listener({ type: 'watchStatusChanged', status: watchStatus });
+    }
+    expect(first).toHaveBeenLastCalledWith({ kind: 'watch-status', epoch: 1, watchStatus });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'watch-status', epoch: 1, watchStatus });
+
     for (const listener of runtimeListeners) listener({ type: 'watchChanged', status: watchStatus });
-    expect(first).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 1, watchStatus });
-    expect(second).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 1, watchStatus });
+    expect(first).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 2, watchStatus });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 2, watchStatus });
 
     for (const listener of storageListeners) {
       listener({ gsm_config: { oldValue: {}, newValue: {} } }, 'local');
     }
-    expect(first).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 2 });
-    expect(second).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 2 });
+    expect(first).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 3 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 3 });
 
     const credential = (tokenEncrypted: string, watchNotificationsEnabled: boolean) => ({
       tokenEncrypted,
@@ -201,8 +207,8 @@ describe('ExtensionManagerRuntime', () => {
         },
       }, 'local');
     }
-    expect(first).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 3 });
-    expect(second).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 3 });
+    expect(first).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 4 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 4 });
 
     for (const listener of storageListeners) {
       listener({
@@ -212,8 +218,8 @@ describe('ExtensionManagerRuntime', () => {
         },
       }, 'local');
     }
-    expect(first).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 4 });
-    expect(second).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 4 });
+    expect(first).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 5 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 5 });
 
     unsubscribeFirst();
     expect(runtimeRemove).not.toHaveBeenCalled();
