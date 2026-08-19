@@ -12,11 +12,14 @@ import { Spinner } from '@/ui/shadcn/spinner';
 import { ManagerResourceLink } from '@/ui/components/ManagerResource';
 import {
   watchReasonPresetValues,
+  type WatchInboxViewMode,
   type WatchReasonCount,
   type WatchReasonPreset,
 } from '@/ui/watch-inbox-presentation';
 import type { WatchInboxSearchInput } from '@/ui/watch-inbox-types';
 interface WatchSurfaceActionsProps {
+  viewMode: WatchInboxViewMode;
+  onViewModeChange: (viewMode: WatchInboxViewMode) => void;
   unreadOnly: boolean;
   refreshing: boolean;
   refreshDisabled: boolean;
@@ -200,6 +203,8 @@ function ReasonFilterPopover({
 }
 
 function WatchSurfaceActions({
+  viewMode,
+  onViewModeChange,
   unreadOnly,
   refreshing,
   refreshDisabled,
@@ -210,6 +215,25 @@ function WatchSurfaceActions({
 
   return (
     <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+      <div
+        className="inline-flex h-[26px] items-center rounded-md bg-muted p-0.5"
+        role="group"
+        aria-label={m.watch.viewLabel}
+      >
+        {(['timeline', 'repository'] as const).map((candidate) => (
+          <button
+            key={candidate}
+            type="button"
+            aria-pressed={viewMode === candidate}
+            onClick={() => onViewModeChange(candidate)}
+            className={cn('h-[22px] rounded-sm px-2.5 text-[11px] font-medium text-muted-foreground transition-[background-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', {
+              'bg-card text-foreground shadow-sm': viewMode === candidate,
+            })}
+          >
+            {candidate === 'timeline' ? m.watch.timelineView : m.watch.repositoryView}
+          </button>
+        ))}
+      </div>
       <div
         className="inline-flex h-[26px] items-center rounded-md bg-muted p-0.5"
         role="group"
@@ -258,6 +282,8 @@ interface WatchInboxCommandBarProps {
   reasonCounts: readonly WatchReasonCount[];
   selectedReasons: readonly string[];
   onSelectedReasonsChange: (reasons: string[]) => void;
+  viewMode: WatchInboxViewMode;
+  onViewModeChange: (viewMode: WatchInboxViewMode) => void;
   unreadOnly: boolean;
   refreshing: boolean;
   refreshDisabled: boolean;
@@ -270,6 +296,8 @@ export function WatchInboxCommandBar({
   reasonCounts,
   selectedReasons,
   onSelectedReasonsChange,
+  viewMode,
+  onViewModeChange,
   unreadOnly,
   refreshing,
   refreshDisabled,
@@ -320,6 +348,8 @@ export function WatchInboxCommandBar({
         />
         <span className="min-w-0 flex-1 max-[720px]:hidden" />
         <WatchSurfaceActions
+          viewMode={viewMode}
+          onViewModeChange={onViewModeChange}
           unreadOnly={unreadOnly}
           refreshing={refreshing}
           refreshDisabled={refreshDisabled}

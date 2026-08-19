@@ -18,6 +18,7 @@ export type WatchErrorCode =
   | 'invalid_pagination'
   | 'not_modified'
   | 'page_limit_exceeded'
+  | 'snapshot_unstable'
   | 'invalid_repository'
   | 'invalid_thread'
   | 'subject_not_found'
@@ -67,6 +68,8 @@ export interface GitHubNotificationThread {
   updatedAt: string;
   lastReadAt: string | null;
   fetchedAt: string;
+  /** Persistence-only marker for the full Inbox scan that observed this row. */
+  scanId?: string | null;
 }
 
 export type WatchSubjectKind = 'issue' | 'pull_request';
@@ -149,6 +152,14 @@ export interface WatchInboxRefreshSnapshot extends WatchRefreshSnapshot {
   historyNextPage: number | null;
   historyExhausted: boolean;
   historyErrorCode: string | null;
+  /** Active full-scan identity; null when no scan is in progress. */
+  scanId: string | null;
+  scanStatus: 'pending' | 'scanning' | 'partial' | 'complete';
+  scanStartedAt: string | null;
+  /** Number of remote pages committed for the active or last completed scan. */
+  scanPageCount: number;
+  /** Last time a complete traversal committed and swept remote-absent rows. */
+  lastConvergedAt: string | null;
 }
 
 export interface GitHubWatchStateRecord {
@@ -166,9 +177,9 @@ export interface WatchScopeSnapshot {
 
 export interface WatchNotificationSnapshot {
   threads: GitHubNotificationThread[];
-  /** Number of valid candidate threads received before live-Star filtering. */
+  /** Number of distinct valid thread IDs returned in this batch. */
   candidateCount: number;
-  /** Number of threads remaining after live-Star filtering. */
+  /** Number of distinct valid thread IDs returned in this batch. */
   matchedCount: number;
   pageCount: number;
   truncated: boolean;

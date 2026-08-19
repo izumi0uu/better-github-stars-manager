@@ -84,6 +84,7 @@ function queryResponse(): WatchInboxQueryResponse {
       hasMainToken: true,
       hasNotificationsToken: true,
       refreshing: false,
+      refreshPhase: null,
       scopeStatus: 'fresh',
       inboxStatus: 'fresh',
       state: {
@@ -109,6 +110,11 @@ function queryResponse(): WatchInboxQueryResponse {
           historyNextPage: null,
           historyExhausted: true,
           historyErrorCode: null,
+          scanId: null,
+          scanStatus: 'complete',
+          scanStartedAt: null,
+          scanPageCount: 1,
+          lastConvergedAt: '2026-08-05T12:00:00Z',
         },
       },
     },
@@ -194,6 +200,31 @@ describe('Watch inbox flat rows', () => {
     ]);
     expect(rows.filter((row) => row.kind === 'thread').map((row) => row.thread.id))
       .toEqual(['3']);
+  });
+  it('groups repositories globally without day rows and keeps newest threads first', () => {
+    const rows = buildWatchInboxRows(
+      timelineThreads,
+      new Set(['owner/alpha']),
+      'repository',
+    );
+
+    expect(rows.map((row) => row.key)).toEqual([
+      'repository:owner/security',
+      'repository:owner/alpha',
+      'thread:2',
+      'thread:1',
+    ]);
+    expect(rows.some((row) => row.kind === 'day')).toBe(false);
+  });
+
+  it('uses repository name as a deterministic tie-breaker for equal activity', () => {
+    const tied = [
+      { ...threads[0], repositoryFullName: 'owner/zeta', updatedAt: '2026-08-05T12:00:00Z' },
+      { ...threads[1], repositoryFullName: 'owner/alpha', updatedAt: '2026-08-05T12:00:00Z' },
+    ];
+
+    expect(buildWatchInboxRows(tied, new Set(), 'repository').map((row) => row.key))
+      .toEqual(['repository:owner/alpha', 'repository:owner/zeta']);
   });
 
   it('finds adjacent logical threads across repository and day boundaries', () => {
@@ -330,15 +361,103 @@ describe('Watch status presentation', () => {
     });
   });
 
-  it('prioritizes bounded snapshot disclosure over refresh activity', () => {
+  it('distinguishes required, active, and paused full Inbox scans', () => {
+    const pending = queryResponse();
+    pending.status.state!.inbox.scanStatus = 'pending';
+    pending.status.state!.inbox.lastConvergedAt = null;
+    expect(deriveWatchStatusPresentation({
+      result: pending,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({ kind: 'scan_pending', tone: 'muted', code: null });
+
+    expect(deriveWatchStatusPresentation({
+      result: pending,
+      loading: false,
+      refreshing: true,
+      error: null,
+    })).toMatchObject({ kind: 'scanning', tone: 'muted', code: null });
+
+    const scanning = queryResponse();
+    scanning.status.scopeStatus = 'stale';
+    scanning.status.state!.scope.errorCode = 'network_error';
+    scanning.status.state!.inbox.scanId = 'scan-1';
+    scanning.status.state!.inbox.scanStatus = 'scanning';
+    scanning.status.state!.inbox.scanStartedAt = '2026-08-05T12:00:00Z';
+    scanning.status.state!.inbox.scanPageCount = 10;
+    scanning.status.state!.inbox.candidateCount = 500;
+    expect(deriveWatchStatusPresentation({
+      result: scanning,
+      loading: false,
+      refreshing: true,
+      error: null,
+    })).toMatchObject({ kind: 'scanning', tone: 'muted', code: null });
+
+    const partial = queryResponse();
+    partial.status.inboxStatus = 'stale';
+    partial.status.state!.inbox.errorCode = 'rate_limited';
+    partial.status.state!.inbox.scanId = 'scan-1';
+    partial.status.state!.inbox.scanStatus = 'partial';
+    partial.status.state!.inbox.scanStartedAt = '2026-08-05T12:00:00Z';
+    partial.status.state!.inbox.scanPageCount = 20;
+    expect(deriveWatchStatusPresentation({
+      result: partial,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({ kind: 'scan_partial', tone: 'warning', code: 'rate_limited' });
+  });
+
+  it('reports the active scope and Inbox phases ahead of stale saved state', () => {
     const response = queryResponse();
-    response.status.state!.inbox.truncated = true;
+    response.status.refreshing = true;
+    response.status.refreshPhase = 'scope';
+    response.status.inboxStatus = 'stale';
+    response.status.state!.inbox.errorCode = 'github_unavailable';
 
     expect(deriveWatchStatusPresentation({
       result: response,
       loading: false,
       refreshing: true,
       error: null,
-    })).toMatchObject({ kind: 'truncated', tone: 'warning', code: 'truncated' });
+    })).toMatchObject({ kind: 'scope_refreshing', tone: 'muted', code: null });
+
+    response.status.refreshPhase = 'inbox';
+    response.status.state!.inbox.scanStatus = 'scanning';
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: true,
+      error: null,
+    })).toMatchObject({ kind: 'scanning', tone: 'muted', code: null });
+
+    response.status.state!.inbox.scanStatus = 'complete';
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: true,
+      error: null,
+    })).toMatchObject({ kind: 'refreshing', tone: 'muted', code: null });
+  });
+
+  it('treats the converged polling interval as healthy rather than incomplete', () => {
+    const response = queryResponse();
+    response.status.inboxStatus = 'cooldown';
+    response.status.state!.inbox.nextAllowedAt = '2026-08-05T12:01:00Z';
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: false,
+      error: null,
+    })).toMatchObject({ kind: 'cooldown', tone: 'success', code: 'cooldown' });
+
+    expect(deriveWatchStatusPresentation({
+      result: response,
+      loading: false,
+      refreshing: true,
+      error: null,
+    })).toMatchObject({ kind: 'refreshing', tone: 'muted', code: null });
   });
 });

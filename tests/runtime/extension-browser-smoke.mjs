@@ -269,7 +269,7 @@ export async function runExtensionBrowserSmoke(options = {}) {
     await ownStars.bringToFront();
     await ownStars.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
     await waitForManagerRoot(ownStars);
-    await assertManagerSurfaceBadges(ownStars, { watch: '2', radar: '1' });
+    await assertManagerSurfaceBadges(ownStars, { watch: '3', radar: '1' });
     ok('Watch and Radar badges rendered from lightweight stored counts before either surface opened');
     await ownStars.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
     await assertRadarSourceFilters(ownStars);
@@ -317,18 +317,21 @@ export async function runExtensionBrowserSmoke(options = {}) {
     resetBackgroundGitHubApiCalls(browser, extensionId);
     const subjectDetailFixture = installBackgroundWatchSubjectDetailFixture(extensionId);
 
-    step('9) Watch renders the bounded stored snapshot without GitHub API calls');
+    step('9) Watch renders the converged stored snapshot without GitHub API calls');
     assert.deepEqual(seededWatch, {
-      databaseVersion: 5,
+      databaseVersion: 6,
       hasMainToken: true,
       hasNotificationsToken: true,
-      allThreadCount: 3,
-      allGroupCount: 2,
+      allThreadCount: 4,
+      allGroupCount: 3,
       customThreadOutsideNativeScopeVisible: true,
-      notificationOutsideLiveStarsVisible: false,
+      notificationOutsideLocalStarsVisible: true,
+      scanStatus: 'complete',
+      candidateCount: 4,
+      matchedCount: 4,
       radarActivityCount: 1,
       radarUnseenCount: 1,
-      watchBadgeCount: 2,
+      watchBadgeCount: 3,
       radarBadgeCount: 1,
       recommendationCount: 1,
       recommendationExcludedFromStars: true,
@@ -354,10 +357,10 @@ export async function runExtensionBrowserSmoke(options = {}) {
       unknownTitleVisible: true,
       unknownTypeVisible: true,
       unknownFallbackHref: 'https://github.com/smoke-user/custom-repo',
-      notificationOutsideLiveStarsVisible: false,
+      notificationOutsideLocalStarsVisible: true,
       statusKind: 'stale',
-      listEndTone: 'info',
-      listEndText: 'End of current window · older threads may exist',
+      listEndTone: 'warning',
+      listEndText: 'End of saved snapshot · 3 threads',
     });
 
     await clickWatchFilter(ownStars, 'All');
@@ -365,8 +368,8 @@ export async function runExtensionBrowserSmoke(options = {}) {
     assert.equal(allSnapshot.unreadPressed, false);
     assert.equal(allSnapshot.allPressed, true);
     assert.equal(allSnapshot.readTitleVisible, true);
-    assert.equal(allSnapshot.notificationOutsideLiveStarsVisible, false);
-    ok('Unread/All changed the stored projection, Custom threads bypassed native scope, and unknown subjects fell back safely');
+    assert.equal(allSnapshot.notificationOutsideLocalStarsVisible, true);
+    ok('Unread/All changed the stored projection, active threads outside Stars remained visible, and unknown subjects fell back safely');
     await openWatchSubjectDetail(ownStars, 'Unread issue thread');
     await assertWatchSubjectDetail(ownStars, subjectDetailFixture);
     ok('Watch Issue details loaded on demand through the main credential');
@@ -777,7 +780,7 @@ async function seedWatchAndRadarFixture(extId) {
   const seeded = await page.evaluate(async () => {
     const APP_SECRET = 'better-github-stars-manager/v1/static-derivation-secret';
     const DB_NAME = 'better-github-stars-manager';
-    const DEXIE_VERSION = 5;
+    const DEXIE_VERSION = 6;
     const IDB_VERSION = DEXIE_VERSION * 10;
     const CONFIG_KEY = 'gsm_config';
     const CREDENTIALS_KEY = 'gsm_github_credentials';
@@ -828,9 +831,9 @@ async function seedWatchAndRadarFixture(extId) {
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(new Error(unexpectedUpgrade
-        ? 'the extension did not initialize its Dexie v5 schema before Watch fixture setup'
+        ? 'the extension did not initialize its Dexie v6 schema before Watch fixture setup'
         : `failed to open extension IndexedDB: ${request.error?.message ?? 'unknown error'}`));
-      request.onblocked = () => reject(new Error('extension IndexedDB v5 fixture open was blocked'));
+      request.onblocked = () => reject(new Error('extension IndexedDB v6 fixture open was blocked'));
     });
     const transactionDone = (transaction) => new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve();
@@ -896,7 +899,7 @@ async function seedWatchAndRadarFixture(extId) {
     for (const storeName of requiredStores) {
       if (!database.objectStoreNames.contains(storeName)) {
         database.close();
-        throw new Error(`Dexie v5 is missing required store ${storeName}`);
+        throw new Error(`Dexie v6 is missing required store ${storeName}`);
       }
     }
 
@@ -1024,7 +1027,7 @@ async function seedWatchAndRadarFixture(extId) {
     threads.put(thread({
       id: '1001',
       repository: 'smoke-user/not-starred',
-      title: 'OUTSIDE LIVE STARS MUST NOT RENDER',
+      title: 'Active Inbox thread outside local Stars',
       type: 'Issue',
       unread: true,
       updatedAt: '2026-08-05T13:30:00.000Z',
@@ -1046,12 +1049,17 @@ async function seedWatchAndRadarFixture(extId) {
         lastModified: 'Wed, 05 Aug 2026 12:05:00 GMT',
         nextAllowedAt: null,
         candidateCount: 4,
-        matchedCount: 3,
-        truncated: true,
+        matchedCount: 4,
+        scanId: null,
+        scanStatus: 'complete',
+        scanStartedAt: null,
+        scanPageCount: 1,
+        lastConvergedAt: '2026-08-05T12:05:00.000Z',
+        truncated: false,
         newerThan: '2026-08-05T12:00:00.000Z',
         historyBefore: '2026-08-05T12:05:00.000Z',
-        historyNextPage: 21, // Exercise manual history beyond eager pages 1-20.
-        historyExhausted: false,
+        historyNextPage: null,
+        historyExhausted: true,
         historyErrorCode: null,
       },
     });
@@ -1159,7 +1167,7 @@ async function seedWatchAndRadarFixture(extId) {
     const surfaceBadges = await chrome.runtime.sendMessage({ type: 'queryManagerSurfaceBadges' });
     if (
       !surfaceBadges?.ok
-      || surfaceBadges.data?.watchUnreadCount !== 2
+      || surfaceBadges.data?.watchUnreadCount !== 3
       || surfaceBadges.data?.radarUnseenCount !== 1
     ) {
       throw new Error(surfaceBadges?.error ?? `seeded badge summary was unavailable: ${JSON.stringify(surfaceBadges?.data ?? null)}`);
@@ -1205,7 +1213,10 @@ async function seedWatchAndRadarFixture(extId) {
       allThreadCount: allInbox.data.totalCount,
       allGroupCount: allInbox.data.groups.length,
       customThreadOutsideNativeScopeVisible: allInbox.data.threads.some((item) => item.id === '1008'),
-      notificationOutsideLiveStarsVisible: allInbox.data.threads.some((item) => item.id === '1001'),
+      notificationOutsideLocalStarsVisible: allInbox.data.threads.some((item) => item.id === '1001'),
+      scanStatus: allInbox.data.status.state?.inbox.scanStatus,
+      candidateCount: allInbox.data.status.state?.inbox.candidateCount,
+      matchedCount: allInbox.data.status.state?.inbox.matchedCount,
       radarActivityCount: radarQuery.data.activities.length,
       radarUnseenCount: radarQuery.data.unseenCount,
       recommendationCount: recommendationQuery.data.recommendations.length,
@@ -3725,7 +3736,7 @@ async function readWatchSnapshot(page) {
       unknownTitleVisible: text.includes('Future event thread'),
       unknownTypeVisible: text.includes('FutureEvent'),
       unknownFallbackHref: unknownLink?.href ?? null,
-      notificationOutsideLiveStarsVisible: text.includes('OUTSIDE LIVE STARS MUST NOT RENDER'),
+      notificationOutsideLocalStarsVisible: text.includes('Active Inbox thread outside local Stars'),
       statusKind: status?.getAttribute('data-watch-status') ?? null,
       listEndTone: listEnd?.getAttribute('data-surface-list-end-tone') ?? null,
       listEndText: listEnd?.textContent?.trim() ?? null,

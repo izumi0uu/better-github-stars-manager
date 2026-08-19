@@ -152,6 +152,61 @@ export class StarsDB extends Dexie {
       recommendationState: '&id, accountLogin',
       recommendationIgnores: '&id, accountLogin',
     });
+    // v6 makes full Notifications traversal durable. Cached threads remain
+    // visible, but every v5 Watch snapshot loses validator/cooldown/cursor
+    // authority and must complete one unconditional scan before 304s are valid.
+    this.version(6).stores({
+      stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
+      tags: 'full_name, mtime',
+      tagMeta: 'name, dimension, mtime',
+      organizeJobs: 'jobId, &activeSlot, status, updatedAt, originAgentSessionId, sessionId',
+      organizeItems: 'id, [jobId+position], [jobId+analysisState], jobId, position, analysisState, leaseExpiresAt',
+      organizeTaxonomies: 'jobId',
+      organizeApplies: 'applyId, jobId, status',
+      organizeApplyRows: 'id, [applyId+position], [applyId+state], applyId, state, leaseExpiresAt',
+      tagDirtyOutbox: 'id, kind, updatedAt',
+      agentSessions: 'id, updatedAt, createdAt',
+      agentMessages: 'id, sessionId, &[sessionId+sequence], [sessionId+turnAttemptId]',
+      agentAttempts: 'id, sessionId, &[sessionId+turnAttemptId], [sessionId+state], updatedAt',
+      agentAttemptRecoveries: 'id, sessionId, &[sessionId+turnAttemptId], updatedAt',
+      agentArtifacts: 'id, sessionId, turnAttemptId, ownerMessageId, storageClass, [sessionId+storageClass], [storageClass+state+lastAccessedAt], [state+createdAt], expiresAt',
+      agentArtifactChunks: 'id, artifactId, &[artifactId+index]',
+      agentStorageUsage: 'id',
+      watchRepositories: 'full_name',
+      watchNotificationThreads: 'id, repositoryFullName, updatedAt, [repositoryFullName+updatedAt]',
+      watchState: 'id',
+      radarActivities: '&id, accountLogin, repositoryKey, starredAt, dismissedAt, [accountLogin+starredAt], [accountLogin+repositoryKey]',
+      radarState: '&id, accountLogin, lastSuccessfulAt',
+      recommendations: '&id, accountLogin',
+      recommendationState: '&id, accountLogin',
+      recommendationIgnores: '&id, accountLogin',
+    }).upgrade(async (tx) => {
+      const stateTable = tx.table('watchState');
+      const state = await stateTable.get('singleton') as GitHubWatchStateRecord | undefined;
+      if (!state) return;
+      const rowCount = await tx.table('watchNotificationThreads').count();
+      await stateTable.put({
+        ...state,
+        inbox: {
+          ...state.inbox,
+          errorCode: null,
+          lastModified: null,
+          nextAllowedAt: null,
+          candidateCount: rowCount,
+          matchedCount: rowCount,
+          truncated: false,
+          historyBefore: null,
+          historyNextPage: null,
+          historyExhausted: true,
+          historyErrorCode: null,
+          scanId: null,
+          scanStatus: 'pending',
+          scanStartedAt: null,
+          scanPageCount: 0,
+          lastConvergedAt: null,
+        },
+      });
+    });
   }
 }
 

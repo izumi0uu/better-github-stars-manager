@@ -45,6 +45,7 @@ function remoteRepository(
 function recommendationInputs() {
   const seeds = selectRecommendationSeeds([{
     full_name: 'Seed/Repo',
+    description: 'Public-safe developer tooling',
     language: 'TypeScript',
     topics: ['developer-tools'],
     starred_at: '2026-08-10T11:00:00Z',
@@ -87,6 +88,48 @@ describe('GitHub recommendation source', () => {
       rateLimitRemaining: 8,
     });
     expect(result.recommendations.map((row) => row.repositoryKey)).toEqual(['candidate/tool']);
+  });
+
+  it('sends a topic-less description keyword plan with supported Search bounds', async () => {
+    const seeds = selectRecommendationSeeds([{
+      full_name: 'Sample/App',
+      description: 'luminara',
+      language: null,
+      topics: [],
+      starred_at: '2026-08-10T11:00:00Z',
+      stargazers_count: 10,
+      tombstone: false,
+      viewer_has_starred: true,
+    }]);
+    const keywordPlan = buildRecommendationQueryPlan(seeds)
+      .find((plan) => plan.signalKind === 'keyword');
+
+    expect(keywordPlan).toMatchObject({
+      signalKind: 'keyword',
+      signalValue: 'luminara',
+      query: 'luminara in:name,description archived:false fork:false stars:>=10',
+    });
+    if (!keywordPlan) throw new Error('Expected a topic-less keyword query');
+
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      expect(String(input)).toBe(
+        'https://api.github.com/search/repositories?q=luminara+in%3Aname%2Cdescription+archived%3Afalse+fork%3Afalse+stars%3A%3E%3D10&sort=stars&order=desc&per_page=100&page=1',
+      );
+      return jsonResponse({ items: [] });
+    }) as typeof fetch;
+
+    const result = await fetchGitHubRecommendations({
+      token: 'synthetic-token',
+      accountLogin: 'viewer',
+      seeds,
+      queryPlan: [keywordPlan],
+      excludedRepositoryKeys: new Set(),
+      fetchImpl,
+      now: () => NOW,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ seedCount: 1, queryCount: 1 });
   });
 
   it('can rank sixty unique candidates from the bounded Search pool', async () => {

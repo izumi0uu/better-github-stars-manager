@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe('Watch background integration contract', () => {
-  it('uses the shared queue and only publishes a Watch-specific invalidation', () => {
+  it('uses the shared queue and publishes Watch invalidation to content scripts', () => {
     assert.match(backgroundSource, /const watchRefreshCoordinator = createWatchRefreshCoordinator\(\{/);
     assert.match(backgroundSource, /runSerialized: \(operation\) => jobQueue\.run\(operation\)/);
     assert.match(
@@ -59,11 +59,21 @@ describe('Watch background integration contract', () => {
       /loadLiveRepositoryNames: async \(\) => \(await db\.stars\.toArray\(\)\)\s*\.filter\(\(star\) => !star\.tombstone && star\.viewer_has_starred !== false\)\s*\.map\(\(star\) => star\.full_name\)/,
     );
 
+    const managerBroadcast = extract(
+      backgroundSource,
+      /function broadcastManagerMessage\(message: ManagerBroadcastMessage\): void \{([\s\S]*?)\n\}\n\nfunction setProgress/,
+    );
+    assert.match(managerBroadcast, /chrome\.runtime\.sendMessage\(message\)/);
+    assert.match(managerBroadcast, /chrome\.tabs\.query\(\{ url: 'https:\/\/github\.com\/\*' \}\)/);
+    assert.match(managerBroadcast, /chrome\.tabs\.sendMessage\(tab\.id, message\)/);
+
     const broadcast = extract(
       backgroundSource,
       /function broadcastWatchChanged\(\) \{([\s\S]*?)\n\}/,
     );
-    assert.match(broadcast, /sendMessage\(\{ type: 'watchChanged' \}\)/);
+    assert.match(broadcast, /watchRefreshCoordinator\.snapshotStatus\(\)/);
+    assert.match(broadcast, /watchBroadcastTail/);
+    assert.match(broadcast, /\{ type: 'watchChanged', status \}/);
     assert.doesNotMatch(broadcast, /invalidateCache|dataChanged/);
   });
 

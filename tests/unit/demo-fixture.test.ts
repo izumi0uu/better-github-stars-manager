@@ -33,9 +33,9 @@ describe('public Demo fixture', () => {
       .toBeGreaterThanOrEqual(60);
     expect(DEMO_FIXTURE.tagMeta).toHaveLength(10);
     expect(new Set(DEMO_FIXTURE.tagMeta.map((meta) => meta.name)).size).toBe(10);
-    expect(DEMO_FIXTURE.watchThreads).toHaveLength(15);
-    expect(new Set(DEMO_FIXTURE.watchThreads.map((thread) => thread.repositoryFullName)).size).toBe(4);
-    expect(Object.keys(DEMO_FIXTURE.watchSubjectDetailsByThreadId)).toHaveLength(15);
+    expect(DEMO_FIXTURE.watchThreads).toHaveLength(16);
+    expect(new Set(DEMO_FIXTURE.watchThreads.map((thread) => thread.repositoryFullName)).size).toBe(5);
+    expect(Object.keys(DEMO_FIXTURE.watchSubjectDetailsByThreadId)).toHaveLength(16);
     expect(DEMO_FIXTURE.radarActivities).toHaveLength(12);
     expect(DEMO_FIXTURE.recommendationBatches.length).toBeGreaterThan(1);
     expect(DEMO_FIXTURE.recommendationBatches.every((batch) => batch.length >= 6)).toBe(true);

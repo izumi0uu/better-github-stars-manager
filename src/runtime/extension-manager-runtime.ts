@@ -26,6 +26,7 @@ import type {
   WatchInboxQueryResponse,
   WatchLoadOlderResult,
   WatchRefreshResult,
+  WatchStatus,
   WatchThreadMutationInput,
   WatchThreadMutationResult,
 } from '@/watch/watch-contract';
@@ -56,18 +57,22 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
   private readonly listeners = new Set<ManagerRuntimeListener>();
   private listening = false;
 
-  private publish(kind: ManagerRuntimeEventKind): void {
-    const event = { kind, epoch: ++this.epoch } as const;
+  private publish(kind: ManagerRuntimeEventKind, watchStatus?: WatchStatus): void {
+    const event = {
+      kind,
+      epoch: ++this.epoch,
+      ...(watchStatus ? { watchStatus } : {}),
+    } as const;
     for (const listener of [...this.listeners]) listener(event);
   }
 
-  private readonly onMessage = (message: { type?: string }) => {
+  private readonly onMessage = (message: { type?: string; status?: WatchStatus }) => {
     switch (message.type) {
       case 'dataChanged':
         this.publish('data');
         break;
       case 'watchChanged':
-        this.publish('watch');
+        this.publish('watch', message.status);
         break;
       case 'radarChanged':
         this.publish('radar');

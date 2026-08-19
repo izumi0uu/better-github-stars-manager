@@ -154,6 +154,15 @@ describe('i18n catalog and locale propagation invariants', () => {
     assert.equal(chinese.agentApplyingChanges, '正在应用标签变更…');
   });
 
+  it('describes the current Watch repository count directly', () => {
+    const english = getMessages('en');
+    const chinese = getMessages('zh-CN');
+
+    assert.equal(english.watch.statusFresh(804, 4), '804 unread · currently watching 4 repositories');
+    assert.equal(english.watch.statusFresh(1, 1), '1 unread · currently watching 1 repository');
+    assert.equal(chinese.watch.statusFresh(804, 4), '未读 804 · 当前 Watch 了 4 个仓库');
+  });
+
   it('keeps Cubby scope summaries natural and localized', () => {
     const english = getMessages('en').agentPanel;
     const chinese = getMessages('zh-CN').agentPanel;

@@ -4,6 +4,7 @@ import type {
   WatchInboxQueryResponse,
   WatchLoadOlderResult,
   WatchRefreshResult,
+  WatchStatus,
   WatchThreadMutationInput,
   WatchThreadMutationResult,
 } from '@/watch/watch-contract';
@@ -25,6 +26,7 @@ export type ManagerRuntimeEventKind =
 export type ManagerRuntimeEvent = Readonly<{
   kind: ManagerRuntimeEventKind;
   epoch: number;
+  watchStatus?: WatchStatus;
 }>;
 
 export type ManagerRuntimeListener = (event: ManagerRuntimeEvent) => void;

@@ -27,6 +27,7 @@ import {
   filterWatchInboxProjection,
   hasNewWatchGroupContent,
   watchGroupContentSignature,
+  type WatchInboxViewMode,
   type WatchThreadNavigationKey,
 } from '@/ui/watch-inbox-presentation';
 import { projectWatchInbox } from '@/watch/watch-model';
@@ -128,6 +129,7 @@ export function WatchInbox({
   const now = useManagerNow();
   const [query, setQuery] = useState('');
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
+  const [viewMode, setViewMode] = useState<WatchInboxViewMode>('timeline');
   const [manualRepositoryExpansions, setManualRepositoryExpansions] = useState<
     Record<string, 'expanded' | 'collapsed'>
   >({});
@@ -196,8 +198,8 @@ export function WatchInbox({
     sourceGroupsByRepository,
   ]);
   const flatRows = useMemo(
-    () => buildWatchInboxRows(visibleProjection?.threads ?? [], expandedRepositories),
-    [expandedRepositories, visibleProjection?.threads],
+    () => buildWatchInboxRows(visibleProjection?.threads ?? [], expandedRepositories, viewMode),
+    [expandedRepositories, viewMode, visibleProjection?.threads],
   );
   const rowVirtualizer = useVirtualizer({
     count: flatRows.length,
@@ -255,7 +257,7 @@ export function WatchInbox({
     if (historyRequestKey) requestedHistoryKeyRef.current = historyRequestKey;
     onLoadOlder();
   }, [historyRequestKey, onLoadOlder]);
-  const refreshDisabled = refreshing || actionPending !== null || status?.inboxStatus === 'cooldown';
+  const refreshDisabled = refreshing || actionPending !== null;
 
   const handleRepositoryToggle = useCallback((
     group: WatchInboxQueryResponse['groups'][number],
@@ -500,28 +502,30 @@ export function WatchInbox({
     visibleThreadCount: number,
     variant: 'plain' | 'timeline' = 'timeline',
   ) => {
+    const scanComplete = state?.inbox.scanStatus === 'complete';
     const stale = status.inboxStatus === 'error'
-      || status.inboxStatus === 'stale'
-      || status.inboxStatus === 'cooldown';
+      || status.inboxStatus === 'stale';
     const boundaryState = loadOlderError
       ? 'error'
       : loadingOlder
         ? 'loading'
-        : canLoadOlder ? 'more' : 'complete';
+        : canLoadOlder ? 'more' : scanComplete ? 'complete' : 'incomplete';
     const tone: 'muted' | 'info' | 'warning' = loadOlderError
       ? 'warning'
-      : canLoadOlder ? 'info' : stale ? 'warning' : 'muted';
+      : canLoadOlder || !scanComplete ? 'info' : stale ? 'warning' : 'muted';
     const text = loadOlderError
       ? m.watch.loadOlderFailed
       : loadingOlder
         ? m.watch.loadingOlder
         : canLoadOlder
           ? m.watch.listEndWindow
-          : stale
+          : !scanComplete
             ? m.watch.listEndSaved(visibleThreadCount)
-            : hasPresentationFilters
-              ? m.watch.listEndMatches(visibleThreadCount)
-              : m.watch.historyComplete(visibleThreadCount);
+            : stale
+              ? m.watch.listEndSaved(visibleThreadCount)
+              : hasPresentationFilters
+                ? m.watch.listEndMatches(visibleThreadCount)
+                : m.watch.historyComplete(visibleThreadCount);
     return (
       <div
         ref={historySentinelRef}
@@ -602,8 +606,11 @@ export function WatchInbox({
     content = (
       <SurfaceWorkCanvas variant="watch" className="px-4 py-3 max-sm:px-3">
         <div
-          className="relative before:absolute before:bottom-3 before:left-[7px] before:top-3 before:w-px before:bg-muted-foreground/30 before:content-['']"
+          className={cn('relative', {
+            "before:absolute before:bottom-3 before:left-[7px] before:top-3 before:w-px before:bg-muted-foreground/30 before:content-['']": viewMode === 'timeline',
+          })}
           data-watch-thread-list
+          data-watch-view={viewMode}
           onKeyDown={handleThreadListKeyDown}
         >
           {scrollElement ? (
@@ -637,7 +644,7 @@ export function WatchInbox({
               </div>
             ))
           )}
-          {renderHistoryBoundary(visibleThreadCount)}
+          {renderHistoryBoundary(visibleThreadCount, viewMode === 'timeline' ? 'timeline' : 'plain')}
         </div>
       </SurfaceWorkCanvas>
     );
@@ -650,6 +657,8 @@ export function WatchInbox({
         reasonCounts={reasonCounts}
         selectedReasons={selectedReasons}
         onSelectedReasonsChange={setSelectedReasons}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
         unreadOnly={unreadOnly}
         refreshing={refreshing}
         refreshDisabled={refreshDisabled}

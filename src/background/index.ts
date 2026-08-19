@@ -77,6 +77,7 @@ import {
   parseWatchAccountLogin,
   parseWatchThreadId,
   parseWatchThreadIds,
+  type WatchStatus,
 } from '@/watch/watch-contract';
 import { RADAR_MAX_FOLLOWING } from '@/radar/radar-model';
 import {
@@ -351,8 +352,9 @@ const watchRefreshCoordinator = createWatchRefreshCoordinator({
     reconcileLiveStars: watchStore.reconcileWatchLiveStars,
     replaceScope: watchStore.replaceWatchScope,
     recordScopeFailure: watchStore.recordWatchScopeFailure,
-    replaceInbox: watchStore.replaceWatchInbox,
-    appendHistory: watchStore.appendWatchInboxHistory,
+    startInboxScan: watchStore.startWatchInboxScan,
+    commitInboxScanBatch: watchStore.commitWatchInboxScanBatch,
+    mergeInboxDelta: watchStore.mergeWatchInboxDelta,
     markLoaded: watchStore.markWatchInboxLoaded,
     revalidateInbox: watchStore.revalidateWatchInbox,
     recordInboxFailure: watchStore.recordWatchInboxFailure,
@@ -362,6 +364,7 @@ const watchRefreshCoordinator = createWatchRefreshCoordinator({
     clearData: watchStore.clearWatchData,
   },
   broadcastChanged: broadcastWatchChanged,
+  broadcastStatusChanged: broadcastWatchChanged,
 });
 const radarRefreshCoordinator = createRadarRefreshCoordinator({
   runSerialized: (operation) => jobQueue.run(operation),
@@ -452,7 +455,7 @@ const scheduledRefreshController = createScheduledRefreshController({
     chrome.alarms.onAlarm.addListener((alarm) => listener(alarm.name));
   },
   refreshWatchInbox: () => watchRefreshCoordinator.refreshInbox(),
-  refreshWatchScope: () => watchRefreshCoordinator.refresh(),
+  refreshWatchScope: () => watchRefreshCoordinator.refreshScope(),
   refreshRadar: () => radarRefreshCoordinator.refresh(),
   refreshRecommendationsIfDue: () => recommendationRefreshCoordinator.refreshAtScheduledBoundary(),
   nextRecommendationRefreshAt: (nowMillis) => recommendationRefreshCoordinator.nextDailyRefreshAt(nowMillis),
@@ -1249,11 +1252,31 @@ function scheduleProgressPersist(prev: SyncProgress, next: SyncProgress) {
   }, delay);
 }
 
+type ManagerBroadcastMessage =
+  | { type: 'progress'; progress: SyncProgress }
+  | { type: 'watchChanged'; status?: WatchStatus }
+  | { type: 'dataChanged' | 'recommendationsChanged' | 'radarChanged' };
+
+function broadcastManagerMessage(message: ManagerBroadcastMessage): void {
+  void chrome.runtime.sendMessage(message).catch(() => {});
+  if (message.type !== 'watchChanged') return;
+
+  // The Watch UI is a content script, so tab messaging exposes committed scan
+  // progress before the original refresh request sends its final response.
+  if (!chrome.tabs?.query || !chrome.tabs.sendMessage) return;
+  void chrome.tabs.query({ url: 'https://github.com/*' }).then((tabs) => {
+    for (const tab of tabs) {
+      if (tab.id === undefined) continue;
+      void chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+    }
+  }).catch(() => {});
+}
+
 function setProgress(p: SyncProgress) {
   const prev = lastProgress;
   lastProgress = p;
   scheduleProgressPersist(prev, p);
-  chrome.runtime.sendMessage({ type: "progress", progress: p }).catch(() => {});
+  broadcastManagerMessage({ type: "progress", progress: p });
 }
 
 function setIdleMessage(message: string) {
@@ -1262,14 +1285,22 @@ function setIdleMessage(message: string) {
 
 function broadcastDataChanged() {
   invalidateCache();
-  chrome.runtime.sendMessage({ type: "dataChanged" }).catch(() => {});
+  broadcastManagerMessage({ type: "dataChanged" });
 }
 
+let watchBroadcastTail: Promise<void> = Promise.resolve();
+
 function broadcastWatchChanged() {
-  chrome.runtime.sendMessage({ type: 'watchChanged' }).catch(() => {});
+  const statusPromise = watchRefreshCoordinator.snapshotStatus().catch(() => null);
+  watchBroadcastTail = watchBroadcastTail.then(async () => {
+    const status = await statusPromise;
+    broadcastManagerMessage(status
+      ? { type: 'watchChanged', status }
+      : { type: 'watchChanged' });
+  }).catch(() => {});
 }
 function broadcastRecommendationChanged() {
-  chrome.runtime.sendMessage({ type: 'recommendationsChanged' }).catch(() => {});
+  broadcastManagerMessage({ type: 'recommendationsChanged' });
 }
 
 function broadcastDataAndRecommendationsChanged() {
@@ -1277,7 +1308,7 @@ function broadcastDataAndRecommendationsChanged() {
   broadcastRecommendationChanged();
 }
 function broadcastRadarChanged() {
-  chrome.runtime.sendMessage({ type: 'radarChanged' }).catch(() => {});
+  broadcastManagerMessage({ type: 'radarChanged' });
 }
 
 async function findLiveStarByCanonicalName(repository: string): Promise<Star | null> {

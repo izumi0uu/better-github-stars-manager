@@ -30,7 +30,9 @@ import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
 import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import type { GitHubNotificationThread, WatchSubjectDetail } from '@/watch/watch-model';
 import type { WatchInboxQueryResponse } from '@/watch/watch-contract';
+import type { Locale } from '@/types';
 import { watchGroupContentSignature } from '@/ui/watch-inbox-presentation';
+import { getMessages } from '@/i18n';
 import {
   cleanupMountedRootsAndBody,
   click,
@@ -80,6 +82,7 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
       hasMainToken: true,
       hasNotificationsToken: true,
       refreshing: false,
+      refreshPhase: null,
       scopeStatus: 'fresh',
       inboxStatus: 'fresh',
       state: {
@@ -105,6 +108,11 @@ function result(overrides: Partial<WatchInboxQueryResponse> = {}): WatchInboxQue
           historyNextPage: null,
           historyExhausted: true,
           historyErrorCode: null,
+          scanId: null,
+          scanStatus: 'complete',
+          scanStartedAt: null,
+          scanPageCount: 1,
+          lastConvergedAt: '2026-08-05T00:00:00Z',
         },
       },
     },
@@ -247,16 +255,66 @@ describe('WatchInbox', () => {
     expect(onUnreadOnlyChange).toHaveBeenCalledWith(false);
     expect(onRefresh).toHaveBeenCalledOnce();
   });
+  it('switches between timeline and repository views without losing thread rows', async () => {
+    const first = thread(1, {
+      repositoryFullName: 'owner/shared-repository',
+      updatedAt: '2026-08-05T12:00:00Z',
+    });
+    const second = thread(2, {
+      repositoryFullName: 'owner/shared-repository',
+      updatedAt: '2026-08-04T12:00:00Z',
+    });
+    const container = renderInbox({ result: result({ threads: [first, second] }) });
+    const viewGroup = container.querySelector<HTMLElement>('[role="group"][aria-label="View"]');
+    if (!viewGroup) throw new Error('Expected Watch view selector');
 
-  it('uses an info tone when the fetched window is truncated', () => {
-    const truncated = result();
-    truncated.status.state!.inbox.truncated = true;
-    truncated.status.state!.inbox.historyNextPage = 11;
-    truncated.status.state!.inbox.historyExhausted = false;
-    const container = renderInbox({ result: truncated });
+    expect(container.querySelector('[data-watch-thread-list]')?.getAttribute('data-watch-view'))
+      .toBe('timeline');
+    expect(container.querySelectorAll('[data-watch-day]')).toHaveLength(2);
+
+    await click(findButtonByText(viewGroup, 'Repository'));
+
+    expect(container.querySelector('[data-watch-thread-list]')?.getAttribute('data-watch-view'))
+      .toBe('repository');
+    expect(viewGroup.querySelector<HTMLButtonElement>('button:nth-of-type(2)')?.getAttribute('aria-pressed'))
+      .toBe('true');
+    expect(container.querySelectorAll('[data-watch-day]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-watch-repository="owner/shared-repository"]'))
+      .toHaveLength(1);
+    expect(container.querySelectorAll('[data-watch-thread-row]')).toHaveLength(2);
+
+    await click(findButtonByText(viewGroup, 'Timeline'));
+    expect(container.querySelector('[data-watch-thread-list]')?.getAttribute('data-watch-view'))
+      .toBe('timeline');
+  });
+
+  it('keeps manual refresh available during a converged polling cooldown', async () => {
+    const cooldown = result();
+    cooldown.status.inboxStatus = 'cooldown';
+    cooldown.status.state!.inbox.nextAllowedAt = '2026-08-05T00:01:00Z';
+    const onRefresh = vi.fn();
+    const container = renderInbox({ result: cooldown, onRefresh });
+    const refresh = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.getAttribute('aria-label') === 'Refresh Watch inbox');
+
+    expect(refresh?.disabled).toBe(false);
+    await click(refresh!);
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it('uses an info tone while the full Inbox scan has more pages', () => {
+    const scanning = result();
+    scanning.status.state!.inbox.truncated = true;
+    scanning.status.state!.inbox.historyNextPage = 11;
+    scanning.status.state!.inbox.historyExhausted = false;
+    scanning.status.state!.inbox.scanId = 'scan-1';
+    scanning.status.state!.inbox.scanStatus = 'scanning';
+    scanning.status.state!.inbox.scanStartedAt = '2026-08-05T00:00:00Z';
+    scanning.status.state!.inbox.scanPageCount = 10;
+    const container = renderInbox({ result: scanning });
     const marker = container.querySelector<HTMLElement>('[data-surface-list-end="timeline"]');
 
-    expect(marker?.textContent).toContain('End of current window · older threads may exist');
+    expect(marker?.textContent).toContain('Current scan boundary · earlier Inbox threads remain');
     expect(marker?.getAttribute('data-surface-list-end-tone')).toBe('info');
   });
 
@@ -295,6 +353,10 @@ describe('WatchInbox', () => {
     paged.status.state!.inbox.truncated = true;
     paged.status.state!.inbox.historyNextPage = 11;
     paged.status.state!.inbox.historyExhausted = false;
+    paged.status.state!.inbox.scanId = 'scan-1';
+    paged.status.state!.inbox.scanStatus = 'scanning';
+    paged.status.state!.inbox.scanStartedAt = '2026-08-05T00:00:00Z';
+    paged.status.state!.inbox.scanPageCount = 10;
     const onLoadOlder = vi.fn();
 
     const container = renderInbox({ result: paged, onLoadOlder });
@@ -314,6 +376,10 @@ describe('WatchInbox', () => {
     paged.status.state!.inbox.truncated = true;
     paged.status.state!.inbox.historyNextPage = 11;
     paged.status.state!.inbox.historyExhausted = false;
+    paged.status.state!.inbox.scanId = 'scan-1';
+    paged.status.state!.inbox.scanStatus = 'partial';
+    paged.status.state!.inbox.scanStartedAt = '2026-08-05T00:00:00Z';
+    paged.status.state!.inbox.scanPageCount = 10;
     const onLoadOlder = vi.fn();
     const container = renderInbox({ result: paged, loadOlderError: true, onLoadOlder });
 
@@ -361,7 +427,7 @@ describe('WatchInbox', () => {
 
     await click(refresh);
     expect(onRefresh).toHaveBeenCalledOnce();
-    expect(container.textContent).toContain('Refresh to load the latest bounded Inbox snapshot');
+    expect(container.textContent).toContain('Refresh to scan your complete GitHub Notifications inbox');
   });
 
   it('keeps stale rows visible and exposes credential recovery in the status ribbon', async () => {
@@ -408,6 +474,131 @@ describe('WatchInbox', () => {
     expect(inbox.textContent).toContain('Thread 0');
     expect(ribbon.querySelector('[role="status"]')).not.toBeNull();
     expect(ribbon.textContent).toContain('Couldn’t refresh · showing saved rows');
+  });
+
+  it('renders durable full-scan progress in the status ribbon', () => {
+    const scanning = result();
+    scanning.status.state!.inbox.scanId = 'scan-1';
+    scanning.status.state!.inbox.scanStatus = 'scanning';
+    scanning.status.state!.inbox.scanStartedAt = '2026-08-05T00:00:00Z';
+    scanning.status.state!.inbox.scanPageCount = 10;
+    scanning.status.state!.inbox.candidateCount = 500;
+
+    const ribbon = mountReact(
+      <WatchStatusRibbon
+        result={scanning}
+        loading={false}
+        refreshing={true}
+        error={null}
+      />,
+      mountedRoots,
+    );
+
+    expect(ribbon.querySelector('[data-watch-status="scanning"]')).not.toBeNull();
+    expect(ribbon.textContent).toContain('Scanning full Inbox · 500 threads found across 10 pages');
+  });
+
+  it('keeps the ribbon mounted while refresh phases and scan counters advance', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const render = (next: WatchInboxQueryResponse, refreshing: boolean) => act(() => root.render(
+      <WatchStatusRibbon
+        result={next}
+        loading={false}
+        refreshing={refreshing}
+        error={null}
+      />,
+    ));
+
+    const scanningResult = (count: number, pages: number) => {
+      const next = result();
+      next.status.refreshing = true;
+      next.status.refreshPhase = 'inbox';
+      next.status.state!.inbox.scanId = 'scan-1';
+      next.status.state!.inbox.scanStatus = 'scanning';
+      next.status.state!.inbox.scanStartedAt = '2026-08-05T00:00:00Z';
+      next.status.state!.inbox.scanPageCount = pages;
+      next.status.state!.inbox.candidateCount = count;
+      return next;
+    };
+
+    const scope = result();
+    scope.status.refreshing = true;
+    scope.status.refreshPhase = 'scope';
+    render(scope, true);
+    const ribbon = container.querySelector<HTMLElement>('[role="status"]');
+    expect(ribbon?.dataset.watchRefreshPhase).toBe('scope');
+    expect(container.textContent).toContain('Syncing watched repositories · showing saved Inbox');
+    expect(container.querySelector('[data-watch-status-text]')?.classList
+      .contains('gsm-watch-status-text-phase')).toBe(true);
+
+    const scanning = scanningResult(10, 1);
+    render(scanning, true);
+    expect(container.querySelector('[role="status"]')).toBe(ribbon);
+    expect(ribbon?.dataset.watchRefreshPhase).toBe('inbox');
+    expect(container.textContent).toContain('Scanning full Inbox · 10 threads found across 1 page');
+
+    const progressed = scanningResult(20, 2);
+    render(progressed, true);
+    expect(container.querySelector('[role="status"]')).toBe(ribbon);
+    expect(Array.from(container.querySelectorAll('[data-watch-progress-number]'))
+      .map((node) => [node.getAttribute('data-watch-progress-field'), node.textContent]))
+      .toEqual([['count', '20'], ['pages', '2']]);
+    expect(container.querySelectorAll('.gsm-watch-status-number-update')).toHaveLength(2);
+
+    render(scanningResult(20, 3), true);
+    expect(Array.from(container.querySelectorAll('[data-watch-progress-number]'))
+      .map((node) => [
+        node.getAttribute('data-watch-progress-field'),
+        node.classList.contains('gsm-watch-status-number-update'),
+      ])).toEqual([['count', false], ['pages', true]]);
+
+    render(scanningResult(30, 3), true);
+    expect(Array.from(container.querySelectorAll('[data-watch-progress-number]'))
+      .map((node) => [
+        node.getAttribute('data-watch-progress-field'),
+        node.classList.contains('gsm-watch-status-number-update'),
+      ])).toEqual([['count', true], ['pages', false]]);
+
+    render(result(), false);
+    expect(container.querySelector('[role="status"]')).toBe(ribbon);
+    expect(ribbon?.dataset.watchRefreshPhase).toBeUndefined();
+  });
+
+  it('preserves locale-specific Watch scan counter order', () => {
+    const renderMessage = (locale: Locale) => {
+      const parts = getMessages(locale).watch.statusScanning(20, 3);
+      return {
+        fields: parts.flatMap((part) => typeof part === 'string' ? [] : [part.field]),
+        text: parts.map((part) => typeof part === 'string' ? part : String(part.value)).join(''),
+      };
+    };
+
+    expect(renderMessage('en')).toEqual({
+      fields: ['count', 'pages'],
+      text: 'Scanning full Inbox · 20 threads found across 3 pages',
+    });
+    expect(renderMessage('zh-CN')).toEqual({
+      fields: ['pages', 'count'],
+      text: '正在完整扫描收件箱 · 已扫描 3 页，找到 20 个 thread',
+    });
+  });
+
+  it('does not label a converged head refresh as another full scan', () => {
+    const ribbon = mountReact(
+      <WatchStatusRibbon
+        result={result()}
+        loading={false}
+        refreshing
+        error={null}
+      />,
+      mountedRoots,
+    );
+
+    expect(ribbon.textContent).toContain('Refreshing Inbox · showing saved rows');
+    expect(ribbon.textContent).not.toContain('Scanning full Inbox');
   });
 
   it('dismisses a warning status ribbon with the close control', async () => {
@@ -960,7 +1151,7 @@ describe('WatchInbox', () => {
     expect(container.textContent).toContain(
       'No threads match the current Watch search and reason filters.',
     );
-    expect(container.textContent).not.toContain('No unread threads in the latest Watch snapshot.');
+    expect(container.textContent).not.toContain('No unread threads in the currently saved Inbox.');
   });
 
   it('temporarily reveals matching persisted groups and restores their collapsed state', async () => {

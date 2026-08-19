@@ -15,7 +15,7 @@ export function useRadarActivityResource(active: boolean) {
   const generation = useRef(0);
   const refreshingRef = useRef(false);
   const refreshEpoch = useRef(0);
-  const initialRefreshAttemptedRef = useRef(false);
+  const entryRefreshEvaluatedRef = useRef(false);
   const cooldownProbeRef = useRef<{ deadline: string | null; attempts: number }>({
     deadline: null,
     attempts: 0,
@@ -79,7 +79,7 @@ export function useRadarActivityResource(active: boolean) {
     refreshEpoch.current += 1;
     refreshingRef.current = false;
     loadedRef.current = false;
-    initialRefreshAttemptedRef.current = false;
+    entryRefreshEvaluatedRef.current = false;
     setResult(null);
     setError(null);
     setLoading(activeRef.current);
@@ -115,7 +115,7 @@ export function useRadarActivityResource(active: boolean) {
     const isCurrent = () => mountedRef.current && activeRef.current
       && refreshEpoch.current === requestEpoch;
     refreshingRef.current = true;
-    initialRefreshAttemptedRef.current = true;
+    entryRefreshEvaluatedRef.current = true;
     setRefreshing(true);
     setError(null);
     try {
@@ -140,17 +140,19 @@ export function useRadarActivityResource(active: boolean) {
 
   useEffect(() => {
     const status = result?.status;
+    if (!active || !status || entryRefreshEvaluatedRef.current) return;
+    entryRefreshEvaluatedRef.current = true;
     if (
-      !active
-      || refreshing
-      || refreshingRef.current
-      || status?.refreshing === true
-      || initialRefreshAttemptedRef.current
-      || !status?.hasMainToken
-      || status.snapshotStatus !== 'never_loaded'
+      status.refreshing
+      || !status.hasMainToken
+      || (
+        status.snapshotStatus !== 'never_loaded'
+        && status.snapshotStatus !== 'stale'
+        && status.snapshotStatus !== 'error'
+      )
     ) return;
     void refresh();
-  }, [active, refresh, refreshing, result]);
+  }, [active, refresh, result]);
 
   const markSeen = useCallback((activityIds: readonly string[]) => {
     const ids = [...new Set(activityIds)];

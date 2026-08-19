@@ -68,9 +68,17 @@ describe('DemoManagerRuntime', () => {
     expect(stars.tagTotal).toBe(10);
     expect(stars.languages.reduce((count, [, languageCount]) => count + languageCount, 0))
       .toBeLessThanOrEqual(stars.grandTotal);
-    expect(watchAll.totalCount).toBe(15);
-    expect(watchAll.groups).toHaveLength(4);
+    expect(watchAll.totalCount).toBe(16);
+    expect(watchAll.groups).toHaveLength(5);
     expect(watchUnread.threads.every((thread) => thread.unread)).toBe(true);
+    const outsideLocalStars = watchAll.threads.find((thread) => (
+      !stars.rows.some((star) => star.full_name === thread.repositoryFullName)
+    ));
+    expect(outsideLocalStars).toMatchObject({
+      id: '1099',
+      repositoryFullName: 'aurora-workshop/inbox-bridge',
+      unread: true,
+    });
     expect(radar.activities.filter((activity) => activity.source === 'following')).toHaveLength(12);
     expect(recommendations.recommendations.length).toBeGreaterThanOrEqual(6);
     expect(badges).toEqual({
@@ -155,10 +163,27 @@ describe('DemoManagerRuntime', () => {
     expect((await runtime.readPreferences()).watchCollapsedRepositories)
       .not.toHaveProperty(unread!.repositoryFullName);
     const starsBeforeUnstar = await runtime.queryStars(ALL_STARS_QUERY);
+    const watchBeforeUnstar = await runtime.queryWatchInbox({ unreadOnly: false });
     await runtime.markUnstarred(unread!.repositoryFullName);
     expect((await runtime.queryStars(ALL_STARS_QUERY)).total).toBe(starsBeforeUnstar.total - 1);
-    expect((await runtime.queryWatchInbox({ unreadOnly: false })).groups)
-      .not.toContainEqual(expect.objectContaining({ repositoryFullName: unread!.repositoryFullName }));
+    const watchAfterUnstar = await runtime.queryWatchInbox({ unreadOnly: false });
+    expect(watchAfterUnstar.totalCount).toBe(watchBeforeUnstar.totalCount);
+    expect(watchAfterUnstar.groups)
+      .toContainEqual(expect.objectContaining({ repositoryFullName: unread!.repositoryFullName }));
+    const refreshedWatch = await runtime.refreshWatch();
+    expect(refreshedWatch.status.state?.inbox).toMatchObject({
+      candidateCount: watchAfterUnstar.totalCount,
+      matchedCount: watchAfterUnstar.totalCount,
+      scanId: null,
+      scanStatus: 'complete',
+      scanStartedAt: null,
+      scanPageCount: 1,
+      lastConvergedAt: '2026-08-16T12:00:00.000Z',
+      truncated: false,
+      historyNextPage: null,
+      historyExhausted: true,
+      historyErrorCode: null,
+    });
 
     const radarBefore = await runtime.queryRadar();
     const unseen = radarBefore.activities.filter((activity) => (
