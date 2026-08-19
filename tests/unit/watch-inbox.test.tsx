@@ -474,6 +474,9 @@ describe('WatchInbox', () => {
     expect(inbox.textContent).toContain('Thread 0');
     expect(ribbon.querySelector('[role="status"]')).not.toBeNull();
     expect(ribbon.textContent).toContain('Couldn’t refresh · showing saved rows');
+    const boundary = inbox.querySelector('[data-surface-list-end="timeline"]');
+    expect(boundary?.textContent).toContain('End of saved snapshot · 1 thread');
+    expect(boundary?.textContent).not.toContain('full Inbox scan incomplete');
   });
 
   it('renders durable full-scan progress in the status ribbon', () => {

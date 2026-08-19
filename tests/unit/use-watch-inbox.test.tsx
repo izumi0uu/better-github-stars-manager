@@ -57,6 +57,20 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function storedCredential(
+  username: string,
+  tokenEncrypted: string,
+  watchNotificationsEnabled = true,
+) {
+  return {
+    tokenEncrypted,
+    tokenCryptoMeta: { salt: 'salt', iv: 'iv' },
+    githubCredentialStatus: 'ready',
+    watchNotificationsEnabled,
+    username,
+  };
+}
+
 function queryResponse(
   totalCount: number,
   accountLogin = 'octocat',
@@ -273,7 +287,10 @@ describe('useWatchInbox', () => {
       await Promise.resolve();
       runtimeListeners[0]?.({ type: 'watchChanged' });
       storageListeners[0]?.({
-        gsm_github_credentials: { newValue: { watchCredentialSource: 'main' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('octocat', 'cipher', true),
+          newValue: storedCredential('octocat', 'cipher', false),
+        },
       }, 'local');
       await Promise.resolve();
     });
@@ -520,7 +537,10 @@ describe('useWatchInbox', () => {
     await act(async () => {
       runtimeListeners[0]?.({ type: 'watchChanged' });
       storageListeners[0]?.({
-        gsm_github_credentials: { newValue: { watchCredentialSource: 'dedicated' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('account-a', 'cipher-a'),
+          newValue: storedCredential('account-b', 'cipher-b'),
+        },
       }, 'local');
       await Promise.resolve();
     });
@@ -603,7 +623,7 @@ describe('useWatchInbox', () => {
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
   });
 
-  it('clears the cached result while reloading an authoritative credential change', async () => {
+  it('keeps cached rows while reloading a Watch capability change', async () => {
     const credentialQuery = deferred<WatchInboxQueryResponse>();
     const queryModes: boolean[] = [];
     watchMocks.bgCall.mockImplementation((
@@ -639,16 +659,16 @@ describe('useWatchInbox', () => {
     await act(async () => {
       storageListeners[0]?.({
         gsm_github_credentials: {
-          oldValue: { watchNotificationsTokenEncrypted: null },
-          newValue: { watchNotificationsTokenEncrypted: 'ciphertext' },
+          oldValue: storedCredential('octocat', 'cipher', false),
+          newValue: storedCredential('octocat', 'cipher', true),
         },
       }, 'local');
       await Promise.resolve();
     });
 
     expect(queryModes).toEqual([false, false]);
-    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('loading');
-    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('none');
+    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
 
     await act(async () => {
       credentialQuery.resolve(queryResponse(3));
@@ -681,7 +701,10 @@ describe('useWatchInbox', () => {
     });
     await act(async () => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('account-a', 'cipher-a'),
+          newValue: storedCredential('account-b', 'cipher-b'),
+        },
       }, 'local');
       await Promise.resolve();
       await Promise.resolve();
@@ -979,8 +1002,8 @@ describe('useWatchInbox', () => {
     await act(async () => {
       storageListeners[0]?.({
         gsm_github_credentials: {
-          oldValue: { accountLogin: 'octocat' },
-          newValue: { accountLogin: activeAccount },
+          oldValue: storedCredential('octocat', 'cipher-a'),
+          newValue: storedCredential(activeAccount, 'cipher-b'),
         },
       }, 'local');
       await Promise.resolve();

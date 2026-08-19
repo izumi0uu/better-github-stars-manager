@@ -522,7 +522,7 @@ export function WatchInbox({
           : !scanComplete
             ? m.watch.listEndSaved(visibleThreadCount)
             : stale
-              ? m.watch.listEndSaved(visibleThreadCount)
+              ? m.watch.listEndSnapshot(visibleThreadCount)
               : hasPresentationFilters
                 ? m.watch.listEndMatches(visibleThreadCount)
                 : m.watch.historyComplete(visibleThreadCount);

@@ -436,6 +436,10 @@ export async function runExtensionBrowserSmoke(options = {}) {
       ok('prompt stayed suppressed through onboarding, recovery, and active work; keyboard dismissal restored the favorite control and Options showed the store link without a reminder toggle');
     }
 
+    // Step 11 intentionally activates Radar, whose independent refresh may use GraphQL.
+    // Scope the final network assertion to Watch credential recovery only.
+    resetBackgroundGitHubApiCalls(browser, extensionId);
+
     step('12) Watch recovery opens focused GitHub authorization without clearing the Classic PAT');
     await markManagerMount(ownStars);
     const disconnected = await clearWatchNotificationsCredential(extensionId);
@@ -2233,7 +2237,7 @@ async function assertGitHubOptionsIntent(page) {
 async function clickWatchRecoveryOptions(page) {
   const clicked = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-    const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+    const section = root?.querySelector('[role="tabpanel"][data-surface="watch"] section');
     const button = [...(section?.querySelectorAll('button') ?? [])]
       .find((candidate) => candidate.textContent?.trim() === 'Open options');
     button?.click();
@@ -3671,7 +3675,7 @@ async function openWatchSurface(page, expectedText) {
     await page.waitForFunction(
       (text) => {
         const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-        const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+        const section = root?.querySelector('[role="tabpanel"][data-surface="watch"] section');
         const watchButton = [...(root?.querySelectorAll('button') ?? [])]
           .find((candidate) => candidate.textContent?.trim().startsWith('Watch'));
         return !!section && watchButton?.getAttribute('aria-selected') === 'true' &&
@@ -3717,7 +3721,7 @@ async function clickWatchFilter(page, label) {
 async function readWatchSnapshot(page) {
   return page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-    const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+    const section = root?.querySelector('[role="tabpanel"][data-surface="watch"] section');
     const text = section?.textContent ?? '';
     const filterGroup = root?.querySelector('[role="group"][aria-label="Inbox thread filter"]');
     const buttonPressed = (label) => [...(filterGroup?.querySelectorAll('button') ?? [])]
@@ -3835,7 +3839,7 @@ async function assertWatchSubjectPermissionRecovery(page) {
 async function openWatchRepositoryDetail(page, fullName) {
   const clicked = await page.evaluate((repository) => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-    const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+    const section = root?.querySelector('[role="tabpanel"][data-surface="watch"] section');
     const button = [...(section?.querySelectorAll('button') ?? [])]
       .find((candidate) => candidate.textContent?.trim() === repository);
     button?.click();
@@ -4020,7 +4024,7 @@ async function assertWatchLayout(page, label) {
   await waitForStableLayout(page);
   const layout = await page.evaluate(() => {
     const root = document.getElementById('gsm-manager-host')?.shadowRoot?.getElementById('gsm-manager-root');
-    const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+    const section = root?.querySelector('[role="tabpanel"][data-surface="watch"] section');
     const scrollPane = section?.parentElement;
     const headerRow = section?.querySelector(
       '[data-surface-command-bar="watch"] [data-surface-work-canvas="watch"]',
@@ -4084,7 +4088,7 @@ async function assertWatchSetupState(page) {
       () => {
         const host = document.getElementById('gsm-manager-host');
         const root = host?.shadowRoot?.getElementById('gsm-manager-root');
-        const section = root?.querySelector('section[aria-label="Watched stars inbox"]');
+        const section = root?.querySelector('[role="tabpanel"][data-surface="watch"] section');
         return document.querySelectorAll('#gsm-manager-host').length === 1 &&
           !!root && !!section &&
           [...(section?.querySelectorAll('button') ?? [])]

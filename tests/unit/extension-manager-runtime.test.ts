@@ -186,11 +186,34 @@ describe('ExtensionManagerRuntime', () => {
     expect(first).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 2 });
     expect(second).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 2 });
 
+    const credential = (tokenEncrypted: string, watchNotificationsEnabled: boolean) => ({
+      tokenEncrypted,
+      tokenCryptoMeta: { salt: 'salt', iv: 'iv' },
+      githubCredentialStatus: 'ready',
+      watchNotificationsEnabled,
+      username: 'octocat',
+    });
     for (const listener of storageListeners) {
-      listener({ gsm_github_credentials: { oldValue: {}, newValue: {} } }, 'local');
+      listener({
+        gsm_github_credentials: {
+          oldValue: credential('cipher-a', true),
+          newValue: credential('cipher-a', false),
+        },
+      }, 'local');
     }
-    expect(first).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 3 });
-    expect(second).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 3 });
+    expect(first).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 3 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 3 });
+
+    for (const listener of storageListeners) {
+      listener({
+        gsm_github_credentials: {
+          oldValue: credential('cipher-a', false),
+          newValue: credential('cipher-b', false),
+        },
+      }, 'local');
+    }
+    expect(first).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 4 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 4 });
 
     unsubscribeFirst();
     expect(runtimeRemove).not.toHaveBeenCalled();

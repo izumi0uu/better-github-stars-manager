@@ -50,6 +50,25 @@ function preferencesFromConfig(config: Config): ManagerPreferences {
   };
 }
 
+function storedMainCredentialIdentity(value: unknown): string {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const cryptoMeta = record.tokenCryptoMeta
+    && typeof record.tokenCryptoMeta === 'object'
+    && !Array.isArray(record.tokenCryptoMeta)
+    ? record.tokenCryptoMeta as Record<string, unknown>
+    : {};
+  const text = (candidate: unknown) => typeof candidate === 'string' ? candidate : null;
+  return JSON.stringify([
+    text(record.username)?.trim().toLowerCase() || null,
+    text(record.tokenEncrypted),
+    text(cryptoMeta.salt),
+    text(cryptoMeta.iv),
+    text(record.githubCredentialStatus),
+  ]);
+}
+
 /** Chrome-extension implementation of the storage-neutral manager port. */
 export class ExtensionManagerRuntime implements ManagerRuntime {
   readonly resources = extensionResources;
@@ -91,7 +110,12 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
   ) => {
     if (areaName !== 'local') return;
     if (changes[CONFIG_STORAGE_KEY]) this.publish('preferences');
-    if (changes[GITHUB_CREDENTIALS_STORAGE_KEY]) this.publish('reset');
+    const credentialsChange = changes[GITHUB_CREDENTIALS_STORAGE_KEY];
+    if (credentialsChange) {
+      const mainCredentialChanged = storedMainCredentialIdentity(credentialsChange.oldValue)
+        !== storedMainCredentialIdentity(credentialsChange.newValue);
+      this.publish(mainCredentialChanged ? 'reset' : 'watch');
+    }
   };
 
   private startListening(): void {

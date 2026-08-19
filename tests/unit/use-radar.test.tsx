@@ -45,6 +45,16 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function storedCredential(username: string, tokenEncrypted: string) {
+  return {
+    tokenEncrypted,
+    tokenCryptoMeta: { salt: 'salt', iv: 'iv' },
+    githubCredentialStatus: 'ready',
+    watchNotificationsEnabled: true,
+    username,
+  };
+}
+
 function response(overrides: Partial<RadarQueryResponse['status']> = {}): RadarQueryResponse {
   return {
     activities: [],
@@ -529,7 +539,10 @@ describe('useRadar', () => {
 
     act(() => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('account-a', 'cipher-a'),
+          newValue: storedCredential('account-b', 'cipher-b'),
+        },
       }, 'local');
     });
     await settle();
@@ -711,7 +724,10 @@ describe('useRadar', () => {
 
     act(() => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('account-a', 'cipher-a'),
+          newValue: storedCredential('account-b', 'cipher-b'),
+        },
       }, 'local');
     });
     await settle();
@@ -749,7 +765,10 @@ describe('useRadar', () => {
 
     act(() => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('account-a', 'cipher-a'),
+          newValue: storedCredential('account-b', 'cipher-b'),
+        },
       }, 'local');
     });
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('none');
