@@ -45,6 +45,16 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function storedCredential(username: string, tokenEncrypted = 'cipher') {
+  return {
+    username,
+    tokenEncrypted,
+    tokenCryptoMeta: { salt: 'salt', iv: 'iv' },
+    githubCredentialStatus: 'ready',
+    watchNotificationsEnabled: true,
+  };
+}
+
 function BadgeProbe() {
   const counts = useManagerSurfaceBadges();
   return (
@@ -102,7 +112,7 @@ describe('useManagerSurfaceBadges', () => {
     expect(badgeMocks.bgCall).toHaveBeenCalledWith('queryManagerSurfaceBadges');
   });
 
-  it('refreshes for domain broadcasts and credential changes while ignoring stale replies', async () => {
+  it('refreshes for domain broadcasts and Watch capability changes while ignoring stale replies', async () => {
     const initial = deferred<{ watchUnreadCount: number; radarUnseenCount: number }>();
     const broadcast = deferred<{ watchUnreadCount: number; radarUnseenCount: number }>();
     badgeMocks.bgCall
@@ -130,7 +140,10 @@ describe('useManagerSurfaceBadges', () => {
 
     await act(async () => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: {}, newValue: {} },
+        gsm_github_credentials: {
+          oldValue: storedCredential('octocat'),
+          newValue: { ...storedCredential('octocat'), watchNotificationsEnabled: false },
+        },
       }, 'local');
       await Promise.resolve();
     });
@@ -162,7 +175,10 @@ describe('useManagerSurfaceBadges', () => {
     });
     await act(async () => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('a', 'cipher-a'),
+          newValue: storedCredential('b', 'cipher-b'),
+        },
       }, 'local');
       await Promise.resolve();
       await Promise.resolve();
