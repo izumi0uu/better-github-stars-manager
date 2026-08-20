@@ -138,7 +138,7 @@ Click **Edit custom layout** in the toolbar to enter layout editing mode:
   <img src="store-assets/screenshots/demo-edit-layout.webp" alt="Drag to reorder, resize, show, or hide table columns" width="900" />
 </div>
 
-The virtualized list handles libraries with hundreds or thousands of rows. Incremental **Sync** fetches new Stars. **Full Sync** fetches all Stars and every public repository you own. A rescan reconciles unstarred repositories without deleting their existing tags or notes.
+The virtualized list handles libraries with hundreds or thousands of rows. Incremental **Sync** fetches new Stars and refreshes every public repository you own. **Full Sync** fetches all Stars and every public repository you own. A rescan reconciles unstarred repositories without deleting their existing tags or notes.
 
 ### Track project changes
 

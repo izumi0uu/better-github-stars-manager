@@ -451,6 +451,26 @@ async function bulkPutStars(stars: Star[]): Promise<void> {
   }
 }
 
+async function refreshOwnedPublicRepositoriesIncrementally(username: string): Promise<number> {
+  const ownedPublic = await fetchAllOwnedPublicRepositories(username);
+  if (ownedPublic.length === 0) return 0;
+  const existingOwned = await db.stars.bulkGet(ownedPublic.map((repo) => repo.full_name));
+  const updates: Star[] = [];
+  let added = 0;
+  for (let index = 0; index < ownedPublic.length; index++) {
+    const repository = ownedPublic[index];
+    const existing = existingOwned[index];
+    // Incremental star pages cannot prove an older live Star was unstarred.
+    // Rescan owns that transition; the public-repository endpoint only fills
+    // new, previously unstarred, or tombstoned owned rows here.
+    if (existing && !existing.tombstone && existing.viewer_has_starred !== false) continue;
+    updates.push(toOwnedPublicRepository(repository, existing));
+    if (!existing || existing.tombstone) added++;
+  }
+  await bulkPutStars(updates);
+  return added;
+}
+
 type ProgressReporter = ((progress: SyncProgress) => void) | undefined;
 
 async function fetchAllStarredPages(
@@ -530,6 +550,8 @@ export const githubStarSource: StarSource = {
   },
 
   async syncIncremental() {
+    const username = await authStore.getUsername();
+    if (!username) throw new Error('Username unknown — re-add the token in options.');
     const cursor = (await authStore.getConfig()).lastSyncStarredAt;
     let added = 0;
     let page = 1;
@@ -552,11 +574,12 @@ export const githubStarSource: StarSource = {
       }
       page++;
     }
+    const ownedAdded = await refreshOwnedPublicRepositoriesIncrementally(username);
     // Advance the cursor only after proving every newer item was covered.
     // If the page cap is hit first, a later full sync/rescan can still recover
     // the skipped window because the old cursor remains in place.
     if (newestStarredAt && crossedCursor) await authStore.update({ lastSyncStarredAt: newestStarredAt });
-    return { added };
+    return { added: added + ownedAdded };
   },
 
   async unstar(fullName: string) {

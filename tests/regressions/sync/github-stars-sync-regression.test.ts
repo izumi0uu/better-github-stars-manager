@@ -14,7 +14,7 @@ Object.defineProperty(globalThis, 'chrome', { value: chromeMock.api, configurabl
 
 const { db } = await import('../../../src/storage/db');
 const { authStore, CONFIG_STORAGE_KEY } = await import('../../../src/auth/auth-store');
-const { githubStarSource } = await import('../../../src/api/github-star-source');
+const { githubStarSource, toStar } = await import('../../../src/api/github-star-source');
 
 const originalFetch = globalThis.fetch;
 const originalGetToken = authStore.getToken;
@@ -250,6 +250,56 @@ describe('GitHub stars sync regressions', () => {
     assert.equal((await db.stars.get('octocat/starred-owned'))?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/101?v=4');
   });
 
+  it('syncIncremental pulls newly owned public repositories without downgrading known stars', async () => {
+    await resetState('2026-06-20T00:00:00Z');
+    await db.stars.put(toStar(starredRepo('octocat/existing-starred', '2026-06-10T00:00:00Z', {
+      description: 'preserve starred metadata',
+    })));
+    const requests: string[] = [];
+    globalThis.fetch = (async (input) => {
+      const url = urlFrom(input);
+      requests.push(url);
+      if (url === 'https://api.github.com/user/starred?per_page=100&page=1') {
+        return pageResponse([]);
+      }
+      if (url === 'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1') {
+        return pageResponse([
+          {
+            ...starredRepo('octocat/existing-starred', '2020-01-01T00:00:00Z').repo,
+            private: false,
+            description: 'owned endpoint must not overwrite starred metadata',
+          },
+        ], '<https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=2>; rel="next"');
+      }
+      if (url === 'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=2') {
+        return pageResponse([
+          {
+            ...starredRepo('octocat/latest-public', '2026-06-21T00:00:00Z').repo,
+            private: false,
+            description: 'newly created owned repository',
+          },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const result = await githubStarSource.syncIncremental();
+
+    assert.deepEqual(result, { added: 1 });
+    assert.deepEqual(requests, [
+      'https://api.github.com/user/starred?per_page=100&page=1',
+      'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',
+      'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=2',
+    ]);
+    const latest = await db.stars.get('octocat/latest-public');
+    assert.equal(latest?.viewer_has_starred, false);
+    assert.equal(latest?.tombstone, false);
+    assert.equal(latest?.description, 'newly created owned repository');
+    const existingStarred = await db.stars.get('octocat/existing-starred');
+    assert.equal(existingStarred?.viewer_has_starred, true);
+    assert.equal(existingStarred?.description, 'preserve starred metadata');
+  });
+
   it('syncIncremental refreshes touched older rows but counts only fresh stars as added', async () => {
     await resetState('2026-06-20T00:00:00Z');
     await db.stars.put({
@@ -270,6 +320,7 @@ describe('GitHub stars sync regressions', () => {
 
     const fetchMock: typeof fetch = async (input) => {
       const url = urlFrom(input);
+      if (url.includes('/users/octocat/repos?')) return pageResponse([]);
       if (!url.endsWith('page=1')) throw new Error(`unexpected fetch: ${url}`);
       return pageResponse([
         starredRepo('fresh/repo', '2026-06-22T00:00:00Z', {
@@ -306,6 +357,7 @@ describe('GitHub stars sync regressions', () => {
 
     const fetchMock: typeof fetch = async (input) => {
       const url = urlFrom(input);
+      if (url.includes('/users/octocat/repos?')) return pageResponse([]);
       const page = Number(new URL(url).searchParams.get('page'));
       fetchedPages.push(page);
       if (page < 1 || page > 5) throw new Error(`unexpected fetch: ${url}`);
