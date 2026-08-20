@@ -253,7 +253,8 @@ describe('GitHub stars sync regressions', () => {
   it('syncIncremental pulls newly owned public repositories without downgrading known stars', async () => {
     await resetState('2026-06-20T00:00:00Z');
     await db.stars.put(toStar(starredRepo('octocat/existing-starred', '2026-06-10T00:00:00Z', {
-      description: 'preserve starred metadata',
+      description: 'stale starred metadata',
+      archived: false,
     })));
     const requests: string[] = [];
     globalThis.fetch = (async (input) => {
@@ -265,9 +266,11 @@ describe('GitHub stars sync regressions', () => {
       if (url === 'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1') {
         return pageResponse([
           {
-            ...starredRepo('octocat/existing-starred', '2020-01-01T00:00:00Z').repo,
+            ...starredRepo('octocat/existing-starred', '2020-01-01T00:00:00Z', {
+              archived: true,
+            }).repo,
             private: false,
-            description: 'owned endpoint must not overwrite starred metadata',
+            description: 'refreshed owned metadata',
           },
         ], '<https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=2>; rel="next"');
       }
@@ -297,7 +300,10 @@ describe('GitHub stars sync regressions', () => {
     assert.equal(latest?.description, 'newly created owned repository');
     const existingStarred = await db.stars.get('octocat/existing-starred');
     assert.equal(existingStarred?.viewer_has_starred, true);
-    assert.equal(existingStarred?.description, 'preserve starred metadata');
+    assert.equal(existingStarred?.starred_at, '2026-06-10T00:00:00Z');
+    assert.equal(existingStarred?.tombstone, false);
+    assert.equal(existingStarred?.description, 'refreshed owned metadata');
+    assert.equal(existingStarred?.archived, true);
   });
 
   it('syncIncremental refreshes touched older rows but counts only fresh stars as added', async () => {

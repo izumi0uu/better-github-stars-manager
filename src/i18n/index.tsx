@@ -1448,7 +1448,7 @@ const messages: Record<Locale, MessageCatalog> = {
       sortStars: "Sort by stars",
       sortName: "Sort by name",
       toggleSortDir: "Toggle sort direction",
-      syncTitle: "Incrementally sync new stars",
+      syncTitle: "Sync new stars and refresh every public repository you own",
       syncButton: "Sync",
       fullSyncTitle: "Re-fetch all stars and every public repository you own",
       fullSyncButton: "Full Sync",
@@ -2074,7 +2074,7 @@ const messages: Record<Locale, MessageCatalog> = {
       noToken: "A GitHub Classic PAT is required.",
       addPat: "Add Classic PAT",
       idle: "Idle",
-      syncIncremental: "Sync new stars and owned repositories",
+      syncIncremental: "Sync new stars and owned public repositories",
       syncFull: "Full re-pull all stars",
       reconcile: "Reconcile stars",
       gistPull: "Pull tags from Gist",
@@ -2407,7 +2407,7 @@ const messages: Record<Locale, MessageCatalog> = {
       retry: "Retry sync",
       gotIt: "Got it",
       tooltipSyncFirst:
-        "Sync pulls in stars you've starred since your last visit (a few requests). Run it whenever you want fresh data.",
+        "Sync pulls in newly starred repositories and refreshes every public repository you own. Run it whenever you want fresh data.",
       tooltipPushFirst:
         "Push backs up your tags + notes to a private Gist so they survive across devices. Auto-created on first push.",
       tooltipPullFirst:
@@ -2420,7 +2420,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "Stars organizes your saved repositories. Watch surfaces Issue and Pull Request threads from those repositories. Following shows repositories recently starred by people you follow, plus For You recommendations.",
       coachStep2Title: "Keep Stars in sync",
       coachStep2Body:
-        "Sync fetches stars added since your last visit. Open its menu for Full Sync when you need a complete re-pull. Neither action creates or changes tags.",
+        "Sync fetches stars added since your last visit and refreshes every public repository you own. Open its menu for Full Sync when you need a complete re-pull. Neither action creates or changes tags.",
       coachStep3Title: "Add topic-based tags",
       coachStep3Body:
         "Auto Tags adds local tags from synced GitHub topics only when you run it. It never runs as part of Sync.",
@@ -2764,7 +2764,7 @@ const messages: Record<Locale, MessageCatalog> = {
       sortStars: "按 star 数",
       sortName: "按名称",
       toggleSortDir: "切换排序方向",
-      syncTitle: "增量同步新的 stars",
+      syncTitle: "同步新 Star，并刷新本人拥有的全部公开仓库",
       syncButton: "Sync",
       fullSyncTitle: "重新拉取全部 Stars 和本人拥有的全部公开仓库",
       fullSyncButton: "Full Sync",
@@ -3712,7 +3712,7 @@ const messages: Record<Locale, MessageCatalog> = {
       retry: "重试同步",
       gotIt: "知道了",
       tooltipSyncFirst:
-        "Sync 会拉取你自上次访问以来新 star 的仓库(只需几次请求)。想刷新数据时随时点击。",
+        "Sync 会拉取自上次访问后新增的 Star，并刷新本人拥有的全部公开仓库。想刷新数据时可随时运行。",
       tooltipPushFirst:
         "Push 会把你的标签和笔记备份到一个私有 Gist,跨设备保留。首次推送时自动创建。",
       tooltipPullFirst:
@@ -3724,7 +3724,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "Stars 用于整理已收藏的仓库；Watch 汇总这些仓库的 Issue 和 Pull Request 动态；Following 展示关注用户最近 Star 的仓库，并提供 For You 推荐。",
       coachStep2Title: "保持 Stars 最新",
       coachStep2Body:
-        "Sync 拉取自上次访问后新增的 Star；需要完整重拉时，从旁边的菜单选择 Full Sync。两者都不会创建或修改标签。",
+        "Sync 会拉取自上次访问后新增的 Star，并刷新本人拥有的全部公开仓库；需要完整重拉时，从旁边的菜单选择 Full Sync。两者都不会创建或修改标签。",
       coachStep3Title: "按 GitHub Topics 添加标签",
       coachStep3Body:
         "Auto Tags 只在你主动运行时，根据已同步的 GitHub Topics 添加本地标签；它不会随 Sync 自动执行。",

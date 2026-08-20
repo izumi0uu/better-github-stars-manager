@@ -421,6 +421,19 @@ function toOwnedPublicRepository(
   };
 }
 
+function mergeOwnedPublicRepositoryMetadata(
+  repository: RepositoryPayload,
+  existing: Star,
+): Star {
+  const refreshed = toOwnedPublicRepository(repository, existing);
+  return {
+    ...refreshed,
+    viewer_has_starred: existing.viewer_has_starred,
+    starred_at: existing.starred_at,
+    tombstone: existing.tombstone,
+  };
+}
+
 /** Concurrently fetch a range of pages; returns in page-number order, not completion order. */
 async function fetchPages(
   pages: number[],
@@ -461,10 +474,11 @@ async function refreshOwnedPublicRepositoriesIncrementally(username: string): Pr
     const repository = ownedPublic[index];
     const existing = existingOwned[index];
     // Incremental star pages cannot prove an older live Star was unstarred.
-    // Rescan owns that transition; the public-repository endpoint only fills
-    // new, previously unstarred, or tombstoned owned rows here.
-    if (existing && !existing.tombstone && existing.viewer_has_starred !== false) continue;
-    updates.push(toOwnedPublicRepository(repository, existing));
+    // Refresh canonical repository metadata from the complete owned snapshot,
+    // but preserve membership fields until rescan reconciles /user/starred.
+    updates.push(existing && !existing.tombstone && existing.viewer_has_starred !== false
+      ? mergeOwnedPublicRepositoryMetadata(repository, existing)
+      : toOwnedPublicRepository(repository, existing));
     if (!existing || existing.tombstone) added++;
   }
   await bulkPutStars(updates);
