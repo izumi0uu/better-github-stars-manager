@@ -51,20 +51,47 @@ afterEach(() => {
 });
 
 describe('Watch background integration contract', () => {
-  it('uses the shared queue and only publishes a Watch-specific invalidation', () => {
+  it('splits durable Watch invalidation from ordered status delivery to content scripts', () => {
     assert.match(backgroundSource, /const watchRefreshCoordinator = createWatchRefreshCoordinator\(\{/);
     assert.match(backgroundSource, /runSerialized: \(operation\) => jobQueue\.run\(operation\)/);
     assert.match(
       backgroundSource,
       /loadLiveRepositoryNames: async \(\) => \(await db\.stars\.toArray\(\)\)\s*\.filter\(\(star\) => !star\.tombstone && star\.viewer_has_starred !== false\)\s*\.map\(\(star\) => star\.full_name\)/,
     );
+    assert.match(backgroundSource, /broadcastChanged: broadcastWatchChanged/);
+    assert.match(backgroundSource, /broadcastStatusChanged: broadcastWatchStatusChanged/);
 
-    const broadcast = extract(
+    const managerBroadcast = extract(
+      backgroundSource,
+      /function broadcastManagerMessage\(message: ManagerBroadcastMessage\): void \{([\s\S]*?)\n\}\n\nfunction setProgress/,
+    );
+    assert.match(managerBroadcast, /chrome\.runtime\.sendMessage\(message\)/);
+    assert.match(
+      managerBroadcast,
+      /message\.type !== 'watchChanged' && message\.type !== 'watchStatusChanged'/,
+    );
+    assert.match(managerBroadcast, /chrome\.tabs\.query\(\{ url: 'https:\/\/github\.com\/\*' \}\)/);
+    assert.match(managerBroadcast, /chrome\.tabs\.sendMessage\(tab\.id, message\)/);
+
+    const queue = extract(
+      backgroundSource,
+      /function queueWatchBroadcast\(type: 'watchChanged' \| 'watchStatusChanged'\) \{([\s\S]*?)\n\}/,
+    );
+    assert.match(queue, /watchRefreshCoordinator\.snapshotStatus\(\)/);
+    assert.match(queue, /watchBroadcastTail/);
+    assert.match(queue, /status \? \{ type, status \} : \{ type \}/);
+
+    const durable = extract(
       backgroundSource,
       /function broadcastWatchChanged\(\) \{([\s\S]*?)\n\}/,
     );
-    assert.match(broadcast, /sendMessage\(\{ type: 'watchChanged' \}\)/);
-    assert.doesNotMatch(broadcast, /invalidateCache|dataChanged/);
+    assert.match(durable, /queueWatchBroadcast\('watchChanged'\)/);
+    const statusOnly = extract(
+      backgroundSource,
+      /function broadcastWatchStatusChanged\(\) \{([\s\S]*?)\n\}/,
+    );
+    assert.match(statusOnly, /queueWatchBroadcast\('watchStatusChanged'\)/);
+    assert.doesNotMatch(statusOnly, /invalidateCache|dataChanged/);
   });
 
   it('scrubs only configured GitHub secrets from diagnostics', () => {

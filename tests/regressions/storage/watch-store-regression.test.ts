@@ -1,23 +1,26 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
+import Dexie from 'dexie';
 import { afterAll, beforeEach, describe, it, vi } from 'vitest';
-import { db } from '@/storage/db';
+import { db, StarsDB } from '@/storage/db';
 import { createChromeMock } from '../../helpers/chrome-mock';
 import {
   appendWatchInboxHistory,
   applyWatchThreadMutation,
+  commitWatchInboxScanBatch,
+  mergeWatchInboxDelta,
   clearWatchData,
   countUnreadWatchThreads,
   disconnectWatchInbox,
   getWatchRepositories,
   getWatchState,
-  markWatchInboxLoaded,
   queryStoredWatchInbox,
   reconcileWatchAccount,
   reconcileWatchLiveStars,
   recordWatchInboxFailure,
   recordWatchHistoryFailure,
   recordWatchScopeFailure,
+  startWatchInboxScan,
   replaceWatchInbox,
   replaceWatchScope,
   revalidateWatchInbox,
@@ -37,6 +40,36 @@ const {
 const ACCOUNT = 'OctoCat';
 const FIRST = '2026-08-05T01:00:00.000Z';
 const SECOND = '2026-08-05T02:00:00.000Z';
+const DB_NAME = 'better-github-stars-manager';
+
+function defineLegacyWatchSchema(database: Dexie): void {
+  database.version(5).stores({
+    stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
+    tags: 'full_name, mtime',
+    tagMeta: 'name, dimension, mtime',
+    organizeJobs: 'jobId, &activeSlot, status, updatedAt, originAgentSessionId, sessionId',
+    organizeItems: 'id, [jobId+position], [jobId+analysisState], jobId, position, analysisState, leaseExpiresAt',
+    organizeTaxonomies: 'jobId',
+    organizeApplies: 'applyId, jobId, status',
+    organizeApplyRows: 'id, [applyId+position], [applyId+state], applyId, state, leaseExpiresAt',
+    tagDirtyOutbox: 'id, kind, updatedAt',
+    agentSessions: 'id, updatedAt, createdAt',
+    agentMessages: 'id, sessionId, &[sessionId+sequence], [sessionId+turnAttemptId]',
+    agentAttempts: 'id, sessionId, &[sessionId+turnAttemptId], [sessionId+state], updatedAt',
+    agentAttemptRecoveries: 'id, sessionId, &[sessionId+turnAttemptId], updatedAt',
+    agentArtifacts: 'id, sessionId, turnAttemptId, ownerMessageId, storageClass, [sessionId+storageClass], [storageClass+state+lastAccessedAt], [state+createdAt], expiresAt',
+    agentArtifactChunks: 'id, artifactId, &[artifactId+index]',
+    agentStorageUsage: 'id',
+    watchRepositories: 'full_name',
+    watchNotificationThreads: 'id, repositoryFullName, updatedAt, [repositoryFullName+updatedAt]',
+    watchState: 'id',
+    radarActivities: '&id, accountLogin, repositoryKey, starredAt, dismissedAt, [accountLogin+starredAt], [accountLogin+repositoryKey]',
+    radarState: '&id, accountLogin, lastSuccessfulAt',
+    recommendations: '&id, accountLogin',
+    recommendationState: '&id, accountLogin',
+    recommendationIgnores: '&id, accountLogin',
+  });
+}
 
 function thread(id: string, repositoryFullName = 'owner/repo'): GitHubNotificationThread {
   return {
@@ -283,6 +316,57 @@ describe('Watch snapshot storage', () => {
     assert.equal(result.state?.inbox.errorCode, null);
   });
 
+  it('normalizes malformed active scan progress to pending without hiding cached rows', async () => {
+    await replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread('cached-a'), thread('cached-b')],
+      attemptedAt: FIRST,
+      lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
+      nextAllowedAt: SECOND,
+      candidateCount: 2,
+      truncated: false,
+      mode: 'replace',
+    });
+    const stored = await db.watchState.get('singleton');
+    assert.ok(stored);
+    const malformedActiveState = {
+      ...stored,
+      inbox: {
+        ...stored.inbox,
+        historyBefore: FIRST,
+        historyNextPage: null,
+        historyExhausted: false,
+        scanId: 'scan-with-missing-cursor',
+        scanStatus: 'scanning' as const,
+        scanStartedAt: FIRST,
+        scanPageCount: 7,
+      },
+    };
+    await db.watchState.put(malformedActiveState);
+
+    const normalized = await queryStoredWatchInbox({
+      accountLogin: ACCOUNT,
+      unreadOnly: false,
+    });
+    assert.deepEqual(
+      normalized.threads.map((row) => row.id).sort(),
+      ['cached-a', 'cached-b'],
+    );
+    assert.equal(normalized.state?.inbox.scanStatus, 'pending');
+    assert.equal(normalized.state?.inbox.scanPageCount, 0);
+
+    await db.watchState.put({
+      ...malformedActiveState,
+      inbox: {
+        ...malformedActiveState.inbox,
+        historyNextPage: 2,
+      },
+    });
+    const validActiveState = await getWatchState(ACCOUNT);
+    assert.equal(validActiveState?.inbox.scanStatus, 'scanning');
+    assert.equal(validActiveState?.inbox.scanPageCount, 7);
+  });
+
   it('keeps the last Inbox on failure and 304-style revalidation', async () => {
     await replaceWatchScope({
       accountLogin: ACCOUNT,
@@ -295,8 +379,8 @@ describe('Watch snapshot storage', () => {
       attemptedAt: FIRST,
       lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
       nextAllowedAt: SECOND,
-      candidateCount: 2,
-      truncated: true,
+      candidateCount: 1,
+      truncated: false,
       mode: 'replace',
     });
     await recordWatchInboxFailure({
@@ -316,109 +400,130 @@ describe('Watch snapshot storage', () => {
     const result = await queryStoredWatchInbox({ accountLogin: 'octocat' });
     assert.deepEqual(result.threads.map((row) => row.id), ['1']);
     assert.equal(result.state?.inbox.errorCode, null);
-    assert.equal(result.state?.inbox.candidateCount, 2);
-    assert.equal(result.state?.inbox.truncated, true);
+    assert.equal(result.state?.inbox.candidateCount, 1);
+    assert.equal(result.state?.inbox.truncated, false);
   });
 
-  it('merges conditional Inbox deltas without dropping older cached threads', async () => {
-    await replaceWatchScope({
+  it('merges a conditional Inbox delta without deleting remotely absent cached rows', async () => {
+    await replaceWatchInbox({
       accountLogin: ACCOUNT,
-      repositories: [{ full_name: 'owner/repo' }],
+      threads: [thread('cached')],
       attemptedAt: FIRST,
+      lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
+      nextAllowedAt: null,
+      candidateCount: 1,
+      truncated: false,
+      mode: 'replace',
     });
+
+    const merged = await mergeWatchInboxDelta({
+      accountLogin: ACCOUNT,
+      expectedLastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
+      threads: [thread('changed')],
+      attemptedAt: SECOND,
+      successfulAt: SECOND,
+      lastModified: 'Wed, 05 Aug 2026 02:00:00 GMT',
+      nextAllowedAt: '2026-08-05T02:01:00.000Z',
+    });
+    assert.equal(merged.applied, true);
+
+    const stale = await mergeWatchInboxDelta({
+      accountLogin: ACCOUNT,
+      expectedLastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
+      threads: [thread('stale')],
+      attemptedAt: '2026-08-05T03:00:00.000Z',
+      successfulAt: '2026-08-05T03:00:00.000Z',
+      lastModified: 'Wed, 05 Aug 2026 03:00:00 GMT',
+      nextAllowedAt: '2026-08-05T03:01:00.000Z',
+    });
+    assert.equal(stale.applied, false);
+    const result = await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false });
+    assert.deepEqual(result.threads.map((row) => row.id).sort(), ['cached', 'changed']);
+    assert.equal(result.state?.inbox.scanStatus, 'complete');
+    assert.equal(result.state?.inbox.candidateCount, 2);
+    assert.equal(result.state?.inbox.matchedCount, 2);
+    assert.equal(result.state?.inbox.lastConvergedAt, FIRST);
+    assert.equal(result.state?.inbox.lastModified, 'Wed, 05 Aug 2026 02:00:00 GMT');
+  });
+
+  it('starts a new scan without dropping the last converged Inbox', async () => {
     await replaceWatchInbox({
       accountLogin: ACCOUNT,
       threads: [thread('older')],
       attemptedAt: FIRST,
       lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
       nextAllowedAt: null,
-      candidateCount: 4,
-      truncated: true,
-      historyBefore: FIRST,
-      historyNextPage: 11,
-      mode: 'replace',
-    });
-
-    await replaceWatchInbox({
-      accountLogin: ACCOUNT,
-      threads: [thread('newer')],
-      attemptedAt: SECOND,
-      lastModified: 'Wed, 05 Aug 2026 02:00:00 GMT',
-      nextAllowedAt: null,
       candidateCount: 1,
       truncated: false,
-      mode: 'merge',
+      mode: 'replace',
+    });
+    const state = await startWatchInboxScan({
+      accountLogin: ACCOUNT,
+      scanId: 'scan-new',
+      scanStartedAt: SECOND,
+      before: SECOND,
+      attemptedAt: SECOND,
+      lastModified: null,
     });
 
     const result = await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false });
-    assert.deepEqual(result.threads.map((row) => row.id), ['newer', 'older']);
-    assert.equal(result.state?.inbox.matchedCount, 2);
-    assert.equal(result.state?.inbox.candidateCount, 5);
-    assert.equal(result.state?.inbox.truncated, true);
+    assert.deepEqual(result.threads.map((row) => row.id), ['older']);
+    assert.equal(state.inbox.matchedCount, 1);
+    assert.equal(state.inbox.candidateCount, 0);
+    assert.equal(state.inbox.scanStatus, 'scanning');
+    assert.equal(state.inbox.historyNextPage, 1);
   });
 
-  it('keeps the head refresh boundary independent while appending frozen history pages', async () => {
-    await db.stars.put(star('owner/repo'));
+  it('persists an exact continuation and marks a failed page partial without sweeping', async () => {
     await replaceWatchInbox({
       accountLogin: ACCOUNT,
-      threads: [thread('1')],
+      threads: [thread('old')],
       attemptedAt: FIRST,
-      successfulAt: FIRST,
-      lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
+      lastModified: null,
       nextAllowedAt: null,
       candidateCount: 1,
-      truncated: true,
-      historyBefore: FIRST,
-      historyNextPage: 11,
+      truncated: false,
       mode: 'replace',
-      requireLiveStars: true,
     });
-    await markWatchInboxLoaded({ accountLogin: ACCOUNT, loadedAt: FIRST });
-    const refreshed = await replaceWatchInbox({
+    await startWatchInboxScan({
       accountLogin: ACCOUNT,
-      threads: [thread('2')],
+      scanId: 'scan-history',
+      scanStartedAt: SECOND,
+      before: SECOND,
+      attemptedAt: SECOND,
+      lastModified: null,
+    });
+    const appended = await commitWatchInboxScanBatch({
+      accountLogin: ACCOUNT,
+      scanId: 'scan-history',
+      before: SECOND,
+      expectedPage: 1,
+      pageCount: 10,
+      threads: [thread('new')],
+      nextPage: 11,
       attemptedAt: SECOND,
       successfulAt: SECOND,
-      lastModified: 'Wed, 05 Aug 2026 02:00:00 GMT',
-      nextAllowedAt: null,
-      candidateCount: 1,
-      truncated: true,
-      historyBefore: SECOND,
-      historyNextPage: 11,
-      mode: 'merge',
-      requireLiveStars: true,
-    });
-
-    assert.equal(refreshed.inbox.newerThan, FIRST);
-    assert.equal(refreshed.inbox.historyBefore, FIRST);
-    assert.equal(refreshed.inbox.historyNextPage, 11);
-
-    const appended = await appendWatchInboxHistory({
-      accountLogin: ACCOUNT,
-      historyBefore: FIRST,
-      historyPage: 11,
-      threads: [thread('3')],
-      candidateCount: 1,
-      nextPage: 13,
-      requireLiveStars: true,
     });
     assert.equal(appended.applied, true);
-    assert.equal(appended.addedCount, 1);
-    assert.equal(appended.state?.inbox.lastSuccessfulAt, SECOND);
-    assert.equal(appended.state?.inbox.newerThan, FIRST);
-    assert.equal(appended.state?.inbox.historyNextPage, 13);
-    assert.equal(appended.state?.inbox.historyExhausted, false);
+    assert.equal(appended.state?.inbox.historyNextPage, 11);
+    assert.equal(appended.state?.inbox.scanStatus, 'scanning');
 
     await recordWatchHistoryFailure({
       accountLogin: ACCOUNT,
-      historyBefore: FIRST,
-      historyPage: 13,
+      historyBefore: SECOND,
+      historyPage: 11,
       errorCode: 'rate_limited',
     });
     const failed = await getWatchState(ACCOUNT);
-    assert.equal(failed?.inbox.errorCode, null);
+    assert.equal(failed?.inbox.errorCode, 'rate_limited');
     assert.equal(failed?.inbox.historyErrorCode, 'rate_limited');
-    assert.equal(failed?.inbox.historyNextPage, 13);
+    assert.equal(failed?.inbox.historyNextPage, 11);
+    assert.equal(failed?.inbox.scanStatus, 'partial');
+    assert.deepEqual(
+      (await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false })).threads
+        .map((row) => row.id).sort(),
+      ['new', 'old'],
+    );
   });
 
   it('rejects malformed history cursors before committing Watch state', async () => {
@@ -459,8 +564,8 @@ describe('Watch snapshot storage', () => {
     assert.equal((await getWatchState(ACCOUNT))?.inbox.historyNextPage, 11);
   });
 
-  it('atomically removes cached rows that leave live Stars during a conditional merge', async () => {
-    await db.stars.bulkPut([star('owner/keep'), star('owner/remove')]);
+  it('keeps unstarred Inbox rows and prunes only after a complete remote scan', async () => {
+    await db.stars.put(star('owner/keep'));
     await replaceWatchInbox({
       accountLogin: ACCOUNT,
       threads: [thread('keep', 'owner/keep'), thread('remove', 'owner/remove')],
@@ -470,60 +575,111 @@ describe('Watch snapshot storage', () => {
       candidateCount: 2,
       truncated: false,
       mode: 'replace',
-      requireLiveStars: true,
     });
-    await db.stars.put(star('owner/remove', true));
-
-    const state = await replaceWatchInbox({
+    await startWatchInboxScan({
       accountLogin: ACCOUNT,
-      threads: [thread('new', 'owner/keep'), thread('outside', 'owner/outside')],
+      scanId: 'scan-1',
+      scanStartedAt: SECOND,
+      before: SECOND,
       attemptedAt: SECOND,
-      lastModified: 'Wed, 05 Aug 2026 02:00:00 GMT',
-      nextAllowedAt: null,
-      candidateCount: 2,
-      truncated: false,
-      mode: 'merge',
-      requireLiveStars: true,
+      lastModified: null,
+    });
+    const partial = await commitWatchInboxScanBatch({
+      accountLogin: ACCOUNT,
+      scanId: 'scan-1',
+      before: SECOND,
+      expectedPage: 1,
+      pageCount: 10,
+      threads: [thread('keep', 'owner/keep'), thread('outside', 'owner/outside')],
+      nextPage: 11,
+      attemptedAt: SECOND,
+      successfulAt: SECOND,
     });
 
+    assert.equal(partial.applied, true);
     assert.deepEqual(
       (await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false })).threads
-        .map((row) => row.id),
-      ['keep', 'new'],
+        .map((row) => row.id).sort(),
+      ['keep', 'outside', 'remove'],
     );
-    assert.equal(state.inbox.matchedCount, 2);
+    const complete = await commitWatchInboxScanBatch({
+      accountLogin: ACCOUNT,
+      scanId: 'scan-1',
+      before: SECOND,
+      expectedPage: 11,
+      pageCount: 1,
+      threads: [],
+      nextPage: null,
+      attemptedAt: SECOND,
+      successfulAt: SECOND,
+    });
+
+    assert.equal(complete.applied, true);
+    assert.deepEqual(
+      (await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false })).threads
+        .map((row) => row.id).sort(),
+      ['keep', 'outside'],
+    );
+    assert.equal(complete.state?.inbox.candidateCount, 2);
+    assert.equal(complete.state?.inbox.matchedCount, 2);
+    assert.equal(complete.state?.inbox.scanStatus, 'complete');
   });
 
-  it('atomically prunes cached rows against live Stars during 304 revalidation', async () => {
-    await db.stars.bulkPut([star('owner/keep'), star('owner/remove')]);
+  it('rolls back converging scan upserts and unseen-row deletion when the state commit fails', async () => {
     await replaceWatchInbox({
       accountLogin: ACCOUNT,
-      threads: [thread('keep', 'owner/keep'), thread('remove', 'owner/remove')],
+      threads: [thread('kept', 'owner/keep'), thread('unseen', 'owner/unseen')],
       attemptedAt: FIRST,
       lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
       nextAllowedAt: null,
       candidateCount: 2,
-      truncated: true,
+      truncated: false,
       mode: 'replace',
-      requireLiveStars: true,
     });
-    await db.stars.put(star('owner/remove', true));
-
-    const state = await revalidateWatchInbox({
+    await startWatchInboxScan({
       accountLogin: ACCOUNT,
+      scanId: 'scan-rollback',
+      scanStartedAt: SECOND,
+      before: SECOND,
       attemptedAt: SECOND,
-      nextAllowedAt: null,
-      requireLiveStars: true,
+      lastModified: null,
     });
+    const before = {
+      threads: await db.watchNotificationThreads.orderBy('id').toArray(),
+      state: await db.watchState.get('singleton'),
+    };
+    const stateWrite = vi.spyOn(db.watchState, 'put')
+      .mockRejectedValueOnce(new Error('converging state commit failed'));
+
+    try {
+      await assert.rejects(
+        () => commitWatchInboxScanBatch({
+          accountLogin: ACCOUNT,
+          scanId: 'scan-rollback',
+          before: SECOND,
+          expectedPage: 1,
+          pageCount: 1,
+          threads: [
+            { ...thread('kept', 'owner/keep'), subjectTitle: 'Updated kept thread' },
+            thread('inserted', 'owner/inserted'),
+          ],
+          nextPage: null,
+          attemptedAt: SECOND,
+          successfulAt: SECOND,
+        }),
+        /converging state commit failed/u,
+      );
+    } finally {
+      stateWrite.mockRestore();
+    }
 
     assert.deepEqual(
-      (await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false })).threads
-        .map((row) => row.id),
-      ['keep'],
+      {
+        threads: await db.watchNotificationThreads.orderBy('id').toArray(),
+        state: await db.watchState.get('singleton'),
+      },
+      before,
     );
-    assert.equal(state.inbox.matchedCount, 1);
-    assert.equal(state.inbox.candidateCount, 2);
-    assert.equal(state.inbox.truncated, true);
   });
 
   it('commits read and done notification mutations only for the bound account', async () => {
@@ -578,7 +734,7 @@ describe('Watch snapshot storage', () => {
 
   });
 
-  it('counts unread Inbox rows only for the bound account', async () => {
+  it('counts every unread Inbox row for the bound account', async () => {
     await db.stars.put(star('Owner/Repo'));
     await replaceWatchScope({
       accountLogin: ACCOUNT,
@@ -600,7 +756,7 @@ describe('Watch snapshot storage', () => {
       mode: 'replace',
     });
 
-    assert.equal(await countUnreadWatchThreads('octocat'), 1);
+    assert.equal(await countUnreadWatchThreads('octocat'), 2);
     assert.equal(await countUnreadWatchThreads('another-user'), 0);
 
     await applyWatchThreadMutation({
@@ -608,7 +764,7 @@ describe('Watch snapshot storage', () => {
       threadIds: ['1'],
       action: 'read',
     });
-    assert.equal(await countUnreadWatchThreads(ACCOUNT), 0);
+    assert.equal(await countUnreadWatchThreads(ACCOUNT), 1);
   });
 
   it('isolates account changes and lets disconnect clear only private Inbox data', async () => {
@@ -639,6 +795,120 @@ describe('Watch snapshot storage', () => {
     });
     assert.equal(await getWatchState('octocat'), null);
     assert.deepEqual(await getWatchRepositories('another-user'), [{ full_name: 'other/repo' }]);
+  });
+
+  it('fences a partial scan across account cutover and removes the prior account data', async () => {
+    await replaceWatchScope({
+      accountLogin: ACCOUNT,
+      repositories: [{ full_name: 'old-account/private' }],
+      attemptedAt: FIRST,
+    });
+    await replaceWatchInbox({
+      accountLogin: ACCOUNT,
+      threads: [thread('old-saved', 'old-account/private')],
+      attemptedAt: FIRST,
+      lastModified: null,
+      nextAllowedAt: null,
+      candidateCount: 1,
+      truncated: false,
+      mode: 'replace',
+    });
+    await startWatchInboxScan({
+      accountLogin: ACCOUNT,
+      scanId: 'scan-old-account',
+      scanStartedAt: SECOND,
+      before: SECOND,
+      attemptedAt: SECOND,
+      lastModified: null,
+    });
+    await commitWatchInboxScanBatch({
+      accountLogin: ACCOUNT,
+      scanId: 'scan-old-account',
+      before: SECOND,
+      expectedPage: 1,
+      pageCount: 10,
+      threads: [thread('old-partial', 'old-account/other')],
+      nextPage: 11,
+      attemptedAt: SECOND,
+      successfulAt: SECOND,
+    });
+    await recordWatchHistoryFailure({
+      accountLogin: ACCOUNT,
+      historyBefore: SECOND,
+      historyPage: 11,
+      errorCode: 'network_error',
+    });
+    assert.equal((await getWatchState(ACCOUNT))?.inbox.scanStatus, 'partial');
+
+    const newBoundary = '2026-08-05T03:00:00.000Z';
+    await startWatchInboxScan({
+      accountLogin: 'SecondUser',
+      scanId: 'scan-new-account',
+      scanStartedAt: newBoundary,
+      before: newBoundary,
+      attemptedAt: newBoundary,
+      lastModified: null,
+    });
+    const afterCutover = {
+      repositories: await db.watchRepositories.toArray(),
+      threads: await db.watchNotificationThreads.toArray(),
+      state: await db.watchState.get('singleton'),
+    };
+    assert.deepEqual(afterCutover.repositories, []);
+    assert.deepEqual(afterCutover.threads, []);
+    assert.equal(afterCutover.state?.accountLogin, 'seconduser');
+    assert.equal(afterCutover.state?.inbox.scanId, 'scan-new-account');
+
+    const staleAccountCommit = await commitWatchInboxScanBatch({
+      accountLogin: ACCOUNT,
+      scanId: 'scan-old-account',
+      before: SECOND,
+      expectedPage: 11,
+      pageCount: 1,
+      threads: [thread('stale-old-account', 'old-account/private')],
+      nextPage: null,
+      attemptedAt: newBoundary,
+      successfulAt: newBoundary,
+    });
+    const reboundCommit = await commitWatchInboxScanBatch({
+      accountLogin: 'SecondUser',
+      scanId: 'scan-old-account',
+      before: SECOND,
+      expectedPage: 11,
+      pageCount: 1,
+      threads: [thread('rebound-old-account', 'old-account/private')],
+      nextPage: null,
+      attemptedAt: newBoundary,
+      successfulAt: newBoundary,
+    });
+
+    assert.equal(staleAccountCommit.applied, false);
+    assert.equal(reboundCommit.applied, false);
+    assert.deepEqual(
+      {
+        repositories: await db.watchRepositories.toArray(),
+        threads: await db.watchNotificationThreads.toArray(),
+        state: await db.watchState.get('singleton'),
+      },
+      afterCutover,
+    );
+
+    const currentAccountCommit = await commitWatchInboxScanBatch({
+      accountLogin: 'SecondUser',
+      scanId: 'scan-new-account',
+      before: newBoundary,
+      expectedPage: 1,
+      pageCount: 1,
+      threads: [thread('new-account', 'new-account/public')],
+      nextPage: null,
+      attemptedAt: newBoundary,
+      successfulAt: newBoundary,
+    });
+    assert.equal(currentAccountCommit.applied, true);
+    assert.deepEqual(
+      (await db.watchNotificationThreads.toArray()).map((row) => row.id),
+      ['new-account'],
+    );
   });
 
   it('never rebinds mismatched or orphaned rows to another account', async () => {
@@ -878,7 +1148,7 @@ describe('Watch snapshot storage', () => {
     assert.deepEqual(await getWatchRepositories('another-user'), [{ full_name: 'other/repo' }]);
   });
 
-  it('prunes native scope and Inbox independently when a star becomes a tombstone', async () => {
+  it('prunes native scope but preserves Inbox rows when a star becomes a tombstone', async () => {
     await db.stars.bulkPut([
       star('owner/repo'),
       star('owner/other'),
@@ -899,6 +1169,7 @@ describe('Watch snapshot storage', () => {
       attemptedAt: FIRST,
       lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
       nextAllowedAt: null,
+
       candidateCount: 3,
       truncated: false,
       mode: 'replace',
@@ -909,13 +1180,103 @@ describe('Watch snapshot storage', () => {
     assert.deepEqual(await getWatchRepositories(ACCOUNT), [{ full_name: 'owner/repo' }]);
     assert.deepEqual(
       (await queryStoredWatchInbox({ accountLogin: ACCOUNT, unreadOnly: false })).threads
-        .map((item) => item.id),
-      ['custom', 'keep'],
+        .map((item) => item.id).sort(),
+      ['custom', 'keep', 'remove'],
     );
     const state = await getWatchState(ACCOUNT);
     assert.equal(state?.scope.repositoryCount, 1);
-    assert.equal(state?.inbox.matchedCount, 2);
+    assert.equal(state?.inbox.matchedCount, 3);
     assert.equal(await reconcileWatchLiveStars(ACCOUNT), false);
+  });
+
+  it('upgrades a v5 Watch snapshot to pending without losing account rows or visit watermark', async () => {
+    const visitWatermark = '2026-08-04T23:30:00.000Z';
+    const legacyThreads = [
+      thread('legacy-a', 'legacy/private'),
+      {
+        ...thread('legacy-b', 'legacy/public'),
+        updatedAt: SECOND,
+        fetchedAt: SECOND,
+      },
+    ];
+
+    await db.close();
+    await Dexie.delete(DB_NAME);
+    const legacy = new Dexie(DB_NAME);
+    defineLegacyWatchSchema(legacy);
+    try {
+      await legacy.open();
+      await legacy.table('watchRepositories').put({ full_name: 'legacy/private' });
+      await legacy.table('watchNotificationThreads').bulkPut(legacyThreads);
+      await legacy.table('watchState').put({
+        id: 'singleton',
+        accountLogin: ACCOUNT.toLowerCase(),
+        scope: {
+          lastAttemptAt: FIRST,
+          lastSuccessfulAt: FIRST,
+          errorCode: null,
+          repositoryCount: 1,
+        },
+        inbox: {
+          lastAttemptAt: FIRST,
+          lastSuccessfulAt: FIRST,
+          errorCode: 'invalid_pagination',
+          lastModified: 'Wed, 05 Aug 2026 01:00:00 GMT',
+          nextAllowedAt: SECOND,
+          candidateCount: 99,
+          matchedCount: 99,
+          truncated: true,
+          newerThan: visitWatermark,
+          historyBefore: FIRST,
+          historyNextPage: 11,
+          historyExhausted: false,
+          historyErrorCode: 'invalid_pagination',
+        },
+      });
+    } finally {
+      legacy.close();
+    }
+
+    const upgraded = new StarsDB();
+    try {
+      await upgraded.open();
+      assert.equal(upgraded.verno, 6);
+      assert.deepEqual(
+        await upgraded.watchRepositories.toArray(),
+        [{ full_name: 'legacy/private' }],
+      );
+      assert.deepEqual(
+        await upgraded.watchNotificationThreads.orderBy('id').toArray(),
+        legacyThreads,
+      );
+
+      const state = await upgraded.watchState.get('singleton');
+      assert.equal(state?.accountLogin, ACCOUNT.toLowerCase());
+      assert.deepEqual(state?.scope, {
+        lastAttemptAt: FIRST,
+        lastSuccessfulAt: FIRST,
+        errorCode: null,
+        repositoryCount: 1,
+      });
+      assert.equal(state?.inbox.newerThan, visitWatermark);
+      assert.equal(state?.inbox.errorCode, null);
+      assert.equal(state?.inbox.lastModified, null);
+      assert.equal(state?.inbox.nextAllowedAt, null);
+      assert.equal(state?.inbox.historyBefore, null);
+      assert.equal(state?.inbox.historyNextPage, null);
+      assert.equal(state?.inbox.historyExhausted, true);
+      assert.equal(state?.inbox.historyErrorCode, null);
+      assert.equal(state?.inbox.scanId, null);
+      assert.equal(state?.inbox.scanStatus, 'pending');
+      assert.equal(state?.inbox.scanStartedAt, null);
+      assert.equal(state?.inbox.scanPageCount, 0);
+      assert.equal(state?.inbox.lastConvergedAt, null);
+      assert.equal(state?.inbox.candidateCount, legacyThreads.length);
+      assert.equal(state?.inbox.matchedCount, legacyThreads.length);
+      assert.equal(state?.inbox.truncated, false);
+    } finally {
+      upgraded.close();
+    }
   });
 
   it('prunes owned public repositories that are not starred from Watch scope', async () => {

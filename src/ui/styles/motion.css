@@ -748,6 +748,38 @@
     }
   }
 
+  .gsm-watch-status-text-phase {
+    animation: gsm-watch-status-text-phase var(--gsm-duration-control) var(--gsm-ease-enter) both;
+  }
+
+  @keyframes gsm-watch-status-text-phase {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .gsm-watch-status-number-update {
+    animation: gsm-watch-status-number-update var(--gsm-duration-control) var(--gsm-ease-enter) both;
+  }
+
+  @keyframes gsm-watch-status-number-update {
+    from {
+      opacity: 0.45;
+      transform: translateY(-2px);
+    }
+
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
   .gsm-drag-hide-intent {
     opacity: 0.25;
   }
@@ -829,6 +861,8 @@
     .gsm-radar-popover,
     .gsm-watch-auto-expanded > :first-child,
     .gsm-watch-refresh-bar,
+    .gsm-watch-status-text-phase,
+    .gsm-watch-status-number-update,
     .gsm-watch-subject-skeleton > span {
       animation: none;
     }

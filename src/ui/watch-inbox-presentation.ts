@@ -121,6 +121,8 @@ export function filterWatchInboxProjection(
   return projectWatchInbox(threads);
 }
 
+export type WatchInboxViewMode = 'timeline' | 'repository';
+
 export type WatchInboxFlatRow =
   | {
     kind: 'day';
@@ -131,13 +133,11 @@ export type WatchInboxFlatRow =
   | {
     kind: 'repository';
     key: string;
-    dayKey: string;
     group: WatchInboxProjection['groups'][number];
   }
   | {
     kind: 'thread';
     key: string;
-    dayKey: string;
     repositoryFullName: string;
     thread: GitHubNotificationThread;
   };
@@ -153,12 +153,35 @@ function watchLocalDayKey(value: string): string {
   return `${year}-${month}-${day}`;
 }
 
-/** A newest-first timeline grouped only within each local calendar day. */
+/** Build either the day timeline or a global repository-first Watch list. */
 export function buildWatchInboxRows(
   threads: readonly GitHubNotificationThread[],
   expandedRepositories: ReadonlySet<string>,
+  viewMode: WatchInboxViewMode = 'timeline',
 ): WatchInboxFlatRow[] {
   type RepositoryGroup = WatchInboxProjection['groups'][number];
+  if (viewMode === 'repository') {
+    const rows: WatchInboxFlatRow[] = [];
+    for (const group of projectWatchInbox(threads).groups) {
+      const repository = group.repositoryFullName.toLowerCase();
+      rows.push({
+        kind: 'repository',
+        key: `repository:${repository}`,
+        group,
+      });
+      if (!expandedRepositories.has(repository)) continue;
+      for (const thread of group.threads) {
+        rows.push({
+          kind: 'thread',
+          key: `thread:${thread.id}`,
+          repositoryFullName: group.repositoryFullName,
+          thread,
+        });
+      }
+    }
+    return rows;
+  }
+
   const days = new Map<string, {
     updatedAt: string;
     repositories: Map<string, RepositoryGroup>;
@@ -193,7 +216,6 @@ export function buildWatchInboxRows(
       rows.push({
         kind: 'repository',
         key: `repository:${dayKey}:${repository}`,
-        dayKey,
         group,
       });
       if (!expandedRepositories.has(repository)) continue;
@@ -201,7 +223,6 @@ export function buildWatchInboxRows(
         rows.push({
           kind: 'thread',
           key: `thread:${thread.id}`,
-          dayKey,
           repositoryFullName: group.repositoryFullName,
           thread,
         });
@@ -268,6 +289,10 @@ export function hasNewWatchGroupContent(
 export type WatchStatusPresentationKind =
   | 'loading'
   | 'refreshing'
+  | 'scope_refreshing'
+  | 'scan_pending'
+  | 'scanning'
+  | 'scan_partial'
   | 'credential_error'
   | 'query_error'
   | 'refresh_error'
@@ -275,7 +300,6 @@ export type WatchStatusPresentationKind =
   | 'scope_error'
   | 'inbox_error'
   | 'stale'
-  | 'truncated'
   | 'never_loaded'
   | 'fresh';
 
@@ -298,20 +322,16 @@ export function deriveWatchStatusPresentation(input: {
   }
 
   const state = result?.status.state;
-  const code = state?.inbox.errorCode ?? state?.scope.errorCode ?? null;
-  const snapshotAt = state?.inbox.lastSuccessfulAt ?? state?.scope.lastSuccessfulAt ?? null;
-  const hasInboxSnapshot = state?.inbox.lastSuccessfulAt !== null &&
-    state?.inbox.lastSuccessfulAt !== undefined;
+  const inbox = state?.inbox;
+  const code = inbox?.errorCode ?? state?.scope.errorCode ?? null;
+  const snapshotAt = inbox?.lastConvergedAt
+    ?? inbox?.lastSuccessfulAt
+    ?? state?.scope.lastSuccessfulAt
+    ?? null;
+  const hasInboxSnapshot = inbox?.lastSuccessfulAt !== null
+    && inbox?.lastSuccessfulAt !== undefined;
   const hasSnapshot = snapshotAt !== null;
   const credentialCode = state?.inbox.errorCode ?? null;
-  if (credentialCode && WATCH_CREDENTIAL_ERROR_CODES[credentialCode]) {
-    return {
-      kind: 'credential_error',
-      tone: hasSnapshot ? 'warning' : 'destructive',
-      code: credentialCode,
-      snapshotAt,
-    };
-  }
   if (error === 'query') {
     return {
       kind: 'query_error',
@@ -323,6 +343,34 @@ export function deriveWatchStatusPresentation(input: {
   if (error === 'refresh') {
     return { kind: 'refresh_error', tone: 'warning', code, snapshotAt };
   }
+  const activeRefresh = refreshing || result?.status.refreshing;
+  if (activeRefresh && result?.status.refreshPhase === 'scope') {
+    return { kind: 'scope_refreshing', tone: 'muted', code: null, snapshotAt };
+  }
+  if (activeRefresh && result?.status.refreshPhase === 'inbox') {
+    return {
+      kind: inbox?.scanStatus === 'complete' ? 'refreshing' : 'scanning',
+      tone: 'muted',
+      code: null,
+      snapshotAt,
+    };
+  }
+  if (credentialCode && WATCH_CREDENTIAL_ERROR_CODES[credentialCode]) {
+    return {
+      kind: 'credential_error',
+      tone: hasSnapshot ? 'warning' : 'destructive',
+      code: credentialCode,
+      snapshotAt,
+    };
+  }
+  if (inbox?.scanStatus === 'partial') {
+    return {
+      kind: 'scan_partial',
+      tone: hasInboxSnapshot ? 'warning' : 'destructive',
+      code: inbox.errorCode ?? 'scan_partial',
+      snapshotAt,
+    };
+  }
   if (result?.status.inboxStatus === 'error') {
     return {
       kind: 'inbox_error',
@@ -333,6 +381,19 @@ export function deriveWatchStatusPresentation(input: {
   }
   if (result?.status.inboxStatus === 'stale') {
     return { kind: 'stale', tone: 'warning', code, snapshotAt };
+  }
+  if (inbox?.scanStatus === 'scanning') {
+    return { kind: 'scanning', tone: 'muted', code: null, snapshotAt };
+  }
+  if (inbox?.scanStatus === 'pending'
+    && result?.status.hasMainToken
+    && result.status.hasNotificationsToken) {
+    return {
+      kind: refreshing || result.status.refreshing ? 'scanning' : 'scan_pending',
+      tone: 'muted',
+      code: null,
+      snapshotAt,
+    };
   }
   if (result?.status.scopeStatus === 'error') {
     return {
@@ -350,14 +411,11 @@ export function deriveWatchStatusPresentation(input: {
       snapshotAt,
     };
   }
-  if (result?.status.inboxStatus === 'cooldown') {
-    return { kind: 'cooldown', tone: 'warning', code: 'cooldown', snapshotAt };
-  }
-  if (state?.inbox.truncated) {
-    return { kind: 'truncated', tone: 'warning', code: 'truncated', snapshotAt };
-  }
   if (refreshing || result?.status.refreshing) {
     return { kind: 'refreshing', tone: 'muted', code: null, snapshotAt };
+  }
+  if (result?.status.inboxStatus === 'cooldown') {
+    return { kind: 'cooldown', tone: 'success', code: 'cooldown', snapshotAt };
   }
   if (!result || result.status.scopeStatus === 'not_configured'
     || result.status.inboxStatus === 'not_configured'

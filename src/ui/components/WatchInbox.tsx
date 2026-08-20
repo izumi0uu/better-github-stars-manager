@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useI18n } from '@/i18n';
@@ -27,6 +28,7 @@ import {
   filterWatchInboxProjection,
   hasNewWatchGroupContent,
   watchGroupContentSignature,
+  type WatchInboxViewMode,
   type WatchThreadNavigationKey,
 } from '@/ui/watch-inbox-presentation';
 import { projectWatchInbox } from '@/watch/watch-model';
@@ -79,7 +81,7 @@ function EmptyState({
 }: {
   icon: React.ReactNode;
   title?: string;
-  text: string;
+  text?: string;
   action?: React.ReactNode;
   tone?: 'muted' | 'success' | 'destructive';
 }) {
@@ -94,7 +96,7 @@ function EmptyState({
           {icon}
         </div>
         {title && <p className="text-[13.5px] font-semibold text-foreground">{title}</p>}
-        <p className="max-w-md text-xs leading-5 text-muted-foreground">{text}</p>
+        {text && <p className="max-w-md text-xs leading-5 text-muted-foreground">{text}</p>}
         {action && <div className="mt-2 flex gap-2">{action}</div>}
       </div>
     </SurfaceWorkCanvas>
@@ -128,6 +130,7 @@ export function WatchInbox({
   const now = useManagerNow();
   const [query, setQuery] = useState('');
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
+  const [viewMode, setViewMode] = useState<WatchInboxViewMode>('timeline');
   const [manualRepositoryExpansions, setManualRepositoryExpansions] = useState<
     Record<string, 'expanded' | 'collapsed'>
   >({});
@@ -196,8 +199,8 @@ export function WatchInbox({
     sourceGroupsByRepository,
   ]);
   const flatRows = useMemo(
-    () => buildWatchInboxRows(visibleProjection?.threads ?? [], expandedRepositories),
-    [expandedRepositories, visibleProjection?.threads],
+    () => buildWatchInboxRows(visibleProjection?.threads ?? [], expandedRepositories, viewMode),
+    [expandedRepositories, viewMode, visibleProjection?.threads],
   );
   const rowVirtualizer = useVirtualizer({
     count: flatRows.length,
@@ -255,7 +258,43 @@ export function WatchInbox({
     if (historyRequestKey) requestedHistoryKeyRef.current = historyRequestKey;
     onLoadOlder();
   }, [historyRequestKey, onLoadOlder]);
-  const refreshDisabled = refreshing || actionPending !== null || status?.inboxStatus === 'cooldown';
+  const refreshDisabled = loading || refreshing || actionPending !== null;
+
+  // Every Watch state keeps the command bar so cold entry does not pop the chrome in.
+  const renderFrame = (content: ReactNode) => (
+    <section className="min-h-full bg-background" aria-label={m.watch.title}>
+      <WatchInboxCommandBar
+        searchInput={searchInput}
+        reasonCounts={reasonCounts}
+        selectedReasons={selectedReasons}
+        onSelectedReasonsChange={setSelectedReasons}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        unreadOnly={unreadOnly}
+        refreshing={refreshing}
+        refreshDisabled={refreshDisabled}
+        onUnreadOnlyChange={onUnreadOnlyChange}
+        onRefresh={onRefresh}
+      />
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className={cn('border-b border-border bg-destructive/[0.07] text-xs text-destructive', {
+          hidden: actionError === null,
+        })}
+      >
+        <SurfaceWorkCanvas variant="watch" className="flex min-h-7 items-center gap-2 px-4 py-1 max-sm:px-3">
+          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+          <span>
+            {actionError === 'read'
+              ? m.watch.actionReadFailed
+              : actionError === 'done' ? m.watch.actionDoneFailed : ''}
+          </span>
+        </SurfaceWorkCanvas>
+      </div>
+      {content}
+    </section>
+  );
 
   const handleRepositoryToggle = useCallback((
     group: WatchInboxQueryResponse['groups'][number],
@@ -400,29 +439,29 @@ export function WatchInbox({
   }, [autoExpandedRepositories]);
 
   if (loading && !result) {
-    return <EmptyState icon={<Spinner className="size-4" />} text={m.common.loading} />;
+    return renderFrame(<EmptyState icon={<Spinner className="size-4" aria-hidden="true" />} />);
   }
 
   if (!result || !status) {
-    return (
+    return renderFrame(
       <EmptyState
         icon={<AlertTriangle className="size-4" />}
         title={m.watch.title}
         text={m.watch.queryFailed}
         tone="destructive"
         action={<Button onClick={onRetryQuery}>{m.watch.retry}</Button>}
-      />
+      />,
     );
   }
 
   if (!status.hasMainToken) {
-    return (
+    return renderFrame(
       <EmptyState
         icon={<Settings2 className="size-4" />}
         title={m.watch.title}
         text={m.watch.configureMainToken}
         action={<Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>}
-      />
+      />,
     );
   }
 
@@ -461,11 +500,9 @@ export function WatchInbox({
     }
     if (row.kind === 'repository') {
       const repository = row.group.repositoryFullName.toLowerCase();
-      const sourceGroup = sourceGroupsByRepository.get(repository) ?? row.group;
       return (
         <WatchRepositoryHeader
           group={row.group}
-          sourceGroup={sourceGroup}
           expanded={expandedRepositories.has(repository)}
           revealMatches={hasPresentationFilters}
           autoExpanded={autoExpandedRepositories[repository] === true}
@@ -502,28 +539,30 @@ export function WatchInbox({
     visibleThreadCount: number,
     variant: 'plain' | 'timeline' = 'timeline',
   ) => {
+    const scanComplete = state?.inbox.scanStatus === 'complete';
     const stale = status.inboxStatus === 'error'
-      || status.inboxStatus === 'stale'
-      || status.inboxStatus === 'cooldown';
+      || status.inboxStatus === 'stale';
     const boundaryState = loadOlderError
       ? 'error'
       : loadingOlder
         ? 'loading'
-        : canLoadOlder ? 'more' : 'complete';
+        : canLoadOlder ? 'more' : scanComplete ? 'complete' : 'incomplete';
     const tone: 'muted' | 'info' | 'warning' = loadOlderError
       ? 'warning'
-      : canLoadOlder ? 'info' : stale ? 'warning' : 'muted';
+      : canLoadOlder || !scanComplete ? 'info' : stale ? 'warning' : 'muted';
     const text = loadOlderError
       ? m.watch.loadOlderFailed
       : loadingOlder
         ? m.watch.loadingOlder
         : canLoadOlder
           ? m.watch.listEndWindow
-          : stale
+          : !scanComplete
             ? m.watch.listEndSaved(visibleThreadCount)
-            : hasPresentationFilters
-              ? m.watch.listEndMatches(visibleThreadCount)
-              : m.watch.historyComplete(visibleThreadCount);
+            : stale
+              ? m.watch.listEndSnapshot(visibleThreadCount)
+              : hasPresentationFilters
+                ? m.watch.listEndMatches(visibleThreadCount)
+                : m.watch.historyComplete(visibleThreadCount);
     return (
       <div
         ref={historySentinelRef}
@@ -604,8 +643,11 @@ export function WatchInbox({
     content = (
       <SurfaceWorkCanvas variant="watch" className="px-4 py-3 max-sm:px-3">
         <div
-          className="relative before:absolute before:bottom-3 before:left-[7px] before:top-3 before:w-px before:bg-muted-foreground/30 before:content-['']"
+          className={cn('relative', {
+            "before:absolute before:bottom-3 before:left-[7px] before:top-3 before:w-px before:bg-muted-foreground/30 before:content-['']": viewMode === 'timeline',
+          })}
           data-watch-thread-list
+          data-watch-view={viewMode}
           onKeyDown={handleThreadListKeyDown}
         >
           {scrollElement ? (
@@ -639,42 +681,11 @@ export function WatchInbox({
               </div>
             ))
           )}
-          {renderHistoryBoundary(visibleThreadCount)}
+          {renderHistoryBoundary(visibleThreadCount, viewMode === 'timeline' ? 'timeline' : 'plain')}
         </div>
       </SurfaceWorkCanvas>
     );
   }
 
-  return (
-    <section className="min-h-full bg-background" aria-label={m.watch.title}>
-      <WatchInboxCommandBar
-        searchInput={searchInput}
-        reasonCounts={reasonCounts}
-        selectedReasons={selectedReasons}
-        onSelectedReasonsChange={setSelectedReasons}
-        unreadOnly={unreadOnly}
-        refreshing={refreshing}
-        refreshDisabled={refreshDisabled}
-        onUnreadOnlyChange={onUnreadOnlyChange}
-        onRefresh={onRefresh}
-      />
-      <div
-        aria-live="polite"
-        aria-atomic="true"
-        className={cn('border-b border-border bg-destructive/[0.07] text-xs text-destructive', {
-          hidden: actionError === null,
-        })}
-      >
-        <SurfaceWorkCanvas variant="watch" className="flex min-h-7 items-center gap-2 px-4 py-1 max-sm:px-3">
-          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
-          <span>
-            {actionError === 'read'
-              ? m.watch.actionReadFailed
-              : actionError === 'done' ? m.watch.actionDoneFailed : ''}
-          </span>
-        </SurfaceWorkCanvas>
-      </div>
-      {content}
-    </section>
-  );
+  return renderFrame(content);
 }

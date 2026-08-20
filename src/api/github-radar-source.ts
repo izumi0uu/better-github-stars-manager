@@ -194,6 +194,7 @@ function responseError(response: Response): GitHubRadarError {
 
 async function retryTransientRequest<T>(
   request: () => Promise<T>,
+  deadlineAt: number,
   signal?: AbortSignal,
 ): Promise<T> {
   for (let attempt = 1; attempt <= REQUEST_MAX_ATTEMPTS; attempt += 1) {
@@ -205,6 +206,10 @@ async function retryTransientRequest<T>(
       if (!retryable || attempt === REQUEST_MAX_ATTEMPTS) throw error;
 
       if (signal?.aborted) throw new GitHubRadarError('request_aborted');
+      const retryDelayMs = REQUEST_RETRY_BASE_DELAY_MS * attempt;
+      const remainingMs = deadlineAt - Date.now();
+      if (remainingMs <= 0) throw new GitHubRadarError('deadline_exceeded');
+      const waitEndsAtDeadline = remainingMs <= retryDelayMs;
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => {
           clearTimeout(timer);
@@ -212,8 +217,9 @@ async function retryTransientRequest<T>(
         };
         const timer = setTimeout(() => {
           signal?.removeEventListener('abort', onAbort);
-          resolve();
-        }, REQUEST_RETRY_BASE_DELAY_MS * attempt);
+          if (waitEndsAtDeadline) reject(new GitHubRadarError('deadline_exceeded'));
+          else resolve();
+        }, Math.min(retryDelayMs, remainingMs));
         signal?.addEventListener('abort', onAbort, { once: true });
       });
     }
@@ -579,6 +585,7 @@ export async function fetchGitHubRadar(
   while (hasNextPage && followingLogins.length < maxFollowing) {
     const page = await retryTransientRequest(
       () => fetchFollowingPage(fetchImpl, token, cursor, requestOptions()),
+      deadlineAt,
       options.signal,
     );
     if (accountLogin !== null && accountLogin !== page.accountLogin) {
@@ -630,6 +637,7 @@ export async function fetchGitHubRadar(
           cutoffMillis,
           requestOptions(),
         ),
+        deadlineAt,
         options.signal,
       );
     } catch (error) {

@@ -5,6 +5,13 @@ import type { ManagerRuntime } from '@/runtime/manager-runtime';
 import type { Locale, SyncProgress } from "@/types";
 import type { RadarPartialReason } from '@/radar/radar-model';
 
+export type WatchStatusProgressField = 'count' | 'pages';
+
+export type WatchStatusTextPart = string | Readonly<{
+  field: WatchStatusProgressField;
+  value: number;
+}>;
+
 export interface MessageCatalog {
   localeName: string;
   common: {
@@ -66,6 +73,9 @@ export interface MessageCatalog {
     watchSurfaceUnread: (count: number) => string;
     title: string;
     filterLabel: string;
+    viewLabel: string;
+    timelineView: string;
+    repositoryView: string;
     searchPlaceholder: string;
     clearSearch: string;
     reasonFilter: string;
@@ -100,9 +110,12 @@ export interface MessageCatalog {
     noMatchingThreads: string;
     statusFresh: (unread: number, watched: number) => string;
     statusRefreshingSaved: string;
+    statusRefreshingScope: string;
     statusRefreshFailedSaved: string;
+    statusScanPending: (count: number) => string;
+    statusScanning: (count: number, pages: number) => readonly WatchStatusTextPart[];
+    statusScanPartial: (count: number, pages: number) => string;
     statusCooldown: (time: string) => string;
-    statusTruncated: (count: number) => string;
     statusCredential: string;
     statusNeverLoaded: string;
     listEndSnapshot: (count: number) => string;
@@ -121,7 +134,6 @@ export interface MessageCatalog {
     credentialStaleSnapshot: string;
     scopeFailed: string;
     inboxFailed: string;
-    truncated: string;
     cooldownUntil: (time: string) => string;
     watchedRepositoryCount: (count: number) => string;
     threadCount: (count: number) => string;
@@ -1174,8 +1186,11 @@ const messages: Record<Locale, MessageCatalog> = {
       starsSurface: "Stars",
       watchSurface: "Watch",
       watchSurfaceUnread: (count) => `Watch, ${count} unread ${count === 1 ? "thread" : "threads"}`,
-      title: "Watched stars inbox",
+      title: "GitHub Notifications inbox",
       filterLabel: "Inbox thread filter",
+      viewLabel: "View",
+      timelineView: "Timeline",
+      repositoryView: "Repository",
       searchPlaceholder: "Search repositories and threads",
       clearSearch: "Clear Watch search",
       reasonFilter: "Notification reasons",
@@ -1197,45 +1212,53 @@ const messages: Record<Locale, MessageCatalog> = {
       configureMainToken: "Update the GitHub Classic PAT to load Watch data.",
       configureNotificationsToken: "Open Options and verify the Classic PAT has the notifications scope.",
       scopeNeverLoaded: "Watched-repository membership has not been loaded from GitHub yet.",
-      inboxNeverLoaded: "Refresh to load the latest bounded Inbox snapshot for your current Stars.",
+      inboxNeverLoaded: "Refresh to scan your complete GitHub Notifications inbox.",
       queryFailed: "The Watch snapshot could not be loaded.",
       refreshFailed: "The latest Watch refresh failed; the previous snapshot remains available.",
       retry: "Retry",
       scopePermissionDenied:
-        "GitHub could not enumerate watched-repository membership. Inbox threads for current Stars can still load.",
+        "GitHub could not enumerate watched-repository membership. Inbox coverage is unaffected.",
       inboxPermissionDenied:
         "The GitHub Classic PAT cannot read Notifications. Add the notifications scope; other features still work.",
-      scopeUnavailable: "Watched-repository membership is unavailable; Inbox threads still use your current Stars.",
+      scopeUnavailable: "Watched-repository membership is unavailable; Inbox coverage is unaffected.",
       noWatchedRepositories: "GitHub returned no watched-repository membership for the current Stars.",
-      noUnreadThreads: "No unread threads for your current Stars in the latest Watch snapshot.",
-      noThreads: "No Inbox threads matched your current Stars in this snapshot.",
+      noUnreadThreads: "No unread threads in the currently saved Inbox.",
+      noThreads: "No notification threads are currently saved.",
       credentialStaleSnapshot:
         "The GitHub Classic PAT was rejected or is unavailable, so the last successful Watch snapshot is shown.",
       noMatchingThreads: "No threads match the current Watch search and reason filters.",
-      statusFresh: (unread, watched) => `${unread} unread · ${watched} confirmed watched Stars`,
-      statusRefreshingSaved: "Refreshing · showing saved rows",
+      statusFresh: (unread, watched) => `${unread} unread · currently watching ${watched} ${watched === 1 ? "repository" : "repositories"}`,
+      statusRefreshingSaved: "Refreshing Inbox · showing saved rows",
+      statusRefreshingScope: "Syncing watched repositories · showing saved Inbox",
       statusRefreshFailedSaved: "Couldn’t refresh · showing saved rows",
-      statusCooldown: (time) => `Refresh available at ${time}`,
-      statusTruncated: (count) => `Showing the newest ${count} threads`,
+      statusScanPending: (count) => `Full Inbox scan needed · showing ${count} saved ${count === 1 ? "thread" : "threads"}`,
+      statusScanning: (count, pages) => [
+        "Scanning full Inbox · ",
+        { field: 'count', value: count },
+        count === 1 ? " thread found across " : " threads found across ",
+        { field: 'pages', value: pages },
+        pages === 1 ? " page" : " pages",
+      ],
+      statusScanPartial: (count, pages) => `Full Inbox scan paused · ${count} ${count === 1 ? "thread" : "threads"} found across ${pages} ${pages === 1 ? "page" : "pages"}`,
+      statusCooldown: (time) => `Inbox complete · background polling resumes at ${time}`,
       statusCredential: "Classic PAT authorization required",
-      statusNeverLoaded: "Ready to load Watch",
-      listEndSnapshot: (count) => `End of current snapshot · ${count} ${count === 1 ? "thread" : "threads"}`,
+      statusNeverLoaded: "Ready to scan Inbox",
+      listEndSnapshot: (count) => `End of saved snapshot · ${count} ${count === 1 ? "thread" : "threads"}`,
       listEndMatches: (count) => `End of matching results · ${count} ${count === 1 ? "thread" : "threads"}`,
-      listEndWindow: "End of current window · older threads may exist",
-      listEndSaved: (count) => `End of saved snapshot · ${count} ${count === 1 ? "thread" : "threads"}`,
+      listEndWindow: "Current scan boundary · earlier Inbox threads remain",
+      listEndSaved: (count) => `End of saved rows · full Inbox scan incomplete · ${count} ${count === 1 ? "thread" : "threads"}`,
       timelineToday: "Today",
       timelineYesterday: "Yesterday",
       newBadge: "New",
       newSinceLastVisit: "Updated since your last Watch visit",
-      loadOlder: "Load older notifications",
-      loadingOlder: "Loading older notifications…",
-      loadOlderFailed: "Couldn’t load older notifications. Your saved timeline is unchanged.",
+      loadOlder: "Continue full Inbox scan",
+      loadingOlder: "Scanning older notifications…",
+      loadOlderFailed: "Full Inbox scan paused. Your saved timeline is unchanged.",
       historyComplete: (count) => `All caught up · ${count} ${count === 1 ? "thread" : "threads"}`,
       staleSnapshot: "Showing the last successful snapshot because the latest refresh failed.",
       scopeFailed: "Watched-repository membership could not be refreshed; Inbox coverage is unaffected.",
-      inboxFailed: "Inbox threads could not be refreshed.",
-      truncated: "This is the newest bounded window; more GitHub threads exist beyond it.",
-      cooldownUntil: (time) => `GitHub asks clients to wait until ${time} before refreshing again.`,
+      inboxFailed: "The full Inbox scan could not continue.",
+      cooldownUntil: (time) => `Background polling resumes at ${time}; manual refresh remains available.`,
       watchedRepositoryCount: (count) => `${count} confirmed watched ${count === 1 ? "Star" : "Stars"}`,
       threadCount: (count) => `${count} ${count === 1 ? "thread" : "threads"}`,
       snapshotAt: (time) => `Snapshot checked ${time}`,
@@ -1319,6 +1342,7 @@ const messages: Record<Locale, MessageCatalog> = {
         topic: `shared topic · ${value}`,
         language: `same language · ${value}`,
         owner: `same owner · ${value}`,
+        keyword: `related keyword · ${value}`,
         name: `related repository name · ${value}`,
       } as Record<string, string>)[kind] ?? value,
       recommendationStarAction: "Star",
@@ -2483,8 +2507,11 @@ const messages: Record<Locale, MessageCatalog> = {
       starsSurface: "Stars",
       watchSurface: "Watch",
       watchSurfaceUnread: (count) => `Watch，${count} 个未读 threads`,
-      title: "已 Watch 的 Stars 收件箱",
+      title: "GitHub 通知收件箱",
       filterLabel: "Inbox thread 筛选",
+      viewLabel: "视图",
+      timelineView: "时间线",
+      repositoryView: "仓库",
       searchPlaceholder: "搜索仓库和 threads",
       clearSearch: "清除 Watch 搜索",
       reasonFilter: "通知原因",
@@ -2506,45 +2533,53 @@ const messages: Record<Locale, MessageCatalog> = {
       configureMainToken: "请更新 GitHub Classic PAT，以加载 Watch 数据。",
       configureNotificationsToken: "请在选项页确认 Classic PAT 已包含 notifications scope。",
       scopeNeverLoaded: "尚未从 GitHub 加载已 Watch 仓库成员关系。",
-      inboxNeverLoaded: "刷新后可加载当前 Stars 的最新有界 Inbox 快照。",
+      inboxNeverLoaded: "刷新后将完整扫描 GitHub 通知收件箱。",
       queryFailed: "无法加载 Watch 快照。",
       refreshFailed: "最近一次 Watch 刷新失败，仍可查看之前的快照。",
       retry: "重试",
       scopePermissionDenied:
-        "GitHub 无法列出已 Watch 仓库成员关系；当前 Stars 的 Inbox threads 仍可加载。",
+        "GitHub 无法列出已 Watch 仓库成员关系；不影响收件箱覆盖范围。",
       inboxPermissionDenied:
         "GitHub Classic PAT 无法读取通知，请添加 notifications scope；其他功能仍可使用。",
-      scopeUnavailable: "已 Watch 仓库成员关系不可用；Inbox threads 仍以当前 Stars 为范围。",
+      scopeUnavailable: "已 Watch 仓库成员关系不可用；不影响收件箱覆盖范围。",
       noWatchedRepositories: "GitHub 没有返回当前 Stars 的已 Watch 仓库成员关系。",
-      noUnreadThreads: "最近一次 Watch 快照中，当前 Stars 没有未读 thread。",
+      noUnreadThreads: "当前已保存的收件箱中没有未读 thread。",
       credentialStaleSnapshot:
         "GitHub Classic PAT 已被拒绝或暂时不可用，现显示上一次成功的 Watch 快照。",
-      noThreads: "这次快照中没有 Inbox thread 匹配当前 Stars。",
+      noThreads: "当前没有已保存的通知 thread。",
       noMatchingThreads: "没有 thread 匹配当前 Watch 搜索和通知原因筛选。",
-      statusFresh: (unread, watched) => `未读 ${unread} · 已确认 Watch 的 Stars ${watched} 个`,
-      statusRefreshingSaved: "刷新中 · 显示已保存数据",
+      statusFresh: (unread, watched) => `未读 ${unread} · 当前 Watch 了 ${watched} 个仓库`,
+      statusRefreshingSaved: "正在刷新收件箱 · 显示已保存数据",
+      statusRefreshingScope: "正在同步 Watch 仓库 · 显示已保存的收件箱",
       statusRefreshFailedSaved: "刷新失败 · 显示已保存数据",
-      statusCooldown: (time) => `可在 ${time} 后刷新`,
-      statusTruncated: (count) => `显示最新 ${count} 个 thread`,
+      statusScanPending: (count) => `需要完整扫描收件箱 · 当前显示 ${count} 个已保存 thread`,
+      statusScanning: (count, pages) => [
+        "正在完整扫描收件箱 · 已扫描 ",
+        { field: 'pages', value: pages },
+        " 页，找到 ",
+        { field: 'count', value: count },
+        " 个 thread",
+      ],
+      statusScanPartial: (count, pages) => `完整扫描已暂停 · 已扫描 ${pages} 页，找到 ${count} 个 thread`,
+      statusCooldown: (time) => `收件箱已完整同步 · 后台轮询将在 ${time} 恢复`,
       statusCredential: "需要 GitHub Classic PAT 鉴权",
-      statusNeverLoaded: "Watch 等待首次加载",
-      listEndSnapshot: (count) => `当前快照末尾 · 共 ${count} 个 thread`,
+      statusNeverLoaded: "等待扫描收件箱",
+      listEndSnapshot: (count) => `已保存快照末尾 · 共 ${count} 个 thread`,
       listEndMatches: (count) => `匹配结果末尾 · 共 ${count} 个 thread`,
-      listEndWindow: "当前窗口末尾 · 可能还有更早的 thread",
-      listEndSaved: (count) => `已保存快照末尾 · 共 ${count} 个 thread`,
+      listEndWindow: "当前扫描边界 · 仍有更早的 Inbox thread 待扫描",
+      listEndSaved: (count) => `已保存数据末尾 · 完整扫描尚未结束 · 共 ${count} 个 thread`,
       timelineToday: "今天",
       timelineYesterday: "昨天",
       newBadge: "新",
       newSinceLastVisit: "自上次查看 Watch 后有更新",
-      loadOlder: "加载更早的通知",
-      loadingOlder: "正在加载更早的通知…",
-      loadOlderFailed: "无法加载更早的通知，已保存的时间线未受影响。",
+      loadOlder: "继续完整扫描收件箱",
+      loadingOlder: "正在扫描更早的通知…",
+      loadOlderFailed: "完整扫描已暂停，已保存的时间线未受影响。",
       historyComplete: (count) => `已看完 · 共 ${count} 个 thread`,
       staleSnapshot: "最近一次刷新失败，当前仍显示上一次成功快照。",
       scopeFailed: "无法刷新已 Watch 仓库成员关系；不影响 Inbox 覆盖范围。",
-      inboxFailed: "无法刷新 Inbox threads。",
-      truncated: "这里只显示最新的有界窗口，GitHub 上仍有更早的 threads。",
-      cooldownUntil: (time) => `GitHub 要求客户端等到 ${time} 后再刷新。`,
+      inboxFailed: "无法继续完整扫描收件箱。",
+      cooldownUntil: (time) => `后台轮询将在 ${time} 恢复；仍可手动刷新。`,
       watchedRepositoryCount: (count) => `${count} 个已确认 Watch 的 Star 仓库`,
       threadCount: (count) => `${count} 个 threads`,
       snapshotAt: (time) => `快照检查于 ${time}`,
@@ -2625,6 +2660,7 @@ const messages: Record<Locale, MessageCatalog> = {
         topic: `共同 topic · ${value}`,
         language: `相同语言 · ${value}`,
         owner: `相同所有者 · ${value}`,
+        keyword: `相关关键词 · ${value}`,
         name: `相关仓库名称 · ${value}`,
       } as Record<string, string>)[kind] ?? value,
       recommendationStarAction: "Star",

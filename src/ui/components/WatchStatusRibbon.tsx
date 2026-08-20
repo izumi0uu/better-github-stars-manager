@@ -1,5 +1,6 @@
+import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
-import { useI18n } from '@/i18n';
+import { useI18n, type WatchStatusTextPart } from '@/i18n';
 
 import { cn } from '@/lib/utils';
 import { useDismissableNotice } from '@/ui/hooks/use-dismissable-notice';
@@ -11,6 +12,49 @@ import {
   formatWatchAbsoluteTime,
 } from '@/ui/watch-inbox-presentation';
 import type { WatchInboxProps } from '@/ui/watch-inbox-types';
+
+type WatchStatusProgress = Readonly<{ count: number; pages: number }> | null;
+
+function WatchStatusText({
+  text,
+  progress,
+}: {
+  text: string | readonly WatchStatusTextPart[];
+  progress: WatchStatusProgress;
+}) {
+  const previousProgressRef = useRef<WatchStatusProgress>(null);
+  const previousProgress = previousProgressRef.current;
+
+  useEffect(() => {
+    previousProgressRef.current = progress;
+  }, [progress]);
+
+  const parts: readonly WatchStatusTextPart[] = typeof text === 'string' ? [text] : text;
+  return (
+    <span
+      data-watch-status-text
+      className="gsm-watch-status-text-phase min-w-0 truncate"
+    >
+      {parts.map((part) => {
+        if (typeof part === 'string') return part;
+        const changed = previousProgress !== null
+          && previousProgress[part.field] !== part.value;
+        return (
+          <span
+            key={part.field}
+            data-watch-progress-number
+            data-watch-progress-field={part.field}
+            className={cn('inline-block tabular-nums', {
+              'gsm-watch-status-number-update': changed,
+            })}
+          >
+            {part.value}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
 
 export function WatchStatusRibbon({
   result,
@@ -38,6 +82,22 @@ export function WatchStatusRibbon({
         return m.common.loading;
       case 'refreshing':
         return presentation.snapshotAt ? m.watch.statusRefreshingSaved : m.watch.refreshing;
+      case 'scope_refreshing':
+        return m.watch.statusRefreshingScope;
+      case 'scan_pending':
+        return m.watch.statusScanPending(
+          state?.inbox.matchedCount ?? result?.threads.length ?? 0,
+        );
+      case 'scanning':
+        return m.watch.statusScanning(
+          state?.inbox.candidateCount ?? 0,
+          state?.inbox.scanPageCount ?? 0,
+        );
+      case 'scan_partial':
+        return m.watch.statusScanPartial(
+          state?.inbox.candidateCount ?? 0,
+          state?.inbox.scanPageCount ?? 0,
+        );
       case 'credential_error':
         return m.watch.statusCredential;
       case 'query_error':
@@ -47,20 +107,27 @@ export function WatchStatusRibbon({
         return m.watch.statusRefreshFailedSaved;
       case 'cooldown': {
         const cooldownUntil = formatWatchAbsoluteTime(state?.inbox.nextAllowedAt ?? null, locale);
-        return cooldownUntil ? m.watch.statusCooldown(cooldownUntil) : m.watch.statusRefreshFailedSaved;
+        return cooldownUntil ? m.watch.statusCooldown(cooldownUntil) : m.watch.statusFresh(
+          result?.unreadCount ?? 0,
+          state?.scope.repositoryCount ?? 0,
+        );
       }
       case 'scope_error':
         return m.watch.scopeFailed;
       case 'inbox_error':
         return m.watch.inboxFailed;
-      case 'truncated':
-        return m.watch.statusTruncated(result?.threads.length ?? 0);
       case 'never_loaded':
         return status?.hasMainToken ? m.watch.statusNeverLoaded : m.watch.configureMainToken;
       case 'fresh':
         return m.watch.statusFresh(result?.unreadCount ?? 0, state?.scope.repositoryCount ?? 0);
     }
   })();
+  const progress = presentation.kind === 'scanning'
+    ? {
+      count: state?.inbox.candidateCount ?? 0,
+      pages: state?.inbox.scanPageCount ?? 0,
+    }
+    : null;
 
 
   if (dismissed) return null;
@@ -76,9 +143,13 @@ export function WatchStatusRibbon({
         'bg-destructive/[0.07]': presentation.tone === 'destructive',
       })}
       data-watch-status={presentation.kind}
+      data-watch-refresh-phase={status?.refreshPhase ?? undefined}
     >
       <SurfaceWorkCanvas variant="watch" className="relative flex h-[30px] items-center gap-2 px-3.5">
-        {presentation.kind === 'refreshing' || (refreshing && presentation.kind !== 'loading') ? (
+        {presentation.kind === 'refreshing'
+          || presentation.kind === 'scope_refreshing'
+          || presentation.kind === 'scanning'
+          || (refreshing && presentation.kind !== 'loading') ? (
           <Spinner className="size-3 shrink-0" />
         ) : (
           <span
@@ -91,7 +162,7 @@ export function WatchStatusRibbon({
             aria-hidden="true"
           />
         )}
-        <span className="min-w-0 truncate text-foreground/90">{text}</span>
+        <WatchStatusText key={presentation.kind} text={text} progress={progress} />
         <span className="flex-1" />
         {presentation.kind === 'credential_error' && onOpenOptions && (
           <Button

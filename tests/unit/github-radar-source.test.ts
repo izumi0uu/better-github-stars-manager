@@ -292,19 +292,27 @@ describe('GitHub Radar source', () => {
     }
   });
 
-  it('re-evaluates the global deadline before a transient retry', async () => {
+  it('stops transient retry backoff at the global deadline', async () => {
     vi.useFakeTimers();
     try {
       const fetchImpl = vi.fn(async () => new Response('', { status: 503 })) as typeof fetch;
-      const rejection = expect(fetchGitHubRadar({
+      let caughtError: unknown = null;
+      const result = fetchGitHubRadar({
         token: 'token',
         fetchImpl,
         now: () => NOW,
         deadlineMs: 100,
-      })).rejects.toMatchObject({ code: 'deadline_exceeded' });
+      }).catch((error: unknown) => {
+        caughtError = error;
+      });
 
-      await vi.advanceTimersByTimeAsync(500);
-      await rejection;
+      await vi.advanceTimersByTimeAsync(99);
+      expect(caughtError).toBeNull();
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await result;
+      expect(caughtError).toMatchObject({ code: 'deadline_exceeded' });
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();

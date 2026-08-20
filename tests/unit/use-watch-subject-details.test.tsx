@@ -84,6 +84,16 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function storedCredential(tokenEncrypted: string) {
+  return {
+    username: 'octocat',
+    tokenEncrypted,
+    tokenCryptoMeta: { salt: 'salt', iv: 'iv' },
+    githubCredentialStatus: 'ready',
+    watchNotificationsEnabled: true,
+  };
+}
+
 function SubjectProbe({ thread }: { thread: GitHubNotificationThread }) {
   const [expanded, setExpanded] = useState(false);
   const subject = useWatchSubjectDetails({ thread, expanded });
@@ -188,7 +198,10 @@ describe('useWatchSubjectDetails', () => {
 
     act(() => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: {}, newValue: {} },
+        gsm_github_credentials: {
+          oldValue: storedCredential('cipher-a'),
+          newValue: storedCredential('cipher-b'),
+        },
       }, 'local');
     });
 

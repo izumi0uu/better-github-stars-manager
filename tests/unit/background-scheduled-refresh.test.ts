@@ -161,6 +161,7 @@ describe('scheduled Watch, Radar, and recommendation refresh', () => {
       expect(h.refreshRecommendationsIfDue).toHaveBeenCalledTimes(1);
       expect(h.nextRecommendationRefreshAt).toHaveBeenCalledTimes(1);
     });
+    expect(h.refreshWatchInbox).not.toBe(h.refreshWatchScope);
   });
 
   it('recomputes the next one-shot alarm after each recommendation alarm', async () => {

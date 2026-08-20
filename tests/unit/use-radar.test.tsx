@@ -45,6 +45,16 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function storedCredential(username: string, tokenEncrypted: string) {
+  return {
+    tokenEncrypted,
+    tokenCryptoMeta: { salt: 'salt', iv: 'iv' },
+    githubCredentialStatus: 'ready',
+    watchNotificationsEnabled: true,
+    username,
+  };
+}
+
 function response(overrides: Partial<RadarQueryResponse['status']> = {}): RadarQueryResponse {
   return {
     activities: [],
@@ -346,6 +356,92 @@ describe('useRadar', () => {
     expect(container.querySelector('[data-testid="unseen"]')?.textContent).toBe('1');
   });
 
+  it.each([
+    ['stale', response({ snapshotStatus: 'stale' })],
+    ['error', response({ snapshotStatus: 'error', errorCode: 'network_error' })],
+  ] as const)(
+    'automatically refreshes a persisted %s projection on entry',
+    async (_snapshotStatus, persisted) => {
+      let radarQueries = 0;
+      radarMocks.bgCall.mockImplementation((type: string) => {
+        if (type === 'queryRadar') {
+          radarQueries += 1;
+          return Promise.resolve(radarQueries === 1 ? persisted : response());
+        }
+        if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+        if (type === 'refreshRadar') return Promise.resolve(refreshResponse());
+        throw new Error(`Unexpected request: ${type}`);
+      });
+
+      const container = mountReact(<Harness />, mountedRoots);
+      await settle();
+      await settle();
+
+      expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar'))
+        .toHaveLength(1);
+      expect(radarQueries).toBe(2);
+      expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('fresh');
+    },
+  );
+
+  it.each([
+    ['fresh', response({ snapshotStatus: 'fresh' })],
+    ['partial', response({ snapshotStatus: 'partial' })],
+    ['cooldown', response({ snapshotStatus: 'cooldown' })],
+    ['not configured', response({
+      snapshotStatus: 'not_configured',
+      hasMainToken: false,
+    })],
+    ['stale without credentials', response({
+      snapshotStatus: 'stale',
+      hasMainToken: false,
+    })],
+  ] as const)(
+    'does not automatically refresh on entry for %s',
+    async (_condition, persisted) => {
+      radarMocks.bgCall.mockImplementation((type: string) => {
+        if (type === 'queryRadar') return Promise.resolve(persisted);
+        if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+        throw new Error(`Unexpected request: ${type}`);
+      });
+
+      mountReact(<Harness />, mountedRoots);
+      await settle();
+      await settle();
+
+      expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar'))
+        .toHaveLength(0);
+    },
+  );
+
+  it('does not auto-refresh when an initially fresh projection becomes stale later', async () => {
+    let radarQueries = 0;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        radarQueries += 1;
+        return Promise.resolve(response({
+          snapshotStatus: radarQueries === 1 ? 'fresh' : 'stale',
+        }));
+      }
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+
+    await act(async () => {
+      runtimeListeners[0]?.({ type: 'radarChanged' });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(radarQueries).toBe(2);
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar'))
+      .toHaveLength(0);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('stale');
+  });
+
   it('does not start a first-use scan while the background is already refreshing', async () => {
     radarMocks.bgCall.mockImplementation((type: string) => {
       if (type === 'queryRadar') {
@@ -363,82 +459,248 @@ describe('useRadar', () => {
     expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('refreshing');
   });
 
-  it('ignores a first-use refresh completion after credentials invalidate the projection', async () => {
-    const pendingRefresh = deferred<RadarRefreshResult>();
+  it('does not duplicate a manual refresh while an eligible entry query is pending', async () => {
+    const entryQuery = deferred<RadarQueryResponse>();
+    const manualRefresh = deferred<RadarRefreshResult>();
     let radarQueries = 0;
+    let refreshRequests = 0;
     radarMocks.bgCall.mockImplementation((type: string) => {
       if (type === 'queryRadar') {
         radarQueries += 1;
-        return Promise.resolve(radarQueries === 1 ? response({ snapshotStatus: 'never_loaded' }) : response());
+        return radarQueries === 1 ? entryQuery.promise : Promise.resolve(response());
       }
       if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
-      if (type === 'refreshRadar') return pendingRefresh.promise;
+      if (type === 'refreshRadar') {
+        refreshRequests += 1;
+        return manualRefresh.promise;
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    expect(radarQueries).toBe(1);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="refresh"]')?.click();
+      await Promise.resolve();
+    });
+    expect(refreshRequests).toBe(1);
+
+    await act(async () => {
+      entryQuery.resolve(response({ snapshotStatus: 'stale' }));
+      await entryQuery.promise;
+      await Promise.resolve();
+    });
+
+    expect(refreshRequests).toBe(1);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('stale');
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('refreshing');
+
+    await act(async () => {
+      manualRefresh.resolve(refreshResponse());
+      await manualRefresh.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(refreshRequests).toBe(1);
+    expect(radarQueries).toBe(2);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('fresh');
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('idle');
+  });
+
+  it('keeps a replacement first-use scan active when a stale refresh settles', async () => {
+    const staleRefresh = deferred<RadarRefreshResult>();
+    const replacementRefresh = deferred<RadarRefreshResult>();
+    const firstUse = response({ snapshotStatus: 'never_loaded' });
+    const authoritative = {
+      ...response(),
+      activities: [unseenActivity],
+      unseenCount: 1,
+    };
+    const refreshes = [staleRefresh, replacementRefresh];
+    let radarQueries = 0;
+    let refreshRequests = 0;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        radarQueries += 1;
+        return Promise.resolve(radarQueries <= 2 ? firstUse : authoritative);
+      }
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      if (type === 'refreshRadar') return refreshes[refreshRequests++]!.promise;
       throw new Error(`Unexpected request: ${type}`);
     });
 
     const container = mountReact(<Harness />, mountedRoots);
     await settle();
     await settle();
-    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(1);
+    expect(refreshRequests).toBe(1);
 
     act(() => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('account-a', 'cipher-a'),
+          newValue: storedCredential('account-b', 'cipher-b'),
+        },
       }, 'local');
     });
     await settle();
     await settle();
-    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('fresh');
+    expect(refreshRequests).toBe(2);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('never_loaded');
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('refreshing');
 
     await act(async () => {
-      pendingRefresh.resolve(refreshResponse({
+      staleRefresh.resolve(refreshResponse({
         published: false,
         status: response({ snapshotStatus: 'error', errorCode: 'network_error' }).status,
       }));
-      await pendingRefresh.promise;
+      await staleRefresh.promise;
       await Promise.resolve();
     });
     await settle();
 
-    expect(radarQueries).toBe(2);
-    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('fresh');
+    expect(refreshRequests).toBe(2);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('never_loaded');
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('refreshing');
     expect(container.querySelector('[data-testid="error"]')?.textContent).toBe('none');
+
+    await act(async () => {
+      replacementRefresh.resolve(refreshResponse());
+      await replacementRefresh.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(radarQueries).toBe(3);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('fresh');
+    expect(container.querySelector('[data-testid="unseen"]')?.textContent).toBe('1');
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('idle');
   });
 
-  it('does not repeat the first-use scan when publication leaves the projection never loaded', async () => {
+  it('keeps a replacement refresh authoritative after deactivation fences a stale first-use scan', async () => {
+    const staleRefresh = deferred<RadarRefreshResult>();
+    const replacementRefresh = deferred<RadarRefreshResult>();
     const firstUse = response({ snapshotStatus: 'never_loaded' });
+    const authoritative = {
+      ...response(),
+      activities: [unseenActivity],
+      unseenCount: 1,
+    };
+    const refreshes = [staleRefresh, replacementRefresh];
     let radarQueries = 0;
+    let refreshRequests = 0;
     radarMocks.bgCall.mockImplementation((type: string) => {
       if (type === 'queryRadar') {
         radarQueries += 1;
-        return Promise.resolve(firstUse);
+        return Promise.resolve(radarQueries <= 2 ? firstUse : authoritative);
       }
       if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
-      if (type === 'refreshRadar') {
-        return Promise.resolve(refreshResponse({ published: false, status: firstUse.status }));
-      }
+      if (type === 'refreshRadar') return refreshes[refreshRequests++]!.promise;
       throw new Error(`Unexpected request: ${type}`);
     });
 
     const container = mountReact(<Harness />, mountedRoots);
     await settle();
     await settle();
-    await settle();
+    expect(refreshRequests).toBe(1);
 
-    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(1);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="deactivate"]')?.click();
+    });
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('idle');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="activate"]')?.click();
+    });
+    await settle();
     expect(radarQueries).toBe(2);
     expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('never_loaded');
 
     await act(async () => {
-      runtimeListeners[0]?.({ type: 'radarChanged' });
+      container.querySelector<HTMLButtonElement>('[data-testid="refresh"]')?.click();
+    });
+    expect(refreshRequests).toBe(2);
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('refreshing');
+
+    await act(async () => {
+      staleRefresh.resolve(refreshResponse({
+        published: false,
+        status: response({ snapshotStatus: 'error', errorCode: 'network_error' }).status,
+      }));
+      await staleRefresh.promise;
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(radarQueries).toBe(2);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('never_loaded');
+    expect(container.querySelector('[data-testid="unseen"]')?.textContent).toBe('0');
+    expect(container.querySelector('[data-testid="error"]')?.textContent).toBe('none');
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('refreshing');
+
+    await act(async () => {
+      replacementRefresh.resolve(refreshResponse());
+      await replacementRefresh.promise;
       await Promise.resolve();
       await Promise.resolve();
     });
+    await settle();
 
     expect(radarQueries).toBe(3);
-    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('fresh');
+    expect(container.querySelector('[data-testid="unseen"]')?.textContent).toBe('1');
+    expect(container.querySelector('[data-testid="error"]')?.textContent).toBe('none');
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('idle');
   });
+
+  it.each([
+    ['never loaded', response({ snapshotStatus: 'never_loaded' })],
+    ['stale', response({ snapshotStatus: 'stale' })],
+    ['error', response({ snapshotStatus: 'error', errorCode: 'network_error' })],
+  ] as const)(
+    'does not repeat the entry refresh when publication leaves the projection %s',
+    async (_condition, persisted) => {
+      let radarQueries = 0;
+      radarMocks.bgCall.mockImplementation((type: string) => {
+        if (type === 'queryRadar') {
+          radarQueries += 1;
+          return Promise.resolve(persisted);
+        }
+        if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+        if (type === 'refreshRadar') {
+          return Promise.resolve(refreshResponse({
+            published: false,
+            status: persisted.status,
+          }));
+        }
+        throw new Error(`Unexpected request: ${type}`);
+      });
+
+      const container = mountReact(<Harness />, mountedRoots);
+      await settle();
+      await settle();
+      await settle();
+
+      expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar'))
+        .toHaveLength(1);
+      expect(radarQueries).toBe(2);
+      expect(container.querySelector('[data-testid="status"]')?.textContent)
+        .toBe(persisted.status.snapshotStatus);
+
+      await act(async () => {
+        runtimeListeners[0]?.({ type: 'radarChanged' });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(radarQueries).toBe(3);
+      expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar'))
+        .toHaveLength(1);
+    },
+  );
 
   it('allows one new first-use scan after credentials invalidate the projection', async () => {
     const firstUse = response({ snapshotStatus: 'never_loaded' });
@@ -462,7 +724,10 @@ describe('useRadar', () => {
 
     act(() => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('account-a', 'cipher-a'),
+          newValue: storedCredential('account-b', 'cipher-b'),
+        },
       }, 'local');
     });
     await settle();
@@ -500,7 +765,10 @@ describe('useRadar', () => {
 
     act(() => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('account-a', 'cipher-a'),
+          newValue: storedCredential('account-b', 'cipher-b'),
+        },
       }, 'local');
     });
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('none');

@@ -122,6 +122,7 @@ function makeCoordinator(input: {
       name: 'repo',
       language: 'TypeScript',
       topics: ['developer-tools'],
+      descriptionKeywords: [],
       starredAt: new Date(NOW - 2_000).toISOString(),
       stargazerCount: 10,
     }]),

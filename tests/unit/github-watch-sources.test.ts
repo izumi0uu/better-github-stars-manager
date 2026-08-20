@@ -372,6 +372,36 @@ describe('GitHub Watch API sources', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it('returns an exact ten-page continuation without duplicate IDs', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      const page = Number(url.searchParams.get('page'));
+      const link = page < 44
+        ? `<https://api.github.com/notifications?all=true&participating=false&per_page=50&before=${encodeURIComponent(NOW)}&page=${page + 1}>; rel="next"`
+        : null;
+      return jsonResponse([
+        notification(String(page)),
+        ...(page === 12 ? [notification('11')] : []),
+      ], { headers: link ? { link } : undefined });
+    });
+
+    const result = await fetchGitHubNotifications({
+      token: 'classic_notifications',
+      before: NOW,
+      startPage: 11,
+      maxPages: 10,
+      fetchImpl,
+      now: () => NOW,
+    });
+
+    expect(result.pageCount).toBe(10);
+    expect(result.nextPage).toBe(21);
+    expect(result.truncated).toBe(true);
+    expect(result.threads.map((item) => item.id))
+      .toEqual(['11', '12', '13', '14', '15', '16', '17', '18', '19', '20']);
+    expect(result.candidateCount).toBe(10);
+  });
+
   it('resumes a frozen Notifications epoch from its persisted next page', async () => {
     const calls: Array<{ page: number; before: string | null; validator: string | null }> = [];
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {

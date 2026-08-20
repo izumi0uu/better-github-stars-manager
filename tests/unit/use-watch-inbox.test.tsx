@@ -9,6 +9,7 @@ import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import {
   WATCH_MAX_THREAD_ACTIONS,
   type WatchInboxQueryResponse,
+  type WatchStatus,
 } from '@/watch/watch-contract';
 import {
   cleanupMountedRootsAndBody,
@@ -23,7 +24,7 @@ const watchMocks = vi.hoisted(() => ({
   updateWatchRepositoryCollapse: vi.fn(),
 }));
 
-type RuntimeListener = (message: { type?: string }) => void;
+type RuntimeListener = (message: { type?: string; status?: WatchStatus }) => void;
 type StorageListener = (
   changes: Record<string, chrome.storage.StorageChange>,
   areaName: string,
@@ -56,6 +57,20 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function storedCredential(
+  username: string,
+  tokenEncrypted: string,
+  watchNotificationsEnabled = true,
+) {
+  return {
+    tokenEncrypted,
+    tokenCryptoMeta: { salt: 'salt', iv: 'iv' },
+    githubCredentialStatus: 'ready',
+    watchNotificationsEnabled,
+    username,
+  };
+}
+
 function queryResponse(
   totalCount: number,
   accountLogin = 'octocat',
@@ -70,6 +85,7 @@ function queryResponse(
       hasMainToken: true,
       hasNotificationsToken: true,
       refreshing: false,
+      refreshPhase: null,
       scopeStatus: 'fresh',
       inboxStatus: 'fresh',
       state: null,
@@ -106,6 +122,11 @@ function cooldownResponse(
       historyNextPage: null,
       historyExhausted: true,
       historyErrorCode: null,
+      scanId: null,
+      scanStatus: 'complete',
+      scanStartedAt: null,
+      scanPageCount: 1,
+      lastConvergedAt: '2026-08-05T11:59:00Z',
     },
   };
   return response;
@@ -193,6 +214,12 @@ function WatchProbe({
       <span data-testid="active">{active ? 'active' : 'dormant'}</span>
       <span data-testid="loading">{inbox.loading ? 'loading' : 'ready'}</span>
       <span data-testid="count">{inbox.result?.totalCount ?? 'none'}</span>
+      <span data-testid="scan-status">
+        {inbox.result?.status.state?.inbox.scanStatus ?? 'none'}
+      </span>
+      <span data-testid="scan-pages">
+        {inbox.result?.status.state?.inbox.scanPageCount ?? 'none'}
+      </span>
       <span data-testid="boundary">{inbox.newerThan ?? 'none'}</span>
       <span data-testid="loading-older">{inbox.loadingOlder ? 'loading' : 'ready'}</span>
       <span data-testid="load-older-error">{inbox.loadOlderError ? 'error' : 'none'}</span>
@@ -260,7 +287,10 @@ describe('useWatchInbox', () => {
       await Promise.resolve();
       runtimeListeners[0]?.({ type: 'watchChanged' });
       storageListeners[0]?.({
-        gsm_github_credentials: { newValue: { watchCredentialSource: 'main' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('octocat', 'cipher', true),
+          newValue: storedCredential('octocat', 'cipher', false),
+        },
       }, 'local');
       await Promise.resolve();
     });
@@ -294,6 +324,68 @@ describe('useWatchInbox', () => {
     expect(watchMocks.bgCall).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+  });
+
+  it('merges status-only progress without querying while durable Watch changes reload', async () => {
+    const initial = cooldownResponse(2_162, '2026-08-05T12:01:00Z');
+    const blockedQuery = deferred<WatchInboxQueryResponse>();
+    let queryCount = 0;
+    watchMocks.bgCall.mockImplementation((type: string) => {
+      if (type !== 'queryWatchInbox') throw new Error(`Unexpected request: ${type}`);
+      queryCount++;
+      return queryCount === 1 ? Promise.resolve(initial) : blockedQuery.promise;
+    });
+    const container = mountReact(<Harness />, mountedRoots);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const progressStatus: WatchStatus = {
+      ...initial.status,
+      refreshing: true,
+      inboxStatus: 'fresh',
+      state: {
+        ...initial.status.state!,
+        inbox: {
+          ...initial.status.state!.inbox,
+          nextAllowedAt: null,
+          candidateCount: 997,
+          truncated: true,
+          historyNextPage: 21,
+          historyExhausted: false,
+          scanId: 'scan-progress',
+          scanStatus: 'scanning',
+          scanStartedAt: '2026-08-05T12:00:00Z',
+          scanPageCount: 20,
+        },
+      },
+    };
+
+    await act(async () => {
+      runtimeListeners[0]?.({ type: 'watchStatusChanged', status: progressStatus });
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="scan-status"]')?.textContent).toBe('scanning');
+    expect(container.querySelector('[data-testid="scan-pages"]')?.textContent).toBe('20');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2162');
+    expect(queryCount).toBe(1);
+
+    const durableStatus: WatchStatus = {
+      ...progressStatus,
+      state: {
+        ...progressStatus.state!,
+        inbox: { ...progressStatus.state!.inbox, scanPageCount: 21 },
+      },
+    };
+    await act(async () => {
+      runtimeListeners[0]?.({ type: 'watchChanged', status: durableStatus });
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="scan-pages"]')?.textContent).toBe('21');
+    expect(queryCount).toBe(2);
   });
 
   it('holds the previous Watch-load boundary stable for one visible visit', async () => {
@@ -460,7 +552,10 @@ describe('useWatchInbox', () => {
     await act(async () => {
       runtimeListeners[0]?.({ type: 'watchChanged' });
       storageListeners[0]?.({
-        gsm_github_credentials: { newValue: { watchCredentialSource: 'dedicated' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('account-a', 'cipher-a'),
+          newValue: storedCredential('account-b', 'cipher-b'),
+        },
       }, 'local');
       await Promise.resolve();
     });
@@ -543,7 +638,7 @@ describe('useWatchInbox', () => {
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('2');
   });
 
-  it('clears the cached result while reloading an authoritative credential change', async () => {
+  it('keeps cached rows while reloading a Watch capability change', async () => {
     const credentialQuery = deferred<WatchInboxQueryResponse>();
     const queryModes: boolean[] = [];
     watchMocks.bgCall.mockImplementation((
@@ -579,16 +674,16 @@ describe('useWatchInbox', () => {
     await act(async () => {
       storageListeners[0]?.({
         gsm_github_credentials: {
-          oldValue: { watchNotificationsTokenEncrypted: null },
-          newValue: { watchNotificationsTokenEncrypted: 'ciphertext' },
+          oldValue: storedCredential('octocat', 'cipher', false),
+          newValue: storedCredential('octocat', 'cipher', true),
         },
       }, 'local');
       await Promise.resolve();
     });
 
     expect(queryModes).toEqual([false, false]);
-    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('loading');
-    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('none');
+    expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
 
     await act(async () => {
       credentialQuery.resolve(queryResponse(3));
@@ -621,7 +716,10 @@ describe('useWatchInbox', () => {
     });
     await act(async () => {
       storageListeners[0]?.({
-        gsm_github_credentials: { oldValue: { accountLogin: 'a' }, newValue: { accountLogin: 'b' } },
+        gsm_github_credentials: {
+          oldValue: storedCredential('account-a', 'cipher-a'),
+          newValue: storedCredential('account-b', 'cipher-b'),
+        },
       }, 'local');
       await Promise.resolve();
       await Promise.resolve();
@@ -919,8 +1017,8 @@ describe('useWatchInbox', () => {
     await act(async () => {
       storageListeners[0]?.({
         gsm_github_credentials: {
-          oldValue: { accountLogin: 'octocat' },
-          newValue: { accountLogin: activeAccount },
+          oldValue: storedCredential('octocat', 'cipher-a'),
+          newValue: storedCredential(activeAccount, 'cipher-b'),
         },
       }, 'local');
       await Promise.resolve();

@@ -57,11 +57,14 @@ export type WatchInboxStatus =
   | 'error'
   | 'cooldown';
 
+export type WatchRefreshPhase = 'scope' | 'inbox' | null;
+
 export interface WatchStatus {
   accountLogin: string | null;
   hasMainToken: boolean;
   hasNotificationsToken: boolean;
   refreshing: boolean;
+  refreshPhase: WatchRefreshPhase;
   scopeStatus: WatchScopeStatus;
   inboxStatus: WatchInboxStatus;
   state: GitHubWatchStateRecord | null;

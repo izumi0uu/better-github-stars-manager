@@ -15,7 +15,7 @@ export function canonicalRepositoryKey(value: unknown): string | null {
   return parts[0]!.toLocaleLowerCase('en-US') + '/' + parts[1]!.toLocaleLowerCase('en-US');
 }
 
-export type RecommendationSignalKind = 'topic' | 'language' | 'owner' | 'name';
+export type RecommendationSignalKind = 'topic' | 'language' | 'owner' | 'keyword' | 'name';
 
 export type RecommendationSeed = Readonly<{
   repositoryKey: string;
@@ -24,6 +24,7 @@ export type RecommendationSeed = Readonly<{
   name: string;
   language: string | null;
   topics: readonly string[];
+  descriptionKeywords: readonly string[];
   starredAt: string;
   stargazerCount: number;
 }>;
@@ -203,20 +204,58 @@ function normalizedTopics(value: readonly string[]): string[] {
   }))].sort((left, right) => left.localeCompare(right));
 }
 
+const MAX_DESCRIPTION_KEYWORDS = 6;
+const DESCRIPTION_KEYWORD_STOP_WORDS = new Set([
+  'about',
+  'based',
+  'build',
+  'built',
+  'from',
+  'github',
+  'into',
+  'open',
+  'project',
+  'repository',
+  'simple',
+  'source',
+  'that',
+  'this',
+  'using',
+  'with',
+  'your',
+]);
+const DESCRIPTION_KEYWORD_PATTERN = /[\p{L}\p{N}]{4,50}/gu;
+
+function extractDescriptionKeywords(value: string): string[] {
+  const keywords: string[] = [];
+  const seen = new Set<string>();
+  for (const match of value.normalize('NFKC').toLocaleLowerCase('en-US').matchAll(DESCRIPTION_KEYWORD_PATTERN)) {
+    const keyword = match[0];
+    if (!keyword || DESCRIPTION_KEYWORD_STOP_WORDS.has(keyword) || seen.has(keyword)) continue;
+    seen.add(keyword);
+    keywords.push(keyword);
+    if (keywords.length === MAX_DESCRIPTION_KEYWORDS) break;
+  }
+  return keywords;
+}
+
 function searchQualifierValue(value: string): string {
   return /^[a-z0-9][a-z0-9_.+-]*$/u.test(value)
     ? value
     : `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
 
-function normalizedLimit(value: number | undefined): number {
-  return Number.isSafeInteger(value) && (value ?? 0) > 0 ? value as number : 0;
+function normalizedLimit(value: number | undefined, maximum: number): number {
+  return Number.isSafeInteger(value) && (value ?? 0) > 0
+    ? Math.min(value as number, maximum)
+    : 0;
 }
 
 export type RecommendationSeedInput = Readonly<{
   full_name: string;
   language: string | null;
   topics: readonly string[];
+  description: string;
   starred_at: string;
   stargazers_count: number;
   tombstone: boolean;
@@ -228,7 +267,7 @@ export function selectRecommendationSeeds(
   rows: readonly RecommendationSeedInput[],
   limit = RECOMMENDATION_MAX_SEEDS,
 ): RecommendationSeed[] {
-  const target = normalizedLimit(limit);
+  const target = normalizedLimit(limit, RECOMMENDATION_MAX_SEEDS);
   if (target === 0) return [];
   const candidates = rows.flatMap((row) => {
     if (row.tombstone || row.viewer_has_starred === false) return [];
@@ -246,6 +285,9 @@ export function selectRecommendationSeeds(
       name: parts.name,
       language,
       topics,
+      descriptionKeywords: topics.length === 0 && typeof row.description === 'string'
+        ? extractDescriptionKeywords(row.description)
+        : [],
       starredAt: new Date(starredAt).toISOString(),
       stargazerCount: Number.isSafeInteger(row.stargazers_count) && row.stargazers_count >= 0
         ? row.stargazers_count
@@ -302,6 +344,9 @@ function buildSignals(seeds: readonly RecommendationSeed[]): Signal[] {
     seed.topics.forEach((topic) => add('topic', topic, seed));
     if (seed.language) add('language', seed.language, seed);
     add('owner', seed.owner, seed);
+    if (seed.topics.length === 0) {
+      seed.descriptionKeywords.slice(0, 2).forEach((keyword) => add('keyword', keyword, seed));
+    }
     const nameTokens = seed.name.split(/[-_.]+/u).filter((token) => token.length >= 4);
     nameTokens.slice(0, 2).forEach((token) => add('name', token, seed));
   }
@@ -309,7 +354,8 @@ function buildSignals(seeds: readonly RecommendationSeed[]): Signal[] {
     topic: 0,
     language: 1,
     owner: 2,
-    name: 3,
+    keyword: 3,
+    name: 4,
   };
   return [...signals.values()].map((signal) => ({
     kind: signal.kind,
@@ -331,7 +377,7 @@ export function buildRecommendationQueryPlan(
   seeds: readonly RecommendationSeed[],
   limit = RECOMMENDATION_MAX_QUERIES,
 ): RecommendationQueryPlanItem[] {
-  const target = normalizedLimit(limit);
+  const target = normalizedLimit(limit, RECOMMENDATION_MAX_QUERIES);
   if (target === 0) return [];
   const signals = buildSignals(seeds);
   const selected: Signal[] = [];
@@ -362,16 +408,38 @@ function queryForSignal(signal: Signal): string {
     case 'topic': return `topic:${value} archived:false fork:false stars:>=10`;
     case 'language': return `language:${value} archived:false fork:false stars:>=25`;
     case 'owner': return `user:${value} archived:false fork:false stars:>=5`;
+    case 'keyword': return `${value} in:name,description archived:false fork:false stars:>=10`;
     case 'name': return `${value} in:name archived:false fork:false stars:>=10`;
   }
 }
 
-function similarity(candidate: RecommendationCandidate, seed: RecommendationSeed): {
+type Similarity = Readonly<{
   score: number;
   reason: RecommendationReason;
-} {
-  const candidateTopics = new Set(candidate.topics.map(canonicalText));
-  const sharedTopics = seed.topics.filter((topic) => candidateTopics.has(topic));
+}>;
+
+type CandidateSimilaritySignals = Readonly<{
+  topics: ReadonlySet<string>;
+  keywords: ReadonlySet<string>;
+  nameTokens: readonly string[];
+}>;
+
+function candidateSimilaritySignals(candidate: RecommendationCandidate): CandidateSimilaritySignals {
+  const keywords = new Set(extractDescriptionKeywords(candidate.description));
+  for (const keyword of extractDescriptionKeywords(candidate.name)) keywords.add(keyword);
+  return {
+    topics: new Set(candidate.topics.map(canonicalText)),
+    keywords,
+    nameTokens: candidate.name.split(/[-_.]+/u),
+  };
+}
+
+function similarity(
+  candidate: RecommendationCandidate,
+  seed: RecommendationSeed,
+  signals: CandidateSimilaritySignals,
+): Similarity {
+  const sharedTopics = seed.topics.filter((topic) => signals.topics.has(topic));
   if (sharedTopics.length > 0) {
     return {
       score: 80 + Math.min(sharedTopics.length, 3) * 12,
@@ -405,9 +473,22 @@ function similarity(candidate: RecommendationCandidate, seed: RecommendationSeed
       },
     };
   }
-  const candidateName = candidate.name.split(/[-_.]+/u);
+  if (seed.topics.length === 0) {
+    const sharedKeywords = seed.descriptionKeywords.filter((keyword) => signals.keywords.has(keyword));
+    if (sharedKeywords.length > 0) {
+      return {
+        score: 30 + Math.min(sharedKeywords.length, 3) * 2,
+        reason: {
+          kind: 'keyword',
+          value: sharedKeywords[0]!,
+          seedRepositoryKey: seed.repositoryKey,
+          seedRepositoryFullName: seed.repositoryFullName,
+        },
+      };
+    }
+  }
   const seedName = seed.name.split(/[-_.]+/u);
-  const sharedName = seedName.find((part) => part.length >= 4 && candidateName.includes(part));
+  const sharedName = seedName.find((part) => part.length >= 4 && signals.nameTokens.includes(part));
   return {
     score: sharedName ? 22 : 0,
     reason: {
@@ -427,6 +508,28 @@ function auxiliaryScore(candidate: RecommendationCandidate, nowMillis: number): 
   return popularity + freshness;
 }
 
+type RawRecommendationCandidate = Readonly<{
+  candidate: RecommendationCandidate;
+  rawScore: number;
+  strongestRelationships: readonly Similarity[];
+}>;
+
+function compareRecommendationReasons(left: Similarity, right: Similarity): number {
+  return left.reason.seedRepositoryKey.localeCompare(right.reason.seedRepositoryKey)
+    || left.reason.seedRepositoryFullName.localeCompare(right.reason.seedRepositoryFullName)
+    || left.reason.kind.localeCompare(right.reason.kind)
+    || left.reason.value.localeCompare(right.reason.value);
+}
+
+function compareRawRecommendationCandidates(
+  left: RawRecommendationCandidate,
+  right: RawRecommendationCandidate,
+): number {
+  return right.rawScore - left.rawScore
+    || right.candidate.stargazerCount - left.candidate.stargazerCount
+    || left.candidate.repositoryKey.localeCompare(right.candidate.repositoryKey);
+}
+
 export function rankRecommendationCandidates(input: Readonly<{
   accountLogin: string;
   candidates: readonly RecommendationCandidate[];
@@ -437,37 +540,74 @@ export function rankRecommendationCandidates(input: Readonly<{
 }>): RecommendationRecord[] {
   const fetchedAtMillis = timestamp(input.fetchedAt);
   const accountLogin = canonicalText(input.accountLogin);
-  const target = input.limit === undefined
-    ? RECOMMENDATION_MAX_CANDIDATES
-    : normalizedLimit(input.limit);
+  const target = normalizedLimit(
+    input.limit ?? RECOMMENDATION_MAX_CANDIDATES,
+    RECOMMENDATION_MAX_CANDIDATES,
+  );
   if (!accountLogin || fetchedAtMillis === 0 || target === 0) return [];
   const deduped = new Map<string, RecommendationCandidate>();
   for (const candidate of input.candidates) {
     if (candidate.archived || candidate.fork || input.excludedRepositoryKeys.has(candidate.repositoryKey)) continue;
     if (!deduped.has(candidate.repositoryKey)) deduped.set(candidate.repositoryKey, candidate);
   }
-  return [...deduped.values()].flatMap((candidate) => {
-    let best: { score: number; reason: RecommendationReason } | null = null;
+
+  const rawCandidates: RawRecommendationCandidate[] = [];
+  for (const candidate of deduped.values()) {
+    const signals = candidateSimilaritySignals(candidate);
+    let strongestScore = 0;
+    const strongestRelationships: Similarity[] = [];
     for (const seed of input.seeds) {
-      const next = similarity(candidate, seed);
-      if (!best || next.score > best.score || (
-        next.score === best.score
-        && next.reason.seedRepositoryKey.localeCompare(best.reason.seedRepositoryKey) < 0
-      )) best = next;
+      const relationship = similarity(candidate, seed, signals);
+      if (relationship.score > strongestScore) {
+        strongestScore = relationship.score;
+        strongestRelationships.length = 0;
+        strongestRelationships.push(relationship);
+      } else if (relationship.score === strongestScore && relationship.score > 0) {
+        strongestRelationships.push(relationship);
+      }
     }
-    if (!best || best.score <= 0) return [];
-    const score = Number((best.score + auxiliaryScore(candidate, fetchedAtMillis)).toFixed(3));
-    return [{
-      ...candidate,
-      id: candidate.repositoryKey,
+    if (strongestRelationships.length === 0) continue;
+    rawCandidates.push({
+      candidate,
+      rawScore: Number((strongestScore + auxiliaryScore(candidate, fetchedAtMillis)).toFixed(3)),
+      strongestRelationships: strongestRelationships.sort(compareRecommendationReasons),
+    });
+  }
+
+  rawCandidates.sort(compareRawRecommendationCandidates);
+  if (rawCandidates.length > target) rawCandidates.length = target;
+  const assignmentsBySeed = new Map<string, number>();
+  const multipleSeeds = input.seeds.length > 1;
+  const recommendations: RecommendationRecord[] = [];
+  for (const rawCandidate of rawCandidates) {
+    let relationship = rawCandidate.strongestRelationships[0]!;
+    for (let index = 1; index < rawCandidate.strongestRelationships.length; index += 1) {
+      const next = rawCandidate.strongestRelationships[index]!;
+      const currentAssignments = assignmentsBySeed.get(relationship.reason.seedRepositoryKey) ?? 0;
+      const nextAssignments = assignmentsBySeed.get(next.reason.seedRepositoryKey) ?? 0;
+      if (
+        nextAssignments < currentAssignments
+        || (nextAssignments === currentAssignments && compareRecommendationReasons(next, relationship) < 0)
+      ) relationship = next;
+    }
+    const seedRepositoryKey = relationship.reason.seedRepositoryKey;
+    const assignmentCount = (assignmentsBySeed.get(seedRepositoryKey) ?? 0) + 1;
+    assignmentsBySeed.set(seedRepositoryKey, assignmentCount);
+    const repeatPenalty = multipleSeeds
+      ? Math.min(40, Math.max(0, assignmentCount - 3) * 5)
+      : 0;
+    recommendations.push({
+      ...rawCandidate.candidate,
+      id: rawCandidate.candidate.repositoryKey,
       accountLogin,
-      score,
-      reason: best.reason,
+      score: Number(Math.max(0, rawCandidate.rawScore - repeatPenalty).toFixed(3)),
+      reason: relationship.reason,
       fetchedAt: new Date(fetchedAtMillis).toISOString(),
-    } satisfies RecommendationRecord];
-  }).sort((left, right) => (
+    });
+  }
+  return recommendations.sort((left, right) => (
     right.score - left.score
       || right.stargazerCount - left.stargazerCount
       || left.repositoryKey.localeCompare(right.repositoryKey)
-  )).slice(0, target);
+  ));
 }

@@ -186,27 +186,45 @@ const WATCH_TITLES = [
   'Describe the offline behavior',
 ] as const;
 
-const WATCH_THREADS: GitHubNotificationThread[] = WATCH_TITLES.map((title, index) => {
-  const repositoryFullName = WATCH_REPOSITORIES[index % WATCH_REPOSITORIES.length];
-  const threadId = String(1001 + index);
-  const subjectType = index % 3 === 1 ? 'PullRequest' : 'Issue';
-  return {
-    id: threadId,
-    repositoryFullName,
+const WATCH_THREADS: GitHubNotificationThread[] = [
+  ...WATCH_TITLES.map((title, index) => {
+    const repositoryFullName = WATCH_REPOSITORIES[index % WATCH_REPOSITORIES.length];
+    const threadId = String(1001 + index);
+    const subjectType = index % 3 === 1 ? 'PullRequest' : 'Issue';
+    return {
+      id: threadId,
+      repositoryFullName,
+      repositoryHtmlUrl: '#',
+      repositoryOwnerLogin: repositoryFullName.split('/')[0] ?? null,
+      repositoryOwnerAvatarUrl: [avatarSunUrl, avatarSkyUrl, avatarPlumUrl, avatarAmberUrl][index % 4],
+      reason: WATCH_REASONS[index % WATCH_REASONS.length],
+      subjectType,
+      subjectTitle: title,
+      subjectApiUrl: null,
+      subjectHtmlUrl: '#',
+      unread: index % 4 !== 3,
+      updatedAt: beforeNow(index < 5 ? 0 : index < 10 ? 1 : 3, index % 5),
+      lastReadAt: index % 4 === 3 ? beforeNow(2, index) : null,
+      fetchedAt: beforeNow(1),
+    };
+  }),
+  {
+    id: '1099',
+    repositoryFullName: 'aurora-workshop/inbox-bridge',
     repositoryHtmlUrl: '#',
-    repositoryOwnerLogin: repositoryFullName.split('/')[0] ?? null,
-    repositoryOwnerAvatarUrl: [avatarSunUrl, avatarSkyUrl, avatarPlumUrl, avatarAmberUrl][index % 4],
-    reason: WATCH_REASONS[index % WATCH_REASONS.length],
-    subjectType,
-    subjectTitle: title,
+    repositoryOwnerLogin: 'aurora-workshop',
+    repositoryOwnerAvatarUrl: avatarSunUrl,
+    reason: 'subscribed',
+    subjectType: 'Issue',
+    subjectTitle: 'Active Inbox thread outside local Stars',
     subjectApiUrl: null,
     subjectHtmlUrl: '#',
-    unread: index % 4 !== 3,
-    updatedAt: beforeNow(index < 5 ? 0 : index < 10 ? 1 : 3, index % 5),
-    lastReadAt: index % 4 === 3 ? beforeNow(2, index) : null,
+    unread: true,
+    updatedAt: beforeNow(0, 6),
+    lastReadAt: null,
     fetchedAt: beforeNow(1),
-  };
-});
+  },
+];
 
 const WATCH_DETAILS: Record<string, WatchSubjectDetail> = Object.fromEntries(
   WATCH_THREADS.map((thread, index) => {
@@ -252,10 +270,15 @@ const WATCH_STATE: GitHubWatchStateRecord = {
     lastAttemptAt: beforeNow(0),
     lastSuccessfulAt: beforeNow(0),
     errorCode: null,
-    lastModified: null,
+    lastModified: new Date(FIXED_NOW).toUTCString(),
     nextAllowedAt: null,
     candidateCount: WATCH_THREADS.length,
     matchedCount: WATCH_THREADS.length,
+    scanId: null,
+    scanStatus: 'complete',
+    scanStartedAt: null,
+    scanPageCount: 1,
+    lastConvergedAt: beforeNow(0),
     truncated: false,
     newerThan: beforeNow(1),
     historyBefore: beforeNow(0),

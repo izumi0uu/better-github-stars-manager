@@ -176,7 +176,7 @@ export function Radar({
   );
   if (loading && !result) {
     return renderFrame(
-      <RadarEmptyState icon={<Spinner className="size-4" />} title={m.radar.title} text={m.common.loading} />,
+      <RadarEmptyState icon={<Spinner className="size-4" aria-hidden="true" />} />,
     );
   }
   if (!result) {

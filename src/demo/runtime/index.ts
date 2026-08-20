@@ -368,13 +368,25 @@ class DemoManagerRuntime implements ManagerRuntime {
   async refreshWatch(): Promise<WatchRefreshResult> {
     const current = this.projectWatch(false);
     const now = timestamp(this.state.now);
+    const distinctThreadCount = new Set(this.state.watchThreads.map((thread) => thread.id)).size;
     this.state.watchState.scope.lastAttemptAt = now;
     this.state.watchState.scope.lastSuccessfulAt = now;
-    this.state.watchState.scope.repositoryCount = current.groups.length;
+    this.state.watchState.scope.errorCode = null;
     this.state.watchState.inbox.lastAttemptAt = now;
     this.state.watchState.inbox.lastSuccessfulAt = now;
-    this.state.watchState.inbox.candidateCount = this.state.watchThreads.length;
+    this.state.watchState.inbox.errorCode = null;
+    this.state.watchState.inbox.candidateCount = distinctThreadCount;
     this.state.watchState.inbox.matchedCount = current.totalCount;
+    this.state.watchState.inbox.scanId = null;
+    this.state.watchState.inbox.scanStatus = 'complete';
+    this.state.watchState.inbox.scanStartedAt = null;
+    this.state.watchState.inbox.scanPageCount = distinctThreadCount === 0 ? 0 : 1;
+    this.state.watchState.inbox.lastConvergedAt = now;
+    this.state.watchState.inbox.truncated = false;
+    this.state.watchState.inbox.historyBefore = now;
+    this.state.watchState.inbox.historyNextPage = null;
+    this.state.watchState.inbox.historyExhausted = true;
+    this.state.watchState.inbox.historyErrorCode = null;
     this.state.watchState.inbox.nextAllowedAt = null;
     this.publish('watch');
     return cloneMutable({
@@ -612,20 +624,8 @@ class DemoManagerRuntime implements ManagerRuntime {
     return changed;
   }
 
-  private liveStarKeys(): Set<string> {
-    return new Set(this.state.stars.flatMap((star) => (
-      !star.tombstone && star.viewer_has_starred !== false
-        ? [canonicalRepository(star.full_name)]
-        : []
-    )));
-  }
-
   private projectWatch(unreadOnly: boolean) {
-    const liveStars = this.liveStarKeys();
-    const threads = this.state.watchThreads.filter((thread) => (
-      liveStars.has(canonicalRepository(thread.repositoryFullName))
-    ));
-    return projectWatchInbox(threads, { unreadOnly });
+    return projectWatchInbox(this.state.watchThreads, { unreadOnly });
   }
 
   private watchStatus(): WatchStatus {
@@ -634,6 +634,7 @@ class DemoManagerRuntime implements ManagerRuntime {
       hasMainToken: true,
       hasNotificationsToken: true,
       refreshing: false,
+      refreshPhase: null,
       scopeStatus: 'fresh',
       inboxStatus: 'fresh',
       state: cloneMutable(this.state.watchState),

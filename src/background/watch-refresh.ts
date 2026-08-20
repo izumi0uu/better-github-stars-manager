@@ -8,9 +8,9 @@ import {
 import type { fetchGitHubWatchScope } from '@/api/github-watch-scope-source';
 import type { fetchGitHubWatchSubjectDetail } from '@/api/github-watch-subject-source';
 import type {
-  appendWatchInboxHistory,
   clearWatchData,
   applyWatchThreadMutation,
+  commitWatchInboxScanBatch,
   disconnectWatchInbox,
   getWatchNotificationThread,
   getWatchRepositories,
@@ -22,9 +22,10 @@ import type {
   recordWatchInboxFailure,
   recordWatchHistoryFailure,
   recordWatchScopeFailure,
-  replaceWatchInbox,
   replaceWatchScope,
   revalidateWatchInbox,
+  startWatchInboxScan,
+  mergeWatchInboxDelta,
 } from '@/storage/watch-store';
 import {
   GitHubWatchError,
@@ -40,6 +41,7 @@ import {
   parseWatchThreadIds,
   type WatchInboxQueryResponse,
   type WatchLoadOlderResult,
+  type WatchRefreshPhase,
   type WatchRefreshResult,
   type WatchStatus,
   type WatchThreadAction,
@@ -69,8 +71,9 @@ export interface WatchRefreshCoordinatorDependencies {
     reconcileLiveStars: typeof reconcileWatchLiveStars;
     replaceScope: typeof replaceWatchScope;
     recordScopeFailure: typeof recordWatchScopeFailure;
-    replaceInbox: typeof replaceWatchInbox;
-    appendHistory: typeof appendWatchInboxHistory;
+    startInboxScan: typeof startWatchInboxScan;
+    commitInboxScanBatch: typeof commitWatchInboxScanBatch;
+    mergeInboxDelta: typeof mergeWatchInboxDelta;
     markLoaded: typeof markWatchInboxLoaded;
     revalidateInbox: typeof revalidateWatchInbox;
     recordInboxFailure: typeof recordWatchInboxFailure;
@@ -81,15 +84,19 @@ export interface WatchRefreshCoordinatorDependencies {
   };
   now?: () => number;
   broadcastChanged(): void;
+  broadcastStatusChanged(): void;
 }
 
 export interface WatchRefreshCoordinator {
   getStatus(): Promise<WatchStatus>;
+  /** Read durable progress without entering the serialized mutation queue. */
+  snapshotStatus(): Promise<WatchStatus>;
   queryInbox(unreadOnly: boolean): Promise<WatchInboxQueryResponse>;
   refresh(): Promise<WatchRefreshResult>;
   getSubjectDetail(threadId: string): Promise<WatchSubjectDetail>;
   loadOlder(): Promise<WatchLoadOlderResult>;
   markLoaded(): Promise<string | null>;
+  refreshScope(): Promise<WatchRefreshResult>;
   refreshInbox(): Promise<WatchRefreshResult>;
   markThreadsRead(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult>;
   markThreadsDone(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult>;
@@ -102,8 +109,17 @@ export interface WatchRefreshCoordinator {
 }
 
 type AuthSnapshot = GitHubCredentialSnapshot;
-
 type RefreshOutcome = Omit<WatchRefreshResult, 'status'>;
+type SnapshotStabilityBudget = { restarts: number };
+type ActiveWatchRefreshPhase = Exclude<WatchRefreshPhase, null>;
+type WatchRefreshFlight = {
+  identity: string;
+  promise: Promise<WatchRefreshResult>;
+};
+type WatchRefreshExecution = {
+  identity: string;
+  phase: ActiveWatchRefreshPhase;
+};
 
 function stableErrorCode(error: unknown): string {
   return error instanceof GitHubWatchError ? error.code : 'internal_error';
@@ -120,7 +136,17 @@ function nextAllowedAt(attemptedAtMs: number, pollIntervalSeconds: number): stri
 
 const THREAD_MUTATION_CONCURRENCY = 4;
 const SUBJECT_DETAIL_CACHE_LIMIT = 100;
-const HISTORY_PAGE_BATCH = 2;
+const INBOX_SCAN_BATCH_PAGES = 10;
+const MANUAL_SNAPSHOT_RESTART_LIMIT = 3;
+
+function validSnapshotValidator(value: string | null | undefined): value is string {
+  const validator = value?.trim();
+  return !!validator && Number.isFinite(Date.parse(validator));
+}
+
+function laterSnapshotBoundary(previous: string, timestampMs: number): string {
+  return new Date(Math.max(timestampMs, Date.parse(previous) + 1)).toISOString();
+}
 
 function sameSubjectIdentity(
   left: WatchSubjectIdentity,
@@ -137,8 +163,10 @@ export function createWatchRefreshCoordinator(
   dependencies: WatchRefreshCoordinatorDependencies,
 ): WatchRefreshCoordinator {
   const now = dependencies.now ?? Date.now;
-  let inFlight: { identity: string; promise: Promise<WatchRefreshResult> } | null = null;
-  let inboxInFlight: { identity: string; promise: Promise<WatchRefreshResult> } | null = null;
+  let inFlight: WatchRefreshFlight | null = null;
+  let inboxInFlight: WatchRefreshFlight | null = null;
+  let scopeInFlight: WatchRefreshFlight | null = null;
+  let activeRefreshExecution: WatchRefreshExecution | null = null;
   let historyInFlight: { identity: string; promise: Promise<WatchLoadOlderResult> } | null = null;
   const subjectDetails = new Map<string, WatchSubjectDetail>();
   const subjectDetailInFlight = new Map<string, Promise<WatchSubjectDetail>>();
@@ -178,6 +206,39 @@ export function createWatchRefreshCoordinator(
       auth.mainToken !== null,
       auth.notificationsToken !== null,
     ]);
+  }
+
+  function activeRefreshPhase(
+    auth: AuthSnapshot,
+    execution = activeRefreshExecution,
+  ): WatchRefreshPhase {
+    return execution?.identity === refreshIdentity(auth)
+      ? execution.phase
+      : null;
+  }
+
+
+  function runRefreshOperation<T>(
+    auth: AuthSnapshot,
+    phase: ActiveWatchRefreshPhase,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const execution: WatchRefreshExecution = {
+      identity: refreshIdentity(auth),
+      phase,
+    };
+    return dependencies.runSerialized(async () => {
+      activeRefreshExecution = execution;
+      dependencies.broadcastStatusChanged();
+      try {
+        return await operation();
+      } finally {
+        if (activeRefreshExecution === execution) {
+          activeRefreshExecution = null;
+          dependencies.broadcastStatusChanged();
+        }
+      }
+    });
   }
 
   function subjectAuthorityFor(auth: AuthSnapshot): string {
@@ -277,9 +338,11 @@ export function createWatchRefreshCoordinator(
     auth: AuthSnapshot,
     refreshing: boolean,
     stateOverride?: WatchStatus['state'],
+    execution = activeRefreshExecution,
   ): Promise<WatchStatus> {
     const hasMainToken = !!(auth.accountLogin && auth.mainToken);
     const hasNotificationsToken = !!auth.notificationsToken;
+    const refreshPhase = refreshing ? activeRefreshPhase(auth, execution) : null;
     const state = stateOverride === undefined && hasMainToken && auth.accountLogin
       ? await dependencies.store.getState(auth.accountLogin)
       : stateOverride ?? null;
@@ -296,6 +359,7 @@ export function createWatchRefreshCoordinator(
     } else if (state.inbox.errorCode) {
       inboxStatus = 'stale';
     } else if (
+      state.inbox.scanStatus === 'complete' &&
       state.inbox.nextAllowedAt &&
       Date.parse(state.inbox.nextAllowedAt) > now()
     ) {
@@ -308,14 +372,18 @@ export function createWatchRefreshCoordinator(
       hasMainToken,
       hasNotificationsToken,
       refreshing,
+      refreshPhase,
       scopeStatus,
       inboxStatus,
       state,
     };
   }
 
-  async function deriveStatus(refreshing = inFlight !== null || inboxInFlight !== null): Promise<WatchStatus> {
-    return deriveStatusForAuth(await readAuth(), refreshing);
+  async function deriveStatus(
+    refreshing = inFlight !== null || inboxInFlight !== null || scopeInFlight !== null,
+    execution = activeRefreshExecution,
+  ): Promise<WatchStatus> {
+    return deriveStatusForAuth(await readAuth(), refreshing, undefined, execution);
   }
 
   async function queryInbox(unreadOnly: boolean): Promise<WatchInboxQueryResponse> {
@@ -330,7 +398,7 @@ export function createWatchRefreshCoordinator(
         ...projectWatchInbox([], { unreadOnly }),
         status: await deriveStatusForAuth(
           latest,
-          inFlight !== null || inboxInFlight !== null,
+          inFlight !== null || inboxInFlight !== null || scopeInFlight !== null,
         ),
       };
     }
@@ -341,7 +409,7 @@ export function createWatchRefreshCoordinator(
       totalCount: result.totalCount,
       status: await deriveStatusForAuth(
         auth,
-        inFlight !== null || inboxInFlight !== null,
+        inFlight !== null || inboxInFlight !== null || scopeInFlight !== null,
         result.state,
       ),
     };
@@ -355,88 +423,265 @@ export function createWatchRefreshCoordinator(
     };
   }
 
-  async function publishInbox(
-    auth: AuthSnapshot,
-    refreshStartedAt: number,
-    attemptedAt: string,
-  ): Promise<{
+  type InboxBatchOutcome = {
     inboxPublished: boolean;
     notModified: boolean;
     changed: boolean;
     credentialsChanged: boolean;
-  }> {
-    const state = await dependencies.store.getState(auth.accountLogin!);
+    failure: unknown | null;
+  };
+
+  async function performInboxBatch(
+    auth: AuthSnapshot,
+    trigger: 'manual' | 'scheduled',
+    stabilityBudget: SnapshotStabilityBudget | null = null,
+  ): Promise<InboxBatchOutcome> {
+    const unchanged = (): InboxBatchOutcome => ({
+      inboxPublished: false,
+      notModified: false,
+      changed: false,
+      credentialsChanged: false,
+      failure: null,
+    });
+    if (!auth.accountLogin || !auth.notificationsToken) return unchanged();
+
+    const startedAtMs = now();
+    const attemptedAt = new Date(startedAtMs).toISOString();
+    let state = await dependencies.store.getState(auth.accountLogin);
+    const hasContinuation = !!state
+      && (state.inbox.scanStatus === 'scanning' || state.inbox.scanStatus === 'partial')
+      && !!state.inbox.scanId
+      && !!state.inbox.scanStartedAt
+      && !!state.inbox.historyBefore
+      && state.inbox.historyNextPage !== null
+      && isValidWatchHistoryPage(state.inbox.historyNextPage);
+    const conditionalValidator = trigger === 'scheduled'
+      && state?.inbox.scanStatus === 'complete'
+      && validSnapshotValidator(state.inbox.lastModified)
+      ? state.inbox.lastModified.trim()
+      : null;
+    const conditionalHead = conditionalValidator !== null;
+    const scanId = hasContinuation
+      ? state!.inbox.scanId!
+      : `watch-inbox:${crypto.randomUUID()}`;
+    const before = hasContinuation
+      ? state!.inbox.historyBefore!
+      : attemptedAt;
+    const expectedPage = hasContinuation
+      ? state!.inbox.historyNextPage!
+      : 1;
+    const scanStartedAt = hasContinuation
+      ? state!.inbox.scanStartedAt!
+      : attemptedAt;
+
     try {
-      if (!auth.notificationsToken) throw new GitHubWatchError('authentication_required');
+      if (!await sameCredentials(auth, true)) {
+        return { ...unchanged(), credentialsChanged: true };
+      }
+      // Manual, pending, and restarted scans persist the frozen first cursor
+      // before network work. A conditional converged poll stays complete until
+      // GitHub returns 200, so only that state can accept a 304.
+      if (!hasContinuation && !conditionalHead) {
+        state = await dependencies.store.startInboxScan({
+          accountLogin: auth.accountLogin,
+          scanId,
+          scanStartedAt,
+          before,
+          attemptedAt,
+          lastModified: null,
+        });
+      }
       const snapshot = await dependencies.fetchNotifications({
         token: auth.notificationsToken,
-        before: refreshStartedAt,
-        lastModified: state?.inbox.lastModified ?? null,
-        now: () => refreshStartedAt,
+        before,
+        startPage: expectedPage,
+        maxPages: conditionalHead ? 1 : INBOX_SCAN_BATCH_PAGES,
+        lastModified: conditionalValidator,
+        now: () => startedAtMs,
       });
       if (!await sameCredentials(auth, true)) {
-        return {
-          inboxPublished: false,
-          notModified: false,
-          changed: false,
-          credentialsChanged: true,
-        };
+        return { ...unchanged(), credentialsChanged: true };
       }
       const allowedAt = nextAllowedAt(now(), snapshot.pollIntervalSeconds);
       if (snapshot.notModified) {
+        if (!conditionalHead || state?.inbox.scanStatus !== 'complete') {
+          throw new GitHubWatchError('invalid_response');
+        }
         await dependencies.store.revalidateInbox({
-          accountLogin: auth.accountLogin!,
+          accountLogin: auth.accountLogin,
           attemptedAt,
           successfulAt: snapshot.fetchedAt,
           nextAllowedAt: allowedAt,
           lastModified: snapshot.lastModified,
-          requireLiveStars: true,
         });
         return {
           inboxPublished: false,
           notModified: true,
           changed: true,
           credentialsChanged: false,
+          failure: null,
         };
       }
-      const previousSuccessfulAt = Date.parse(state?.inbox.lastSuccessfulAt ?? '');
-      const headOverlapsPreviousRefresh = Number.isFinite(previousSuccessfulAt)
-        && snapshot.threads.some((thread) => Date.parse(thread.updatedAt) <= previousSuccessfulAt);
-      const resetHistory = snapshot.nextPage !== null
-        && Number.isFinite(previousSuccessfulAt)
-        && !headOverlapsPreviousRefresh;
-      await dependencies.store.replaceInbox({
-        accountLogin: auth.accountLogin!,
+      if (snapshot.before !== before) {
+        throw new GitHubWatchError('invalid_pagination', undefined, { page: expectedPage });
+      }
+      if (!hasContinuation && conditionalValidator !== null) {
+        if (!validSnapshotValidator(snapshot.lastModified)) {
+          throw new GitHubWatchError('snapshot_unstable');
+        }
+        if (snapshot.pageCount !== 1 || snapshot.nextPage !== null) {
+          await dependencies.store.startInboxScan({
+            accountLogin: auth.accountLogin,
+            scanId,
+            scanStartedAt,
+            before,
+            attemptedAt,
+            lastModified: null,
+          });
+          return {
+            inboxPublished: false,
+            notModified: false,
+            changed: true,
+            credentialsChanged: false,
+            failure: null,
+          };
+        }
+        const merged = await dependencies.store.mergeInboxDelta({
+          accountLogin: auth.accountLogin,
+          expectedLastModified: conditionalValidator,
+          threads: snapshot.threads,
+          attemptedAt,
+          successfulAt: snapshot.fetchedAt,
+          lastModified: snapshot.lastModified.trim(),
+          nextAllowedAt: allowedAt,
+        });
+        if (!merged.applied) {
+          return { ...unchanged(), credentialsChanged: true };
+        }
+        return {
+          inboxPublished: snapshot.threads.length > 0,
+          notModified: false,
+          changed: true,
+          credentialsChanged: false,
+          failure: null,
+        };
+      }
+      let commitSuccessfulAt = snapshot.fetchedAt;
+      let commitPollIntervalSeconds = snapshot.pollIntervalSeconds;
+      let commitCooldownStartedAtMs = now();
+      let commitLastModified: string | null | undefined = expectedPage === 1
+        ? snapshot.lastModified
+        : undefined;
+      // Numeric pages can reorder while a frozen traversal is running. Never
+      // expose a terminal batch to the sweeping store commit until page 1 says
+      // this exact boundary and validator remained unchanged.
+      if (snapshot.nextPage === null) {
+        const validatorCandidate = expectedPage === 1
+          ? snapshot.lastModified
+          : state?.inbox.lastModified;
+        if (!validSnapshotValidator(validatorCandidate)) {
+          throw new GitHubWatchError('snapshot_unstable');
+        }
+        const validator = validatorCandidate.trim();
+        if (!await sameCredentials(auth, true)) {
+          return { ...unchanged(), credentialsChanged: true };
+        }
+        const validationStartedAtMs = now();
+        const validation = await dependencies.fetchNotifications({
+          token: auth.notificationsToken,
+          before,
+          startPage: 1,
+          maxPages: 1,
+          lastModified: validator,
+          now: () => validationStartedAtMs,
+        });
+        if (!await sameCredentials(auth, true)) {
+          return { ...unchanged(), credentialsChanged: true };
+        }
+        if (validation.before !== before) {
+          throw new GitHubWatchError('invalid_pagination', undefined, { page: 1 });
+        }
+        const current = await dependencies.store.getState(auth.accountLogin);
+        if (
+          current?.inbox.scanId !== scanId
+          || (current.inbox.scanStatus !== 'scanning' && current.inbox.scanStatus !== 'partial')
+          || current.inbox.historyBefore !== before
+          || current.inbox.historyNextPage !== expectedPage
+        ) {
+          return { ...unchanged(), credentialsChanged: true };
+        }
+        if (!validation.notModified) {
+          if (
+            trigger === 'manual'
+            && stabilityBudget
+            && stabilityBudget.restarts >= MANUAL_SNAPSHOT_RESTART_LIMIT
+          ) {
+            throw new GitHubWatchError('snapshot_unstable');
+          }
+          const validationAtMs = Date.parse(validation.fetchedAt);
+          const restartedAt = laterSnapshotBoundary(
+            before,
+            Number.isFinite(validationAtMs) ? Math.max(now(), validationAtMs) : now(),
+          );
+          await dependencies.store.startInboxScan({
+            accountLogin: auth.accountLogin,
+            scanId: `watch-inbox:${crypto.randomUUID()}`,
+            scanStartedAt: restartedAt,
+            before: restartedAt,
+            attemptedAt: restartedAt,
+            lastModified: null,
+          });
+          if (trigger === 'manual' && stabilityBudget) stabilityBudget.restarts++;
+          return {
+            inboxPublished: false,
+            notModified: false,
+            changed: true,
+            credentialsChanged: false,
+            failure: null,
+          };
+        }
+        if (validation.lastModified !== validator) {
+          throw new GitHubWatchError('snapshot_unstable');
+        }
+        const validatedAtMs = Date.parse(validation.fetchedAt);
+        commitCooldownStartedAtMs = Number.isFinite(validatedAtMs)
+          ? validatedAtMs
+          : validationStartedAtMs;
+        commitSuccessfulAt = validation.fetchedAt;
+        commitPollIntervalSeconds = validation.pollIntervalSeconds;
+        commitLastModified = validator;
+      }
+      const committed = await dependencies.store.commitInboxScanBatch({
+        accountLogin: auth.accountLogin,
+        scanId,
+        before,
+        expectedPage,
+        pageCount: snapshot.pageCount,
         threads: snapshot.threads,
+        nextPage: snapshot.nextPage,
         attemptedAt,
-        successfulAt: snapshot.fetchedAt,
-        lastModified: snapshot.lastModified,
-        nextAllowedAt: allowedAt,
-        candidateCount: snapshot.candidateCount,
-        truncated: snapshot.truncated,
-        historyBefore: snapshot.before,
-        historyNextPage: snapshot.nextPage,
-        resetHistory,
-        mode: state?.inbox.lastSuccessfulAt ? 'merge' : 'replace',
-        requireLiveStars: true,
+        successfulAt: commitSuccessfulAt,
+        lastModified: commitLastModified,
+        nextAllowedAt: snapshot.nextPage === null || expectedPage === 1
+          ? nextAllowedAt(commitCooldownStartedAtMs, commitPollIntervalSeconds)
+          : undefined,
       });
+      if (!committed.applied) {
+        return { ...unchanged(), credentialsChanged: true };
+      }
       return {
         inboxPublished: true,
         notModified: false,
         changed: true,
         credentialsChanged: false,
+        failure: null,
       };
     } catch (error) {
       if (!await sameCredentials(auth, true)) {
-        return {
-          inboxPublished: false,
-          notModified: false,
-          changed: false,
-          credentialsChanged: true,
-        };
+        return { ...unchanged(), credentialsChanged: true };
       }
       await dependencies.store.recordInboxFailure({
-        accountLogin: auth.accountLogin!,
+        accountLogin: auth.accountLogin,
         attemptedAt,
         errorCode: stableErrorCode(error),
       });
@@ -445,6 +690,7 @@ export function createWatchRefreshCoordinator(
         notModified: false,
         changed: true,
         credentialsChanged: false,
+        failure: error,
       };
     }
   }
@@ -459,56 +705,61 @@ export function createWatchRefreshCoordinator(
       || !auth.notificationsToken
       || !await sameCredentials(auth, true)
     ) throw new GitHubWatchError('authentication_required');
-
-    const state = await dependencies.store.getState(auth.accountLogin);
-    const historyBefore = state?.inbox.historyBefore ?? null;
-    const historyPage = state?.inbox.historyNextPage ?? null;
-    if (!historyBefore || historyPage === null || state?.inbox.historyExhausted) {
+    const before = await dependencies.store.getState(auth.accountLogin);
+    if (before?.inbox.scanStatus === 'complete') {
       return { addedCount: 0, hasMore: false };
     }
+    const beforeCount = before?.inbox.matchedCount ?? 0;
+    const batch = await performInboxBatch(auth, 'scheduled');
+    if (batch.failure) throw batch.failure;
+    if (batch.changed) dependencies.broadcastChanged();
+    const after = await dependencies.store.getState(auth.accountLogin);
+    return {
+      addedCount: Math.max(0, (after?.inbox.matchedCount ?? 0) - beforeCount),
+      hasMore: after?.inbox.scanStatus !== 'complete',
+    };
+  }
 
+  async function performScopeRefresh(auth: AuthSnapshot): Promise<{
+    scopePublished: boolean;
+    changed: boolean;
+  }> {
+    if (!auth.accountLogin || !auth.mainToken || !await sameCredentials(auth, false)) {
+      return { scopePublished: false, changed: false };
+    }
+    const refreshStartedAt = now();
+    const attemptedAt = new Date(refreshStartedAt).toISOString();
     try {
-      if (!isValidWatchHistoryPage(historyPage)) {
-        throw new GitHubWatchError('invalid_pagination');
-      }
-      const snapshot = await dependencies.fetchNotifications({
-        token: auth.notificationsToken,
-        before: historyBefore,
-        startPage: historyPage,
-        maxPages: HISTORY_PAGE_BATCH,
-        now: () => now(),
+      const remoteScope = await dependencies.fetchScope({
+        token: auth.mainToken,
+        now: () => refreshStartedAt,
       });
-      if (!await sameCredentials(auth, true)) {
-        throw new GitHubWatchError('credential_changed');
+      if (!await sameCredentials(auth, false)) {
+        return { scopePublished: false, changed: false };
       }
-      if (snapshot.notModified || snapshot.before !== historyBefore) {
-        throw new GitHubWatchError('invalid_pagination', undefined, { page: historyPage });
+      const currentLiveNames = await loadLiveNames();
+      if (!await sameCredentials(auth, false)) {
+        return { scopePublished: false, changed: false };
       }
-      const committed = await dependencies.store.appendHistory({
+      await dependencies.store.replaceScope({
         accountLogin: auth.accountLogin,
-        historyBefore,
-        historyPage,
-        threads: snapshot.threads,
-        candidateCount: snapshot.candidateCount,
-        nextPage: snapshot.nextPage,
-        requireLiveStars: true,
+        repositories: remoteScope.repositories.filter((repository) => (
+          currentLiveNames.has(repository.full_name)
+        )),
+        attemptedAt,
+        successfulAt: remoteScope.fetchedAt,
       });
-      if (committed.applied) dependencies.broadcastChanged();
-      return {
-        addedCount: committed.addedCount,
-        hasMore: committed.state?.inbox.historyExhausted === false,
-      };
+      return { scopePublished: true, changed: true };
     } catch (error) {
-      if (await sameCredentials(auth, true)) {
-        const recorded = await dependencies.store.recordHistoryFailure({
-          accountLogin: auth.accountLogin,
-          historyBefore,
-          historyPage,
-          errorCode: stableErrorCode(error),
-        });
-        if (recorded) dependencies.broadcastChanged();
+      if (!await sameCredentials(auth, false)) {
+        return { scopePublished: false, changed: false };
       }
-      throw error;
+      await dependencies.store.recordScopeFailure({
+        accountLogin: auth.accountLogin,
+        attemptedAt,
+        errorCode: stableErrorCode(error),
+      });
+      return { scopePublished: false, changed: true };
     }
   }
 
@@ -517,89 +768,64 @@ export function createWatchRefreshCoordinator(
     if (!auth.accountLogin || !auth.mainToken || !await sameCredentials(auth, false)) {
       return empty;
     }
-    const refreshStartedAt = now();
-    const attemptedAt = new Date(refreshStartedAt).toISOString();
-
-    let changed = false;
-    if (!await sameCredentials(auth, false)) return empty;
-    let scopePublished = false;
-    try {
-      const remoteScope = await dependencies.fetchScope({
-        token: auth.mainToken,
-        now: () => refreshStartedAt,
-      });
-      if (!await sameCredentials(auth, false)) return empty;
-      const currentLiveNames = await loadLiveNames();
-      if (!await sameCredentials(auth, false)) return empty;
-      const repositories = remoteScope.repositories.filter((repository) => (
-        currentLiveNames.has(repository.full_name)
-      ));
-      await dependencies.store.replaceScope({
-        accountLogin: auth.accountLogin,
-        repositories,
-        attemptedAt,
-        successfulAt: remoteScope.fetchedAt,
-      });
-      scopePublished = true;
-      changed = true;
-    } catch (error) {
-      if (!await sameCredentials(auth, false)) return empty;
-      await dependencies.store.recordScopeFailure({
-        accountLogin: auth.accountLogin,
-        attemptedAt,
-        errorCode: stableErrorCode(error),
-      });
-      changed = true;
-    }
-
+    const scope = await runRefreshOperation(
+      auth,
+      'scope',
+      () => performScopeRefresh(auth),
+    );
+    const stabilityBudget: SnapshotStabilityBudget = { restarts: 0 };
+    let changed = scope.changed;
+    let changedBroadcast = false;
     let inboxPublished = false;
-    let notModified = false;
-    if (
-      auth.notificationsToken &&
-      await sameCredentials(auth, true)
-    ) {
-      const state = await dependencies.store.getState(auth.accountLogin);
-      const inboxCoolingDown = !!(
-        state?.inbox.nextAllowedAt &&
-        Date.parse(state.inbox.nextAllowedAt) > refreshStartedAt
-      );
-      if (!inboxCoolingDown) {
-        const inbox = await publishInbox(auth, refreshStartedAt, attemptedAt);
-        if (inbox.credentialsChanged) {
-          if (changed) dependencies.broadcastChanged();
-          return { ...empty, scopePublished };
-        }
-        inboxPublished = inbox.inboxPublished;
-        notModified = inbox.notModified;
-        changed ||= inbox.changed;
+    if (auth.notificationsToken && await sameCredentials(auth, true)) {
+      for (;;) {
+        const batch = await runRefreshOperation(auth, 'inbox', async () => {
+          const outcome = await performInboxBatch(auth, 'manual', stabilityBudget);
+          if (outcome.changed) dependencies.broadcastChanged();
+          return outcome;
+        });
+        changed ||= batch.changed;
+        inboxPublished ||= batch.inboxPublished;
+        if (batch.changed) changedBroadcast = true;
+        if (batch.credentialsChanged || batch.failure) break;
+        const state = await dependencies.store.getState(auth.accountLogin);
+        if (state?.inbox.scanStatus === 'complete') break;
       }
     }
-    if (changed) dependencies.broadcastChanged();
-    return { scopePublished, inboxPublished, notModified };
+    if (changed && !changedBroadcast) dependencies.broadcastChanged();
+    return { scopePublished: scope.scopePublished, inboxPublished, notModified: false };
+  }
+
+  async function performScopeOnlyRefresh(auth: AuthSnapshot): Promise<RefreshOutcome> {
+    const scope = await performScopeRefresh(auth);
+    if (scope.changed) dependencies.broadcastChanged();
+    return {
+      scopePublished: scope.scopePublished,
+      inboxPublished: false,
+      notModified: false,
+    };
   }
 
   async function performInboxRefresh(auth: AuthSnapshot): Promise<RefreshOutcome> {
     const empty = emptyOutcome();
     if (
-      !auth.accountLogin ||
-      !auth.mainToken ||
-      !auth.notificationsToken ||
-      !await sameCredentials(auth, true)
+      !auth.accountLogin
+      || !auth.mainToken
+      || !auth.notificationsToken
+      || !await sameCredentials(auth, true)
     ) return empty;
-
-    const refreshStartedAt = now();
-    const attemptedAt = new Date(refreshStartedAt).toISOString();
     const state = await dependencies.store.getState(auth.accountLogin);
     if (
-      state?.inbox.nextAllowedAt &&
-      Date.parse(state.inbox.nextAllowedAt) > refreshStartedAt
+      state?.inbox.scanStatus === 'complete'
+      && state.inbox.nextAllowedAt
+      && Date.parse(state.inbox.nextAllowedAt) > now()
     ) return empty;
-    const inbox = await publishInbox(auth, refreshStartedAt, attemptedAt);
-    if (inbox.changed) dependencies.broadcastChanged();
+    const batch = await performInboxBatch(auth, 'scheduled');
+    if (batch.changed) dependencies.broadcastChanged();
     return {
       scopePublished: false,
-      inboxPublished: inbox.inboxPublished,
-      notModified: inbox.notModified,
+      inboxPublished: batch.inboxPublished,
+      notModified: batch.notModified,
     };
   }
 
@@ -619,14 +845,54 @@ export function createWatchRefreshCoordinator(
       return refresh();
     }
 
-    const operation = dependencies.runSerialized(() => performRefresh(requestedAuth));
+    const operation = performRefresh(requestedAuth);
     const promise = operation.then(async (outcome) => ({
       ...outcome,
       status: await deriveStatus(false),
     }));
     inFlight = { identity, promise };
+    dependencies.broadcastStatusChanged();
     void promise.finally(() => {
-      if (inFlight?.promise === promise) inFlight = null;
+      if (inFlight?.promise === promise) {
+        inFlight = null;
+        dependencies.broadcastStatusChanged();
+      }
+    }).catch(() => {});
+    return promise;
+  }
+
+  async function refreshScope(): Promise<WatchRefreshResult> {
+    await reconcileAccount();
+    const requestedAuth = await readAuth();
+    const identity = refreshIdentity(requestedAuth);
+    const current = inFlight ?? scopeInFlight;
+    if (current) {
+      if (current.identity === identity) return current.promise;
+      try {
+        await current.promise;
+      } catch {
+        // The new credential identity still deserves its own queued attempt.
+      }
+      if (inFlight === current) inFlight = null;
+      if (scopeInFlight === current) scopeInFlight = null;
+      return refreshScope();
+    }
+    const operation = runRefreshOperation(
+      requestedAuth,
+      'scope',
+      () => performScopeOnlyRefresh(requestedAuth),
+    );
+    const promise = operation.then(async (outcome) => ({
+      ...outcome,
+      status: await deriveStatus(false),
+    }));
+    scopeInFlight = { identity, promise };
+    dependencies.broadcastStatusChanged();
+    void promise.finally(() => {
+      if (scopeInFlight?.promise === promise) {
+        scopeInFlight = null;
+        dependencies.broadcastStatusChanged();
+      }
     }).catch(() => {});
     return promise;
   }
@@ -641,14 +907,22 @@ export function createWatchRefreshCoordinator(
     if (activeAfterReconcile) return activeAfterReconcile.promise;
 
     const identity = refreshIdentity(requestedAuth);
-    const operation = dependencies.runSerialized(() => performInboxRefresh(requestedAuth));
+    const operation = runRefreshOperation(
+      requestedAuth,
+      'inbox',
+      () => performInboxRefresh(requestedAuth),
+    );
     const promise = operation.then(async (outcome) => ({
       ...outcome,
       status: await deriveStatus(false),
     }));
     inboxInFlight = { identity, promise };
+    dependencies.broadcastStatusChanged();
     void promise.finally(() => {
-      if (inboxInFlight?.promise === promise) inboxInFlight = null;
+      if (inboxInFlight?.promise === promise) {
+        inboxInFlight = null;
+        dependencies.broadcastStatusChanged();
+      }
     }).catch(() => {});
     return promise;
   }
@@ -825,6 +1099,7 @@ export function createWatchRefreshCoordinator(
   }
 
   return {
+    snapshotStatus: () => deriveStatus(),
     async getStatus() {
       await reconcileAccount();
       return deriveStatus();
@@ -839,10 +1114,11 @@ export function createWatchRefreshCoordinator(
     loadOlder,
     markLoaded,
     markThreadsRead: (input) => mutateThreads('read', input),
+    refreshScope,
     markThreadsDone: (input) => mutateThreads('done', input),
     disconnectInbox: disconnectInboxCommand,
     clearData: clearDataCommand,
     reconcileAccount,
-    isRefreshing: () => inFlight !== null || inboxInFlight !== null,
+    isRefreshing: () => inFlight !== null || inboxInFlight !== null || scopeInFlight !== null,
   };
 }

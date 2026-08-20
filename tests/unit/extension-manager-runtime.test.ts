@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExtensionManagerRuntime } from '@/runtime/extension-manager-runtime';
 import { DEFAULT_LIBRARY_VIEW_PREFS } from '@/preferences';
 import type { Config } from '@/types';
+import type { WatchStatus } from '@/watch/watch-contract';
 
 const adapterMocks = vi.hoisted(() => ({
   bgCall: vi.fn(),
@@ -26,7 +27,7 @@ vi.mock('@/auth/auth-store', () => ({
   },
 }));
 
-type RuntimeListener = (message: { type?: string }) => void;
+type RuntimeListener = (message: { type?: string; status?: WatchStatus }) => void;
 type StorageListener = (
   changes: Record<string, chrome.storage.StorageChange>,
   areaName: string,
@@ -156,7 +157,7 @@ describe('ExtensionManagerRuntime', () => {
     expect(adapterMocks.updateWatchRepositoryCollapse).toHaveBeenCalledWith('Owner/Repo', 'signature');
   });
 
-  it('shares ordered invalidations across subscribers and detaches Chrome listeners after the last cleanup', () => {
+  it('shares ordered Watch status and invalidations across subscribers and cleans up listeners', () => {
     const runtime = new ExtensionManagerRuntime();
     const first = vi.fn();
     const second = vi.fn();
@@ -165,21 +166,60 @@ describe('ExtensionManagerRuntime', () => {
 
     expect(runtimeAdd).toHaveBeenCalledTimes(1);
     expect(storageAdd).toHaveBeenCalledTimes(1);
-    for (const listener of runtimeListeners) listener({ type: 'watchChanged' });
-    expect(first).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 1 });
-    expect(second).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 1 });
+    const watchStatus: WatchStatus = {
+      accountLogin: 'octocat',
+      hasMainToken: true,
+      hasNotificationsToken: true,
+      refreshing: true,
+      refreshPhase: 'scope',
+      scopeStatus: 'fresh',
+      inboxStatus: 'fresh',
+      state: null,
+    };
+    for (const listener of runtimeListeners) {
+      listener({ type: 'watchStatusChanged', status: watchStatus });
+    }
+    expect(first).toHaveBeenLastCalledWith({ kind: 'watch-status', epoch: 1, watchStatus });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'watch-status', epoch: 1, watchStatus });
+
+    for (const listener of runtimeListeners) listener({ type: 'watchChanged', status: watchStatus });
+    expect(first).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 2, watchStatus });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 2, watchStatus });
 
     for (const listener of storageListeners) {
       listener({ gsm_config: { oldValue: {}, newValue: {} } }, 'local');
     }
-    expect(first).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 2 });
-    expect(second).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 2 });
+    expect(first).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 3 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'preferences', epoch: 3 });
+
+    const credential = (tokenEncrypted: string, watchNotificationsEnabled: boolean) => ({
+      tokenEncrypted,
+      tokenCryptoMeta: { salt: 'salt', iv: 'iv' },
+      githubCredentialStatus: 'ready',
+      watchNotificationsEnabled,
+      username: 'octocat',
+    });
+    for (const listener of storageListeners) {
+      listener({
+        gsm_github_credentials: {
+          oldValue: credential('cipher-a', true),
+          newValue: credential('cipher-a', false),
+        },
+      }, 'local');
+    }
+    expect(first).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 4 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'watch', epoch: 4 });
 
     for (const listener of storageListeners) {
-      listener({ gsm_github_credentials: { oldValue: {}, newValue: {} } }, 'local');
+      listener({
+        gsm_github_credentials: {
+          oldValue: credential('cipher-a', false),
+          newValue: credential('cipher-b', false),
+        },
+      }, 'local');
     }
-    expect(first).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 3 });
-    expect(second).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 3 });
+    expect(first).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 5 });
+    expect(second).toHaveBeenLastCalledWith({ kind: 'reset', epoch: 5 });
 
     unsubscribeFirst();
     expect(runtimeRemove).not.toHaveBeenCalled();
