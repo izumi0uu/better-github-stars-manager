@@ -80,6 +80,14 @@ EDGE_EXECUTABLE="/path/to/Microsoft Edge" pnpm test:smoke:edge
 
 The Edge target is a build, package, and browser identity only: it ships the same full product as Chrome, including Gist sync, Cubby, AI Providers, and Provider-backed Organize. Its build writes to `dist-edge/`, and `pnpm package:edge` writes `artifacts/edge/`. The real-browser smoke runs the shared full-product scenarios and requires an explicit Microsoft Edge executable that reports an `Edg/<version>` identity; Chrome substitution is never Edge release proof.
 
+Build every maintained output with one command:
+
+```bash
+pnpm build:all
+```
+
+This writes the production Chrome extension to `dist/`, Firefox to `dist-firefox/`, Edge to `dist-edge/`, and the public demo to `dist-demo/`. It does not create store-upload ZIP files; use the target-specific `package:chrome`, `package:firefox`, or `package:edge` command for those artifacts.
+
 ## Debug Cubby Agent
 
 When investigating Cubby Agent diagnostics, Provider events, or recovery behavior, do not modify the release build to expose temporary debug state. Use the repository's development entry points.

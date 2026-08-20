@@ -25,6 +25,7 @@
     "build:firefox": "node scripts/build-firefox-extension.mjs",
     "build:edge": "node scripts/build-edge-extension.mjs",
     "build:demo": "tsc --noEmit && vite build --config vite.demo.config.ts && node scripts/verify-demo-artifacts.mjs demo",
+    "build:all": "pnpm build:firefox && pnpm build:edge && pnpm build:demo",
     "verify:artifact-isolation": "node scripts/verify-demo-artifacts.mjs both",
     "test:demo:browser": "node tests/runtime/demo-browser-smoke.mjs",
     "package:extension": "node scripts/package-extension.mjs",

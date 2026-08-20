@@ -80,6 +80,14 @@ EDGE_EXECUTABLE="/path/to/Microsoft Edge" pnpm test:smoke:edge
 
 Edge 目标只是构建、打包和浏览器身份：它提供与 Chrome 相同的完整产品，包括 Gist 同步、Cubby、AI Provider 和 Provider 驱动的 Organize。构建输出位于 `dist-edge/`，`pnpm package:edge` 输出到 `artifacts/edge/`。真实浏览器 smoke 运行共享的完整产品场景，必须使用报告 `Edg/<version>` 身份的 Microsoft Edge 可执行文件；发布证据不能用 Chrome 代替。
 
+用一个命令构建所有维护中的输出：
+
+```bash
+pnpm build:all
+```
+
+该命令会将生产版 Chrome 扩展写入 `dist/`、Firefox 扩展写入 `dist-firefox/`、Edge 扩展写入 `dist-edge/`，并将公开 Demo 写入 `dist-demo/`。它不会生成用于上传商店的 ZIP；如需上传产物，请分别运行 `package:chrome`、`package:firefox` 或 `package:edge`。
+
 ## 调试 Cubby Agent
 
 检查 Cubby Agent 的开发诊断、Provider 事件或恢复行为时，不要修改发布构建来临时暴露调试状态。使用仓库提供的开发入口。
