@@ -50,6 +50,7 @@ function baseConfig(): Config {
     watchNotificationsEnabled: false,
     tokenCryptoMeta: null,
     watchCollapsedRepositories: {},
+    radarWindowDays: 60,
     agentProvider: {
       provider: 'openai',
       protocol: null,

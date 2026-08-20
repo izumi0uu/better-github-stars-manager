@@ -6,6 +6,7 @@ import {
 import type { GitHubCredentialSnapshot } from '@/auth/auth-store';
 import { GitHubRadarError, type RadarActivityRecord, type RadarActivityPresentation, type RadarStateRecord } from '@/radar/radar-model';
 import type { RadarSourceSnapshot } from '@/radar/radar-contract';
+import type { Config, FollowingHistoryWindowDays } from '@/types';
 
 const NOW = 1_786_000_000_000;
 
@@ -27,6 +28,7 @@ function state(overrides: Partial<RadarStateRecord> = {}): RadarStateRecord {
     accountLogin: 'viewer',
     lastAttemptAt: new Date(NOW - 1_000).toISOString(),
     lastSuccessfulAt: new Date(NOW - 1_000).toISOString(),
+    windowDays: 60,
     errorCode: null,
     nextAllowedAt: null,
     activityCount: 1,
@@ -64,6 +66,7 @@ function snapshot(overrides: Partial<RadarSourceSnapshot> = {}): RadarSourceSnap
   return {
     accountLogin: 'viewer',
     activities: [activity],
+    windowDays: 60,
     fetchedAt: new Date(NOW).toISOString(),
     followingCount: 2,
     scannedFollowingCount: 2,
@@ -93,6 +96,7 @@ function makeCoordinator(input: {
   activities?: RadarActivityPresentation[];
 } = {}) {
   let currentAuth = input.auth ?? authSnapshot();
+  let currentWindowDays: FollowingHistoryWindowDays = 60;
   const currentState = input.state === undefined ? state() : input.state;
   const events: string[] = [];
   const runSerialized: RadarRefreshCoordinatorDependencies['runSerialized'] = async <T,>(
@@ -112,8 +116,9 @@ function makeCoordinator(input: {
     runSerialized,
     auth: {
       getGitHubCredentialSnapshot: vi.fn(async () => currentAuth),
+      getConfig: vi.fn(async () => ({ radarWindowDays: currentWindowDays }) as Config),
     },
-    fetchRadar: input.fetchRadar ?? vi.fn(async () => snapshot()),
+    fetchRadar: input.fetchRadar ?? vi.fn(async (options) => snapshot({ windowDays: options.windowDays })),
     store,
     now: () => NOW,
     broadcastChanged: vi.fn(() => { events.push('broadcast'); }),
@@ -125,6 +130,7 @@ function makeCoordinator(input: {
     store,
     events,
     setAuth(next: GitHubCredentialSnapshot) { currentAuth = next; },
+    setWindowDays(next: FollowingHistoryWindowDays) { currentWindowDays = next; },
   };
 }
 
@@ -143,7 +149,57 @@ describe('Radar refresh coordinator', () => {
     expect(one).toEqual(two);
     expect(fetchRadar).toHaveBeenCalledTimes(1);
     expect(h.store.commitSnapshot).toHaveBeenCalledTimes(1);
+    expect(fetchRadar).toHaveBeenCalledWith(expect.objectContaining({ windowDays: 60 }));
     expect(h.events.at(-1)).toBe('broadcast');
+  });
+
+  it('uses the selected history window for fetch, query, and status', async () => {
+    const h = makeCoordinator();
+    h.setWindowDays(90);
+
+    const refresh = await h.coordinator.refresh();
+    const query = await h.coordinator.query();
+
+    expect(h.dependencies.fetchRadar).toHaveBeenCalledWith(expect.objectContaining({ windowDays: 90 }));
+    expect(h.store.listActivities).toHaveBeenCalledWith('viewer', NOW, 90);
+    expect(refresh.status.windowDays).toBe(90);
+    expect(query.status.windowDays).toBe(90);
+  });
+
+  it('abandons an in-flight result when the history window changes', async () => {
+    let release!: (value: RadarSourceSnapshot) => void;
+    const fetchRadar = vi.fn(() => new Promise<RadarSourceSnapshot>((resolve) => { release = resolve; }));
+    const h = makeCoordinator({ fetchRadar });
+
+    const refresh = h.coordinator.refresh();
+    while (!release) await Promise.resolve();
+    h.setWindowDays(90);
+    release(snapshot({ windowDays: 60 }));
+
+    const result = await refresh;
+    expect(result.published).toBe(false);
+    expect(h.store.commitSnapshot).not.toHaveBeenCalled();
+    expect(result.status.windowDays).toBe(90);
+  });
+
+  it('does not publish when the history window changes during snapshot commit', async () => {
+    let releaseCommit!: () => void;
+    const h = makeCoordinator();
+    h.store.commitSnapshot.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { releaseCommit = resolve; });
+      return state();
+    });
+
+    const refresh = h.coordinator.refresh();
+    while (!releaseCommit) await Promise.resolve();
+    h.setWindowDays(90);
+    releaseCommit();
+
+    const result = await refresh;
+    expect(h.store.commitSnapshot).toHaveBeenCalledTimes(1);
+    expect(result.published).toBe(false);
+    expect(h.dependencies.broadcastChanged).not.toHaveBeenCalled();
+    expect(result.status.windowDays).toBe(90);
   });
 
   it('skips all network work while a rate-limit cooldown is active', async () => {

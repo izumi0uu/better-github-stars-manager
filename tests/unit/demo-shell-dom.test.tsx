@@ -25,6 +25,7 @@ function createLocaleSource(locale: Locale) {
   let preferences: ManagerPreferences = {
     theme: 'light',
     locale,
+    radarWindowDays: 30,
     libraryView: {
       version: 1,
       filters: {

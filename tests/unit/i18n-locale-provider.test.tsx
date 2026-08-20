@@ -52,6 +52,7 @@ function localePreferences(locale: Locale): ManagerPreferences {
   return {
     theme: 'dark',
     locale,
+    radarWindowDays: 30,
     libraryView: DEFAULT_LIBRARY_VIEW_PREFS,
     watchCollapsedRepositories: {},
     columnLayoutMode: 'default',

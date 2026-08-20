@@ -10,6 +10,10 @@ import {
   type ManagerSurfaceBadgeCounts,
   type WatchRepositoryDetail,
 } from '@/runtime/manager-runtime';
+import {
+  DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
+  normalizeFollowingHistoryWindowDays,
+} from '@/preferences';
 import { projectStarsQuery, type StarsQueryParams, type StarsQueryResult } from '@/stars/stars-query';
 import { projectWatchInbox, normalizeRepositoryFullName, type WatchSubjectDetail } from '@/watch/watch-model';
 import type {
@@ -166,6 +170,9 @@ class DemoManagerRuntime implements ManagerRuntime {
     const next = {
       ...this.state.preferences,
       ...cloneMutable(patch),
+      radarWindowDays: normalizeFollowingHistoryWindowDays(
+        patch.radarWindowDays ?? this.state.preferences.radarWindowDays,
+      ),
     } satisfies ManagerPreferences;
     if (JSON.stringify(this.state.preferences) !== JSON.stringify(next)) {
       this.state.preferences = next;
@@ -464,6 +471,7 @@ class DemoManagerRuntime implements ManagerRuntime {
     const now = timestamp(this.state.now);
     this.state.radarState.lastAttemptAt = now;
     this.state.radarState.lastSuccessfulAt = now;
+    this.state.radarState.windowDays = this.radarWindowDays();
     this.state.radarState.batchCount++;
     this.state.radarState.activityCount = this.state.radarActivities.length;
     this.publish('radar');
@@ -641,10 +649,17 @@ class DemoManagerRuntime implements ManagerRuntime {
     };
   }
 
+  private radarWindowDays() {
+    return normalizeFollowingHistoryWindowDays(
+      this.state.preferences.radarWindowDays ?? DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
+    );
+  }
+
   private projectRadar() {
     return projectRadarActivities({
       accountLogin: this.accountLogin(),
       nowMillis: this.state.now,
+      windowDays: this.radarWindowDays(),
       activities: this.state.radarActivities,
       stars: this.state.stars,
       tags: this.state.tags,
@@ -656,11 +671,17 @@ class DemoManagerRuntime implements ManagerRuntime {
   }
 
   private radarStatus(): RadarStatus {
+    const windowDays = this.radarWindowDays();
     return {
       accountLogin: this.accountLogin(),
       hasMainToken: true,
       refreshing: false,
-      snapshotStatus: this.state.radarState.partialReasons.length > 0 ? 'partial' : 'fresh',
+      windowDays,
+      snapshotStatus: this.state.radarState.windowDays !== windowDays
+        ? 'stale'
+        : this.state.radarState.partialReasons.length > 0
+          ? 'partial'
+          : 'fresh',
       errorCode: this.state.radarState.errorCode,
       state: cloneMutable(this.state.radarState),
     };

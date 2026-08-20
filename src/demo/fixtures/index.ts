@@ -333,6 +333,7 @@ const RADAR_STATE: RadarStateRecord = {
   accountLogin: ACCOUNT_LOGIN,
   lastAttemptAt: beforeNow(1),
   lastSuccessfulAt: beforeNow(1),
+  windowDays: 60,
   errorCode: null,
   nextAllowedAt: null,
   activityCount: RADAR_ACTIVITIES.length,
@@ -409,6 +410,7 @@ const ACCOUNT: ManagerAccount = {
 const PREFERENCES: ManagerPreferences = {
   theme: 'light',
   locale: 'en',
+  radarWindowDays: 60,
   libraryView: {
     version: 1,
     filters: {

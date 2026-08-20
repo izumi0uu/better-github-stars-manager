@@ -15,6 +15,7 @@ import type {
   RadarStatus,
 } from '@/radar/radar-contract';
 import { db } from './db';
+import { DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS } from '@/preferences';
 
 const RADAR_STATE_ID = 'singleton' as const;
 const RADAR_STALE_AFTER_MS = 30 * 60 * 1_000;
@@ -33,6 +34,7 @@ function emptyState(accountLogin: string, lastAttemptAt = now()): RadarStateReco
     accountLogin: accountKey(accountLogin),
     lastAttemptAt,
     lastSuccessfulAt: null,
+    windowDays: null,
     errorCode: null,
     nextAllowedAt: null,
     activityCount: 0,
@@ -64,16 +66,26 @@ function stateForAccount(
 
 export async function countUnseenRadarActivities(
   accountLogin: string | null | undefined,
+  nowMillis = Date.now(),
+  windowDays = DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
 ): Promise<number> {
   if (!accountLogin?.trim()) return 0;
   const key = accountKey(accountLogin);
+  const cutoffMillis = nowMillis - windowDays * 24 * 60 * 60 * 1_000;
   return db.transaction('r', db.radarActivities, db.radarState, async () => {
     const state = await db.radarState.get(RADAR_STATE_ID);
     if (state?.accountLogin !== key) return 0;
     return db.radarActivities
       .where('accountLogin')
       .equals(key)
-      .filter((activity) => activity.dismissedAt === null && storedSeenAt(activity.seenAt) === null)
+      .filter((activity) => {
+        const starredAt = timestamp(activity.starredAt);
+        return activity.dismissedAt === null
+          && storedSeenAt(activity.seenAt) === null
+          && starredAt !== null
+          && starredAt >= cutoffMillis
+          && starredAt <= nowMillis;
+      })
       .count();
   });
 }
@@ -138,6 +150,7 @@ export async function commitRadarSnapshot(snapshot: RadarSourceSnapshot): Promis
       accountLogin,
       lastAttemptAt: attemptAt,
       lastSuccessfulAt: snapshot.fetchedAt,
+      windowDays: snapshot.windowDays,
       errorCode: null,
       nextAllowedAt: null,
       activityCount: activities.length,
@@ -230,6 +243,7 @@ export async function clearRadarData(): Promise<void> {
 export async function listRadarActivities(
   accountLogin: string,
   nowMillis = Date.now(),
+  windowDays = DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
 ): Promise<RadarActivityPresentation[]> {
   const key = accountKey(accountLogin);
   const [activities, stars, tags, tagMeta] = await Promise.all([
@@ -241,6 +255,7 @@ export async function listRadarActivities(
   return projectRadarActivities({
     accountLogin: key,
     nowMillis,
+    windowDays,
     activities,
     stars,
     tags,
@@ -252,15 +267,18 @@ export async function listRadarActivities(
 export function radarSnapshotStatus(
   state: RadarStateRecord | null,
   nowMillis = Date.now(),
+  windowDays = DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
 ): RadarSnapshotStatus {
   if (!state) return 'never_loaded';
   const nextAllowedAt = timestamp(state.nextAllowedAt);
   if (nextAllowedAt !== null && nextAllowedAt > nowMillis) return 'cooldown';
   const lastSuccessfulAt = timestamp(state.lastSuccessfulAt);
   if (lastSuccessfulAt === null) return state.errorCode !== null ? 'error' : 'never_loaded';
-  if (state.errorCode !== null || nowMillis - lastSuccessfulAt > RADAR_STALE_AFTER_MS) {
-    return 'stale';
-  }
+  if (
+    state.windowDays !== windowDays
+    || state.errorCode !== null
+    || nowMillis - lastSuccessfulAt > RADAR_STALE_AFTER_MS
+  ) return 'stale';
   if (state.partialReasons.length > 0) return 'partial';
   return 'fresh';
 }
@@ -271,14 +289,16 @@ export function makeRadarStatus(
   refreshing: boolean,
   state: RadarStateRecord | null,
   nowMillis = Date.now(),
+  windowDays = DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
 ): RadarStatus {
   return {
     accountLogin: accountLogin ? accountKey(accountLogin) : null,
     hasMainToken,
     refreshing,
+    windowDays,
     snapshotStatus: !hasMainToken
       ? 'not_configured'
-      : radarSnapshotStatus(state, nowMillis),
+      : radarSnapshotStatus(state, nowMillis, windowDays),
     errorCode: state?.errorCode ?? null,
     state,
   };

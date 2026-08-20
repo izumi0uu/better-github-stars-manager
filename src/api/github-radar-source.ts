@@ -4,11 +4,11 @@ import {
   normalizeRadarActivity,
   RADAR_MAX_FOLLOWING,
   RADAR_STARS_PER_FOLLOWER,
-  RADAR_WINDOW_DAYS,
   type RadarActivityRecord,
   type RadarPartialReason,
 } from '@/radar/radar-model';
 import type { RadarSourceSnapshot } from '@/radar/radar-contract';
+import { DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS } from '@/preferences';
 
 const GRAPHQL_URL = 'https://api.github.com/graphql';
 const FOLLOWING_PAGE_SIZE = 100;
@@ -548,7 +548,7 @@ export async function fetchGitHubRadar(
   const now = options.now?.() ?? new Date();
   const nowMillis = now.getTime();
   if (!Number.isFinite(nowMillis)) throw new GitHubRadarError('invalid_response');
-  const windowDays = positiveInteger(options.windowDays, RADAR_WINDOW_DAYS);
+  const windowDays = positiveInteger(options.windowDays, DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS);
   const maxFollowing = positiveInteger(options.maxFollowing, DEFAULT_MAX_FOLLOWING);
   const batchSize = Math.min(
     positiveInteger(options.batchSize, DEFAULT_BATCH_SIZE),
@@ -674,6 +674,7 @@ export async function fetchGitHubRadar(
 
   return {
     accountLogin: accountLogin.toLocaleLowerCase('en-US'),
+    windowDays,
     activities: dedupeRadarActivities(activities),
     fetchedAt: now.toISOString(),
     followingCount,

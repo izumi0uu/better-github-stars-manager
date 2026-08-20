@@ -108,6 +108,7 @@ function config(overrides: Partial<Config> = {}): Config {
     githubCredentialStatus: overrides.githubCredentialStatus ?? 'ready',
     watchNotificationsEnabled: overrides.watchNotificationsEnabled ?? false,
     watchCollapsedRepositories: overrides.watchCollapsedRepositories ?? {},
+    radarWindowDays: overrides.radarWindowDays ?? 30,
     agentProvider: overrides.agentProvider
       ? {
           declaredContextWindow: overrides.agentProvider.provider === 'custom-openai-compatible'
@@ -213,6 +214,8 @@ async function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
   });
 }
 
+let originalScrollIntoViewDescriptor: PropertyDescriptor | undefined;
+
 describe('Options preferences', () => {
   beforeEach(() => {
     authMocks.getConfig.mockReset();
@@ -237,6 +240,14 @@ describe('Options preferences', () => {
     runtimeListeners.length = 0;
     permissionAddedListeners.length = 0;
     permissionRemovedListeners.length = 0;
+    originalScrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'scrollIntoView',
+    );
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
     vi.stubGlobal('chrome', {
       runtime: {
         getManifest: vi.fn(() => ({ manifest_version: 3 })),
@@ -333,6 +344,15 @@ describe('Options preferences', () => {
   afterEach(() => {
     cleanupMountedRootsAndBody(mountedRoots);
     vi.unstubAllGlobals();
+    if (originalScrollIntoViewDescriptor) {
+      Object.defineProperty(
+        HTMLElement.prototype,
+        'scrollIntoView',
+        originalScrollIntoViewDescriptor,
+      );
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+    }
   });
 
   it('renders a verified stars link only for a usable token and trusted username', async () => {
@@ -470,6 +490,35 @@ describe('Options preferences', () => {
     expect(authMocks.recordStoreRatingNavigation).toHaveBeenCalledTimes(2);
     expect(panel?.querySelector('[data-testid="store-rating-status"]')).toBeNull();
     expect(document.querySelector('[data-testid="main-token-status"]')?.getAttribute('role')).toBe('alert');
+  });
+
+  it('shows and persists the bounded Following history choice with risk copy', async () => {
+    authMocks.getConfig.mockResolvedValue(config({ radarWindowDays: 60 }));
+    authMocks.hasToken.mockResolvedValue(true);
+
+    await renderOptions();
+
+    const trigger = document.querySelector<HTMLElement>('[data-testid="following-history-window"]');
+    expect(trigger?.textContent).toContain('60 days');
+    expect(trigger?.getAttribute('aria-describedby'))
+      .toBe('following-history-window-hint following-history-window-risk');
+    expect(document.body.textContent).toContain('Longer windows can use more GitHub API quota');
+
+    await act(async () => {
+      trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      await Promise.resolve();
+    });
+    const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+    expect(options.map((candidate) => candidate.textContent?.trim()))
+      .toEqual(['30 days', '60 days', '90 days']);
+    const option = options.find((candidate) => candidate.textContent?.includes('90 days'));
+    expect(option).toBeDefined();
+    await act(async () => {
+      option!.click();
+      await Promise.resolve();
+    });
+
+    expect(authMocks.update).toHaveBeenCalledWith({ radarWindowDays: 90 });
   });
 
   it('normalizes and persists split auto-tag policy inputs independently', async () => {

@@ -5,7 +5,6 @@ import {
 
 export const RADAR_STARS_PER_FOLLOWER = 30;
 export const RADAR_MAX_FOLLOWING = 200;
-export const RADAR_WINDOW_DAYS = 30;
 export const RADAR_PARTIAL_REASONS = [
   'github_star_list_truncated',
   'private_activity_omitted',
@@ -108,6 +107,8 @@ export interface RadarStateRecord {
   accountLogin: string;
   lastAttemptAt: string | null;
   lastSuccessfulAt: string | null;
+  /** Window used to build the latest successful snapshot; null for legacy or empty state. */
+  windowDays: number | null;
   errorCode: RadarErrorCode | null;
   nextAllowedAt: string | null;
   activityCount: number;

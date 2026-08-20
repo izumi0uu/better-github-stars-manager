@@ -43,6 +43,7 @@ describe('preferences persistence', () => {
 
     assert.equal(await authStore.getLocale(), 'zh-CN');
     assert.equal((await authStore.getConfig()).locale, 'zh-CN');
+    assert.equal((await authStore.getConfig()).radarWindowDays, 30);
   });
 
   it('normalizes and persists legacy preference fields', async () => {
@@ -53,6 +54,7 @@ describe('preferences persistence', () => {
 
     storageBacking[CONFIG_STORAGE_KEY] = {
       autoTagLimit: 7,
+      radarWindowDays: 360,
       libraryView: {
         version: 1,
         filters: {
@@ -75,6 +77,7 @@ describe('preferences persistence', () => {
     const legacyConfig = await authStore.getConfig();
     assert.equal(legacyConfig.maxTagsPerRepo, 7);
     assert.equal(legacyConfig.minTopicRepoCount, 3);
+    assert.equal(legacyConfig.radarWindowDays, 30);
     assert.equal(legacyConfig.libraryView.filters.onlyArchived, true);
 
     useFilterStore.getState().applyLibraryViewPrefs(legacyConfig.libraryView, 'vue');
@@ -87,11 +90,13 @@ describe('preferences persistence', () => {
 
     await authStore.updateAutoTagPolicy({ maxTagsPerRepo: 4, minTopicRepoCount: 3 });
     await authStore.updateLibraryViewPrefs(hydratedPrefs);
+    await authStore.update({ radarWindowDays: 90 });
 
     const storedConfig = storageBacking[CONFIG_STORAGE_KEY] as Config;
     assert.equal(storedConfig.autoTagLimit, 4);
     assert.equal(storedConfig.maxTagsPerRepo, 4);
     assert.equal(storedConfig.minTopicRepoCount, 3);
+    assert.equal(storedConfig.radarWindowDays, 90);
     assert.deepEqual(storedConfig.libraryView, hydratedPrefs);
   });
 

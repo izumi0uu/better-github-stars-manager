@@ -25,7 +25,6 @@ import type { Star, Tag, TagMeta } from '@/types';
 const NOW = '2026-08-16T12:00:00.000Z';
 const RECENT = '2026-08-15T12:00:00.000Z';
 const OLDER = '2026-08-10T12:00:00.000Z';
-const EXPIRED = '2026-07-01T12:00:00.000Z';
 
 const DEFAULT_FILTER: StarsQueryParams['filter'] = {
   query: '',
@@ -222,7 +221,7 @@ describe('storage-neutral projector parity', () => {
       stargazers_count: 55,
     });
     const followedStar = star('Owner/Followed', {
-      starred_at: EXPIRED,
+      starred_at: '2026-06-01T12:00:00.000Z',
       topics: ['local-topic', 'blocked-topic'],
       stargazers_count: 321,
     });
@@ -249,6 +248,7 @@ describe('storage-neutral projector parity', () => {
     const source = {
       accountLogin: ' VIEWER ',
       nowMillis: Date.parse(NOW),
+      windowDays: 60,
       activities: await db.radarActivities.where('accountLogin').equals('viewer').toArray(),
       stars: await db.stars.toArray(),
       tags: await db.tags.toArray(),

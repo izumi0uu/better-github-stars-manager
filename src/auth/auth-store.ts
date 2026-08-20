@@ -13,9 +13,11 @@ import {
 } from "@/onboarding/state";
 import {
   DEFAULT_AUTO_TAG_LIMIT,
+  DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
   DEFAULT_LIBRARY_VIEW_PREFS,
   DEFAULT_LOCALE,
   DEFAULT_MIN_TOPIC_REPO_COUNT,
+  normalizeFollowingHistoryWindowDays,
   normalizeLibraryViewPrefs,
   normalizeAutoTagLimit,
   normalizeMaxTagsPerRepo,
@@ -108,6 +110,7 @@ const DEFAULT_CONFIG: Config = {
   githubCredentialStatus: null,
   watchNotificationsEnabled: false,
   watchCollapsedRepositories: {},
+  radarWindowDays: DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
   agentProvider: {
     provider: "openai",
     protocol: null,
@@ -231,6 +234,7 @@ function mergeStoredConfig(stored: Partial<Config>): Config {
     autoTagAgentPromptSeen: stored.autoTagAgentPromptSeen === true,
     storeRatingPrompt: normalizeStoreRatingPromptState(stored.storeRatingPrompt),
     maxTagsPerRepo: maxTagsPerRepo ?? DEFAULT_CONFIG.maxTagsPerRepo,
+    radarWindowDays: normalizeFollowingHistoryWindowDays(stored.radarWindowDays),
     watchCollapsedRepositories: normalizeWatchCollapsedRepositories(
       stored.watchCollapsedRepositories,
     ),
@@ -322,6 +326,7 @@ function withNormalizedConfig(config: Config): Config {
     autoTagLimit: normalizeAutoTagLimit(config.autoTagLimit),
     maxTagsPerRepo: normalizeMaxTagsPerRepo(config.maxTagsPerRepo, config.autoTagLimit),
     minTopicRepoCount: normalizeMinTopicRepoCount(config.minTopicRepoCount),
+    radarWindowDays: normalizeFollowingHistoryWindowDays(config.radarWindowDays),
     libraryView: normalizeLibraryViewPrefs(config.libraryView),
     starsPanelDefaultEnabled: normalizeStarsPanelDefaultEnabled(config.starsPanelDefaultEnabled),
     columnLayoutMode: normalizeColumnLayoutMode(config.columnLayoutMode),

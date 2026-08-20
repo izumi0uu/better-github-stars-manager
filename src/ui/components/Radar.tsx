@@ -269,7 +269,7 @@ export function Radar({
       <RadarEmptyState
         icon={<Check className="size-4" />}
         title={m.radar.emptyTitle}
-        text={m.radar.emptyBody}
+        text={m.radar.emptyBody(status.windowDays)}
         tone="success"
       />,
     );
@@ -289,8 +289,8 @@ export function Radar({
       : queryActive
         ? m.radar.listEndMatches(visibleResultCount)
         : view === 'feed'
-          ? m.radar.listEndActivities(visibleResultCount)
-          : m.radar.listEndProjects(visibleResultCount);
+          ? m.radar.listEndActivities(status.windowDays, visibleResultCount)
+          : m.radar.listEndProjects(status.windowDays, visibleResultCount);
   const renderRadarRow = (index: number) => {
     if (view === 'feed') {
       const searchResult = activitySearchResults[index];
@@ -337,7 +337,7 @@ export function Radar({
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
             <span className="min-w-0">
               {m.radar.statusPartial}:{' '}
-              {state.partialReasons.map(m.radar.partialReason).join(' ')}
+              {state.partialReasons.map((reason) => m.radar.partialReason(reason, status.windowDays)).join(' ')}
             </span>
             <button
               type="button"
@@ -354,7 +354,7 @@ export function Radar({
         <RadarEmptyState
           icon={<ListFilter className="size-4" />}
           title={m.radar.filteredEmptyTitle}
-          text={m.radar.filteredEmptyBody}
+          text={m.radar.filteredEmptyBody(status.windowDays)}
         />
       ) : visibleResultCount === 0 && queryActive ? (
         <RadarEmptyState
