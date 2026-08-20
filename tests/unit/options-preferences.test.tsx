@@ -214,6 +214,8 @@ async function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
   });
 }
 
+let originalScrollIntoViewDescriptor: PropertyDescriptor | undefined;
+
 describe('Options preferences', () => {
   beforeEach(() => {
     authMocks.getConfig.mockReset();
@@ -238,6 +240,10 @@ describe('Options preferences', () => {
     runtimeListeners.length = 0;
     permissionAddedListeners.length = 0;
     permissionRemovedListeners.length = 0;
+    originalScrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'scrollIntoView',
+    );
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
       configurable: true,
       value: vi.fn(),
@@ -338,7 +344,15 @@ describe('Options preferences', () => {
   afterEach(() => {
     cleanupMountedRootsAndBody(mountedRoots);
     vi.unstubAllGlobals();
-    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+    if (originalScrollIntoViewDescriptor) {
+      Object.defineProperty(
+        HTMLElement.prototype,
+        'scrollIntoView',
+        originalScrollIntoViewDescriptor,
+      );
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+    }
   });
 
   it('renders a verified stars link only for a usable token and trusted username', async () => {
