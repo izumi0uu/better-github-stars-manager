@@ -246,16 +246,20 @@ describe('Radar', () => {
     expect(ribbon.textContent).toContain('Loading…');
   });
 
-  it('keeps the For You command bar mounted while the cold recommendation query resolves', () => {
+  it('announces For You cold loading without visible placeholder copy', () => {
     const container = mount(<Radar {...surfaceProps({
       discoverView: 'for-you',
       recommendationLoading: true,
       recommendations: null,
     })} />);
+    const announcements = Array.from(container.querySelectorAll('[role="status"].sr-only'))
+      .map((node) => node.textContent);
 
     expect(container.querySelector('[data-surface-command-bar="for-you"]')).not.toBeNull();
     expect(container.querySelector('[data-radar-discover-view="for-you"]')).not.toBeNull();
-    expect(container.textContent).not.toContain('Loading…');
+    expect(announcements).toContain('Loading…');
+    expect(container.querySelector('.min-h-64')?.textContent).toBe('');
+    expect(container.querySelector('svg.animate-spin[aria-hidden="true"]')).not.toBeNull();
   });
 
 

@@ -258,7 +258,7 @@ export function WatchInbox({
     if (historyRequestKey) requestedHistoryKeyRef.current = historyRequestKey;
     onLoadOlder();
   }, [historyRequestKey, onLoadOlder]);
-  const refreshDisabled = refreshing || actionPending !== null;
+  const refreshDisabled = loading || refreshing || actionPending !== null;
 
   // Every Watch state keeps the command bar so cold entry does not pop the chrome in.
   const renderFrame = (content: ReactNode) => (

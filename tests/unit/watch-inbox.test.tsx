@@ -263,8 +263,13 @@ describe('WatchInbox', () => {
       mountedRoots,
     );
 
-    expect(inbox.querySelector('[data-surface-command-bar="watch"]')).not.toBeNull();
+    const commandBar = inbox.querySelector<HTMLElement>('[data-surface-command-bar="watch"]');
+    const refresh = Array.from(commandBar?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+      .find((button) => button.getAttribute('aria-label')?.includes('Refresh'));
+
+    expect(commandBar).not.toBeNull();
     expect(inbox.querySelector('input[name="watch-search"]')).not.toBeNull();
+    expect(refresh?.disabled).toBe(true);
     expect(inbox.textContent).not.toContain('Loading…');
     expect(ribbon.querySelector('[data-watch-status="loading"]')).not.toBeNull();
     expect(ribbon.textContent).toContain('Loading…');

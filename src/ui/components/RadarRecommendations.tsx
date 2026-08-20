@@ -456,8 +456,14 @@ export function RadarRecommendations({
     </section>
   );
 
+  // For You has no status ribbon of its own, so the cold-load announcement lives here.
   if (loading && !recommendations) {
-    return frame(<RadarEmptyState icon={<Spinner className="size-4" aria-hidden="true" />} />);
+    return frame(
+      <>
+        <span role="status" aria-live="polite" className="sr-only">{m.common.loading}</span>
+        <RadarEmptyState icon={<Spinner className="size-4" aria-hidden="true" />} />
+      </>,
+    );
   }
   if (!recommendations) {
     return frame(<RadarEmptyState
