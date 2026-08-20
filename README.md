@@ -137,7 +137,7 @@ Stars 工作区用于检索和维护你的仓库收藏：
   <img src="store-assets/screenshots/demo-edit-layout.webp" alt="拖拽调整表格列顺序、宽度与显隐" width="900" />
 </div>
 
-仓库列表使用虚拟化渲染，可处理几百到几千条记录。增量 **Sync** 获取新 Star，**Full Sync** 重新拉取全部 Stars 和你拥有的公开仓库。重扫会对账已取消的 Star，并保留已有标签和笔记。
+仓库列表使用虚拟化渲染，可处理几百到几千条记录。增量 **Sync** 获取新 Star，并刷新你拥有的全部公开仓库；**Full Sync** 会重新拉取全部 Stars 和你拥有的公开仓库。重扫会对账已取消的 Star，并保留已有标签和笔记。
 
 ### Watch 某个项目的变化
 

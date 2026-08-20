@@ -72,6 +72,12 @@ describe('Incremental archived regressions', () => {
 
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/users/octocat/repos?')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       if (!url.includes('/user/starred?per_page=100&page=1')) {
         throw new Error(`unexpected fetch: ${url}`);
       }
@@ -111,7 +117,9 @@ describe('Incremental archived regressions', () => {
     }) as typeof fetch;
 
     const originalGetToken = authStore.getToken;
+    const originalGetUsername = authStore.getUsername;
     authStore.getToken = async () => 'github_pat_test';
+    authStore.getUsername = async () => 'octocat';
 
     try {
       const result = await githubStarSource.syncIncremental();
@@ -138,6 +146,7 @@ describe('Incremental archived regressions', () => {
       assert.equal(rows.rows[0]?.archived, true);
     } finally {
       authStore.getToken = originalGetToken;
+      authStore.getUsername = originalGetUsername;
     }
   });
 });
