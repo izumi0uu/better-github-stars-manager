@@ -457,7 +457,7 @@ export function RadarRecommendations({
   );
 
   if (loading && !recommendations) {
-    return frame(<RadarEmptyState icon={<Spinner className="size-4" />} title={m.radar.forYou} text={m.common.loading} />);
+    return frame(<RadarEmptyState icon={<Spinner className="size-4" aria-hidden="true" />} />);
   }
   if (!recommendations) {
     return frame(<RadarEmptyState

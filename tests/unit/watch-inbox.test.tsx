@@ -255,6 +255,21 @@ describe('WatchInbox', () => {
     expect(onUnreadOnlyChange).toHaveBeenCalledWith(false);
     expect(onRefresh).toHaveBeenCalledOnce();
   });
+
+  it('keeps the command bar mounted and defers loading copy to the ribbon on cold entry', () => {
+    const inbox = renderInbox({ loading: true, result: null });
+    const ribbon = mountReact(
+      <WatchStatusRibbon result={null} loading refreshing={false} error={null} />,
+      mountedRoots,
+    );
+
+    expect(inbox.querySelector('[data-surface-command-bar="watch"]')).not.toBeNull();
+    expect(inbox.querySelector('input[name="watch-search"]')).not.toBeNull();
+    expect(inbox.textContent).not.toContain('Loading…');
+    expect(ribbon.querySelector('[data-watch-status="loading"]')).not.toBeNull();
+    expect(ribbon.textContent).toContain('Loading…');
+  });
+
   it('switches between timeline and repository views without losing thread rows', async () => {
     const first = thread(1, {
       repositoryFullName: 'owner/shared-repository',

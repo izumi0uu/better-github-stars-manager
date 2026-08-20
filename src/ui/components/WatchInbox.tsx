@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useI18n } from '@/i18n';
@@ -80,7 +81,7 @@ function EmptyState({
 }: {
   icon: React.ReactNode;
   title?: string;
-  text: string;
+  text?: string;
   action?: React.ReactNode;
   tone?: 'muted' | 'success' | 'destructive';
 }) {
@@ -95,7 +96,7 @@ function EmptyState({
           {icon}
         </div>
         {title && <p className="text-[13.5px] font-semibold text-foreground">{title}</p>}
-        <p className="max-w-md text-xs leading-5 text-muted-foreground">{text}</p>
+        {text && <p className="max-w-md text-xs leading-5 text-muted-foreground">{text}</p>}
         {action && <div className="mt-2 flex gap-2">{action}</div>}
       </div>
     </SurfaceWorkCanvas>
@@ -259,6 +260,42 @@ export function WatchInbox({
   }, [historyRequestKey, onLoadOlder]);
   const refreshDisabled = refreshing || actionPending !== null;
 
+  // Every Watch state keeps the command bar so cold entry does not pop the chrome in.
+  const renderFrame = (content: ReactNode) => (
+    <section className="min-h-full bg-background" aria-label={m.watch.title}>
+      <WatchInboxCommandBar
+        searchInput={searchInput}
+        reasonCounts={reasonCounts}
+        selectedReasons={selectedReasons}
+        onSelectedReasonsChange={setSelectedReasons}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        unreadOnly={unreadOnly}
+        refreshing={refreshing}
+        refreshDisabled={refreshDisabled}
+        onUnreadOnlyChange={onUnreadOnlyChange}
+        onRefresh={onRefresh}
+      />
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className={cn('border-b border-border bg-destructive/[0.07] text-xs text-destructive', {
+          hidden: actionError === null,
+        })}
+      >
+        <SurfaceWorkCanvas variant="watch" className="flex min-h-7 items-center gap-2 px-4 py-1 max-sm:px-3">
+          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+          <span>
+            {actionError === 'read'
+              ? m.watch.actionReadFailed
+              : actionError === 'done' ? m.watch.actionDoneFailed : ''}
+          </span>
+        </SurfaceWorkCanvas>
+      </div>
+      {content}
+    </section>
+  );
+
   const handleRepositoryToggle = useCallback((
     group: WatchInboxQueryResponse['groups'][number],
   ) => {
@@ -402,29 +439,29 @@ export function WatchInbox({
   }, [autoExpandedRepositories]);
 
   if (loading && !result) {
-    return <EmptyState icon={<Spinner className="size-4" />} text={m.common.loading} />;
+    return renderFrame(<EmptyState icon={<Spinner className="size-4" aria-hidden="true" />} />);
   }
 
   if (!result || !status) {
-    return (
+    return renderFrame(
       <EmptyState
         icon={<AlertTriangle className="size-4" />}
         title={m.watch.title}
         text={m.watch.queryFailed}
         tone="destructive"
         action={<Button onClick={onRetryQuery}>{m.watch.retry}</Button>}
-      />
+      />,
     );
   }
 
   if (!status.hasMainToken) {
-    return (
+    return renderFrame(
       <EmptyState
         icon={<Settings2 className="size-4" />}
         title={m.watch.title}
         text={m.watch.configureMainToken}
         action={<Button onClick={onOpenOptions}>{m.watch.openOptions}</Button>}
-      />
+      />,
     );
   }
 
@@ -650,38 +687,5 @@ export function WatchInbox({
     );
   }
 
-  return (
-    <section className="min-h-full bg-background" aria-label={m.watch.title}>
-      <WatchInboxCommandBar
-        searchInput={searchInput}
-        reasonCounts={reasonCounts}
-        selectedReasons={selectedReasons}
-        onSelectedReasonsChange={setSelectedReasons}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
-        unreadOnly={unreadOnly}
-        refreshing={refreshing}
-        refreshDisabled={refreshDisabled}
-        onUnreadOnlyChange={onUnreadOnlyChange}
-        onRefresh={onRefresh}
-      />
-      <div
-        aria-live="polite"
-        aria-atomic="true"
-        className={cn('border-b border-border bg-destructive/[0.07] text-xs text-destructive', {
-          hidden: actionError === null,
-        })}
-      >
-        <SurfaceWorkCanvas variant="watch" className="flex min-h-7 items-center gap-2 px-4 py-1 max-sm:px-3">
-          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
-          <span>
-            {actionError === 'read'
-              ? m.watch.actionReadFailed
-              : actionError === 'done' ? m.watch.actionDoneFailed : ''}
-          </span>
-        </SurfaceWorkCanvas>
-      </div>
-      {content}
-    </section>
-  );
+  return renderFrame(content);
 }

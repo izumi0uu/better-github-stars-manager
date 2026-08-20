@@ -24,8 +24,8 @@ export function RadarEmptyState({
   tone = 'muted',
 }: {
   icon: ReactNode;
-  title: string;
-  text: string;
+  title?: string;
+  text?: string;
   action?: ReactNode;
   tone?: 'muted' | 'success' | 'warning' | 'destructive';
 }) {
@@ -40,8 +40,8 @@ export function RadarEmptyState({
         })}>
           {icon}
         </div>
-        <p className="text-[13.5px] font-semibold text-foreground">{title}</p>
-        <p className="max-w-lg text-xs leading-5 text-muted-foreground">{text}</p>
+        {title && <p className="text-[13.5px] font-semibold text-foreground">{title}</p>}
+        {text && <p className="max-w-lg text-xs leading-5 text-muted-foreground">{text}</p>}
         {action && <div className="mt-2 flex flex-wrap justify-center gap-2">{action}</div>}
       </div>
     </SurfaceWorkCanvas>

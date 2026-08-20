@@ -228,6 +228,37 @@ describe('Radar', () => {
     expect(container.querySelector('[data-radar-view="for-you"]')).toBeNull();
   });
 
+  it('keeps the Following command bar mounted and defers loading copy to the ribbon', () => {
+    const container = mount(<Radar {...surfaceProps({ loading: true, result: null })} />);
+    const ribbon = mount(
+      <RadarStatusRibbon
+        result={null}
+        loading
+        refreshing={false}
+        error={null}
+        onOpenOptions={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector('[data-surface-command-bar="following"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('Loading…');
+    expect(ribbon.querySelector('[data-radar-status="loading"]')).not.toBeNull();
+    expect(ribbon.textContent).toContain('Loading…');
+  });
+
+  it('keeps the For You command bar mounted while the cold recommendation query resolves', () => {
+    const container = mount(<Radar {...surfaceProps({
+      discoverView: 'for-you',
+      recommendationLoading: true,
+      recommendations: null,
+    })} />);
+
+    expect(container.querySelector('[data-surface-command-bar="for-you"]')).not.toBeNull();
+    expect(container.querySelector('[data-radar-discover-view="for-you"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('Loading…');
+  });
+
+
   it('keeps dismiss separate from seen intent and restores focus after removal', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
