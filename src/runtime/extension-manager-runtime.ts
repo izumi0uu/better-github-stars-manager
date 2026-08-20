@@ -43,6 +43,7 @@ function preferencesFromConfig(config: Config): ManagerPreferences {
   return {
     theme: config.theme,
     locale: config.locale,
+    radarWindowDays: config.radarWindowDays,
     libraryView: config.libraryView,
     watchCollapsedRepositories: config.watchCollapsedRepositories,
     columnLayoutMode: config.columnLayoutMode,

@@ -43,6 +43,7 @@ const storageRemove = vi.fn((listener: StorageListener) => storageListeners.dele
 const preferences = {
   theme: 'dark',
   locale: 'en',
+  radarWindowDays: 30,
   libraryView: DEFAULT_LIBRARY_VIEW_PREFS,
   watchCollapsedRepositories: {},
   columnLayoutMode: 'default',
@@ -52,6 +53,7 @@ const preferences = {
   | 'theme'
   | 'locale'
   | 'libraryView'
+  | 'radarWindowDays'
   | 'watchCollapsedRepositories'
   | 'columnLayoutMode'
   | 'customColumnLayout'

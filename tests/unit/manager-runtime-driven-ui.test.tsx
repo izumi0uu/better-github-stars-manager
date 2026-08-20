@@ -26,6 +26,7 @@ const unused = async (): Promise<never> => {
 const defaultPreferences: ManagerPreferences = {
   theme: 'dark',
   locale: 'en',
+  radarWindowDays: 30,
   libraryView: DEFAULT_LIBRARY_VIEW_PREFS,
   watchCollapsedRepositories: {},
   columnLayoutMode: 'default',

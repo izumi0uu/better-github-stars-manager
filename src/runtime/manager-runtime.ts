@@ -44,6 +44,7 @@ export type ManagerPreferences = Readonly<Pick<
   | 'locale'
   | 'libraryView'
   | 'watchCollapsedRepositories'
+  | 'radarWindowDays'
   | 'columnLayoutMode'
   | 'customColumnLayout'
 >>;

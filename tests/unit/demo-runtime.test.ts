@@ -89,6 +89,35 @@ describe('DemoManagerRuntime', () => {
     });
   });
 
+  it('reprojects the selected Following window and keeps snapshot provenance stale until refresh', async () => {
+    const runtime = createDemoManagerRuntime();
+    const initial = await runtime.queryRadar();
+    const initialSelfCount = initial.activities.filter((activity) => activity.source === 'self').length;
+
+    expect(initialSelfCount).toBeGreaterThan(0);
+    expect(initial.status).toMatchObject({
+      windowDays: 60,
+      snapshotStatus: 'fresh',
+      state: { windowDays: 60 },
+    });
+
+    await runtime.updatePreferences({ radarWindowDays: 30 });
+    const narrowed = await runtime.queryRadar();
+    expect(narrowed.activities.filter((activity) => activity.source === 'self')).toHaveLength(0);
+    expect(narrowed.status).toMatchObject({
+      windowDays: 30,
+      snapshotStatus: 'stale',
+      state: { windowDays: 60 },
+    });
+
+    const refreshed = await runtime.refreshRadar();
+    expect(refreshed.status).toMatchObject({
+      windowDays: 30,
+      snapshotStatus: 'fresh',
+      state: { windowDays: 30 },
+    });
+  });
+
   it('applies the synthetic account to owned-repository queries', async () => {
     const runtime = createDemoManagerRuntime();
     const owned = await runtime.queryStars({

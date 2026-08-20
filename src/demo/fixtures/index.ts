@@ -410,6 +410,7 @@ const ACCOUNT: ManagerAccount = {
 const PREFERENCES: ManagerPreferences = {
   theme: 'light',
   locale: 'en',
+  radarWindowDays: 60,
   libraryView: {
     version: 1,
     filters: {
