@@ -9,7 +9,7 @@ export interface StarSource {
   /** Full pull: upsert every repo. Does NOT detect unstars (use rescan). */
   syncFull(onProgress?: (p: SyncProgress) => void): Promise<{ added: number; updated: number }>;
 
-  /** Incremental: pull newest in starred_at-desc order until the lastSyncStarredAt cursor is reached. */
+  /** Incremental: pull newest stars to the cursor and refresh every public repository owned by the account. */
   syncIncremental(): Promise<{ added: number }>;
 
   /** Rescan: re-pull everything; tombstone local repos absent from the API (soft delete, tags/notes preserved). */
