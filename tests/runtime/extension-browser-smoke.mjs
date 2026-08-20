@@ -198,6 +198,11 @@ export async function runExtensionBrowserSmoke(options = {}) {
     await optionsFromPopup.waitForSelector('textarea', { timeout: 10_000 });
     await waitForBodyText(optionsFromPopup, 'GitHub Classic PAT');
     await assertOptionsDefaultChineseAndUseEnglish(optionsFromPopup);
+    const defaultFollowingWindow = await optionsFromPopup.$eval(
+      '[data-testid="following-history-window"]',
+      (element) => element.textContent?.trim() ?? '',
+    );
+    assert.equal(defaultFollowingWindow, '30 days');
     await assertScheduledRefreshAlarms(optionsFromPopup, false);
     ok('Watch and Radar periodic alarms were installed; ineligible recommendation alarm stayed absent');
     ok('popup and Options defaulted to Chinese, then Options switched to English for the remaining smoke flow');
@@ -870,6 +875,7 @@ async function seedWatchAndRadarFixture(extId) {
         onboardingStage: 'done',
         seenOnboarding: true,
         autoTagAgentPromptSeen: true,
+        radarWindowDays: 30,
         starsPanelDefaultEnabled: true,
       },
       [CREDENTIALS_KEY]: credentials,
@@ -1091,6 +1097,7 @@ async function seedWatchAndRadarFixture(extId) {
       accountLogin: 'smoke-user',
       lastAttemptAt: radarFetchedAt,
       lastSuccessfulAt: radarFetchedAt,
+      windowDays: 30,
       errorCode: null,
       nextAllowedAt: null,
       activityCount: 1,

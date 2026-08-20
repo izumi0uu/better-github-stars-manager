@@ -39,6 +39,7 @@ function status(overrides: Partial<RadarStatus> = {}): RadarStatus {
     accountLogin: 'viewer',
     hasMainToken: true,
     refreshing: false,
+    windowDays: 60,
     snapshotStatus: 'fresh',
     errorCode: null,
     state: {
@@ -46,6 +47,7 @@ function status(overrides: Partial<RadarStatus> = {}): RadarStatus {
       accountLogin: 'viewer',
       lastAttemptAt: '2026-08-10T12:00:00.000Z',
       lastSuccessfulAt: '2026-08-10T12:00:00.000Z',
+      windowDays: 60,
       errorCode: null,
       nextAllowedAt: null,
       activityCount: 2,
@@ -92,12 +94,12 @@ function activity(id: string, repositoryKey: string): RadarActivityPresentation 
   };
 }
 
-function radarResult(): RadarQueryResponse {
+function radarResult(statusOverrides: Partial<RadarStatus> = {}): RadarQueryResponse {
   const activities = [activity('one', 'owner/one'), activity('two', 'owner/two')];
   return {
     activities,
     unseenCount: 2,
-    status: status(),
+    status: status(statusOverrides),
   };
 }
 
@@ -224,8 +226,15 @@ describe('Radar', () => {
     expect(container.querySelectorAll('[data-radar-row]')).toHaveLength(2);
     expect(container.querySelector('[data-surface-command-bar="following"]')).not.toBeNull();
     expect(container.querySelector('[data-radar-discover-view="following"]')).not.toBeNull();
-    expect(container.textContent).toContain('End of 30-day window · 2 activities');
+    expect(container.textContent).toContain('End of 60-day window · 2 activities');
     expect(container.querySelector('[data-radar-view="for-you"]')).toBeNull();
+  });
+
+  it('renders the selected Following history window', () => {
+    const container = mount(<Radar {...surfaceProps({ result: radarResult({ windowDays: 90 }) })} />);
+
+    expect(container.textContent).toContain('Public stars · last 90 days');
+    expect(container.textContent).toContain('End of 90-day window · 2 activities');
   });
 
   it('keeps the Following command bar mounted and defers loading copy to the ribbon', () => {

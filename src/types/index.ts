@@ -5,6 +5,8 @@ import type { AgentDataDisclosureAcceptance } from '@/bgsm-agent/disclosure';
 
 export type Locale = 'en' | 'zh-CN';
 
+export type FollowingHistoryWindowDays = 30 | 60 | 90;
+
 export type OnboardingStage =
   | 'needs_token'
   | 'awaiting_sync'
@@ -386,6 +388,8 @@ export interface Config {
   maxTagsPerRepo: number;
   /** Minimum repos that must share a topic/tag before automated organization uses it. */
   minTopicRepoCount: number;
+  /** Number of recent days included in Following activity. */
+  radarWindowDays: FollowingHistoryWindowDays;
   /** Durable library view intent for filters and primary sort. */
   libraryView: LibraryViewPrefs;
   /** Whether your own GitHub stars page should open the overlay panel by default. */

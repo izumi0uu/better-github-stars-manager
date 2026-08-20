@@ -66,10 +66,15 @@ function activity(
   };
 }
 
-function snapshot(activities: RadarActivityRecord[], fetchedAt = SECOND): RadarSourceSnapshot {
+function snapshot(
+  activities: RadarActivityRecord[],
+  fetchedAt = SECOND,
+  windowDays = 60,
+): RadarSourceSnapshot {
   return {
     accountLogin: 'Viewer',
     activities,
+    windowDays,
     fetchedAt,
     followingCount: 4,
     scannedFollowingCount: 4,
@@ -211,8 +216,24 @@ describe('Radar snapshot storage', () => {
       .toMatchObject({ snapshotStatus: 'stale', errorCode: 'network_error' });
   });
 
+  it('marks a different selected window stale and filters saved rows immediately', async () => {
+    const nowMillis = Date.parse(SECOND);
+    const insideSixty = new Date(nowMillis - 45 * 24 * 60 * 60 * 1_000).toISOString();
+    const outsideSixty = new Date(nowMillis - 75 * 24 * 60 * 60 * 1_000).toISOString();
+    const committed = await commitRadarSnapshot(snapshot([
+      activity('inside', 'owner/inside', insideSixty),
+      activity('outside', 'owner/outside', outsideSixty),
+    ], SECOND, 90));
+
+    expect(radarSnapshotStatus(committed, nowMillis, 90)).toBe('fresh');
+    expect(radarSnapshotStatus(committed, nowMillis, 60)).toBe('stale');
+    expect((await listRadarActivities('viewer', nowMillis, 60)).map((row) => row.id))
+      .toEqual(['inside']);
+    expect(await countUnseenRadarActivities('viewer', nowMillis, 60)).toBe(1);
+  });
+
   it('projects recent live Stars as self activity without copying them into Radar storage', async () => {
-    const expiredAt = new Date(Date.parse(SECOND) - 31 * 24 * 60 * 60 * 1_000).toISOString();
+    const expiredAt = new Date(Date.parse(SECOND) - 61 * 24 * 60 * 60 * 1_000).toISOString();
     await db.stars.bulkPut([
       star('owner/recent', 77),
       { ...star('owner/expired'), starred_at: expiredAt },

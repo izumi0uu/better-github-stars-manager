@@ -19,6 +19,7 @@ export interface RadarStatus {
   accountLogin: string | null;
   hasMainToken: boolean;
   refreshing: boolean;
+  windowDays: number;
   snapshotStatus: RadarSnapshotStatus;
   errorCode: RadarErrorCode | null;
   state: RadarStateRecord | null;
@@ -38,6 +39,7 @@ export interface RadarRefreshResult {
 export interface RadarSourceSnapshot {
   accountLogin: string;
   activities: RadarActivityRecord[];
+  windowDays: number;
   fetchedAt: string;
   followingCount: number;
   scannedFollowingCount: number;

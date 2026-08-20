@@ -239,9 +239,9 @@ export interface MessageCatalog {
     permissionTitle: string;
     permissionBody: string;
     emptyTitle: string;
-    emptyBody: string;
+    emptyBody: (windowDays: number) => string;
     filteredEmptyTitle: string;
-    filteredEmptyBody: string;
+    filteredEmptyBody: (windowDays: number) => string;
     searchPlaceholder: string;
     clearSearch: string;
     searchResultCount: (count: number) => string;
@@ -251,18 +251,18 @@ export interface MessageCatalog {
     statusPartial: string;
     statusCooldown: (time: string) => string;
     statusPermission: string;
-    listEndActivities: (count: number) => string;
-    listEndProjects: (count: number) => string;
+    listEndActivities: (windowDays: number, count: number) => string;
+    listEndProjects: (windowDays: number, count: number) => string;
     listEndMatches: (count: number) => string;
     listEndPartial: string;
     listEndSaved: (count: number) => string;
     freshSummary: (activities: number, following: number) => string;
     partialSnapshot: (count: number) => string;
-    partialReason: (reason: RadarPartialReason) => string;
+    partialReason: (reason: RadarPartialReason, windowDays: number) => string;
     staleSnapshot: string;
     cooldownUntil: (time: string) => string;
     snapshotAt: (time: string) => string;
-    publicActivityOnly: string;
+    publicActivityOnly: (windowDays: number) => string;
     actorStarred: string;
     openActorProfile: (actor: string) => string;
     inLibrary: string;
@@ -933,6 +933,10 @@ export interface MessageCatalog {
     agentStorageClearFailed: (error: string) => string;
     agentStorageRetry: string;
     behaviorHeading: string;
+    followingHistoryWindowLabel: string;
+    followingHistoryWindowHint: string;
+    followingHistoryWindowRisk: string;
+    followingHistoryWindowOption: (days: number) => string;
     maxTagsPerRepoLabel: string;
     maxTagsPerRepoHint: string;
     minTopicRepoCountLabel: string;
@@ -1379,9 +1383,9 @@ const messages: Record<Locale, MessageCatalog> = {
       permissionBody:
         "Following Radar needs the read:user scope on the GitHub Classic PAT. Stars, tags, Gist, and sync are unaffected.",
       emptyTitle: "No recent stars",
-      emptyBody: "No star activity was found in the last 30 days.",
+      emptyBody: (windowDays) => `No star activity was found in the last ${windowDays} days.`,
       filteredEmptyTitle: "No activity from selected sources",
-      filteredEmptyBody: "Adjust Following and Me to show recent stars from the last 30 days.",
+      filteredEmptyBody: (windowDays) => `Adjust Following and Me to show recent stars from the last ${windowDays} days.`,
       searchPlaceholder: "Search people or repositories",
       clearSearch: "Clear Following search",
       searchResultCount: (count) => `${count} matching ${count === 1 ? "activity" : "activities"}`,
@@ -1391,23 +1395,23 @@ const messages: Record<Locale, MessageCatalog> = {
       statusPartial: "Partial results · some activity may be missing",
       statusCooldown: (time) => `Scan available at ${time}`,
       statusPermission: "Following needs access to your following graph",
-      listEndActivities: (count) => `End of 30-day window · ${count} ${count === 1 ? "activity" : "activities"}`,
-      listEndProjects: (count) => `End of 30-day window · ${count} ${count === 1 ? "project" : "projects"}`,
+      listEndActivities: (windowDays, count) => `End of ${windowDays}-day window · ${count} ${count === 1 ? "activity" : "activities"}`,
+      listEndProjects: (windowDays, count) => `End of ${windowDays}-day window · ${count} ${count === 1 ? "project" : "projects"}`,
       listEndMatches: (count) => `End of matching results · ${count}`,
       listEndPartial: "End of fetched results · some activity may be missing",
       listEndSaved: (count) => `End of saved activity · ${count} ${count === 1 ? "item" : "items"}`,
       freshSummary: (activities, following) => `${activities} activities · ${following} following`,
       partialSnapshot: (count) =>
         `Partial snapshot — ${count} known ${count === 1 ? "gap" : "gaps"}`,
-      partialReason: (reason) => ({
-        github_star_list_truncated: "Some accounts could not be paged to the end of the 30-day window.",
+      partialReason: (reason, windowDays) => ({
+        github_star_list_truncated: `Some accounts could not be paged to the end of the ${windowDays}-day window.`,
         private_activity_omitted: "Private followed-star activity was omitted.",
         following_scan_truncated: "Not every followed account could be scanned.",
       })[reason],
       staleSnapshot: "Showing the last successful snapshot because the latest scan failed or is stale.",
       cooldownUntil: (time) => `GitHub rate limit reached. Scanning unlocks at ${time}.`,
       snapshotAt: (time) => `Snapshot checked ${time}`,
-      publicActivityOnly: "Public stars · last 30 days",
+      publicActivityOnly: (windowDays) => `Public stars · last ${windowDays} days`,
       actorStarred: "starred",
       openActorProfile: (actor) => `Open @${actor} on GitHub`,
       inLibrary: "in your library",
@@ -2208,6 +2212,12 @@ const messages: Record<Locale, MessageCatalog> = {
       agentStorageClearFailed: (error) => `Tool cache could not be cleared: ${error}`,
       agentStorageRetry: "Try again",
       behaviorHeading: "4. Preferences",
+      followingHistoryWindowLabel: "Following history",
+      followingHistoryWindowHint:
+        "Choose how much public Star activity to scan from accounts you follow. Changes apply on the next scan.",
+      followingHistoryWindowRisk:
+        "Longer windows can use more GitHub API quota, take longer to refresh, store more data locally, and are more likely to return partial results when GitHub or the scan budget limits the request.",
+      followingHistoryWindowOption: (days) => `${days} days`,
       maxTagsPerRepoLabel: "Max automatic tags per repo",
       maxTagsPerRepoHint:
         "Auto Tags uses this limit. In Chat, Cubby may add at most this many tags to a repository per turn; Organize uses the lower of this value and its 5-tag safety cap.",
@@ -2696,9 +2706,9 @@ const messages: Record<Locale, MessageCatalog> = {
       permissionBody:
         "Following Radar 需要 GitHub Classic PAT 的 read:user scope。Stars、标签、Gist 和同步不受影响。",
       emptyTitle: "暂无近期 Star",
-      emptyBody: "最近 30 天未发现 Star 动态。",
+      emptyBody: (windowDays) => `最近 ${windowDays} 天未发现 Star 动态。`,
       filteredEmptyTitle: "所选来源没有动态",
-      filteredEmptyBody: "调整“关注的人”和“我”，查看最近 30 天的 Star 动态。",
+      filteredEmptyBody: (windowDays) => `调整“关注的人”和“我”，查看最近 ${windowDays} 天的 Star 动态。`,
       searchPlaceholder: "搜索人物或仓库",
       clearSearch: "清除 Following 搜索",
       searchResultCount: (count) => `匹配 ${count} 条动态`,
@@ -2708,22 +2718,22 @@ const messages: Record<Locale, MessageCatalog> = {
       statusPartial: "部分结果 · 可能缺少部分动态",
       statusCooldown: (time) => `可在 ${time} 后扫描`,
       statusPermission: "Following 需要读取关注关系的权限",
-      listEndActivities: (count) => `30 天窗口末尾 · 共 ${count} 条动态`,
-      listEndProjects: (count) => `30 天窗口末尾 · 共 ${count} 个项目`,
+      listEndActivities: (windowDays, count) => `${windowDays} 天窗口末尾 · 共 ${count} 条动态`,
+      listEndProjects: (windowDays, count) => `${windowDays} 天窗口末尾 · 共 ${count} 个项目`,
       listEndMatches: (count) => `匹配结果末尾 · 共 ${count} 项`,
       listEndPartial: "已获取结果末尾 · 可能缺少部分动态",
       listEndSaved: (count) => `已保存动态末尾 · 共 ${count} 项`,
       freshSummary: (activities, following) => `${activities} 条动态 · 关注 ${following} 人`,
       partialSnapshot: (count) => `部分快照 · ${count} 个已知缺口`,
-      partialReason: (reason) => ({
-        github_star_list_truncated: "部分账号未能翻页到 30 天窗口末尾。",
+      partialReason: (reason, windowDays) => ({
+        github_star_list_truncated: `部分账号未能翻页到 ${windowDays} 天窗口末尾。`,
         private_activity_omitted: "已省略关注账号的私有 Star 动态。",
         following_scan_truncated: "未能扫描全部关注账号。",
       })[reason],
       staleSnapshot: "最近一次扫描失败或快照已过期，当前显示上一次成功快照。",
       cooldownUntil: (time) => `已触发 GitHub 速率限制，${time} 后可再次扫描。`,
       snapshotAt: (time) => `快照检查于 ${time}`,
-      publicActivityOnly: "公开 Star · 最近 30 天",
+      publicActivityOnly: (windowDays) => `公开 Star · 最近 ${windowDays} 天`,
       actorStarred: "Star 了",
       openActorProfile: (actor) => `在 GitHub 打开 @${actor} 的主页`,
       inLibrary: "已在你的 Stars 中",
@@ -3525,6 +3535,12 @@ const messages: Record<Locale, MessageCatalog> = {
       agentStorageClearFailed: (error) => `无法清理工具缓存：${error}`,
       agentStorageRetry: "重试",
       behaviorHeading: "4. 偏好设置",
+      followingHistoryWindowLabel: "Following 历史范围",
+      followingHistoryWindowHint:
+        "选择扫描所关注账号最近多少天的公开 Star 动态；更改后在下次扫描生效。",
+      followingHistoryWindowRisk:
+        "范围越长，GitHub API 配额、刷新时间和本地存储占用越高；达到 GitHub 限制或单次扫描预算时，可能只返回部分结果。",
+      followingHistoryWindowOption: (days) => `${days} 天`,
       maxTagsPerRepoLabel: "每个仓库最多自动标签数",
       maxTagsPerRepoHint:
         "Auto Tags 使用此上限；聊天中 Cubby 每轮最多为单个仓库新增这么多个标签；整理功能取此值与 5 个标签安全上限中的较小值。",

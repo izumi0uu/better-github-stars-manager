@@ -159,7 +159,7 @@ Watch Inbox requires the optional `notifications` scope on your Classic Personal
 
 Following and For You offer two discovery paths:
 
-- **Following activity**: Review public Star activity from people you follow over the last 30 days, with controls to search, hide items, star repositories, add favorites, and assign tags
+- **Following activity**: Review public Star activity from people you follow over the last 30 days by default, or choose 30, 60, or 90 days in Preferences. Search and hide activity, star repositories, add favorites, and assign tags. Longer windows can take more time, GitHub API quota, and local storage, and are more likely to return partial results
 - **For You**: Choose seeds from your existing Stars, fetch candidates through GitHub's public Search API, filter them, and recommend the results
 
 For You excludes repositories you currently star, archived repositories, and forks. It uses supported GitHub APIs and does not reproduce GitHub Explore's private recommendation system. See [How For You recommendations work](docs/en/for-you-recommendation-strategy.md) for candidate sources, scoring, and daily refresh behavior.

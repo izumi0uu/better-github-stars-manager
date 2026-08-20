@@ -36,16 +36,27 @@ import { Textarea } from "@/ui/shadcn/textarea";
 import { Separator } from "@/ui/shadcn/separator";
 import { Input } from "@/ui/shadcn/input";
 import { Checkbox } from "@/ui/shadcn/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/ui/shadcn/select";
 import { cn } from "@/lib/utils";
 import { REPO_URL } from "@/lib/links";
 import { useImeBufferedInput } from "@/ui/hooks/use-ime-input";
 import { useI18n } from "@/i18n";
+import type { FollowingHistoryWindowDays } from '@/types';
 import {
   DEFAULT_AUTO_TAG_LIMIT,
+  DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
+  FOLLOWING_HISTORY_WINDOW_OPTIONS,
   DEFAULT_MIN_TOPIC_REPO_COUNT,
   MAX_AUTO_TAG_LIMIT,
   MIN_AUTO_TAG_LIMIT,
   normalizeMaxTagsPerRepo,
+  normalizeFollowingHistoryWindowDays,
   normalizeMinTopicRepoCount,
 } from "@/preferences";
 import {
@@ -98,10 +109,16 @@ export function Options() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [agentSettingsSnapshot, setAgentSettingsSnapshot] =
     useState<OptionsAgentSettingsSnapshot>(DEFAULT_OPTIONS_AGENT_SETTINGS_SNAPSHOT);
+  const [radarWindowDays, setRadarWindowDays] = useState<FollowingHistoryWindowDays>(
+    DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
+  );
   const [maxTagsPerRepo, setMaxTagsPerRepo] = useState<string>(String(DEFAULT_AUTO_TAG_LIMIT));
   const [minTopicRepoCount, setMinTopicRepoCount] = useState<string>(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
   const persistedMaxTagsPerRepoRef = useRef(String(DEFAULT_AUTO_TAG_LIMIT));
   const persistedMinTopicRepoCountRef = useRef(String(DEFAULT_MIN_TOPIC_REPO_COUNT));
+  const persistedRadarWindowDaysRef = useRef<FollowingHistoryWindowDays>(
+    DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
+  );
   const [starsPanelDefaultEnabled, setStarsPanelDefaultEnabled] = useState(true);
   const [tokenBusy, setTokenBusy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
@@ -127,10 +144,12 @@ export function Options() {
     setGistId(c.gistId);
     setTheme(c.theme);
     setAgentSettingsSnapshot({ providerConfig: c.agentProvider });
+    setRadarWindowDays(c.radarWindowDays);
     setMaxTagsPerRepo(String(c.maxTagsPerRepo));
     setMinTopicRepoCount(String(c.minTopicRepoCount));
     persistedMaxTagsPerRepoRef.current = String(c.maxTagsPerRepo);
     persistedMinTopicRepoCountRef.current = String(c.minTopicRepoCount);
+    persistedRadarWindowDaysRef.current = c.radarWindowDays;
     setStarsPanelDefaultEnabled(c.starsPanelDefaultEnabled);
     setSyncStatus((current) => mergeStatusSnapshot(current, status));
   };
@@ -211,6 +230,18 @@ export function Options() {
     document.documentElement.classList.toggle("dark", next === "dark");
   };
 
+
+  const saveRadarWindowDays = async (raw: string) => {
+    const next = normalizeFollowingHistoryWindowDays(raw);
+    setRadarWindowDays(next);
+    try {
+      await authStore.update({ radarWindowDays: next });
+      persistedRadarWindowDaysRef.current = next;
+    } catch (error) {
+      setRadarWindowDays(persistedRadarWindowDaysRef.current);
+      setMsg({ kind: "err", text: translateError(error, m) });
+    }
+  };
   const saveMaxTagsPerRepo = async (raw: string) => {
     const next = normalizeMaxTagsPerRepo(raw);
     setMaxTagsPerRepo(String(next)); // clamp the field back to a legal value
@@ -299,6 +330,7 @@ export function Options() {
           JSON.stringify(newCfg?.agentProvider ?? null) &&
         oldCfg?.maxTagsPerRepo === newCfg?.maxTagsPerRepo &&
         oldCfg?.minTopicRepoCount === newCfg?.minTopicRepoCount &&
+        oldCfg?.radarWindowDays === newCfg?.radarWindowDays &&
         oldCfg?.starsPanelDefaultEnabled === newCfg?.starsPanelDefaultEnabled &&
         JSON.stringify(oldCfg?.storeRatingPrompt ?? null) ===
           JSON.stringify(newCfg?.storeRatingPrompt ?? null);
@@ -572,6 +604,47 @@ export function Options() {
       <section className="mt-6">
         <h2 className="text-base font-medium">{m.options.behaviorHeading}</h2>
         <div className="mt-3 grid gap-4 rounded-lg border border-border bg-muted/20 p-4">
+          <div className="grid gap-1.5">
+            <label
+              id="following-history-window-label"
+              htmlFor="following-history-window"
+              className="text-sm font-medium text-foreground"
+            >
+              {m.options.followingHistoryWindowLabel}
+            </label>
+            <p id="following-history-window-hint" className="gsm-body-note">
+              {m.options.followingHistoryWindowHint}
+            </p>
+            <Select
+              value={String(radarWindowDays)}
+              onValueChange={(value) => void saveRadarWindowDays(value)}
+            >
+              <SelectTrigger
+                id="following-history-window"
+                data-testid="following-history-window"
+                aria-labelledby="following-history-window-label"
+                aria-describedby="following-history-window-hint following-history-window-risk"
+                className="w-36"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FOLLOWING_HISTORY_WINDOW_OPTIONS.map((days) => (
+                  <SelectItem key={days} value={String(days)}>
+                    {m.options.followingHistoryWindowOption(days)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p
+              id="following-history-window-risk"
+              className="flex items-start gap-2 text-xs leading-5 text-muted-foreground"
+            >
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
+              <span>{m.options.followingHistoryWindowRisk}</span>
+            </p>
+          </div>
+
           <NumericPrefField
             id="max-tags-per-repo"
             label={m.options.maxTagsPerRepoLabel}

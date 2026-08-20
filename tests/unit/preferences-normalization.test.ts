@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'vitest';
 import {
   DEFAULT_AUTO_TAG_LIMIT,
+  DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
+  FOLLOWING_HISTORY_WINDOW_OPTIONS,
   DEFAULT_LIBRARY_VIEW_PREFS,
   DEFAULT_MIN_TOPIC_REPO_COUNT,
   normalizeLibraryViewPrefs,
+  normalizeFollowingHistoryWindowDays,
   normalizeMaxTagsPerRepo,
   normalizeMinTopicRepoCount,
 } from '../../src/preferences';
@@ -24,6 +27,15 @@ describe('preference normalization', () => {
     assert.equal(normalizeMinTopicRepoCount('99'), 50);
     assert.equal(normalizeMinTopicRepoCount('nope'), DEFAULT_MIN_TOPIC_REPO_COUNT);
     assert.equal(normalizeMinTopicRepoCount(Number.NaN), DEFAULT_MIN_TOPIC_REPO_COUNT);
+  });
+
+  it('accepts only supported Following history windows', () => {
+    assert.deepEqual(FOLLOWING_HISTORY_WINDOW_OPTIONS, [30, 60, 90]);
+    assert.equal(normalizeFollowingHistoryWindowDays(30), 30);
+    assert.equal(normalizeFollowingHistoryWindowDays('90'), 90);
+    assert.equal(normalizeFollowingHistoryWindowDays(undefined), DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS);
+    assert.equal(normalizeFollowingHistoryWindowDays(45), DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS);
+    assert.equal(normalizeFollowingHistoryWindowDays(360), DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS);
   });
 
   it('normalizes libraryView v1 and strips non-owned fields', () => {

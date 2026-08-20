@@ -507,7 +507,7 @@ describe('GitHub Radar source', () => {
     expect(snapshot.activities.at(-1)?.repositoryOwnerLogin).toBe('owner');
   });
 
-  it('pages active accounts until their activity crosses the 30-day cutoff', async () => {
+  it('pages active accounts until their activity crosses the default 30-day cutoff', async () => {
     const recentOne = new Date(NOW.getTime() - 60_000).toISOString();
     const recentTwo = new Date(NOW.getTime() - 120_000).toISOString();
     const recentThree = new Date(NOW.getTime() - 180_000).toISOString();
@@ -561,6 +561,7 @@ describe('GitHub Radar source', () => {
       'owner/three',
     ]);
     expect(snapshot.batchCount).toBe(2);
+    expect(snapshot.windowDays).toBe(30);
     expect(snapshot.partialReasons).toEqual([]);
   });
 
@@ -584,9 +585,9 @@ describe('GitHub Radar source', () => {
     expect(snapshot.partialReasons).toEqual(['github_star_list_truncated']);
   });
 
-  it('uses a rolling 30-day cutoff', async () => {
-    const recent = new Date(NOW.getTime() - 29 * 24 * 60 * 60 * 1_000).toISOString();
-    const expired = new Date(NOW.getTime() - 31 * 24 * 60 * 60 * 1_000).toISOString();
+  it('uses the selected rolling 90-day cutoff', async () => {
+    const recent = new Date(NOW.getTime() - 89 * 24 * 60 * 60 * 1_000).toISOString();
+    const expired = new Date(NOW.getTime() - 91 * 24 * 60 * 60 * 1_000).toISOString();
     let request = 0;
     const fetchImpl = vi.fn(async () => {
       request += 1;
@@ -601,9 +602,10 @@ describe('GitHub Radar source', () => {
         }]));
     }) as typeof fetch;
 
-    const snapshot = await fetchGitHubRadar({ token: 'token', fetchImpl, now: () => NOW });
+    const snapshot = await fetchGitHubRadar({ token: 'token', fetchImpl, now: () => NOW, windowDays: 90 });
 
     expect(snapshot.activities.map((activity) => activity.repositoryKey)).toEqual(['owner/recent']);
+    expect(snapshot.windowDays).toBe(90);
   });
 
   it('maps primary rate limits and caller aborts to stable error codes', async () => {

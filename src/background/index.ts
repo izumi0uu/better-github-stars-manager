@@ -405,18 +405,26 @@ function badgeCredentialUnchanged(
 }
 
 async function queryManagerSurfaceBadgeCounts(): Promise<ManagerSurfaceBadgeCounts> {
-  const credential = await authStore.getGitHubCredentialSnapshot();
+  const [credential, config] = await Promise.all([
+    authStore.getGitHubCredentialSnapshot(),
+    authStore.getConfig(),
+  ]);
   const accountLogin = badgeAccountLogin(credential);
   if (!accountLogin || !credential.mainToken) return EMPTY_MANAGER_SURFACE_BADGE_COUNTS;
 
+  const countedAt = Date.now();
   const [watchUnreadCount, radarUnseenCount] = await Promise.all([
     watchStore.countUnreadWatchThreads(accountLogin),
-    radarStore.countUnseenRadarActivities(accountLogin),
+    radarStore.countUnseenRadarActivities(accountLogin, countedAt, config.radarWindowDays),
   ]);
-  const latestCredential = await authStore.getGitHubCredentialSnapshot();
-  if (!badgeCredentialUnchanged(credential, latestCredential)) {
-    return EMPTY_MANAGER_SURFACE_BADGE_COUNTS;
-  }
+  const [latestCredential, latestConfig] = await Promise.all([
+    authStore.getGitHubCredentialSnapshot(),
+    authStore.getConfig(),
+  ]);
+  if (
+    !badgeCredentialUnchanged(credential, latestCredential)
+    || config.radarWindowDays !== latestConfig.radarWindowDays
+  ) return EMPTY_MANAGER_SURFACE_BADGE_COUNTS;
   return { watchUnreadCount, radarUnseenCount };
 }
 const recommendationRefreshCoordinator = createRecommendationRefreshCoordinator({

@@ -645,6 +645,7 @@ class DemoManagerRuntime implements ManagerRuntime {
     return projectRadarActivities({
       accountLogin: this.accountLogin(),
       nowMillis: this.state.now,
+      windowDays: this.state.radarState.windowDays ?? 60,
       activities: this.state.radarActivities,
       stars: this.state.stars,
       tags: this.state.tags,
@@ -660,6 +661,7 @@ class DemoManagerRuntime implements ManagerRuntime {
       accountLogin: this.accountLogin(),
       hasMainToken: true,
       refreshing: false,
+      windowDays: this.state.radarState.windowDays ?? 60,
       snapshotStatus: this.state.radarState.partialReasons.length > 0 ? 'partial' : 'fresh',
       errorCode: this.state.radarState.errorCode,
       state: cloneMutable(this.state.radarState),

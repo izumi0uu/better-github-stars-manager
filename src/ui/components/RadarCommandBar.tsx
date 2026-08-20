@@ -15,6 +15,7 @@ import { Button } from '@/ui/shadcn/button';
 import { Input } from '@/ui/shadcn/input';
 import { Spinner } from '@/ui/shadcn/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/shadcn/tooltip';
+import { DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS } from '@/preferences';
 
 export function RadarEmptyState({
   icon,
@@ -296,7 +297,11 @@ export function RadarCommandBar({
         )}
         <span className="inline-flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground max-[700px]:basis-full">
           <Clock3 className="size-3 shrink-0" aria-hidden="true" />
-          <span className="truncate">{m.radar.publicActivityOnly}</span>
+          <span className="truncate">
+            {m.radar.publicActivityOnly(
+              result?.status.windowDays ?? DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
+            )}
+          </span>
         </span>
         <span className="min-w-0 flex-1 max-[700px]:hidden" />
         <RadarCommandBarActions

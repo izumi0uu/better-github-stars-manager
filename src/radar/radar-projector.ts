@@ -4,7 +4,6 @@ import {
   normalizeRadarActivity,
   normalizeRadarAvatarUrl,
   normalizeRadarRepositoryTopics,
-  RADAR_WINDOW_DAYS,
   sortRadarActivities,
   type RadarActivityPresentation,
   type RadarActivityRecord,
@@ -15,6 +14,7 @@ import { canonicalTagKey, excludedCanonicalTagKeys, visibleTagNames } from '@/ta
 export type RadarProjectionSource = Readonly<{
   accountLogin: string;
   nowMillis: number;
+  windowDays: number;
   activities: readonly RadarActivityRecord[];
   stars: readonly Star[];
   tags: readonly Tag[];
@@ -71,9 +71,16 @@ function ownStarPresentation(
 
 export function projectRadarActivities(source: RadarProjectionSource): RadarActivityPresentation[] {
   const accountLogin = source.accountLogin.trim().toLocaleLowerCase('en-US');
+  const cutoffMillis = source.nowMillis - source.windowDays * 24 * 60 * 60 * 1_000;
   const storedActivities = dedupeRadarActivities(source.activities)
-    .filter((activity) => activity.accountLogin === accountLogin && activity.dismissedAt === null);
-  const cutoffMillis = source.nowMillis - RADAR_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+    .filter((activity) => {
+      const starredAt = timestamp(activity.starredAt);
+      return activity.accountLogin === accountLogin
+        && activity.dismissedAt === null
+        && starredAt !== null
+        && starredAt >= cutoffMillis
+        && starredAt <= source.nowMillis;
+    });
   const ownStars = source.stars.filter((star) => {
     const starredAt = timestamp(star.starred_at);
     return !star.tombstone

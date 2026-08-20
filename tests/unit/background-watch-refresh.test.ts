@@ -28,6 +28,7 @@ function config(): Config {
     githubCredentialStatus: 'ready',
     watchCollapsedRepositories: {},
     watchNotificationsEnabled: true,
+    radarWindowDays: 60,
     watchNotificationsTokenEncrypted: 'watch-cipher',
     watchNotificationsTokenCryptoMeta: { iv: 'watch-iv', salt: 'watch-salt' },
     watchCredentialSource: 'dedicated',

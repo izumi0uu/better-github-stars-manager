@@ -158,7 +158,7 @@ Watch Inbox 需要 Classic Personal Access Token (PAT) 的可选 `notifications`
 
 Following 与 For You 帮助你发现更多项目：
 
-- **关注动态**：读取你关注的人的最近 30 天的公开 Star 活动，并支持搜索、隐藏、Star、收藏和添加标签
+- **关注动态**：默认读取你关注的人的最近 30 天公开 Star 活动；可在偏好设置切换为 30、60 或 90 天，并支持搜索、隐藏、Star、收藏和添加标签。范围越长，刷新耗时、GitHub API 配额和本地存储占用可能越高，也更容易出现部分结果
 - **为你推荐**：从现有 Stars 选择数据，通过 GitHub 公开 Search 获取筛选后再推送给你
 
 For You 会排除你已 Star 的仓库、Archived 仓库和 Fork。它使用 GitHub 支持的公开接口，不复刻 GitHub Explore 的私有推荐系统。候选来源、评分和每日刷新规则见 [For You 推荐如何工作](docs/zh/for-you-recommendation-strategy.md)。

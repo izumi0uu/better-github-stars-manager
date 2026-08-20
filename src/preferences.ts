@@ -1,5 +1,6 @@
 import type {
   LibraryViewPrefs,
+  FollowingHistoryWindowDays,
   LibraryViewSortDir,
   Locale,
   LibraryViewSortKey,
@@ -12,6 +13,8 @@ export const MIN_AUTO_TAG_LIMIT = 1;
 export const MAX_AUTO_TAG_LIMIT = 50;
 export const DEFAULT_MIN_TOPIC_REPO_COUNT = 3;
 export const MAX_WATCH_COLLAPSED_REPOSITORIES = 100;
+export const FOLLOWING_HISTORY_WINDOW_OPTIONS = [30, 60, 90] as const satisfies readonly FollowingHistoryWindowDays[];
+export const DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS: FollowingHistoryWindowDays = 30;
 
 const SORT_KEYS: readonly LibraryViewSortKey[] = [
   'starred_at',
@@ -71,6 +74,16 @@ export function normalizeMinTopicRepoCount(value: unknown): number {
     return DEFAULT_MIN_TOPIC_REPO_COUNT;
   }
   return normalizeIntegerPreference(value, DEFAULT_MIN_TOPIC_REPO_COUNT);
+}
+
+export function normalizeFollowingHistoryWindowDays(
+  value: unknown,
+): FollowingHistoryWindowDays {
+  const parsed = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return typeof parsed === 'number'
+    && FOLLOWING_HISTORY_WINDOW_OPTIONS.includes(parsed as FollowingHistoryWindowDays)
+    ? parsed as FollowingHistoryWindowDays
+    : DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS;
 }
 
 function uniqueStrings(value: unknown): string[] {

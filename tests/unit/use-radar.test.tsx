@@ -63,6 +63,7 @@ function response(overrides: Partial<RadarQueryResponse['status']> = {}): RadarQ
       accountLogin: 'viewer',
       hasMainToken: true,
       refreshing: false,
+      windowDays: 60,
       snapshotStatus: 'fresh',
       errorCode: null,
       state: null,
