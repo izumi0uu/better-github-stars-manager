@@ -14,10 +14,11 @@ export function RadarStatusRibbon({
   refreshing,
   error,
   onOpenOptions,
-  fullReconciling = false,
-}: Pick<RadarProps, 'result' | 'loading' | 'refreshing' | 'error' | 'onOpenOptions'> & {
-  fullReconciling?: boolean;
-}) {
+  fullReconciling,
+}: Pick<
+  RadarProps,
+  'result' | 'loading' | 'refreshing' | 'fullReconciling' | 'error' | 'onOpenOptions'
+>) {
   const busy = refreshing || fullReconciling;
   const { m, locale } = useI18n();
   const status = result?.status;

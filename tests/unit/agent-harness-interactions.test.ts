@@ -34,6 +34,12 @@ import {
 
 const encoder = new TextEncoder();
 
+function assertProtocolError(action: () => void): void {
+  assert.throws(action, (error: unknown) => (
+    error instanceof ProtocolValidationError && error.code === 'protocol_error'
+  ));
+}
+
 function deferred<T>() {
   const { promise, resolve } = Promise.withResolvers<T>();
   return { promise, resolve };
@@ -197,7 +203,7 @@ describe('canonical bounded tool results', () => {
     assert.equal(serializedToolResultByteLength(raw), MAX_GENERIC_TOOL_SUCCESS_RESULT_BYTES + 1);
     const cyclic: { self?: unknown } = {};
     cyclic.self = cyclic;
-    assert.throws(() => serializedToolResultByteLength(okToolResult(cyclic)));
+    assert.throws(() => serializedToolResultByteLength(okToolResult(cyclic)), TypeError);
   });
 });
 
@@ -239,10 +245,7 @@ describe('provider protocol history validation', () => {
       [assistant, { role: 'user', content: 'intervening' }, resultA, resultB],
     ];
     for (const history of malformed) {
-      assert.throws(
-        () => validateProviderProtocolHistory(history),
-        (error: unknown) => error instanceof ProtocolValidationError && error.code === 'protocol_error',
-      );
+      assertProtocolError(() => validateProviderProtocolHistory(history));
     }
   });
 
@@ -268,7 +271,7 @@ describe('provider protocol history validation', () => {
       { role: 'assistant', content: '', toolCalls: [{ id: 'old', name: 'read', arguments: {} }] },
       { role: 'tool', content: '{"ok":true,"data":{}}', toolCallId: 'old', toolName: 'read' },
     ]);
-    for (const history of badCalls) assert.throws(() => validateProviderProtocolHistory(history));
+    for (const history of badCalls) assertProtocolError(() => validateProviderProtocolHistory(history));
   });
 
   it('requires the complete ToolResult envelope schema and bounded valid JSON', () => {
@@ -280,7 +283,7 @@ describe('provider protocol history validation', () => {
       '{"ok":true,"data":{},"extra":1}',
       '{"ok":false,"error":{"code":"x"}}',
       '{"ok":false,"error":{"code":"x","message":"y","extra":1}}',
-    ]) assert.throws(() => validateSerializedResult(content));
+    ]) assertProtocolError(() => validateSerializedResult(content));
   });
 
   it('preflights malformed input before every provider invocation and malformed output before tools', async () => {

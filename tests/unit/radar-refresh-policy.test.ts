@@ -57,6 +57,9 @@ describe('Radar refresh policy', () => {
   it('routes a selected-window expansion to full', () => {
     expect(plan({ selectedWindowDays: 90 })).toMatchObject({ mode: 'full', lookbackDays: 90 });
   });
+  it('routes a selected-window contraction to full', () => {
+    expect(plan({ selectedWindowDays: 30 })).toMatchObject({ mode: 'full', lookbackDays: 30 });
+  });
 
   it('routes a credential identity change to full', () => {
     expect(plan({ credentialIdentity: 'viewer:identity-b:true' }))

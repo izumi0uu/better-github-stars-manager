@@ -221,7 +221,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-  it('exposes an accessible full reconciliation action without changing the selected window', () => {
+  it('exposes an accessible full reconciliation action', () => {
     const onFullReconcile = vi.fn();
     const result = radarResult({ windowDays: 90 });
     const container = mount(<RadarCommandBarActions
@@ -242,7 +242,6 @@ afterEach(() => {
     expect(button).toBeDefined();
     act(() => button?.click());
     expect(onFullReconcile).toHaveBeenCalledTimes(1);
-    expect(result.status.windowDays).toBe(90);
   });
 describe('Radar', () => {
   it('keeps the Following feed and command controls intact', () => {
@@ -251,15 +250,7 @@ describe('Radar', () => {
     expect(container.querySelectorAll('[data-radar-row]')).toHaveLength(2);
     expect(container.querySelector('[data-surface-command-bar="following"]')).not.toBeNull();
     expect(container.querySelector('[data-radar-discover-view="following"]')).not.toBeNull();
-    expect(container.textContent).toContain('Showing all activity from the last 60 days · 2 activities');
     expect(container.querySelector('[data-radar-view="for-you"]')).toBeNull();
-  });
-
-  it('renders the selected Following history window', () => {
-    const container = mount(<Radar {...surfaceProps({ result: radarResult({ windowDays: 90 }) })} />);
-
-    expect(container.textContent).toContain('Public followed activity · last 90 days');
-    expect(container.textContent).toContain('Showing all activity from the last 90 days · 2 activities');
   });
 
   it('keeps the Following command bar mounted and defers loading copy to the ribbon', () => {
@@ -269,6 +260,7 @@ describe('Radar', () => {
         result={null}
         loading
         refreshing={false}
+        fullReconciling={false}
         error={null}
         onOpenOptions={vi.fn()}
       />,
@@ -914,6 +906,7 @@ describe('RadarStatusRibbon', () => {
       result={radarResult()}
       loading={false}
       refreshing={false}
+      fullReconciling={false}
       error={null}
       onOpenOptions={vi.fn()}
     />);
@@ -937,6 +930,7 @@ describe('RadarStatusRibbon', () => {
       result={partialFullResult}
       loading={false}
       refreshing={false}
+      fullReconciling={false}
       error={null}
       onOpenOptions={vi.fn()}
     />);

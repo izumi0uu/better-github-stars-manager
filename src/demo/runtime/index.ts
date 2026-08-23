@@ -471,7 +471,6 @@ class DemoManagerRuntime implements ManagerRuntime {
     const now = timestamp(this.state.now);
     this.state.radarState.lastAttemptAt = now;
     this.state.radarState.lastSuccessfulAt = now;
-    this.state.radarState.windowDays = this.radarWindowDays();
     this.state.radarState.lastRefreshMode = 'incremental';
     this.state.radarState.lastIncrementalAt = now;
     this.state.radarState.batchCount++;

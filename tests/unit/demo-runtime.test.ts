@@ -89,7 +89,7 @@ describe('DemoManagerRuntime', () => {
     });
   });
 
-  it('reprojects the selected Following window and keeps snapshot provenance stale until refresh', async () => {
+  it('reprojects the selected Following window and reconciles provenance on full refresh', async () => {
     const runtime = createDemoManagerRuntime();
     const initial = await runtime.queryRadar();
     const initialSelfCount = initial.activities.filter((activity) => activity.source === 'self').length;
@@ -110,7 +110,7 @@ describe('DemoManagerRuntime', () => {
       state: { windowDays: 60 },
     });
 
-    const refreshed = await runtime.refreshRadar();
+    const refreshed = await runtime.fullReconcileRadar();
     expect(refreshed.status).toMatchObject({
       windowDays: 30,
       snapshotStatus: 'fresh',

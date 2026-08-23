@@ -89,6 +89,9 @@ Keep this file short and practical. Add rules here only when they are core to th
 - For docs-only changes, code tests are optional.
 - Do not add automated tests that read Markdown files to assert prose, headings, links, or section layout. Test the owning runtime behavior or machine-readable contract instead; review published documentation directly.
 - Do not add automated tests solely to assert exact i18n wording or descriptive UI/documentation copy. When copy changes, update or remove stale text assertions; test the owning behavior, accessibility semantics, or machine-readable contract instead.
+- New tests MUST fail when the behavior under test is removed. Prefer injected dependency and real handler/component behavior tests over assertions that read source files and match implementation strings or regular expressions. Static source checks are reserved for packaging, security, generated-artifact, or CSS-structure constraints that cannot be exercised behaviorally; keep them narrow and state the boundary they protect.
+- Do not duplicate the same descriptive copy contract across i18n, component, and Options tests. Keep exact copy assertions only when wording is itself a security, privacy, authorization, error-sanitization, accessibility-name, or externally documented protocol contract; otherwise assert state, role, selector, callback, error code, URL, or structured payload.
+- Rejection assertions MUST check a stable error type, code, or message when one exists. Avoid bare `toThrow()`, `assert.throws()`, and truthiness-only assertions when a more specific observable contract is available.
 
 ## Documentation
 

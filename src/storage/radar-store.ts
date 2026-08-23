@@ -193,8 +193,9 @@ export async function commitRadarRefresh(
     const activities = completeFull
       ? incoming
       : dedupeRadarActivities(mergedById.values());
-    await db.radarActivities.clear();
-    if (activities.length > 0) await db.radarActivities.bulkPut(activities);
+    if (completeFull) await db.radarActivities.clear();
+    const written = completeFull ? activities : incoming;
+    if (written.length > 0) await db.radarActivities.bulkPut(written);
 
     const previousOrEmpty = previousState ?? emptyState(accountLogin, attemptAt);
     const state: RadarStateRecord = {

@@ -234,7 +234,7 @@ describe('Cubby messaging', () => {
     ['transport rejection', () => Promise.reject(new Error('worker unavailable'))],
     ['background rejection', () => Promise.resolve({ ok: false, error: 'storage unavailable' })],
   ])('fails retry projection reads and commands closed after %s', async (
-    _label,
+    label,
     response,
   ) => {
     const value: AgentRetryDraft = {
@@ -248,12 +248,25 @@ describe('Cubby messaging', () => {
     };
     vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(response) } });
 
-    await expect(readDurableAgentRetryDraftCandidate(value.sessionId)).rejects.toThrow();
-    await expect(dismissDurableAgentSessionRetry({
-      sessionId: value.sessionId,
-      turnAttemptId: value.turnAttemptId,
-    })).rejects.toThrow();
-    await expect(discardDurableAgentSessionRecovery(value.sessionId)).rejects.toThrow();
+    const failures = await Promise.all([
+      readDurableAgentRetryDraftCandidate(value.sessionId).catch((reason: unknown) => reason),
+      dismissDurableAgentSessionRetry({
+        sessionId: value.sessionId,
+        turnAttemptId: value.turnAttemptId,
+      }).catch((reason: unknown) => reason),
+      discardDurableAgentSessionRecovery(value.sessionId).catch((reason: unknown) => reason),
+    ]);
+
+    for (const failure of failures) {
+      expect(failure).toBeInstanceOf(Error);
+      if (label === 'transport rejection') {
+        expect((failure as Error).message).toBe('worker unavailable');
+      } else {
+        expect(failure).toBeInstanceOf(BackgroundCallError);
+        expect((failure as BackgroundCallError).message).toBe('storage unavailable');
+        expect((failure as BackgroundCallError).code).toBeNull();
+      }
+    }
   });
 
   it('preserves stable background error codes without exposing protocol details as control flow', async () => {

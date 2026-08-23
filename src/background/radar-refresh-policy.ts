@@ -8,7 +8,7 @@ export type RadarRefreshPlanReason =
   | 'forced'
   | 'no_baseline'
   | 'incomplete'
-  | 'window_expanded'
+  | 'window_changed'
   | 'credential_changed'
   | 'full_reconciliation_due'
   | 'stable_baseline';
@@ -62,8 +62,8 @@ export function selectRadarRefreshPlan(input: RadarRefreshPolicyInput): RadarRef
   if (
     state.windowDays === null
     || state.windowDays === undefined
-    || input.selectedWindowDays > state.windowDays
-  ) return full('window_expanded');
+    || input.selectedWindowDays !== state.windowDays
+  ) return full('window_changed');
   if (
     state.credentialIdentity === null
     || state.credentialIdentity === undefined
