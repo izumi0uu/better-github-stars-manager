@@ -116,9 +116,9 @@ export interface ManagerRuntime {
 
   queryRadar(): Promise<RadarQueryResponse>;
   refreshRadar(): Promise<RadarRefreshResult>;
+  fullReconcileRadar(): Promise<RadarRefreshResult>;
   markRadarActivitiesSeen(activityIds: readonly string[]): Promise<RadarStatus>;
   dismissRadarActivities(activityIds: readonly string[]): Promise<RadarStatus>;
-
   queryRecommendations(): Promise<RecommendationQueryResponse>;
   refreshRecommendations(): Promise<RecommendationRefreshResult>;
   ignoreRecommendation(repositoryKey: string, repositoryFullName: string): Promise<void>;

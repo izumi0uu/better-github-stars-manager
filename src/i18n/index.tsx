@@ -1,9 +1,9 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { DEFAULT_LOCALE } from "@/preferences";
-import type { ManagerRuntime } from '@/runtime/manager-runtime';
 import type { Locale, SyncProgress } from "@/types";
-import type { RadarPartialReason } from '@/radar/radar-model';
+import type { RadarPartialReason, RadarRefreshMode } from '@/radar/radar-model';
+import type { ManagerRuntime } from '@/runtime/manager-runtime';
 
 export type WatchStatusProgressField = 'count' | 'pages';
 
@@ -247,7 +247,11 @@ export interface MessageCatalog {
     searchResultCount: (count: number) => string;
     searchEmpty: (query: string) => string;
     statusRefreshingSaved: string;
+    statusReconcilingSaved: string;
     statusRefreshFailedSaved: string;
+    fullReconcile: string;
+    fullReconciling: string;
+    fullReconcileHint: string;
     statusPartial: string;
     statusCooldown: (time: string) => string;
     statusPermission: string;
@@ -262,6 +266,7 @@ export interface MessageCatalog {
     staleSnapshot: string;
     cooldownUntil: (time: string) => string;
     snapshotAt: (time: string) => string;
+    snapshotProvenance: (mode: RadarRefreshMode, windowDays: number) => string;
     publicActivityOnly: (windowDays: number) => string;
     actorStarred: string;
     openActorProfile: (actor: string) => string;
@@ -1389,14 +1394,18 @@ const messages: Record<Locale, MessageCatalog> = {
       searchPlaceholder: "Search people or repositories",
       clearSearch: "Clear Following search",
       searchResultCount: (count) => `${count} matching ${count === 1 ? "activity" : "activities"}`,
-      searchEmpty: (query) => `No people or repositories match “${query}”.`,
+      searchEmpty: (query) => `No activity matches “${query}”.`,
       statusRefreshingSaved: "Scanning · showing saved activity",
+      statusReconcilingSaved: "Full sync · showing saved activity",
       statusRefreshFailedSaved: "Couldn’t scan · showing saved activity",
+      fullReconcile: "Full sync",
+      fullReconciling: "Full syncing…",
+      fullReconcileHint: "Attempts a complete scan of the selected history window. Saved activity remains visible while it runs; it may use more GitHub quota and take longer.",
       statusPartial: "Partial results · some activity may be missing",
       statusCooldown: (time) => `Scan available at ${time}`,
       statusPermission: "Following needs access to your following graph",
-      listEndActivities: (windowDays, count) => `End of ${windowDays}-day window · ${count} ${count === 1 ? "activity" : "activities"}`,
-      listEndProjects: (windowDays, count) => `End of ${windowDays}-day window · ${count} ${count === 1 ? "project" : "projects"}`,
+      listEndActivities: (windowDays, count) => `Showing all activity from the last ${windowDays} days · ${count} ${count === 1 ? "activity" : "activities"}`,
+      listEndProjects: (windowDays, count) => `Showing all projects from the last ${windowDays} days · ${count} ${count === 1 ? "project" : "projects"}`,
       listEndMatches: (count) => `End of matching results · ${count}`,
       listEndPartial: "End of fetched results · some activity may be missing",
       listEndSaved: (count) => `End of saved activity · ${count} ${count === 1 ? "item" : "items"}`,
@@ -1404,14 +1413,17 @@ const messages: Record<Locale, MessageCatalog> = {
       partialSnapshot: (count) =>
         `Partial snapshot — ${count} known ${count === 1 ? "gap" : "gaps"}`,
       partialReason: (reason, windowDays) => ({
-        github_star_list_truncated: `Some accounts could not be paged to the end of the ${windowDays}-day window.`,
+        github_star_list_truncated: `Some highly active accounts could not be fully retrieved for the ${windowDays}-day range.`,
         private_activity_omitted: "Private followed-star activity was omitted.",
         following_scan_truncated: "Not every followed account could be scanned.",
       })[reason],
-      staleSnapshot: "Showing the last successful snapshot because the latest scan failed or is stale.",
+      staleSnapshot: "Showing saved activity because the latest snapshot is stale.",
       cooldownUntil: (time) => `GitHub rate limit reached. Scanning unlocks at ${time}.`,
       snapshotAt: (time) => `Snapshot checked ${time}`,
-      publicActivityOnly: (windowDays) => `Public stars · last ${windowDays} days`,
+      snapshotProvenance: (mode, windowDays) => mode === 'full'
+        ? `Full sync · last ${windowDays} days`
+        : `Incremental update · last ${windowDays} days`,
+      publicActivityOnly: (windowDays) => `Public followed activity · last ${windowDays} days`,
       actorStarred: "starred",
       openActorProfile: (actor) => `Open @${actor} on GitHub`,
       inLibrary: "in your library",
@@ -2177,46 +2189,46 @@ const messages: Record<Locale, MessageCatalog> = {
       agentGrantAccess: "Allow access",
       agentAccessGranted: "Access allowed",
       agentHostAccessRequired: "Allow browser access to test or use this custom service.",
-      agentStorageHeading: "Local Cubby conversation, recovery & artifact ledger",
+      agentStorageHeading: "Local Cubby storage & tool cache",
       agentStorageIntro:
-        "This ledger covers conversation transcripts, attempt and recovery state, saved conversation artifacts, and re-fetchable tool cache on this device. It does not represent all Cubby or extension storage.",
+        "Tracks locally saved Cubby conversation transcripts, recovery state, saved artifacts, and re-fetchable tool cache on this device. It does not represent all extension storage.",
       agentStorageOrganizeRetention:
-        "Organize data is separate and bounded: active or preflight task instructions and frozen scope, proposal, Apply, and receipt records, plus one latest completed or cancelled result. None is counted in this ledger. Deleting the origin conversation keeps that latest result until you dismiss it or a new Organize run replaces it.",
+        "Organize task data and the latest completed or cancelled result are stored separately and not counted in this cache ledger. Deleting the origin conversation still keeps that latest result until you dismiss it or a new Organize run replaces it.",
       agentStorageRefresh: "Refresh storage usage",
       agentStorageLoading: "Checking Agent storage…",
-      agentStorageDurableData: "Conversation, recovery & saved artifacts",
+      agentStorageDurableData: "Conversation & saved data",
       agentStorageConversationCount: (sessions, messages) =>
         `${sessions} conversation${sessions === 1 ? "" : "s"} · ${messages} message${messages === 1 ? "" : "s"}`,
       agentStorageToolCache: "Re-fetchable tool cache",
       agentStorageArtifactCount: (artifacts) =>
         `${artifacts} cached tool artifact${artifacts === 1 ? "" : "s"}`,
-      agentStorageLedgerTotal: "Conversation, recovery & artifact ledger total",
-      agentStorageLogicalLimit: (limit) => `${limit} ledger limit`,
-      agentStorageLedgerUsageLabel: "Conversation, recovery, and artifact ledger used",
+      agentStorageLedgerTotal: "Total Cubby storage used",
+      agentStorageLogicalLimit: (limit) => `${limit} limit`,
+      agentStorageLedgerUsageLabel: "Cubby storage used",
       agentStorageThresholds: (warning, limit) =>
-        `This ledger only: warning at ${warning} · new ledger writes refused at ${limit}`,
+        `Warning at ${warning} · New writes paused at ${limit} limit`,
       agentStorageBrowserUsage: (usage, quota) =>
         `Whole-extension browser storage estimate: ${usage} of ${quota}`,
       agentStorageBrowserUnavailable: "Whole-extension browser storage estimate unavailable",
       agentStorageWarning:
-        "This ledger is above its warning level; other Cubby and extension storage is outside this threshold. Clear the re-fetchable tool cache before storage-heavy work.",
+        "Cubby storage is above its warning threshold. Clear the re-fetchable tool cache before storage-heavy tasks to free up space.",
       agentStorageLimitReached:
-        "This ledger reached its local limit. New ledger data is refused until space is available; other Cubby and extension storage is outside this threshold.",
+        "Cubby storage reached its local limit. New writes are paused until space is freed; other extension storage is unaffected.",
       agentStorageClearHint:
-        "Clears only re-fetchable tool cache. Final answers and conversation transcripts, attempt and recovery state, and saved conversation artifacts remain.",
+        "Only clears re-fetchable tool cache. Conversation transcripts, answers, recovery state, and saved artifacts will be preserved.",
       agentStorageClearCache: "Clear tool cache",
       agentStorageClearingCache: "Clearing tool cache…",
       agentStorageCacheCleared: (artifacts, bytes, protectedArtifacts) =>
         `Cleared ${artifacts} cached tool artifact${artifacts === 1 ? "" : "s"} and freed ${bytes}.${protectedArtifacts > 0 ? ` Kept ${protectedArtifacts} active or referenced artifact${protectedArtifacts === 1 ? "" : "s"}.` : ""}`,
-      agentStorageUnavailable: (error) => `Cubby ledger usage is unavailable: ${error}`,
+      agentStorageUnavailable: (error) => `Cubby storage usage is unavailable: ${error}`,
       agentStorageClearFailed: (error) => `Tool cache could not be cleared: ${error}`,
       agentStorageRetry: "Try again",
       behaviorHeading: "4. Preferences",
-      followingHistoryWindowLabel: "Following history",
+      followingHistoryWindowLabel: "Activity history range",
       followingHistoryWindowHint:
-        "Choose how much public Star activity to scan from accounts you follow. Changes apply on the next scan.",
+        "Choose how many days of public Star activity to scan from accounts you follow. Applies on the next scan.",
       followingHistoryWindowRisk:
-        "Longer windows can use more GitHub API quota, take longer to refresh, store more data locally, and are more likely to return partial results when GitHub or the scan budget limits the request.",
+        "Longer ranges take more time, API quota, and local storage to scan. If you follow many accounts, GitHub rate limits may cause only partial results to load.",
       followingHistoryWindowOption: (days) => `${days} days`,
       maxTagsPerRepoLabel: "Max automatic tags per repo",
       maxTagsPerRepoHint:
@@ -2712,28 +2724,35 @@ const messages: Record<Locale, MessageCatalog> = {
       searchPlaceholder: "搜索人物或仓库",
       clearSearch: "清除 Following 搜索",
       searchResultCount: (count) => `匹配 ${count} 条动态`,
-      searchEmpty: (query) => `没有人物或仓库匹配“${query}”。`,
+      searchEmpty: (query) => `没有动态匹配“${query}”。`,
       statusRefreshingSaved: "扫描中 · 显示已保存动态",
+      statusReconcilingSaved: "全量同步 · 显示已保存动态",
       statusRefreshFailedSaved: "扫描失败 · 显示已保存动态",
+      fullReconcile: "全量同步",
+      fullReconciling: "全量同步中…",
+      fullReconcileHint: "尝试完整扫描所选历史窗口；运行期间会保留已保存动态，可能消耗更多 GitHub 配额并花费更长时间。",
       statusPartial: "部分结果 · 可能缺少部分动态",
       statusCooldown: (time) => `可在 ${time} 后扫描`,
       statusPermission: "Following 需要读取关注关系的权限",
-      listEndActivities: (windowDays, count) => `${windowDays} 天窗口末尾 · 共 ${count} 条动态`,
-      listEndProjects: (windowDays, count) => `${windowDays} 天窗口末尾 · 共 ${count} 个项目`,
+      listEndActivities: (windowDays, count) => `已展示最近 ${windowDays} 天的全部动态 · 共 ${count} 条`,
+      listEndProjects: (windowDays, count) => `已展示最近 ${windowDays} 天涉及的全部项目 · 共 ${count} 个`,
       listEndMatches: (count) => `匹配结果末尾 · 共 ${count} 项`,
       listEndPartial: "已获取结果末尾 · 可能缺少部分动态",
       listEndSaved: (count) => `已保存动态末尾 · 共 ${count} 项`,
       freshSummary: (activities, following) => `${activities} 条动态 · 关注 ${following} 人`,
       partialSnapshot: (count) => `部分快照 · ${count} 个已知缺口`,
       partialReason: (reason, windowDays) => ({
-        github_star_list_truncated: `部分账号未能翻页到 ${windowDays} 天窗口末尾。`,
+        github_star_list_truncated: `部分活跃账号历史 Star 较多，未能完整获取最近 ${windowDays} 天的全部记录。`,
         private_activity_omitted: "已省略关注账号的私有 Star 动态。",
         following_scan_truncated: "未能扫描全部关注账号。",
       })[reason],
-      staleSnapshot: "最近一次扫描失败或快照已过期，当前显示上一次成功快照。",
+      staleSnapshot: "最新快照已过期，当前显示已保存动态。",
       cooldownUntil: (time) => `已触发 GitHub 速率限制，${time} 后可再次扫描。`,
       snapshotAt: (time) => `快照检查于 ${time}`,
-      publicActivityOnly: (windowDays) => `公开 Star · 最近 ${windowDays} 天`,
+      snapshotProvenance: (mode, windowDays) => mode === 'full'
+        ? `全量同步 · 最近 ${windowDays} 天`
+        : `增量更新 · 最近 ${windowDays} 天`,
+      publicActivityOnly: (windowDays) => `公开关注动态 · 最近 ${windowDays} 天`,
       actorStarred: "Star 了",
       openActorProfile: (actor) => `在 GitHub 打开 @${actor} 的主页`,
       inLibrary: "已在你的 Stars 中",
@@ -3488,7 +3507,7 @@ const messages: Record<Locale, MessageCatalog> = {
       agentDisclosureKeyException:
         "AI 服务 API 密钥只会通过服务商要求的认证请求头发送到上方准确地址（Anthropic 使用 x-api-key），绝不会写入提示词或日志。",
       agentDisclosureLocalHistory:
-        "已提交的对话历史、包含已提交提示词的近期尝试记录、有界续接恢复投影，以及分页工件，可能会以明文保存在本机浏览器的扩展存储中，不会同步、导出或进入发布版诊断。删除对话会移除对应对话记录、尝试与恢复数据，以及归该对话所有的工件；可重新获取的工具缓存也可单独清理。解压加载的开发版会在启用原始捕获前另行披露风险。",
+        "已提交的对话历史、近期尝试记录、恢复状态及会话工件会保存在本机浏览器的扩展存储中，不会同步、导出或进入发布版诊断。删除对话会彻底移除对应对话记录、尝试与恢复数据及相关工件；工具临时缓存也可随时单独清理。解压加载的开发版会在启用原始捕获前另行披露风险。",
       agentDisclosureBuiltInAccess:
         "此服务已包含在扩展内置的浏览器访问范围中。",
       agentDisclosureCustomAccess:
@@ -3501,45 +3520,45 @@ const messages: Record<Locale, MessageCatalog> = {
       agentGrantAccess: "允许访问",
       agentAccessGranted: "已允许访问",
       agentHostAccessRequired: "测试或使用此自定义服务前，请先允许浏览器访问。",
-      agentStorageHeading: "本机 Cubby 对话、恢复与工件账本",
+      agentStorageHeading: "本机 Cubby 存储与缓存",
       agentStorageIntro:
-        "此账本涵盖本机的对话记录、尝试与恢复状态、已保存的对话工件，以及可重新获取的工具缓存；不代表 Cubby 或扩展的全部存储。",
+        "统计本机保存的 Cubby 对话记录、恢复状态、已保存工件与可重新获取的工具缓存；不代表扩展的全部存储。",
       agentStorageOrganizeRetention:
-        "Organize 数据单独有界保存：活动中或预检阶段的任务指令与冻结范围、提案、Apply 与回执记录，以及最近一次已完成或已取消的结果；这些数据均不计入此账本。删除来源对话仍会保留该最近结果，直到你将其关闭或新的 Organize 运行将其替换。",
+        "智能整理 (Organize) 的任务数据与最近一次整理结果独立存储，不计入此缓存统计；删除来源对话仍会保留该最近结果，直到你将其关闭或新的整理运行将其替换。",
       agentStorageRefresh: "刷新存储用量",
       agentStorageLoading: "正在检查 Agent 存储…",
-      agentStorageDurableData: "对话、恢复与已保存工件",
+      agentStorageDurableData: "对话记录与已保存数据",
       agentStorageConversationCount: (sessions, messages) =>
         `${sessions} 个对话 · ${messages} 条消息`,
       agentStorageToolCache: "可重新获取的工具缓存",
-      agentStorageArtifactCount: (artifacts) => `${artifacts} 个缓存工具工件`,
-      agentStorageLedgerTotal: "对话、恢复与工件账本总量",
-      agentStorageLogicalLimit: (limit) => `账本上限 ${limit}`,
-      agentStorageLedgerUsageLabel: "对话、恢复与工件账本已用空间",
+      agentStorageArtifactCount: (artifacts) => `${artifacts} 项缓存工具数据`,
+      agentStorageLedgerTotal: "Cubby 存储总占用",
+      agentStorageLogicalLimit: (limit) => `上限 ${limit}`,
+      agentStorageLedgerUsageLabel: "Cubby 存储已用空间",
       agentStorageThresholds: (warning, limit) =>
-        `仅此账本：${warning} 时提醒 · ${limit} 时拒绝新的账本写入`,
+        `达到 ${warning} 时预警 · 达到 ${limit} 上限时将暂停写入新数据`,
       agentStorageBrowserUsage: (usage, quota) =>
         `整个扩展的浏览器存储估算：已用 ${usage}，可用额度 ${quota}`,
       agentStorageBrowserUnavailable: "暂时无法获取整个扩展的浏览器存储估算",
       agentStorageWarning:
-        "此账本已超过提醒线；其他 Cubby 与扩展存储不受此阈值限制。进行高存储量任务前，请先清理可重新获取的工具缓存。",
+        "Cubby 存储已超过预警阈值。建议在执行高存储量任务前先清理工具缓存以释放空间。",
       agentStorageLimitReached:
-        "此账本已达到本机上限。释放空间前将拒绝新的账本数据；其他 Cubby 与扩展存储不受此阈值限制。",
+        "Cubby 存储已达到本机上限。释放空间前将暂停写入新数据；扩展的其他存储不受影响。",
       agentStorageClearHint:
-        "只清理可重新获取的工具缓存；最终回答与对话记录、尝试与恢复状态，以及已保存的对话工件会保留。",
+        "仅清理可重新获取的工具临时缓存；对话历史、回答、恢复状态与已保存数据均会完整保留。",
       agentStorageClearCache: "清理工具缓存",
       agentStorageClearingCache: "正在清理工具缓存…",
       agentStorageCacheCleared: (artifacts, bytes, protectedArtifacts) =>
-        `已清理 ${artifacts} 个缓存工具工件，释放 ${bytes}。${protectedArtifacts > 0 ? `另有 ${protectedArtifacts} 个正在使用或仍被引用的工件已保留。` : ""}`,
-      agentStorageUnavailable: (error) => `无法获取 Cubby 账本用量：${error}`,
+        `已清理 ${artifacts} 项缓存工具数据，释放 ${bytes}。${protectedArtifacts > 0 ? `另有 ${protectedArtifacts} 项正在使用或仍被引用的数据已保留。` : ""}`,
+      agentStorageUnavailable: (error) => `无法获取 Cubby 存储用量：${error}`,
       agentStorageClearFailed: (error) => `无法清理工具缓存：${error}`,
       agentStorageRetry: "重试",
       behaviorHeading: "4. 偏好设置",
-      followingHistoryWindowLabel: "Following 历史范围",
+      followingHistoryWindowLabel: "关注动态时间范围",
       followingHistoryWindowHint:
-        "选择扫描所关注账号最近多少天的公开 Star 动态；更改后在下次扫描生效。",
+        "选择扫描所关注账号最近多少天的公开 Star 动态，更改将在下次扫描生效。",
       followingHistoryWindowRisk:
-        "范围越长，GitHub API 配额、刷新时间和本地存储占用越高；达到 GitHub 限制或单次扫描预算时，可能只返回部分结果。",
+        "天数越长，扫描耗时、API 配额和本地存储占用越高；若关注人数较多，可能会因 GitHub 速率限制仅返回部分最新结果。",
       followingHistoryWindowOption: (days) => `${days} 天`,
       maxTagsPerRepoLabel: "每个仓库最多自动标签数",
       maxTagsPerRepoHint:

@@ -9,9 +9,13 @@ import {
 } from '@/radar/radar-model';
 import type {
   RadarQueryResponse,
+  RadarRefreshRequest,
   RadarRefreshResult,
   RadarStatus,
 } from '@/radar/radar-contract';
+import {
+  selectRadarRefreshPlan,
+} from '@/background/radar-refresh-policy';
 import {
   commitRadarSnapshot,
   dismissRadarActivities,
@@ -24,12 +28,12 @@ import {
   clearRadarData,
 } from '@/storage/radar-store';
 
-const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1_000;
-
 type RadarAuth = Pick<typeof authStore, 'getGitHubCredentialSnapshot' | 'getConfig'>;
 type AuthSnapshot = GitHubCredentialSnapshot;
-
+type RadarRefreshOptions = Readonly<{ bypassPendingFull?: boolean }>;
 type RadarRefreshOutcome = Readonly<{ published: boolean }>;
+
+const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1_000;
 
 export interface RadarRefreshCoordinatorDependencies {
   runSerialized<T>(operation: () => Promise<T>): Promise<T>;
@@ -37,9 +41,9 @@ export interface RadarRefreshCoordinatorDependencies {
   fetchRadar: typeof fetchGitHubRadar;
   store: {
     clearData: typeof clearRadarData;
+    commitSnapshot: typeof commitRadarSnapshot;
     prepareAccount: typeof prepareRadarAccount;
     getState: typeof getRadarState;
-    commitSnapshot: typeof commitRadarSnapshot;
     recordFailure: typeof recordRadarFailure;
     listActivities: typeof listRadarActivities;
     dismissActivities: typeof dismissRadarActivities;
@@ -52,15 +56,26 @@ export interface RadarRefreshCoordinatorDependencies {
 export interface RadarRefreshCoordinator {
   getStatus(): Promise<RadarStatus>;
   query(): Promise<RadarQueryResponse>;
-  refresh(): Promise<RadarRefreshResult>;
+  refresh(request?: RadarRefreshRequest): Promise<RadarRefreshResult>;
+  fullReconcile(): Promise<RadarRefreshResult>;
   dismiss(activityIds: readonly string[]): Promise<RadarStatus>;
   markSeen(activityIds: readonly string[]): Promise<RadarStatus>;
   reconcileAccount(): Promise<void>;
   isRefreshing(): boolean;
 }
 
+function normalizedAccountLogin(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLocaleLowerCase('en-US');
+  return normalized || null;
+}
+
 function identity(auth: AuthSnapshot): string {
-  return JSON.stringify([auth.accountLogin, auth.mainIdentity, auth.mainToken !== null]);
+  return JSON.stringify([
+    normalizedAccountLogin(auth.accountLogin),
+    auth.mainIdentity,
+    auth.mainToken !== null,
+  ]);
 }
 
 function stableErrorCode(error: unknown): RadarErrorCode {
@@ -77,7 +92,13 @@ export function createRadarRefreshCoordinator(
   dependencies: RadarRefreshCoordinatorDependencies,
 ): RadarRefreshCoordinator {
   const now = dependencies.now ?? Date.now;
-  let inFlight: { identity: string; promise: Promise<RadarRefreshResult> } | null = null;
+  let inFlight: {
+    identity: string;
+    request: RadarRefreshRequest;
+    promise: Promise<RadarRefreshResult>;
+  } | null = null;
+  let pendingFull: { identity: string; promise: Promise<RadarRefreshResult> } | null = null;
+  let preparedIdentity: string | null = null;
 
   async function readAuth(): Promise<AuthSnapshot> {
     return dependencies.auth.getGitHubCredentialSnapshot();
@@ -89,17 +110,31 @@ export function createRadarRefreshCoordinator(
 
   async function sameCredentials(snapshot: AuthSnapshot): Promise<boolean> {
     const latest = await readAuth();
-    return latest.accountLogin === snapshot.accountLogin
-      && latest.mainToken !== null
-      && latest.mainIdentity === snapshot.mainIdentity;
+    return latest.mainToken !== null
+      && identity(latest) === identity(snapshot);
   }
 
   async function sameRequest(
     snapshot: AuthSnapshot,
     windowDays: FollowingHistoryWindowDays,
   ): Promise<boolean> {
-    return await sameCredentials(snapshot) && await readWindowDays() === windowDays;
+    const [latestAuth, latestWindowDays] = await Promise.all([readAuth(), readWindowDays()]);
+    return latestAuth.mainToken !== null
+      && identity(latestAuth) === identity(snapshot)
+      && latestWindowDays === windowDays;
   }
+
+  async function requestIsCurrent(
+    snapshot: AuthSnapshot,
+    windowDays: FollowingHistoryWindowDays,
+  ): Promise<boolean> {
+    try {
+      return await sameRequest(snapshot, windowDays);
+    } catch {
+      return false;
+    }
+  }
+
 
   async function statusForAuth(
     auth: AuthSnapshot,
@@ -118,13 +153,19 @@ export function createRadarRefreshCoordinator(
   }
 
   async function reconcileAccount(): Promise<void> {
+    const auth = await readAuth();
+    const nextIdentity = identity(auth);
+    if (preparedIdentity === nextIdentity) return;
+
     await dependencies.runSerialized(async () => {
-      const auth = await readAuth();
-      if (auth.accountLogin && auth.mainToken) {
-        await dependencies.store.prepareAccount(auth.accountLogin);
+      const latest = await readAuth();
+      const latestIdentity = identity(latest);
+      if (latest.accountLogin && latest.mainToken) {
+        await dependencies.store.prepareAccount(latest.accountLogin);
       } else {
         await dependencies.store.clearData();
       }
+      preparedIdentity = latestIdentity;
     });
   }
 
@@ -162,79 +203,152 @@ export function createRadarRefreshCoordinator(
   async function performRefresh(
     auth: AuthSnapshot,
     windowDays: FollowingHistoryWindowDays,
+    request: RadarRefreshRequest,
   ): Promise<RadarRefreshOutcome> {
-    if (!auth.accountLogin || !auth.mainToken || !await sameRequest(auth, windowDays)) {
-      return { published: false };
-    }
-    const attemptedAt = now();
-    await dependencies.store.prepareAccount(auth.accountLogin);
-    const previousState = await dependencies.store.getState(auth.accountLogin);
-    if (
-      previousState?.nextAllowedAt
-      && Date.parse(previousState.nextAllowedAt) > attemptedAt
-      && previousState.errorCode === 'rate_limited'
-    ) {
+    const accountLogin = auth.accountLogin;
+    if (!accountLogin || !auth.mainToken || !(await requestIsCurrent(auth, windowDays))) {
       return { published: false };
     }
 
+    const attemptedAt = now();
     try {
+      await dependencies.store.prepareAccount(accountLogin);
+      const previousState = await dependencies.store.getState(accountLogin);
+      if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
+
+      const nextAllowedMillis = previousState?.nextAllowedAt
+        ? Date.parse(previousState.nextAllowedAt)
+        : Number.NaN;
+      if (Number.isFinite(nextAllowedMillis) && nextAllowedMillis > attemptedAt) {
+        return { published: false };
+      }
+
+      const plan = selectRadarRefreshPlan({
+        nowMillis: attemptedAt,
+        selectedWindowDays: windowDays,
+        credentialIdentity: identity(auth),
+        state: previousState,
+        forceFull: request === 'full',
+      });
       const snapshot = await dependencies.fetchRadar({
         token: auth.mainToken,
         now: () => new Date(attemptedAt),
         windowDays,
+        refreshMode: plan.mode,
+        lookbackDays: plan.lookbackDays,
       });
+      const snapshotRecord = snapshot && typeof snapshot === 'object' ? snapshot : null;
+      const snapshotAccountLogin = snapshotRecord && 'accountLogin' in snapshotRecord
+        ? normalizedAccountLogin(snapshotRecord.accountLogin)
+        : null;
       if (
-        snapshot.windowDays !== windowDays
-        || snapshot.accountLogin.trim().toLocaleLowerCase('en-US')
-          !== auth.accountLogin.trim().toLocaleLowerCase('en-US')
+        snapshotAccountLogin !== normalizedAccountLogin(accountLogin)
+        || snapshot.windowDays !== windowDays
+        || snapshot.refreshMode !== plan.mode
+        || snapshot.lookbackDays !== plan.lookbackDays
       ) {
         throw new GitHubRadarError('invalid_response');
       }
-      if (!await sameRequest(auth, windowDays)) return { published: false };
-      await dependencies.store.commitSnapshot(snapshot);
-      // Config can change while the IndexedDB commit yields; never announce that stale result.
-      if (!await sameRequest(auth, windowDays)) return { published: false };
-      dependencies.broadcastChanged();
-      return { published: true };
+      if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
+      await dependencies.store.commitSnapshot(snapshot, { credentialIdentity: identity(auth) });
+      if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
     } catch (error) {
-      if (await sameRequest(auth, windowDays)) {
+      if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
+      try {
         await dependencies.store.recordFailure(
-          auth.accountLogin,
+          accountLogin,
           stableErrorCode(error),
           { nextAllowedAt: rateLimitNextAllowedAt(error, attemptedAt) },
         );
-        dependencies.broadcastChanged();
+      } catch {
+        return { published: false };
       }
+      if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
+      dependencies.broadcastChanged();
       return { published: false };
     }
+
+    if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
+    dependencies.broadcastChanged();
+    return { published: true };
   }
 
-  async function refresh(): Promise<RadarRefreshResult> {
+  function startFlight(
+    requestedAuth: AuthSnapshot,
+    windowDays: FollowingHistoryWindowDays,
+    request: RadarRefreshRequest,
+    requestedIdentity: string,
+  ): Promise<RadarRefreshResult> {
+    const operation = dependencies.runSerialized(
+      () => performRefresh(requestedAuth, windowDays, request),
+    );
+    const promise = operation.then(async (outcome) => ({
+      ...outcome,
+      status: await statusForAuth(await readAuth(), false),
+    }));
+    inFlight = { identity: requestedIdentity, request, promise };
+    void promise.finally(() => {
+      if (inFlight?.promise === promise) inFlight = null;
+    }).catch(() => {});
+    return promise;
+  }
+
+  function queueFullAfter(
+    current: { promise: Promise<RadarRefreshResult> },
+    requestedIdentity: string,
+  ): Promise<RadarRefreshResult> {
+    if (pendingFull?.identity === requestedIdentity) return pendingFull.promise;
+
+    let queuedPromise!: Promise<RadarRefreshResult>;
+    queuedPromise = (async () => {
+      try {
+        await current.promise;
+      } catch {
+        // A failed refresh must not strand a requested full reconciliation.
+      }
+      if (inFlight?.promise === current.promise) inFlight = null;
+      return refresh('full', { bypassPendingFull: true });
+    })();
+    pendingFull = { identity: requestedIdentity, promise: queuedPromise };
+    void queuedPromise.finally(() => {
+      if (pendingFull?.promise === queuedPromise) pendingFull = null;
+    }).catch(() => {});
+    return queuedPromise;
+  }
+
+  async function refresh(
+    request: RadarRefreshRequest = 'auto',
+    options: RadarRefreshOptions = {},
+  ): Promise<RadarRefreshResult> {
     await reconcileAccount();
     const [requestedAuth, windowDays] = await Promise.all([readAuth(), readWindowDays()]);
     const requestedIdentity = JSON.stringify([identity(requestedAuth), windowDays]);
+    if (
+      !options.bypassPendingFull
+      && pendingFull?.identity === requestedIdentity
+    ) return pendingFull.promise;
     const current = inFlight;
     if (current) {
-      if (current.identity === requestedIdentity) return current.promise;
+      if (
+        current.identity === requestedIdentity
+        && (request === 'auto' || current.request === 'full')
+      ) return current.promise;
+      if (request === 'full') return queueFullAfter(current, requestedIdentity);
+
       try {
         await current.promise;
       } catch {
         // A changed credential or history window gets its own isolated attempt.
       }
       if (inFlight === current) inFlight = null;
-      return refresh();
+      return refresh(request, options);
     }
 
-    const operation = dependencies.runSerialized(() => performRefresh(requestedAuth, windowDays));
-    const promise = operation.then(async (outcome) => ({
-      ...outcome,
-      status: await statusForAuth(await readAuth(), false),
-    }));
-    inFlight = { identity: requestedIdentity, promise };
-    void promise.finally(() => {
-      if (inFlight?.promise === promise) inFlight = null;
-    }).catch(() => {});
-    return promise;
+    return startFlight(requestedAuth, windowDays, request, requestedIdentity);
+  }
+
+  async function fullReconcile(): Promise<RadarRefreshResult> {
+    return refresh('full');
   }
 
   async function dismiss(activityIds: readonly string[]): Promise<RadarStatus> {
@@ -248,6 +362,7 @@ export function createRadarRefreshCoordinator(
     });
     return statusForAuth(await readAuth(), inFlight !== null);
   }
+
   async function markSeen(activityIds: readonly string[]): Promise<RadarStatus> {
     await reconcileAccount();
     const auth = await readAuth();
@@ -260,11 +375,11 @@ export function createRadarRefreshCoordinator(
     return statusForAuth(await readAuth(), inFlight !== null);
   }
 
-
   return {
     getStatus,
     query,
     refresh,
+    fullReconcile,
     dismiss,
     markSeen,
     reconcileAccount,

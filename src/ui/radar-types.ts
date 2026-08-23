@@ -25,6 +25,7 @@ export interface RadarProps {
   loading: boolean;
   recommendationLoading: boolean;
   refreshing: boolean;
+  fullReconciling: boolean;
   recommendationRefreshing: boolean;
   error: 'query' | 'refresh' | null;
   recommendationError: 'query' | 'refresh' | null;
@@ -37,6 +38,7 @@ export interface RadarProps {
   onViewChange: (view: RadarView) => void;
   onSourceEnabledChange: (source: RadarActivitySource, enabled: boolean) => void;
   onRefresh: () => void;
+  onFullReconcile: () => void;
   onRefreshRecommendations: () => void;
   onRetryQuery: () => void;
   onRetryRecommendations: () => void;

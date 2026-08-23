@@ -267,6 +267,9 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
   refreshRadar(): Promise<RadarRefreshResult> {
     return bgCall<RadarRefreshResult>('refreshRadar');
   }
+  fullReconcileRadar(): Promise<RadarRefreshResult> {
+    return bgCall<RadarRefreshResult>('fullReconcileRadar');
+  }
 
   markRadarActivitiesSeen(activityIds: readonly string[]): Promise<RadarStatus> {
     return bgCall<RadarStatus>(

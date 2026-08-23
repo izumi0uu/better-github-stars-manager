@@ -35,6 +35,10 @@ function emptyState(accountLogin: string, lastAttemptAt = now()): RadarStateReco
     lastAttemptAt,
     lastSuccessfulAt: null,
     windowDays: null,
+    lastRefreshMode: null,
+    lastIncrementalAt: null,
+    lastFullReconciledAt: null,
+    credentialIdentity: null,
     errorCode: null,
     nextAllowedAt: null,
     activityCount: 0,
@@ -47,6 +51,25 @@ function emptyState(accountLogin: string, lastAttemptAt = now()): RadarStateReco
   };
 }
 
+function normalizeState(state: RadarStateRecord): RadarStateRecord {
+  return {
+    ...state,
+    accountLogin: accountKey(state.accountLogin),
+    windowDays: Number.isSafeInteger(state.windowDays) ? state.windowDays : null,
+    lastRefreshMode: state.lastRefreshMode === 'full' || state.lastRefreshMode === 'incremental'
+      ? state.lastRefreshMode
+      : null,
+    lastIncrementalAt: typeof state.lastIncrementalAt === 'string' ? state.lastIncrementalAt : null,
+    lastFullReconciledAt: typeof state.lastFullReconciledAt === 'string'
+      ? state.lastFullReconciledAt
+      : null,
+    credentialIdentity: typeof state.credentialIdentity === 'string'
+      ? state.credentialIdentity
+      : null,
+    partialReasons: normalizeRadarPartialReasons(state.partialReasons),
+  };
+}
+
 function timestamp(value: string | null): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -55,13 +78,13 @@ function timestamp(value: string | null): number | null {
 function storedSeenAt(value: unknown): string | null {
   return typeof value === 'string' && timestamp(value) !== null ? value : null;
 }
-
-
 function stateForAccount(
   state: RadarStateRecord | undefined,
   accountLogin: string,
 ): RadarStateRecord | null {
-  return state && state.accountLogin === accountKey(accountLogin) ? state : null;
+  if (!state) return null;
+  const normalized = normalizeState(state);
+  return normalized.accountLogin === accountKey(accountLogin) ? normalized : null;
 }
 
 export async function countUnseenRadarActivities(
@@ -74,7 +97,7 @@ export async function countUnseenRadarActivities(
   const cutoffMillis = nowMillis - windowDays * 24 * 60 * 60 * 1_000;
   return db.transaction('r', db.radarActivities, db.radarState, async () => {
     const state = await db.radarState.get(RADAR_STATE_ID);
-    if (state?.accountLogin !== key) return 0;
+    if (!state || accountKey(state.accountLogin) !== key) return 0;
     return db.radarActivities
       .where('accountLogin')
       .equals(key)
@@ -95,7 +118,7 @@ export async function prepareRadarAccount(accountLogin: string): Promise<void> {
   const key = accountKey(accountLogin);
   await db.transaction('rw', db.radarActivities, db.radarState, async () => {
     const state = await db.radarState.get(RADAR_STATE_ID);
-    if (state?.accountLogin === key) return;
+    if (state && accountKey(state.accountLogin) === key) return;
     await db.radarActivities.clear();
     await db.radarState.delete(RADAR_STATE_ID);
   });
@@ -104,53 +127,94 @@ export async function prepareRadarAccount(accountLogin: string): Promise<void> {
 export async function getRadarState(accountLogin: string): Promise<RadarStateRecord | null> {
   return stateForAccount(await db.radarState.get(RADAR_STATE_ID), accountLogin);
 }
-
 function preservedDismissedAt(
   existingById: ReadonlyMap<string, RadarActivityRecord>,
   activity: RadarActivityRecord,
 ): string | null {
   return existingById.get(activity.id)?.dismissedAt ?? activity.dismissedAt ?? null;
 }
+
 function preservedSeenAt(
   existingById: ReadonlyMap<string, RadarActivityRecord>,
   activity: RadarActivityRecord,
 ): string | null {
   const existing = existingById.get(activity.id);
-  return existing ? storedSeenAt(existing.seenAt) : null;
+  return storedSeenAt(existing?.seenAt) ?? storedSeenAt(activity.seenAt);
 }
 
+type RadarCommitOptions = Readonly<{ credentialIdentity?: string | null }>;
 
-/** Replace one account's snapshot while retaining explicit dismissals and seen state. */
-export async function commitRadarSnapshot(snapshot: RadarSourceSnapshot): Promise<RadarStateRecord> {
+/** Merge recent refreshes and replace only authoritative complete reconciliations. */
+export async function commitRadarRefresh(
+  snapshot: RadarSourceSnapshot,
+  options: RadarCommitOptions = {},
+): Promise<RadarStateRecord> {
   const accountLogin = accountKey(snapshot.accountLogin);
+  if (!accountLogin) throw new Error('Radar account is required');
+  if (snapshot.activities.some((activity) => accountKey(activity.accountLogin) !== accountLogin)) {
+    throw new Error('Radar activity account mismatch');
+  }
   const attemptAt = now();
   return db.transaction('rw', db.radarActivities, db.radarState, async () => {
+    const storedState = await db.radarState.get(RADAR_STATE_ID);
+    if (storedState && accountKey(storedState.accountLogin) !== accountLogin) {
+      throw new Error('Radar account mismatch');
+    }
     const previous = await db.radarActivities.toArray();
-    const existingById = new Map(
-      previous
-        .filter((activity) => activity.accountLogin === accountLogin)
-        .map((activity) => [activity.id, activity] as const),
-    );
-    const activities = dedupeRadarActivities(snapshot.activities).map((activity) => ({
+    if (previous.some((activity) => accountKey(activity.accountLogin) !== accountLogin)) {
+      throw new Error('Radar activity account mismatch');
+    }
+    const previousState = stateForAccount(storedState, accountLogin);
+    const completeFull = snapshot.refreshMode === 'full'
+      && snapshot.lookbackDays === snapshot.windowDays
+      && Number.isSafeInteger(snapshot.followingCount)
+      && snapshot.followingCount >= 0
+      && snapshot.scannedFollowingCount === snapshot.followingCount
+      && Array.isArray(snapshot.partialReasons)
+      && snapshot.partialReasons.length === 0;
+    const existingCredential = previousState?.credentialIdentity ?? null;
+    if (
+      options.credentialIdentity !== undefined
+      && existingCredential !== null
+      && options.credentialIdentity !== existingCredential
+      && !completeFull
+    ) {
+      throw new Error('Radar credential mismatch');
+    }
+    const existingById = new Map(previous.map((activity) => [activity.id, activity] as const));
+    const incoming = dedupeRadarActivities(snapshot.activities).map((activity) => ({
       ...activity,
       accountLogin,
       dismissedAt: preservedDismissedAt(existingById, activity),
       seenAt: preservedSeenAt(existingById, activity),
     }));
-    await db.radarActivities.clear();
-    if (activities.length > 0) await db.radarActivities.bulkPut(activities);
+    const mergedById = new Map(existingById);
+    for (const activity of incoming) mergedById.set(activity.id, activity);
+    const activities = completeFull
+      ? incoming
+      : dedupeRadarActivities(mergedById.values());
+    if (completeFull) await db.radarActivities.clear();
+    const written = completeFull ? activities : incoming;
+    if (written.length > 0) await db.radarActivities.bulkPut(written);
 
-    const previousState = stateForAccount(
-      await db.radarState.get(RADAR_STATE_ID),
-      accountLogin,
-    );
+    const previousOrEmpty = previousState ?? emptyState(accountLogin, attemptAt);
     const state: RadarStateRecord = {
-      ...(previousState ?? emptyState(accountLogin, attemptAt)),
+      ...previousOrEmpty,
       id: RADAR_STATE_ID,
       accountLogin,
       lastAttemptAt: attemptAt,
       lastSuccessfulAt: snapshot.fetchedAt,
-      windowDays: snapshot.windowDays,
+      windowDays: completeFull ? snapshot.windowDays : previousOrEmpty.windowDays,
+      lastRefreshMode: snapshot.refreshMode,
+      lastIncrementalAt: snapshot.refreshMode === 'incremental'
+        ? snapshot.fetchedAt
+        : previousOrEmpty.lastIncrementalAt,
+      lastFullReconciledAt: completeFull
+        ? snapshot.fetchedAt
+        : previousOrEmpty.lastFullReconciledAt,
+      credentialIdentity: options.credentialIdentity === undefined
+        ? previousOrEmpty.credentialIdentity
+        : options.credentialIdentity,
       errorCode: null,
       nextAllowedAt: null,
       activityCount: activities.length,
@@ -166,6 +230,13 @@ export async function commitRadarSnapshot(snapshot: RadarSourceSnapshot): Promis
   });
 }
 
+export async function commitRadarSnapshot(
+  snapshot: RadarSourceSnapshot,
+  options: RadarCommitOptions = {},
+): Promise<RadarStateRecord> {
+  return commitRadarRefresh(snapshot, options);
+}
+
 export async function recordRadarFailure(
   accountLogin: string,
   errorCode: RadarErrorCode,
@@ -173,8 +244,16 @@ export async function recordRadarFailure(
 ): Promise<RadarStateRecord> {
   const key = accountKey(accountLogin);
   const attemptAt = now();
-  return db.transaction('rw', db.radarState, async () => {
-    const previous = stateForAccount(await db.radarState.get(RADAR_STATE_ID), key);
+  return db.transaction('rw', db.radarActivities, db.radarState, async () => {
+    const stored = await db.radarState.get(RADAR_STATE_ID);
+    if (stored && accountKey(stored.accountLogin) !== key) {
+      throw new Error('Radar account mismatch');
+    }
+    const rows = await db.radarActivities.toArray();
+    if (rows.some((activity) => accountKey(activity.accountLogin) !== key)) {
+      throw new Error('Radar activity account mismatch');
+    }
+    const previous = stateForAccount(stored, key);
     const state: RadarStateRecord = {
       ...(previous ?? emptyState(key, attemptAt)),
       id: RADAR_STATE_ID,

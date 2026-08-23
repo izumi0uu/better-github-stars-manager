@@ -40,6 +40,7 @@ export function Radar({
   loading,
   recommendationLoading,
   refreshing,
+  fullReconciling,
   recommendationRefreshing,
   error,
   recommendationError,
@@ -52,6 +53,7 @@ export function Radar({
   onViewChange,
   onSourceEnabledChange,
   onRefresh,
+  onFullReconcile,
   onRefreshRecommendations,
   onRetryQuery,
   onRetryRecommendations,
@@ -162,12 +164,14 @@ export function Radar({
         discoverView={discoverView}
         view={view}
         refreshing={refreshing}
+        fullReconciling={fullReconciling}
         sources={sources}
         query={query}
         resultCount={visibleResultCount}
         onDiscoverViewChange={onDiscoverViewChange}
         onViewChange={onViewChange}
         onRefresh={onRefresh}
+        onFullReconcile={onFullReconcile}
         onSourceEnabledChange={onSourceEnabledChange}
         onQueryChange={setQuery}
       />

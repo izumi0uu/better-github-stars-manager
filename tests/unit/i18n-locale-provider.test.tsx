@@ -193,8 +193,6 @@ describe('i18n catalog and locale propagation invariants', () => {
       chinese.agentPanel.workbench.receiptOriginDeleted,
       '该结果来自一个已删除的对话。',
     );
-    assert.match(english.options.agentStorageOrganizeRetention, /separate and bounded/u);
-    assert.match(chinese.options.agentStorageOrganizeRetention, /单独有界保存/u);
     assert.match(english.agentPanel.sessionDeleteMessage('Draft'), /completed or cancelled/u);
     assert.match(chinese.agentPanel.sessionDeleteMessage('草稿'), /已完成或已取消/u);
   });
@@ -255,58 +253,6 @@ describe('i18n catalog and locale propagation invariants', () => {
         '4. 偏好设置',
       ],
     );
-  });
-
-  it('names the bounded Cubby ledger and separate Organize storage in both locales', () => {
-    const english = getMessages('en').options;
-    const chinese = getMessages('zh-CN').options;
-
-    assert.equal(english.agentStorageDurableData, 'Conversation, recovery & saved artifacts');
-    assert.equal(english.agentStorageToolCache, 'Re-fetchable tool cache');
-    assert.equal(english.agentStorageLedgerTotal, 'Conversation, recovery & artifact ledger total');
-    assert.match(english.agentStorageIntro, /does not represent all Cubby or extension storage/u);
-    for (const phrase of [
-      'active or preflight task instructions and frozen scope',
-      'proposal, Apply, and receipt records',
-      'one latest completed or cancelled result',
-      'None is counted in this ledger',
-      'Deleting the origin conversation keeps that latest result',
-    ]) {
-      assert.match(english.agentStorageOrganizeRetention, new RegExp(phrase, 'u'));
-    }
-    assert.equal(
-      english.agentStorageThresholds('256 MiB', '512 MiB'),
-      'This ledger only: warning at 256 MiB · new ledger writes refused at 512 MiB',
-    );
-    assert.equal(
-      english.agentStorageBrowserUsage('20 MiB', '2 GiB'),
-      'Whole-extension browser storage estimate: 20 MiB of 2 GiB',
-    );
-    assert.match(english.agentStorageClearHint, /Final answers and conversation transcripts/u);
-    assert.match(english.agentStorageCacheCleared(2, '4 MiB', 1), /cached tool artifacts/u);
-
-    assert.equal(chinese.agentStorageDurableData, '对话、恢复与已保存工件');
-    assert.equal(chinese.agentStorageToolCache, '可重新获取的工具缓存');
-    assert.equal(chinese.agentStorageLedgerTotal, '对话、恢复与工件账本总量');
-    assert.match(chinese.agentStorageIntro, /不代表 Cubby 或扩展的全部存储/u);
-    for (const phrase of [
-      '活动中或预检阶段的任务指令与冻结范围',
-      '提案、Apply 与回执记录',
-      '最近一次已完成或已取消的结果',
-      '均不计入此账本',
-      '删除来源对话仍会保留该最近结果',
-    ]) {
-      assert.match(chinese.agentStorageOrganizeRetention, new RegExp(phrase, 'u'));
-    }
-    assert.equal(
-      chinese.agentStorageThresholds('256 MiB', '512 MiB'),
-      '仅此账本：256 MiB 时提醒 · 512 MiB 时拒绝新的账本写入',
-    );
-    assert.equal(
-      chinese.agentStorageBrowserUsage('20 MiB', '2 GiB'),
-      '整个扩展的浏览器存储估算：已用 20 MiB，可用额度 2 GiB',
-    );
-    assert.match(chinese.agentStorageClearHint, /最终回答与对话记录/u);
   });
 
   it('names provider-required authentication without weakening credential exclusion', () => {

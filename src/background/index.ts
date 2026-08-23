@@ -283,6 +283,7 @@ type Req = BgsmAgentSessionRequest
   | { type: "getRadarStatus" }
   | { type: "queryRadar" }
   | { type: "refreshRadar" }
+  | { type: "fullReconcileRadar" }
   | { type: "dismissRadarActivities"; activityIds?: unknown }
   | { type: "markRadarActivitiesSeen"; activityIds?: unknown }
   | { type: "radarStarRepository"; fullName?: unknown }
@@ -1982,7 +1983,9 @@ async function handle(req: Req): Promise<Res> {
       case 'queryRadar':
         return { ok: true, data: await radarRefreshCoordinator.query() };
       case 'refreshRadar':
-        return { ok: true, data: await radarRefreshCoordinator.refresh() };
+        return { ok: true, data: await radarRefreshCoordinator.refresh('auto') };
+      case 'fullReconcileRadar':
+        return { ok: true, data: await radarRefreshCoordinator.fullReconcile() };
       case 'dismissRadarActivities': {
         if (
           !Array.isArray(req.activityIds)
