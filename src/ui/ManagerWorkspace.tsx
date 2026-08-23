@@ -628,6 +628,7 @@ export function ManagerWorkspace({
               result={radar.result}
               loading={radar.loading}
               refreshing={radar.refreshing}
+              fullReconciling={radar.fullReconciling}
               error={radar.error}
               onOpenOptions={() => openOptionsSection()}
             />
@@ -721,6 +722,7 @@ export function ManagerWorkspace({
                   loading={radar.loading}
                   recommendationLoading={radar.recommendationLoading}
                   refreshing={radar.refreshing}
+                  fullReconciling={radar.fullReconciling}
                   recommendationRefreshing={radar.recommendationRefreshing}
                   error={radar.error}
                   recommendationError={radar.recommendationError}
@@ -728,11 +730,12 @@ export function ManagerWorkspace({
                   pendingAction={radar.pendingAction}
                   recommendationFavorites={radar.recommendationFavorites}
                   view={radar.view}
-                  onDiscoverViewChange={radar.setDiscoverView}
                   onViewChange={radar.setView}
+                  onDiscoverViewChange={radar.setDiscoverView}
                   onSourceEnabledChange={radar.setSourceEnabled}
                   sources={radar.sources}
                   onRefresh={() => { void radar.refresh(); }}
+                  onFullReconcile={() => { void radar.fullReconcile(); }}
                   onRefreshRecommendations={() => { void radar.refreshRecommendations(); }}
                   onRetryQuery={() => { void radar.reload(); }}
                   onRetryRecommendations={() => { void radar.reloadRecommendations(); }}

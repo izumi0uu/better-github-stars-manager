@@ -472,6 +472,21 @@ class DemoManagerRuntime implements ManagerRuntime {
     this.state.radarState.lastAttemptAt = now;
     this.state.radarState.lastSuccessfulAt = now;
     this.state.radarState.windowDays = this.radarWindowDays();
+    this.state.radarState.lastRefreshMode = 'incremental';
+    this.state.radarState.lastIncrementalAt = now;
+    this.state.radarState.batchCount++;
+    this.state.radarState.activityCount = this.state.radarActivities.length;
+    this.publish('radar');
+    return cloneMutable({ published: true, status: this.radarStatus() });
+  }
+
+  async fullReconcileRadar(): Promise<RadarRefreshResult> {
+    const now = timestamp(this.state.now);
+    this.state.radarState.lastAttemptAt = now;
+    this.state.radarState.lastSuccessfulAt = now;
+    this.state.radarState.windowDays = this.radarWindowDays();
+    this.state.radarState.lastRefreshMode = 'full';
+    this.state.radarState.lastFullReconciledAt = now;
     this.state.radarState.batchCount++;
     this.state.radarState.activityCount = this.state.radarActivities.length;
     this.publish('radar');

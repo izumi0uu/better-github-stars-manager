@@ -4,6 +4,7 @@ import { db } from '@/storage/db';
 import {
   clearRadarData,
   commitRadarSnapshot,
+  commitRadarRefresh,
   countUnseenRadarActivities,
   dismissRadarActivities,
   getRadarState,
@@ -70,16 +71,20 @@ function snapshot(
   activities: RadarActivityRecord[],
   fetchedAt = SECOND,
   windowDays = 60,
+  refreshMode: 'full' | 'incremental' = 'full',
+  partialReasons: RadarSourceSnapshot['partialReasons'] = [],
 ): RadarSourceSnapshot {
   return {
     accountLogin: 'Viewer',
     activities,
     windowDays,
+    refreshMode,
+    lookbackDays: refreshMode === 'incremental' ? 7 : windowDays,
     fetchedAt,
     followingCount: 4,
     scannedFollowingCount: 4,
     batchCount: 1,
-    partialReasons: [],
+    partialReasons,
     rateLimitRemaining: 4_000,
     rateLimitResetAt: null,
   };
@@ -366,4 +371,157 @@ describe('Radar snapshot storage', () => {
       suggestedTags: ['topic-one', 'topic-two'],
     });
   });
+  it('merges incremental rows, preserves local metadata, and retains omissions', async () => {
+    const old = activity('old', 'owner/old', FIRST, { seenAt: FIRST, dismissedAt: SECOND });
+    const updated = activity('updated', 'owner/updated', FIRST, {
+      seenAt: FIRST,
+      dismissedAt: SECOND,
+      repositoryDescription: 'old remote value',
+    });
+    await commitRadarSnapshot(snapshot([old, updated], FIRST));
+
+    const incoming = activity('updated', 'owner/updated', SECOND, {
+      seenAt: null,
+      dismissedAt: null,
+      repositoryDescription: 'new remote value',
+    });
+    const state = await commitRadarRefresh(snapshot([incoming], SECOND, 60, 'incremental'));
+
+    expect(await db.radarActivities.get('old')).toBeDefined();
+    expect(await db.radarActivities.get('updated')).toMatchObject({
+      starredAt: SECOND,
+      repositoryDescription: 'new remote value',
+      seenAt: FIRST,
+      dismissedAt: SECOND,
+    });
+    expect(state.lastRefreshMode).toBe('incremental');
+    expect(state.lastIncrementalAt).toBe(SECOND);
+    expect(state.lastFullReconciledAt).toBe(FIRST);
+  });
+
+  it('removes omitted rows only for a complete full reconciliation', async () => {
+    await commitRadarSnapshot(snapshot([
+      activity('keep', 'owner/keep', FIRST),
+      activity('stale', 'owner/stale', FIRST),
+    ], FIRST));
+
+    await commitRadarRefresh(snapshot([activity('keep', 'owner/keep', SECOND)], SECOND, 60, 'full'));
+    expect(await db.radarActivities.get('stale')).toBeUndefined();
+  });
+
+  it('preserves omitted rows when full following coverage is incomplete', async () => {
+    await commitRadarSnapshot(snapshot([
+      activity('keep', 'owner/keep', FIRST),
+      activity('stale', 'owner/stale', FIRST),
+    ], FIRST));
+
+    const incomplete = {
+      ...snapshot([activity('keep', 'owner/keep', SECOND)], SECOND, 90, 'full'),
+      scannedFollowingCount: 3,
+    };
+    const state = await commitRadarRefresh(incomplete);
+
+    expect(await db.radarActivities.get('stale')).toBeDefined();
+    expect(state.windowDays).toBe(60);
+    expect(state.lastFullReconciledAt).toBe(FIRST);
+  });
+
+  it('preserves omitted rows for partial full results', async () => {
+    await commitRadarSnapshot(snapshot([
+      activity('keep', 'owner/keep', FIRST),
+      activity('stale', 'owner/stale', FIRST),
+    ], FIRST));
+
+    const state = await commitRadarRefresh(snapshot(
+      [activity('keep', 'owner/keep', SECOND)],
+      SECOND,
+      90,
+      'full',
+      ['following_scan_truncated'],
+    ));
+    expect(await db.radarActivities.get('stale')).toBeDefined();
+    expect(state.windowDays).toBe(60);
+    expect(state.lastFullReconciledAt).toBe(FIRST);
+  });
+
+  it('does not initialize authoritative window provenance from a partial full result', async () => {
+    const state = await commitRadarRefresh(snapshot(
+      [activity('partial', 'owner/partial', SECOND)],
+      SECOND,
+      90,
+      'full',
+      ['following_scan_truncated'],
+    ));
+
+    expect(state.windowDays).toBeNull();
+    expect(state.lastFullReconciledAt).toBeNull();
+  });
+
+  it('rolls back incremental rows and state together when checkpointing fails', async () => {
+    await commitRadarSnapshot(snapshot([activity('old', 'owner/old', FIRST)], FIRST));
+    const beforeRows = await db.radarActivities.toArray();
+    const beforeState = await db.radarState.get('singleton');
+    const statePut = vi.spyOn(db.radarState, 'put').mockRejectedValueOnce(new Error('checkpoint failed'));
+
+    await expect(commitRadarRefresh(snapshot([
+      activity('new', 'owner/new', SECOND),
+    ], SECOND, 60, 'incremental'))).rejects.toThrow('checkpoint failed');
+
+    statePut.mockRestore();
+    expect(await db.radarActivities.toArray()).toEqual(beforeRows);
+    expect(await db.radarState.get('singleton')).toEqual(beforeState);
+  });
+  it('retains omissions when a full result does not cover the selected window', async () => {
+    await commitRadarSnapshot(snapshot([
+      activity('keep', 'owner/keep', FIRST),
+      activity('stale', 'owner/stale', FIRST),
+    ], FIRST));
+
+    const state = await commitRadarRefresh({
+      ...snapshot([activity('keep', 'owner/keep', SECOND)], SECOND, 90, 'full'),
+      lookbackDays: 7,
+    });
+    expect(await db.radarActivities.get('stale')).toBeDefined();
+    expect(state.windowDays).toBe(60);
+    expect(state.lastFullReconciledAt).toBe(FIRST);
+  });
+
+  it('fences credential changes until a complete full replacement', async () => {
+    await commitRadarSnapshot(
+      snapshot([activity('old', 'owner/old', FIRST)], FIRST),
+      { credentialIdentity: 'credential-a' },
+    );
+    const beforeRows = await db.radarActivities.toArray();
+    const beforeState = await db.radarState.get('singleton');
+
+    await expect(commitRadarRefresh(
+      snapshot([activity('incremental', 'owner/incremental', SECOND)], SECOND, 60, 'incremental'),
+      { credentialIdentity: 'credential-b' },
+    )).rejects.toThrow('Radar credential mismatch');
+    expect(await db.radarActivities.toArray()).toEqual(beforeRows);
+    expect(await db.radarState.get('singleton')).toEqual(beforeState);
+
+    const committed = await commitRadarRefresh(
+      snapshot([activity('new', 'owner/new', SECOND)], SECOND, 60, 'full'),
+      { credentialIdentity: 'credential-b' },
+    );
+    expect(committed.credentialIdentity).toBe('credential-b');
+    expect(await db.radarActivities.get('old')).toBeUndefined();
+    expect(await db.radarActivities.get('new')).toBeDefined();
+  });
+
+  it('rejects account-mismatched rows and failures without replacing the bound state', async () => {
+    await commitRadarSnapshot(snapshot([activity('existing', 'owner/existing', FIRST)], FIRST));
+    const beforeRows = await db.radarActivities.toArray();
+    const beforeState = await db.radarState.get('singleton');
+
+    await expect(commitRadarRefresh(snapshot([
+      activity('foreign', 'owner/foreign', SECOND, { accountLogin: 'other-account' }),
+    ], SECOND))).rejects.toThrow('Radar activity account mismatch');
+    await expect(recordRadarFailure('other-account', 'network_error'))
+      .rejects.toThrow('Radar account mismatch');
+    expect(await db.radarActivities.toArray()).toEqual(beforeRows);
+    expect(await db.radarState.get('singleton')).toEqual(beforeState);
+  });
+
 });

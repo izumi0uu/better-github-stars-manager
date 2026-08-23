@@ -60,7 +60,9 @@ export function useRadar({
       void recommendation.reload(false);
       return;
     }
-    if (event.kind === 'radar' || event.kind === 'data') void activity.reload(true);
+    if (event.kind === 'radar' || event.kind === 'data' || event.kind === 'preferences') {
+      void activity.reload(true);
+    }
     if (event.kind === 'recommendations' || event.kind === 'data') {
       void recommendation.reload(true);
     }
@@ -194,15 +196,17 @@ export function useRadar({
     loading: activity.loading,
     recommendationLoading: recommendation.loading,
     refreshing: activity.refreshing,
+    refresh: activity.refresh,
+    fullReconcile: activity.fullReconcile,
     recommendationRefreshing: recommendation.refreshing,
+    fullReconciling: activity.fullReconciling,
+    reload: activity.reload,
     error: activity.error,
     recommendationError: recommendation.error,
     actionError,
     pendingAction,
-    refresh: activity.refresh,
-    refreshRecommendations: recommendation.refresh,
-    reload: activity.reload,
     reloadRecommendations: recommendation.reload,
+    refreshRecommendations: recommendation.refresh,
     star,
     unstar,
     setFavorite,

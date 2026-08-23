@@ -68,31 +68,29 @@ describe("AgentStoragePanel", () => {
     expect(panel?.getAttribute("aria-describedby"))
       .toBe("agent-storage-intro agent-storage-organize-retention");
     expect(container.querySelector("#agent-storage-heading")?.textContent)
-      .toContain("Local Cubby conversation, recovery & artifact ledger");
+      .toContain("Local Cubby storage & tool cache");
     expect(container.querySelector("#agent-storage-intro")?.textContent)
-      .toContain("does not represent all Cubby or extension storage");
+      .toContain("does not represent all extension storage");
     const organize = container.querySelector("#agent-storage-organize-retention")?.textContent;
-    expect(organize).toContain("active or preflight task instructions and frozen scope");
-    expect(organize).toContain("proposal, Apply, and receipt records");
-    expect(organize).toContain("one latest completed or cancelled result");
-    expect(organize).toContain("None is counted in this ledger");
-    expect(organize).toContain("Deleting the origin conversation keeps that latest result");
+    expect(organize).toContain("Organize task data and the latest completed or cancelled result");
+    expect(organize).toContain("stored separately and not counted in this cache ledger");
+    expect(organize).toContain("Deleting the origin conversation still keeps that latest result");
     expect(container.textContent).toContain("12 MiB");
     expect(container.textContent).toContain("2 conversations · 18 messages");
     expect(container.textContent).toContain("Re-fetchable tool cache");
     expect(container.textContent).toContain("4 MiB");
     expect(container.textContent).toContain("3 cached tool artifacts");
-    expect(container.textContent).toContain("Conversation, recovery & artifact ledger total");
-    expect(container.textContent).toContain("512 MiB ledger limit");
+    expect(container.textContent).toContain("Total Cubby storage used");
+    expect(container.textContent).toContain("512 MiB limit");
     expect(container.textContent).toContain(
-      "This ledger only: warning at 256 MiB · new ledger writes refused at 512 MiB",
+      "Warning at 256 MiB · New writes paused at 512 MiB limit",
     );
     expect(container.textContent).toContain(
       "Whole-extension browser storage estimate: 20 MiB of 2 GiB",
     );
     const progress = container.querySelector('[role="progressbar"]');
     expect(progress?.getAttribute("aria-label"))
-      .toBe("Conversation, recovery, and artifact ledger used");
+      .toBe("Cubby storage used");
     expect(progress?.getAttribute("aria-describedby"))
       .toBe("agent-storage-thresholds agent-storage-browser-estimate");
     expect(progress?.getAttribute("aria-valuemax")).toBe(String(512 * MiB));
@@ -100,7 +98,7 @@ describe("AgentStoragePanel", () => {
       .find((button) => button.textContent?.includes("Clear tool cache"));
     expect(clearButton?.getAttribute("aria-describedby")).toBe("agent-storage-clear-hint");
     expect(container.querySelector("#agent-storage-clear-hint")?.textContent)
-      .toContain("Final answers and conversation transcripts");
+      .toContain("Conversation transcripts, answers");
   });
 
   it("renders loading and unavailable-estimate states without inventing browser usage", () => {
@@ -117,8 +115,8 @@ describe("AgentStoragePanel", () => {
   });
 
   it.each([
-    [256, true, false, "above its warning level"],
-    [512, true, true, "New ledger data is refused"],
+    [256, true, false, "above its warning threshold"],
+    [512, true, true, "New writes are paused"],
   ] as const)(
     "shows the expected capacity state at %i MiB",
     (totalMiB, isWarning, isAtHardLimit, expected) => {

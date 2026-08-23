@@ -13,6 +13,7 @@ export const RADAR_PARTIAL_REASONS = [
 
 export type RadarPartialReason = typeof RADAR_PARTIAL_REASONS[number];
 export type RadarActivitySource = 'following' | 'self';
+export type RadarRefreshMode = 'full' | 'incremental';
 
 export type RadarErrorCode =
   | 'authentication_required'
@@ -101,14 +102,18 @@ export interface RadarProjectPresentation {
   activities: readonly RadarActivityPresentation[];
   activityIds: string[];
 }
-
 export interface RadarStateRecord {
   id: 'singleton';
   accountLogin: string;
   lastAttemptAt: string | null;
   lastSuccessfulAt: string | null;
-  /** Window used to build the latest successful snapshot; null for legacy or empty state. */
+  /** Window covered by the latest authoritative full reconciliation. */
   windowDays: number | null;
+  lastRefreshMode?: RadarRefreshMode | null;
+  lastIncrementalAt?: string | null;
+  lastFullReconciledAt?: string | null;
+  /** Opaque credential/account identity used to fence refresh provenance. */
+  credentialIdentity?: string | null;
   errorCode: RadarErrorCode | null;
   nextAllowedAt: string | null;
   activityCount: number;

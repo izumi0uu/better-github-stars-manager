@@ -155,26 +155,35 @@ function RadarSourceToggleGroup({
 
 type RadarCommandBarActionsProps = Pick<
   RadarProps,
-  'result' | 'loading' | 'refreshing' | 'onRefresh' | 'sources'
+  'result' | 'loading' | 'refreshing' | 'fullReconciling' | 'onRefresh' | 'onFullReconcile' | 'sources'
 > & {
   view: RadarView;
   onViewChange: (view: RadarView) => void;
   onSourceEnabledChange: (source: RadarActivitySource, enabled: boolean) => void;
 };
-
 export function RadarCommandBarActions({
   result,
   loading,
   view,
   refreshing,
+  fullReconciling,
   sources,
   onViewChange,
   onRefresh,
+  onFullReconcile,
   onSourceEnabledChange,
 }: RadarCommandBarActionsProps) {
   const { m } = useI18n();
   const status = result?.status.snapshotStatus;
-  const refreshDisabled = loading || refreshing || status === 'cooldown' || status === 'not_configured';
+  const refreshDisabled = loading
+    || refreshing
+    || fullReconciling
+    || result?.status.refreshing === true
+    || result?.status.hasMainToken !== true
+    || status === 'cooldown'
+    || status === 'not_configured';
+  const fullReconcileLabel = fullReconciling ? m.radar.fullReconciling : m.radar.fullReconcile;
+  const fullReconcileHint = fullReconciling ? m.radar.fullReconciling : m.radar.fullReconcileHint;
   return (
     <div className="flex items-center gap-2">
       <div
@@ -197,10 +206,7 @@ export function RadarCommandBarActions({
           </button>
         ))}
       </div>
-      <RadarSourceToggleGroup
-        sources={sources}
-        onSourceEnabledChange={onSourceEnabledChange}
-      />
+      <RadarSourceToggleGroup sources={sources} onSourceEnabledChange={onSourceEnabledChange} />
       {status && status !== 'fresh' && status !== 'never_loaded' && status !== 'not_configured' && status !== 'stale' && (
         <span className={cn('max-[700px]:hidden rounded-full border px-2 py-px font-mono text-[10px]', {
           'border-warning/35 bg-warning/10 text-warning': status === 'partial' || status === 'cooldown',
@@ -209,6 +215,24 @@ export function RadarCommandBarActions({
           {m.radar.statusLabel(status)}
         </span>
       )}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-[30px] gap-1.5 px-2 text-xs"
+            disabled={refreshDisabled}
+            onClick={onFullReconcile}
+            aria-label={fullReconcileLabel}
+            aria-busy={fullReconciling}
+            data-radar-action="full-reconcile"
+          >
+            {fullReconciling ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" aria-hidden="true" />}
+            <span className="max-[620px]:hidden">{fullReconcileLabel}</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{fullReconcileHint}</TooltipContent>
+      </Tooltip>
       <Button
         variant="outline"
         size="sm"
@@ -240,12 +264,14 @@ export function RadarCommandBar({
   discoverView,
   view,
   refreshing,
+  fullReconciling,
   sources,
   query,
   resultCount,
   onDiscoverViewChange,
   onViewChange,
   onRefresh,
+  onFullReconcile,
   onSourceEnabledChange,
   onQueryChange,
 }: RadarCommandBarProps) {
@@ -309,7 +335,9 @@ export function RadarCommandBar({
           loading={loading}
           view={view}
           refreshing={refreshing}
+          fullReconciling={fullReconciling}
           sources={sources}
+          onFullReconcile={onFullReconcile}
           onViewChange={onViewChange}
           onRefresh={onRefresh}
           onSourceEnabledChange={onSourceEnabledChange}

@@ -184,6 +184,7 @@ function surfaceProps(
     loading: false,
     recommendationLoading: false,
     refreshing: false,
+    fullReconciling: false,
     recommendationRefreshing: false,
     error: null,
     recommendationError: null,
@@ -196,6 +197,7 @@ function surfaceProps(
     onViewChange: vi.fn(),
     onSourceEnabledChange: vi.fn(),
     onRefresh: vi.fn(),
+    onFullReconcile: vi.fn(),
     onRefreshRecommendations: vi.fn(),
     onRetryQuery: vi.fn(),
     onRetryRecommendations: vi.fn(),
@@ -219,6 +221,29 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+  it('exposes an accessible full reconciliation action without changing the selected window', () => {
+    const onFullReconcile = vi.fn();
+    const result = radarResult({ windowDays: 90 });
+    const container = mount(<RadarCommandBarActions
+      result={result}
+      loading={false}
+      view="feed"
+      fullReconciling={false}
+      refreshing={false}
+      sources={{ following: true, self: false }}
+      onViewChange={vi.fn()}
+      onRefresh={vi.fn()}
+      onFullReconcile={onFullReconcile}
+      onSourceEnabledChange={vi.fn()}
+    />);
+
+    const button = Array.from(container.querySelectorAll('button'))
+      .find((candidate) => candidate.getAttribute('aria-label') === 'Full sync');
+    expect(button).toBeDefined();
+    act(() => button?.click());
+    expect(onFullReconcile).toHaveBeenCalledTimes(1);
+    expect(result.status.windowDays).toBe(90);
+  });
 describe('Radar', () => {
   it('keeps the Following feed and command controls intact', () => {
     const container = mount(<Radar {...surfaceProps()} />);
@@ -226,15 +251,15 @@ describe('Radar', () => {
     expect(container.querySelectorAll('[data-radar-row]')).toHaveLength(2);
     expect(container.querySelector('[data-surface-command-bar="following"]')).not.toBeNull();
     expect(container.querySelector('[data-radar-discover-view="following"]')).not.toBeNull();
-    expect(container.textContent).toContain('End of 60-day window · 2 activities');
+    expect(container.textContent).toContain('Showing all activity from the last 60 days · 2 activities');
     expect(container.querySelector('[data-radar-view="for-you"]')).toBeNull();
   });
 
   it('renders the selected Following history window', () => {
     const container = mount(<Radar {...surfaceProps({ result: radarResult({ windowDays: 90 }) })} />);
 
-    expect(container.textContent).toContain('Public stars · last 90 days');
-    expect(container.textContent).toContain('End of 90-day window · 2 activities');
+    expect(container.textContent).toContain('Public followed activity · last 90 days');
+    expect(container.textContent).toContain('Showing all activity from the last 90 days · 2 activities');
   });
 
   it('keeps the Following command bar mounted and defers loading copy to the ribbon', () => {
@@ -826,6 +851,17 @@ describe('Radar', () => {
     expect(failed.querySelector('[data-recommendation-row="candidate/tool"] [role="alert"]')?.textContent)
       .toContain('Action failed: failed');
   });
+  it('keeps saved Following rows visible while full reconciliation is busy', () => {
+    const container = mount(<Radar {...surfaceProps({ refreshing: true, fullReconciling: true })} />);
+    const button = container.querySelector<HTMLButtonElement>('button[data-radar-action="full-reconcile"]');
+
+    expect(container.querySelectorAll('[data-radar-row]')).toHaveLength(2);
+    expect(button?.disabled).toBe(true);
+    expect(button?.getAttribute('aria-label')).toBe('Full syncing…');
+    expect(button?.getAttribute('aria-busy')).toBe('true');
+    expect(button?.querySelector('svg.animate-spin')).not.toBeNull();
+  });
+
 });
 
 describe('RadarCommandBarActions', () => {
@@ -839,13 +875,36 @@ describe('RadarCommandBarActions', () => {
       result={cooled}
       loading={false}
       view="feed"
+      fullReconciling={false}
       refreshing={false}
       sources={{ following: true, self: false }}
       onViewChange={vi.fn()}
       onRefresh={vi.fn()}
+      onFullReconcile={vi.fn()}
       onSourceEnabledChange={vi.fn()}
     />);
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')?.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('button[data-radar-action="full-reconcile"]')?.disabled)
+      .toBe(true);
+  });
+
+  it('disables full reconciliation without credentials', () => {
+    const result = radarResult();
+    result.status = status({ hasMainToken: false, snapshotStatus: 'not_configured' });
+    const container = mount(<RadarCommandBarActions
+      result={result}
+      loading={false}
+      view="feed"
+      fullReconciling={false}
+      refreshing={false}
+      sources={{ following: true, self: false }}
+      onViewChange={vi.fn()}
+      onRefresh={vi.fn()}
+      onFullReconcile={vi.fn()}
+      onSourceEnabledChange={vi.fn()}
+    />);
+    expect(container.querySelector<HTMLButtonElement>('button[data-radar-action="full-reconcile"]')?.disabled)
+      .toBe(true);
   });
 });
 
@@ -862,5 +921,40 @@ describe('RadarStatusRibbon', () => {
     const ribbon = container.querySelector('[data-radar-status="fresh"]');
     expect(ribbon?.classList.contains('bg-card')).toBe(true);
     expect(ribbon?.classList.contains('bg-success/[0.07]')).toBe(false);
+  });
+  it('does not attribute the selected window to a partial full snapshot', () => {
+    const partialFullResult = radarResult({
+      windowDays: 90,
+      snapshotStatus: 'partial',
+      state: {
+        ...status().state!,
+        windowDays: null,
+        lastRefreshMode: 'full',
+        partialReasons: ['following_scan_truncated'],
+      },
+    });
+    const container = mount(<RadarStatusRibbon
+      result={partialFullResult}
+      loading={false}
+      refreshing={false}
+      error={null}
+      onOpenOptions={vi.fn()}
+    />);
+
+    expect(container.textContent).toContain('Snapshot checked');
+    expect(container.textContent).not.toContain('Full sync · last 90 days');
+  });
+  it('announces saved activity while full reconciliation is busy', () => {
+    const container = mount(<RadarStatusRibbon
+      result={radarResult()}
+      loading={false}
+      refreshing={false}
+      fullReconciling
+      error={null}
+      onOpenOptions={vi.fn()}
+    />);
+    expect(container.querySelector('[data-radar-status="refreshing"]')).not.toBeNull();
+    expect(container.textContent).toContain('Full sync · showing saved activity');
+    expect(container.querySelector('svg.animate-spin')).not.toBeNull();
   });
 });

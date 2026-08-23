@@ -7,6 +7,7 @@ export function useRadarActivityResource(active: boolean) {
   const [result, setResult] = useState<RadarQueryResponse | null>(null);
   const [loading, setLoading] = useState(active);
   const [refreshing, setRefreshing] = useState(false);
+  const [fullReconciling, setFullReconciling] = useState(false);
   const [error, setError] = useState<'query' | 'refresh' | null>(null);
   const mountedRef = useRef(true);
   const activeRef = useRef(active);
@@ -69,6 +70,7 @@ export function useRadarActivityResource(active: boolean) {
       refreshingRef.current = false;
       setLoading(false);
       setRefreshing(false);
+      setFullReconciling(false);
       return;
     }
     void reload(loadedRef.current);
@@ -84,6 +86,7 @@ export function useRadarActivityResource(active: boolean) {
     setError(null);
     setLoading(activeRef.current);
     setRefreshing(false);
+    setFullReconciling(false);
   }, []);
 
   const cooldownUntil = result?.status.snapshotStatus === 'cooldown'
@@ -109,7 +112,7 @@ export function useRadarActivityResource(active: boolean) {
     return () => window.clearTimeout(timer);
   }, [active, cooldownProbeTick, cooldownUntil, reload, runtime]);
 
-  const refresh = useCallback(async () => {
+  const runRefresh = useCallback(async (mode: 'incremental' | 'full') => {
     if (!mountedRef.current || refreshingRef.current) return;
     const requestEpoch = refreshEpoch.current;
     const isCurrent = () => mountedRef.current && activeRef.current
@@ -117,15 +120,16 @@ export function useRadarActivityResource(active: boolean) {
     refreshingRef.current = true;
     entryRefreshEvaluatedRef.current = true;
     setRefreshing(true);
+    setFullReconciling(mode === 'full');
     setError(null);
     try {
-      const refreshResult = await runtime.refreshRadar();
+      const refreshResult = mode === 'full'
+        ? await runtime.fullReconcileRadar()
+        : await runtime.refreshRadar();
       if (!isCurrent()) return;
       await reload(true);
       if (!isCurrent()) return;
-      if (!refreshResult.published && refreshResult.status.errorCode) {
-        setError('refresh');
-      }
+      if (!refreshResult.published && refreshResult.status.errorCode) setError('refresh');
     } catch {
       if (!isCurrent()) return;
       await reload(true);
@@ -134,9 +138,14 @@ export function useRadarActivityResource(active: boolean) {
       if (isCurrent()) {
         refreshingRef.current = false;
         setRefreshing(false);
+        setFullReconciling(false);
       }
     }
   }, [reload, runtime]);
+
+  const refresh = useCallback(() => runRefresh('incremental'), [runRefresh]);
+
+  const fullReconcile = useCallback(() => runRefresh('full'), [runRefresh]);
 
   useEffect(() => {
     const status = result?.status;
@@ -184,8 +193,10 @@ export function useRadarActivityResource(active: boolean) {
     result,
     loading,
     refreshing: refreshing || result?.status.refreshing === true,
+    fullReconciling,
     error,
     refresh,
+    fullReconcile,
     reload,
     invalidateCredentials,
     markSeen,

@@ -88,6 +88,7 @@ Keep this file short and practical. Add rules here only when they are core to th
 - Name new tests, suites, and replay env prefixes by product surface or behavior, not priority or phase labels. Use names like `query-fuzz`, `tag-store-fuzz`, or `BACKGROUND_RUNNER_FUZZ`.
 - For docs-only changes, code tests are optional.
 - Do not add automated tests that read Markdown files to assert prose, headings, links, or section layout. Test the owning runtime behavior or machine-readable contract instead; review published documentation directly.
+- Do not add automated tests solely to assert exact i18n wording or descriptive UI/documentation copy. When copy changes, update or remove stale text assertions; test the owning behavior, accessibility semantics, or machine-readable contract instead.
 
 ## Documentation
 

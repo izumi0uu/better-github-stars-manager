@@ -156,6 +156,9 @@ describe('GitHub Radar source', () => {
     expect(snapshot).toMatchObject({
       accountLogin: 'viewer',
       fetchedAt: NOW.toISOString(),
+      windowDays: 30,
+      refreshMode: 'full',
+      lookbackDays: 30,
       followingCount: 2,
       scannedFollowingCount: 2,
       batchCount: 1,
@@ -631,5 +634,61 @@ describe('GitHub Radar source', () => {
     await expect(fetchGitHubRadar({ token: 'token', fetchImpl: neverFetch, signal: controller.signal }))
       .rejects.toMatchObject({ code: 'request_aborted' });
     expect(neverFetch).not.toHaveBeenCalled();
+  });
+
+  it('uses a fixed seven-day cutoff for incremental refreshes', async () => {
+    const recent = new Date(NOW.getTime() - 6 * 24 * 60 * 60 * 1_000).toISOString();
+    const expired = new Date(NOW.getTime() - 8 * 24 * 60 * 60 * 1_000).toISOString();
+    let request = 0;
+    const fetchImpl = vi.fn(async () => {
+      request += 1;
+      return request === 1
+        ? jsonResponse(followingEnvelope({ logins: ['alice'] }))
+        : jsonResponse(activityEnvelope([{
+          login: 'alice',
+          edges: [
+            { starredAt: recent, node: repository('owner/recent') },
+            { starredAt: expired, node: repository('owner/expired') },
+          ],
+        }]));
+    }) as typeof fetch;
+
+    const snapshot = await fetchGitHubRadar({
+      token: 'token',
+      fetchImpl,
+      now: () => NOW,
+      windowDays: 90,
+      refreshMode: 'incremental',
+      lookbackDays: 90,
+    });
+
+    expect(snapshot.activities.map((activity) => activity.repositoryKey)).toEqual(['owner/recent']);
+    expect(snapshot).toMatchObject({ refreshMode: 'incremental', lookbackDays: 7, windowDays: 90 });
+  });
+
+  it('uses the selected window cutoff for full reconciliation', async () => {
+    const recent = new Date(NOW.getTime() - 8 * 24 * 60 * 60 * 1_000).toISOString();
+    let request = 0;
+    const fetchImpl = vi.fn(async () => {
+      request += 1;
+      return request === 1
+        ? jsonResponse(followingEnvelope({ logins: ['alice'] }))
+        : jsonResponse(activityEnvelope([{
+          login: 'alice',
+          edges: [{ starredAt: recent, node: repository('owner/recent') }],
+        }]));
+    }) as typeof fetch;
+
+    const snapshot = await fetchGitHubRadar({
+      token: 'token',
+      fetchImpl,
+      now: () => NOW,
+      windowDays: 90,
+      refreshMode: 'full',
+      lookbackDays: 7,
+    });
+
+    expect(snapshot.activities.map((activity) => activity.repositoryKey)).toEqual(['owner/recent']);
+    expect(snapshot).toMatchObject({ refreshMode: 'full', lookbackDays: 90, windowDays: 90 });
   });
 });

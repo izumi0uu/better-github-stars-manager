@@ -14,11 +14,19 @@ export function RadarStatusRibbon({
   refreshing,
   error,
   onOpenOptions,
-}: Pick<RadarProps, 'result' | 'loading' | 'refreshing' | 'error' | 'onOpenOptions'>) {
+  fullReconciling = false,
+}: Pick<RadarProps, 'result' | 'loading' | 'refreshing' | 'error' | 'onOpenOptions'> & {
+  fullReconciling?: boolean;
+}) {
+  const busy = refreshing || fullReconciling;
   const { m, locale } = useI18n();
   const status = result?.status;
   const state = status?.state;
   const snapshotAt = formatRadarAbsoluteTime(state?.lastSuccessfulAt ?? null, locale);
+  const provenanceWindow = state?.windowDays ?? null;
+  const provenance = state?.lastRefreshMode && provenanceWindow !== null
+    ? m.radar.snapshotProvenance(state.lastRefreshMode, provenanceWindow)
+    : null;
   const permissionFailure = status?.errorCode === 'authentication_required'
     || status?.errorCode === 'permission_denied';
   const hasSavedActivity = (state?.activityCount ?? 0) > 0;
@@ -27,8 +35,10 @@ export function RadarStatusRibbon({
 
   if (loading && !result) {
     text = m.common.loading;
-  } else if (refreshing) {
-    text = result ? m.radar.statusRefreshingSaved : m.radar.refreshing;
+  } else if (busy) {
+    text = result
+      ? fullReconciling ? m.radar.statusReconcilingSaved : m.radar.statusRefreshingSaved
+      : fullReconciling ? m.radar.fullReconciling : m.radar.refreshing;
   } else if (error === 'refresh' && result) {
     text = m.radar.statusRefreshFailedSaved;
     tone = 'warning';
@@ -75,7 +85,7 @@ export function RadarStatusRibbon({
   }
 
   const { dismissed, dismiss } = useDismissableNotice(
-    (tone === 'warning' || tone === 'destructive') && !loading && !refreshing,
+    (tone === 'warning' || tone === 'destructive') && !loading && !busy,
   );
   if (dismissed) return null;
   return (
@@ -84,10 +94,10 @@ export function RadarStatusRibbon({
       aria-live="polite"
       aria-atomic="true"
       className="shrink-0 overflow-hidden border-b border-border bg-card text-xs"
-      data-radar-status={refreshing ? 'refreshing' : status?.snapshotStatus ?? (loading ? 'loading' : 'error')}
+      data-radar-status={busy ? 'refreshing' : status?.snapshotStatus ?? (loading ? 'loading' : 'error')}
     >
       <SurfaceWorkCanvas variant="following" className="relative flex min-h-[30px] items-center gap-2 px-3.5 py-1">
-        {refreshing || (loading && !result) ? (
+        {busy || (loading && !result) ? (
           <Spinner className="size-3 shrink-0" />
         ) : (
           <span className={cn('size-[7px] shrink-0 rounded-full', {
@@ -106,10 +116,10 @@ export function RadarStatusRibbon({
         )}
         {snapshotAt && (
           <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground max-[640px]:hidden">
-            {m.radar.snapshotAt(snapshotAt)}
+            {provenance ? `${provenance} · ` : ''}{m.radar.snapshotAt(snapshotAt)}
           </span>
         )}
-        {(tone === 'warning' || tone === 'destructive') && !loading && !refreshing && (
+        {(tone === 'warning' || tone === 'destructive') && !loading && !busy && (
           <button
             type="button"
             aria-label={m.common.close}
@@ -119,7 +129,7 @@ export function RadarStatusRibbon({
             <X className="size-3" aria-hidden="true" />
           </button>
         )}
-        {refreshing && <span className="gsm-watch-refresh-bar" aria-hidden="true" />}
+        {busy && <span className="gsm-watch-refresh-bar" aria-hidden="true" />}
       </SurfaceWorkCanvas>
     </div>
   );

@@ -6,6 +6,7 @@ import {
 import type { GitHubCredentialSnapshot } from '@/auth/auth-store';
 import { GitHubRadarError, type RadarActivityRecord, type RadarActivityPresentation, type RadarStateRecord } from '@/radar/radar-model';
 import type { RadarSourceSnapshot } from '@/radar/radar-contract';
+import { createSerializedRunner } from '@/background/serialized-runner';
 import type { Config, FollowingHistoryWindowDays } from '@/types';
 
 const NOW = 1_786_000_000_000;
@@ -29,6 +30,10 @@ function state(overrides: Partial<RadarStateRecord> = {}): RadarStateRecord {
     lastAttemptAt: new Date(NOW - 1_000).toISOString(),
     lastSuccessfulAt: new Date(NOW - 1_000).toISOString(),
     windowDays: 60,
+    lastRefreshMode: 'full',
+    lastIncrementalAt: null,
+    lastFullReconciledAt: new Date(NOW - 2 * 24 * 60 * 60 * 1_000).toISOString(),
+    credentialIdentity: JSON.stringify(['viewer', 'identity-a', true]),
     errorCode: null,
     nextAllowedAt: null,
     activityCount: 1,
@@ -67,6 +72,8 @@ function snapshot(overrides: Partial<RadarSourceSnapshot> = {}): RadarSourceSnap
     accountLogin: 'viewer',
     activities: [activity],
     windowDays: 60,
+    refreshMode: 'incremental',
+    lookbackDays: 7,
     fetchedAt: new Date(NOW).toISOString(),
     followingCount: 2,
     scannedFollowingCount: 2,
@@ -94,14 +101,13 @@ function makeCoordinator(input: {
   state?: RadarStateRecord | null;
   fetchRadar?: RadarRefreshCoordinatorDependencies['fetchRadar'];
   activities?: RadarActivityPresentation[];
+  runSerialized?: RadarRefreshCoordinatorDependencies['runSerialized'];
 } = {}) {
   let currentAuth = input.auth ?? authSnapshot();
   let currentWindowDays: FollowingHistoryWindowDays = 60;
   const currentState = input.state === undefined ? state() : input.state;
   const events: string[] = [];
-  const runSerialized: RadarRefreshCoordinatorDependencies['runSerialized'] = async <T,>(
-    operation: () => Promise<T>,
-  ) => operation();
+  const runSerialized = input.runSerialized ?? (async <T,>(operation: () => Promise<T>) => operation());
   const store = {
     clearData: vi.fn(async () => { events.push('clear'); }),
     prepareAccount: vi.fn(async () => { events.push('prepare'); }),
@@ -118,7 +124,11 @@ function makeCoordinator(input: {
       getGitHubCredentialSnapshot: vi.fn(async () => currentAuth),
       getConfig: vi.fn(async () => ({ radarWindowDays: currentWindowDays }) as Config),
     },
-    fetchRadar: input.fetchRadar ?? vi.fn(async (options) => snapshot({ windowDays: options.windowDays })),
+    fetchRadar: input.fetchRadar ?? vi.fn(async (options) => snapshot({
+      windowDays: options.windowDays,
+      refreshMode: options.refreshMode,
+      lookbackDays: options.lookbackDays,
+    })),
     store,
     now: () => NOW,
     broadcastChanged: vi.fn(() => { events.push('broadcast'); }),
@@ -149,10 +159,144 @@ describe('Radar refresh coordinator', () => {
     expect(one).toEqual(two);
     expect(fetchRadar).toHaveBeenCalledTimes(1);
     expect(h.store.commitSnapshot).toHaveBeenCalledTimes(1);
+    expect(h.store.commitSnapshot).toHaveBeenCalledWith(
+      expect.anything(),
+      { credentialIdentity: JSON.stringify(['viewer', 'identity-a', true]) },
+    );
     expect(fetchRadar).toHaveBeenCalledWith(expect.objectContaining({ windowDays: 60 }));
     expect(h.events.at(-1)).toBe('broadcast');
   });
 
+  it('coalesces repeated full reconciliations while one full fetch is active', async () => {
+    let release!: (value: RadarSourceSnapshot) => void;
+    const fetchRadar = vi.fn(() => new Promise<RadarSourceSnapshot>((resolve) => { release = resolve; }));
+    const h = makeCoordinator({
+      fetchRadar,
+      runSerialized: createSerializedRunner().run,
+    });
+
+    const first = h.coordinator.fullReconcile();
+    while (!release) await Promise.resolve();
+    const second = h.coordinator.fullReconcile();
+    release(snapshot({ refreshMode: 'full', lookbackDays: 60 }));
+
+    const [one, two] = await Promise.all([first, second]);
+    expect(one).toEqual(two);
+    expect(fetchRadar).toHaveBeenCalledTimes(1);
+    expect(h.store.commitSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues one full fetch after incremental work without overlapping fetches', async () => {
+    let releaseIncremental!: () => void;
+    let releaseFull!: () => void;
+    let activeFetches = 0;
+    let peakFetches = 0;
+    const modes: string[] = [];
+    const fetchRadar = vi.fn(async (options) => {
+      modes.push(options.refreshMode ?? '');
+      activeFetches += 1;
+      peakFetches = Math.max(peakFetches, activeFetches);
+      await new Promise<void>((resolve) => {
+        if (options.refreshMode === 'incremental') releaseIncremental = resolve;
+        else releaseFull = resolve;
+      });
+      activeFetches -= 1;
+      return snapshot({
+        windowDays: options.windowDays,
+        refreshMode: options.refreshMode,
+        lookbackDays: options.lookbackDays,
+      });
+    });
+    const h = makeCoordinator({
+      fetchRadar,
+      runSerialized: createSerializedRunner().run,
+    });
+
+    const incremental = h.coordinator.refresh();
+    while (!releaseIncremental) await Promise.resolve();
+    const fullOne = h.coordinator.fullReconcile();
+    const fullTwo = h.coordinator.fullReconcile();
+    releaseIncremental();
+    while (!releaseFull) await Promise.resolve();
+    releaseFull();
+
+    const [incrementalResult, one, two] = await Promise.all([incremental, fullOne, fullTwo]);
+    expect(incrementalResult.published).toBe(true);
+    expect(one).toEqual(two);
+    expect(fetchRadar).toHaveBeenCalledTimes(2);
+    expect(modes).toEqual(['incremental', 'full']);
+    expect(peakFetches).toBe(1);
+  });
+
+  it('coalesces an automatic refresh into a queued full handoff', async () => {
+    let releaseIncremental!: () => void;
+    let releaseFull!: () => void;
+    const fetchRadar = vi.fn(async (options) => {
+      if (options.refreshMode === 'incremental') {
+        await new Promise<void>((resolve) => { releaseIncremental = resolve; });
+      } else {
+        await new Promise<void>((resolve) => { releaseFull = resolve; });
+      }
+      return snapshot({
+        windowDays: options.windowDays,
+        refreshMode: options.refreshMode,
+        lookbackDays: options.lookbackDays,
+      });
+    });
+    const h = makeCoordinator({
+      fetchRadar,
+      runSerialized: createSerializedRunner().run,
+    });
+
+    const incremental = h.coordinator.refresh();
+    while (!releaseIncremental) await Promise.resolve();
+
+    let releaseWindow!: () => void;
+    const configGate = new Promise<Config>((resolve) => {
+      releaseWindow = () => resolve({ radarWindowDays: 60 } as Config);
+    });
+    let configRead!: () => void;
+    const configReadPromise = new Promise<void>((resolve) => { configRead = resolve; });
+    vi.spyOn(h.dependencies.auth, 'getConfig').mockImplementationOnce(() => {
+      configRead();
+      return configGate;
+    });
+
+    const fullOne = h.coordinator.fullReconcile();
+    await configReadPromise;
+
+    let automatic!: ReturnType<typeof h.coordinator.refresh>;
+    const automaticReady = configGate.then(() => new Promise<void>((resolve) => {
+      queueMicrotask(() => {
+        automatic = h.coordinator.refresh();
+        resolve();
+      });
+    }));
+    releaseWindow();
+    await automaticReady;
+    let automaticSettled = false;
+    const automaticResult = automatic.then((result) => {
+      automaticSettled = true;
+      return result;
+    });
+
+    const fullTwo = h.coordinator.fullReconcile();
+    releaseIncremental();
+    while (!releaseFull) await Promise.resolve();
+    expect(automaticSettled).toBe(false);
+    releaseFull();
+
+    const [incrementalResult, one, two, auto] = await Promise.all([
+      incremental,
+      fullOne,
+      fullTwo,
+      automaticResult,
+    ]);
+    expect(incrementalResult.published).toBe(true);
+    expect(one).toEqual(two);
+    expect(one).toEqual(auto);
+    expect(fetchRadar).toHaveBeenCalledTimes(2);
+  });
   it('uses the selected history window for fetch, query, and status', async () => {
     const h = makeCoordinator();
     h.setWindowDays(90);
@@ -166,6 +310,67 @@ describe('Radar refresh coordinator', () => {
     expect(query.status.windowDays).toBe(90);
   });
 
+  it('passes every policy branch to the source deterministically', async () => {
+    const cases: Array<{
+      request: 'auto' | 'full';
+      state: RadarStateRecord | null;
+      windowDays?: FollowingHistoryWindowDays;
+      auth?: GitHubCredentialSnapshot;
+      expected: { refreshMode: 'full' | 'incremental'; lookbackDays: number };
+    }> = [
+      {
+        request: 'full',
+        state: state(),
+        expected: { refreshMode: 'full', lookbackDays: 60 },
+      },
+      {
+        request: 'auto',
+        state: null,
+        expected: { refreshMode: 'full', lookbackDays: 60 },
+      },
+      {
+        request: 'auto',
+        state: state({ partialReasons: ['github_star_list_truncated'] }),
+        expected: { refreshMode: 'full', lookbackDays: 60 },
+      },
+      {
+        request: 'auto',
+        state: state({ errorCode: 'network_error' }),
+        expected: { refreshMode: 'full', lookbackDays: 60 },
+      },
+      {
+        request: 'auto',
+        state: state({ windowDays: 60 }),
+        windowDays: 90,
+        expected: { refreshMode: 'full', lookbackDays: 90 },
+      },
+      {
+        request: 'auto',
+        state: state(),
+        auth: authSnapshot({ mainIdentity: 'identity-b' }),
+        expected: { refreshMode: 'full', lookbackDays: 60 },
+      },
+      {
+        request: 'auto',
+        state: state({
+          lastFullReconciledAt: new Date(NOW - 7 * 24 * 60 * 60 * 1_000).toISOString(),
+        }),
+        expected: { refreshMode: 'full', lookbackDays: 60 },
+      },
+      {
+        request: 'auto',
+        state: state(),
+        expected: { refreshMode: 'incremental', lookbackDays: 7 },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const h = makeCoordinator({ state: testCase.state, auth: testCase.auth });
+      if (testCase.windowDays) h.setWindowDays(testCase.windowDays);
+      await h.coordinator.refresh(testCase.request);
+      expect(h.dependencies.fetchRadar).toHaveBeenCalledWith(expect.objectContaining(testCase.expected));
+    }
+  });
   it('abandons an in-flight result when the history window changes', async () => {
     let release!: (value: RadarSourceSnapshot) => void;
     const fetchRadar = vi.fn(() => new Promise<RadarSourceSnapshot>((resolve) => { release = resolve; }));
@@ -218,6 +423,35 @@ describe('Radar refresh coordinator', () => {
     expect(result.status.snapshotStatus).toBe('cooldown');
   });
 
+  it('honors a future cooldown regardless of the previous error code', async () => {
+    const h = makeCoordinator({
+      state: state({
+        errorCode: 'permission_denied',
+        nextAllowedAt: new Date(NOW + 60_000).toISOString(),
+      }),
+    });
+
+    const result = await h.coordinator.refresh();
+
+    expect(result.published).toBe(false);
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+    expect(h.store.commitSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('fences the fetch when the account window changes during preparation', async () => {
+    const h = makeCoordinator();
+    h.store.prepareAccount
+      .mockImplementationOnce(async () => {})
+      .mockImplementationOnce(async () => { h.setWindowDays(90); });
+
+    const result = await h.coordinator.refresh();
+
+    expect(result.published).toBe(false);
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+    expect(h.store.commitSnapshot).not.toHaveBeenCalled();
+    expect(result.status.windowDays).toBe(90);
+  });
+
   it('records a stable failure without deleting the previous published snapshot', async () => {
     const h = makeCoordinator({
       fetchRadar: vi.fn(async () => {
@@ -232,6 +466,20 @@ describe('Radar refresh coordinator', () => {
     expect(h.store.recordFailure).toHaveBeenCalledWith('viewer', 'permission_denied', { nextAllowedAt: null });
     expect(h.events).toEqual(['prepare', 'prepare', 'failure', 'broadcast']);
   });
+  it('does not surface a failure-recording error or broadcast stale failure state', async () => {
+    const h = makeCoordinator({
+      fetchRadar: vi.fn(async () => {
+        throw new GitHubRadarError('permission_denied', { status: 403 });
+      }),
+    });
+    h.store.recordFailure.mockRejectedValueOnce(new Error('storage unavailable'));
+
+    const result = await h.coordinator.refresh();
+
+    expect(result.published).toBe(false);
+    expect(h.dependencies.broadcastChanged).not.toHaveBeenCalled();
+  });
+
 
   it('rejects a source snapshot published for a different account', async () => {
     const h = makeCoordinator({

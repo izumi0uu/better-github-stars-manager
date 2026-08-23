@@ -76,6 +76,7 @@ function createRuntime(resources: ManagerRuntime['resources'] = {
     updateWatchCollapse: async () => {},
     queryRadar: unused,
     refreshRadar: unused,
+    fullReconcileRadar: unused,
     markRadarActivitiesSeen: unused,
     dismissRadarActivities: unused,
     queryRecommendations: unused,

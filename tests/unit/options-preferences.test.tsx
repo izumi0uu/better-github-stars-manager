@@ -385,12 +385,12 @@ describe('Options preferences', () => {
     await renderOptions();
 
     const panel = document.querySelector('[data-testid="agent-storage-panel"]');
-    expect(panel?.textContent).toContain('Conversation, recovery & saved artifacts');
-    expect(panel?.textContent).toContain('Conversation, recovery & artifact ledger total');
+    expect(panel?.textContent).toContain('Conversation & saved data');
+    expect(panel?.textContent).toContain('Total Cubby storage used');
     expect(panel?.textContent).toContain('1 MiB');
     expect(panel?.textContent).toContain('Re-fetchable tool cache');
     expect(panel?.textContent).toContain('2 MiB');
-    expect(panel?.textContent).toContain('None is counted in this ledger');
+    expect(panel?.textContent).toContain('not counted in this cache ledger');
     expect(panel?.textContent).toContain('Whole-extension browser storage estimate');
     const clearCache = [...panel!.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.includes('Clear tool cache'));
@@ -502,7 +502,7 @@ describe('Options preferences', () => {
     expect(trigger?.textContent).toContain('60 days');
     expect(trigger?.getAttribute('aria-describedby'))
       .toBe('following-history-window-hint following-history-window-risk');
-    expect(document.body.textContent).toContain('Longer windows can use more GitHub API quota');
+
 
     await act(async () => {
       trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));

@@ -3,8 +3,13 @@ import type {
   RadarActivityRecord,
   RadarErrorCode,
   RadarPartialReason,
+  RadarRefreshMode,
   RadarStateRecord,
 } from '@/radar/radar-model';
+
+export type { RadarRefreshMode } from '@/radar/radar-model';
+export type RadarRefreshRequest = 'auto' | 'full';
+
 
 export type RadarSnapshotStatus =
   | 'not_configured'
@@ -40,6 +45,8 @@ export interface RadarSourceSnapshot {
   accountLogin: string;
   activities: RadarActivityRecord[];
   windowDays: number;
+  refreshMode: RadarRefreshMode;
+  lookbackDays: number;
   fetchedAt: string;
   followingCount: number;
   scannedFollowingCount: number;

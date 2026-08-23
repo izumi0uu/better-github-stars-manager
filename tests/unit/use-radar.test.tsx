@@ -137,6 +137,9 @@ function RadarProbe({ initialActive = true }: { initialActive?: boolean } = {}) 
         Deactivate
       </button>
       <button type="button" data-testid="refresh" onClick={() => void radar.refresh()}>Refresh</button>
+      <button type="button" data-testid="full-reconcile" onClick={() => void radar.fullReconcile()}>
+        Full reconcile
+      </button>
       <button
         type="button"
         data-testid="refresh-recommendations"
@@ -171,9 +174,11 @@ function RadarProbe({ initialActive = true }: { initialActive?: boolean } = {}) 
       <span data-testid="active">{active ? 'active' : 'dormant'}</span>
       <span data-testid="loading">{radar.loading ? 'loading' : 'ready'}</span>
       <span data-testid="refreshing">{radar.refreshing ? 'refreshing' : 'idle'}</span>
+      <span data-testid="full-reconciling">{radar.fullReconciling ? 'reconciling' : 'idle'}</span>
       <span data-testid="error">{radar.error ?? 'none'}</span>
       <span data-testid="pending-action">{radar.pendingAction?.kind ?? 'none'}</span>
       <span data-testid="status">{radar.result?.status.snapshotStatus ?? 'none'}</span>
+      <span data-testid="window-days">{radar.result?.status.windowDays ?? 'none'}</span>
       <span data-testid="count">{radar.result?.activities.length ?? 'none'}</span>
       <span data-testid="unseen">{radar.result?.unseenCount ?? 'none'}</span>
       <span data-testid="first-seen">{radar.result?.activities[0]?.seen ? 'seen' : 'unseen'}</span>
@@ -283,6 +288,12 @@ describe('useRadar', () => {
     await act(async () => {
       await Promise.resolve();
       runtimeListeners[0]?.({ type: 'dataChanged' });
+      storageListeners[0]?.({
+        gsm_config: {
+          oldValue: { radarWindowDays: 30 },
+          newValue: { radarWindowDays: 90 },
+        },
+      }, 'local');
       await Promise.resolve();
     });
 
@@ -291,6 +302,50 @@ describe('useRadar', () => {
     expect(container.querySelector('[data-testid="loading"]')?.textContent).toBe('ready');
     expect(container.querySelector('[data-testid="recommendation-loading"]')?.textContent)
       .toBe('ready');
+  });
+
+  it('requeries and reprojects only Following when the config preference changes', async () => {
+    let radarQueries = 0;
+    let recommendationQueries = 0;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        radarQueries += 1;
+        return Promise.resolve(radarQueries === 1
+          ? response({ windowDays: 30 })
+          : {
+              ...response({ windowDays: 90 }),
+              activities: [unseenActivity],
+              unseenCount: 1,
+            });
+      }
+      if (type === 'queryRecommendations') {
+        recommendationQueries += 1;
+        return Promise.resolve(recommendationResponse());
+      }
+      throw new Error(`Unexpected request: ${type}`);
+    });
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+
+    expect(container.querySelector('[data-testid="window-days"]')?.textContent).toBe('30');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('0');
+
+    await act(async () => {
+      storageListeners[0]?.({
+        gsm_config: {
+          oldValue: { radarWindowDays: 30 },
+          newValue: { radarWindowDays: 90 },
+        },
+      }, 'local');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(radarQueries).toBe(2);
+    expect(recommendationQueries).toBe(1);
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar')).toHaveLength(0);
+    expect(container.querySelector('[data-testid="window-days"]')?.textContent).toBe('90');
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
   });
 
   it('starts both first-load queries together and only once on activation', async () => {
@@ -889,6 +944,47 @@ describe('useRadar', () => {
     expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('fresh');
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('0');
     expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('idle');
+  });
+
+  it('runs full reconciliation through the runtime while retaining saved activity', async () => {
+    const loaded = { ...response(), activities: [unseenActivity], unseenCount: 1 };
+    const fullReconcile = deferred<RadarRefreshResult>();
+    let queries = 0;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        queries += 1;
+        return Promise.resolve(loaded);
+      }
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      if (type === 'fullReconcileRadar') return fullReconcile.promise;
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="full-reconcile"]')?.click();
+      await Promise.resolve();
+    });
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'fullReconcileRadar'))
+      .toHaveLength(1);
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('refreshing');
+    expect(container.querySelector('[data-testid="full-reconciling"]')?.textContent)
+      .toBe('reconciling');
+
+    await act(async () => {
+      fullReconcile.resolve(refreshResponse());
+      await fullReconcile.promise;
+      await Promise.resolve();
+    });
+    await settle();
+    expect(queries).toBe(2);
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('idle');
+    expect(container.querySelector('[data-testid="full-reconciling"]')?.textContent).toBe('idle');
   });
 
   it('keeps saved recommendations when refresh cannot publish', async () => {

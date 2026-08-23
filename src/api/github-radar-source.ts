@@ -6,9 +6,12 @@ import {
   RADAR_STARS_PER_FOLLOWER,
   type RadarActivityRecord,
   type RadarPartialReason,
+  type RadarRefreshMode,
 } from '@/radar/radar-model';
 import type { RadarSourceSnapshot } from '@/radar/radar-contract';
 import { DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS } from '@/preferences';
+
+export const RADAR_INCREMENTAL_LOOKBACK_DAYS = 7 as const;
 
 const GRAPHQL_URL = 'https://api.github.com/graphql';
 const FOLLOWING_PAGE_SIZE = 100;
@@ -68,6 +71,8 @@ export interface FetchGitHubRadarOptions {
   now?: () => Date;
   signal?: AbortSignal;
   windowDays?: number;
+  refreshMode?: RadarRefreshMode;
+  lookbackDays?: number;
   maxFollowing?: number;
   batchSize?: number;
   starsPerFollower?: number;
@@ -549,6 +554,10 @@ export async function fetchGitHubRadar(
   const nowMillis = now.getTime();
   if (!Number.isFinite(nowMillis)) throw new GitHubRadarError('invalid_response');
   const windowDays = positiveInteger(options.windowDays, DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS);
+  const refreshMode: RadarRefreshMode = options.refreshMode === 'incremental' ? 'incremental' : 'full';
+  const lookbackDays = refreshMode === 'incremental'
+    ? RADAR_INCREMENTAL_LOOKBACK_DAYS
+    : windowDays;
   const maxFollowing = positiveInteger(options.maxFollowing, DEFAULT_MAX_FOLLOWING);
   const batchSize = Math.min(
     positiveInteger(options.batchSize, DEFAULT_BATCH_SIZE),
@@ -606,7 +615,7 @@ export async function fetchGitHubRadar(
   }
   if (accountLogin === null) throw new GitHubRadarError('invalid_response');
 
-  const cutoffMillis = nowMillis - windowDays * 24 * 60 * 60 * 1_000;
+  const cutoffMillis = nowMillis - lookbackDays * 24 * 60 * 60 * 1_000;
   const activities: RadarActivityRecord[] = [];
   let batchCount = 0;
   let scannedFollowingCount = 0;
@@ -675,6 +684,8 @@ export async function fetchGitHubRadar(
   return {
     accountLogin: accountLogin.toLocaleLowerCase('en-US'),
     windowDays,
+    refreshMode,
+    lookbackDays,
     activities: dedupeRadarActivities(activities),
     fetchedAt: now.toISOString(),
     followingCount,
