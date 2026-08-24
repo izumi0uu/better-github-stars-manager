@@ -363,7 +363,13 @@ describe('Integration (real query engine + Dexie)', () => {
       },
       { ...base, full_name: 'a-team/shared-tool', starred_at: '2026-06-24' },
     ] as Star[]);
-    invalidateCache();
+    const defaultResult = await queryStars({
+      filter: defaultFilter(),
+      accountLogin: ' A ',
+      offset: 0,
+      limit: 100,
+    });
+    assert.equal(defaultResult.rows.some((star) => star.full_name === 'a/public-owned-unstarred'), false);
 
     const result = await queryStars({
       filter: { ...defaultFilter(), onlyOwned: true },

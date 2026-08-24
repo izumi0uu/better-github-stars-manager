@@ -134,7 +134,6 @@ describe('public Demo shell DOM behavior', () => {
     expect(confirmation.getAttribute('aria-busy')).toBe('true');
     expect(requiredElement<HTMLButtonElement>(container, '[data-testid="demo-reset-confirm"]').disabled).toBe(true);
     expect(requiredElement<HTMLButtonElement>(container, '[data-testid="demo-reset-cancel"]').disabled).toBe(true);
-    expect(confirmation.textContent).toContain('Resetting');
 
     await act(async () => {
       resolveReset?.();

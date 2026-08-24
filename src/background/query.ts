@@ -16,7 +16,6 @@ import {
  * + sidebar facet counts, never the full row set.
  */
 
-
 export interface ResolvedLaunchCandidate {
   contract: LaunchCandidateContract;
   repositoryIds: string[];
@@ -29,7 +28,11 @@ export type ResultSubsetResolver = (
   generation: number,
 ) => readonly string[] | null;
 
-let cache: { source: StarsQuerySource; version: number } | null = null;
+let cache: {
+  source: StarsQuerySource;
+  version: number;
+  includesOwnedPublic: boolean;
+} | null = null;
 let cacheVersion = 0;
 
 /** Invalidate the in-memory cache (called after any sync/write). */
@@ -38,28 +41,34 @@ export function invalidateCache() {
   cache = null;
 }
 
-async function ensureCache() {
-  if (cache && cache.version === cacheVersion) return cache;
+async function ensureCache(includesOwnedPublic: boolean) {
+  if (
+    cache
+    && cache.version === cacheVersion
+    && cache.includesOwnedPublic === includesOwnedPublic
+  ) return cache;
+  const starsPromise = includesOwnedPublic
+    ? db.stars.toArray()
+    : db.stars.filter((star) => star.viewer_has_starred !== false).toArray();
   const [stars, tags, tagMeta] = await Promise.all([
-    db.stars.toArray(),
+    starsPromise,
     db.tags.toArray(),
     db.tagMeta.toArray(),
   ]);
   cache = {
     source: { stars, tags, tagMeta },
     version: cacheVersion,
+    includesOwnedPublic,
   };
   return cache;
 }
-
-
 
 /** Resolves every matching repository ID using the same authoritative filter/sort semantics as queryStars. */
 export async function queryAllMatchingStarIds(
   filter: StarsQueryParams['filter'],
   accountLogin: string | null = null,
 ): Promise<string[]> {
-  const { source } = await ensureCache();
+  const { source } = await ensureCache(filter.onlyOwned);
   return projectMatchingStars(source, filter, accountLogin).map((star) => star.full_name);
 }
 
@@ -69,7 +78,11 @@ export async function resolveLaunchCandidate(
   accountLogin: string | null = null,
 ): Promise<ResolvedLaunchCandidate> {
   validateLaunchCandidateContract(contract);
-  const { source } = await ensureCache();
+  const { source } = await ensureCache(
+    contract.kind === 'current_view'
+      ? contract.filter.onlyOwned
+      : contract.kind === 'selected_repository',
+  );
   let repositoryIds: string[];
   let label: string;
   let filterSnapshot: string;
@@ -132,7 +145,10 @@ export async function resolveLiveLaunchCandidate(
   accountLogin: string | null = null,
 ): Promise<ResolvedLaunchCandidate> {
   const resolved = await resolveLaunchCandidate(contract, resolveResultSubset, accountLogin);
-  const { source } = await ensureCache();
+  const { source } = await ensureCache(
+    contract.kind === 'selected_repository'
+      || (contract.kind === 'current_view' && contract.filter.onlyOwned),
+  );
   const liveRepositoryIds = new Set(
     source.stars.filter((star) => !star.tombstone).map((star) => star.full_name),
   );
@@ -145,6 +161,6 @@ export async function resolveLiveLaunchCandidate(
 }
 
 export async function queryStars(params: StarsQueryParams): Promise<StarsQueryResult> {
-  const { source } = await ensureCache();
+  const { source } = await ensureCache(params.filter.onlyOwned);
   return projectStarsQuery(source, params);
 }

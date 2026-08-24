@@ -49,7 +49,14 @@ describe('Agent artifact integrity', () => {
 
     await expect(verifyArtifactIntegrityManifest(artifact)).resolves.toBeUndefined();
     await expect(verifyChunkDigests(artifact.id, chunks)).resolves.toBeUndefined();
-    expect(sameArtifactIntegrity(integrity, structuredClone(integrity))).toBe(true);
+
+    const rebuilt = await buildArtifactIntegrityManifest(chunks);
+    expect(sameArtifactIntegrity(integrity, rebuilt)).toBe(true);
+    const changed = await buildArtifactIntegrityManifest([
+      await chunk(0, 'hello!'),
+      await chunk(1, '😀'),
+    ]);
+    expect(sameArtifactIntegrity(integrity, changed)).toBe(false);
   });
 
   it('rejects tampered manifest and chunk digests', async () => {

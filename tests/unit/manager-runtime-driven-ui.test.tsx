@@ -56,6 +56,7 @@ function createRuntime(resources: ManagerRuntime['resources'] = {
     readPreferences: async () => preferences,
     updatePreferences,
     queryStars: unused,
+    loadOwnedPublicRepositories: async () => ({ added: 0, updated: 0 }),
     querySurfaceBadges: unused,
     listExcludedTags: async () => [],
     setTags: async () => {},

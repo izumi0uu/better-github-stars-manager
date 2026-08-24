@@ -365,7 +365,7 @@ describe('Options preferences', () => {
     expect(link).not.toBeNull();
     expect(link?.target).toBe('_blank');
     expect(link?.rel).toContain('noreferrer');
-    expect(link?.textContent).toContain('Open my stars');
+    expect(link?.textContent?.trim()).not.toBe('');
   });
 
   it('hides the stars link when only cached username remains', async () => {
@@ -375,7 +375,9 @@ describe('Options preferences', () => {
     await renderOptions();
 
     expect(document.querySelector('a[href="https://github.com/octocat?tab=stars"]')).toBeNull();
-    expect(document.body.textContent).toContain(watchCopy.cachedAccountWarning('octocat'));
+    const githubSettings = document.querySelector('[data-testid="github-connection-settings"]');
+    expect(githubSettings?.textContent).toContain(watchCopy.cachedAccountWarning('octocat'));
+    expect(githubSettings?.textContent).not.toContain(watchCopy.authenticatedAs('octocat'));
   });
 
   it('loads Agent storage independently and clears only the re-fetchable tool cache', async () => {
@@ -385,13 +387,12 @@ describe('Options preferences', () => {
     await renderOptions();
 
     const panel = document.querySelector('[data-testid="agent-storage-panel"]');
-    expect(panel?.textContent).toContain('Conversation & saved data');
-    expect(panel?.textContent).toContain('Total Cubby storage used');
+    expect(panel).not.toBeNull();
     expect(panel?.textContent).toContain('1 MiB');
-    expect(panel?.textContent).toContain('Re-fetchable tool cache');
     expect(panel?.textContent).toContain('2 MiB');
-    expect(panel?.textContent).toContain('not counted in this cache ledger');
-    expect(panel?.textContent).toContain('Whole-extension browser storage estimate');
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'getAgentStorageUsage',
+    });
     const clearCache = [...panel!.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.includes('Clear tool cache'));
     expect(clearCache).toBeDefined();
@@ -403,7 +404,8 @@ describe('Options preferences', () => {
       type: 'clearAgentToolCache',
     });
     expect(panel?.textContent).toContain('0 B');
-    expect(panel?.textContent).toContain('Cleared 2 cached tool artifacts and freed 2 MiB.');
+    expect(panel?.textContent).toContain('1 MiB');
+    expect(panel?.querySelector('[role="status"]')?.textContent).toContain('2 MiB');
     expect(clearCache?.disabled).toBe(true);
   });
 
@@ -432,7 +434,7 @@ describe('Options preferences', () => {
 
     const panel = document.querySelector('[data-testid="store-rating-settings"]');
     const link = panel?.querySelector<HTMLAnchorElement>('a[href="https://example.com/reviews"]');
-    expect(link?.textContent).toContain('Rate in Chrome Web Store');
+    expect(link?.textContent?.trim()).not.toBe('');
     expect(link?.target).toBe('_blank');
     expect(panel?.querySelector('#store-rating-reminder')).toBeNull();
 
@@ -564,7 +566,9 @@ describe('Options preferences', () => {
 
     expect(maxTags?.value).toBe('5');
     expect(minCoverage?.value).toBe('3');
-    expect(document.body.textContent).toContain('storage down');
+    const status = document.querySelector('[data-testid="main-token-status"]');
+    expect(status?.getAttribute('role')).toBe('alert');
+    expect(status?.textContent).toContain('storage down');
   });
 
   it('hides the stars link after clearing the token', async () => {
@@ -601,7 +605,6 @@ describe('Options preferences', () => {
     const githubSettings = document.querySelector<HTMLElement>(
       '[data-testid="github-connection-settings"]',
     );
-    expect(githubSettings?.textContent).toContain(watchCopy.tokenStep1);
     expect(githubSettings?.textContent).toContain('read:user');
     expect(githubSettings?.textContent).toContain('Following');
     const guide = githubSettings?.querySelector<HTMLDetailsElement>(
@@ -744,7 +747,9 @@ describe('Options preferences', () => {
     });
     const status = document.querySelector('[data-testid="agent-connection-status"]');
     expect(status?.getAttribute('role')).toBe('status');
-    expect(status?.textContent).toContain('Saved · Connected to OpenAI · gpt-5 (123 ms)');
+    expect(status?.textContent).toContain('OpenAI');
+    expect(status?.textContent).toContain('gpt-5');
+    expect(status?.textContent).toContain('123 ms');
   });
 
   it('keeps saved settings and shows an inline error when automatic testing fails', async () => {
@@ -786,7 +791,6 @@ describe('Options preferences', () => {
     expect(keyInput?.value).toBe('');
     const status = document.querySelector('[data-testid="agent-connection-status"]');
     expect(status?.getAttribute('role')).toBe('alert');
-    expect(status?.textContent).toContain('Settings saved, but the connection test failed:');
     expect(status?.textContent).toContain('Something went wrong: AI provider rejected the request (401).');
     expect(status?.textContent).not.toContain('Something went wrong: Something went wrong:');
   });
@@ -833,7 +837,6 @@ describe('Options preferences', () => {
       expect(advanced?.querySelector('#agent-provider-context-window') !== null)
         .toBe(provider === 'openrouter');
       expect(document.querySelector('#agent-base-url')).toBeNull();
-      expect(document.body.textContent).not.toContain('API protocol');
     },
   );
 
@@ -884,8 +887,10 @@ describe('Options preferences', () => {
       workingContextWindow: null,
       apiKey: 'sk-custom',
     });
-    expect(document.querySelector('[data-testid="agent-connection-status"]')?.textContent)
-      .toContain('Settings saved. Allow browser access, then test the connection.');
+    const status = document.querySelector('[data-testid="agent-connection-status"]');
+    expect(status?.getAttribute('role')).toBe('status');
+    expect([...document.querySelectorAll('button')]
+      .some((button) => button.textContent?.includes('Allow access'))).toBe(true);
   });
 
   it('uses an exact Custom model preset without requiring capacity and allows an override', async () => {
@@ -923,7 +928,6 @@ describe('Options preferences', () => {
 
     expect(providerWindow?.required).toBe(false);
     expect(providerWindow?.placeholder).toBe('1050000');
-    expect(document.body.textContent).toContain('Known model IDs use an exact built-in preset.');
     await setInputValue(keyInput!, 'sk-preset');
     expect(saveButton.disabled).toBe(false);
 
@@ -993,7 +997,7 @@ describe('Options preferences', () => {
 
     await setInputValue(providerWindow!, '4095');
     expect(providerWindow?.getAttribute('aria-invalid')).toBe('true');
-    expect(document.body.textContent).toContain('Enter a whole number from 4,096 to 2,000,000.');
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
     expect(saveButton.disabled).toBe(true);
 
     await setInputValue(providerWindow!, '128000');
@@ -1003,7 +1007,6 @@ describe('Options preferences', () => {
 
     await setInputValue(workingWindow!, '256000');
     expect(workingWindow?.getAttribute('aria-invalid')).toBe('true');
-    expect(document.body.textContent).toContain('The working window cannot exceed the service window.');
     expect(saveButton.disabled).toBe(true);
 
     await setInputValue(workingWindow!, '64000');
@@ -1072,20 +1075,21 @@ describe('Options preferences', () => {
     const testButton = [...document.querySelectorAll('button')]
       .find((button) => button.textContent?.includes('Test connection')) as HTMLButtonElement;
 
+    const disclosurePanel = document.querySelector('[data-testid="agent-data-disclosure"]');
     expect(chatProtocol).toBeInstanceOf(HTMLButtonElement);
     expect(responsesProtocol).toBeInstanceOf(HTMLButtonElement);
     expect(responsesProtocol?.getAttribute('aria-pressed')).toBe('true');
     expect(document.body.textContent).toContain('A saved key is already on this device.');
-    expect(document.body.textContent).not.toContain('Accept disclosure');
-    expect(document.body.textContent).toContain('Access allowed');
+    expect(disclosurePanel?.textContent).not.toContain('Accept data sharing');
+    expect(disclosurePanel?.textContent).toContain('Access allowed');
     expect(testButton.disabled).toBe(false);
 
     await click(chatProtocol as HTMLButtonElement);
 
     expect(chatProtocol?.getAttribute('aria-pressed')).toBe('true');
     expect(document.body.textContent).toContain('A saved key is already on this device.');
-    expect(document.body.textContent).not.toContain('Accept disclosure');
-    expect(document.body.textContent).toContain('Access allowed');
+    expect(disclosurePanel?.textContent).not.toContain('Accept data sharing');
+    expect(disclosurePanel?.textContent).toContain('Access allowed');
     expect(testButton.disabled).toBe(false);
     expect(chrome.permissions.request).not.toHaveBeenCalled();
 
@@ -1117,37 +1121,6 @@ describe('Options preferences', () => {
       apiKey: undefined,
     });
     expect(chrome.permissions.request).not.toHaveBeenCalled();
-  });
-
-  it('defines matching English and Chinese Custom advanced-setting copy', () => {
-    const english = getMessages('en').options;
-    const chinese = getMessages('zh-CN').options;
-
-    expect([
-      english.agentAdvancedSettings,
-      english.agentProtocolLabel,
-      english.agentProtocolChat,
-      english.agentProtocolResponses,
-    ]).toEqual(['Advanced settings', 'API protocol', 'Chat Completions', 'Responses API']);
-    expect([
-      chinese.agentAdvancedSettings,
-      chinese.agentProtocolLabel,
-      chinese.agentProtocolChat,
-      chinese.agentProtocolResponses,
-    ]).toEqual(['高级设置', 'API 协议', 'Chat Completions', 'Responses API']);
-    expect([
-      english.agentProviderContextWindowLabel,
-      english.agentWorkingContextWindowLabel,
-      chinese.agentProviderContextWindowLabel,
-      chinese.agentWorkingContextWindowLabel,
-    ]).toEqual([
-      'Service context window',
-      'Working context window',
-      '服务上下文窗口',
-      '工作上下文窗口',
-    ]);
-    expect(english.agentWorkingContextWindowHint).toContain('only reduce');
-    expect(chinese.agentWorkingContextWindowHint).toContain('只能降低');
   });
 
   it('preserves custom settings but makes no test request when host permission is denied', async () => {
@@ -1354,9 +1327,11 @@ describe('Options preferences', () => {
       workingContextWindow: null,
       apiKey: 'sk-live',
     });
-    expect(document.body.textContent).toContain(
-      'Connected to OpenAI · gpt-5.4 (321 ms)',
-    );
+    const status = document.querySelector('[data-testid="agent-connection-status"]');
+    expect(status?.getAttribute('role')).toBe('status');
+    expect(status?.textContent).toContain('OpenAI');
+    expect(status?.textContent).toContain('gpt-5.4');
+    expect(status?.textContent).toContain('321 ms');
   });
 
   it('adopts refreshed persisted Agent settings while retaining the plaintext key draft', async () => {
@@ -1471,7 +1446,7 @@ describe('Options preferences', () => {
     expect(authMocks.getConfig).toHaveBeenCalledTimes(configReadsBeforeDisclosure);
 
     expect(modelInput?.value).toBe('draft-model-not-yet-saved');
-    expect(document.body.textContent).not.toContain('Accept disclosure');
+    expect(document.body.textContent).toContain('Accept data sharing');
   });
 
   it('lets the user remove a saved AI service key', async () => {

@@ -6,10 +6,16 @@ import type { Star, SyncProgress } from '@/types';
  * (authenticated `GET /user/starred`).
  */
 export interface StarSource {
-  /** Full pull: upsert every repo. Does NOT detect unstars (use rescan). */
-  syncFull(onProgress?: (p: SyncProgress) => void): Promise<{ added: number; updated: number }>;
+  /** Full pull: sync starred repos; owned-public rows are included by default unless excluded via includeOwnedPublic: false. */
+  syncFull(
+    onProgress?: (p: SyncProgress) => void,
+    options?: Readonly<{ includeOwnedPublic?: boolean }>,
+  ): Promise<{ added: number; updated: number }>;
 
-  /** Incremental: pull newest stars to the cursor and refresh every public repository owned by the account. */
+  /** Fetch and persist owned public repositories for background Stars hydration. */
+  syncOwnedPublicRepositories(): Promise<{ added: number; updated: number }>;
+
+  /** Incremental: pull newest starred repositories to the cursor. */
   syncIncremental(): Promise<{ added: number }>;
 
   /** Rescan: re-pull everything; tombstone local repos absent from the API (soft delete, tags/notes preserved). */

@@ -7,6 +7,7 @@ import {
   type ManagerRuntime,
   type ManagerRuntimeEventKind,
   type ManagerRuntimeListener,
+  type OwnedPublicRepositoryLoadResult,
   type ManagerSurfaceBadgeCounts,
   type WatchRepositoryDetail,
 } from '@/runtime/manager-runtime';
@@ -190,6 +191,10 @@ class DemoManagerRuntime implements ManagerRuntime {
       ...params,
       accountLogin: params.accountLogin ?? this.state.account.username ?? undefined,
     }));
+  }
+
+  async loadOwnedPublicRepositories(): Promise<OwnedPublicRepositoryLoadResult> {
+    return { added: 0, updated: 0 };
   }
 
   async querySurfaceBadges(): Promise<ManagerSurfaceBadgeCounts> {

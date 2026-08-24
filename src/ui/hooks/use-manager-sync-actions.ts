@@ -146,7 +146,7 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
       const tracksOnboarding = shouldTrackOnboardingSync(st.onboardingStage);
       setPendingAction(syncType);
       if (tracksOnboarding) await setOnboardingStage('syncing');
-      bgCall(syncType)
+      bgCall(syncType, syncType === 'syncFull' ? { includeOwnedPublic: false } : undefined)
         .then(async () => {
           refreshStars();
           await refreshStatus();

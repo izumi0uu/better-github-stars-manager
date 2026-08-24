@@ -17,10 +17,6 @@ const watchContractSource = readFileSync(
   new URL('../../src/watch/watch-contract.ts', import.meta.url),
   'utf8',
 );
-const watchRefreshSource = readFileSync(
-  new URL('../../src/background/watch-refresh.ts', import.meta.url),
-  'utf8',
-);
 
 function installOptionsSessionMock(initial: Record<string, unknown> = {}) {
   const values = new Map(Object.entries(initial));
@@ -194,7 +190,11 @@ describe('Watch background integration contract', () => {
     assert.match(watchContractSource, /hasMainToken: boolean/);
     assert.match(watchContractSource, /hasNotificationsToken: boolean/);
     assert.doesNotMatch(watchContractSource, /credentialSource\?:/);
-    assert.match(watchRefreshSource, /const hasNotificationsToken = !!auth\.notificationsToken/);
+    // The flag derivations are behaviorally covered in background-watch-refresh.test.ts
+    // (e.g. main retained while the dedicated Notifications token is cleared keeps
+    // hasMainToken true and hasNotificationsToken false). The checks above pin only the
+    // WatchStatus payload contract and its anti-leak boundary: the content-script status
+    // never exposes the credential source.
   });
 
   it('accepts ordinary and targeted openOptions without broadening the request', () => {
@@ -255,13 +255,13 @@ describe('Watch background integration contract', () => {
     assert.ok(rejectAt >= 0 && rejectAt < writeAt && writeAt < openAt);
   });
 
-  it('consumes the intent on mount and listens for a new session intent on an already-open page', () => {
-    assert.match(optionsSource, /consumeOptionsIntent\(\)/);
-    assert.match(optionsSource, /OPTIONS_INTENT_STORAGE_KEY/);
+  it('keeps the Options recovery intent inside session storage with listener cleanup', () => {
+    // Mount-time consumption and live routing of a new session intent are behaviorally
+    // covered in options-preferences.test.tsx. These checks pin only the boundaries that
+    // component test does not observe: session-area scoping, listener cleanup on unmount,
+    // and never persisting the transient intent to chrome.storage.local.
     assert.match(optionsSource, /areaName !== ["']session["']/);
-    assert.match(optionsSource, /changes\[OPTIONS_INTENT_STORAGE_KEY\]/);
-    assert.match(optionsSource, /chrome\.storage\.onChanged\.addListener\(listener\)/);
-    assert.match(optionsSource, /chrome\.storage\.onChanged\.removeListener\(listener\)/);
+    assert.match(optionsSource, /chrome\.storage\.onChanged\.removeListener\(handleStorageChanged\)/);
     assert.doesNotMatch(optionsSource, /storage\.local\.(?:set|remove)\([^)]*OPTIONS_INTENT_STORAGE_KEY/);
   });
 });

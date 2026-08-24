@@ -464,25 +464,25 @@ async function bulkPutStars(stars: Star[]): Promise<void> {
   }
 }
 
-async function refreshOwnedPublicRepositoriesIncrementally(username: string): Promise<number> {
+async function refreshOwnedPublicRepositories(username: string): Promise<{ added: number; updated: number }> {
   const ownedPublic = await fetchAllOwnedPublicRepositories(username);
-  if (ownedPublic.length === 0) return 0;
+  if (ownedPublic.length === 0) return { added: 0, updated: 0 };
   const existingOwned = await db.stars.bulkGet(ownedPublic.map((repo) => repo.full_name));
   const updates: Star[] = [];
   let added = 0;
+  let updated = 0;
   for (let index = 0; index < ownedPublic.length; index++) {
     const repository = ownedPublic[index];
     const existing = existingOwned[index];
-    // Incremental star pages cannot prove an older live Star was unstarred.
-    // Refresh canonical repository metadata from the complete owned snapshot,
-    // but preserve membership fields until rescan reconciles /user/starred.
+    // Preserve membership fields for rows that are already known as stars.
     updates.push(existing && !existing.tombstone && existing.viewer_has_starred !== false
       ? mergeOwnedPublicRepositoryMetadata(repository, existing)
       : toOwnedPublicRepository(repository, existing));
     if (!existing || existing.tombstone) added++;
+    else updated++;
   }
   await bulkPutStars(updates);
-  return added;
+  return { added, updated };
 }
 
 type ProgressReporter = ((progress: SyncProgress) => void) | undefined;
@@ -522,10 +522,13 @@ export const githubStarSource: StarSource = {
     return u;
   },
 
-  async syncFull(onProgress) {
+  async syncFull(onProgress, options) {
     const m = await getLocaleMessages();
-    const username = await authStore.getUsername();
-    if (!username) throw new Error('Username unknown — re-add the token in options.');
+    const includeOwnedPublic = options?.includeOwnedPublic !== false;
+    const username = includeOwnedPublic ? await authStore.getUsername() : null;
+    if (includeOwnedPublic && !username) {
+      throw new Error('Username unknown — re-add the token in options.');
+    }
     const [starredPageSet, ownedPublic] = await Promise.all([
       fetchAllStarredPages(
         'full',
@@ -533,7 +536,9 @@ export const githubStarSource: StarSource = {
         onProgress,
         (page, attempt) => m.background.fetchingPageRetry(page, attempt),
       ),
-      fetchAllOwnedPublicRepositories(username),
+      includeOwnedPublic && username
+        ? fetchAllOwnedPublicRepositories(username)
+        : Promise.resolve<RepositoryPayload[]>([]),
     ]);
     const existingOwned = ownedPublic.length > 0
       ? await db.stars.bulkGet(ownedPublic.map((repo) => repo.full_name))
@@ -563,9 +568,13 @@ export const githubStarSource: StarSource = {
     };
   },
 
-  async syncIncremental() {
+  async syncOwnedPublicRepositories() {
     const username = await authStore.getUsername();
     if (!username) throw new Error('Username unknown — re-add the token in options.');
+    return refreshOwnedPublicRepositories(username);
+  },
+
+  async syncIncremental() {
     const cursor = (await authStore.getConfig()).lastSyncStarredAt;
     let added = 0;
     let page = 1;
@@ -588,12 +597,12 @@ export const githubStarSource: StarSource = {
       }
       page++;
     }
-    const ownedAdded = await refreshOwnedPublicRepositoriesIncrementally(username);
+    // Owned public repositories are refreshed separately during Stars hydration.
     // Advance the cursor only after proving every newer item was covered.
     // If the page cap is hit first, a later full sync/rescan can still recover
     // the skipped window because the old cursor remains in place.
     if (newestStarredAt && crossedCursor) await authStore.update({ lastSyncStarredAt: newestStarredAt });
-    return { added: added + ownedAdded };
+    return { added };
   },
 
   async unstar(fullName: string) {

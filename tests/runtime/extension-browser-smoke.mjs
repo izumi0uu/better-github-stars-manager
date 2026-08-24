@@ -1761,6 +1761,141 @@ function createFirefoxAgentProviderFixture(guard) {
   });
 }
 
+// The PR-owned-public hydration (`useStars` -> `loadOwnedPublicRepositories`)
+// defers one `GET /users/smoke-user/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1`
+// in the background after the first successful Stars query. The guard
+// intercepts every background api.github.com fetch, so this legitimate
+// hydration must be answered deterministically with synthetic data instead of
+// being recorded as an unexpected network call. The match is pinned to the
+// exact production page-1 request (login, every paginator parameter, no extra
+// keys); anything else still falls through to the previous handle and fails
+// closed.
+function installOwnedPublicRepositoriesFixture(guard) {
+  const previousHandle = guard.handle;
+  const requestedUrls = [];
+  const authorizationMissing = [];
+  const handle = async (request) => {
+    if (request.method !== 'GET') return previousHandle ? previousHandle(request) : false;
+    const url = new URL(request.url);
+    const searchKeys = [...url.searchParams.keys()].sort();
+    const isOwnedPublicPage = url.origin === 'https://api.github.com'
+      && url.pathname === '/users/smoke-user/repos'
+      && searchKeys.length === 5
+      && searchKeys.join(',') === 'direction,page,per_page,sort,type'
+      && url.searchParams.get('type') === 'owner'
+      && url.searchParams.get('sort') === 'full_name'
+      && url.searchParams.get('direction') === 'asc'
+      && url.searchParams.get('per_page') === '100'
+      && url.searchParams.get('page') === '1';
+    if (!isOwnedPublicPage) return previousHandle ? previousHandle(request) : false;
+    // Production `fetchOwnedPublicPage` sends
+    // `tokenHeaders(token, 'application/vnd.github+json')`, so the request must
+    // carry an Authorization header. Assert presence only — never read, print,
+    // store, or compare the token value. A missing header must not receive the
+    // synthetic success response: fall through so the guard fails it and the
+    // smoke reports the leak.
+    const authorizationPresent = Object.keys(request.headers)
+      .some((name) => name.toLowerCase() === 'authorization');
+    if (!authorizationPresent) {
+      authorizationMissing.push(url.href);
+      return previousHandle ? previousHandle(request) : false;
+    }
+    requestedUrls.push(url.href);
+    // One synthetic empty page and no Link header: the production paginator
+    // stops after page 1, so the hydration settles with { added: 0, updated: 0 }.
+    await request.respond(200, '[]');
+    return true;
+  };
+  guard.handle = handle;
+  return {
+    requestedUrls,
+    authorizationMissing,
+    restore() {
+      if (guard.handle === handle) guard.handle = previousHandle;
+    },
+  };
+}
+
+// The stars-page remount mounts a fresh manager with the seeded credential,
+// which fires the manager's initial incremental sync (`GET /user/starred`,
+// page 1). Answer it deterministically with an empty page so the seeded local
+// library stays authoritative; any other URL still falls through and fails
+// closed in `unexpectedUrls`.
+function installFirefoxInitialStarsSyncFixture(guard) {
+  const previousHandle = guard.handle;
+  const requested = [];
+  const handle = async (request) => {
+    if (request.method !== 'GET') return previousHandle ? previousHandle(request) : false;
+    const url = new URL(request.url);
+    const isInitialStarsSync = url.href === 'https://api.github.com/user/starred?per_page=100&page=1';
+    if (!isInitialStarsSync) return previousHandle ? previousHandle(request) : false;
+    const authorizationPresent = Object.keys(request.headers)
+      .some((name) => name.toLowerCase() === 'authorization');
+    if (!authorizationPresent) return previousHandle ? previousHandle(request) : false;
+    requested.push(url.href);
+    // One empty page and no Link header: the incremental sync settles with
+    // { added: 0 }, leaving the seeded library authoritative.
+    await request.respond(200, '[]');
+    return true;
+  };
+  guard.handle = handle;
+  return Object.freeze({
+    requested,
+    restore() {
+      if (guard.handle === handle) guard.handle = previousHandle;
+    },
+  });
+}
+
+// The hydration is deferred with `setTimeout(0)` after the first successful
+// Stars query of a `useStars` instance, so the smoke must settle on an
+// observable signal instead of a fixed sleep: the fixture records the URL the
+// moment the guarded background fetch lands, and this bounded poll returns
+// once that request is observed (or fails the smoke loudly).
+const OWNED_PUBLIC_HYDRATION_TIMEOUT_MS = 30_000;
+async function waitForOwnedPublicHydration(fixture) {
+  const deadline = Date.now() + OWNED_PUBLIC_HYDRATION_TIMEOUT_MS;
+  while (fixture.requestedUrls.length === 0 && Date.now() < deadline) {
+    // A request that reaches the fixture without an Authorization header is
+    // recorded in `authorizationMissing` and deliberately falls through to
+    // fail closed. Fail the smoke immediately instead of burning the bounded
+    // wait on `requestedUrls`.
+    assert.equal(
+      fixture.authorizationMissing.length,
+      0,
+      'Firefox owned-public hydration reached the fixture without an Authorization header.',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(
+    fixture.authorizationMissing.length,
+    0,
+    'Firefox owned-public hydration reached the fixture without an Authorization header.',
+  );
+  assert.equal(
+    fixture.requestedUrls.length,
+    1,
+    'Firefox stars-page remount did not request the owned-public hydration within the bounded wait.',
+  );
+}
+
+// The hydration URL's query parameters are matched by key/value set, not raw
+// href equality: the browser may serialize `URLSearchParams` in any order, so
+// the recorded `href` is not byte-stable. Parsing both sides and comparing
+// origin, pathname, and sorted parameter entries preserves the exact
+// canonical contract (login, the five paginator keys, exact values) while
+// ignoring parameter order and rejecting missing, extra, duplicate, or
+// wrong-valued parameters.
+const OWNED_PUBLIC_HYDRATION_CANONICAL_URL = 'https://api.github.com/users/smoke-user/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1';
+function parseHydrationRequestUrl(raw) {
+  const url = new URL(raw);
+  const params = [...url.searchParams.entries()]
+    .sort(([nameA, valueA], [nameB, valueB]) => (
+      nameA < nameB ? -1 : nameA > nameB ? 1 : valueA < valueB ? -1 : valueA > valueB ? 1 : 0
+    ));
+  return { origin: url.origin, pathname: url.pathname, params };
+}
+
 async function clickTrustedDocumentButtonByText(page, label) {
   const handle = await page.evaluateHandle((expected) => [...document.querySelectorAll('button')]
     .find((candidate) => candidate.textContent?.trim() === expected) ?? null, label);
@@ -1776,16 +1911,26 @@ async function clickTrustedDocumentButtonByText(page, label) {
   }
 }
 
-async function grantFirefoxAgentDataPermission(page) {
+async function grantFirefoxAgentDataPermission(page, extId) {
   await page.evaluate(async () => {
     const key = 'gsm_config';
     const current = (await chrome.storage.local.get(key))[key] ?? {};
     await chrome.storage.local.set({ [key]: { ...current, agentDataDisclosureAcceptance: null } });
   });
-  try {
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 10_000 });
-  } catch (error) {
-    if (!/Navigation timeout/iu.test(formatError(error))) throw error;
+  if (runtimeTarget === 'firefox') {
+    // Firefox BiDi rejects `page.reload()` on moz-extension:// pages, so
+    // reset deterministically by closing the tab and reopening Options
+    // through the same executable-driven opener. The fresh tab renders the
+    // disclosure from the cleared storage state and is the page returned
+    // for subsequent provider configuration.
+    await page.close().catch(() => {});
+    page = await openExtensionPage(extId, OPTIONS_PATH, 'options-agent-permission');
+  } else {
+    try {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 10_000 });
+    } catch (error) {
+      if (!/Navigation timeout/iu.test(formatError(error))) throw error;
+    }
   }
   await page.waitForSelector('[data-testid="agent-data-disclosure"]', { timeout: 10_000 });
   await clickTrustedDocumentButtonByText(page, 'Accept data sharing');
@@ -1803,6 +1948,7 @@ async function grantFirefoxAgentDataPermission(page) {
     },
     { polling: DOM_POLLING_MS, timeout: 20_000 },
   );
+  return page;
 }
 
 async function configureFirefoxSavedProvider(page) {
@@ -2094,11 +2240,27 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
     'Cubby permission refusal reached the Provider network.',
   );
 
+  // The owned-public hydration is one-shot per `useStars` instance: it is
+  // deferred only after the first successful Stars query, and the ref
+  // suppresses duplicates until the load fails or resets. The stars-page
+  // manager is already mounted before this interval, so the parity actions
+  // alone do not deterministically produce a fresh successful query. Remount
+  // it under the fixture: a fresh `useStars` defers exactly one hydration
+  // after its first successful query, which the bounded wait below observes
+  // (a real request signal, not a sleep). The fixture answers it
+  // deterministically so it never lands in `unexpectedUrls`; the assertions
+  // below still fail closed for any other URL.
+  const ownedPublicFixture = installOwnedPublicRepositoriesFixture(guard);
   const provider = createFirefoxAgentProviderFixture(guard);
+  const starsSyncFixture = installFirefoxInitialStarsSyncFixture(guard);
   try {
-    const permissionPage = await openExtensionPage(extId, OPTIONS_PATH, 'options-agent-permission');
+    await starsPage.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await waitForManagerRoot(starsPage);
+    await waitForOwnedPublicHydration(ownedPublicFixture);
+
+    let permissionPage = await openExtensionPage(extId, OPTIONS_PATH, 'options-agent-permission');
     try {
-      await grantFirefoxAgentDataPermission(permissionPage);
+      permissionPage = await grantFirefoxAgentDataPermission(permissionPage, extId);
       await configureFirefoxSavedProvider(permissionPage);
     } finally {
       await permissionPage.close().catch(() => {});
@@ -2107,13 +2269,33 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
     await assertFirefoxCubbyTurn(starsPage);
     const organize = await runFirefoxFullLibraryOrganize(page);
     assertFirefoxProviderCoverage(provider.captures, organize, captureStart);
+    assert.deepEqual(
+      ownedPublicFixture.authorizationMissing,
+      [],
+      'Firefox owned-public hydration reached the fixture without an Authorization header.',
+    );
+    assert.deepEqual(
+      ownedPublicFixture.requestedUrls.map((raw) => parseHydrationRequestUrl(raw)),
+      [parseHydrationRequestUrl(OWNED_PUBLIC_HYDRATION_CANONICAL_URL)],
+      'Firefox stars-page remount did not deterministically settle the owned-public hydration.',
+    );
+    assert.equal(
+      starsSyncFixture.requested.length > 0
+        && starsSyncFixture.requested.every((url) => (
+          url === 'https://api.github.com/user/starred?per_page=100&page=1'
+        )),
+      true,
+      'Firefox stars-page remount did not settle only authenticated initial stars sync requests.',
+    );
     assert.equal(
       guard.unexpectedUrls.length,
       guardedRequestCount,
       'Firefox Cubby or Organize escaped the controlled Provider fixture.',
     );
   } finally {
+    starsSyncFixture.restore();
     provider.restore();
+    ownedPublicFixture.restore();
   }
 
   const portResult = await page.evaluate(() => new Promise((resolve) => {

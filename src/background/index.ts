@@ -254,8 +254,9 @@ import { writeOptionsIntent } from '@/utils/options-intent';
  */
 
 type Req = BgsmAgentSessionRequest
+  | { type: "syncOwnedPublicRepositories" }
   | { type: "syncIncremental" }
-  | { type: "syncFull" }
+  | { type: "syncFull"; includeOwnedPublic?: unknown }
   | { type: "syncRescan" }
   | { type: "autoAssignTags" }
   | { type: "gistPush" }
@@ -1553,7 +1554,7 @@ async function getStatusPayload() {
   };
 }
 
-async function performFullSyncJob() {
+async function performFullSyncJob(includeOwnedPublic = true) {
   const m = await getLocaleMessages();
   setProgress({
     phase: "full",
@@ -1561,7 +1562,9 @@ async function performFullSyncJob() {
     total: null,
     message: m.background.fetchingPages(1),
   });
-  const result = await githubStarSource.syncFull((p) => setProgress(p));
+  const result = includeOwnedPublic
+    ? await githubStarSource.syncFull((p) => setProgress(p))
+    : await githubStarSource.syncFull((p) => setProgress(p), { includeOwnedPublic: false });
   await reconcileWatchScopeAfterStarsChange();
   broadcastDataAndRecommendationsChanged();
   await finalizeTrackedOnboardingSync();
@@ -1569,8 +1572,8 @@ async function performFullSyncJob() {
   return result;
 }
 
-async function performFullSync() {
-  return run(performFullSyncJob, { kind: "stars-sync" });
+async function performFullSync(includeOwnedPublic = true) {
+  return run(() => performFullSyncJob(includeOwnedPublic), { kind: "stars-sync" });
 }
 
 const backfillExecutor = createBackfillExecutor({
@@ -1698,6 +1701,18 @@ async function handle(req: Req): Promise<Res> {
       return { ok: true, data: await bgsmAgentRuntime.sessionRpc.handle(agentSessionRequest) };
     }
     switch (req.type) {
+      case "syncOwnedPublicRepositories": {
+        if (!(await authStore.hasToken())) {
+          return { ok: false, error: (await getLocaleMessages()).background.noToken };
+        }
+        const result = await run(async () => {
+          const syncResult = await githubStarSource.syncOwnedPublicRepositories();
+          broadcastDataAndRecommendationsChanged();
+          return syncResult;
+        }, { kind: "stars-sync" });
+        return { ok: true, data: result };
+      }
+
       case "syncIncremental": {
         const m = await getLocaleMessages();
         if (!(await authStore.hasToken())) {
@@ -1726,7 +1741,10 @@ async function handle(req: Req): Promise<Res> {
           await failTrackedOnboardingSync();
           return { ok: false, error: m.background.noToken };
         }
-        const result = await performFullSync();
+        if (req.includeOwnedPublic !== undefined && typeof req.includeOwnedPublic !== "boolean") {
+          return { ok: false, error: "Invalid full-sync options" };
+        }
+        const result = await performFullSync(req.includeOwnedPublic ?? true);
         return { ok: true, data: { ...result, tagged: 0 } };
       }
       case "syncRescan": {

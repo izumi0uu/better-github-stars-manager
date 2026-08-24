@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Radar } from '@/ui/components/Radar';
+import { fitRadarProjectAvatarStack } from '@/ui/components/RadarActivityRows';
 import { RadarCommandBarActions } from '@/ui/components/RadarCommandBar';
 import { RadarStatusRibbon } from '@/ui/components/RadarStatusRibbon';
 import type { RadarQueryResponse, RadarStatus } from '@/radar/radar-contract';
@@ -461,6 +462,41 @@ describe('Radar', () => {
     expect(onUnstar).toHaveBeenCalledWith('owner/two', 'owner/two');
   });
 
+  it('includes the repository copy action in the quick-action arrow-key cycle', async () => {
+    const container = mount(<Radar {...surfaceProps()} />);
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Quick actions for owner/two"]',
+    );
+
+    await act(async () => { trigger?.click(); });
+    const popover = document.body.querySelector<HTMLElement>('[role="dialog"]');
+    const copyButton = popover?.querySelector<HTMLButtonElement>('button[aria-label="Copy repository URL"]');
+
+    expect(copyButton).not.toBeNull();
+    expect(copyButton?.hasAttribute('data-radar-action-stop')).toBe(true);
+
+    const stops = Array.from(
+      popover?.querySelectorAll<HTMLElement>('[data-radar-action-stop]:not(:disabled)') ?? [],
+    );
+    expect(stops).toContain(copyButton);
+
+    const starButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.trim().startsWith('Star on GitHub'));
+    expect(starButton).not.toBeNull();
+    starButton?.focus();
+    expect(document.activeElement).toBe(starButton);
+
+    await act(async () => {
+      popover?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    });
+    expect(document.activeElement).toBe(copyButton);
+
+    await act(async () => {
+      popover?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    expect(document.activeElement).toBe(starButton);
+  });
+
   it('keeps the Following project action bar opaque and allows Unstar', async () => {
     const result = radarResult();
     result.activities[0] = {
@@ -495,6 +531,72 @@ describe('Radar', () => {
     await act(async () => { unstarButton?.click(); });
     expect(onUnstar).toHaveBeenCalledWith('owner/one', 'owner/one');
   });
+  it('keeps project avatars prominent without widening narrow rows', () => {
+    const result = radarResult();
+    result.activities[0] = {
+      ...result.activities[0]!,
+      repositoryOwnerAvatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
+    };
+    const container = mount(<Radar {...surfaceProps({ result, view: 'projects' })} />);
+    const slot = container.querySelector<HTMLElement>(
+      '[data-radar-project="owner/one"] [data-repository-avatar-slot]',
+    );
+
+    expect(slot?.className).toContain('size-5');
+    expect(slot?.className).toContain('max-[520px]:size-4');
+  });
+
+  it('renders every fitted project activity avatar without an overflow badge', () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.matches('[data-radar-project-avatar-column]') ? 70 : 0;
+    });
+    const result = radarResult();
+    result.activities = [
+      activity('one', 'owner/one'),
+      activity('two', 'owner/one'),
+      activity('three', 'owner/one'),
+      activity('four', 'owner/one'),
+    ];
+    const container = mount(<Radar {...surfaceProps({ result, view: 'projects' })} />);
+    const stack = container.querySelector('[data-radar-project="owner/one"] [data-radar-project-avatar-stack]');
+
+    expect(stack?.querySelectorAll('[data-radar-project-avatar-slot]')).toHaveLength(4);
+    expect(stack?.querySelector('[data-radar-project-avatar-overflow]')).toBeNull();
+  });
+
+  it('renders an overflow badge only for actors hidden by the project width', () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.matches('[data-radar-project-avatar-column]') ? 50 : 0;
+    });
+    const result = radarResult();
+    result.activities = [
+      activity('one', 'owner/one'),
+      activity('two', 'owner/one'),
+      activity('three', 'owner/one'),
+      activity('four', 'owner/one'),
+    ];
+    const container = mount(<Radar {...surfaceProps({ result, view: 'projects' })} />);
+    const stack = container.querySelector('[data-radar-project="owner/one"] [data-radar-project-avatar-stack]');
+
+    expect(stack?.querySelectorAll('[data-radar-project-avatar-slot]')).toHaveLength(2);
+    expect(stack?.querySelector('[data-radar-project-avatar-overflow]')?.textContent).toBe('+3');
+  });
+
+  it('reports only hidden actors when a project avatar stack is constrained', () => {
+    expect(fitRadarProjectAvatarStack({
+      actorCount: 4,
+      availableWidth: 0,
+    })).toEqual({ visibleCount: 0, hiddenCount: 4 });
+    expect(fitRadarProjectAvatarStack({
+      actorCount: 4,
+      availableWidth: 50,
+    })).toEqual({ visibleCount: 1, hiddenCount: 3 });
+    expect(fitRadarProjectAvatarStack({
+      actorCount: 4,
+      availableWidth: 70,
+    })).toEqual({ visibleCount: 4, hiddenCount: 0 });
+  });
+
 
   it('switches Discover views with click and arrow-key tab semantics', async () => {
     const onDiscoverViewChange = vi.fn();

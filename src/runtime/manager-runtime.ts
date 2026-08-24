@@ -51,6 +51,11 @@ export type ManagerPreferences = Readonly<Pick<
 
 export type ManagerPreferencesPatch = Partial<ManagerPreferences>;
 
+export type OwnedPublicRepositoryLoadResult = Readonly<{
+  added: number;
+  updated: number;
+}>;
+
 export type ManagerSurfaceBadgeCounts = Readonly<{
   watchUnreadCount: number;
   radarUnseenCount: number;
@@ -94,6 +99,7 @@ export interface ManagerRuntime {
   updatePreferences(patch: ManagerPreferencesPatch): Promise<ManagerPreferences>;
 
   queryStars(params: StarsQueryParams): Promise<StarsQueryResult>;
+  loadOwnedPublicRepositories(): Promise<OwnedPublicRepositoryLoadResult>;
   querySurfaceBadges(): Promise<ManagerSurfaceBadgeCounts>;
   listExcludedTags(): Promise<string[]>;
   setTags(fullName: string, tags: readonly string[]): Promise<void>;

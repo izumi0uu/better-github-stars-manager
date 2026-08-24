@@ -30,12 +30,12 @@ describe('background sync auto-tag contract', () => {
   });
 
   it('runs full sync and backfill without auto-tagging or nested full-sync runners', () => {
-    assert.match(backgroundSource, /const result = await githubStarSource\.syncFull\(\(p\) => setProgress\(p\)\);/);
-    assert.match(backgroundSource, /async function performFullSync\(\)\s*\{\s*return run\(performFullSyncJob, \{ kind: "stars-sync" \}\);\s*\}/);
+    assert.match(backgroundSource, /const result = includeOwnedPublic\s+\? await githubStarSource\.syncFull\(\(p\) => setProgress\(p\)\)\s+: await githubStarSource\.syncFull\(\(p\) => setProgress\(p\), \{ includeOwnedPublic: false \}\);/);
+    assert.match(backgroundSource, /async function performFullSync\(includeOwnedPublic = true\)\s*\{\s*return run\(\(\) => performFullSyncJob\(includeOwnedPublic\), \{ kind: "stars-sync" \}\);\s*\}/);
     assert.match(backgroundSource, /setIdleMessage\(m\.background\.fullDone\(result\.added\)\)/);
 
     const fullBlock = caseBlock('syncFull', 'syncRescan');
-    assert.match(fullBlock, /performFullSync\(\)/);
+    assert.match(fullBlock, /performFullSync\(req\.includeOwnedPublic \?\? true\)/);
     assert.match(fullBlock, /tagged: 0/);
     assert.doesNotMatch(fullBlock, /autoTagAll/);
     assert.doesNotMatch(fullBlock, /autoAssignDone/);

@@ -9,9 +9,10 @@ import {
 } from 'lucide-react';
 import { MAX_SEMANTIC_TAG_NAME_BYTES } from '@/bgsm-agent/policy';
 import type { ProposalReviewRow } from '@/bgsm-agent/proposal';
-import type { WorkbenchProposalSummary } from '@/ui/agent-workbench-state';
 import { useI18n, type MessageCatalog } from '@/i18n';
 import { cn } from '@/lib/utils';
+import type { WorkbenchProposalSummary } from '@/ui/agent-workbench-state';
+import { CopyableRepositoryLink } from '@/ui/components/CopyableRepositoryLink';
 import { Button } from '@/ui/shadcn/button';
 import { Checkbox } from '@/ui/shadcn/checkbox';
 
@@ -366,16 +367,19 @@ const ProposalReviewRow = memo(function ProposalReviewRow({
         />
         <div className="min-w-0">
           <div className="flex min-w-0 items-start justify-between gap-2">
-            <a
-              className="inline-flex min-w-0 items-center gap-1 text-[12.5px] font-medium text-foreground hover:underline"
-              href={`https://github.com/${row.repositoryId}`}
-              target="_blank"
-              rel="noreferrer"
-              title={labels.reviewOpenRepository}
+            <CopyableRepositoryLink
+              resource={{
+                kind: 'repository',
+                fullName: row.repositoryId,
+                remoteUrl: `https://github.com/${row.repositoryId}`,
+              }}
+              disabled={!editable || rejected}
+              linkClassName="inline-flex min-w-0 items-center gap-1 text-[12.5px] font-medium text-foreground hover:underline"
+              linkProps={{ title: labels.reviewOpenRepository }}
             >
               <span className="truncate">{row.repositoryId}</span>
               <ExternalLink className="size-3 shrink-0" />
-            </a>
+            </CopyableRepositoryLink>
             <Button
               variant="ghost"
               size="sm"
