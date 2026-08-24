@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFilterStore } from './filter-store';
 import { useLibraryViewPrefs } from './hooks/use-library-view-prefs';
 import type { Star, Tag } from '@/types';
@@ -27,6 +27,7 @@ export function useStars(allowHashTagOverride = true) {
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastQueriedFilterKey, setLastQueriedFilterKey] = useState<string | null>(null);
+  const ownedPublicLoadRequestedRef = useRef(false);
 
   const filter = {
     query: f.query,
@@ -65,9 +66,19 @@ export function useStars(allowHashTagOverride = true) {
 
     setLoading(true);
     if (shouldFade) setPhase('fading-out');
-
+    let ownedLoadStart: ReturnType<typeof setTimeout> | undefined;
+    const requestOwnedPublicRepositories = () => {
+      if (ownedPublicLoadRequestedRef.current || ownedLoadStart !== undefined) return;
+      ownedLoadStart = setTimeout(() => {
+        ownedLoadStart = undefined;
+        if (cancelled || ownedPublicLoadRequestedRef.current) return;
+        ownedPublicLoadRequestedRef.current = true;
+        void runtime.loadOwnedPublicRepositories().catch(() => {
+          ownedPublicLoadRequestedRef.current = false;
+        });
+      }, 0);
+    };
     const runQuery = () => {
-      if (cancelled) return;
       runtime.queryStars({ filter, offset: 0, limit: Number.MAX_SAFE_INTEGER })
         .then((result) => {
           if (cancelled) return;
@@ -81,6 +92,7 @@ export function useStars(allowHashTagOverride = true) {
             setPhase('idle');
           }
           setLoading(false);
+          requestOwnedPublicRepositories();
         })
         .catch(() => {
           if (!cancelled) {
@@ -91,19 +103,20 @@ export function useStars(allowHashTagOverride = true) {
     };
 
     if (shouldFade) {
-      fadeOut = setTimeout(runQuery, FADE_OUT_MS);
+      fadeOut = setTimeout(() => { void runQuery(); }, FADE_OUT_MS);
     } else {
       runQuery();
     }
-
     return () => {
       cancelled = true;
       if (fadeOut) clearTimeout(fadeOut);
       if (fadeIn) clearTimeout(fadeIn);
+      clearTimeout(ownedLoadStart);
     };
   }, [f.libraryViewHydrated, filterKey, refreshKey, runtime]);
 
   useEffect(() => runtime.subscribe((event) => {
+    if (event.kind === 'reset') ownedPublicLoadRequestedRef.current = false;
     if (event.kind === 'data' || event.kind === 'reset') {
       setRefreshKey((key) => key + 1);
     }

@@ -25,6 +25,7 @@ import { useDelayedHoverIntent } from '@/ui/hooks/use-delayed-hover-intent';
 import { SearchMatchText } from '@/ui/components/SearchMatchText';
 import { RepositoryOwnerAvatar } from '@/ui/components/RepositoryOwnerAvatar';
 import { ManagerResourceLink, useManagerImage } from '@/ui/components/ManagerResource';
+import { CopyableRepositoryLink } from '@/ui/components/CopyableRepositoryLink';
 import { useManagerNow } from '@/ui/manager-runtime-context';
 import type {
   RadarActivitySearchResult,
@@ -84,6 +85,54 @@ function stopQuickActionPropagation(event: React.KeyboardEvent | React.MouseEven
 
 const RADAR_SEEN_HOVER_DELAY_MS = 180;
 const noopRadarSeenIntent = () => {};
+const RADAR_PROJECT_AVATAR_SIZE_PX = 22;
+const RADAR_PROJECT_AVATAR_OVERLAP_PX = 6;
+
+export interface RadarProjectAvatarFit {
+  visibleCount: number;
+  hiddenCount: number;
+}
+
+export function fitRadarProjectAvatarStack({
+  actorCount,
+  availableWidth,
+  avatarSize = RADAR_PROJECT_AVATAR_SIZE_PX,
+  avatarOverlap = RADAR_PROJECT_AVATAR_OVERLAP_PX,
+  overflowWidth = avatarSize,
+}: {
+  actorCount: number;
+  availableWidth: number;
+  avatarSize?: number;
+  avatarOverlap?: number;
+  overflowWidth?: number;
+}): RadarProjectAvatarFit {
+  const total = Math.max(0, Math.floor(actorCount));
+  if (total === 0) return { visibleCount: 0, hiddenCount: 0 };
+
+  const size = Math.max(0, avatarSize);
+  const step = Math.max(0, size - Math.max(0, avatarOverlap));
+  const width = Number.isFinite(availableWidth) ? Math.max(0, availableWidth) : 0;
+  const fullWidth = size + ((total - 1) * step);
+  if (fullWidth <= width) return { visibleCount: total, hiddenCount: 0 };
+
+  const moreWidth = Math.max(0, overflowWidth);
+  for (let visibleCount = total - 1; visibleCount >= 0; visibleCount -= 1) {
+    const requiredWidth = moreWidth + (visibleCount * step);
+    if (requiredWidth <= width) {
+      return { visibleCount, hiddenCount: total - visibleCount };
+    }
+  }
+  return { visibleCount: 0, hiddenCount: total };
+}
+
+function radarPixelToken(
+  styles: CSSStyleDeclaration,
+  property: string,
+  fallback: number,
+): number {
+  const value = Number.parseFloat(styles.getPropertyValue(property));
+  return Number.isFinite(value) ? value : fallback;
+}
 
 function isRadarDismissTarget(target: EventTarget | null): boolean {
   return target instanceof Element
@@ -335,18 +384,22 @@ function RadarQuickActions({
         })}
       >
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-          <ManagerResourceLink
+          <CopyableRepositoryLink
             resource={{
               kind: 'repository',
               fullName: target.repositoryFullName,
               remoteUrl: target.repositoryHtmlUrl,
             }}
-            className="min-w-0 flex-1 truncate rounded-sm font-mono text-xs font-semibold text-foreground underline underline-offset-2 outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
-            onPointerDown={stopQuickActionPropagation}
-            onClick={stopQuickActionPropagation}
+            className="min-w-0 flex-1"
+            linkClassName="min-w-0 flex-1 truncate rounded-sm font-mono text-xs font-semibold text-foreground underline underline-offset-2 outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
+            linkProps={{
+              onPointerDown: stopQuickActionPropagation,
+              onClick: stopQuickActionPropagation,
+            }}
+            copyProps={{ onPointerDown: stopQuickActionPropagation }}
           >
             {target.repositoryDisplayName}
-          </ManagerResourceLink>
+          </CopyableRepositoryLink>
           <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] tabular-nums text-muted-foreground">
             <Star className="size-3" aria-hidden="true" />
             {target.displayedStargazerCount.toLocaleString(locale)}
@@ -865,8 +918,11 @@ export function RadarProjectRow({
   const [composerOpen, setComposerOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [descriptionClipped, setDescriptionClipped] = useState(false);
+  const [avatarFit, setAvatarFit] = useState<{ activityCount: number; visibleCount: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const summaryRef = useRef<HTMLParagraphElement>(null);
+  const avatarColumnRef = useRef<HTMLDivElement>(null);
+  const avatarStackRef = useRef<HTMLDivElement>(null);
   const tagButtonRef = useRef<HTMLButtonElement>(null);
   const tagInputRef = useRef<HTMLInputElement>(null);
   const composerWasOpenRef = useRef(false);
@@ -884,9 +940,10 @@ export function RadarProjectRow({
       && (!query || tagName.toLocaleLowerCase('en-US').includes(query))
     )).slice(0, 8);
   }, [project.suggestedTags, project.tags, tagDraft]);
-  const stackActivities = project.activities.length > 4
-    ? project.activities.slice(0, 3)
-    : project.activities;
+  const avatarVisibleCount = avatarFit?.activityCount === project.activities.length
+    ? avatarFit.visibleCount
+    : project.activities.length;
+  const stackActivities = project.activities.slice(0, avatarVisibleCount);
   const extraActors = project.activities.length - stackActivities.length;
   const actorSummary = project.activities.length > 3
     ? project.activities.slice(0, 2)
@@ -971,6 +1028,54 @@ export function RadarProjectRow({
     return () => window.removeEventListener('resize', measure);
   }, [open, project.repositoryDescription]);
 
+  useLayoutEffect(() => {
+    const column = avatarColumnRef.current;
+    const stack = avatarStackRef.current;
+    const activityCount = project.activities.length;
+    if (!column || !stack) return;
+    if (activityCount === 0) {
+      setAvatarFit((current) => current === null ? current : null);
+      return;
+    }
+    const measure = () => {
+      const columnStyles = getComputedStyle(column);
+      const stackStyles = getComputedStyle(stack);
+      const availableWidth = Math.max(0, column.clientWidth
+        - radarPixelToken(columnStyles, 'padding-left', 0)
+        - radarPixelToken(columnStyles, 'padding-right', 0)
+        - radarPixelToken(stackStyles, 'padding-left', 0)
+        - radarPixelToken(stackStyles, 'padding-right', 0));
+
+      const fit = fitRadarProjectAvatarStack({
+        actorCount: activityCount,
+        availableWidth,
+        avatarSize: radarPixelToken(
+          stackStyles,
+          '--gsm-radar-project-avatar-size',
+          RADAR_PROJECT_AVATAR_SIZE_PX,
+        ),
+        avatarOverlap: radarPixelToken(
+          stackStyles,
+          '--gsm-radar-project-avatar-overlap',
+          RADAR_PROJECT_AVATAR_OVERLAP_PX,
+        ),
+      });
+      setAvatarFit((current) => (
+        current?.activityCount === activityCount
+          && current.visibleCount === fit.visibleCount
+          ? current
+          : { activityCount, visibleCount: fit.visibleCount }
+      ));
+    };
+    measure();
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(measure);
+      observer.observe(column);
+      return () => observer.disconnect();
+    }
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [project.activities.length]);
   return (
     <div className="relative min-w-0" data-radar-project={project.repositoryKey}>
       <div
@@ -1007,7 +1112,7 @@ export function RadarProjectRow({
             <RepositoryOwnerAvatar
               fullName={project.repositoryDisplayName}
               url={project.repositoryOwnerAvatarUrl}
-              className="size-4"
+              className="size-5 max-[520px]:size-4"
             />
             <ManagerResourceLink
               resource={{
@@ -1051,8 +1156,9 @@ export function RadarProjectRow({
             </span>
           </div>
         </div>
-        <div className="flex min-w-0 shrink-0 flex-col items-end pr-7 max-[520px]:max-w-[34%]">
+        <div ref={avatarColumnRef} data-radar-project-avatar-column className="flex min-w-0 shrink-0 flex-col items-end pr-7 max-[520px]:max-w-[34%]">
           <div
+            ref={avatarStackRef}
             className="flex max-w-full items-center justify-end pl-1"
             data-radar-project-avatar-stack
           >

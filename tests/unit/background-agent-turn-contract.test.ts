@@ -28,20 +28,10 @@ const turnServiceSource = readFileSync(
   new URL('../../src/background/bgsm-agent-turn-service.ts', import.meta.url),
   'utf8',
 );
-const turnPortSource = readFileSync(
-  new URL('../../src/background/bgsm-agent-turn-port.ts', import.meta.url),
-  'utf8',
-);
-const episodeDriverSource = readFileSync(
-  new URL('../../src/background/bgsm-agent-episode-driver.ts', import.meta.url),
-  'utf8',
-);
 const agentRuntimeSource = [
   backgroundSource,
   runtimeSource,
   turnServiceSource,
-  turnPortSource,
-  episodeDriverSource,
 ].join('\n');
 
 type Listener<T> = (value: T) => void;
@@ -170,8 +160,6 @@ describe('background Agent runtime composition contract', () => {
     assert.match(backgroundSource, /const bgsmAgentRuntime = createBgsmAgentRuntime\(\{/);
     assert.match(backgroundSource, /chrome\.runtime\.onConnect\.addListener/);
     assert.match(backgroundSource, /port\.name !== ["']bgsm-agent["']/);
-    assert.match(turnPortSource, /bgsmAgentTurnEvent/);
-    assert.match(turnPortSource, /bgsmAgentTurnResult/);
     assert.match(backgroundSource, /createProvider: createRegisteredAgentProvider/);
     assert.match(backgroundSource, /agentProviderGate\.createRuntimeProvider\(\)/);
     assert.match(backgroundSource, /agentProviderGate\.prepareRuntimeProvider\(\)/);
@@ -185,7 +173,6 @@ describe('background Agent runtime composition contract', () => {
     assert.match(turnServiceSource, /dependencies\.attemptCoordinator\.commit\(\{/);
 
     assert.match(turnServiceSource, /providerFingerprint: preparedRuntimeProvider\.fingerprint/);
-    assert.match(episodeDriverSource, /runAgentLoop\(\{/);
     assert.match(turnServiceSource, /const ledger = new AgentExecutionLedger\(\)/);
     assert.match(
       turnServiceSource,

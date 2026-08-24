@@ -175,6 +175,34 @@ function Harness({ allowHashTagOverride = true }: Readonly<{ allowHashTagOverrid
   );
 }
 
+type QueryRequest = {
+  type: 'query';
+  params: { filter: { tags: string[]; languages: string[]; sortKey: string; onlyUntagged: boolean } };
+};
+
+function isQueryRequest(value: unknown): value is QueryRequest {
+  if (typeof value !== 'object' || value === null || !('type' in value) || value.type !== 'query') return false;
+  if (!('params' in value) || typeof value.params !== 'object' || value.params === null) return false;
+  if (!('filter' in value.params) || typeof value.params.filter !== 'object' || value.params.filter === null) return false;
+  const filter = value.params.filter;
+  return 'tags' in filter
+    && 'languages' in filter
+    && 'sortKey' in filter
+    && 'onlyUntagged' in filter
+    && Array.isArray(filter.tags)
+    && Array.isArray(filter.languages)
+    && typeof filter.sortKey === 'string'
+    && typeof filter.onlyUntagged === 'boolean';
+}
+
+function queryMessage(): QueryRequest {
+  const messages: unknown[] = vi.mocked(chrome.runtime.sendMessage).mock.calls
+    .map(([message]) => message);
+  const request = messages.find(isQueryRequest);
+  if (!request) throw new Error('Expected a Stars query request');
+  return request;
+}
+
 async function flush() {
   await act(async () => {
     await Promise.resolve();
@@ -239,8 +267,9 @@ describe('library view preference persistence', () => {
 
     await flush();
 
-    expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(1);
-    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+    const firstMessage = vi.mocked(chrome.runtime.sendMessage).mock.calls[0]?.[0];
+    expect(firstMessage).toMatchObject({ type: 'query' });
+    expect(firstMessage).toMatchObject({
       type: 'query',
       params: {
         filter: {
@@ -260,6 +289,10 @@ describe('library view preference persistence', () => {
         limit: Number.MAX_SAFE_INTEGER,
       },
     });
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ type: 'syncOwnedPublicRepositories' });
     expect(authMocks.updateLibraryViewPrefs).not.toHaveBeenCalled();
   });
 
@@ -299,9 +332,7 @@ describe('library view preference persistence', () => {
     mountReact(<Harness />, mountedRoots);
     await flush();
 
-    const message = vi.mocked(chrome.runtime.sendMessage).mock.calls[0][0] as unknown as {
-      params: { filter: { tags: string[]; languages: string[]; sortKey: string } };
-    };
+    const message = queryMessage();
     expect(message.params.filter.tags).toEqual(['vue']);
     expect(message.params.filter.languages).toEqual(['TypeScript']);
     expect(message.params.filter.sortKey).toBe('created_at');
@@ -318,9 +349,7 @@ describe('library view preference persistence', () => {
     mountReact(<Harness allowHashTagOverride={false} />, mountedRoots);
     await flush();
 
-    const message = vi.mocked(chrome.runtime.sendMessage).mock.calls[0][0] as unknown as {
-      params: { filter: { tags: string[]; languages: string[]; sortKey: string } };
-    };
+    const message = queryMessage();
     expect(message.params.filter.tags).toEqual(['react']);
     expect(message.params.filter.languages).toEqual(['TypeScript']);
     expect(message.params.filter.sortKey).toBe('created_at');
@@ -334,9 +363,7 @@ describe('library view preference persistence', () => {
     mountReact(<Harness />, mountedRoots);
     await flush();
 
-    const message = vi.mocked(chrome.runtime.sendMessage).mock.calls[0][0] as unknown as {
-      params: { filter: { tags: string[]; languages: string[]; sortKey: string } };
-    };
+    const message = queryMessage();
     expect(message.params.filter.tags).toEqual(['react']);
     expect(message.params.filter.languages).toEqual(['TypeScript']);
     expect(message.params.filter.sortKey).toBe('created_at');
@@ -409,9 +436,7 @@ describe('library view preference persistence', () => {
     });
     await flush();
 
-    const message = vi.mocked(chrome.runtime.sendMessage).mock.calls[0][0] as unknown as {
-      params: { filter: { tags: string[]; languages: string[]; sortKey: string; onlyUntagged: boolean } };
-    };
+    const message = queryMessage();
     expect(message.params.filter.tags).toEqual(['vue']);
     expect(message.params.filter.languages).toEqual(['Rust']);
     expect(message.params.filter.onlyUntagged).toBe(true);

@@ -251,7 +251,7 @@ describe('GitHub stars sync regressions', () => {
     assert.equal((await db.stars.get('octocat/starred-owned'))?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/101?v=4');
   });
 
-  it('syncIncremental pulls newly owned public repositories without downgrading known stars', async () => {
+  it('syncIncremental skips owned repositories until the owning filter requests them', async () => {
     await resetState('2026-06-20T00:00:00Z');
     await db.stars.put(toStar(starredRepo('octocat/existing-starred', '2026-06-10T00:00:00Z', {
       description: 'stale starred metadata',
@@ -287,9 +287,19 @@ describe('GitHub stars sync regressions', () => {
       throw new Error(`unexpected fetch: ${url}`);
     }) as typeof fetch;
 
-    const result = await githubStarSource.syncIncremental();
+    const incremental = await githubStarSource.syncIncremental();
 
-    assert.deepEqual(result, { added: 1 });
+    assert.deepEqual(incremental, { added: 0 });
+    assert.deepEqual(requests, [
+      'https://api.github.com/user/starred?per_page=100&page=1',
+    ]);
+    assert.equal(await db.stars.get('octocat/latest-public'), undefined);
+    assert.equal((await db.stars.get('octocat/existing-starred'))?.description, 'stale starred metadata');
+    assert.equal((await db.stars.get('octocat/existing-starred'))?.archived, false);
+
+    const lazy = await githubStarSource.syncOwnedPublicRepositories();
+
+    assert.deepEqual(lazy, { added: 1, updated: 1 });
     assert.deepEqual(requests, [
       'https://api.github.com/user/starred?per_page=100&page=1',
       'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',

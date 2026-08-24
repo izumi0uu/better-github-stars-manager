@@ -428,11 +428,14 @@ describe('Agent diagnostics page', () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[data-testid="agent-diagnostics-build"]')?.textContent)
-      .toContain('Standalone read-only artifact viewer');
     expect(container.querySelector('[data-testid="agent-diagnostics-import-input"]')).not.toBeNull();
-    expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent))
-      .toEqual(['Traces', 'Analysis', 'Provider']);
+    const tabs = [...container.querySelectorAll('[role="tab"]')];
+    expect(tabs).toHaveLength(3);
+    expect(tabs[0]?.getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelector('[data-testid="agent-diagnostics-raw-capture"]')).toBeNull();
+    expect(container.querySelector('button[title="Export traces"]')).toBeNull();
+    expect(container.querySelector('button[title="Clear local traces"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-diagnostics-return-live"]')).toBeNull();
     expect(ports).toHaveLength(0);
   });
 
@@ -593,8 +596,9 @@ describe('Agent diagnostics page', () => {
       });
       await Promise.resolve();
     });
-    expect(container.querySelector('[data-testid="agent-diagnostics-status"]')?.textContent)
-      .toContain('Loading retained trace evidence');
+
+    expect(container.querySelector('[data-testid="agent-diagnostics-runs"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[title="Refresh traces"]')?.disabled).toBe(true);
     expect(evidence.posted.at(-1)).toEqual(expect.objectContaining({
       requestId: request.requestId,
       type: 'get_snapshot',
@@ -615,8 +619,8 @@ describe('Agent diagnostics page', () => {
       });
       await Promise.resolve();
     });
-    expect(container.querySelector('[data-testid="agent-diagnostics-status"]')?.textContent)
-      .toContain('2 retained operation');
+
+    expect(container.querySelectorAll('[data-testid^="agent-diagnostics-run-"]')).toHaveLength(2);
     expect(workers[0]?.posted.map((message) => message.type)).toEqual([
       'artifact_parse_start',
       'artifact_parse_chunk',
@@ -631,8 +635,8 @@ describe('Agent diagnostics page', () => {
 
     const activeRun = container.querySelector<HTMLButtonElement>('[data-testid="agent-diagnostics-run-agent_turn\\:active"]')!;
     expect(activeRun.getAttribute('aria-pressed')).toBe('true');
-    expect(container.querySelector('[data-testid="agent-diagnostics-build"]')?.textContent).toContain('Development build');
-    expect(container.querySelector('[data-testid="agent-diagnostics-timeline"]')?.textContent).toContain('phase_changed');
+
+    expect(container.querySelector('[data-testid="agent-diagnostics-event-active-phase"]')).not.toBeNull();
 
     const filter = container.querySelector<HTMLSelectElement>('[data-testid="agent-diagnostics-event-filter"]')!;
     await act(async () => {
@@ -640,15 +644,19 @@ describe('Agent diagnostics page', () => {
       filter.dispatchEvent(new Event('change', { bubbles: true }));
       await Promise.resolve();
     });
-    expect(container.querySelector('[data-testid="agent-diagnostics-timeline"]')?.textContent).not.toContain('root_started');
+
+    expect(container.querySelector('[data-testid="agent-diagnostics-event-active-start"]')).toBeNull();
 
     const event = container.querySelector<HTMLButtonElement>('[data-testid="agent-diagnostics-event-active-phase"] button')!;
     await act(async () => {
       event.click();
       await Promise.resolve();
     });
-    expect(container.querySelector('[data-testid="agent-diagnostics-event-details"]')?.textContent).toContain('phase_changed');
-    expect(container.querySelector('[data-testid="agent-diagnostics-event-data"]')?.textContent).toContain('provider');
+
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="agent-diagnostics-event-active-phase"] button')?.getAttribute('aria-pressed'))
+      .toBe('true');
+    expect(container.querySelector('[data-testid="agent-diagnostics-event-data"]')?.textContent)
+      .toContain('"phase": "provider"');
   });
 
   it('renders empty and evidence-error states and sends a confirmed clear only over the control Port', async () => {
@@ -818,10 +826,11 @@ describe('Agent diagnostics page', () => {
 
     expect([...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
       .find((button) => button.textContent === 'Traces')?.getAttribute('aria-selected')).toBe('true');
-    expect(container.querySelector('[data-testid="agent-diagnostics-event-details"]')?.textContent)
-      .toContain('provider_error');
+
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="agent-diagnostics-event-active-provider-error"] button')?.getAttribute('aria-pressed'))
+      .toBe('true');
     expect(container.querySelector('[data-testid="agent-diagnostics-event-data"]')?.textContent)
-      .toContain('context_length_exceeded');
+      .toContain('"code": "context_length_exceeded"');
   });
 
   it('warns about page-memory visibility and renders one-shot raw evidence without adding it to traces', async () => {
@@ -857,9 +866,10 @@ describe('Agent diagnostics page', () => {
       });
       await Promise.resolve();
     });
-    expect(toggle.textContent).toBe('Disarm');
+
     expect(container.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent)
-      .toContain('Armed for the next real Cubby run');
+      .toContain('raw_capture:ui');
+    expect(container.querySelector('[data-testid="agent-diagnostics-raw-events"]')).toBeNull();
 
     const common = {
       version: 1 as const,
@@ -912,10 +922,13 @@ describe('Agent diagnostics page', () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[data-testid="agent-diagnostics-raw-events"]')?.textContent)
-      .toContain('captured prompt in page memory');
+    const rawEvents = container.querySelector('[data-testid="agent-diagnostics-raw-events"]')!;
+    expect(rawEvents.querySelectorAll('li')).toHaveLength(3);
+    expect(rawEvents.textContent).toContain('provider_prompt');
+    expect(rawEvents.textContent).toContain('capture_completed');
+    expect(rawEvents.textContent).toContain('captured prompt in page memory');
     expect(container.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent)
-      .toContain('Capture completed for agent_turn:ui');
+      .toContain('agent_turn:ui');
     expect(container.querySelector('[data-testid="agent-diagnostics-timeline"]')?.textContent ?? '')
       .not.toContain('captured prompt in page memory');
 
@@ -924,8 +937,8 @@ describe('Agent diagnostics page', () => {
       await Promise.resolve();
     });
     expect(container.querySelector('[data-testid="agent-diagnostics-raw-events"]')).toBeNull();
-    expect(container.querySelector('[data-testid="agent-diagnostics-raw-status"]')?.textContent)
-      .toContain('Not armed');
+
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="agent-diagnostics-toggle-raw-capture"]')?.disabled).toBe(true);
   });
 
   it('exports the selected scope as Port chunks without stringifying React artifact state', async () => {
@@ -1033,10 +1046,11 @@ describe('Agent diagnostics page', () => {
     });
     expect(ports.every((port) => port.disconnected)).toBe(true);
     expect(container.querySelector('[data-testid="agent-diagnostics-raw-capture"]')).toBeNull();
-    expect(container.querySelector('[data-testid="agent-diagnostics-status"]')?.textContent)
-      .toContain('Read-only imported artifact');
-    expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent))
-      .toEqual(['Traces', 'Analysis', 'Provider']);
+
+    expect(container.querySelector('[data-testid="agent-diagnostics-return-live"]')).not.toBeNull();
+    const tabs = [...container.querySelectorAll('[role="tab"]')];
+    expect(tabs).toHaveLength(3);
+    expect(tabs[0]?.getAttribute('aria-selected')).toBe('true');
 
     cleanupMountedRootsAndBody(mountedRoots);
     ports = [];
@@ -1082,7 +1096,8 @@ describe('Agent diagnostics page', () => {
       });
       await Promise.resolve();
     });
-    expect(container.querySelector('[data-testid="agent-diagnostics-status"]')?.textContent)
-      .not.toContain('Read-only imported artifact');
+
+    expect(container.querySelector('[data-testid="agent-diagnostics-return-live"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-diagnostics-raw-capture"]')).not.toBeNull();
   });
 });

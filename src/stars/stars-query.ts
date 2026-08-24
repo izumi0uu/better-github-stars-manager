@@ -146,6 +146,7 @@ function filterAndSortRows(
   const ownedPrefix = accountLogin?.trim().normalize('NFKC').toLocaleLowerCase('en-US');
 
   const filtered = stars.filter((star) => {
+    if (!filter.onlyOwned && star.viewer_has_starred === false) return false;
     if (!filter.showTombstone && star.tombstone) return false;
     if (filter.onlyArchived && !star.archived) return false;
     if (

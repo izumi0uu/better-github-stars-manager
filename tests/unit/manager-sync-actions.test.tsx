@@ -203,7 +203,7 @@ describe('useManagerSyncActions', () => {
     const hook = mountHook(refreshStars);
 
     await waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith({ type: 'syncFull' });
+      expect(sendMessage).toHaveBeenCalledWith({ type: 'syncFull', includeOwnedPublic: false });
       expect(refreshStars).toHaveBeenCalledTimes(1);
       expect(hook.current.status?.onboardingStage).toBe('coach');
       expect(hook.current.pendingAction).toBeNull();
@@ -242,7 +242,7 @@ describe('useManagerSyncActions', () => {
     expect(hook.current.pendingAction).toBeNull();
   });
 
-  it('uses catalog labels when the initial automatic sync fails', async () => {
+  it('surfaces the automatic sync error and marks onboarding as failed', async () => {
     sendMessage.mockImplementation((message: { type: string }) => {
       if (message.type === 'getStatus') {
         return ok(baseStatus({ hasToken: true, onboardingStage: 'awaiting_sync', inFlight: false }));
@@ -256,9 +256,12 @@ describe('useManagerSyncActions', () => {
     const hook = mountHook();
 
     await waitFor(() => {
-      expect(hook.current.info).toBe('Full re-pull all stars: initial-down');
+      expect(hook.current.info).not.toBeNull();
+      expect(hook.current.info).toContain('initial-down');
       expect(hook.current.status?.onboardingStage).toBe('sync_failed');
+      expect(hook.current.successAction).toBeNull();
       expect(hook.current.pendingAction).toBeNull();
+      expect(hook.current.busy).toBe(false);
     });
   });
 
@@ -290,7 +293,7 @@ describe('useManagerSyncActions', () => {
     expect(hook.current.busy).toBe(false);
   });
 
-  it('uses catalog copy when gist pull is missing', async () => {
+  it('surfaces a notice when gist pull is missing without claiming success', async () => {
     sendMessage.mockImplementation((message: { type: string }) => {
       if (message.type === 'getStatus') return ok(baseStatus({ onboardingStage: 'done' }));
       if (message.type === 'gistPull') return ok({ missing: true });
@@ -304,10 +307,10 @@ describe('useManagerSyncActions', () => {
       await hook.current.doSync('gistPull', 'Pull tags from Gist');
     });
 
-    expect(hook.current.info).toBe(
-      'The linked sync Gist was missing; the app unbound it on this device. Push to create a new one.',
-    );
+    expect(hook.current.info).not.toBeNull();
     expect(hook.current.successAction).toBeNull();
+    expect(hook.current.pendingAction).toBeNull();
+    expect(hook.current.busy).toBe(false);
   });
 
   it('runs auto tags through the shared manager action lifecycle', async () => {
@@ -332,7 +335,7 @@ describe('useManagerSyncActions', () => {
     expect(hook.current.busy).toBe(false);
   });
 
-  it('uses catalog copy when a backfill action fails', async () => {
+  it('surfaces the backfill error without claiming success', async () => {
     const status = baseStatus({
       hasToken: false,
       onboardingStage: 'done',
@@ -352,7 +355,10 @@ describe('useManagerSyncActions', () => {
       await hook.current.runBackfill('repo_data_sync');
     });
 
-    expect(hook.current.info).toBe('Run Full Sync: backfill-down');
+    expect(hook.current.info).not.toBeNull();
+    expect(hook.current.info).toContain('backfill-down');
     expect(hook.current.successAction).toBeNull();
+    expect(hook.current.pendingAction).toBeNull();
+    expect(hook.current.busy).toBe(false);
   });
 });

@@ -5,15 +5,33 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManagerPanel } from '@/ui/ManagerPanel';
-import type * as FilterStore from '@/ui/filter-store';
 import type { SyncStatus } from '@/utils/messaging';
+import type * as FilterStore from '@/ui/filter-store';
 import { click } from './test-utils';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+type CapturedAgentHostProps = {
+  open: boolean;
+  defaultCandidate: { kind: string; selectedRepositoryIdHint?: string };
+  chatCandidate: { kind: string; selectedRepositoryIdHint?: string };
+  scopeCount: number;
+};
+
+const agentHostMocks = vi.hoisted(() => ({
+  props: [] as CapturedAgentHostProps[],
+}));
+
 const starsMocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   tagTree: { tags: [] as { name: string; count: number }[], total: 0 },
+}));
+
+vi.mock('@/ui/components/AgentHost', () => ({
+  AgentHost: (props: CapturedAgentHostProps) => {
+    agentHostMocks.props.push(props);
+    return null;
+  },
 }));
 
 vi.mock('@/ui/use-stars', () => ({
@@ -127,6 +145,10 @@ vi.mock('@/ui/components/ActiveFilterChips', () => ({
   ActiveFilterChips: () => null,
 }));
 
+vi.mock('@/ui/components/FilterSidebar', () => ({
+  FilterSidebar: () => <div />,
+}));
+
 vi.mock('@/ui/components/FloatingLocaleToggle', () => ({
   FloatingLocaleToggle: () => null,
 }));
@@ -136,7 +158,20 @@ vi.mock('@/ui/components/RepoDetailPanel', () => ({
 }));
 
 vi.mock('@/ui/components/StarsTable', () => ({
-  StarsTable: () => <div data-testid="stars-table" />,
+  StarsTable: ({
+    onSelect,
+    selectedFullName,
+  }: {
+    onSelect?: (fullName: string) => void;
+    selectedFullName?: string | null;
+  }) => (
+    <div data-testid="stars-table">
+      <button type="button" data-testid="select-repo" onClick={() => onSelect?.('owner/repo')}>
+        Select owner/repo
+      </button>
+      <span data-testid="selected-full-name">{selectedFullName ?? ''}</span>
+    </div>
+  ),
 }));
 
 vi.mock('@/ui/components/LayoutEditChrome', () => ({
@@ -169,7 +204,7 @@ function ok(data?: unknown) {
   return Promise.resolve({ ok: true, data });
 }
 
-function mountPanel(deleteAllTags: () => Promise<unknown>) {
+function mountPanel() {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -180,7 +215,6 @@ function mountPanel(deleteAllTags: () => Promise<unknown>) {
     if (message.type === 'getAccount') {
       return ok({ username: 'octocat', avatarUrl: 'avatar.png', displayName: 'Octo Cat', gistId: null });
     }
-    if (message.type === 'deleteAllTags') return deleteAllTags();
     throw new Error(`Unexpected message: ${message.type}`);
   });
 
@@ -213,11 +247,8 @@ async function waitFor(assertion: () => void) {
 }
 
 beforeEach(() => {
+  agentHostMocks.props.length = 0;
   starsMocks.refresh.mockReset();
-  starsMocks.tagTree = {
-    tags: [{ name: 'react', count: 2 }, { name: 'ui', count: 1 }],
-    total: 2,
-  };
   messageListeners = [];
   sendMessage.mockReset();
   vi.stubGlobal('chrome', {
@@ -261,46 +292,57 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('ManagerWorkspace sidebar tag mutation wiring', () => {
-  it('surfaces the sidebar mutation message and refreshes exactly once on success', async () => {
-    const { container } = mountPanel(() => ok({ assignmentsRemoved: 3, distinctTagsRemoved: 2 }));
+describe('ManagerPanel Agent entry wiring', () => {
+  it('mounts the lazy Agent entry only on open and carries the selected repository as chat context', async () => {
+    const { container } = mountPanel();
     await waitFor(() => {
-      expect(container.querySelector('button[title="Delete all tags"]')).not.toBeNull();
+      expect(container.querySelector('[data-coach-target="agent"]')).not.toBeNull();
     });
+    expect(agentHostMocks.props).toHaveLength(0);
 
-    const deleteAll = container.querySelector<HTMLButtonElement>('button[title="Delete all tags"]');
-    expect(deleteAll).not.toBeNull();
-    await click(deleteAll!);
-    const confirm = container.querySelector<HTMLButtonElement>(
-      'button[title="Delete all tags from every repo? This cannot be undone."]',
-    );
-    expect(confirm).not.toBeNull();
-    await click(confirm!);
-
+    await click(container.querySelector('[data-coach-target="agent"]') as HTMLButtonElement);
     await waitFor(() => {
-      expect(container.querySelector('.gsm-helper-text')).not.toBeNull();
+      expect(agentHostMocks.props.length).toBeGreaterThan(0);
     });
-    expect(starsMocks.refresh).toHaveBeenCalledTimes(1);
+    let captured = agentHostMocks.props.at(-1);
+    expect(captured?.open).toBe(true);
+    expect(captured?.defaultCandidate.kind).toBe('current_view');
+    expect(captured?.chatCandidate.kind).toBe('current_view');
+
+    await click(container.querySelector('[data-testid="select-repo"]') as HTMLButtonElement);
+    await waitFor(() => {
+      captured = agentHostMocks.props.at(-1);
+      expect(captured?.chatCandidate.kind).toBe('selected_repository');
+    });
+    expect(captured?.chatCandidate.selectedRepositoryIdHint).toBe('owner/repo');
+    expect(captured?.defaultCandidate.selectedRepositoryIdHint).toBe('owner/repo');
+    expect(captured?.scopeCount).toBe(1);
+    // Opening the Agent entry does not clear the repository selection.
+    expect(container.querySelector('[data-testid="selected-full-name"]')?.textContent).toBe('owner/repo');
   });
 
-  it('shows a failure notice without refreshing when the tag mutation fails', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { container } = mountPanel(() => Promise.resolve({ ok: false, error: 'delete failed' }));
+  it('keeps the deterministic Auto Tags prompt separate from the Agent entry', async () => {
+    const { container } = mountPanel();
     await waitFor(() => {
-      expect(container.querySelector('button[title="Delete all tags"]')).not.toBeNull();
+      expect(container.querySelector('[data-coach-target="auto-tags"]')).not.toBeNull();
+      expect(container.querySelector('[data-coach-target="agent"]')).not.toBeNull();
     });
+    const autoTags = container.querySelector('[data-coach-target="auto-tags"]') as HTMLButtonElement;
+    const agent = container.querySelector('[data-coach-target="agent"]') as HTMLButtonElement;
+    expect(autoTags).not.toBe(agent);
+    expect(autoTags.contains(agent) || agent.contains(autoTags)).toBe(false);
 
-    const deleteAll = container.querySelector<HTMLButtonElement>('button[title="Delete all tags"]');
-    expect(deleteAll).not.toBeNull();
-    await click(deleteAll!);
-    await click(container.querySelector<HTMLButtonElement>(
-      'button[title="Delete all tags from every repo? This cannot be undone."]',
-    )!);
-
+    await click(autoTags);
     await waitFor(() => {
-      expect(container.querySelector('.gsm-helper-text')).not.toBeNull();
+      expect(container.querySelector('[data-testid="auto-tag-agent-prompt"]')).not.toBeNull();
     });
-    expect(starsMocks.refresh).not.toHaveBeenCalled();
-    consoleError.mockRestore();
+    expect(agentHostMocks.props).toHaveLength(0);
+
+    await click(agent);
+    await waitFor(() => {
+      expect(agentHostMocks.props.length).toBeGreaterThan(0);
+    });
+    expect(container.querySelector('[data-testid="auto-tag-agent-prompt"]')).not.toBeNull();
+    expect(agentHostMocks.props.at(-1)?.open).toBe(true);
   });
 });

@@ -4,6 +4,7 @@ import {
   GITHUB_CREDENTIALS_STORAGE_KEY,
 } from '@/auth/auth-store';
 import type {
+  OwnedPublicRepositoryLoadResult,
   DeleteAllTagsResult,
   ManagerAccount,
   ManagerPreferences,
@@ -175,6 +176,10 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
 
   queryStars(params: StarsQueryParams): Promise<StarsQueryResult> {
     return bgCall<StarsQueryResult>('query', { params });
+  }
+
+  loadOwnedPublicRepositories(): Promise<OwnedPublicRepositoryLoadResult> {
+    return bgCall<OwnedPublicRepositoryLoadResult>('syncOwnedPublicRepositories');
   }
 
   querySurfaceBadges(): Promise<ManagerSurfaceBadgeCounts> {

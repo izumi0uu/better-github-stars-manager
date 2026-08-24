@@ -130,6 +130,14 @@ describe('ExtensionManagerRuntime', () => {
     ]);
   });
 
+  it('maps on-demand owned repository loading to its background command', async () => {
+    adapterMocks.bgCall.mockResolvedValue({ added: 2, updated: 3 });
+    const runtime = new ExtensionManagerRuntime();
+
+    await expect(runtime.loadOwnedPublicRepositories()).resolves.toEqual({ added: 2, updated: 3 });
+    expect(adapterMocks.bgCall).toHaveBeenCalledWith('syncOwnedPublicRepositories');
+  });
+
   it('maps Watch history and visible-load commands to dedicated envelopes', async () => {
     const historyResult = { addedCount: 2, hasMore: true, status: {} };
     adapterMocks.bgCall
