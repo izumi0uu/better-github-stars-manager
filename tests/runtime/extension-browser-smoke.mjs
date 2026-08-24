@@ -1773,6 +1773,7 @@ function createFirefoxAgentProviderFixture(guard) {
 function installOwnedPublicRepositoriesFixture(guard) {
   const previousHandle = guard.handle;
   const requestedUrls = [];
+  const authorizationMissing = [];
   const handle = async (request) => {
     if (request.method !== 'GET') return previousHandle ? previousHandle(request) : false;
     const url = new URL(request.url);
@@ -1787,6 +1788,18 @@ function installOwnedPublicRepositoriesFixture(guard) {
       && url.searchParams.get('per_page') === '100'
       && url.searchParams.get('page') === '1';
     if (!isOwnedPublicPage) return previousHandle ? previousHandle(request) : false;
+    // Production `fetchOwnedPublicPage` sends
+    // `tokenHeaders(token, 'application/vnd.github+json')`, so the request must
+    // carry an Authorization header. Assert presence only — never read, print,
+    // store, or compare the token value. A missing header must not receive the
+    // synthetic success response: fall through so the guard fails it and the
+    // smoke reports the leak.
+    const authorizationPresent = Object.keys(request.headers)
+      .some((name) => name.toLowerCase() === 'authorization');
+    if (!authorizationPresent) {
+      authorizationMissing.push(url.href);
+      return previousHandle ? previousHandle(request) : false;
+    }
     requestedUrls.push(url.href);
     // One synthetic empty page and no Link header: the production paginator
     // stops after page 1, so the hydration settles with { added: 0, updated: 0 }.
@@ -1796,10 +1809,29 @@ function installOwnedPublicRepositoriesFixture(guard) {
   guard.handle = handle;
   return {
     requestedUrls,
+    authorizationMissing,
     restore() {
       if (guard.handle === handle) guard.handle = previousHandle;
     },
   };
+}
+
+// The hydration is deferred with `setTimeout(0)` after the first successful
+// Stars query of a `useStars` instance, so the smoke must settle on an
+// observable signal instead of a fixed sleep: the fixture records the URL the
+// moment the guarded background fetch lands, and this bounded poll returns
+// once that request is observed (or fails the smoke loudly).
+const OWNED_PUBLIC_HYDRATION_TIMEOUT_MS = 30_000;
+async function waitForOwnedPublicHydration(fixture) {
+  const deadline = Date.now() + OWNED_PUBLIC_HYDRATION_TIMEOUT_MS;
+  while (fixture.requestedUrls.length === 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(
+    fixture.requestedUrls.length,
+    1,
+    'Firefox stars-page remount did not request the owned-public hydration within the bounded wait.',
+  );
 }
 
 async function clickTrustedDocumentButtonByText(page, label) {
@@ -2135,13 +2167,23 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
     'Cubby permission refusal reached the Provider network.',
   );
 
-  // The first successful Stars query in this interval defers the owned-public
-  // hydration, which is a legitimate guarded background request. Answer it
-  // deterministically so it never lands in `unexpectedUrls`; the assertion
-  // below still fails closed for any other URL.
+  // The owned-public hydration is one-shot per `useStars` instance: it is
+  // deferred only after the first successful Stars query, and the ref
+  // suppresses duplicates until the load fails or resets. The stars-page
+  // manager is already mounted before this interval, so the parity actions
+  // alone do not deterministically produce a fresh successful query. Remount
+  // it under the fixture: a fresh `useStars` defers exactly one hydration
+  // after its first successful query, which the bounded wait below observes
+  // (a real request signal, not a sleep). The fixture answers it
+  // deterministically so it never lands in `unexpectedUrls`; the assertions
+  // below still fail closed for any other URL.
   const ownedPublicFixture = installOwnedPublicRepositoriesFixture(guard);
   const provider = createFirefoxAgentProviderFixture(guard);
   try {
+    await starsPage.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await waitForManagerRoot(starsPage);
+    await waitForOwnedPublicHydration(ownedPublicFixture);
+
     const permissionPage = await openExtensionPage(extId, OPTIONS_PATH, 'options-agent-permission');
     try {
       await grantFirefoxAgentDataPermission(permissionPage);
@@ -2154,9 +2196,14 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
     const organize = await runFirefoxFullLibraryOrganize(page);
     assertFirefoxProviderCoverage(provider.captures, organize, captureStart);
     assert.deepEqual(
+      ownedPublicFixture.authorizationMissing,
+      [],
+      'Firefox owned-public hydration reached the fixture without an Authorization header.',
+    );
+    assert.deepEqual(
       ownedPublicFixture.requestedUrls,
       ['https://api.github.com/users/smoke-user/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1'],
-      'Firefox Cubby or Organize did not settle the owned-public hydration deterministically.',
+      'Firefox stars-page remount did not deterministically settle the owned-public hydration.',
     );
     assert.equal(
       guard.unexpectedUrls.length,
