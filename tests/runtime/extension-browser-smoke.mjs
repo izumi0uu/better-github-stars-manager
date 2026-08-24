@@ -1856,13 +1856,44 @@ const OWNED_PUBLIC_HYDRATION_TIMEOUT_MS = 30_000;
 async function waitForOwnedPublicHydration(fixture) {
   const deadline = Date.now() + OWNED_PUBLIC_HYDRATION_TIMEOUT_MS;
   while (fixture.requestedUrls.length === 0 && Date.now() < deadline) {
+    // A request that reaches the fixture without an Authorization header is
+    // recorded in `authorizationMissing` and deliberately falls through to
+    // fail closed. Fail the smoke immediately instead of burning the bounded
+    // wait on `requestedUrls`.
+    assert.equal(
+      fixture.authorizationMissing.length,
+      0,
+      'Firefox owned-public hydration reached the fixture without an Authorization header.',
+    );
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
+  assert.equal(
+    fixture.authorizationMissing.length,
+    0,
+    'Firefox owned-public hydration reached the fixture without an Authorization header.',
+  );
   assert.equal(
     fixture.requestedUrls.length,
     1,
     'Firefox stars-page remount did not request the owned-public hydration within the bounded wait.',
   );
+}
+
+// The hydration URL's query parameters are matched by key/value set, not raw
+// href equality: the browser may serialize `URLSearchParams` in any order, so
+// the recorded `href` is not byte-stable. Parsing both sides and comparing
+// origin, pathname, and sorted parameter entries preserves the exact
+// canonical contract (login, the five paginator keys, exact values) while
+// ignoring parameter order and rejecting missing, extra, duplicate, or
+// wrong-valued parameters.
+const OWNED_PUBLIC_HYDRATION_CANONICAL_URL = 'https://api.github.com/users/smoke-user/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1';
+function parseHydrationRequestUrl(raw) {
+  const url = new URL(raw);
+  const params = [...url.searchParams.entries()]
+    .sort(([nameA, valueA], [nameB, valueB]) => (
+      nameA < nameB ? -1 : nameA > nameB ? 1 : valueA < valueB ? -1 : valueA > valueB ? 1 : 0
+    ));
+  return { origin: url.origin, pathname: url.pathname, params };
 }
 
 async function clickTrustedDocumentButtonByText(page, label) {
@@ -2244,8 +2275,8 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
       'Firefox owned-public hydration reached the fixture without an Authorization header.',
     );
     assert.deepEqual(
-      ownedPublicFixture.requestedUrls,
-      ['https://api.github.com/users/smoke-user/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1'],
+      ownedPublicFixture.requestedUrls.map((raw) => parseHydrationRequestUrl(raw)),
+      [parseHydrationRequestUrl(OWNED_PUBLIC_HYDRATION_CANONICAL_URL)],
       'Firefox stars-page remount did not deterministically settle the owned-public hydration.',
     );
     assert.equal(
