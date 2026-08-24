@@ -319,7 +319,7 @@ describe('drawer and popup integration', () => {
     );
     const link = container.querySelector<HTMLAnchorElement>('a[href="https://github.com/owner/repo"]');
     expect(link).not.toBeNull();
-    const copyButton = container.querySelector<HTMLButtonElement>('button[aria-label="Copy repository URL"]');
+    const copyButton = container.querySelector<HTMLButtonElement>(`button[aria-label="${getMessages('en').common.copyRepository}"]`);
     expect(copyButton).not.toBeNull();
     await clickCopy(copyButton!);
     expect(writeTextMock).toHaveBeenCalledWith('https://github.com/owner/repo');
@@ -347,7 +347,7 @@ describe('drawer and popup integration', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    const copyButton = container.querySelector<HTMLButtonElement>('button[aria-label="Copy repository URL"]');
+    const copyButton = container.querySelector<HTMLButtonElement>(`button[aria-label="${getMessages('en').common.copyRepository}"]`);
     expect(copyButton?.disabled).toBe(true);
     expect(container.querySelector('a[aria-disabled="true"]')).not.toBeNull();
   });

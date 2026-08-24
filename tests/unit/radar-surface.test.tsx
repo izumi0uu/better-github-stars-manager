@@ -462,6 +462,41 @@ describe('Radar', () => {
     expect(onUnstar).toHaveBeenCalledWith('owner/two', 'owner/two');
   });
 
+  it('includes the repository copy action in the quick-action arrow-key cycle', async () => {
+    const container = mount(<Radar {...surfaceProps()} />);
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Quick actions for owner/two"]',
+    );
+
+    await act(async () => { trigger?.click(); });
+    const popover = document.body.querySelector<HTMLElement>('[role="dialog"]');
+    const copyButton = popover?.querySelector<HTMLButtonElement>('button[aria-label="Copy repository URL"]');
+
+    expect(copyButton).not.toBeNull();
+    expect(copyButton?.hasAttribute('data-radar-action-stop')).toBe(true);
+
+    const stops = Array.from(
+      popover?.querySelectorAll<HTMLElement>('[data-radar-action-stop]:not(:disabled)') ?? [],
+    );
+    expect(stops).toContain(copyButton);
+
+    const starButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.trim().startsWith('Star on GitHub'));
+    expect(starButton).not.toBeNull();
+    starButton?.focus();
+    expect(document.activeElement).toBe(starButton);
+
+    await act(async () => {
+      popover?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    });
+    expect(document.activeElement).toBe(copyButton);
+
+    await act(async () => {
+      popover?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    expect(document.activeElement).toBe(starButton);
+  });
+
   it('keeps the Following project action bar opaque and allows Unstar', async () => {
     const result = radarResult();
     result.activities[0] = {

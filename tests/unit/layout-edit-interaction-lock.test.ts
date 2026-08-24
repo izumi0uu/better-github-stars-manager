@@ -12,9 +12,11 @@ describe('layout edit interaction lock invariants', () => {
 
     expect(source).toMatch(/const\s+interactionLocked\s*=\s*editingLayout;/);
     expect(source).toContain('layoutEditing={editingLayout}');
+    expect(source.match(/<StarsTable[\s\S]*?\/>/)?.[0] ?? '').toContain('interactionLocked={interactionLocked}');
+    expect(source.match(/<FilterSidebar[\s\S]*?\/>/)?.[0] ?? '').toContain('interactionLocked={interactionLocked}');
     expect(source).toMatch(/<ActiveFilterChips[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
     expect(source).toMatch(/<FloatingLocaleToggle[\s\S]*?interactionLocked=\{interactionLocked\}[\s\S]*?\/>/);
-    expect(source).toContain('interactionLocked={interactionLocked}');
+    expect(source.match(/<RepoDetailPanel[\s\S]*?\/>/)?.[0] ?? '').toContain('interactionLocked={interactionLocked}');
   });
 
   it('clears the selected repo and unstar popover when layout editing begins', () => {
@@ -85,10 +87,15 @@ describe('layout edit interaction lock invariants', () => {
   it('disables row-grid transitions while column resizing is active', () => {
     // Perf invariant: live column resize must not animate row grids. jsdom cannot
     // prove which properties a browser transitions, so the body-scoped rule is
-    // asserted structurally.
+    // asserted structurally: the row-grid selector must sit in the rule whose
+    // declaration overrides transition-property to none.
     const motion = read('src/ui/styles/motion.css');
+    const rowGridResizeRule = motion.match(
+      /body\.gsm-resizing-column\s*\[data-layout-row-grid\][\s\S]*?\{([^}]*)\}/,
+    )?.[1] ?? '';
 
     expect(motion).toContain('body.gsm-resizing-column [data-layout-row-grid]');
+    expect(rowGridResizeRule).toContain('transition-property: none !important;');
   });
 
   it('locks the filter sidebar and row actions without teaching them a provider', () => {

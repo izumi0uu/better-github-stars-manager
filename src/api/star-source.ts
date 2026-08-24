@@ -6,7 +6,7 @@ import type { Star, SyncProgress } from '@/types';
  * (authenticated `GET /user/starred`).
  */
 export interface StarSource {
-  /** Full pull: upsert every repo; owned public rows are included by default. */
+  /** Full pull: sync starred repos; owned-public rows are included by default unless excluded via includeOwnedPublic: false. */
   syncFull(
     onProgress?: (p: SyncProgress) => void,
     options?: Readonly<{ includeOwnedPublic?: boolean }>,

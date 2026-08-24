@@ -396,7 +396,10 @@ function RadarQuickActions({
               onPointerDown: stopQuickActionPropagation,
               onClick: stopQuickActionPropagation,
             }}
-            copyProps={{ onPointerDown: stopQuickActionPropagation }}
+            copyProps={{
+              onPointerDown: stopQuickActionPropagation,
+              ...({ 'data-radar-action-stop': '' } as Record<string, string>),
+            }}
           >
             {target.repositoryDisplayName}
           </CopyableRepositoryLink>

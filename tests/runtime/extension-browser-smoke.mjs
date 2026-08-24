@@ -1761,6 +1761,47 @@ function createFirefoxAgentProviderFixture(guard) {
   });
 }
 
+// The PR-owned-public hydration (`useStars` -> `loadOwnedPublicRepositories`)
+// defers one `GET /users/smoke-user/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1`
+// in the background after the first successful Stars query. The guard
+// intercepts every background api.github.com fetch, so this legitimate
+// hydration must be answered deterministically with synthetic data instead of
+// being recorded as an unexpected network call. The match is pinned to the
+// exact production page-1 request (login, every paginator parameter, no extra
+// keys); anything else still falls through to the previous handle and fails
+// closed.
+function installOwnedPublicRepositoriesFixture(guard) {
+  const previousHandle = guard.handle;
+  const requestedUrls = [];
+  const handle = async (request) => {
+    if (request.method !== 'GET') return previousHandle ? previousHandle(request) : false;
+    const url = new URL(request.url);
+    const searchKeys = [...url.searchParams.keys()].sort();
+    const isOwnedPublicPage = url.origin === 'https://api.github.com'
+      && url.pathname === '/users/smoke-user/repos'
+      && searchKeys.length === 5
+      && searchKeys.join(',') === 'direction,page,per_page,sort,type'
+      && url.searchParams.get('type') === 'owner'
+      && url.searchParams.get('sort') === 'full_name'
+      && url.searchParams.get('direction') === 'asc'
+      && url.searchParams.get('per_page') === '100'
+      && url.searchParams.get('page') === '1';
+    if (!isOwnedPublicPage) return previousHandle ? previousHandle(request) : false;
+    requestedUrls.push(url.href);
+    // One synthetic empty page and no Link header: the production paginator
+    // stops after page 1, so the hydration settles with { added: 0, updated: 0 }.
+    await request.respond(200, '[]');
+    return true;
+  };
+  guard.handle = handle;
+  return {
+    requestedUrls,
+    restore() {
+      if (guard.handle === handle) guard.handle = previousHandle;
+    },
+  };
+}
+
 async function clickTrustedDocumentButtonByText(page, label) {
   const handle = await page.evaluateHandle((expected) => [...document.querySelectorAll('button')]
     .find((candidate) => candidate.textContent?.trim() === expected) ?? null, label);
@@ -2094,6 +2135,11 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
     'Cubby permission refusal reached the Provider network.',
   );
 
+  // The first successful Stars query in this interval defers the owned-public
+  // hydration, which is a legitimate guarded background request. Answer it
+  // deterministically so it never lands in `unexpectedUrls`; the assertion
+  // below still fails closed for any other URL.
+  const ownedPublicFixture = installOwnedPublicRepositoriesFixture(guard);
   const provider = createFirefoxAgentProviderFixture(guard);
   try {
     const permissionPage = await openExtensionPage(extId, OPTIONS_PATH, 'options-agent-permission');
@@ -2107,6 +2153,11 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
     await assertFirefoxCubbyTurn(starsPage);
     const organize = await runFirefoxFullLibraryOrganize(page);
     assertFirefoxProviderCoverage(provider.captures, organize, captureStart);
+    assert.deepEqual(
+      ownedPublicFixture.requestedUrls,
+      ['https://api.github.com/users/smoke-user/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1'],
+      'Firefox Cubby or Organize did not settle the owned-public hydration deterministically.',
+    );
     assert.equal(
       guard.unexpectedUrls.length,
       guardedRequestCount,
@@ -2114,6 +2165,7 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
     );
   } finally {
     provider.restore();
+    ownedPublicFixture.restore();
   }
 
   const portResult = await page.evaluate(() => new Promise((resolve) => {
