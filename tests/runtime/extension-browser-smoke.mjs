@@ -1816,6 +1816,37 @@ function installOwnedPublicRepositoriesFixture(guard) {
   };
 }
 
+// The stars-page remount mounts a fresh manager with the seeded credential,
+// which fires the manager's initial incremental sync (`GET /user/starred`,
+// page 1). Answer it deterministically with an empty page so the seeded local
+// library stays authoritative; any other URL still falls through and fails
+// closed in `unexpectedUrls`.
+function installFirefoxInitialStarsSyncFixture(guard) {
+  const previousHandle = guard.handle;
+  const requested = [];
+  const handle = async (request) => {
+    if (request.method !== 'GET') return previousHandle ? previousHandle(request) : false;
+    const url = new URL(request.url);
+    const isInitialStarsSync = url.href === 'https://api.github.com/user/starred?per_page=100&page=1';
+    if (!isInitialStarsSync) return previousHandle ? previousHandle(request) : false;
+    const authorizationPresent = Object.keys(request.headers)
+      .some((name) => name.toLowerCase() === 'authorization');
+    if (!authorizationPresent) return previousHandle ? previousHandle(request) : false;
+    requested.push(url.href);
+    // One empty page and no Link header: the incremental sync settles with
+    // { added: 0 }, leaving the seeded library authoritative.
+    await request.respond(200, '[]');
+    return true;
+  };
+  guard.handle = handle;
+  return Object.freeze({
+    requested,
+    restore() {
+      if (guard.handle === handle) guard.handle = previousHandle;
+    },
+  });
+}
+
 // The hydration is deferred with `setTimeout(0)` after the first successful
 // Stars query of a `useStars` instance, so the smoke must settle on an
 // observable signal instead of a fixed sleep: the fixture records the URL the
@@ -1849,16 +1880,26 @@ async function clickTrustedDocumentButtonByText(page, label) {
   }
 }
 
-async function grantFirefoxAgentDataPermission(page) {
+async function grantFirefoxAgentDataPermission(page, extId) {
   await page.evaluate(async () => {
     const key = 'gsm_config';
     const current = (await chrome.storage.local.get(key))[key] ?? {};
     await chrome.storage.local.set({ [key]: { ...current, agentDataDisclosureAcceptance: null } });
   });
-  try {
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 10_000 });
-  } catch (error) {
-    if (!/Navigation timeout/iu.test(formatError(error))) throw error;
+  if (runtimeTarget === 'firefox') {
+    // Firefox BiDi rejects `page.reload()` on moz-extension:// pages, so
+    // reset deterministically by closing the tab and reopening Options
+    // through the same executable-driven opener. The fresh tab renders the
+    // disclosure from the cleared storage state and is the page returned
+    // for subsequent provider configuration.
+    await page.close().catch(() => {});
+    page = await openExtensionPage(extId, OPTIONS_PATH, 'options-agent-permission');
+  } else {
+    try {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 10_000 });
+    } catch (error) {
+      if (!/Navigation timeout/iu.test(formatError(error))) throw error;
+    }
   }
   await page.waitForSelector('[data-testid="agent-data-disclosure"]', { timeout: 10_000 });
   await clickTrustedDocumentButtonByText(page, 'Accept data sharing');
@@ -1876,6 +1917,7 @@ async function grantFirefoxAgentDataPermission(page) {
     },
     { polling: DOM_POLLING_MS, timeout: 20_000 },
   );
+  return page;
 }
 
 async function configureFirefoxSavedProvider(page) {
@@ -2179,14 +2221,15 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
   // below still fail closed for any other URL.
   const ownedPublicFixture = installOwnedPublicRepositoriesFixture(guard);
   const provider = createFirefoxAgentProviderFixture(guard);
+  const starsSyncFixture = installFirefoxInitialStarsSyncFixture(guard);
   try {
     await starsPage.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
     await waitForManagerRoot(starsPage);
     await waitForOwnedPublicHydration(ownedPublicFixture);
 
-    const permissionPage = await openExtensionPage(extId, OPTIONS_PATH, 'options-agent-permission');
+    let permissionPage = await openExtensionPage(extId, OPTIONS_PATH, 'options-agent-permission');
     try {
-      await grantFirefoxAgentDataPermission(permissionPage);
+      permissionPage = await grantFirefoxAgentDataPermission(permissionPage, extId);
       await configureFirefoxSavedProvider(permissionPage);
     } finally {
       await permissionPage.close().catch(() => {});
@@ -2206,11 +2249,20 @@ async function assertFirefoxRuntimeParity(page, extId, starsPage) {
       'Firefox stars-page remount did not deterministically settle the owned-public hydration.',
     );
     assert.equal(
+      starsSyncFixture.requested.length > 0
+        && starsSyncFixture.requested.every((url) => (
+          url === 'https://api.github.com/user/starred?per_page=100&page=1'
+        )),
+      true,
+      'Firefox stars-page remount did not settle only authenticated initial stars sync requests.',
+    );
+    assert.equal(
       guard.unexpectedUrls.length,
       guardedRequestCount,
       'Firefox Cubby or Organize escaped the controlled Provider fixture.',
     );
   } finally {
+    starsSyncFixture.restore();
     provider.restore();
     ownedPublicFixture.restore();
   }
