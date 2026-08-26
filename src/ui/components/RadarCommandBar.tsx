@@ -182,8 +182,18 @@ export function RadarCommandBarActions({
     || result?.status.hasMainToken !== true
     || status === 'cooldown'
     || status === 'not_configured';
-  const fullReconcileLabel = fullReconciling ? m.radar.fullReconciling : m.radar.fullReconcile;
-  const fullReconcileHint = fullReconciling ? m.radar.fullReconciling : m.radar.fullReconcileHint;
+  // Exactly one action owns the busy indicator: the other is greyed out without
+  // a spinner, so the surface never claims two concurrent scans.
+  const incrementalRefreshing = refreshing && !fullReconciling;
+  const hasPausedReconciliation = result?.status.reconciliation !== null
+    && result?.status.reconciliation !== undefined
+    && !fullReconciling;
+  const fullReconcileLabel = fullReconciling
+    ? m.radar.fullReconciling
+    : hasPausedReconciliation ? m.radar.resumeFullReconcile : m.radar.fullReconcile;
+  const fullReconcileHint = fullReconciling
+    ? m.radar.fullReconciling
+    : hasPausedReconciliation ? m.radar.resumeFullReconcileHint : m.radar.fullReconcileHint;
   return (
     <div className="flex items-center gap-2">
       <div
@@ -239,11 +249,15 @@ export function RadarCommandBarActions({
         className="h-[30px] gap-1.5 px-2.5 text-xs"
         disabled={refreshDisabled}
         onClick={onRefresh}
-        aria-label={refreshing ? m.radar.refreshing : m.radar.refresh}
+        aria-label={incrementalRefreshing ? m.radar.refreshing : m.radar.refresh}
+        aria-busy={incrementalRefreshing}
+        data-radar-action="refresh"
       >
-        {refreshing ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
+        {incrementalRefreshing
+          ? <Spinner className="size-3.5" />
+          : <RefreshCw className="size-3.5" aria-hidden="true" />}
         <span className="max-[520px]:hidden">
-          {refreshing ? m.radar.refreshing : m.radar.refresh}
+          {incrementalRefreshing ? m.radar.refreshing : m.radar.refresh}
         </span>
       </Button>
     </div>

@@ -4,8 +4,18 @@ import {
   type RadarRefreshCoordinatorDependencies,
 } from '@/background/radar-refresh';
 import type { GitHubCredentialSnapshot } from '@/auth/auth-store';
-import { GitHubRadarError, type RadarActivityRecord, type RadarActivityPresentation, type RadarStateRecord } from '@/radar/radar-model';
-import type { RadarSourceSnapshot } from '@/radar/radar-contract';
+import type {
+  RadarReconciliationSourceStep,
+  RadarSourceSnapshot,
+} from '@/radar/radar-contract';
+import {
+  createRadarReconciliationCheckpoint,
+  GitHubRadarError,
+  type RadarActivityRecord,
+  type RadarActivityPresentation,
+  type RadarReconciliationCheckpoint,
+  type RadarStateRecord,
+} from '@/radar/radar-model';
 import { createSerializedRunner } from '@/background/serialized-runner';
 import type { Config, FollowingHistoryWindowDays } from '@/types';
 
@@ -96,15 +106,39 @@ const followingActivity = {
 } satisfies RadarActivityPresentation;
 
 
+type FetchStepOptions = Parameters<
+  RadarRefreshCoordinatorDependencies['fetchReconciliationStep']
+>[0];
+
+/** One step that completes an empty epoch, for tests about routing not coverage. */
+function terminalStep(
+  checkpoint: RadarReconciliationCheckpoint,
+): RadarReconciliationSourceStep {
+  return {
+    expectedReconciliationId: checkpoint.reconciliationId,
+    expectedRevision: checkpoint.revision,
+    checkpoint: {
+      ...checkpoint,
+      revision: checkpoint.revision + 1,
+      cursor: { phase: 'activity', followingCount: 0, actors: [] },
+    },
+    activities: [],
+    complete: true,
+  };
+}
+
 function makeCoordinator(input: {
   auth?: GitHubCredentialSnapshot;
   state?: RadarStateRecord | null;
   fetchRadar?: RadarRefreshCoordinatorDependencies['fetchRadar'];
+  fetchReconciliationStep?: RadarRefreshCoordinatorDependencies['fetchReconciliationStep'];
+  reconciliation?: RadarReconciliationCheckpoint | null;
   activities?: RadarActivityPresentation[];
   runSerialized?: RadarRefreshCoordinatorDependencies['runSerialized'];
 } = {}) {
   let currentAuth = input.auth ?? authSnapshot();
   let currentWindowDays: FollowingHistoryWindowDays = 60;
+  let currentReconciliation = input.reconciliation ?? null;
   const currentState = input.state === undefined ? state() : input.state;
   const events: string[] = [];
   const runSerialized = input.runSerialized ?? (async <T,>(operation: () => Promise<T>) => operation());
@@ -112,6 +146,23 @@ function makeCoordinator(input: {
     clearData: vi.fn(async () => { events.push('clear'); }),
     prepareAccount: vi.fn(async () => { events.push('prepare'); }),
     getState: vi.fn(async () => currentState),
+    getReconciliation: vi.fn(async () => currentReconciliation),
+    startReconciliation: vi.fn(async (checkpoint: RadarReconciliationCheckpoint) => {
+      currentReconciliation = checkpoint;
+      return { state: currentState ?? state(), checkpoint };
+    }),
+    commitReconciliationStep: vi.fn(async (input: { step: RadarReconciliationSourceStep }) => {
+      currentReconciliation = input.step.complete ? null : input.step.checkpoint;
+      return {
+        applied: true,
+        state: currentState ?? state(),
+        checkpoint: currentReconciliation,
+      };
+    }),
+    abandonReconciliation: vi.fn(async () => {
+      currentReconciliation = null;
+      return true;
+    }),
     commitSnapshot: vi.fn(async () => { events.push('commit'); return currentState ?? state(); }),
     recordFailure: vi.fn(async () => { events.push('failure'); return currentState ?? state(); }),
     listActivities: vi.fn(async () => input.activities ?? [] as RadarActivityPresentation[]),
@@ -129,6 +180,10 @@ function makeCoordinator(input: {
       refreshMode: options.refreshMode,
       lookbackDays: options.lookbackDays,
     })),
+    // A full plan always routes through the resumable step, so the default
+    // completes one epoch immediately and keeps snapshot-path tests focused.
+    fetchReconciliationStep: input.fetchReconciliationStep
+      ?? vi.fn(async (options: FetchStepOptions) => terminalStep(options.checkpoint)),
     store,
     now: () => NOW,
     broadcastChanged: vi.fn(() => { events.push('broadcast'); }),
@@ -167,39 +222,40 @@ describe('Radar refresh coordinator', () => {
     expect(h.events.at(-1)).toBe('broadcast');
   });
 
-  it('coalesces repeated full reconciliations while one full fetch is active', async () => {
-    let release!: (value: RadarSourceSnapshot) => void;
-    const fetchRadar = vi.fn(() => new Promise<RadarSourceSnapshot>((resolve) => { release = resolve; }));
+  it('coalesces repeated full reconciliations while one full step is active', async () => {
+    let release!: () => void;
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return terminalStep(options.checkpoint);
+    });
     const h = makeCoordinator({
-      fetchRadar,
+      fetchReconciliationStep: fetchStep,
       runSerialized: createSerializedRunner().run,
     });
 
     const first = h.coordinator.fullReconcile();
     while (!release) await Promise.resolve();
     const second = h.coordinator.fullReconcile();
-    release(snapshot({ refreshMode: 'full', lookbackDays: 60 }));
+    release();
 
     const [one, two] = await Promise.all([first, second]);
     expect(one).toEqual(two);
-    expect(fetchRadar).toHaveBeenCalledTimes(1);
-    expect(h.store.commitSnapshot).toHaveBeenCalledTimes(1);
+    expect(fetchStep).toHaveBeenCalledTimes(1);
+    expect(h.store.commitReconciliationStep).toHaveBeenCalledTimes(1);
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
   });
 
-  it('queues one full fetch after incremental work without overlapping fetches', async () => {
+  it('queues one full step after incremental work without overlapping fetches', async () => {
     let releaseIncremental!: () => void;
     let releaseFull!: () => void;
     let activeFetches = 0;
     let peakFetches = 0;
-    const modes: string[] = [];
+    const order: string[] = [];
     const fetchRadar = vi.fn(async (options) => {
-      modes.push(options.refreshMode ?? '');
+      order.push(options.refreshMode ?? '');
       activeFetches += 1;
       peakFetches = Math.max(peakFetches, activeFetches);
-      await new Promise<void>((resolve) => {
-        if (options.refreshMode === 'incremental') releaseIncremental = resolve;
-        else releaseFull = resolve;
-      });
+      await new Promise<void>((resolve) => { releaseIncremental = resolve; });
       activeFetches -= 1;
       return snapshot({
         windowDays: options.windowDays,
@@ -207,8 +263,17 @@ describe('Radar refresh coordinator', () => {
         lookbackDays: options.lookbackDays,
       });
     });
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => {
+      order.push('full');
+      activeFetches += 1;
+      peakFetches = Math.max(peakFetches, activeFetches);
+      await new Promise<void>((resolve) => { releaseFull = resolve; });
+      activeFetches -= 1;
+      return terminalStep(options.checkpoint);
+    });
     const h = makeCoordinator({
       fetchRadar,
+      fetchReconciliationStep: fetchStep,
       runSerialized: createSerializedRunner().run,
     });
 
@@ -223,8 +288,9 @@ describe('Radar refresh coordinator', () => {
     const [incrementalResult, one, two] = await Promise.all([incremental, fullOne, fullTwo]);
     expect(incrementalResult.published).toBe(true);
     expect(one).toEqual(two);
-    expect(fetchRadar).toHaveBeenCalledTimes(2);
-    expect(modes).toEqual(['incremental', 'full']);
+    expect(fetchRadar).toHaveBeenCalledTimes(1);
+    expect(fetchStep).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['incremental', 'full']);
     expect(peakFetches).toBe(1);
   });
 
@@ -232,19 +298,20 @@ describe('Radar refresh coordinator', () => {
     let releaseIncremental!: () => void;
     let releaseFull!: () => void;
     const fetchRadar = vi.fn(async (options) => {
-      if (options.refreshMode === 'incremental') {
-        await new Promise<void>((resolve) => { releaseIncremental = resolve; });
-      } else {
-        await new Promise<void>((resolve) => { releaseFull = resolve; });
-      }
+      await new Promise<void>((resolve) => { releaseIncremental = resolve; });
       return snapshot({
         windowDays: options.windowDays,
         refreshMode: options.refreshMode,
         lookbackDays: options.lookbackDays,
       });
     });
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => {
+      await new Promise<void>((resolve) => { releaseFull = resolve; });
+      return terminalStep(options.checkpoint);
+    });
     const h = makeCoordinator({
       fetchRadar,
+      fetchReconciliationStep: fetchStep,
       runSerialized: createSerializedRunner().run,
     });
 
@@ -295,72 +362,241 @@ describe('Radar refresh coordinator', () => {
     expect(incrementalResult.published).toBe(true);
     expect(one).toEqual(two);
     expect(one).toEqual(auto);
-    expect(fetchRadar).toHaveBeenCalledTimes(2);
+    expect(fetchRadar).toHaveBeenCalledTimes(1);
+    expect(fetchStep).toHaveBeenCalledTimes(1);
   });
-  it('uses the selected history window for fetch, query, and status', async () => {
+  it('starts a durable checkpoint for a forced full reconciliation', async () => {
+    const credentialIdentity = JSON.stringify(['viewer', 'identity-a', true]);
+    const fetchStep: NonNullable<RadarRefreshCoordinatorDependencies['fetchReconciliationStep']> =
+      vi.fn(async (options) => {
+        const nextCheckpoint: RadarReconciliationCheckpoint = {
+          ...options.checkpoint,
+          revision: options.checkpoint.revision + 1,
+          updatedAt: new Date(NOW).toISOString(),
+          cursor: {
+            phase: 'following',
+            nextCursor: 'following-next',
+            seenCursors: ['following-next'],
+            logins: [],
+            totalCount: null,
+          },
+        };
+        return {
+          expectedReconciliationId: options.checkpoint.reconciliationId,
+          expectedRevision: options.checkpoint.revision,
+          checkpoint: nextCheckpoint,
+          activities: [],
+          complete: false,
+        };
+      });
+    const h = makeCoordinator({ fetchReconciliationStep: fetchStep });
+
+    const result = await h.coordinator.fullReconcile();
+
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+    expect(h.store.startReconciliation).toHaveBeenCalledWith(expect.objectContaining({
+      revision: 0,
+      accountLogin: 'viewer',
+      credentialIdentity,
+      windowDays: 60,
+    }));
+    expect(fetchStep).toHaveBeenCalledWith(expect.objectContaining({
+      checkpoint: expect.objectContaining({ revision: 0 }),
+    }));
+    expect(result.published).toBe(true);
+    expect(result.status.reconciliation).toMatchObject({ phase: 'following' });
+  });
+
+  it('resumes a persisted full reconciliation before selecting a new refresh plan', async () => {
+    const credentialIdentity = JSON.stringify(['viewer', 'identity-a', true]);
+    const checkpoint = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:resume',
+      accountLogin: 'viewer',
+      credentialIdentity,
+      windowDays: 60,
+      startedAt: new Date(NOW - 1_000).toISOString(),
+    });
+    const nextCheckpoint: RadarReconciliationCheckpoint = {
+      ...checkpoint,
+      revision: 1,
+      updatedAt: new Date(NOW).toISOString(),
+      cursor: {
+        phase: 'following',
+        nextCursor: 'following-next',
+        seenCursors: ['following-next'],
+        logins: [],
+        totalCount: null,
+      },
+    };
+    const fetchStep: NonNullable<RadarRefreshCoordinatorDependencies['fetchReconciliationStep']> =
+      vi.fn(async (options) => ({
+        expectedReconciliationId: options.checkpoint.reconciliationId,
+        expectedRevision: options.checkpoint.revision,
+        checkpoint: nextCheckpoint,
+        activities: [],
+        complete: false,
+      }));
+    const h = makeCoordinator({
+      reconciliation: checkpoint,
+      fetchReconciliationStep: fetchStep,
+    });
+
+    const result = await h.coordinator.refresh();
+
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+    expect(fetchStep).toHaveBeenCalledWith(expect.objectContaining({
+      token: 'main-token',
+      checkpoint,
+    }));
+    expect(h.store.startReconciliation).not.toHaveBeenCalled();
+    expect(h.store.commitReconciliationStep).toHaveBeenCalledWith(expect.objectContaining({
+      accountLogin: 'viewer',
+      credentialIdentity,
+      windowDays: 60,
+    }));
+    expect(result.published).toBe(true);
+    expect(result.status.reconciliation).toMatchObject({
+      phase: 'following',
+      totalCount: null,
+      pauseReason: 'interrupted',
+    });
+  });
+
+  it('abandons an epoch whose own fence keeps rejecting its step', async () => {
+    const credentialIdentity = JSON.stringify(['viewer', 'identity-a', true]);
+    const checkpoint = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:stuck',
+      accountLogin: 'viewer',
+      credentialIdentity,
+      windowDays: 60,
+      startedAt: new Date(NOW - 1_000).toISOString(),
+    });
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => terminalStep(options.checkpoint));
+    const h = makeCoordinator({
+      reconciliation: checkpoint,
+      fetchReconciliationStep: fetchStep,
+    });
+    // The stored cursor refuses this step while the fence stays put, so
+    // recomputing it would fail identically on every later wake.
+    h.store.commitReconciliationStep.mockResolvedValueOnce({
+      applied: false,
+      state: state(),
+      checkpoint,
+    });
+
+    const result = await h.coordinator.refresh();
+
+    expect(result.published).toBe(false);
+    expect(h.store.abandonReconciliation).toHaveBeenCalledWith('viewer', checkpoint.reconciliationId);
+    expect(h.dependencies.broadcastChanged).not.toHaveBeenCalled();
+  });
+
+  it('leaves a moved fence alone when another epoch already advanced', async () => {
+    const credentialIdentity = JSON.stringify(['viewer', 'identity-a', true]);
+    const checkpoint = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:raced',
+      accountLogin: 'viewer',
+      credentialIdentity,
+      windowDays: 60,
+      startedAt: new Date(NOW - 1_000).toISOString(),
+    });
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => terminalStep(options.checkpoint));
+    const h = makeCoordinator({
+      reconciliation: checkpoint,
+      fetchReconciliationStep: fetchStep,
+    });
+    h.store.commitReconciliationStep.mockResolvedValueOnce({
+      applied: false,
+      state: state(),
+      checkpoint: { ...checkpoint, revision: checkpoint.revision + 1 },
+    });
+
+    const result = await h.coordinator.refresh();
+
+    expect(result.published).toBe(false);
+    expect(h.store.abandonReconciliation).not.toHaveBeenCalled();
+  });
+  it('uses the selected history window for the epoch, query, and status', async () => {
     const h = makeCoordinator();
     h.setWindowDays(90);
 
+    // A widened window invalidates the saved baseline, so this refresh starts a
+    // full epoch rather than an incremental snapshot.
     const refresh = await h.coordinator.refresh();
     const query = await h.coordinator.query();
 
-    expect(h.dependencies.fetchRadar).toHaveBeenCalledWith(expect.objectContaining({ windowDays: 90 }));
+    expect(h.store.startReconciliation).toHaveBeenCalledWith(expect.objectContaining({ windowDays: 90 }));
     expect(h.store.listActivities).toHaveBeenCalledWith('viewer', NOW, 90);
     expect(refresh.status.windowDays).toBe(90);
     expect(query.status.windowDays).toBe(90);
   });
 
-  it('passes every policy branch to the source deterministically', async () => {
+  it('uses the selected history window for an incremental snapshot', async () => {
+    const h = makeCoordinator({ state: state({ windowDays: 90 }) });
+    h.setWindowDays(90);
+
+    const refresh = await h.coordinator.refresh();
+
+    expect(h.store.startReconciliation).not.toHaveBeenCalled();
+    expect(h.dependencies.fetchRadar).toHaveBeenCalledWith(expect.objectContaining({
+      windowDays: 90,
+      refreshMode: 'incremental',
+      lookbackDays: 7,
+    }));
+    expect(refresh.status.windowDays).toBe(90);
+  });
+
+  it('routes every policy branch to the path that owns it', async () => {
     const cases: Array<{
       request: 'auto' | 'full';
       state: RadarStateRecord | null;
       windowDays?: FollowingHistoryWindowDays;
       auth?: GitHubCredentialSnapshot;
-      expected: { refreshMode: 'full' | 'incremental'; lookbackDays: number };
+      expected: { mode: 'full' | 'incremental'; windowDays: FollowingHistoryWindowDays };
     }> = [
       {
         request: 'full',
         state: state(),
-        expected: { refreshMode: 'full', lookbackDays: 60 },
+        expected: { mode: 'full', windowDays: 60 },
       },
       {
         request: 'auto',
         state: null,
-        expected: { refreshMode: 'full', lookbackDays: 60 },
+        expected: { mode: 'full', windowDays: 60 },
       },
       {
         request: 'auto',
         state: state({ partialReasons: ['github_star_list_truncated'] }),
-        expected: { refreshMode: 'full', lookbackDays: 60 },
+        expected: { mode: 'incremental', windowDays: 60 },
       },
       {
         request: 'auto',
         state: state({ errorCode: 'network_error' }),
-        expected: { refreshMode: 'full', lookbackDays: 60 },
+        expected: { mode: 'full', windowDays: 60 },
       },
       {
         request: 'auto',
         state: state({ windowDays: 60 }),
         windowDays: 90,
-        expected: { refreshMode: 'full', lookbackDays: 90 },
+        expected: { mode: 'full', windowDays: 90 },
       },
       {
         request: 'auto',
         state: state(),
         auth: authSnapshot({ mainIdentity: 'identity-b' }),
-        expected: { refreshMode: 'full', lookbackDays: 60 },
+        expected: { mode: 'full', windowDays: 60 },
       },
       {
         request: 'auto',
         state: state({
           lastFullReconciledAt: new Date(NOW - 7 * 24 * 60 * 60 * 1_000).toISOString(),
         }),
-        expected: { refreshMode: 'full', lookbackDays: 60 },
+        expected: { mode: 'full', windowDays: 60 },
       },
       {
         request: 'auto',
         state: state(),
-        expected: { refreshMode: 'incremental', lookbackDays: 7 },
+        expected: { mode: 'incremental', windowDays: 60 },
       },
     ];
 
@@ -368,7 +604,19 @@ describe('Radar refresh coordinator', () => {
       const h = makeCoordinator({ state: testCase.state, auth: testCase.auth });
       if (testCase.windowDays) h.setWindowDays(testCase.windowDays);
       await h.coordinator.refresh(testCase.request);
-      expect(h.dependencies.fetchRadar).toHaveBeenCalledWith(expect.objectContaining(testCase.expected));
+      if (testCase.expected.mode === 'full') {
+        expect(h.store.startReconciliation).toHaveBeenCalledWith(expect.objectContaining({
+          windowDays: testCase.expected.windowDays,
+        }));
+        expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+      } else {
+        expect(h.dependencies.fetchRadar).toHaveBeenCalledWith(expect.objectContaining({
+          refreshMode: 'incremental',
+          lookbackDays: 7,
+          windowDays: testCase.expected.windowDays,
+        }));
+        expect(h.store.startReconciliation).not.toHaveBeenCalled();
+      }
     }
   });
   it('abandons an in-flight result when the history window changes', async () => {
@@ -490,7 +738,76 @@ describe('Radar refresh coordinator', () => {
 
     expect(result.published).toBe(false);
     expect(h.store.commitSnapshot).not.toHaveBeenCalled();
-    expect(h.store.recordFailure).toHaveBeenCalledWith('viewer', 'invalid_response', { nextAllowedAt: null });
+    expect(h.store.recordFailure).toHaveBeenCalledWith('viewer', 'invalid_response', {
+      nextAllowedAt: new Date(NOW + 5 * 60 * 1_000).toISOString(),
+    });
+  });
+
+  it('lets an explicit full request pass a transient-failure cooldown', async () => {
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => terminalStep(options.checkpoint));
+    const h = makeCoordinator({
+      state: state({
+        errorCode: 'network_error',
+        nextAllowedAt: new Date(NOW + 60_000).toISOString(),
+      }),
+      fetchReconciliationStep: fetchStep,
+    });
+
+    const automatic = await h.coordinator.refresh('auto');
+    expect(automatic.published).toBe(false);
+    expect(fetchStep).not.toHaveBeenCalled();
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+
+    const explicit = await h.coordinator.refresh('full');
+    expect(explicit.published).toBe(true);
+    expect(h.store.startReconciliation).toHaveBeenCalledWith(expect.objectContaining({
+      windowDays: 60,
+    }));
+    expect(fetchStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an explicit full request behind an active rate-limit cooldown', async () => {
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => terminalStep(options.checkpoint));
+    const h = makeCoordinator({
+      state: state({
+        errorCode: 'rate_limited',
+        nextAllowedAt: new Date(NOW + 60_000).toISOString(),
+      }),
+      fetchReconciliationStep: fetchStep,
+    });
+
+    const result = await h.coordinator.refresh('full');
+
+    expect(result.published).toBe(false);
+    expect(fetchStep).not.toHaveBeenCalled();
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicit full request behind a rate-reserve checkpoint', async () => {
+    const credentialIdentity = JSON.stringify(['viewer', 'identity-a', true]);
+    const base = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:reserve',
+      accountLogin: 'viewer',
+      credentialIdentity,
+      windowDays: 60,
+      startedAt: new Date(NOW - 1_000).toISOString(),
+    });
+    const fetchStep = vi.fn();
+    const h = makeCoordinator({
+      state: state({ nextAllowedAt: null }),
+      reconciliation: {
+        ...base,
+        pauseReason: 'rate_reserve',
+        nextAllowedAt: new Date(NOW + 60_000).toISOString(),
+      },
+      fetchReconciliationStep: fetchStep,
+    });
+
+    const result = await h.coordinator.refresh('full');
+
+    expect(result.published).toBe(false);
+    expect(fetchStep).not.toHaveBeenCalled();
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
   });
 
   it('abandons an in-flight result when the credential identity changes', async () => {

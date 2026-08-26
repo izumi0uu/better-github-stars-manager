@@ -1,3 +1,5 @@
+import type { FollowingHistoryWindowDays } from '@/types';
+
 import {
   normalizeRepositoryFullName,
   repositoryHtmlUrl,
@@ -14,6 +16,55 @@ export const RADAR_PARTIAL_REASONS = [
 export type RadarPartialReason = typeof RADAR_PARTIAL_REASONS[number];
 export type RadarActivitySource = 'following' | 'self';
 export type RadarRefreshMode = 'full' | 'incremental';
+export type RadarReconciliationPauseReason = 'request_budget' | 'deadline' | 'rate_reserve';
+const RADAR_RECONCILIATION_DAY_MS = 24 * 60 * 60 * 1_000;
+
+export interface RadarReconciliationFollowingCursor {
+  phase: 'following';
+  nextCursor: string | null;
+  seenCursors: string[];
+  logins: string[];
+  totalCount: number | null;
+}
+
+export interface RadarReconciliationActorCursor {
+  login: string;
+  nextCursor: string | null;
+  seenCursors: string[];
+  complete: boolean;
+}
+
+export interface RadarReconciliationActivityCursor {
+  phase: 'activity';
+  followingCount: number;
+  actors: RadarReconciliationActorCursor[];
+}
+
+export type RadarReconciliationCursor =
+  | RadarReconciliationFollowingCursor
+  | RadarReconciliationActivityCursor;
+
+export interface RadarReconciliationCheckpoint {
+  schemaVersion: 1;
+  reconciliationId: string;
+  revision: number;
+  accountLogin: string;
+  credentialIdentity: string;
+  windowDays: FollowingHistoryWindowDays;
+  startedAt: string;
+  cutoffAt: string;
+  updatedAt: string;
+  cursor: RadarReconciliationCursor;
+  partialReasons: RadarPartialReason[];
+  scannedFollowingCount: number;
+  batchCount: number;
+  rateLimitRemaining: number | null;
+  rateLimitResetAt: string | null;
+  maxRequestCost: number | null;
+  pauseReason: RadarReconciliationPauseReason | null;
+  nextAllowedAt: string | null;
+}
+
 
 export type RadarErrorCode =
   | 'authentication_required'
@@ -68,6 +119,8 @@ export interface RadarActivityRecord {
   starredAt: string;
   dismissedAt: string | null;
   seenAt: string | null;
+  /** Persistence-only marker for the full reconciliation that observed this row. */
+  reconciliationId?: string | null;
 }
 
 export interface RadarActivityPresentation extends RadarActivityRecord {
@@ -123,6 +176,13 @@ export interface RadarStateRecord {
   partialReasons: RadarPartialReason[];
   rateLimitRemaining: number | null;
   rateLimitResetAt: string | null;
+  /** Highest GitHub-reported GraphQL cost observed in the latest refresh. */
+  maxRequestCost?: number | null;
+}
+
+/** Private persisted state; reconciliation cursors never cross the UI boundary. */
+export interface RadarStoredStateRecord extends RadarStateRecord {
+  reconciliation?: RadarReconciliationCheckpoint | null;
 }
 
 
@@ -180,6 +240,236 @@ function canonicalLogin(value: unknown): string {
     throw new GitHubRadarError('invalid_activity');
   }
   return login.toLocaleLowerCase('en-US');
+}
+function checkpointTimestamp(value: unknown): string | null {
+  const text = nonEmptyString(value);
+  if (!text) return null;
+  const millis = Date.parse(text);
+  return Number.isFinite(millis) ? new Date(millis).toISOString() : null;
+}
+function reconciliationCutoffAt(
+  startedAt: string,
+  windowDays: FollowingHistoryWindowDays,
+): string {
+  return new Date(
+    Date.parse(startedAt) - windowDays * RADAR_RECONCILIATION_DAY_MS,
+  ).toISOString();
+}
+
+
+function checkpointCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+function checkpointNullableCount(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  const count = checkpointCount(value);
+  return count === null ? undefined : count;
+}
+
+function checkpointNullableString(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  const text = nonEmptyString(value);
+  return text ?? undefined;
+}
+
+function checkpointStringList(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const strings = value.map(nonEmptyString);
+  if (strings.some((item) => item === null)) return null;
+  const normalized = strings as string[];
+  return new Set(normalized).size === normalized.length ? normalized : null;
+}
+
+function checkpointLogin(value: unknown): string | null {
+  try {
+    return canonicalLogin(value);
+  } catch {
+    return null;
+  }
+}
+
+function checkpointLoginList(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > RADAR_MAX_FOLLOWING) return null;
+  const logins = value.map(checkpointLogin);
+  if (logins.some((login) => login === null)) return null;
+  const normalized = logins as string[];
+  return new Set(normalized).size === normalized.length ? normalized : null;
+}
+
+function normalizeReconciliationCursor(value: unknown): RadarReconciliationCursor | null {
+  const input = record(value);
+  if (!input) return null;
+  if (input.phase === 'following') {
+    const nextCursor = checkpointNullableString(input.nextCursor);
+    const seenCursors = checkpointStringList(input.seenCursors);
+    const logins = checkpointLoginList(input.logins);
+    const totalCount = checkpointNullableCount(input.totalCount);
+    if (
+      nextCursor === undefined
+      || !seenCursors
+      || !logins
+      || totalCount === undefined
+      || (totalCount !== null && totalCount < logins.length)
+      || (nextCursor === null && (
+        seenCursors.length !== 0 || logins.length !== 0 || totalCount !== null
+      ))
+      || (nextCursor !== null && seenCursors.at(-1) !== nextCursor)
+    ) return null;
+    return { phase: 'following', nextCursor, seenCursors, logins, totalCount };
+  }
+  if (input.phase !== 'activity' || !Array.isArray(input.actors)) return null;
+  if (input.actors.length > RADAR_MAX_FOLLOWING) return null;
+  const followingCount = checkpointCount(input.followingCount);
+  if (followingCount === null || followingCount < input.actors.length) return null;
+  const actors: RadarReconciliationActorCursor[] = [];
+  for (const value of input.actors) {
+    const actor = record(value);
+    const login = checkpointLogin(actor?.login);
+    const nextCursor = checkpointNullableString(actor?.nextCursor);
+    const seenCursors = checkpointStringList(actor?.seenCursors);
+    const complete = actor?.complete;
+    if (
+      !login
+      || nextCursor === undefined
+      || !seenCursors
+      || typeof complete !== 'boolean'
+      || (complete && nextCursor !== null)
+      || (!complete && nextCursor === null && seenCursors.length !== 0)
+      || (nextCursor !== null && seenCursors.at(-1) !== nextCursor)
+    ) return null;
+    actors.push({ login, nextCursor, seenCursors, complete });
+  }
+  if (new Set(actors.map((actor) => actor.login)).size !== actors.length) return null;
+  return { phase: 'activity', followingCount, actors };
+}
+
+export function createRadarReconciliationCheckpoint(input: Readonly<{
+  reconciliationId: string;
+  accountLogin: string;
+  credentialIdentity: string;
+  windowDays: FollowingHistoryWindowDays;
+  startedAt: string;
+}>): RadarReconciliationCheckpoint {
+  const startedAt = checkpointTimestamp(input.startedAt);
+  const reconciliationId = nonEmptyString(input.reconciliationId);
+  const credentialIdentity = nonEmptyString(input.credentialIdentity);
+  const accountLogin = checkpointLogin(input.accountLogin);
+  if (!startedAt || !reconciliationId || !credentialIdentity || !accountLogin) {
+    throw new TypeError('Radar reconciliation identity is invalid.');
+  }
+  return {
+    schemaVersion: 1,
+    reconciliationId,
+    revision: 0,
+    accountLogin,
+    credentialIdentity,
+    windowDays: input.windowDays,
+    startedAt,
+    cutoffAt: reconciliationCutoffAt(startedAt, input.windowDays),
+    updatedAt: startedAt,
+    cursor: {
+      phase: 'following',
+      nextCursor: null,
+      seenCursors: [],
+      logins: [],
+      totalCount: null,
+    },
+    partialReasons: [],
+    scannedFollowingCount: 0,
+    batchCount: 0,
+    rateLimitRemaining: null,
+    rateLimitResetAt: null,
+    maxRequestCost: null,
+    pauseReason: null,
+    nextAllowedAt: null,
+  };
+}
+
+export function normalizeRadarReconciliationCheckpoint(
+  value: unknown,
+): RadarReconciliationCheckpoint | null {
+  const input = record(value);
+  if (!input || input.schemaVersion !== 1) return null;
+  const reconciliationId = nonEmptyString(input.reconciliationId);
+  const revision = checkpointCount(input.revision);
+  const accountLogin = checkpointLogin(input.accountLogin);
+  const credentialIdentity = nonEmptyString(input.credentialIdentity);
+  const windowDays = input.windowDays;
+  const normalizedWindowDays: FollowingHistoryWindowDays | null = windowDays === 30
+    || windowDays === 60
+    || windowDays === 90
+    ? windowDays
+    : null;
+  const startedAt = checkpointTimestamp(input.startedAt);
+  const cutoffAt = checkpointTimestamp(input.cutoffAt);
+  const updatedAt = checkpointTimestamp(input.updatedAt);
+  const cursor = normalizeReconciliationCursor(input.cursor);
+  const scannedFollowingCount = checkpointCount(input.scannedFollowingCount);
+  const batchCount = checkpointCount(input.batchCount);
+  const rateLimitRemaining = checkpointNullableCount(input.rateLimitRemaining);
+  const rateLimitResetAt = input.rateLimitResetAt === null
+    ? null
+    : checkpointTimestamp(input.rateLimitResetAt);
+  const maxRequestCost = checkpointNullableCount(input.maxRequestCost);
+  const pauseReason = input.pauseReason;
+  const nextAllowedAt = input.nextAllowedAt === null
+    ? null
+    : checkpointTimestamp(input.nextAllowedAt);
+  if (
+    !reconciliationId
+    || revision === null
+    || !accountLogin
+    || !credentialIdentity
+    || normalizedWindowDays === null
+    || !startedAt
+    || !cutoffAt
+    || !updatedAt
+    || Date.parse(cutoffAt) > Date.parse(startedAt)
+    || Date.parse(updatedAt) < Date.parse(startedAt)
+    || !cursor
+    || scannedFollowingCount === null
+    || scannedFollowingCount > (cursor.phase === 'activity' ? cursor.actors.length : cursor.logins.length)
+    || batchCount === null
+    || rateLimitRemaining === undefined
+    || (input.rateLimitResetAt !== null && rateLimitResetAt === null)
+    || maxRequestCost === undefined
+    || (pauseReason !== null
+      && pauseReason !== 'request_budget'
+      && pauseReason !== 'deadline'
+      && pauseReason !== 'rate_reserve')
+    || (input.nextAllowedAt !== null && nextAllowedAt === null)
+  ) return null;
+  if (cutoffAt !== reconciliationCutoffAt(startedAt, normalizedWindowDays)) return null;
+  const partialReasons = normalizeRadarPartialReasons(input.partialReasons);
+  if (
+    !Array.isArray(input.partialReasons)
+    || input.partialReasons.some((reason) => (
+      typeof reason !== 'string' || !RADAR_PARTIAL_REASONS.includes(reason as RadarPartialReason)
+    ))
+  ) return null;
+  return {
+    schemaVersion: 1,
+    reconciliationId,
+    revision,
+    accountLogin,
+    credentialIdentity,
+    windowDays: normalizedWindowDays,
+    startedAt,
+    cutoffAt,
+    updatedAt,
+    cursor,
+    partialReasons,
+    scannedFollowingCount,
+    batchCount,
+    rateLimitRemaining,
+    rateLimitResetAt,
+    maxRequestCost,
+    pauseReason,
+    nextAllowedAt,
+  };
 }
 
 export function normalizeRadarAvatarUrl(value: unknown): string | null {

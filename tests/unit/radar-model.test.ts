@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   aggregateRadarProjects,
+  createRadarReconciliationCheckpoint,
   dedupeRadarActivities,
   GitHubRadarError,
   normalizeRadarActivity,
   normalizeRadarPartialReasons,
+  normalizeRadarReconciliationCheckpoint,
   radarActivityId,
   type RadarActivityPresentation,
   type RadarActivitySource,
 } from '@/radar/radar-model';
-
 function activity(input: {
   actor: string;
   repository: string;
@@ -217,5 +218,48 @@ describe('Radar activity model', () => {
       'private_activity_omitted',
       'following_scan_truncated',
     ])).toEqual(['private_activity_omitted', 'following_scan_truncated']);
+  });
+  it('round-trips a restart-safe checkpoint and rejects impossible cursors', () => {
+    const checkpoint = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:model',
+      accountLogin: 'Viewer',
+      credentialIdentity: 'credential-a',
+      windowDays: 60,
+      startedAt: '2026-08-10T12:00:00Z',
+    });
+    expect(normalizeRadarReconciliationCheckpoint(checkpoint)).toEqual(checkpoint);
+
+    expect(normalizeRadarReconciliationCheckpoint({
+      ...checkpoint,
+      cursor: {
+        phase: 'following',
+        nextCursor: 'cursor-2',
+        seenCursors: ['cursor-1'],
+        logins: ['alice'],
+        totalCount: 1,
+      },
+    })).toBeNull();
+    expect(normalizeRadarReconciliationCheckpoint({
+      ...checkpoint,
+      cursor: {
+        phase: 'following',
+        nextCursor: 'cursor-1',
+        seenCursors: ['cursor-1', 'cursor-2'],
+        logins: ['alice'],
+        totalCount: 1,
+      },
+    })).toBeNull();
+    expect(normalizeRadarReconciliationCheckpoint({
+      ...checkpoint,
+      cursor: {
+        phase: 'activity',
+        followingCount: 1,
+        actors: [{ login: 'alice', nextCursor: null, seenCursors: ['cursor-1'], complete: false }],
+      },
+    })).toBeNull();
+    expect(normalizeRadarReconciliationCheckpoint({
+      ...checkpoint,
+      cutoffAt: '2026-08-03T12:00:00.000Z',
+    })).toBeNull();
   });
 });

@@ -1,10 +1,15 @@
 import type { GitHubCredentialSnapshot, authStore } from '@/auth/auth-store';
 import type { FollowingHistoryWindowDays } from '@/types';
-import { fetchGitHubRadar } from '@/api/github-radar-source';
 import {
+  fetchGitHubRadar,
+  fetchGitHubRadarReconciliationStep,
+} from '@/api/github-radar-source';
+import {
+  createRadarReconciliationCheckpoint,
   GitHubRadarError,
   type RadarActivityPresentation,
   type RadarErrorCode,
+  type RadarReconciliationCheckpoint,
   type RadarStateRecord,
 } from '@/radar/radar-model';
 import type {
@@ -17,33 +22,42 @@ import {
   selectRadarRefreshPlan,
 } from '@/background/radar-refresh-policy';
 import {
+  abandonRadarReconciliation,
+  commitRadarReconciliationStep,
   commitRadarSnapshot,
   dismissRadarActivities,
+  getRadarReconciliation,
   getRadarState,
   listRadarActivities,
   markRadarActivitiesSeen,
   makeRadarStatus,
   prepareRadarAccount,
   recordRadarFailure,
+  startRadarReconciliation,
   clearRadarData,
 } from '@/storage/radar-store';
-
 type RadarAuth = Pick<typeof authStore, 'getGitHubCredentialSnapshot' | 'getConfig'>;
 type AuthSnapshot = GitHubCredentialSnapshot;
 type RadarRefreshOptions = Readonly<{ bypassPendingFull?: boolean }>;
 type RadarRefreshOutcome = Readonly<{ published: boolean }>;
 
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1_000;
+const TRANSIENT_FAILURE_COOLDOWN_MS = 5 * 60 * 1_000;
 
 export interface RadarRefreshCoordinatorDependencies {
   runSerialized<T>(operation: () => Promise<T>): Promise<T>;
   auth: RadarAuth;
   fetchRadar: typeof fetchGitHubRadar;
+  fetchReconciliationStep: typeof fetchGitHubRadarReconciliationStep;
   store: {
     clearData: typeof clearRadarData;
     commitSnapshot: typeof commitRadarSnapshot;
     prepareAccount: typeof prepareRadarAccount;
     getState: typeof getRadarState;
+    getReconciliation: typeof getRadarReconciliation;
+    startReconciliation: typeof startRadarReconciliation;
+    commitReconciliationStep: typeof commitRadarReconciliationStep;
+    abandonReconciliation: typeof abandonRadarReconciliation;
     recordFailure: typeof recordRadarFailure;
     listActivities: typeof listRadarActivities;
     dismissActivities: typeof dismissRadarActivities;
@@ -82,9 +96,27 @@ function stableErrorCode(error: unknown): RadarErrorCode {
   return error instanceof GitHubRadarError ? error.code : 'network_error';
 }
 
-function rateLimitNextAllowedAt(error: unknown, attemptedAt: number): string | null {
-  if (!(error instanceof GitHubRadarError) || error.code !== 'rate_limited') return null;
-  if (error.resetAt && Number.isFinite(Date.parse(error.resetAt))) return error.resetAt;
+function allowedAtMillis(value: string | null | undefined): number {
+  const millis = value ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(millis) ? millis : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Failures need a cooldown floor, otherwise the Following surface re-triggers
+ * the same failing scan on every entry. Credential and permission failures are
+ * excluded: they need a user action, and a cooldown would mask their status.
+ */
+function failureNextAllowedAt(error: unknown, attemptedAt: number): string | null {
+  const code = stableErrorCode(error);
+  if (code === 'authentication_required' || code === 'permission_denied') return null;
+  if (code !== 'rate_limited') {
+    return new Date(attemptedAt + TRANSIENT_FAILURE_COOLDOWN_MS).toISOString();
+  }
+  if (
+    error instanceof GitHubRadarError
+    && error.resetAt
+    && Number.isFinite(Date.parse(error.resetAt))
+  ) return error.resetAt;
   return new Date(attemptedAt + DEFAULT_RATE_LIMIT_COOLDOWN_MS).toISOString();
 }
 
@@ -141,6 +173,7 @@ export function createRadarRefreshCoordinator(
     refreshing: boolean,
     stateOverride?: RadarStateRecord | null,
     windowDaysOverride?: FollowingHistoryWindowDays,
+    reconciliationOverride?: RadarReconciliationCheckpoint | null,
   ): Promise<RadarStatus> {
     const windowDays = windowDaysOverride ?? await readWindowDays();
     const hasMainToken = !!(auth.accountLogin && auth.mainToken);
@@ -149,7 +182,20 @@ export function createRadarRefreshCoordinator(
       : hasMainToken && auth.accountLogin
         ? await dependencies.store.getState(auth.accountLogin)
         : null;
-    return makeRadarStatus(auth.accountLogin, hasMainToken, refreshing, state, now(), windowDays);
+    const reconciliation = reconciliationOverride !== undefined
+      ? reconciliationOverride
+      : hasMainToken && auth.accountLogin
+        ? await dependencies.store.getReconciliation(auth.accountLogin)
+        : null;
+    return makeRadarStatus(
+      auth.accountLogin,
+      hasMainToken,
+      refreshing,
+      state,
+      now(),
+      windowDays,
+      reconciliation,
+    );
   }
 
   async function reconcileAccount(): Promise<void> {
@@ -179,11 +225,14 @@ export function createRadarRefreshCoordinator(
     const [auth, windowDays] = await Promise.all([readAuth(), readWindowDays()]);
     const accountLogin = auth.accountLogin && auth.mainToken ? auth.accountLogin : null;
     const queriedAt = now();
-    const [activities, state] = await Promise.all([
+    const [activities, state, reconciliation] = await Promise.all([
       accountLogin
         ? dependencies.store.listActivities(accountLogin, queriedAt, windowDays)
         : Promise.resolve([] as RadarActivityPresentation[]),
       accountLogin ? dependencies.store.getState(accountLogin) : Promise.resolve(null),
+      accountLogin
+        ? dependencies.store.getReconciliation(accountLogin)
+        : Promise.resolve(null),
     ]);
     const [latest, latestWindowDays] = await Promise.all([readAuth(), readWindowDays()]);
     if (identity(auth) !== identity(latest) || windowDays !== latestWindowDays) {
@@ -196,9 +245,24 @@ export function createRadarRefreshCoordinator(
     return {
       activities,
       unseenCount: activities.reduce((count, activity) => count + (activity.seen ? 0 : 1), 0),
-      status: await statusForAuth(auth, inFlight !== null, state, windowDays),
+      status: await statusForAuth(auth, inFlight !== null, state, windowDays, reconciliation),
     };
   }
+
+function reconciliationMatches(
+  checkpoint: RadarReconciliationCheckpoint,
+  auth: AuthSnapshot,
+  windowDays: FollowingHistoryWindowDays,
+): boolean {
+  return checkpoint.accountLogin === normalizedAccountLogin(auth.accountLogin)
+    && checkpoint.credentialIdentity === identity(auth)
+    && checkpoint.windowDays === windowDays;
+}
+
+function createReconciliationId(attemptedAt: number): string {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  return randomUuid ? `radar-reconcile:${randomUuid}` : `radar-reconcile:${attemptedAt}:${Math.random()}`;
+}
 
   async function performRefresh(
     auth: AuthSnapshot,
@@ -206,36 +270,100 @@ export function createRadarRefreshCoordinator(
     request: RadarRefreshRequest,
   ): Promise<RadarRefreshOutcome> {
     const accountLogin = auth.accountLogin;
-    if (!accountLogin || !auth.mainToken || !(await requestIsCurrent(auth, windowDays))) {
+    const mainToken = auth.mainToken;
+    if (!accountLogin || !mainToken || !(await requestIsCurrent(auth, windowDays))) {
       return { published: false };
     }
 
     const attemptedAt = now();
     try {
       await dependencies.store.prepareAccount(accountLogin);
-      const previousState = await dependencies.store.getState(accountLogin);
+      let previousState = await dependencies.store.getState(accountLogin);
+      let checkpoint = await dependencies.store.getReconciliation(accountLogin);
+      if (checkpoint && !reconciliationMatches(checkpoint, auth, windowDays)) {
+        await dependencies.store.abandonReconciliation(accountLogin, checkpoint.reconciliationId);
+        checkpoint = null;
+      }
       if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
 
-      const nextAllowedMillis = previousState?.nextAllowedAt
-        ? Date.parse(previousState.nextAllowedAt)
-        : Number.NaN;
-      if (Number.isFinite(nextAllowedMillis) && nextAllowedMillis > attemptedAt) {
-        return { published: false };
-      }
+      // A GitHub quota wait is a hard boundary and comes from the rate-reserve
+      // checkpoint or a rate-limited saved state. A transient-failure cooldown
+      // only exists to stop automatic retry storms, so an explicit user request
+      // may pass through it.
+      const rateWaitMillis = Math.max(
+        allowedAtMillis(checkpoint?.pauseReason === 'rate_reserve' ? checkpoint.nextAllowedAt : null),
+        allowedAtMillis(previousState?.errorCode === 'rate_limited' ? previousState.nextAllowedAt : null),
+      );
+      if (rateWaitMillis > attemptedAt) return { published: false };
+      if (
+        request !== 'full'
+        && allowedAtMillis(previousState?.nextAllowedAt ?? null) > attemptedAt
+      ) return { published: false };
 
-      const plan = selectRadarRefreshPlan({
+      const resumeStep = async (
+        epoch: RadarReconciliationCheckpoint,
+      ): Promise<RadarRefreshOutcome> => {
+        const step = await dependencies.fetchReconciliationStep({
+          token: mainToken,
+          checkpoint: epoch,
+          now: () => new Date(attemptedAt),
+        });
+        if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
+        const committed = await dependencies.store.commitReconciliationStep({
+          accountLogin,
+          credentialIdentity: identity(auth),
+          windowDays,
+          step,
+        });
+        if (!committed.applied) {
+          // A rejection against the exact fence we sent is deterministic: the
+          // stored cursor cannot accept this step and recomputing it would fail
+          // identically, so abandon the epoch instead of stalling on it. A moved
+          // fence is an ordinary race and leaves that epoch alone.
+          const fenceUnmoved = committed.checkpoint !== null
+            && committed.checkpoint.reconciliationId === step.expectedReconciliationId
+            && committed.checkpoint.revision === step.expectedRevision;
+          if (fenceUnmoved) {
+            await dependencies.store.abandonReconciliation(
+              accountLogin,
+              step.expectedReconciliationId,
+            );
+          }
+          return { published: false };
+        }
+        if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
+        dependencies.broadcastChanged();
+        return { published: true };
+      };
+
+      if (checkpoint) return resumeStep(checkpoint);
+
+      const effectivePlan = selectRadarRefreshPlan({
         nowMillis: attemptedAt,
         selectedWindowDays: windowDays,
         credentialIdentity: identity(auth),
         state: previousState,
         forceFull: request === 'full',
       });
+      if (effectivePlan.mode === 'full') {
+        const started = await dependencies.store.startReconciliation(
+          createRadarReconciliationCheckpoint({
+            reconciliationId: createReconciliationId(attemptedAt),
+            accountLogin,
+            credentialIdentity: identity(auth),
+            windowDays,
+            startedAt: new Date(attemptedAt).toISOString(),
+          }),
+        );
+        return resumeStep(started.checkpoint);
+      }
+
       const snapshot = await dependencies.fetchRadar({
         token: auth.mainToken,
         now: () => new Date(attemptedAt),
         windowDays,
-        refreshMode: plan.mode,
-        lookbackDays: plan.lookbackDays,
+        refreshMode: effectivePlan.mode,
+        lookbackDays: effectivePlan.lookbackDays,
       });
       const snapshotRecord = snapshot && typeof snapshot === 'object' ? snapshot : null;
       const snapshotAccountLogin = snapshotRecord && 'accountLogin' in snapshotRecord
@@ -244,8 +372,8 @@ export function createRadarRefreshCoordinator(
       if (
         snapshotAccountLogin !== normalizedAccountLogin(accountLogin)
         || snapshot.windowDays !== windowDays
-        || snapshot.refreshMode !== plan.mode
-        || snapshot.lookbackDays !== plan.lookbackDays
+        || snapshot.refreshMode !== effectivePlan.mode
+        || snapshot.lookbackDays !== effectivePlan.lookbackDays
       ) {
         throw new GitHubRadarError('invalid_response');
       }
@@ -254,11 +382,17 @@ export function createRadarRefreshCoordinator(
       if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
     } catch (error) {
       if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
+      if (
+        error instanceof GitHubRadarError
+        && (error.code === 'invalid_pagination' || error.code === 'invalid_response')
+      ) {
+        await dependencies.store.abandonReconciliation(accountLogin);
+      }
       try {
         await dependencies.store.recordFailure(
           accountLogin,
           stableErrorCode(error),
-          { nextAllowedAt: rateLimitNextAllowedAt(error, attemptedAt) },
+          { nextAllowedAt: failureNextAllowedAt(error, attemptedAt) },
         );
       } catch {
         return { published: false };

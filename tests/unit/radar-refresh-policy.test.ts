@@ -47,11 +47,14 @@ describe('Radar refresh policy', () => {
     expect(plan({ state })).toMatchObject({ mode: 'full', lookbackDays: 60 });
   });
 
-  it.each([
-    ['partial', stableState({ partialReasons: ['github_star_list_truncated'] })],
-    ['error', stableState({ errorCode: 'network_error' })],
-  ])('routes an incomplete %s state to full', (_label, state) => {
-    expect(plan({ state })).toMatchObject({ mode: 'full', lookbackDays: 60 });
+  it('routes a failed previous attempt to full', () => {
+    expect(plan({ state: stableState({ errorCode: 'network_error' }) }))
+      .toMatchObject({ mode: 'full', lookbackDays: 60, reason: 'last_attempt_failed' });
+  });
+
+  it('keeps a partial baseline on the incremental path', () => {
+    expect(plan({ state: stableState({ partialReasons: ['github_star_list_truncated'] }) }))
+      .toMatchObject({ mode: 'incremental', lookbackDays: 7, reason: 'stable_baseline' });
   });
 
   it('routes a selected-window expansion to full', () => {

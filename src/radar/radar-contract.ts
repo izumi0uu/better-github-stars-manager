@@ -3,6 +3,8 @@ import type {
   RadarActivityRecord,
   RadarErrorCode,
   RadarPartialReason,
+  RadarReconciliationCheckpoint,
+  RadarReconciliationPauseReason,
   RadarRefreshMode,
   RadarStateRecord,
 } from '@/radar/radar-model';
@@ -20,6 +22,16 @@ export type RadarSnapshotStatus =
   | 'error'
   | 'cooldown';
 
+export interface RadarReconciliationStatus {
+  phase: RadarReconciliationCheckpoint['cursor']['phase'];
+  completedCount: number;
+  totalCount: number | null;
+  updatedAt: string;
+  pauseReason: RadarReconciliationPauseReason | 'interrupted' | null;
+  nextAllowedAt: string | null;
+}
+
+
 export interface RadarStatus {
   accountLogin: string | null;
   hasMainToken: boolean;
@@ -28,6 +40,7 @@ export interface RadarStatus {
   snapshotStatus: RadarSnapshotStatus;
   errorCode: RadarErrorCode | null;
   state: RadarStateRecord | null;
+  reconciliation?: RadarReconciliationStatus | null;
 }
 
 export interface RadarQueryResponse {
@@ -54,4 +67,14 @@ export interface RadarSourceSnapshot {
   partialReasons: RadarPartialReason[];
   rateLimitRemaining: number | null;
   rateLimitResetAt: string | null;
+  /** Highest GitHub-reported GraphQL request cost observed in this fetch. */
+  maxRequestCost?: number | null;
+}
+
+export interface RadarReconciliationSourceStep {
+  expectedReconciliationId: string;
+  expectedRevision: number;
+  checkpoint: RadarReconciliationCheckpoint;
+  activities: RadarActivityRecord[];
+  complete: boolean;
 }

@@ -605,7 +605,7 @@ describe('WatchInbox', () => {
     });
     expect(renderMessage('zh-CN')).toEqual({
       fields: ['pages', 'count'],
-      text: '正在完整扫描收件箱 · 已扫描 3 页，找到 20 个 thread',
+      text: '正在完整扫描收件箱 · 已扫描 3 页，找到 20 条通知',
     });
   });
 

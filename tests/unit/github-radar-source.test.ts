@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchGitHubRadar } from '@/api/github-radar-source';
+import {
+  fetchGitHubRadar,
+  fetchGitHubRadarReconciliationStep,
+} from '@/api/github-radar-source';
+import {
+  createRadarReconciliationCheckpoint,
+  type RadarReconciliationCheckpoint,
+} from '@/radar/radar-model';
 
 const NOW = new Date('2026-08-10T12:00:00.000Z');
 
@@ -19,6 +26,7 @@ function followingEnvelope(input: {
   hasNextPage?: boolean;
   endCursor?: string | null;
   remaining?: number;
+  cost?: number;
 }) {
   return {
     data: {
@@ -34,6 +42,7 @@ function followingEnvelope(input: {
         },
       },
       rateLimit: {
+        ...(input.cost === undefined ? {} : { cost: input.cost }),
         remaining: input.remaining ?? 4999,
         resetAt: '2026-08-10T13:00:00Z',
       },
@@ -80,7 +89,7 @@ function activityEnvelope(followers: Array<{
   edges: Array<{ starredAt: string; node: unknown }>;
   hasNextPage?: boolean;
   endCursor?: string | null;
-}>, remaining = 4900) {
+}>, remaining = 4900, cost?: number) {
   return {
     data: {
       ...Object.fromEntries(followers.map((follower, index) => [
@@ -100,6 +109,7 @@ function activityEnvelope(followers: Array<{
         },
       ])),
       rateLimit: {
+        ...(cost === undefined ? {} : { cost }),
         remaining,
         resetAt: '2026-08-10T13:00:00Z',
       },
@@ -690,5 +700,171 @@ describe('GitHub Radar source', () => {
 
     expect(snapshot.activities.map((activity) => activity.repositoryKey)).toEqual(['owner/recent']);
     expect(snapshot).toMatchObject({ refreshMode: 'full', lookbackDays: 90, windowDays: 90 });
+  });
+  it('walks multi-page Following and actor pages inside one request budget', async () => {
+    const initial = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:test',
+      accountLogin: 'viewer',
+      credentialIdentity: 'viewer:identity:true',
+      windowDays: 30,
+      startedAt: NOW.toISOString(),
+    });
+    const requests: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        query: string;
+        variables: Record<string, unknown>;
+      };
+      requests.push(body);
+      if (body.query.includes('RadarFollowing')) {
+        return body.variables.cursor === null
+          ? jsonResponse(followingEnvelope({
+            logins: ['alice'],
+            totalCount: 2,
+            hasNextPage: true,
+            endCursor: 'following-next',
+            cost: 7,
+          }))
+          : jsonResponse(followingEnvelope({
+            logins: ['bob'],
+            totalCount: 2,
+            cost: 6,
+          }));
+      }
+      return jsonResponse(activityEnvelope([
+        {
+          login: 'alice',
+          edges: [{ starredAt: NOW.toISOString(), node: repository('owner/alice-star') }],
+        },
+        {
+          login: 'bob',
+          edges: [{ starredAt: NOW.toISOString(), node: repository('owner/bob-star') }],
+        },
+      ], 4_900, 4));
+    }) as typeof fetch;
+
+    const step = await fetchGitHubRadarReconciliationStep({
+      token: 'token',
+      checkpoint: initial,
+      fetchImpl,
+      now: () => NOW,
+    });
+
+    expect(requests.map((request) => request.variables)).toEqual([
+      { cursor: null },
+      { cursor: 'following-next' },
+      { login0: 'alice', cursor0: null, login1: 'bob', cursor1: null },
+    ]);
+    expect(step.complete).toBe(true);
+    expect(step.checkpoint.pauseReason).toBeNull();
+    expect(step.checkpoint.partialReasons).toEqual([]);
+    expect(step.checkpoint.scannedFollowingCount).toBe(2);
+    expect(step.checkpoint.maxRequestCost).toBe(7);
+    expect(step.checkpoint.cursor).toMatchObject({
+      phase: 'activity',
+      followingCount: 2,
+      actors: [
+        { login: 'alice', complete: true, nextCursor: null },
+        { login: 'bob', complete: true, nextCursor: null },
+      ],
+    });
+    expect(step.activities.map((activity) => activity.repositoryKey))
+      .toEqual(['owner/alice-star', 'owner/bob-star']);
+  });
+
+  it('resumes the stored Following cursor after a request-budget pause', async () => {
+    const initial = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:resume',
+      accountLogin: 'viewer',
+      credentialIdentity: 'viewer:identity:true',
+      windowDays: 30,
+      startedAt: NOW.toISOString(),
+    });
+    const requests: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        query: string;
+        variables: Record<string, unknown>;
+      };
+      requests.push(body);
+      if (body.query.includes('RadarFollowing')) {
+        return body.variables.cursor === null
+          ? jsonResponse(followingEnvelope({
+            logins: ['alice'],
+            totalCount: 1,
+            hasNextPage: true,
+            endCursor: 'following-next',
+          }))
+          : jsonResponse(followingEnvelope({ logins: [], totalCount: 1 }));
+      }
+      return jsonResponse(activityEnvelope([{
+        login: 'alice',
+        edges: [{ starredAt: NOW.toISOString(), node: repository('owner/resumed') }],
+      }]));
+    }) as typeof fetch;
+    const step = (checkpoint: RadarReconciliationCheckpoint) => fetchGitHubRadarReconciliationStep({
+      token: 'token',
+      checkpoint,
+      fetchImpl,
+      now: () => NOW,
+      maxRequests: 1,
+    });
+
+    const first = await step(initial);
+    expect(first.checkpoint.pauseReason).toBe('request_budget');
+    expect(first.checkpoint.cursor).toMatchObject({
+      phase: 'following',
+      nextCursor: 'following-next',
+    });
+
+    const second = await step(first.checkpoint);
+    expect(requests[1]?.variables).toEqual({ cursor: 'following-next' });
+    expect(second.checkpoint.cursor.phase).toBe('activity');
+    expect(second.complete).toBe(false);
+
+    const third = await step(second.checkpoint);
+    expect(requests[2]?.variables).toEqual({ login0: 'alice', cursor0: null });
+    expect(third.complete).toBe(true);
+    expect(third.checkpoint.pauseReason).toBeNull();
+    expect(third.activities.map((activity) => activity.repositoryKey)).toEqual(['owner/resumed']);
+  });
+
+  it('persists a request-budget pause with the advanced actor cursor', async () => {
+    const base = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:budget',
+      accountLogin: 'viewer',
+      credentialIdentity: 'viewer:identity:true',
+      windowDays: 30,
+      startedAt: NOW.toISOString(),
+    });
+    const checkpoint = {
+      ...base,
+      cursor: {
+        phase: 'activity' as const,
+        followingCount: 1,
+        actors: [{ login: 'alice', nextCursor: null, seenCursors: [], complete: false }],
+      },
+    };
+    const fetchImpl = vi.fn(async () => jsonResponse(activityEnvelope([{
+      login: 'alice',
+      edges: [{ starredAt: NOW.toISOString(), node: repository('owner/page-one') }],
+      hasNextPage: true,
+      endCursor: 'actor-next',
+    }]))) as typeof fetch;
+
+    const result = await fetchGitHubRadarReconciliationStep({
+      token: 'token',
+      checkpoint,
+      fetchImpl,
+      now: () => NOW,
+      maxRequests: 1,
+    });
+
+    expect(result.complete).toBe(false);
+    expect(result.checkpoint.pauseReason).toBe('request_budget');
+    expect(result.checkpoint.cursor).toMatchObject({
+      phase: 'activity',
+      actors: [{ login: 'alice', nextCursor: 'actor-next', complete: false }],
+    });
   });
 });

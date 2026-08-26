@@ -143,6 +143,9 @@ export function useRadarActivityResource(active: boolean) {
     }
   }, [reload, runtime]);
 
+  // The background coordinator already resumes a saved checkpoint before its
+  // normal plan, so ordinary refresh stays incremental and Resume full sync
+  // remains the only explicit full-scan entry point.
   const refresh = useCallback(() => runRefresh('incremental'), [runRefresh]);
 
   const fullReconcile = useCallback(() => runRefresh('full'), [runRefresh]);
@@ -189,11 +192,17 @@ export function useRadarActivityResource(active: boolean) {
       .then(() => reload(true), () => reload(true));
   }, [reload, runtime]);
 
+  // A step this page did not start still belongs to a full epoch: a checkpoint
+  // exists only while one is unfinished, and the coordinator resumes it before
+  // any incremental plan. Deriving busy state here keeps the ribbon and the
+  // command bar attributing background work to Full sync.
+  const backgroundEpochRunning = result?.status.refreshing === true
+    && result.status.reconciliation != null;
   return {
     result,
     loading,
     refreshing: refreshing || result?.status.refreshing === true,
-    fullReconciling,
+    fullReconciling: fullReconciling || backgroundEpochRunning,
     error,
     refresh,
     fullReconcile,

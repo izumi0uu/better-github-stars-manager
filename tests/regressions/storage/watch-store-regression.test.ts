@@ -1240,7 +1240,7 @@ describe('Watch snapshot storage', () => {
     const upgraded = new StarsDB();
     try {
       await upgraded.open();
-      assert.equal(upgraded.verno, 6);
+      assert.equal(upgraded.verno, 7);
       assert.deepEqual(
         await upgraded.watchRepositories.toArray(),
         [{ full_name: 'legacy/private' }],

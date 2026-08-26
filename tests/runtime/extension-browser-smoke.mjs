@@ -324,7 +324,7 @@ export async function runExtensionBrowserSmoke(options = {}) {
 
     step('9) Watch renders the converged stored snapshot without GitHub API calls');
     assert.deepEqual(seededWatch, {
-      databaseVersion: 6,
+      databaseVersion: 7,
       hasMainToken: true,
       hasNotificationsToken: true,
       allThreadCount: 4,
@@ -789,7 +789,7 @@ async function seedWatchAndRadarFixture(extId) {
   const seeded = await page.evaluate(async () => {
     const APP_SECRET = 'better-github-stars-manager/v1/static-derivation-secret';
     const DB_NAME = 'better-github-stars-manager';
-    const DEXIE_VERSION = 6;
+    const DEXIE_VERSION = 7;
     const IDB_VERSION = DEXIE_VERSION * 10;
     const CONFIG_KEY = 'gsm_config';
     const CREDENTIALS_KEY = 'gsm_github_credentials';
@@ -840,9 +840,9 @@ async function seedWatchAndRadarFixture(extId) {
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(new Error(unexpectedUpgrade
-        ? 'the extension did not initialize its Dexie v6 schema before Watch fixture setup'
+        ? `the extension did not initialize its Dexie v${DEXIE_VERSION} schema before Watch fixture setup`
         : `failed to open extension IndexedDB: ${request.error?.message ?? 'unknown error'}`));
-      request.onblocked = () => reject(new Error('extension IndexedDB v6 fixture open was blocked'));
+      request.onblocked = () => reject(new Error(`extension IndexedDB v${DEXIE_VERSION} fixture open was blocked`));
     });
     const transactionDone = (transaction) => new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve();
@@ -909,7 +909,7 @@ async function seedWatchAndRadarFixture(extId) {
     for (const storeName of requiredStores) {
       if (!database.objectStoreNames.contains(storeName)) {
         database.close();
-        throw new Error(`Dexie v6 is missing required store ${storeName}`);
+        throw new Error(`Dexie v${DEXIE_VERSION} is missing required store ${storeName}`);
       }
     }
 
