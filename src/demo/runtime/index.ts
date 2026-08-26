@@ -703,6 +703,7 @@ class DemoManagerRuntime implements ManagerRuntime {
           : 'fresh',
       errorCode: this.state.radarState.errorCode,
       state: cloneMutable(this.state.radarState),
+      reconciliation: null,
     };
   }
 

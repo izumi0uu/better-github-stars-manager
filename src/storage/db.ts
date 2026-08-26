@@ -28,7 +28,7 @@ import type {
 } from '@/watch/watch-model';
 import type {
   RadarActivityRecord,
-  RadarStateRecord,
+  RadarStoredStateRecord,
 } from '@/radar/radar-model';
 import type {
   RecommendationIgnoreRecord,
@@ -63,7 +63,7 @@ export class StarsDB extends Dexie {
   watchNotificationThreads!: Table<GitHubNotificationThread, string>;
   watchState!: Table<GitHubWatchStateRecord, 'singleton'>;
   radarActivities!: Table<RadarActivityRecord, string>;
-  radarState!: Table<RadarStateRecord, 'singleton'>;
+  radarState!: Table<RadarStoredStateRecord, 'singleton'>;
   recommendations!: Table<RecommendationRecord, string>;
   recommendationState!: Table<RecommendationStateRecord, 'singleton'>;
   recommendationIgnores!: Table<RecommendationIgnoreRecord, string>;
@@ -206,6 +206,34 @@ export class StarsDB extends Dexie {
           lastConvergedAt: null,
         },
       });
+    });
+    // v7 adds optional Radar reconciliation checkpoints and per-row epoch
+    // markers. Neither field is indexed; legacy rows remain valid when absent.
+    this.version(7).stores({
+      stars: 'full_name, language, starred_at, pushed_at, created_at, tombstone',
+      tags: 'full_name, mtime',
+      tagMeta: 'name, dimension, mtime',
+      organizeJobs: 'jobId, &activeSlot, status, updatedAt, originAgentSessionId, sessionId',
+      organizeItems: 'id, [jobId+position], [jobId+analysisState], jobId, position, analysisState, leaseExpiresAt',
+      organizeTaxonomies: 'jobId',
+      organizeApplies: 'applyId, jobId, status',
+      organizeApplyRows: 'id, [applyId+position], [applyId+state], applyId, state, leaseExpiresAt',
+      tagDirtyOutbox: 'id, kind, updatedAt',
+      agentSessions: 'id, updatedAt, createdAt',
+      agentMessages: 'id, sessionId, &[sessionId+sequence], [sessionId+turnAttemptId]',
+      agentAttempts: 'id, sessionId, &[sessionId+turnAttemptId], [sessionId+state], updatedAt',
+      agentAttemptRecoveries: 'id, sessionId, &[sessionId+turnAttemptId], updatedAt',
+      agentArtifacts: 'id, sessionId, turnAttemptId, ownerMessageId, storageClass, [sessionId+storageClass], [storageClass+state+lastAccessedAt], [state+createdAt], expiresAt',
+      agentArtifactChunks: 'id, artifactId, &[artifactId+index]',
+      agentStorageUsage: 'id',
+      watchRepositories: 'full_name',
+      watchNotificationThreads: 'id, repositoryFullName, updatedAt, [repositoryFullName+updatedAt]',
+      watchState: 'id',
+      radarActivities: '&id, accountLogin, repositoryKey, starredAt, dismissedAt, [accountLogin+starredAt], [accountLogin+repositoryKey]',
+      radarState: '&id, accountLogin, lastSuccessfulAt',
+      recommendations: '&id, accountLogin',
+      recommendationState: '&id, accountLogin',
+      recommendationIgnores: '&id, accountLogin',
     });
   }
 }

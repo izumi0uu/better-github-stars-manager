@@ -12,7 +12,10 @@ import {
 } from '@/api/github-notifications-source';
 import { fetchGitHubWatchScope } from '@/api/github-watch-scope-source';
 import { fetchGitHubWatchSubjectDetail } from '@/api/github-watch-subject-source';
-import { fetchGitHubRadar } from '@/api/github-radar-source';
+import {
+  fetchGitHubRadar,
+  fetchGitHubRadarReconciliationStep,
+} from '@/api/github-radar-source';
 import { getMessages } from "@/i18n";
 import {
   addBgsmAgentManualTags,
@@ -372,10 +375,15 @@ const radarRefreshCoordinator = createRadarRefreshCoordinator({
   runSerialized: (operation) => jobQueue.run(operation),
   auth: authStore,
   fetchRadar: fetchGitHubRadar,
+  fetchReconciliationStep: fetchGitHubRadarReconciliationStep,
   store: {
     clearData: radarStore.clearRadarData,
     prepareAccount: radarStore.prepareRadarAccount,
     getState: radarStore.getRadarState,
+    getReconciliation: radarStore.getRadarReconciliation,
+    startReconciliation: radarStore.startRadarReconciliation,
+    commitReconciliationStep: radarStore.commitRadarReconciliationStep,
+    abandonReconciliation: radarStore.abandonRadarReconciliation,
     commitSnapshot: radarStore.commitRadarSnapshot,
     recordFailure: radarStore.recordRadarFailure,
     listActivities: radarStore.listRadarActivities,

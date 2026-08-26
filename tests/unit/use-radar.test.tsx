@@ -987,6 +987,55 @@ describe('useRadar', () => {
     expect(container.querySelector('[data-testid="full-reconciling"]')?.textContent).toBe('idle');
   });
 
+  it('keeps ordinary refresh incremental while a checkpoint is paused', async () => {
+    const paused = {
+      ...response({
+        reconciliation: {
+          phase: 'activity',
+          completedCount: 2,
+          totalCount: 5,
+          updatedAt: '2026-08-10T12:00:00.000Z',
+          pauseReason: 'interrupted',
+          nextAllowedAt: null,
+        },
+      }),
+      activities: [unseenActivity],
+      unseenCount: 1,
+    };
+    const refresh = deferred<RadarRefreshResult>();
+    let queries = 0;
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') {
+        queries += 1;
+        return Promise.resolve(queries === 1 ? paused : response());
+      }
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      if (type === 'refreshRadar') return refresh.promise;
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="refresh"]')?.click();
+      await Promise.resolve();
+    });
+
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'fullReconcileRadar'))
+      .toHaveLength(0);
+    expect(radarMocks.bgCall.mock.calls.filter(([type]) => type === 'refreshRadar'))
+      .toHaveLength(1);
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1');
+    expect(container.querySelector('[data-testid="full-reconciling"]')?.textContent).toBe('idle');
+
+    await act(async () => {
+      refresh.resolve(refreshResponse());
+      await refresh.promise;
+    });
+    await settle();
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('idle');
+  });
+
   it('keeps saved recommendations when refresh cannot publish', async () => {
     const loaded = recommendationResponse();
     const failed = recommendationResponse({ snapshotStatus: 'stale', errorCode: 'network_error' });

@@ -23,6 +23,7 @@ export function RadarStatusRibbon({
   const { m, locale } = useI18n();
   const status = result?.status;
   const state = status?.state;
+  const reconciliation = status?.reconciliation ?? null;
   const snapshotAt = formatRadarAbsoluteTime(state?.lastSuccessfulAt ?? null, locale);
   const provenanceWindow = state?.windowDays ?? null;
   const provenance = state?.lastRefreshMode && provenanceWindow !== null
@@ -31,6 +32,13 @@ export function RadarStatusRibbon({
   const permissionFailure = status?.errorCode === 'authentication_required'
     || status?.errorCode === 'permission_denied';
   const hasSavedActivity = (state?.activityCount ?? 0) > 0;
+  const pauseTime = reconciliation?.nextAllowedAt
+    ? formatRadarAbsoluteTime(reconciliation.nextAllowedAt, locale)
+    : null;
+  // A rate-reserve pause also writes a saved-state cooldown, and its own copy
+  // already names the wait plus progress. Only a recorded failure outranks
+  // paused-progress copy, otherwise the reason stays hidden behind it.
+  const failureOwnsRibbon = status?.hasMainToken !== true || status.errorCode !== null;
   let text = m.common.loading;
   let tone: 'muted' | 'success' | 'warning' | 'destructive' = 'muted';
 
@@ -42,6 +50,14 @@ export function RadarStatusRibbon({
       : fullReconciling ? m.radar.fullReconciling : m.radar.refreshing;
   } else if (error === 'refresh' && result) {
     text = m.radar.statusRefreshFailedSaved;
+    tone = 'warning';
+  } else if (reconciliation && !failureOwnsRibbon) {
+    text = reconciliation.pauseReason === 'rate_reserve' && pauseTime
+      ? m.radar.statusReconciliationRatePaused(pauseTime)
+      : m.radar.statusReconciliationPaused(
+        reconciliation.completedCount,
+        reconciliation.totalCount,
+      );
     tone = 'warning';
   } else if (error === 'query' && !result) {
     text = m.radar.queryFailed;

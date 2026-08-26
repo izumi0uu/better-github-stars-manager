@@ -4,8 +4,18 @@ import {
   type RadarRefreshCoordinatorDependencies,
 } from '@/background/radar-refresh';
 import type { GitHubCredentialSnapshot } from '@/auth/auth-store';
-import { GitHubRadarError, type RadarActivityRecord, type RadarActivityPresentation, type RadarStateRecord } from '@/radar/radar-model';
-import type { RadarSourceSnapshot } from '@/radar/radar-contract';
+import type {
+  RadarReconciliationSourceStep,
+  RadarSourceSnapshot,
+} from '@/radar/radar-contract';
+import {
+  createRadarReconciliationCheckpoint,
+  GitHubRadarError,
+  type RadarActivityRecord,
+  type RadarActivityPresentation,
+  type RadarReconciliationCheckpoint,
+  type RadarStateRecord,
+} from '@/radar/radar-model';
 import { createSerializedRunner } from '@/background/serialized-runner';
 import type { Config, FollowingHistoryWindowDays } from '@/types';
 
@@ -100,11 +110,14 @@ function makeCoordinator(input: {
   auth?: GitHubCredentialSnapshot;
   state?: RadarStateRecord | null;
   fetchRadar?: RadarRefreshCoordinatorDependencies['fetchRadar'];
+  fetchReconciliationStep?: RadarRefreshCoordinatorDependencies['fetchReconciliationStep'];
+  reconciliation?: RadarReconciliationCheckpoint | null;
   activities?: RadarActivityPresentation[];
   runSerialized?: RadarRefreshCoordinatorDependencies['runSerialized'];
 } = {}) {
   let currentAuth = input.auth ?? authSnapshot();
   let currentWindowDays: FollowingHistoryWindowDays = 60;
+  let currentReconciliation = input.reconciliation ?? null;
   const currentState = input.state === undefined ? state() : input.state;
   const events: string[] = [];
   const runSerialized = input.runSerialized ?? (async <T,>(operation: () => Promise<T>) => operation());
@@ -112,6 +125,23 @@ function makeCoordinator(input: {
     clearData: vi.fn(async () => { events.push('clear'); }),
     prepareAccount: vi.fn(async () => { events.push('prepare'); }),
     getState: vi.fn(async () => currentState),
+    getReconciliation: vi.fn(async () => currentReconciliation),
+    startReconciliation: vi.fn(async (checkpoint: RadarReconciliationCheckpoint) => {
+      currentReconciliation = checkpoint;
+      return { state: currentState ?? state(), checkpoint };
+    }),
+    commitReconciliationStep: vi.fn(async (input: { step: RadarReconciliationSourceStep }) => {
+      currentReconciliation = input.step.complete ? null : input.step.checkpoint;
+      return {
+        applied: true,
+        state: currentState ?? state(),
+        checkpoint: currentReconciliation,
+      };
+    }),
+    abandonReconciliation: vi.fn(async () => {
+      currentReconciliation = null;
+      return true;
+    }),
     commitSnapshot: vi.fn(async () => { events.push('commit'); return currentState ?? state(); }),
     recordFailure: vi.fn(async () => { events.push('failure'); return currentState ?? state(); }),
     listActivities: vi.fn(async () => input.activities ?? [] as RadarActivityPresentation[]),
@@ -129,6 +159,7 @@ function makeCoordinator(input: {
       refreshMode: options.refreshMode,
       lookbackDays: options.lookbackDays,
     })),
+    fetchReconciliationStep: input.fetchReconciliationStep,
     store,
     now: () => NOW,
     broadcastChanged: vi.fn(() => { events.push('broadcast'); }),
@@ -297,6 +328,102 @@ describe('Radar refresh coordinator', () => {
     expect(one).toEqual(auto);
     expect(fetchRadar).toHaveBeenCalledTimes(2);
   });
+  it('starts a durable checkpoint for a forced full reconciliation', async () => {
+    const credentialIdentity = JSON.stringify(['viewer', 'identity-a', true]);
+    const fetchStep: NonNullable<RadarRefreshCoordinatorDependencies['fetchReconciliationStep']> =
+      vi.fn(async (options) => {
+        const nextCheckpoint: RadarReconciliationCheckpoint = {
+          ...options.checkpoint,
+          revision: options.checkpoint.revision + 1,
+          updatedAt: new Date(NOW).toISOString(),
+          cursor: {
+            phase: 'following',
+            nextCursor: 'following-next',
+            seenCursors: ['following-next'],
+            logins: [],
+            totalCount: null,
+          },
+        };
+        return {
+          expectedReconciliationId: options.checkpoint.reconciliationId,
+          expectedRevision: options.checkpoint.revision,
+          checkpoint: nextCheckpoint,
+          activities: [],
+          complete: false,
+        };
+      });
+    const h = makeCoordinator({ fetchReconciliationStep: fetchStep });
+
+    const result = await h.coordinator.fullReconcile();
+
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+    expect(h.store.startReconciliation).toHaveBeenCalledWith(expect.objectContaining({
+      revision: 0,
+      accountLogin: 'viewer',
+      credentialIdentity,
+      windowDays: 60,
+    }));
+    expect(fetchStep).toHaveBeenCalledWith(expect.objectContaining({
+      checkpoint: expect.objectContaining({ revision: 0 }),
+    }));
+    expect(result.published).toBe(true);
+    expect(result.status.reconciliation).toMatchObject({ phase: 'following' });
+  });
+
+  it('resumes a persisted full reconciliation before selecting a new refresh plan', async () => {
+    const credentialIdentity = JSON.stringify(['viewer', 'identity-a', true]);
+    const checkpoint = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:resume',
+      accountLogin: 'viewer',
+      credentialIdentity,
+      windowDays: 60,
+      startedAt: new Date(NOW - 1_000).toISOString(),
+    });
+    const nextCheckpoint: RadarReconciliationCheckpoint = {
+      ...checkpoint,
+      revision: 1,
+      updatedAt: new Date(NOW).toISOString(),
+      cursor: {
+        phase: 'following',
+        nextCursor: 'following-next',
+        seenCursors: ['following-next'],
+        logins: [],
+        totalCount: null,
+      },
+    };
+    const fetchStep: NonNullable<RadarRefreshCoordinatorDependencies['fetchReconciliationStep']> =
+      vi.fn(async (options) => ({
+        expectedReconciliationId: options.checkpoint.reconciliationId,
+        expectedRevision: options.checkpoint.revision,
+        checkpoint: nextCheckpoint,
+        activities: [],
+        complete: false,
+      }));
+    const h = makeCoordinator({
+      reconciliation: checkpoint,
+      fetchReconciliationStep: fetchStep,
+    });
+
+    const result = await h.coordinator.refresh();
+
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+    expect(fetchStep).toHaveBeenCalledWith(expect.objectContaining({
+      token: 'main-token',
+      checkpoint,
+    }));
+    expect(h.store.startReconciliation).not.toHaveBeenCalled();
+    expect(h.store.commitReconciliationStep).toHaveBeenCalledWith(expect.objectContaining({
+      accountLogin: 'viewer',
+      credentialIdentity,
+      windowDays: 60,
+    }));
+    expect(result.published).toBe(true);
+    expect(result.status.reconciliation).toMatchObject({
+      phase: 'following',
+      totalCount: null,
+      pauseReason: 'interrupted',
+    });
+  });
   it('uses the selected history window for fetch, query, and status', async () => {
     const h = makeCoordinator();
     h.setWindowDays(90);
@@ -331,7 +458,7 @@ describe('Radar refresh coordinator', () => {
       {
         request: 'auto',
         state: state({ partialReasons: ['github_star_list_truncated'] }),
-        expected: { refreshMode: 'full', lookbackDays: 60 },
+        expected: { refreshMode: 'incremental', lookbackDays: 7 },
       },
       {
         request: 'auto',
@@ -490,7 +617,69 @@ describe('Radar refresh coordinator', () => {
 
     expect(result.published).toBe(false);
     expect(h.store.commitSnapshot).not.toHaveBeenCalled();
-    expect(h.store.recordFailure).toHaveBeenCalledWith('viewer', 'invalid_response', { nextAllowedAt: null });
+    expect(h.store.recordFailure).toHaveBeenCalledWith('viewer', 'invalid_response', {
+      nextAllowedAt: new Date(NOW + 5 * 60 * 1_000).toISOString(),
+    });
+  });
+
+  it('lets an explicit full request pass a transient-failure cooldown', async () => {
+    const h = makeCoordinator({
+      state: state({
+        errorCode: 'network_error',
+        nextAllowedAt: new Date(NOW + 60_000).toISOString(),
+      }),
+    });
+
+    const automatic = await h.coordinator.refresh('auto');
+    expect(automatic.published).toBe(false);
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+
+    const explicit = await h.coordinator.refresh('full');
+    expect(explicit.published).toBe(true);
+    expect(h.dependencies.fetchRadar).toHaveBeenCalledWith(
+      expect.objectContaining({ refreshMode: 'full', lookbackDays: 60 }),
+    );
+  });
+
+  it('keeps an explicit full request behind an active rate-limit cooldown', async () => {
+    const h = makeCoordinator({
+      state: state({
+        errorCode: 'rate_limited',
+        nextAllowedAt: new Date(NOW + 60_000).toISOString(),
+      }),
+    });
+
+    const result = await h.coordinator.refresh('full');
+
+    expect(result.published).toBe(false);
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicit full request behind a rate-reserve checkpoint', async () => {
+    const credentialIdentity = JSON.stringify(['viewer', 'identity-a', true]);
+    const base = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:reserve',
+      accountLogin: 'viewer',
+      credentialIdentity,
+      windowDays: 60,
+      startedAt: new Date(NOW - 1_000).toISOString(),
+    });
+    const fetchStep = vi.fn();
+    const h = makeCoordinator({
+      state: state({ nextAllowedAt: null }),
+      reconciliation: {
+        ...base,
+        pauseReason: 'rate_reserve',
+        nextAllowedAt: new Date(NOW + 60_000).toISOString(),
+      },
+      fetchReconciliationStep: fetchStep,
+    });
+
+    const result = await h.coordinator.refresh('full');
+
+    expect(result.published).toBe(false);
+    expect(fetchStep).not.toHaveBeenCalled();
+    expect(h.dependencies.fetchRadar).not.toHaveBeenCalled();
   });
 
   it('abandons an in-flight result when the credential identity changes', async () => {

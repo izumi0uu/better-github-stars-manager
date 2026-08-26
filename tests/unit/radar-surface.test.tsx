@@ -1000,6 +1000,35 @@ describe('RadarCommandBarActions', () => {
     expect(container.querySelector<HTMLButtonElement>('button[data-radar-action="full-reconcile"]')?.disabled)
       .toBe(true);
   });
+
+  it('gives the busy indicator to exactly one running action', () => {
+    const props = {
+      result: radarResult(),
+      loading: false,
+      view: 'feed' as const,
+      sources: { following: true, self: false },
+      onViewChange: vi.fn(),
+      onRefresh: vi.fn(),
+      onFullReconcile: vi.fn(),
+      onSourceEnabledChange: vi.fn(),
+    };
+    const read = (container: HTMLElement, action: 'refresh' | 'full-reconcile') => {
+      const button = container.querySelector<HTMLButtonElement>(`button[data-radar-action="${action}"]`);
+      return {
+        disabled: button?.disabled ?? null,
+        busy: button?.getAttribute('aria-busy') ?? null,
+        spinner: !!button?.querySelector('svg.animate-spin'),
+      };
+    };
+
+    const full = mount(<RadarCommandBarActions {...props} refreshing fullReconciling />);
+    expect(read(full, 'full-reconcile')).toEqual({ disabled: true, busy: 'true', spinner: true });
+    expect(read(full, 'refresh')).toEqual({ disabled: true, busy: 'false', spinner: false });
+
+    const incremental = mount(<RadarCommandBarActions {...props} refreshing fullReconciling={false} />);
+    expect(read(incremental, 'refresh')).toEqual({ disabled: true, busy: 'true', spinner: true });
+    expect(read(incremental, 'full-reconcile')).toEqual({ disabled: true, busy: 'false', spinner: false });
+  });
 });
 
 describe('RadarStatusRibbon', () => {
@@ -1052,5 +1081,120 @@ describe('RadarStatusRibbon', () => {
     expect(container.querySelector('[data-radar-status="refreshing"]')).not.toBeNull();
     expect(container.textContent).toContain('Full sync · showing saved activity');
     expect(container.querySelector('svg.animate-spin')).not.toBeNull();
+  });
+  it('shows saved activity and a resume label for an interrupted full sync', () => {
+    const result = radarResult({
+      reconciliation: {
+        phase: 'activity',
+        completedCount: 2,
+        totalCount: 5,
+        updatedAt: '2026-08-10T12:00:00.000Z',
+        pauseReason: 'interrupted',
+        nextAllowedAt: null,
+      },
+    });
+    const ribbon = mount(<RadarStatusRibbon
+      result={result}
+      loading={false}
+      refreshing={false}
+      fullReconciling={false}
+      error={null}
+      onOpenOptions={vi.fn()}
+    />);
+    const commandBar = mount(<RadarCommandBarActions
+      result={result}
+      loading={false}
+      view="feed"
+      fullReconciling={false}
+      refreshing={false}
+      sources={{ following: true, self: false }}
+      onViewChange={vi.fn()}
+      onRefresh={vi.fn()}
+      onFullReconcile={vi.fn()}
+      onSourceEnabledChange={vi.fn()}
+    />);
+
+    expect(ribbon.textContent).toContain('Full sync paused · 2 of 5 accounts completed');
+    expect(ribbon.textContent).toContain('saved activity remains visible');
+    expect(commandBar.querySelector('[data-radar-action="full-reconcile"]')?.getAttribute('aria-label'))
+      .toBe('Resume full sync');
+  });
+
+  it('keeps a failed step visible instead of paused full-sync progress', () => {
+    const result = radarResult({
+      snapshotStatus: 'error',
+      errorCode: 'permission_denied',
+      reconciliation: {
+        phase: 'activity',
+        completedCount: 2,
+        totalCount: 5,
+        updatedAt: '2026-08-10T12:00:00.000Z',
+        pauseReason: 'interrupted',
+        nextAllowedAt: null,
+      },
+    });
+    const container = mount(<RadarStatusRibbon
+      result={result}
+      loading={false}
+      refreshing={false}
+      fullReconciling={false}
+      error={null}
+      onOpenOptions={vi.fn()}
+    />);
+
+    expect(container.textContent).toContain('Following needs access to your following graph');
+    expect(container.textContent).not.toContain('Full sync paused');
+  });
+
+  it('keeps a cooldown time visible instead of paused full-sync progress', () => {
+    const base = status();
+    const result = radarResult({
+      snapshotStatus: 'cooldown',
+      errorCode: 'network_error',
+      state: { ...base.state!, nextAllowedAt: '2026-08-10T13:00:00.000Z' },
+      reconciliation: {
+        phase: 'activity',
+        completedCount: 2,
+        totalCount: 5,
+        updatedAt: '2026-08-10T12:00:00.000Z',
+        pauseReason: 'interrupted',
+        nextAllowedAt: null,
+      },
+    });
+    const container = mount(<RadarStatusRibbon
+      result={result}
+      loading={false}
+      refreshing={false}
+      fullReconciling={false}
+      error={null}
+      onOpenOptions={vi.fn()}
+    />);
+
+    expect(container.textContent).toContain('Scan available at');
+    expect(container.textContent).not.toContain('Full sync paused');
+  });
+
+  it('shows the quota recovery time for a rate-reserved full sync', () => {
+    const result = radarResult({
+      reconciliation: {
+        phase: 'following',
+        completedCount: 3,
+        totalCount: 8,
+        updatedAt: '2026-08-10T12:00:00.000Z',
+        pauseReason: 'rate_reserve',
+        nextAllowedAt: '2026-08-10T13:00:00.000Z',
+      },
+    });
+    const container = mount(<RadarStatusRibbon
+      result={result}
+      loading={false}
+      refreshing={false}
+      fullReconciling={false}
+      error={null}
+      onOpenOptions={vi.fn()}
+    />);
+
+    expect(container.textContent).toContain('Full sync paused until');
+    expect(container.textContent).toContain('while GitHub quota recovers');
   });
 });

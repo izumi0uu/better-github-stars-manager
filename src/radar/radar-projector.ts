@@ -31,6 +31,12 @@ function storedSeenAt(value: unknown): string | null {
   return typeof value === 'string' && timestamp(value) !== null ? value : null;
 }
 
+function publicRadarActivity(activity: RadarActivityRecord): RadarActivityRecord {
+  const visible = { ...activity };
+  delete visible.reconciliationId;
+  return visible;
+}
+
 function ownStarPresentation(
   star: Star,
   accountLogin: string,
@@ -115,7 +121,7 @@ export function projectRadarActivities(source: RadarProjectionSource): RadarActi
       hasLiveStar ? star.topics : activity.repositoryTopics,
     );
     return {
-      ...activity,
+      ...publicRadarActivity(activity),
       source: 'following',
       seenAt,
       seen: seenAt !== null,

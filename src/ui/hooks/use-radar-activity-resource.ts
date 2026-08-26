@@ -143,6 +143,9 @@ export function useRadarActivityResource(active: boolean) {
     }
   }, [reload, runtime]);
 
+  // The background coordinator already resumes a saved checkpoint before its
+  // normal plan, so ordinary refresh stays incremental and Resume full sync
+  // remains the only explicit full-scan entry point.
   const refresh = useCallback(() => runRefresh('incremental'), [runRefresh]);
 
   const fullReconcile = useCallback(() => runRefresh('full'), [runRefresh]);

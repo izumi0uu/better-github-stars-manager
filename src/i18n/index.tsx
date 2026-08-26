@@ -250,10 +250,14 @@ export interface MessageCatalog {
     searchEmpty: (query: string) => string;
     statusRefreshingSaved: string;
     statusReconcilingSaved: string;
+    statusReconciliationPaused: (completed: number, total: number | null) => string;
+    statusReconciliationRatePaused: (time: string) => string;
     statusRefreshFailedSaved: string;
     fullReconcile: string;
+    resumeFullReconcile: string;
     fullReconciling: string;
     fullReconcileHint: string;
+    resumeFullReconcileHint: string;
     statusPartial: string;
     statusCooldown: (time: string) => string;
     statusPermission: string;
@@ -1401,10 +1405,16 @@ const messages: Record<Locale, MessageCatalog> = {
       searchEmpty: (query) => `No activity matches “${query}”.`,
       statusRefreshingSaved: "Scanning · showing saved activity",
       statusReconcilingSaved: "Full sync · showing saved activity",
+      statusReconciliationPaused: (completed, total) => total === null
+        ? `Full sync paused · ${completed} accounts completed · saved activity remains visible`
+        : `Full sync paused · ${completed} of ${total} accounts completed · saved activity remains visible`,
+      statusReconciliationRatePaused: (time) => `Full sync paused until ${time} while GitHub quota recovers.`,
       statusRefreshFailedSaved: "Couldn’t scan · showing saved activity",
       fullReconcile: "Full sync",
+      resumeFullReconcile: "Resume full sync",
       fullReconciling: "Full syncing…",
       fullReconcileHint: "Attempts a complete scan of the selected history window. Saved activity remains visible while it runs; it may use more GitHub quota and take longer.",
+      resumeFullReconcileHint: "Resume the saved full scan from its last checkpoint. Saved activity remains visible while it continues.",
       statusPartial: "Partial results · some activity may be missing",
       statusCooldown: (time) => `Scan available at ${time}`,
       statusPermission: "Following needs access to your following graph",
@@ -2733,28 +2743,34 @@ const messages: Record<Locale, MessageCatalog> = {
       searchEmpty: (query) => `没有动态匹配“${query}”。`,
       statusRefreshingSaved: "扫描中 · 显示已保存动态",
       statusReconcilingSaved: "全量同步 · 显示已保存动态",
+      statusReconciliationPaused: (completed, total) => total === null
+        ? `全量同步已暂停 · 已同步 ${completed} 个账号 · 当前展示已有动态`
+        : `全量同步已暂停 · 已同步 ${completed}/${total} 个账号 · 当前展示已有动态`,
+      statusReconciliationRatePaused: (time) => `全量同步已暂停，等待 GitHub 配额于 ${time} 后恢复。`,
       statusRefreshFailedSaved: "扫描失败 · 显示已保存动态",
       fullReconcile: "全量同步",
+      resumeFullReconcile: "继续全量同步",
       fullReconciling: "全量同步中…",
-      fullReconcileHint: "尝试完整扫描所选历史窗口；运行期间会保留已保存动态，可能消耗更多 GitHub 配额并花费更长时间。",
+      fullReconcileHint: "完整扫描设定天数内的全部动态；同步期间仍可浏览已有数据，该操作耗时较长并消耗更多 GitHub 配额。",
+      resumeFullReconcileHint: "从上次中断处继续全量同步；同步期间仍可浏览已有动态。",
       statusPartial: "部分结果 · 可能缺少部分动态",
       statusCooldown: (time) => `可在 ${time} 后扫描`,
-      statusPermission: "Following 需要读取关注关系的权限",
+      statusPermission: "关注动态需要读取关注列表的权限",
       listEndActivities: (windowDays, count) => `已展示最近 ${windowDays} 天的全部动态 · 共 ${count} 条`,
       listEndProjects: (windowDays, count) => `已展示最近 ${windowDays} 天涉及的全部项目 · 共 ${count} 个`,
       listEndMatches: (count) => `匹配结果末尾 · 共 ${count} 项`,
       listEndPartial: "已获取结果末尾 · 可能缺少部分动态",
       listEndSaved: (count) => `已保存动态末尾 · 共 ${count} 项`,
       freshSummary: (activities, following) => `${activities} 条动态 · 关注 ${following} 人`,
-      partialSnapshot: (count) => `部分快照 · ${count} 个已知缺口`,
+      partialSnapshot: (count) => `部分结果 · 包含 ${count} 项未完整扫描`,
       partialReason: (reason, windowDays) => ({
         github_star_list_truncated: `部分活跃账号历史 Star 较多，未能完整获取最近 ${windowDays} 天的全部记录。`,
         private_activity_omitted: "已省略关注账号的私有 Star 动态。",
         following_scan_truncated: "未能扫描全部关注账号。",
       })[reason],
-      staleSnapshot: "最新快照已过期，当前显示已保存动态。",
+      staleSnapshot: "数据已有一段时间未更新，当前显示上次同步结果。",
       cooldownUntil: (time) => `已触发 GitHub 速率限制，${time} 后可再次扫描。`,
-      snapshotAt: (time) => `快照检查于 ${time}`,
+      snapshotAt: (time) => `更新于 ${time}`,
       snapshotProvenance: (mode, windowDays) => mode === 'full'
         ? `全量同步 · 最近 ${windowDays} 天`
         : `增量更新 · 最近 ${windowDays} 天`,

@@ -2,13 +2,21 @@ import {
   dedupeRadarActivities,
   GitHubRadarError,
   normalizeRadarActivity,
+  normalizeRadarPartialReasons,
+  normalizeRadarReconciliationCheckpoint,
   RADAR_MAX_FOLLOWING,
   RADAR_STARS_PER_FOLLOWER,
   type RadarActivityRecord,
   type RadarPartialReason,
+  type RadarReconciliationCheckpoint,
+  type RadarReconciliationCursor,
+  type RadarReconciliationPauseReason,
   type RadarRefreshMode,
 } from '@/radar/radar-model';
-import type { RadarSourceSnapshot } from '@/radar/radar-contract';
+import type {
+  RadarReconciliationSourceStep,
+  RadarSourceSnapshot,
+} from '@/radar/radar-contract';
 import { DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS } from '@/preferences';
 
 export const RADAR_INCREMENTAL_LOOKBACK_DAYS = 7 as const;
@@ -20,6 +28,17 @@ const DEFAULT_BATCH_SIZE = 5;
 const DEFAULT_STARS_PER_FOLLOWER = RADAR_STARS_PER_FOLLOWER;
 const DEFAULT_RATE_LIMIT_LOW_WATER = 50;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const RECONCILIATION_MAX_REQUESTS = 10;
+
+class RadarStepPause extends Error {
+  readonly reason: 'request_budget' | 'deadline';
+
+  constructor(reason: 'request_budget' | 'deadline') {
+    super(reason);
+    this.name = 'RadarStepPause';
+    this.reason = reason;
+  }
+}
 const DEFAULT_DEADLINE_MS = 120_000;
 const REQUEST_MAX_ATTEMPTS = 3;
 const REQUEST_RETRY_BASE_DELAY_MS = 500;
@@ -34,13 +53,14 @@ const FOLLOWING_QUERY = `
         pageInfo { hasNextPage endCursor }
       }
     }
-    rateLimit { remaining resetAt }
+    rateLimit { cost remaining resetAt }
   }
 `;
 
 type FetchLike = typeof fetch;
 
 type GraphqlRateLimit = {
+  cost: number | null;
   remaining: number | null;
   resetAt: string | null;
 };
@@ -168,6 +188,7 @@ function headerRateLimit(response: Response): GraphqlRateLimit {
   const resetText = response.headers.get('x-ratelimit-reset');
   const resetEpoch = resetText === null ? Number.NaN : Number(resetText);
   return {
+    cost: null,
     remaining: Number.isSafeInteger(parsedRemaining) && parsedRemaining >= 0
       ? parsedRemaining
       : null,
@@ -267,6 +288,7 @@ async function fetchGraphql(
       signal: controller.signal,
     });
   } catch (error) {
+    if (error instanceof RadarStepPause) throw error;
     if (requestTimedOut) throw new GitHubRadarError('deadline_exceeded');
     if (options.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
       throw new GitHubRadarError('request_aborted');
@@ -297,7 +319,7 @@ async function fetchGraphql(
     if (errors.length > 0) throw classifyGraphqlErrors(errors);
     throw new GitHubRadarError('invalid_response');
   }
-  return { data, errors, rateLimit: headerRateLimit(response) };
+  return { data, errors, rateLimit: parseRateLimit(data, headerRateLimit(response)) };
 }
 
 function parseRateLimit(
@@ -306,6 +328,7 @@ function parseRateLimit(
 ): GraphqlRateLimit {
   const value = record(data.rateLimit);
   return {
+    cost: nonNegativeInteger(value?.cost) ?? fallback.cost,
     remaining: nonNegativeInteger(value?.remaining) ?? fallback.remaining,
     resetAt: parseResetAt(value?.resetAt) ?? fallback.resetAt,
   };
@@ -378,7 +401,7 @@ function buildActivityBatchQuery(count: number, starsPerFollower: number): strin
     }
   `).join('\n');
 
-  return `query RadarActivityBatch(${variables}) {\n${aliases}\nrateLimit { remaining resetAt }\n}`;
+  return `query RadarActivityBatch(${variables}) {\n${aliases}\nrateLimit { cost remaining resetAt }\n}`;
 }
 
 function parseActivityBatch(
@@ -531,6 +554,11 @@ function minNullable(left: number | null, right: number | null): number | null {
   if (right === null) return left;
   return Math.min(left, right);
 }
+function maxNullable(left: number | null, right: number | null): number | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return Math.max(left, right);
+}
 function addPendingActivityReasons(
   pending: readonly ActivityPageTarget[],
   partialReasons: Set<RadarPartialReason>,
@@ -589,6 +617,7 @@ export async function fetchGitHubRadar(
   let hasNextPage = true;
   let rateLimitRemaining: number | null = null;
   let rateLimitResetAt: string | null = null;
+  let maxRequestCost: number | null = null;
   const partialReasons = new Set<RadarPartialReason>();
 
   while (hasNextPage && followingLogins.length < maxFollowing) {
@@ -605,8 +634,9 @@ export async function fetchGitHubRadar(
     followingLogins.push(...page.logins.slice(0, maxFollowing - followingLogins.length));
     rateLimitRemaining = minNullable(rateLimitRemaining, page.remaining);
     rateLimitResetAt = page.resetAt ?? rateLimitResetAt;
-    hasNextPage = page.hasNextPage;
+    maxRequestCost = maxNullable(maxRequestCost, page.cost);
     cursor = page.endCursor;
+    hasNextPage = page.hasNextPage;
     if (page.remaining !== null && page.remaining <= rateLimitLowWater && hasNextPage) break;
   }
 
@@ -665,6 +695,7 @@ export async function fetchGitHubRadar(
     )).length;
     rateLimitRemaining = minNullable(rateLimitRemaining, batch.remaining);
     rateLimitResetAt = batch.resetAt ?? rateLimitResetAt;
+    maxRequestCost = maxNullable(maxRequestCost, batch.cost);
     if (batch.privateActivityOmitted) partialReasons.add('private_activity_omitted');
     addPendingActivityReasons(batch.skippedTargets, partialReasons);
 
@@ -698,5 +729,267 @@ export async function fetchGitHubRadar(
     ].filter((reason): reason is RadarPartialReason => partialReasons.has(reason as RadarPartialReason)),
     rateLimitRemaining,
     rateLimitResetAt,
+    maxRequestCost,
+  };
+}
+
+export interface FetchGitHubRadarReconciliationStepOptions {
+  token: string;
+  checkpoint: RadarReconciliationCheckpoint;
+  fetchImpl?: FetchLike;
+  signal?: AbortSignal;
+  now?: () => Date;
+  requestTimeoutMs?: number;
+  deadlineMs?: number;
+  maxRequests?: number;
+  rateLimitLowWater?: number;
+  batchSize?: number;
+  starsPerFollower?: number;
+}
+
+function canonicalStepLogin(value: string): string {
+  const login = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(login)) {
+    throw new GitHubRadarError('invalid_response');
+  }
+  return login.toLocaleLowerCase('en-US');
+}
+
+function stepReasons(
+  current: readonly RadarPartialReason[],
+  additions: readonly RadarPartialReason[],
+): RadarPartialReason[] {
+  return normalizeRadarPartialReasons([...current, ...additions]);
+}
+
+type ActivityTraversalCursor = Extract<RadarReconciliationCursor, { phase: 'activity' }>;
+
+/** Copy a stored cursor into mutable traversal state for one slice. */
+function traversalCursor(cursor: RadarReconciliationCursor): RadarReconciliationCursor {
+  return cursor.phase === 'following'
+    ? { ...cursor, seenCursors: [...cursor.seenCursors], logins: [...cursor.logins] }
+    : {
+      phase: 'activity',
+      followingCount: cursor.followingCount,
+      actors: cursor.actors.map((actor) => ({ ...actor, seenCursors: [...actor.seenCursors] })),
+    };
+}
+
+function resumablePauseReason(error: unknown): RadarReconciliationPauseReason | null {
+  if (error instanceof RadarStepPause) return error.reason;
+  if (error instanceof GitHubRadarError && error.code === 'deadline_exceeded') return 'deadline';
+  return null;
+}
+
+/**
+ * Execute one bounded, restart-safe slice of a full Radar reconciliation. The
+ * slice keeps paging until GitHub coverage completes or a resumable boundary is
+ * reached, then returns exactly one checkpoint revision for the store to apply.
+ */
+export async function fetchGitHubRadarReconciliationStep(
+  options: FetchGitHubRadarReconciliationStepOptions,
+): Promise<RadarReconciliationSourceStep> {
+  const token = options.token.trim();
+  if (!token) throw new GitHubRadarError('authentication_required');
+  const checkpoint = normalizeRadarReconciliationCheckpoint(options.checkpoint);
+  if (!checkpoint) throw new GitHubRadarError('invalid_pagination');
+  const now = options.now?.() ?? new Date();
+  if (!Number.isFinite(now.getTime())) throw new GitHubRadarError('invalid_response');
+  const cutoffMillis = Date.parse(checkpoint.cutoffAt);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const requestTimeoutMs = positiveInteger(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
+  const deadlineAt = Date.now() + positiveInteger(options.deadlineMs, DEFAULT_DEADLINE_MS);
+  const maxRequests = positiveInteger(options.maxRequests, RECONCILIATION_MAX_REQUESTS);
+  const rateLimitLowWater = positiveInteger(options.rateLimitLowWater, DEFAULT_RATE_LIMIT_LOW_WATER);
+  const batchSize = Math.min(positiveInteger(options.batchSize, DEFAULT_BATCH_SIZE), DEFAULT_BATCH_SIZE);
+  const starsPerFollower = Math.min(
+    positiveInteger(options.starsPerFollower, DEFAULT_STARS_PER_FOLLOWER),
+    DEFAULT_STARS_PER_FOLLOWER,
+  );
+
+  let requestCount = 0;
+  const countedFetch: FetchLike = async (input, init) => {
+    if (requestCount >= maxRequests) throw new RadarStepPause('request_budget');
+    requestCount += 1;
+    return fetchImpl(input, init);
+  };
+  const requestOptions = () => {
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 0) throw new RadarStepPause('deadline');
+    return { signal: options.signal, timeoutMs: Math.min(requestTimeoutMs, remainingMs) };
+  };
+
+  let cursor = traversalCursor(checkpoint.cursor);
+  const activities: RadarActivityRecord[] = [];
+  const additions: RadarPartialReason[] = [];
+  let batchCount = checkpoint.batchCount;
+  let scannedFollowingCount = checkpoint.scannedFollowingCount;
+  // A remaining balance recovers after each GitHub reset window, so only the
+  // minimum observed inside this slice describes the current quota.
+  let observedRemaining: number | null = null;
+  let rateLimitResetAt = checkpoint.rateLimitResetAt;
+  let maxRequestCost = checkpoint.maxRequestCost;
+  let pauseReason: RadarReconciliationPauseReason | null = null;
+  let complete = false;
+
+  const absorbRate = (rate: GraphqlRateLimit) => {
+    observedRemaining = minNullable(observedRemaining, rate.remaining);
+    rateLimitResetAt = rate.resetAt ?? rateLimitResetAt;
+    maxRequestCost = maxNullable(maxRequestCost, rate.cost);
+  };
+  const boundaryPause = (remaining: number | null): RadarReconciliationPauseReason | null => {
+    if (remaining !== null && remaining <= rateLimitLowWater) return 'rate_reserve';
+    if (requestCount >= maxRequests) return 'request_budget';
+    if (Date.now() >= deadlineAt) return 'deadline';
+    return null;
+  };
+
+  while (!complete && pauseReason === null) {
+    if (cursor.phase === 'following') {
+      const following = cursor;
+      let page: FollowingPage;
+      try {
+        page = await retryTransientRequest(
+          () => fetchFollowingPage(countedFetch, token, following.nextCursor, requestOptions()),
+          deadlineAt,
+          options.signal,
+        );
+      } catch (error) {
+        pauseReason = resumablePauseReason(error);
+        if (pauseReason === null) throw error;
+        break;
+      }
+      absorbRate(page);
+      if (checkpoint.accountLogin !== canonicalStepLogin(page.accountLogin)) {
+        throw new GitHubRadarError('invalid_response');
+      }
+      const seen = new Set(following.logins);
+      const logins = [...following.logins];
+      for (const rawLogin of page.logins) {
+        const login = canonicalStepLogin(rawLogin);
+        if (!seen.has(login) && logins.length < RADAR_MAX_FOLLOWING) {
+          seen.add(login);
+          logins.push(login);
+        }
+      }
+      const nextCursor = page.hasNextPage && logins.length < RADAR_MAX_FOLLOWING
+        ? page.endCursor
+        : null;
+      if (nextCursor !== null) {
+        if (following.seenCursors.includes(nextCursor)) {
+          throw new GitHubRadarError('invalid_pagination');
+        }
+        cursor = {
+          phase: 'following',
+          nextCursor,
+          seenCursors: [...following.seenCursors, nextCursor],
+          logins,
+          totalCount: page.totalCount,
+        };
+        pauseReason = boundaryPause(page.remaining);
+        continue;
+      }
+      // The actor set freezes only when Following paging ends, so an
+      // intermediate page never marks the epoch permanently incomplete.
+      if (page.hasNextPage || logins.length < page.totalCount) {
+        additions.push('following_scan_truncated');
+      }
+      cursor = {
+        phase: 'activity',
+        followingCount: page.totalCount,
+        actors: logins.map((login) => ({
+          login,
+          nextCursor: null,
+          seenCursors: [],
+          complete: false,
+        })),
+      };
+      complete = logins.length === 0;
+      if (!complete) pauseReason = boundaryPause(page.remaining);
+      continue;
+    }
+
+    const activityCursor: ActivityTraversalCursor = cursor;
+    const pending = activityCursor.actors.filter((actor) => !actor.complete).slice(0, batchSize);
+    if (pending.length === 0) {
+      complete = true;
+      break;
+    }
+    let batch: ActivityBatch;
+    try {
+      batch = await retryTransientRequest(
+        () => fetchActivityBatch(
+          countedFetch,
+          token,
+          checkpoint.accountLogin,
+          pending.map((actor) => ({ login: actor.login, cursor: actor.nextCursor })),
+          starsPerFollower,
+          cutoffMillis,
+          requestOptions(),
+        ),
+        deadlineAt,
+        options.signal,
+      );
+    } catch (error) {
+      pauseReason = resumablePauseReason(error);
+      if (pauseReason === null) throw error;
+      break;
+    }
+    absorbRate(batch);
+    const skipped = new Set(batch.skippedTargets.map((target) => (
+      `${target.login}\u0000${target.cursor ?? ''}`
+    )));
+    const continuations = new Map(batch.continuations.map((target) => [
+      target.login.toLocaleLowerCase('en-US'),
+      target.cursor,
+    ]));
+    for (const actor of pending) {
+      if (skipped.has(`${actor.login}\u0000${actor.nextCursor ?? ''}`)) {
+        additions.push(actor.nextCursor === null && actor.seenCursors.length === 0
+          ? 'following_scan_truncated'
+          : 'github_star_list_truncated');
+        actor.nextCursor = null;
+        actor.complete = true;
+        continue;
+      }
+      const continuation = continuations.get(actor.login);
+      if (continuation) {
+        if (actor.seenCursors.includes(continuation)) {
+          throw new GitHubRadarError('invalid_pagination');
+        }
+        actor.nextCursor = continuation;
+        actor.seenCursors.push(continuation);
+      } else {
+        actor.nextCursor = null;
+        actor.complete = true;
+      }
+    }
+    activities.push(...batch.activities);
+    batchCount += 1;
+    scannedFollowingCount = activityCursor.actors.filter((actor) => actor.complete).length;
+    if (batch.privateActivityOmitted) additions.push('private_activity_omitted');
+    complete = activityCursor.actors.every((actor) => actor.complete);
+    if (!complete) pauseReason = boundaryPause(batch.remaining);
+  }
+
+  return {
+    expectedReconciliationId: checkpoint.reconciliationId,
+    expectedRevision: checkpoint.revision,
+    checkpoint: {
+      ...checkpoint,
+      revision: checkpoint.revision + 1,
+      updatedAt: now.toISOString(),
+      cursor,
+      partialReasons: stepReasons(checkpoint.partialReasons, additions),
+      scannedFollowingCount,
+      batchCount,
+      rateLimitRemaining: observedRemaining ?? checkpoint.rateLimitRemaining,
+      rateLimitResetAt,
+      maxRequestCost,
+      pauseReason,
+      nextAllowedAt: pauseReason === 'rate_reserve' ? rateLimitResetAt : null,
+    },
+    activities,
+    complete,
   };
 }

@@ -7,7 +7,7 @@ export const RADAR_FULL_RECONCILIATION_INTERVAL_MS = 7 * 24 * 60 * 60 * 1_000;
 export type RadarRefreshPlanReason =
   | 'forced'
   | 'no_baseline'
-  | 'incomplete'
+  | 'last_attempt_failed'
   | 'window_changed'
   | 'credential_changed'
   | 'full_reconciliation_due'
@@ -55,10 +55,10 @@ export function selectRadarRefreshPlan(input: RadarRefreshPolicyInput): RadarRef
   const lastFullMillis = parsedTimestamp(state?.lastFullReconciledAt);
   if (!state || lastFullMillis === null) return full('no_baseline');
 
-  if (
-    state.errorCode !== null && state.errorCode !== undefined
-    || (state.partialReasons?.length ?? 0) > 0
-  ) return full('incomplete');
+  // Partial reasons describe coverage GitHub will not return for this window,
+  // so they must not force a full scan on every wake; only a failed attempt
+  // and the weekly interval do.
+  if (state.errorCode !== null && state.errorCode !== undefined) return full('last_attempt_failed');
   if (
     state.windowDays === null
     || state.windowDays === undefined

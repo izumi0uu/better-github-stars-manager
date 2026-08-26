@@ -3,10 +3,12 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/storage/db';
 import {
   clearRadarData,
+  commitRadarReconciliationStep,
   commitRadarSnapshot,
   commitRadarRefresh,
   countUnseenRadarActivities,
   dismissRadarActivities,
+  getRadarReconciliation,
   getRadarState,
   listRadarActivities,
   markRadarActivitiesSeen,
@@ -14,12 +16,18 @@ import {
   prepareRadarAccount,
   radarSnapshotStatus,
   recordRadarFailure,
+  startRadarReconciliation,
 } from '@/storage/radar-store';
-import type { RadarSourceSnapshot } from '@/radar/radar-contract';
-import type { RadarActivityRecord } from '@/radar/radar-model';
+import type { RadarReconciliationSourceStep, RadarSourceSnapshot } from '@/radar/radar-contract';
+import {
+  createRadarReconciliationCheckpoint,
+  type RadarActivityRecord,
+  type RadarReconciliationCheckpoint,
+} from '@/radar/radar-model';
 
 const FIRST = '2026-08-10T10:00:00.000Z';
 const SECOND = '2026-08-10T11:00:00.000Z';
+const THIRD = '2026-08-10T12:00:00.000Z';
 
 function star(fullName: string, count = 100, tombstone = false) {
   return {
@@ -522,6 +530,286 @@ describe('Radar snapshot storage', () => {
       .rejects.toThrow('Radar account mismatch');
     expect(await db.radarActivities.toArray()).toEqual(beforeRows);
     expect(await db.radarState.get('singleton')).toEqual(beforeState);
+  });
+  it('persists resumable full-sync steps and cleans stale rows only at an authoritative terminal step', async () => {
+    const existing = activity('existing', 'owner/existing', FIRST, {
+      seenAt: FIRST,
+      dismissedAt: SECOND,
+    });
+    const stale = activity('stale', 'owner/stale', FIRST);
+    await commitRadarSnapshot(
+      snapshot([existing, stale], FIRST),
+      { credentialIdentity: 'credential-a' },
+    );
+
+    const initial = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:storage',
+      accountLogin: 'viewer',
+      credentialIdentity: 'credential-a',
+      windowDays: 60,
+      startedAt: SECOND,
+    });
+    const started = await startRadarReconciliation(initial);
+    expect(started.checkpoint).toEqual(initial);
+
+    const activityCheckpoint: RadarReconciliationCheckpoint = {
+      ...initial,
+      revision: 1,
+      updatedAt: THIRD,
+      cursor: {
+        phase: 'activity',
+        followingCount: 1,
+        actors: [{
+          login: 'actor-existing',
+          nextCursor: null,
+          seenCursors: [],
+          complete: false,
+        }],
+      },
+      batchCount: 1,
+    };
+    const firstStep: RadarReconciliationSourceStep = {
+      expectedReconciliationId: initial.reconciliationId,
+      expectedRevision: initial.revision,
+      checkpoint: activityCheckpoint,
+      activities: [activity('existing', 'owner/existing', THIRD, {
+        repositoryDescription: 'updated remote description',
+        seenAt: null,
+        dismissedAt: null,
+      })],
+      complete: false,
+    };
+    const firstCommit = await commitRadarReconciliationStep({
+      accountLogin: 'viewer',
+      credentialIdentity: 'credential-a',
+      windowDays: 60,
+      step: firstStep,
+    });
+    expect(firstCommit.applied).toBe(true);
+    expect(await getRadarReconciliation('viewer')).toEqual(activityCheckpoint);
+    expect(await db.radarActivities.get('stale')).toBeDefined();
+    expect(await db.radarActivities.get('existing')).toMatchObject({
+      repositoryDescription: 'updated remote description',
+      seenAt: FIRST,
+      dismissedAt: SECOND,
+      reconciliationId: initial.reconciliationId,
+    });
+
+    const terminalCheckpoint: RadarReconciliationCheckpoint = {
+      ...activityCheckpoint,
+      revision: 2,
+      updatedAt: '2026-08-10T13:00:00.000Z',
+      cursor: {
+        phase: 'activity',
+        followingCount: 1,
+        actors: [{
+          login: 'actor-existing',
+          nextCursor: null,
+          seenCursors: [],
+          complete: true,
+        }],
+      },
+      scannedFollowingCount: 1,
+    };
+    const terminalStep: RadarReconciliationSourceStep = {
+      expectedReconciliationId: initial.reconciliationId,
+      expectedRevision: activityCheckpoint.revision,
+      checkpoint: terminalCheckpoint,
+      activities: [],
+      complete: true,
+    };
+    await expect(commitRadarReconciliationStep({
+      accountLogin: 'viewer',
+      credentialIdentity: 'credential-a',
+      windowDays: 60,
+      step: {
+        ...terminalStep,
+        checkpoint: {
+          ...terminalCheckpoint,
+          cutoffAt: '2026-08-03T11:00:00.000Z',
+        },
+      },
+    })).rejects.toThrow('Radar reconciliation checkpoint is invalid.');
+    expect(await db.radarActivities.get('stale')).toBeDefined();
+
+    const terminalCommit = await commitRadarReconciliationStep({
+      accountLogin: 'viewer',
+      credentialIdentity: 'credential-a',
+      windowDays: 60,
+      step: terminalStep,
+    });
+
+    expect(terminalCommit.applied).toBe(true);
+    expect(await getRadarReconciliation('viewer')).toBeNull();
+    expect(await db.radarActivities.get('stale')).toBeUndefined();
+    expect(await db.radarActivities.get('existing')).toBeDefined();
+    expect(terminalCommit.state).toMatchObject({
+      activityCount: 1,
+      lastFullReconciledAt: terminalCheckpoint.updatedAt,
+      windowDays: 60,
+    });
+  });
+
+  it('advances full provenance without sweeping when the epoch could not cover every account', async () => {
+    const stale = activity('stale', 'owner/stale', FIRST);
+    await commitRadarSnapshot(
+      snapshot([stale], FIRST),
+      { credentialIdentity: 'credential-a' },
+    );
+
+    const initial = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:capped',
+      accountLogin: 'viewer',
+      credentialIdentity: 'credential-a',
+      windowDays: 60,
+      startedAt: SECOND,
+    });
+    await startRadarReconciliation(initial);
+
+    // The frozen actor set covers only part of the Following graph, so the
+    // epoch proves what it fetched but cannot prove an unobserved row is gone.
+    const terminal: RadarReconciliationCheckpoint = {
+      ...initial,
+      revision: 1,
+      updatedAt: THIRD,
+      cursor: {
+        phase: 'activity',
+        followingCount: 2,
+        actors: [{
+          login: 'actor-fresh',
+          nextCursor: null,
+          seenCursors: [],
+          complete: true,
+        }],
+      },
+      partialReasons: ['following_scan_truncated'],
+      scannedFollowingCount: 1,
+      batchCount: 1,
+    };
+    const commit = await commitRadarReconciliationStep({
+      accountLogin: 'viewer',
+      credentialIdentity: 'credential-a',
+      windowDays: 60,
+      step: {
+        expectedReconciliationId: initial.reconciliationId,
+        expectedRevision: initial.revision,
+        checkpoint: terminal,
+        activities: [activity('fresh', 'owner/fresh', THIRD)],
+        complete: true,
+      },
+    });
+
+    expect(commit.applied).toBe(true);
+    expect(await getRadarReconciliation('viewer')).toBeNull();
+    expect(await db.radarActivities.get('stale')).toBeDefined();
+    expect(commit.state).toMatchObject({
+      lastFullReconciledAt: THIRD,
+      windowDays: 60,
+      partialReasons: ['following_scan_truncated'],
+    });
+  });
+
+  it('accepts monotonic multi-page cursor advances and rejects rewritten history', async () => {
+    const initial = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:cursors',
+      accountLogin: 'viewer',
+      credentialIdentity: 'credential-a',
+      windowDays: 60,
+      startedAt: SECOND,
+    });
+    await startRadarReconciliation(initial);
+    const commit = (
+      checkpoint: RadarReconciliationCheckpoint,
+      expectedRevision: number,
+    ) => commitRadarReconciliationStep({
+      accountLogin: 'viewer',
+      credentialIdentity: 'credential-a',
+      windowDays: 60,
+      step: {
+        expectedReconciliationId: initial.reconciliationId,
+        expectedRevision,
+        checkpoint,
+        activities: [],
+        complete: false,
+      },
+    });
+
+    // One step pages GitHub several times inside its request budget, so a
+    // multi-page advance is the normal shape rather than a corruption signal.
+    const followingPages: RadarReconciliationCheckpoint = {
+      ...initial,
+      revision: 1,
+      updatedAt: THIRD,
+      cursor: {
+        phase: 'following',
+        nextCursor: 'following-3',
+        seenCursors: ['following-1', 'following-2', 'following-3'],
+        logins: ['alice'],
+        totalCount: 1,
+      },
+    };
+    expect((await commit(followingPages, 0)).applied).toBe(true);
+    const followingRewrite: RadarReconciliationCheckpoint = {
+      ...followingPages,
+      revision: 2,
+      updatedAt: '2026-08-10T13:00:00.000Z',
+      cursor: {
+        phase: 'following',
+        nextCursor: 'following-9',
+        seenCursors: ['following-2', 'following-9'],
+        logins: ['alice'],
+        totalCount: 1,
+      },
+    };
+    expect((await commit(followingRewrite, 1)).applied).toBe(false);
+    expect(await getRadarReconciliation('viewer')).toEqual(followingPages);
+
+    const activityStart: RadarReconciliationCheckpoint = {
+      ...followingPages,
+      revision: 2,
+      updatedAt: '2026-08-10T13:00:00.000Z',
+      cursor: {
+        phase: 'activity',
+        followingCount: 1,
+        actors: [{ login: 'alice', nextCursor: null, seenCursors: [], complete: false }],
+      },
+    };
+    expect((await commit(activityStart, 1)).applied).toBe(true);
+    const actorPages: RadarReconciliationCheckpoint = {
+      ...activityStart,
+      revision: 3,
+      updatedAt: '2026-08-10T14:00:00.000Z',
+      batchCount: 2,
+      cursor: {
+        phase: 'activity',
+        followingCount: 1,
+        actors: [{
+          login: 'alice',
+          nextCursor: 'actor-3',
+          seenCursors: ['actor-1', 'actor-2', 'actor-3'],
+          complete: false,
+        }],
+      },
+    };
+    expect((await commit(actorPages, 2)).applied).toBe(true);
+    const actorRewrite: RadarReconciliationCheckpoint = {
+      ...actorPages,
+      revision: 4,
+      updatedAt: '2026-08-10T15:00:00.000Z',
+      batchCount: 3,
+      cursor: {
+        phase: 'activity',
+        followingCount: 1,
+        actors: [{
+          login: 'alice',
+          nextCursor: 'actor-7',
+          seenCursors: ['actor-2', 'actor-7'],
+          complete: false,
+        }],
+      },
+    };
+    expect((await commit(actorRewrite, 3)).applied).toBe(false);
+    expect(await getRadarReconciliation('viewer')).toEqual(actorPages);
   });
 
 });
