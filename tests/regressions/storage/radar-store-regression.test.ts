@@ -764,51 +764,78 @@ describe('Radar snapshot storage', () => {
     expect((await commit(followingRewrite, 1)).applied).toBe(false);
     expect(await getRadarReconciliation('viewer')).toEqual(followingPages);
 
-    const activityStart: RadarReconciliationCheckpoint = {
+    // The live Following size changes while a long scan runs, so a drifting
+    // totalCount must not deadlock the epoch on a permanently rejected step.
+    const followingDrift: RadarReconciliationCheckpoint = {
       ...followingPages,
       revision: 2,
       updatedAt: '2026-08-10T13:00:00.000Z',
       cursor: {
-        phase: 'activity',
-        followingCount: 1,
-        actors: [{ login: 'alice', nextCursor: null, seenCursors: [], complete: false }],
+        phase: 'following',
+        nextCursor: 'following-4',
+        seenCursors: ['following-1', 'following-2', 'following-3', 'following-4'],
+        logins: ['alice', 'bob'],
+        totalCount: 2,
       },
     };
-    expect((await commit(activityStart, 1)).applied).toBe(true);
-    const actorPages: RadarReconciliationCheckpoint = {
-      ...activityStart,
+    const drifted = await commit(followingDrift, 1);
+    expect(drifted.applied).toBe(true);
+    expect(drifted.checkpoint?.cursor).toMatchObject({ totalCount: 2 });
+
+    const activityStart: RadarReconciliationCheckpoint = {
+      ...followingDrift,
       revision: 3,
       updatedAt: '2026-08-10T14:00:00.000Z',
+      cursor: {
+        phase: 'activity',
+        followingCount: 2,
+        actors: [
+          { login: 'alice', nextCursor: null, seenCursors: [], complete: false },
+          { login: 'bob', nextCursor: null, seenCursors: [], complete: false },
+        ],
+      },
+    };
+    expect((await commit(activityStart, 2)).applied).toBe(true);
+    const actorPages: RadarReconciliationCheckpoint = {
+      ...activityStart,
+      revision: 4,
+      updatedAt: '2026-08-10T15:00:00.000Z',
       batchCount: 2,
       cursor: {
         phase: 'activity',
-        followingCount: 1,
-        actors: [{
-          login: 'alice',
-          nextCursor: 'actor-3',
-          seenCursors: ['actor-1', 'actor-2', 'actor-3'],
-          complete: false,
-        }],
+        followingCount: 2,
+        actors: [
+          {
+            login: 'alice',
+            nextCursor: 'actor-3',
+            seenCursors: ['actor-1', 'actor-2', 'actor-3'],
+            complete: false,
+          },
+          { login: 'bob', nextCursor: null, seenCursors: [], complete: true },
+        ],
       },
     };
-    expect((await commit(actorPages, 2)).applied).toBe(true);
+    expect((await commit(actorPages, 3)).applied).toBe(true);
     const actorRewrite: RadarReconciliationCheckpoint = {
       ...actorPages,
-      revision: 4,
-      updatedAt: '2026-08-10T15:00:00.000Z',
+      revision: 5,
+      updatedAt: '2026-08-10T16:00:00.000Z',
       batchCount: 3,
       cursor: {
         phase: 'activity',
-        followingCount: 1,
-        actors: [{
-          login: 'alice',
-          nextCursor: 'actor-7',
-          seenCursors: ['actor-2', 'actor-7'],
-          complete: false,
-        }],
+        followingCount: 2,
+        actors: [
+          {
+            login: 'alice',
+            nextCursor: 'actor-7',
+            seenCursors: ['actor-2', 'actor-7'],
+            complete: false,
+          },
+          { login: 'bob', nextCursor: null, seenCursors: [], complete: true },
+        ],
       },
     };
-    expect((await commit(actorRewrite, 3)).applied).toBe(false);
+    expect((await commit(actorRewrite, 4)).applied).toBe(false);
     expect(await getRadarReconciliation('viewer')).toEqual(actorPages);
   });
 

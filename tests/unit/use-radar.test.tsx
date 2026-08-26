@@ -1036,6 +1036,47 @@ describe('useRadar', () => {
     expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('idle');
   });
 
+  it('attributes a background epoch to full sync rather than incremental refresh', async () => {
+    const backgroundEpoch = response({
+      refreshing: true,
+      reconciliation: {
+        phase: 'activity',
+        completedCount: 2,
+        totalCount: 5,
+        updatedAt: '2026-08-10T12:00:00.000Z',
+        pauseReason: null,
+        nextAllowedAt: null,
+      },
+    });
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') return Promise.resolve(backgroundEpoch);
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('refreshing');
+    expect(container.querySelector('[data-testid="full-reconciling"]')?.textContent)
+      .toBe('reconciling');
+  });
+
+  it('keeps a background incremental refresh out of full-sync busy state', async () => {
+    const backgroundIncremental = response({ refreshing: true });
+    radarMocks.bgCall.mockImplementation((type: string) => {
+      if (type === 'queryRadar') return Promise.resolve(backgroundIncremental);
+      if (type === 'queryRecommendations') return Promise.resolve(recommendationResponse());
+      throw new Error(`Unexpected request: ${type}`);
+    });
+
+    const container = mountReact(<Harness />, mountedRoots);
+    await settle();
+
+    expect(container.querySelector('[data-testid="refreshing"]')?.textContent).toBe('refreshing');
+    expect(container.querySelector('[data-testid="full-reconciling"]')?.textContent).toBe('idle');
+  });
+
   it('keeps saved recommendations when refresh cannot publish', async () => {
     const loaded = recommendationResponse();
     const failed = recommendationResponse({ snapshotStatus: 'stale', errorCode: 'network_error' });

@@ -48,16 +48,16 @@ export interface RadarRefreshCoordinatorDependencies {
   runSerialized<T>(operation: () => Promise<T>): Promise<T>;
   auth: RadarAuth;
   fetchRadar: typeof fetchGitHubRadar;
-  fetchReconciliationStep?: typeof fetchGitHubRadarReconciliationStep;
+  fetchReconciliationStep: typeof fetchGitHubRadarReconciliationStep;
   store: {
     clearData: typeof clearRadarData;
     commitSnapshot: typeof commitRadarSnapshot;
     prepareAccount: typeof prepareRadarAccount;
     getState: typeof getRadarState;
-    getReconciliation?: typeof getRadarReconciliation;
-    startReconciliation?: typeof startRadarReconciliation;
-    commitReconciliationStep?: typeof commitRadarReconciliationStep;
-    abandonReconciliation?: typeof abandonRadarReconciliation;
+    getReconciliation: typeof getRadarReconciliation;
+    startReconciliation: typeof startRadarReconciliation;
+    commitReconciliationStep: typeof commitRadarReconciliationStep;
+    abandonReconciliation: typeof abandonRadarReconciliation;
     recordFailure: typeof recordRadarFailure;
     listActivities: typeof listRadarActivities;
     dismissActivities: typeof dismissRadarActivities;
@@ -184,7 +184,7 @@ export function createRadarRefreshCoordinator(
         : null;
     const reconciliation = reconciliationOverride !== undefined
       ? reconciliationOverride
-      : hasMainToken && auth.accountLogin && dependencies.store.getReconciliation
+      : hasMainToken && auth.accountLogin
         ? await dependencies.store.getReconciliation(auth.accountLogin)
         : null;
     return makeRadarStatus(
@@ -230,7 +230,7 @@ export function createRadarRefreshCoordinator(
         ? dependencies.store.listActivities(accountLogin, queriedAt, windowDays)
         : Promise.resolve([] as RadarActivityPresentation[]),
       accountLogin ? dependencies.store.getState(accountLogin) : Promise.resolve(null),
-      accountLogin && dependencies.store.getReconciliation
+      accountLogin
         ? dependencies.store.getReconciliation(accountLogin)
         : Promise.resolve(null),
     ]);
@@ -270,7 +270,8 @@ function createReconciliationId(attemptedAt: number): string {
     request: RadarRefreshRequest,
   ): Promise<RadarRefreshOutcome> {
     const accountLogin = auth.accountLogin;
-    if (!accountLogin || !auth.mainToken || !(await requestIsCurrent(auth, windowDays))) {
+    const mainToken = auth.mainToken;
+    if (!accountLogin || !mainToken || !(await requestIsCurrent(auth, windowDays))) {
       return { published: false };
     }
 
@@ -278,13 +279,9 @@ function createReconciliationId(attemptedAt: number): string {
     try {
       await dependencies.store.prepareAccount(accountLogin);
       let previousState = await dependencies.store.getState(accountLogin);
-      let checkpoint = dependencies.store.getReconciliation
-        ? await dependencies.store.getReconciliation(accountLogin)
-        : null;
+      let checkpoint = await dependencies.store.getReconciliation(accountLogin);
       if (checkpoint && !reconciliationMatches(checkpoint, auth, windowDays)) {
-        if (dependencies.store.abandonReconciliation) {
-          await dependencies.store.abandonReconciliation(accountLogin, checkpoint.reconciliationId);
-        }
+        await dependencies.store.abandonReconciliation(accountLogin, checkpoint.reconciliationId);
         checkpoint = null;
       }
       if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
@@ -303,50 +300,64 @@ function createReconciliationId(attemptedAt: number): string {
         && allowedAtMillis(previousState?.nextAllowedAt ?? null) > attemptedAt
       ) return { published: false };
 
-      const plan = checkpoint
-        ? null
-        : selectRadarRefreshPlan({
-          nowMillis: attemptedAt,
-          selectedWindowDays: windowDays,
-          credentialIdentity: identity(auth),
-          state: previousState,
-          forceFull: request === 'full',
-        });
-      const canResume = !!dependencies.fetchReconciliationStep
-        && !!dependencies.store.startReconciliation
-        && !!dependencies.store.commitReconciliationStep;
-      if (canResume && (checkpoint || plan?.mode === 'full')) {
-        if (!checkpoint) {
-          const started = await dependencies.store.startReconciliation!(
-            createRadarReconciliationCheckpoint({
-              reconciliationId: createReconciliationId(attemptedAt),
-              accountLogin,
-              credentialIdentity: identity(auth),
-              windowDays,
-              startedAt: new Date(attemptedAt).toISOString(),
-            }),
-          );
-          checkpoint = started.checkpoint;
-        }
-        const step = await dependencies.fetchReconciliationStep!({
-          token: auth.mainToken,
-          checkpoint,
+      const resumeStep = async (
+        epoch: RadarReconciliationCheckpoint,
+      ): Promise<RadarRefreshOutcome> => {
+        const step = await dependencies.fetchReconciliationStep({
+          token: mainToken,
+          checkpoint: epoch,
           now: () => new Date(attemptedAt),
         });
         if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
-        const committed = await dependencies.store.commitReconciliationStep!({
+        const committed = await dependencies.store.commitReconciliationStep({
           accountLogin,
           credentialIdentity: identity(auth),
           windowDays,
           step,
         });
-        if (!committed.applied) return { published: false };
+        if (!committed.applied) {
+          // A rejection against the exact fence we sent is deterministic: the
+          // stored cursor cannot accept this step and recomputing it would fail
+          // identically, so abandon the epoch instead of stalling on it. A moved
+          // fence is an ordinary race and leaves that epoch alone.
+          const fenceUnmoved = committed.checkpoint !== null
+            && committed.checkpoint.reconciliationId === step.expectedReconciliationId
+            && committed.checkpoint.revision === step.expectedRevision;
+          if (fenceUnmoved) {
+            await dependencies.store.abandonReconciliation(
+              accountLogin,
+              step.expectedReconciliationId,
+            );
+          }
+          return { published: false };
+        }
         if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
         dependencies.broadcastChanged();
         return { published: true };
+      };
+
+      if (checkpoint) return resumeStep(checkpoint);
+
+      const effectivePlan = selectRadarRefreshPlan({
+        nowMillis: attemptedAt,
+        selectedWindowDays: windowDays,
+        credentialIdentity: identity(auth),
+        state: previousState,
+        forceFull: request === 'full',
+      });
+      if (effectivePlan.mode === 'full') {
+        const started = await dependencies.store.startReconciliation(
+          createRadarReconciliationCheckpoint({
+            reconciliationId: createReconciliationId(attemptedAt),
+            accountLogin,
+            credentialIdentity: identity(auth),
+            windowDays,
+            startedAt: new Date(attemptedAt).toISOString(),
+          }),
+        );
+        return resumeStep(started.checkpoint);
       }
 
-      const effectivePlan = plan!;
       const snapshot = await dependencies.fetchRadar({
         token: auth.mainToken,
         now: () => new Date(attemptedAt),
@@ -374,7 +385,6 @@ function createReconciliationId(attemptedAt: number): string {
       if (
         error instanceof GitHubRadarError
         && (error.code === 'invalid_pagination' || error.code === 'invalid_response')
-        && dependencies.store.abandonReconciliation
       ) {
         await dependencies.store.abandonReconciliation(accountLogin);
       }

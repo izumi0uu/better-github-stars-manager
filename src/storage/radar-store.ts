@@ -357,6 +357,11 @@ function validActorTransition(
  * One step may page GitHub several times inside its request budget, so a
  * transition is valid when it extends frozen identity and cursor history
  * monotonically rather than by exactly one page.
+ *
+ * `totalCount` is the live Following size and legitimately drifts while a long
+ * scan runs, so it is not fenced here. Coverage is proven at commit time
+ * instead: sweep authority still requires the frozen actor set to match the
+ * recorded Following count exactly with no partial reason.
  */
 function validReconciliationTransition(
   previous: RadarReconciliationCheckpoint,
@@ -376,22 +381,16 @@ function validReconciliationTransition(
   }
   if (next.cursor.phase === 'following') {
     const appended = appendedCursors(previous.cursor.seenCursors, next.cursor.seenCursors);
-    if (
-      appended === null
-      || !hasPrefix(next.cursor.logins, previous.cursor.logins)
-      || (previous.cursor.totalCount !== null
-        && next.cursor.totalCount !== previous.cursor.totalCount)
-    ) return false;
+    if (appended === null || !hasPrefix(next.cursor.logins, previous.cursor.logins)) return false;
     return appended.length === 0
       ? next.cursor.nextCursor === previous.cursor.nextCursor
         && next.cursor.logins.length === previous.cursor.logins.length
-        && next.cursor.totalCount === previous.cursor.totalCount
       : next.cursor.nextCursor === appended.at(-1);
   }
+  // The actor set freezes here and never changes again, so it must contain every
+  // login already recorded during Following paging.
   const actorLogins = next.cursor.actors.map((actor) => actor.login);
-  return hasPrefix(actorLogins, previous.cursor.logins)
-    && (previous.cursor.totalCount === null
-      || next.cursor.followingCount === previous.cursor.totalCount);
+  return hasPrefix(actorLogins, previous.cursor.logins);
 }
 
 function checkpointFollowingCount(checkpoint: RadarReconciliationCheckpoint): number {
