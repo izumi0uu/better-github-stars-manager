@@ -19,7 +19,6 @@ export type ErrorMessages = {
   tokenGistProbeBadShape: string;
   /** Step 3 cleanup (DELETE /gists/{id}) — surfaced before persistence. */
   tokenGistCleanupStatus: (status: number | string) => string;
-  tokenGistCleanupNetwork: string;
   tokenWatchingForbidden: string;
   tokenWatchingStatus: (status: number | string) => string;
   tokenWatchingNetwork: string;
@@ -79,8 +78,6 @@ export const enErrorMessages: ErrorMessages = {
     "GitHub created the probe Gist but returned an unexpected response. Nothing was saved; retry.",
   tokenGistCleanupStatus: (status) =>
     `GitHub created the probe Gist but cleanup failed (${status}). Nothing was saved; retry.`,
-  tokenGistCleanupNetwork:
-    "GitHub created the probe Gist but cleanup could not be confirmed. Nothing was saved; retry.",
   tokenWatchingForbidden: "The token was saved, but Watch Inbox needs the notifications scope.",
   tokenWatchingStatus: (status) => `GitHub returned ${status} while checking Notifications access.`,
   tokenWatchingNetwork: "The token was saved, but Notifications access could not be checked.",
@@ -156,8 +153,6 @@ export const zhErrorMessages: ErrorMessages = {
     "GitHub 已创建探针 Gist,但返回内容不符合预期。未保存 token,请重试。",
   tokenGistCleanupStatus: (status) =>
     `GitHub 已创建探针 Gist,但清理失败(${status})。未保存 token,请重试。`,
-  tokenGistCleanupNetwork:
-    "GitHub 已创建探针 Gist,但无法确认清理是否完成。未保存 token,请重试。",
   ghTokenRejected: "已保存的 GitHub Classic PAT 被拒绝或已过期，请在选项页更换。",
   ghRateLimit: "已达到 GitHub 速率限制,请稍候重试。",
   ghNoToken: "应用需要 GitHub Classic PAT 鉴权，请在选项页添加。",
