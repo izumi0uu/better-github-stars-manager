@@ -137,9 +137,11 @@ describe('Watch background integration contract', () => {
   });
 
   it('reconciles an account boundary without polling or nested queue work', () => {
+    // Anchor on the listener's own account guard rather than whatever is declared
+    // after it, so moving neighbouring code cannot silently drop this contract.
     const listener = extract(
       backgroundSource,
-      /chrome\.storage\.onChanged\.addListener\(\(changes, areaName\) => \{([\s\S]*?)\n\}\);\nconst organizeJobRunConnections/,
+      /chrome\.storage\.onChanged\.addListener\(\(changes, areaName\) => \{\n {2}if \(areaName !== 'local'\) return;([\s\S]*?)\n\}\);/,
     );
     assert.match(listener, /const credentialsChange = changes\[GITHUB_CREDENTIALS_STORAGE_KEY\]/);
     assert.match(listener, /const accountChange = credentialsChange \?\? changes\[CONFIG_STORAGE_KEY\]/);
