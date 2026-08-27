@@ -152,7 +152,7 @@ No analytics software development kit, ad network, tracking service, developer p
 
 ## Host permissions
 
-The manifest requires GitHub page and API hosts plus the OpenAI, OpenRouter, and Anthropic hosts. Custom compatible services use optional host permissions.
+The manifest requires only the GitHub page and API hosts. Every AI-service origin, built-in and custom alike, is an optional host permission requested on demand when you set that service up.
 
 A host match pattern may cover every port for a scheme and hostname. The extension separately binds credentials and requests to the exact configured canonical origin, including its port. Chromium-based browsers document the required and optional access distinction in [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions); Firefox exposes the same distinction through its optional-permissions API.
 

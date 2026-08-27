@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getMessages } from '@/i18n';
 import { AgentDataDisclosurePanel } from '@/options/AgentDataDisclosurePanel';
 import {
   cleanupMountedRootsAndBody,
@@ -45,6 +46,12 @@ describe('Agent data disclosure', () => {
     expect(container.textContent).toContain('provider-required authentication header');
     expect(container.textContent).toContain("Anthropic's x-api-key");
     expect(container.textContent).not.toContain('as an Authorization header');
+    // The panel must state that host access is requested separately and on demand;
+    // read the copy from the catalog so this stays a rendering contract, not a
+    // duplicated wording assertion.
+    expect(container.textContent).toContain(
+      getMessages('en').options.agentDisclosureProviderAccess,
+    );
   });
 
   it('keeps disclosure acceptance and custom host access as separate actions', async () => {

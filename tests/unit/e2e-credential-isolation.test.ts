@@ -258,6 +258,13 @@ describe('E2E credential isolation', () => {
     ]);
     expect(job).toMatch(/^[ \t]*path:[ \t]*dist-edge[ \t]*$/m);
 
+    // The Edge smoke drives a headed browser under xvfb. Dropping either variable
+    // would silently fall back to headless or a non-CI launch profile, which no
+    // longer reproduces the packaged runtime the release proof depends on.
+    const smokeStep = stepBlock(job, 'Run Microsoft Edge full-product smoke');
+    expect(smokeStep).toMatch(/^[ \t]*CI:[ \t]*'true'[ \t]*$/m);
+    expect(smokeStep).toMatch(/^[ \t]*PUPPETEER_HEADLESS:[ \t]*'false'[ \t]*$/m);
+
     // Release identity proof requires the real Edge binary; substituting Chrome or Chromium
     // downgrades the evidence to test-only scope, so the resolver must never fall back.
     const resolveStep = stepBlock(job, 'Resolve Microsoft Edge executable');

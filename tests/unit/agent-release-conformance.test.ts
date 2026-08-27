@@ -10,6 +10,9 @@ const root = process.cwd();
 
 describe('Agent release conformance', () => {
   it('keeps the runtime disclosure category contract wired into the informational UI', () => {
+    // Category identifiers are a machine-readable contract between the runtime
+    // constant and the panel, so a source scan is the right shape here. Rendering
+    // contracts live in agent-disclosure.test.tsx, which mounts the panel.
     const source = read('src/options/AgentDataDisclosurePanel.tsx');
     for (const category of [
       ...AGENT_SENT_TASK_DATA_CATEGORIES,
@@ -17,8 +20,6 @@ describe('Agent release conformance', () => {
     ]) {
       expect(source).toContain(category);
     }
-    expect(source).toContain('agentDisclosureKeyException');
-    expect(source).toContain('agentDisclosureProviderAccess');
   });
 
   it('keeps every model provider host out of required permissions', () => {
