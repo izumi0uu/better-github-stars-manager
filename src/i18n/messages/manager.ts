@@ -80,8 +80,8 @@ export const zhManagerMessages: ManagerMessages = {
   storeRatingPromptStoreNote: (store) => `实际评分将在 ${store} 中完成。`,
   storeRatingPromptLater: "以后再说",
   storeRatingPromptNever: "不再提醒",
-  deleteTagFailed: (error) => `删除标签失败: ${error}`,
-  deleteAllTagsFailed: (error) => `删除全部标签失败: ${error}`,
+  deleteTagFailed: (error) => `删除标签失败：${error}`,
+  deleteAllTagsFailed: (error) => `删除全部标签失败：${error}`,
   noTokenBanner: "应用需要 GitHub Classic PAT 鉴权才能加载数据。",
   addPat: "打开选项页添加 Classic PAT",
   emptyState: "无结果。调整筛选，或点击工具栏中的 Sync。",
@@ -92,5 +92,5 @@ export const zhManagerMessages: ManagerMessages = {
   backfillSyncRetry: "重试同步",
   backfillSyncLater: "稍后再说",
   backfillSyncRunning: "正在同步数据…",
-  backfillSyncFailed: (error) => `同步失败: ${error}`,
+  backfillSyncFailed: (error) => `同步失败：${error}`,
 };

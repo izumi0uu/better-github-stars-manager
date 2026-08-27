@@ -19,5 +19,5 @@ export const zhDevMessages: DevMessages = {
   clearLocalData: "清本地",
   confirmClearLocalData: "确认清除",
   clearingLocalData: "清除中…",
-  clearLocalDataFailed: (error) => `清除失败: ${error}`,
+  clearLocalDataFailed: (error) => `清除失败：${error}`,
 };
