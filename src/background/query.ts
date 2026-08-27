@@ -1,4 +1,7 @@
-import { db } from '@/storage/db';
+import {
+  invalidateLibrarySnapshot,
+  readLibrarySnapshot,
+} from '@/storage/library-projection';
 import {
   validateLaunchCandidateContract,
   type LaunchCandidateContract,
@@ -39,6 +42,7 @@ let cacheVersion = 0;
 export function invalidateCache() {
   cacheVersion++;
   cache = null;
+  invalidateLibrarySnapshot();
 }
 
 async function ensureCache(includesOwnedPublic: boolean) {
@@ -47,16 +51,15 @@ async function ensureCache(includesOwnedPublic: boolean) {
     && cache.version === cacheVersion
     && cache.includesOwnedPublic === includesOwnedPublic
   ) return cache;
-  const starsPromise = includesOwnedPublic
-    ? db.stars.toArray()
-    : db.stars.filter((star) => star.viewer_has_starred !== false).toArray();
-  const [stars, tags, tagMeta] = await Promise.all([
-    starsPromise,
-    db.tags.toArray(),
-    db.tagMeta.toArray(),
-  ]);
+  // The shared library snapshot serves every surface. This layer keeps its own
+  // entry because it additionally caches the owned-public narrowing, which only
+  // the Stars query needs.
+  const library = await readLibrarySnapshot();
+  const stars = includesOwnedPublic
+    ? library.stars
+    : library.stars.filter((star) => star.viewer_has_starred !== false);
   cache = {
-    source: { stars, tags, tagMeta },
+    source: { stars, tags: library.tags, tagMeta: library.tagMeta },
     version: cacheVersion,
     includesOwnedPublic,
   };

@@ -20,6 +20,7 @@ import type {
   RadarStatus,
 } from '@/radar/radar-contract';
 import { db } from './db';
+import { readLibrarySnapshot } from './library-projection';
 import { DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS } from '@/preferences';
 
 const RADAR_STATE_ID = 'singleton' as const;
@@ -112,6 +113,11 @@ function stateForAccount(
   return stored ? publicState(stored) : null;
 }
 
+/** Inclusive lower bound for a rolling activity window, as a stored timestamp. */
+function windowCutoffAt(nowMillis: number, windowDays: number): string {
+  return new Date(nowMillis - windowDays * 24 * 60 * 60 * 1_000).toISOString();
+}
+
 export async function countUnseenRadarActivities(
   accountLogin: string | null | undefined,
   nowMillis = Date.now(),
@@ -119,21 +125,22 @@ export async function countUnseenRadarActivities(
 ): Promise<number> {
   if (!accountLogin?.trim()) return 0;
   const key = accountKey(accountLogin);
-  const cutoffMillis = nowMillis - windowDays * 24 * 60 * 60 * 1_000;
   return db.transaction('r', db.radarActivities, db.radarState, async () => {
     const state = await db.radarState.get(RADAR_STATE_ID);
     if (!state || accountKey(state.accountLogin) !== key) return 0;
+    // This runs on every account reconciliation, so bound it with the compound
+    // index and filter only the two fields the index cannot express.
     return db.radarActivities
-      .where('accountLogin')
-      .equals(key)
-      .filter((activity) => {
-        const starredAt = timestamp(activity.starredAt);
-        return activity.dismissedAt === null
-          && storedSeenAt(activity.seenAt) === null
-          && starredAt !== null
-          && starredAt >= cutoffMillis
-          && starredAt <= nowMillis;
-      })
+      .where('[accountLogin+starredAt]')
+      .between(
+        [key, windowCutoffAt(nowMillis, windowDays)],
+        [key, new Date(nowMillis).toISOString()],
+        true,
+        true,
+      )
+      .filter((activity) => (
+        activity.dismissedAt === null && storedSeenAt(activity.seenAt) === null
+      ))
       .count();
   });
 }
@@ -642,20 +649,28 @@ export async function listRadarActivities(
   windowDays = DEFAULT_FOLLOWING_HISTORY_WINDOW_DAYS,
 ): Promise<RadarActivityPresentation[]> {
   const key = accountKey(accountLogin);
-  const [activities, stars, tags, tagMeta] = await Promise.all([
-    db.radarActivities.where('accountLogin').equals(key).toArray(),
-    db.stars.toArray(),
-    db.tags.toArray(),
-    db.tagMeta.toArray(),
+  const [activities, library] = await Promise.all([
+    // The projector discards rows outside the window anyway, so bound the read
+    // with the compound index instead of scanning every saved row.
+    db.radarActivities
+      .where('[accountLogin+starredAt]')
+      .between(
+        [key, windowCutoffAt(nowMillis, windowDays)],
+        [key, new Date(nowMillis).toISOString()],
+        true,
+        true,
+      )
+      .toArray(),
+    readLibrarySnapshot(),
   ]);
   return projectRadarActivities({
     accountLogin: key,
     nowMillis,
     windowDays,
     activities,
-    stars,
-    tags,
-    tagMeta,
+    stars: library.stars,
+    tags: library.tags,
+    tagMeta: library.tagMeta,
   });
 }
 
