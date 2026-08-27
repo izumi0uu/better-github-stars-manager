@@ -4,7 +4,7 @@ import {
   GITHUB_CREDENTIALS_STORAGE_KEY,
 } from "@/auth/auth-store";
 import { hasAgentPersonalCommunicationsPermission } from '@/auth/agent-data-permission';
-import { canonicalJson, sha256Base64Url } from '@/agent-harness/canonical-json';
+import { canonicalJson } from '@/agent-harness/canonical-json';
 import { githubStarSource } from "@/api/github-star-source";
 import {
   fetchGitHubNotifications,
@@ -29,7 +29,6 @@ import { DEV } from "@/dev";
 import { attachDevTracePort } from '@/agent-observability/dev-port';
 import { createDevAgentTurnTraceFactory } from '@/agent-observability/agent-turn-trace';
 import { createDevRawCaptureCoordinator } from '@/agent-observability/raw-capture';
-import { scrubAgentProviderConnectionFailure } from '@/agent-observability/redaction';
 import {
   createDevOrganizeJobRunTraceFactory,
   reconcileDevOrganizeJobRunProvisionalRoots,
@@ -41,8 +40,6 @@ import {
   resolveLiveLaunchCandidate,
 } from "./query";
 import type { StarsQueryParams, StarsQueryResult } from '@/stars/stars-query';
-import { countTopicRepoFrequency, reconcileAutoTagAssignments, suggestTags } from "@/ui/suggest";
-import type { AutoTagBulkUpdate } from "@/api/tag-store";
 import {
   AGENT_DATA_DISCLOSURE_REQUIRED,
   AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
@@ -51,10 +48,8 @@ import {
 import {
   addTagNames,
   canonicalTagKey,
-  dismissedAutoTagNames,
   excludedCanonicalTagKeys,
   manualTagNames,
-  sameTagNames,
   visibleTagNames,
 } from "@/tags/tag-model";
 import { selectActiveBackfillId } from "@/upgrades/backfill-state";
@@ -95,9 +90,7 @@ import {
 } from "@/bgsm-agent";
 import {
   createRegisteredAgentProvider,
-  describeAgentProviderConnectionFailure,
   testRegisteredAgentProviderConnection,
-  type AgentTraceProviderIdentity,
 } from "@/agent-harness";
 import { hasAgentProviderHostPermission } from "@/agent-harness/provider-access";
 import type { AgentProviderConnectionResult } from '@/agent-harness/provider-registry';
@@ -108,7 +101,6 @@ import {
 import type {
   AgentCustomProviderProtocol,
   AgentProviderId,
-  OrganizeItemRecord,
   OrganizeJobRecord,
   OnboardingStage,
   Star,
@@ -131,10 +123,8 @@ import {
   resolveContinuationCursor,
 } from "@/bgsm-agent/continuation-cursor";
 import {
-  createFrozenScope,
   createFrozenScopeCursor,
   parsePreflightToken,
-  parseScopeFingerprint,
 } from "@/bgsm-agent/scope";
 import {
   createOrganizeJobId,
@@ -145,32 +135,12 @@ import {
   type OrganizeJobId,
 } from "@/bgsm-agent/identity";
 import {
-  parseSourceFingerprint,
-  parseTaxonomyFingerprint,
-  type ActionableProposalRow,
-  type NonActionableAnalysisOutcome,
-} from "@/bgsm-agent/proposal";
-import {
-  restoreOrganizeJobRunAnalysisState,
-  type OrganizeJobRunAnalysisState,
-  type OrganizeJobRunPagePosition,
-} from "@/bgsm-agent/organize-job";
-import {
   createEmptyRunBudgetUsage,
   createOrganizeTagPolicySnapshot,
   createProductionRunBudget,
-  type RunBudget,
   type RunBudgetUsage,
 } from "@/bgsm-agent/policy";
-import {
-  loadFrozenScopePage,
-  type SemanticRepositoryRecord,
-} from "@/bgsm-agent/organize-scope-reader";
-import {
-  buildSemanticTaxonomyFromStorage,
-  buildSemanticPolicyTaxonomyFromStorage,
-  fingerprintSemanticTaxonomy,
-} from "@/bgsm-agent/semantic-dto";
+import { loadFrozenScopePage } from '@/bgsm-agent/organize-scope-reader';
 import { normalizeStoredTag, type LegacyTagRow } from "@/storage/tag-shape";
 import {
   activateOrganizePreflight,
@@ -186,7 +156,6 @@ import {
   dismissTerminalOrganizeJob,
   getOrganizeApplyProgress,
   getActiveOrganizeJob,
-  getOrganizeCoverage,
   getOrganizeJob,
   getOrganizeJobForRun,
   getOrganizePreflightByToken,
@@ -195,7 +164,6 @@ import {
   getOrganizeReviewPageAtOffset,
   getOrganizeReceiptPageAtOffset,
   getOrganizeSelectionSummary,
-  getOrganizeTaxonomy,
   recoverExpiredOrganizeLeases,
   releaseOrganizeJobLeases,
   releaseOrganizeAnalysisPage,
@@ -211,10 +179,8 @@ import {
   splitOrganizeAnalysisPage,
   updateOrganizeSelection,
   takeControlOrganizeJob,
-  type OrganizeAnalysisOutcome,
   type OrganizeSelectionSummary,
 } from "@/storage/organize-job-store";
-import type { SemanticTaxonomyDto } from "@/bgsm-agent/semantic-dto";
 import {
   canReplaceBlockedDurableRun,
   resolveBgsmOrganizeControlRole,
@@ -243,13 +209,44 @@ import {
   type BgsmOrganizeReceiptRow,
   type BgsmOrganizeJobClientMessage,
   type BgsmOrganizeJobDeliveryKind,
-  type BgsmOrganizeJobControlFailureReason,
   type BgsmOrganizeJobErrorReason,
-  type ManagerSurfaceBadgeCounts,
   type BgsmOrganizeJobServerMessage,
 } from "@/utils/messaging";
 import { writeOptionsIntent } from '@/utils/options-intent';
 
+import { queryManagerSurfaceBadgeCounts } from './manager-surface-badges';
+import { shouldPersistProgress } from './progress-persistence';
+import { autoTagAll } from './auto-tag';
+import { describeSafeAgentProviderConnectionFailure } from './provider-failure';
+import {
+  agentTraceProviderIdentity,
+  organizeAnalysisProviderBinding,
+} from './agent-trace-identity';
+import {
+  organizeOutcomesForPage,
+  sameOrganizeAnalysisRanges,
+  buildRestoredOrganizeAnalysisState,
+} from './organize-analysis-projection';
+import {
+  buildOrganizeJobPresentation,
+  loadFrozenOrganizeTaxonomy,
+  loadOrganizeJobRunRepositoryRecords,
+  loadOrganizeJobRunTaxonomy,
+} from './organize-store-reads';
+import {
+  boundOrganizeJobRunError,
+  classifyOrganizeJobRunError,
+  classifyOrganizeRestoreFailure,
+  durableOrganizePageIdentity,
+  durableOrganizeRunIdentity,
+  ephemeralOrganizeRunIdentity,
+  isTerminalOrganizeJob,
+  organizeApplyBlocksAgentWrites,
+  organizePageAddress,
+  OrganizeControlFailure,
+  readdressOrganizeSnapshot,
+  type OrganizePageIdentity,
+} from './organize-run-identity';
 /**
  * Background SW — sync orchestrator and sole owner of the extension-origin
  * IndexedDB. Content scripts/popup/options talk via messages; they never touch
@@ -393,50 +390,7 @@ const radarRefreshCoordinator = createRadarRefreshCoordinator({
   broadcastChanged: broadcastRadarChanged,
 });
 
-const EMPTY_MANAGER_SURFACE_BADGE_COUNTS: ManagerSurfaceBadgeCounts = Object.freeze({
-  watchUnreadCount: 0,
-  radarUnseenCount: 0,
-});
 
-type GitHubCredentialSnapshot = Awaited<ReturnType<typeof authStore.getGitHubCredentialSnapshot>>;
-
-function badgeAccountLogin(snapshot: GitHubCredentialSnapshot): string | null {
-  const login = snapshot.accountLogin?.trim();
-  return login ? login.toLocaleLowerCase('en-US') : null;
-}
-
-function badgeCredentialUnchanged(
-  previous: GitHubCredentialSnapshot,
-  current: GitHubCredentialSnapshot,
-): boolean {
-  return badgeAccountLogin(previous) === badgeAccountLogin(current)
-    && previous.mainIdentity === current.mainIdentity
-    && Boolean(previous.mainToken) === Boolean(current.mainToken);
-}
-
-async function queryManagerSurfaceBadgeCounts(): Promise<ManagerSurfaceBadgeCounts> {
-  const [credential, config] = await Promise.all([
-    authStore.getGitHubCredentialSnapshot(),
-    authStore.getConfig(),
-  ]);
-  const accountLogin = badgeAccountLogin(credential);
-  if (!accountLogin || !credential.mainToken) return EMPTY_MANAGER_SURFACE_BADGE_COUNTS;
-
-  const countedAt = Date.now();
-  const [watchUnreadCount, radarUnseenCount] = await Promise.all([
-    watchStore.countUnreadWatchThreads(accountLogin),
-    radarStore.countUnseenRadarActivities(accountLogin, countedAt, config.radarWindowDays),
-  ]);
-  const [latestCredential, latestConfig] = await Promise.all([
-    authStore.getGitHubCredentialSnapshot(),
-    authStore.getConfig(),
-  ]);
-  if (
-    !badgeCredentialUnchanged(credential, latestCredential)
-    || config.radarWindowDays !== latestConfig.radarWindowDays
-  ) return EMPTY_MANAGER_SURFACE_BADGE_COUNTS;
-  return { watchUnreadCount, radarUnseenCount };
-}
 const recommendationRefreshCoordinator = createRecommendationRefreshCoordinator({
   runSerialized: (operation) => jobQueue.run(operation),
   auth: authStore,
@@ -1134,120 +1088,10 @@ organizeJobRunScheduler = createBgsmOrganizeJobScheduler({
     });
   },
 });
-async function loadOrganizeJobRunRepositoryRecords(repositoryIds: readonly string[]) {
-  const [stars, tags] = await Promise.all([
-    db.stars.bulkGet([...repositoryIds]),
-    idbTagStore.getMany([...repositoryIds]),
-  ]);
-  const records = new Map<string, SemanticRepositoryRecord>();
-  repositoryIds.forEach((repositoryId, index) => {
-    const star = stars[index];
-    if (star) records.set(repositoryId, { star, tag: tags.get(repositoryId) ?? null });
-  });
-  return records;
-}
 
-async function loadOrganizeJobRunTaxonomy() {
-  const [rawTags, tagMeta] = await Promise.all([db.tags.toArray(), db.tagMeta.toArray()]);
-  const tags = rawTags.map((rawTag) => normalizeStoredTag(rawTag as LegacyTagRow));
-  const taxonomy = buildSemanticTaxonomyFromStorage(tagMeta, tags);
-  const policyTaxonomy = buildSemanticPolicyTaxonomyFromStorage(tagMeta, tags);
-  return Object.freeze({
-    taxonomy,
-    policyTaxonomy,
-    fingerprint: await fingerprintSemanticTaxonomy(policyTaxonomy),
-  });
-}
 
-type StoredOrganizeTaxonomy = Readonly<{
-  taxonomy: SemanticTaxonomyDto;
-  policyTaxonomy: SemanticTaxonomyDto;
-}>;
 
-async function loadFrozenOrganizeTaxonomy(identity: OrganizeRunIdentity) {
-  const job = await getOrganizeJobForRun(identity.runId, identity.generation);
-  if (!job) throw new TypeError("Durable organize job is unavailable for taxonomy loading.");
-  const stored = await getOrganizeTaxonomy(job.jobId);
-  if (!stored || !isStoredOrganizeTaxonomy(stored.snapshot)) {
-    throw new TypeError("Durable organize taxonomy snapshot is invalid.");
-  }
-  return Object.freeze({
-    taxonomy: stored.snapshot.taxonomy,
-    policyTaxonomy: stored.snapshot.policyTaxonomy,
-    fingerprint: stored.fingerprint as Awaited<ReturnType<typeof fingerprintSemanticTaxonomy>>,
-  });
-}
 
-function isStoredOrganizeTaxonomy(value: unknown): value is StoredOrganizeTaxonomy {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return !!record.taxonomy && typeof record.taxonomy === "object" &&
-    !!record.policyTaxonomy && typeof record.policyTaxonomy === "object";
-}
-
-function organizeOutcomesForPage(
-  state: OrganizeJobRunAnalysisState,
-  positions: readonly OrganizeJobRunPagePosition[],
-): readonly OrganizeAnalysisOutcome[] {
-  const actionable = new Map(state.actionableProposalRows.map((row) => [row.frozenIndex, row]));
-  const nonActionable = new Map(
-    state.nonActionableAnalysisOutcomes.map((row) => [row.frozenIndex, row]),
-  );
-  return positions.map((position): OrganizeAnalysisOutcome => {
-    const proposal = actionable.get(position.frozenIndex);
-    if (proposal) {
-      return {
-        position: position.frozenIndex,
-        state: "actionable",
-        sourceFingerprint: proposal.sourceFingerprint,
-        proposedActions: proposal.actions,
-      };
-    }
-    const outcome = nonActionable.get(position.frozenIndex);
-    if (!outcome) throw new TypeError("Finalized organize page is missing a row outcome.");
-    return {
-      position: position.frozenIndex,
-      state: outcome.kind === "analysis_failed" ? "failed" : outcome.kind,
-      failure: outcome.kind === "analysis_failed" ? "provider_failed" : null,
-    };
-  });
-}
-
-function sameOrganizeAnalysisRanges(
-  left: readonly Readonly<{
-    startFrozenIndex: number;
-    endFrozenIndexExclusive: number;
-    depth: number;
-  }>[],
-  right: readonly Readonly<{
-    startFrozenIndex: number;
-    endFrozenIndexExclusive: number;
-    depth: number;
-  }>[],
-): boolean {
-  return left.length === right.length && left.every((range, index) => {
-    const other = right[index];
-    return other !== undefined
-      && range.startFrozenIndex === other.startFrozenIndex
-      && range.endFrozenIndexExclusive === other.endFrozenIndexExclusive
-      && range.depth === other.depth;
-  });
-}
-
-function shouldPersistProgress(
-  prev: SyncProgress,
-  next: SyncProgress,
-): boolean {
-  if (prev.phase !== next.phase) return true;
-  if (prev.message !== next.message) return true;
-  if (prev.total !== next.total) return true;
-  if (next.phase === "idle") return true;
-  if (next.total == null) return next.done !== prev.done;
-  const step = Math.max(1, Math.ceil(next.total / 25));
-  return (
-    next.done === 0 || next.done === next.total || next.done - prev.done >= step
-  );
-}
 
 async function persistProgressSnapshot(progress: SyncProgress) {
   try {
@@ -1392,119 +1236,11 @@ async function getLocaleMessages() {
   return getMessages(await authStore.getLocale());
 }
 
-/**
- * Auto-tag every star from its topics (NOT language — language is a sidebar
- * filter, not a tag; full rationale in suggest.ts). Pure-local, idempotent,
- * preserves notes. Excluded names are skipped so deleted tags don't resurrect.
- */
-async function autoTagAll(
-  progressLabel: string,
-  onProgress?: (p: SyncProgress) => void,
-  phase: SyncProgress['phase'] = 'incremental',
-): Promise<{ tagged: number; remainingUntagged: number }> {
-  const cfg = await authStore.getConfig();
-  const stars = (await db.stars.toArray()).filter((star) => (
-    !star.tombstone && star.viewer_has_starred !== false
-  ));
-  const excluded = new Set(await idbTagStore.listExcluded());
-  const existingTags = await idbTagStore.getMany(stars.map((star) => star.full_name));
-  const topicRepoCounts = countTopicRepoFrequency(stars);
-  const plans: AutoTagBulkUpdate[] = [];
-  const total = stars.length;
-  console.log(
-    '[GSM] autoTag START | stars:',
-    total,
-    '| excluded:',
-    excluded.size,
-    '| phase:',
-    phase,
-    '| limit:',
-    cfg.maxTagsPerRepo,
-    '| minRepoCount:',
-    cfg.minTopicRepoCount,
-  );
-  for (let i = 0; i < stars.length; i++) {
-    const star = stars[i];
-    const existing = existingTags.get(star.full_name);
-    const manualTags = manualTagNames(existing);
-    const dismissed = dismissedAutoTagNames(existing);
-    const nextAutoTags = suggestTags(star, [...manualTags, ...dismissed], excluded, {
-      limit: cfg.maxTagsPerRepo,
-      minRepoCount: cfg.minTopicRepoCount,
-      topicRepoCounts,
-    });
-    plans.push({ full_name: star.full_name, autoTags: nextAutoTags });
-    const done = i + 1;
-    if (onProgress && (done === 1 || done === total || done % 100 === 0)) {
-      onProgress({
-        phase,
-        done,
-        total,
-        message: progressLabel,
-      });
-    }
-    if (done % 100 === 0) await Promise.resolve();
-  }
-  const updates = reconcileAutoTagAssignments(plans, cfg.minTopicRepoCount)
-    .filter((plan) => !sameTagNames(existingTags.get(plan.full_name)?.autoTags ?? [], plan.autoTags));
-  const { updated: tagged } =
-    updates.length > 0 ? await idbTagStore.setAutoTagsBulk(updates) : { updated: 0 };
-  console.log('[GSM] autoTag END | newly tagged:', tagged, 'of', total);
-  const afterTags = await idbTagStore.getMany(stars.map((star) => star.full_name));
-  let remainingUntagged = 0;
-  for (const star of stars) {
-    if (star.tombstone) continue;
-    const row = afterTags.get(star.full_name);
-    const hasManual = (row?.manualTags?.length ?? 0) > 0;
-    const hasAuto = (row?.autoTags?.length ?? 0) > 0;
-    if (!hasManual && !hasAuto) remainingUntagged += 1;
-  }
-  return { tagged, remainingUntagged };
-}
 
 
 
-function agentTraceProviderIdentity(
-  provider: Readonly<{
-    providerId: AgentProviderId;
-    endpoint: Readonly<{ profile: Readonly<{ protocol: string }> }>;
-  }>,
-  modelCapabilityRevision: string,
-): AgentTraceProviderIdentity {
-  const providerClass = provider.providerId === 'custom-openai-compatible'
-    ? 'custom'
-    : provider.providerId;
-  const protocol = provider.endpoint.profile.protocol === 'chat-completions'
-    ? 'chat_completions'
-    : provider.endpoint.profile.protocol === 'anthropic-messages'
-      ? 'anthropic_messages'
-      : 'responses';
-  return Object.freeze({ providerClass, protocol, modelCapabilityRevision });
-}
-
-async function organizeAnalysisProviderBinding(provider: Readonly<{
-  providerId: AgentProviderId;
-  model: string;
-  endpoint: Readonly<{
-    completionEndpoint: string;
-    profile: Readonly<{ protocol: string }>;
-  }>;
-  contextCapability: Readonly<{ capabilityRevision: string }>;
-}>) {
-  return Object.freeze({
-    version: 1,
-    provider: provider.providerId,
-    model: provider.model,
-    protocol: provider.endpoint.profile.protocol,
-    capabilityRevision: provider.contextCapability.capabilityRevision,
-    endpointFingerprint: `endpoint:v1:${await sha256Base64Url(provider.endpoint.completionEndpoint)}`,
-  });
-}
 
 
-function organizeApplyBlocksAgentWrites(job: OrganizeJobRecord | undefined): boolean {
-  return !!job && ['apply_sealed', 'applying', 'paused'].includes(job.status);
-}
 
 const run = jobQueue.run;
 const BACKFILL_STATUS_RECONCILE_MS = 30_000;
@@ -1690,17 +1426,6 @@ function recordProviderProbeFailure(
   providerDiagnosticsRuntime?.recordProbeFailure(requestId, startedAt, error);
 }
 
-async function describeSafeAgentProviderConnectionFailure(error: unknown) {
-  const failure = describeAgentProviderConnectionFailure(error);
-  const settledSecrets = await Promise.allSettled([
-    authStore.getToken(),
-    authStore.getAgentApiKey(),
-  ]);
-  const secrets = settledSecrets.flatMap((result) => (
-    result.status === "fulfilled" && result.value ? [result.value] : []
-  ));
-  return scrubAgentProviderConnectionFailure(failure, secrets);
-}
 
 async function handle(req: Req): Promise<Res> {
   const agentSessionRequest = parseBgsmAgentSessionRequest(req);
@@ -2973,60 +2698,7 @@ function currentOrganizeJobRunPort(
   return organizeJobRunConnections.current({ controllerId, sessionId })?.port;
 }
 
-type OrganizePageIdentity = Readonly<{
-  controllerId: BgsmOrganizeJobClientMessage['controllerId'];
-  sessionId: string;
-}>;
 
-class OrganizeControlFailure extends Error {
-  readonly reason: BgsmOrganizeJobControlFailureReason;
-
-  constructor(reason: BgsmOrganizeJobControlFailureReason) {
-    super(reason);
-    this.name = 'OrganizeControlFailure';
-    this.reason = reason;
-  }
-}
-
-function isTerminalOrganizeJob(job: Pick<OrganizeJobRecord, 'status'>): boolean {
-  return job.status === 'completed' || job.status === 'cancelled';
-}
-
-function durableOrganizePageIdentity(job: Pick<OrganizeJobRecord, 'controllerId' | 'sessionId'>): OrganizePageIdentity {
-  return { controllerId: parseControllerId(job.controllerId), sessionId: job.sessionId };
-}
-
-function durableOrganizeRunIdentity(
-  job: Pick<OrganizeJobRecord, 'controllerId' | 'sessionId' | 'runId' | 'generation'>,
-): OrganizeRunIdentity {
-  return {
-    ...durableOrganizePageIdentity(job),
-    runId: parseRunId(job.runId),
-    generation: job.generation,
-  };
-}
-
-function readdressOrganizeSnapshot(
-  snapshot: OrganizeJobRunSnapshot,
-  page: OrganizePageIdentity,
-): OrganizeJobRunSnapshot {
-  return Object.freeze({ ...snapshot, ...organizePageAddress(page) });
-}
-
-function organizePageAddress(page: OrganizePageIdentity): OrganizePageIdentity {
-  return { controllerId: page.controllerId, sessionId: page.sessionId };
-}
-
-function ephemeralOrganizeRunIdentity(
-  snapshot: Pick<OrganizeJobRunSnapshot, 'controllerId' | 'sessionId' | 'runId' | 'generation'>,
-): OrganizeRunIdentity {
-  return {
-    controllerId: snapshot.controllerId,
-    sessionId: snapshot.sessionId,
-    runId: snapshot.runId,
-    generation: snapshot.generation,
-  };
-}
 
 async function postOrganizeOwnerMessage(
   runId: OrganizeRunIdentity['runId'],
@@ -3120,70 +2792,8 @@ function postOrganizeJobRunError(
   });
 }
 
-function classifyOrganizeJobRunError(error: unknown): BgsmOrganizeJobErrorReason {
-  if (error instanceof OrganizeControlFailure) return error.reason;
-  const message = error instanceof Error ? error.message : '';
-  if (/already consumed/u.test(message)) return 'preflight_replayed';
-  if (/preflight.*stale|stale.*preflight/u.test(message)) return 'preflight_stale';
-  if (/preflight/u.test(message)) return 'preflight_invalid';
-  if (/active OrganizeJobRun/u.test(message)) return 'already_started';
-  if (/revision is stale/u.test(message)) return 'revision_conflict';
-  if (/stale|does not belong/u.test(message)) return 'stale_generation';
-  return 'internal_error';
-}
-
-function boundOrganizeJobRunError(detail: string): string {
-  const value = detail.trim() || "BGSM OrganizeJobRun failed.";
-  const encoder = new TextEncoder();
-  if (encoder.encode(value).byteLength <= 4_096) return value;
-  let bounded = "";
-  for (const codePoint of value) {
-    if (encoder.encode(bounded + codePoint).byteLength > 4_096) break;
-    bounded += codePoint;
-  }
-  return bounded;
-}
 
 
-async function buildOrganizeJobPresentation(
-  job: OrganizeJobRecord,
-): Promise<BgsmOrganizeJobPresentation> {
-  if (job.status === 'preflight_ready') {
-    throw new TypeError('A preflight cannot be presented as an active organize job.');
-  }
-  const [coverage, selection, apply] = await Promise.all([
-    getOrganizeCoverage(job.jobId),
-    getOrganizeSelectionSummary(job.jobId),
-    job.applyId ? getOrganizeApplyProgress(job.applyId) : Promise.resolve(undefined),
-  ]);
-  return Object.freeze({
-    controllerId: job.controllerId as BgsmOrganizeJobPresentation['controllerId'],
-    sessionId: job.sessionId,
-    runId: parseRunId(job.runId),
-    generation: job.generation,
-    jobId: job.jobId,
-    originAgentSessionId: job.originAgentSessionId,
-    revision: job.revision,
-    status: job.status,
-    scopeLabel: job.frozenScope.label,
-    scopeCount: job.itemCount,
-    capturedAt: job.frozenScope.capturedAt,
-    proposalId: parseProposalId(job.proposalId),
-    coverage: Object.freeze({
-      total: coverage.total,
-      analyzed: coverage.analyzed,
-      actionable: coverage.actionable,
-      unchanged: coverage.unchanged,
-      insufficientEvidence: coverage.insufficientEvidence,
-      missing: coverage.missing,
-      tombstoned: coverage.tombstoned,
-      analysisFailed: coverage.failed,
-    }),
-    selectedRepositories: selection.selectedRepositories,
-    selectedActions: selection.selectedActions,
-    apply: apply ? Object.freeze({ ...apply }) : null,
-  });
-}
 
 async function publishOrganizeJobState(
   jobId: string,
@@ -3738,95 +3348,8 @@ async function restoreDurableOrganizeJob(
   }
 }
 
-function classifyOrganizeRestoreFailure(
-  error: unknown,
-): 'checkpoint_invariant' | 'checkpoint_missing' | 'storage_unavailable' | 'unknown' {
-  const message = error instanceof Error ? error.message : '';
-  if (
-    error instanceof TypeError
-    || error instanceof RangeError
-    || /invalid|malformed|stale|contiguous|FrozenScope|ledger|fingerprint/u.test(message)
-  ) return 'checkpoint_invariant';
-  if (/missing|Unknown organize job/u.test(message)) return 'checkpoint_missing';
-  const name = error instanceof Error ? error.name : '';
-  if (/Database|Transaction|Quota|Abort|InvalidState|UnknownError/u.test(name)) {
-    return 'storage_unavailable';
-  }
-  return 'unknown';
-}
 
 
-function buildRestoredOrganizeAnalysisState(
-  job: OrganizeJobRecord,
-  items: readonly OrganizeItemRecord[],
-  taxonomyFingerprintValue: string,
-): OrganizeJobRunAnalysisState {
-  if (job.frozenScope.kind !== 'all_live_stars' || typeof job.frozenScope.filterSnapshot !== 'string') {
-    throw new TypeError('Stored organize FrozenScope is invalid.');
-  }
-  const runId = parseRunId(job.runId);
-  const proposalId = parseProposalId(job.proposalId);
-  const taxonomyFingerprint = items.find((row) => row.analysisState === 'actionable')
-    ? parseTaxonomyFingerprint(taxonomyFingerprintValue)
-    : null;
-  const analyzed = items
-    .filter((row) => row.analysisState !== 'pending' && row.analysisState !== 'leased')
-    .map((row) => ({
-      frozenIndex: row.position,
-      repositoryId: row.fullName,
-      classification: row.analysisState === 'actionable' ? 'actionable' as const : 'non_actionable' as const,
-    }));
-  const nonActionable: NonActionableAnalysisOutcome[] = items.flatMap((row) => {
-    if (row.analysisState === 'pending' || row.analysisState === 'leased' || row.analysisState === 'actionable') {
-      return [];
-    }
-    return [{
-      frozenIndex: row.position,
-      repositoryId: row.fullName,
-      kind: row.analysisState === 'failed' ? 'analysis_failed' as const : row.analysisState,
-    }];
-  });
-  const actionable: ActionableProposalRow[] = items.flatMap((row) => {
-    if (row.analysisState !== 'actionable') return [];
-    if (!taxonomyFingerprint || !row.sourceFingerprint) {
-      throw new TypeError('Stored actionable organize row is missing sealed fingerprints.');
-    }
-    return [{
-      proposalRowId: `${proposalId}:row:${row.position}`,
-      frozenIndex: row.position,
-      repositoryId: row.fullName,
-      sourceFingerprint: parseSourceFingerprint(row.sourceFingerprint),
-      taxonomyFingerprint,
-      actions: row.proposedActions,
-    }];
-  });
-  return restoreOrganizeJobRunAnalysisState({
-    runId,
-    generation: job.generation,
-    proposalId,
-    frozenScope: createFrozenScope({
-      kind: 'all_live_stars',
-      label: job.frozenScope.label,
-      filterSnapshot: job.frozenScope.filterSnapshot,
-      repositoryIds: job.frozenScope.repositoryIds,
-      capturedAt: job.frozenScope.capturedAt,
-      fingerprint: parseScopeFingerprint(job.frozenScope.fingerprint),
-    }),
-    tagPolicy: createOrganizeTagPolicySnapshot(job.tagPolicy),
-    budget: job.budget as RunBudget,
-    usage: job.usage as RunBudgetUsage,
-    nextFrozenIndex: job.nextFrozenIndex,
-    analysisPendingRanges: job.analysisPendingRanges ?? [],
-    status: ['review', 'apply_sealed', 'applying', 'paused', 'completed'].includes(job.status)
-      ? 'review'
-      : job.status === 'analysis_blocked'
-        ? 'analysis_blocked'
-        : 'analyzing',
-    analyzedFrozenPositions: analyzed,
-    nonActionableAnalysisOutcomes: nonActionable,
-    actionableProposalRows: actionable,
-  });
-}
 
 organizeAnalysisRecovery.install();
 organizeApplyRecovery.install();
@@ -3896,3 +3419,4 @@ void authStore
     }
   })
   .catch(() => {});
+
