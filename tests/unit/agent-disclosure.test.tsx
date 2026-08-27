@@ -2,6 +2,10 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES,
+  AGENT_SENT_TASK_DATA_CATEGORIES,
+} from '@/bgsm-agent/disclosure';
 import { getMessages } from '@/i18n';
 import { AgentDataDisclosurePanel } from '@/options/AgentDataDisclosurePanel';
 import {
@@ -52,6 +56,36 @@ describe('Agent data disclosure', () => {
     expect(container.textContent).toContain(
       getMessages('en').options.agentDisclosureProviderAccess,
     );
+  });
+
+  it('renders every declared task-data category in the disclosure list', () => {
+    // The runtime category constants are the disclosure contract; the panel is
+    // their only user-facing surface. Assert against the rendered
+    // data-disclosure-category attributes so dropping a category from the panel
+    // fails here instead of only in a source scan.
+    const container = mountReact(
+      <AgentDataDisclosurePanel
+        providerLabel="OpenAI"
+        canonicalOrigin="https://api.openai.com"
+        disclosureAccepted={false}
+        disclosureBusy={false}
+        hostAccessGranted={false}
+        hostAccessBusy={false}
+        onGrantAccess={() => {}}
+        onAcceptDisclosure={() => {}}
+      />,
+      mountedRoots,
+    );
+
+    const rendered = new Set(
+      [...container.querySelectorAll('[data-disclosure-category]')]
+        .flatMap((item) => (item.getAttribute('data-disclosure-category') ?? '').split(' '))
+        .filter(Boolean),
+    );
+    expect([...rendered].sort()).toEqual([
+      ...AGENT_SENT_TASK_DATA_CATEGORIES,
+      ...AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES,
+    ].toSorted());
   });
 
   it('keeps disclosure acceptance and custom host access as separate actions', async () => {

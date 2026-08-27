@@ -258,12 +258,13 @@ describe('E2E credential isolation', () => {
     ]);
     expect(job).toMatch(/^[ \t]*path:[ \t]*dist-edge[ \t]*$/m);
 
-    // The Edge smoke drives a headed browser under xvfb. Dropping either variable
-    // would silently fall back to headless or a non-CI launch profile, which no
-    // longer reproduces the packaged runtime the release proof depends on.
-    const smokeStep = stepBlock(job, 'Run Microsoft Edge full-product smoke');
-    expect(smokeStep).toMatch(/^[ \t]*CI:[ \t]*'true'[ \t]*$/m);
-    expect(smokeStep).toMatch(/^[ \t]*PUPPETEER_HEADLESS:[ \t]*'false'[ \t]*$/m);
+    // The Edge smoke drives a headed browser under xvfb. Both variables must live in
+    // the step's `env:` mapping: inside a `run:` heredoc they would never reach the
+    // smoke process, and CI would silently fall back to a headless or non-CI launch
+    // profile that no longer reproduces the packaged runtime.
+    const smokeEnv = stepEnvBlock(job, 'Run Microsoft Edge full-product smoke');
+    expect(smokeEnv).toMatch(/^[ \t]*CI:[ \t]*'true'[ \t]*$/m);
+    expect(smokeEnv).toMatch(/^[ \t]*PUPPETEER_HEADLESS:[ \t]*'false'[ \t]*$/m);
 
     // Release identity proof requires the real Edge binary; substituting Chrome or Chromium
     // downgrades the evidence to test-only scope, so the resolver must never fall back.
@@ -422,6 +423,27 @@ function stepBlock(job: string, name: string): string {
   );
 
   return followingStep === -1 ? remainder : remainder.slice(0, followingStep);
+}
+
+/**
+ * Returns only the `env:` mapping of a step, so an assertion cannot be satisfied
+ * by the same text appearing inside `run:`. GitHub Actions passes environment
+ * variables to the process from this mapping alone.
+ */
+function stepEnvBlock(job: string, name: string): string {
+  const step = stepBlock(job, name);
+  const heading = /^([ \t]*)env:[ \t]*\r?$/m.exec(step);
+  if (!heading) {
+    throw new Error(`Workflow step has no env mapping: ${name}`);
+  }
+
+  const contentStart = heading.index + heading[0].length;
+  const remainder = step.slice(contentStart);
+  const followingKey = remainder.search(
+    new RegExp(String.raw`^${heading[1]}[A-Za-z0-9_-]+:`, 'm'),
+  );
+
+  return followingKey === -1 ? remainder : remainder.slice(0, followingKey);
 }
 
 function expectInOrder(source: string, values: readonly string[]): void {

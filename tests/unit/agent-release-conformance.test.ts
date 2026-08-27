@@ -1,27 +1,10 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES,
-  AGENT_SENT_TASK_DATA_CATEGORIES,
-} from '@/bgsm-agent/disclosure';
 
 const root = process.cwd();
 
 describe('Agent release conformance', () => {
-  it('keeps the runtime disclosure category contract wired into the informational UI', () => {
-    // Category identifiers are a machine-readable contract between the runtime
-    // constant and the panel, so a source scan is the right shape here. Rendering
-    // contracts live in agent-disclosure.test.tsx, which mounts the panel.
-    const source = read('src/options/AgentDataDisclosurePanel.tsx');
-    for (const category of [
-      ...AGENT_SENT_TASK_DATA_CATEGORIES,
-      ...AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES,
-    ]) {
-      expect(source).toContain(category);
-    }
-  });
-
   it('keeps every model provider host out of required permissions', () => {
     const manifest = read('manifest.config.ts');
     expect(manifest).toContain("optional_host_permissions");
