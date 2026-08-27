@@ -26,9 +26,15 @@ const FOLLOWING_PAGE_SIZE = 100;
 const DEFAULT_MAX_FOLLOWING = RADAR_MAX_FOLLOWING;
 const DEFAULT_BATCH_SIZE = 5;
 const DEFAULT_STARS_PER_FOLLOWER = RADAR_STARS_PER_FOLLOWER;
-const DEFAULT_RATE_LIMIT_LOW_WATER = 50;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-const RECONCILIATION_MAX_REQUESTS = 10;
+
+/**
+ * Quota floor kept unspent so an interrupted scan never starves other GitHub
+ * work, and the per-step request ceiling. Both are exported because the refresh
+ * coordinator needs them to decide whether another step is affordable.
+ */
+export const RADAR_RATE_LIMIT_RESERVE = 50;
+export const RADAR_STEP_MAX_REQUESTS = 10;
 
 class RadarStepPause extends Error {
   readonly reason: 'request_budget' | 'deadline';
@@ -597,7 +603,7 @@ export async function fetchGitHubRadar(
   );
   const rateLimitLowWater = positiveInteger(
     options.rateLimitLowWater,
-    DEFAULT_RATE_LIMIT_LOW_WATER,
+    RADAR_RATE_LIMIT_RESERVE,
   );
   const requestTimeoutMs = positiveInteger(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
   const deadlineAt = Date.now() + positiveInteger(options.deadlineMs, DEFAULT_DEADLINE_MS);
@@ -640,7 +646,9 @@ export async function fetchGitHubRadar(
     if (page.remaining !== null && page.remaining <= rateLimitLowWater && hasNextPage) break;
   }
 
-  if (hasNextPage || followingLogins.length < followingCount) {
+  if (followingLogins.length >= maxFollowing && followingCount > maxFollowing) {
+    partialReasons.add('following_cap_reached');
+  } else if (hasNextPage || followingLogins.length < followingCount) {
     partialReasons.add('following_scan_truncated');
   }
   if (accountLogin === null) throw new GitHubRadarError('invalid_response');
@@ -722,11 +730,7 @@ export async function fetchGitHubRadar(
     followingCount,
     scannedFollowingCount,
     batchCount,
-    partialReasons: [
-      'github_star_list_truncated',
-      'private_activity_omitted',
-      'following_scan_truncated',
-    ].filter((reason): reason is RadarPartialReason => partialReasons.has(reason as RadarPartialReason)),
+    partialReasons: normalizeRadarPartialReasons([...partialReasons]),
     rateLimitRemaining,
     rateLimitResetAt,
     maxRequestCost,
@@ -799,8 +803,8 @@ export async function fetchGitHubRadarReconciliationStep(
   const fetchImpl = options.fetchImpl ?? fetch;
   const requestTimeoutMs = positiveInteger(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
   const deadlineAt = Date.now() + positiveInteger(options.deadlineMs, DEFAULT_DEADLINE_MS);
-  const maxRequests = positiveInteger(options.maxRequests, RECONCILIATION_MAX_REQUESTS);
-  const rateLimitLowWater = positiveInteger(options.rateLimitLowWater, DEFAULT_RATE_LIMIT_LOW_WATER);
+  const maxRequests = positiveInteger(options.maxRequests, RADAR_STEP_MAX_REQUESTS);
+  const rateLimitLowWater = positiveInteger(options.rateLimitLowWater, RADAR_RATE_LIMIT_RESERVE);
   const batchSize = Math.min(positiveInteger(options.batchSize, DEFAULT_BATCH_SIZE), DEFAULT_BATCH_SIZE);
   const starsPerFollower = Math.min(
     positiveInteger(options.starsPerFollower, DEFAULT_STARS_PER_FOLLOWER),
@@ -890,8 +894,12 @@ export async function fetchGitHubRadarReconciliationStep(
         continue;
       }
       // The actor set freezes only when Following paging ends, so an
-      // intermediate page never marks the epoch permanently incomplete.
-      if (page.hasNextPage || logins.length < page.totalCount) {
+      // intermediate page never marks the epoch permanently incomplete. The
+      // product cap and a GitHub-side gap both truncate coverage, but only the
+      // cap is a stable product boundary the UI can explain.
+      if (logins.length >= RADAR_MAX_FOLLOWING && page.totalCount > RADAR_MAX_FOLLOWING) {
+        additions.push('following_cap_reached');
+      } else if (page.hasNextPage || logins.length < page.totalCount) {
         additions.push('following_scan_truncated');
       }
       cursor = {

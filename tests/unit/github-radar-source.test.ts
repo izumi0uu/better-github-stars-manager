@@ -5,6 +5,7 @@ import {
 } from '@/api/github-radar-source';
 import {
   createRadarReconciliationCheckpoint,
+  RADAR_MAX_FOLLOWING,
   type RadarReconciliationCheckpoint,
 } from '@/radar/radar-model';
 
@@ -866,5 +867,53 @@ describe('GitHub Radar source', () => {
       phase: 'activity',
       actors: [{ login: 'alice', nextCursor: 'actor-next', complete: false }],
     });
+  });
+
+  it('reports the product cap separately from a GitHub-side Following gap', async () => {
+    const initial = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:cap',
+      accountLogin: 'viewer',
+      credentialIdentity: 'viewer:identity:true',
+      windowDays: 30,
+      startedAt: NOW.toISOString(),
+    });
+    const cappedLogins = Array.from({ length: RADAR_MAX_FOLLOWING }, (_, i) => `actor${i}`);
+    const capFetch = vi.fn(async () => jsonResponse(followingEnvelope({
+      logins: cappedLogins,
+      totalCount: RADAR_MAX_FOLLOWING + 40,
+      hasNextPage: true,
+      endCursor: 'never-read',
+    }))) as typeof fetch;
+
+    const capped = await fetchGitHubRadarReconciliationStep({
+      token: 'token',
+      checkpoint: initial,
+      fetchImpl: capFetch,
+      now: () => NOW,
+      maxRequests: 1,
+    });
+
+    expect(capped.checkpoint.partialReasons).toEqual(['following_cap_reached']);
+    expect(capped.checkpoint.cursor).toMatchObject({
+      phase: 'activity',
+      followingCount: RADAR_MAX_FOLLOWING + 40,
+    });
+
+    // Under the cap, a page that reports more accounts than it returns is a
+    // GitHub-side gap and keeps the original reason.
+    const gapFetch = vi.fn(async () => jsonResponse(followingEnvelope({
+      logins: ['alice'],
+      totalCount: 3,
+    }))) as typeof fetch;
+
+    const gapped = await fetchGitHubRadarReconciliationStep({
+      token: 'token',
+      checkpoint: initial,
+      fetchImpl: gapFetch,
+      now: () => NOW,
+      maxRequests: 1,
+    });
+
+    expect(gapped.checkpoint.partialReasons).toEqual(['following_scan_truncated']);
   });
 });

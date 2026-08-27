@@ -3,12 +3,15 @@ import type { FollowingHistoryWindowDays } from '@/types';
 import {
   fetchGitHubRadar,
   fetchGitHubRadarReconciliationStep,
+  RADAR_RATE_LIMIT_RESERVE,
+  RADAR_STEP_MAX_REQUESTS,
 } from '@/api/github-radar-source';
 import {
   createRadarReconciliationCheckpoint,
   GitHubRadarError,
   type RadarActivityPresentation,
   type RadarErrorCode,
+  RADAR_MAX_FOLLOWING,
   type RadarReconciliationCheckpoint,
   type RadarStateRecord,
 } from '@/radar/radar-model';
@@ -43,6 +46,27 @@ type RadarRefreshOutcome = Readonly<{ published: boolean }>;
 
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1_000;
 const TRANSIENT_FAILURE_COOLDOWN_MS = 5 * 60 * 1_000;
+
+/**
+ * Worst-case steps for a full graph: the followed-account cap needs two
+ * Following pages plus one activity request per five actors, and one step
+ * spends at most `RADAR_STEP_MAX_REQUESTS`.
+ */
+const RADAR_MAX_CHAINED_STEPS = Math.ceil(
+  (2 + RADAR_MAX_FOLLOWING / 5) / RADAR_STEP_MAX_REQUESTS,
+);
+
+/**
+ * Whether one more step fits above the quota reserve. GitHub reports the cost of
+ * the most expensive request in the epoch, so a full step is priced at that cost
+ * times the per-step request ceiling. An unknown balance or cost never chains.
+ */
+function affordsAnotherStep(checkpoint: RadarReconciliationCheckpoint): boolean {
+  const remaining = checkpoint.rateLimitRemaining;
+  const cost = checkpoint.maxRequestCost;
+  if (remaining === null || cost === null || cost <= 0) return false;
+  return remaining - RADAR_STEP_MAX_REQUESTS * cost > RADAR_RATE_LIMIT_RESERVE;
+}
 
 export interface RadarRefreshCoordinatorDependencies {
   runSerialized<T>(operation: () => Promise<T>): Promise<T>;
@@ -302,13 +326,15 @@ function createReconciliationId(attemptedAt: number): string {
 
       const resumeStep = async (
         epoch: RadarReconciliationCheckpoint,
-      ): Promise<RadarRefreshOutcome> => {
+      ): Promise<{ outcome: RadarRefreshOutcome; next: RadarReconciliationCheckpoint | null }> => {
         const step = await dependencies.fetchReconciliationStep({
           token: mainToken,
           checkpoint: epoch,
-          now: () => new Date(attemptedAt),
+          now: () => new Date(now()),
         });
-        if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
+        if (!(await requestIsCurrent(auth, windowDays))) {
+          return { outcome: { published: false }, next: null };
+        }
         const committed = await dependencies.store.commitReconciliationStep({
           accountLogin,
           credentialIdentity: identity(auth),
@@ -329,14 +355,40 @@ function createReconciliationId(attemptedAt: number): string {
               step.expectedReconciliationId,
             );
           }
-          return { published: false };
+          return { outcome: { published: false }, next: null };
         }
-        if (!(await requestIsCurrent(auth, windowDays))) return { published: false };
+        if (!(await requestIsCurrent(auth, windowDays))) {
+          return { outcome: { published: false }, next: null };
+        }
         dependencies.broadcastChanged();
-        return { published: true };
+        return { outcome: { published: true }, next: committed.checkpoint };
       };
 
-      if (checkpoint) return resumeStep(checkpoint);
+      /**
+       * Run consecutive steps while one wake can still afford them. A single
+       * step is bounded by its request budget, so without chaining a large
+       * Following graph needs one hourly alarm per step and takes hours to
+       * converge. Only a request-budget pause is chained: a deadline pause means
+       * this wake is already slow, and a quota pause is a hard wait.
+       */
+      const runEpoch = async (
+        first: RadarReconciliationCheckpoint,
+      ): Promise<RadarRefreshOutcome> => {
+        let epoch: RadarReconciliationCheckpoint | null = first;
+        let outcome: RadarRefreshOutcome = { published: false };
+        for (let step = 0; step < RADAR_MAX_CHAINED_STEPS && epoch !== null; step += 1) {
+          const result = await resumeStep(epoch);
+          outcome = result.outcome;
+          const next = result.next;
+          epoch = next !== null && next.pauseReason === 'request_budget'
+            && affordsAnotherStep(next)
+            ? next
+            : null;
+        }
+        return outcome;
+      };
+
+      if (checkpoint) return runEpoch(checkpoint);
 
       const effectivePlan = selectRadarRefreshPlan({
         nowMillis: attemptedAt,
@@ -355,7 +407,7 @@ function createReconciliationId(attemptedAt: number): string {
             startedAt: new Date(attemptedAt).toISOString(),
           }),
         );
-        return resumeStep(started.checkpoint);
+        return runEpoch(started.checkpoint);
       }
 
       const snapshot = await dependencies.fetchRadar({

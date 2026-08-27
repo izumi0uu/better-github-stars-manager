@@ -11,6 +11,7 @@ export const RADAR_PARTIAL_REASONS = [
   'github_star_list_truncated',
   'private_activity_omitted',
   'following_scan_truncated',
+  'following_cap_reached',
 ] as const;
 
 export type RadarPartialReason = typeof RADAR_PARTIAL_REASONS[number];
@@ -574,6 +575,7 @@ export function normalizeRadarPartialReasons(value: unknown): RadarPartialReason
     github_star_list_truncated: true,
     private_activity_omitted: true,
     following_scan_truncated: true,
+    following_cap_reached: true,
   };
   const present = new Set(value.filter((item): item is RadarPartialReason => (
     typeof item === 'string' && item in allowed

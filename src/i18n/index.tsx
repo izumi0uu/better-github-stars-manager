@@ -2,7 +2,11 @@ import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { DEFAULT_LOCALE } from "@/preferences";
 import type { Locale, SyncProgress } from "@/types";
-import type { RadarPartialReason, RadarRefreshMode } from '@/radar/radar-model';
+import {
+  RADAR_MAX_FOLLOWING,
+  type RadarPartialReason,
+  type RadarRefreshMode,
+} from '@/radar/radar-model';
 import type { ManagerRuntime } from '@/runtime/manager-runtime';
 
 export type WatchStatusProgressField = 'count' | 'pages';
@@ -1430,6 +1434,7 @@ const messages: Record<Locale, MessageCatalog> = {
         github_star_list_truncated: `Some highly active accounts could not be fully retrieved for the ${windowDays}-day range.`,
         private_activity_omitted: "Private followed-star activity was omitted.",
         following_scan_truncated: "Not every followed account could be scanned.",
+        following_cap_reached: `Following covers your ${RADAR_MAX_FOLLOWING} most recently followed accounts.`,
       })[reason],
       staleSnapshot: "Showing saved activity because the latest snapshot is stale.",
       cooldownUntil: (time) => `GitHub rate limit reached. Scanning unlocks at ${time}.`,
@@ -2767,6 +2772,7 @@ const messages: Record<Locale, MessageCatalog> = {
         github_star_list_truncated: `部分活跃账号历史 Star 较多，未能完整获取最近 ${windowDays} 天的全部记录。`,
         private_activity_omitted: "已省略关注账号的私有 Star 动态。",
         following_scan_truncated: "未能扫描全部关注账号。",
+        following_cap_reached: `Following 覆盖你最近关注的 ${RADAR_MAX_FOLLOWING} 个账号。`,
       })[reason],
       staleSnapshot: "数据已有一段时间未更新，当前显示上次同步结果。",
       cooldownUntil: (time) => `已触发 GitHub 速率限制，${time} 后可再次扫描。`,
