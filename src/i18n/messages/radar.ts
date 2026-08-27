@@ -16,7 +16,6 @@ export type RadarMessages = {
   clearForYouSearch: string;
   forYouSearchResultCount: (count: number) => string;
   forYouSearchEmpty: (query: string) => string;
-  recommendationsOnly: string;
   recommendationsRefreshing: string;
   recommendationsRefreshingSaved: string;
   recommendationsNewBatch: string;
@@ -141,7 +140,6 @@ export const enRadarMessages: RadarMessages = {
   clearForYouSearch: "Clear For You search",
   forYouSearchResultCount: (count) => `${count} matching ${count === 1 ? "recommendation" : "recommendations"}`,
   forYouSearchEmpty: (query) => `No recommendations match “${query}”.`,
-  recommendationsOnly: "Public repositories · based on your stars",
   recommendationsRefreshing: "Refreshing recommendations…",
   recommendationsRefreshingSaved: "Refreshing · showing saved recommendations",
   recommendationsNewBatch: "New batch",
@@ -290,7 +288,6 @@ export const zhRadarMessages: RadarMessages = {
   clearForYouSearch: "清除为你推荐搜索",
   forYouSearchResultCount: (count) => `匹配 ${count} 个推荐仓库`,
   forYouSearchEmpty: (query) => `没有推荐仓库匹配“${query}”。`,
-  recommendationsOnly: "公开仓库 · 基于你的 Stars",
   recommendationsRefreshing: "正在刷新推荐…",
   recommendationsRefreshingSaved: "刷新中 · 显示已保存推荐",
   recommendationsNewBatch: "换一批",

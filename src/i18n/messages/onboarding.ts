@@ -15,8 +15,6 @@ export type OnboardingMessages = {
   gotIt: string;
   /** One-time enhanced tooltip bodies (shown on first hover of each action). */
   tooltipSyncFirst: string;
-  tooltipPushFirst: string;
-  tooltipPullFirst: string;
   /** Highlighted step coachmark (first run, after first sync). Persistent
    *  bubbles — no hover. Each step highlights one UI element. */
   coachTitle: string;
@@ -49,10 +47,6 @@ export const enOnboardingMessages: OnboardingMessages = {
   gotIt: "Got it",
   tooltipSyncFirst:
     "Sync pulls in newly starred repositories. When Stars opens, your public repositories refresh quietly in the background so the list appears quickly.",
-  tooltipPushFirst:
-    "Push backs up your tags + notes to a private Gist so they survive across devices. Auto-created on first push.",
-  tooltipPullFirst:
-    "Pull merges tags + notes from your Gist into this device (per-repo, last-write-wins). Use after editing on another device.",
   coachTitle: "Quick tour",
   coachIntro:
     "Here are the core controls you'll use most. Follow along — this shows only once.",
@@ -88,10 +82,6 @@ export const zhOnboardingMessages: OnboardingMessages = {
   gotIt: "知道了",
   tooltipSyncFirst:
     "Sync 会拉取新增的 Star。打开 Stars 后，应用会在后台静默刷新本人公开仓库，让列表先快速显示。",
-  tooltipPushFirst:
-    "Push 会把你的标签和笔记备份到一个私有 Gist,跨设备保留。首次推送时自动创建。",
-  tooltipPullFirst:
-    "Pull 会把 Gist 中的标签和笔记合并到本设备(按仓库、后写覆盖)。在另一台设备编辑后使用。",
   coachTitle: "快速上手",
   coachIntro: "下面是最常用的核心控件。跟着看一遍——本引导只显示一次。",
   coachStep1Title: "认识三个工作区",

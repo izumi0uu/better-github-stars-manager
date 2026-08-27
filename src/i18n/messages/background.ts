@@ -14,7 +14,7 @@ export type BackgroundMessages = {
   rescanningPages: (total: number) => string;
   reconcilingLocal: (count: number) => string;
   rescanSummary: (tombstoned: number, revived: number) => string;
-pushingTags: string;
+  pushingTags: string;
   pullingTags: string;
   gistPushDone: (count: number) => string;
   gistPushRecreated: string;

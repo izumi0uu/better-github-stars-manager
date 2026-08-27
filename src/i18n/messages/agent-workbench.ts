@@ -22,10 +22,7 @@ export type AgentWorkbenchMessages = {
   analysisScopeIncomplete: string;
   nothingToAnalyzeBody: string;
   dismiss: string;
-  confirmRequestedScope: string;
-  candidateRepositories: (count: number) => string;
   continue: string;
-  analyzingFrozenScope: string;
   progressSummary: (processed: number, remaining: number, batches: number) => string;
   runProgressLabel: string;
   processed: string;
@@ -38,17 +35,6 @@ export type AgentWorkbenchMessages = {
   restartWholeLibrary: string;
   discardAnalysis: string;
   runStateRefreshed: string;
-  analysisReady: string;
-  preparedReady: string;
-  preparedPaused: string;
-  budgetExhausted: (reason: string) => string;
-  budgetSubtitle: (processed: number, total: number) => string;
-  budgetProgress: (processed: number, remaining: number, attempts: number) => string;
-  budgetBody: string;
-  continueRemainingCount: (count: number) => string;
-  moreRemain: string;
-  moreRemainBody: string;
-  continueCreatesRun: string;
   continueRemaining: string;
   proposalSummary: (actionable: number, nonActionable: number) => string;
   proposalSelectionNote: string;
@@ -56,7 +42,6 @@ export type AgentWorkbenchMessages = {
   reviewCoverageComplete: (count: number) => string;
   reviewLoadFailedBody: string;
   proposalCounts: (actionable: number, nonActionable: number, selected: number) => string;
-  finishReviewFirst: string;
   selectRepository: (repositoryId: string) => string;
   applyingSelectedChanges: string;
   selectedRowsLocked: (count: number) => string;
@@ -90,7 +75,6 @@ export type AgentWorkbenchMessages = {
   viewChanged: string;
   connectionInterrupted: string;
   workerLost: string;
-  timelineLabel: (state: string) => string;
   runStepsLabel: string;
   runStepScope: string;
   runStepAnalyze: string;
@@ -152,10 +136,7 @@ export const enAgentWorkbenchMessages: AgentWorkbenchMessages = {
   analysisScopeIncomplete: "The saved analysis scope is incomplete. Prepare it again.",
   nothingToAnalyzeBody: "Either every visible repo already has tags, or the active filters hide the candidates. Change filters or broaden scope, then ask again.",
   dismiss: "Dismiss",
-  confirmRequestedScope: "Confirm requested scope",
-  candidateRepositories: (count) => `${count} candidate repositories.`,
   continue: "Continue",
-  analyzingFrozenScope: "Analyzing locked scope",
   progressSummary: (processed, remaining) => `${processed} analyzed · ${remaining} remaining`,
   runProgressLabel: "Analysis progress",
   processed: "Processed",
@@ -170,17 +151,6 @@ export const enAgentWorkbenchMessages: AgentWorkbenchMessages = {
   restartWholeLibrary: "Restart full-library analysis",
   discardAnalysis: "Discard this analysis",
   runStateRefreshed: "The saved analysis state changed. Its latest progress has been restored; try continuing again or restart the full-library analysis.",
-  analysisReady: "Analysis ready",
-  preparedReady: "The selected scope is prepared.",
-  preparedPaused: "The selected scope is ready and will start after the current analysis stops.",
-  budgetExhausted: (reason) => `Run limit reached · ${reason}`,
-  budgetSubtitle: (processed, total) => `Processed ${processed} / ${total} · remaining were not auto-continued`,
-  budgetProgress: (processed, remaining, attempts) => `${processed} processed · ${remaining} remaining · ${attempts} AI requests used`,
-  budgetBody: "Remaining repositories were not processed automatically. Continue to start a new analysis for them.",
-  continueRemainingCount: (count) => `Continue remaining ${count}`,
-  moreRemain: "More repositories remain",
-  moreRemainBody: "The current review is settled. Remaining repositories were not processed automatically.",
-  continueCreatesRun: "Continuing starts a new analysis for the remaining repositories.",
   continueRemaining: "Continue remaining",
   proposalSummary: (actionable, nonActionable) => `Cubby found ${actionable} tag suggestions. ${nonActionable} repositories need no changes or lack enough evidence.`,
   proposalSelectionNote: "Only selected suggestions will become manual tags.",
@@ -188,7 +158,6 @@ export const enAgentWorkbenchMessages: AgentWorkbenchMessages = {
   reviewCoverageComplete: (count) => `Full library covered · ${count} repositories analyzed`,
   reviewLoadFailedBody: "The analysis is complete, but its suggestions could not be loaded. Retry without rerunning the analysis.",
   proposalCounts: (actionable, nonActionable, selected) => `${actionable} suggestions · ${nonActionable} no change · ${selected} selected`,
-  finishReviewFirst: "More repositories remain. Finish this review before continuing.",
   selectRepository: (repositoryId) => `Select ${repositoryId}`,
   applyingSelectedChanges: "Applying selected changes",
   selectedRowsLocked: (count) => `${count} selected · selection locked`,
@@ -222,20 +191,6 @@ export const enAgentWorkbenchMessages: AgentWorkbenchMessages = {
   viewChanged: "View changed",
   connectionInterrupted: "Cubby connection was interrupted. Reconnecting…",
   workerLost: "The extension restarted, so this analysis can no longer continue. Start a new analysis.",
-  timelineLabel: (state) => ({
-    preflight: "Preparing scope",
-    frozen: "Scope locked",
-    prepared: "Analysis ready",
-    checking_provider: "Checking AI service",
-    analyzing: "Analyzing",
-    review: "Ready for review",
-    applying: "Applying",
-    completed: "Completed",
-    budget_exhausted: "Run limit reached",
-    cancelled: "Cancelled",
-    failed: "Failed",
-    interrupted: "Interrupted",
-  }[state] ?? state.replaceAll("_", " ")),
   runStepsLabel: "Cubby analysis steps",
   runStepScope: "Scope",
   runStepAnalyze: "Analyze",
@@ -297,10 +252,7 @@ export const zhAgentWorkbenchMessages: AgentWorkbenchMessages = {
   analysisScopeIncomplete: "已保存的分析范围不完整，请重新准备后再试。",
   nothingToAnalyzeBody: "可见仓库可能都已有标签，或当前筛选隐藏了候选项。请调整筛选或扩大范围后重试。",
   dismiss: "关闭",
-  confirmRequestedScope: "确认请求的范围",
-  candidateRepositories: (count) => `${count} 个候选仓库。`,
   continue: "继续",
-  analyzingFrozenScope: "正在分析锁定范围",
   progressSummary: (processed, remaining) => `已分析 ${processed} · 剩余 ${remaining}`,
   runProgressLabel: "分析进度",
   processed: "已处理",
@@ -315,17 +267,6 @@ export const zhAgentWorkbenchMessages: AgentWorkbenchMessages = {
   restartWholeLibrary: "重新分析整个资料库",
   discardAnalysis: "放弃本次分析",
   runStateRefreshed: "已恢复最新的分析进度。请再次继续，或重新分析整个资料库。",
-  analysisReady: "分析已就绪",
-  preparedReady: "所选范围已准备就绪。",
-  preparedPaused: "所选范围已准备就绪，将在当前分析停止后开始。",
-  budgetExhausted: (reason) => `已达到本轮上限 · ${reason}`,
-  budgetSubtitle: (processed, total) => `已处理 ${processed} / ${total} · 剩余项未自动继续`,
-  budgetProgress: (processed, remaining, attempts) => `已处理 ${processed} · 剩余 ${remaining} · 已使用 ${attempts} 次 AI 请求`,
-  budgetBody: "剩余仓库不会被自动处理。继续即可为它们开始新的分析。",
-  continueRemainingCount: (count) => `继续处理剩余 ${count} 项`,
-  moreRemain: "仍有仓库待处理",
-  moreRemainBody: "当前审阅已结束，剩余仓库没有被自动处理。",
-  continueCreatesRun: "继续将为剩余仓库开始新的分析。",
   continueRemaining: "继续处理剩余项",
   proposalSummary: (actionable, nonActionable) => `Cubby 找到了 ${actionable} 条标签建议。另有 ${nonActionable} 个仓库无需变更或证据不足。`,
   proposalSelectionNote: "只有选中的建议会写入手动标签。",
@@ -333,7 +274,6 @@ export const zhAgentWorkbenchMessages: AgentWorkbenchMessages = {
   reviewCoverageComplete: (count) => `已覆盖完整资料库 · 已分析 ${count} 个仓库`,
   reviewLoadFailedBody: "分析已完成，但建议暂时无法加载。可以直接重试，无需重新分析。",
   proposalCounts: (actionable, nonActionable, selected) => `${actionable} 条建议 · ${nonActionable} 个无需变更 · 已选择 ${selected} 条`,
-  finishReviewFirst: "仍有仓库待处理。请先完成当前审阅再继续。",
   selectRepository: (repositoryId) => `选择 ${repositoryId}`,
   applyingSelectedChanges: "正在应用所选变更",
   selectedRowsLocked: (count) => `已选择 ${count} 项 · 选择已锁定`,
@@ -367,20 +307,6 @@ export const zhAgentWorkbenchMessages: AgentWorkbenchMessages = {
   viewChanged: "查看已变更项",
   connectionInterrupted: "Cubby 连接已中断，正在重新连接…",
   workerLost: "扩展已重启，本次分析无法继续。请开始新的分析。",
-  timelineLabel: (state) => ({
-    preflight: "正在解析范围",
-    frozen: "范围已锁定",
-    prepared: "分析已准备",
-    checking_provider: "正在检查 AI 服务",
-    analyzing: "正在分析",
-    review: "待审阅",
-    applying: "正在应用",
-    completed: "已完成",
-    budget_exhausted: "已达到本轮上限",
-    cancelled: "已取消",
-    failed: "失败",
-    interrupted: "已中断",
-  }[state] ?? state.replaceAll("_", " ")),
   runStepsLabel: "Cubby 分析步骤",
   runStepScope: "范围",
   runStepAnalyze: "分析",

@@ -13,18 +13,14 @@ export type FilterSidebarMessages = {
   showTombstoneHint: string;
   languages: (count: number) => string;
   languagesSearch: string;
-  languagesSelected: (count: number) => string;
   languagesEmpty: string;
   tags: (count: number) => string;
-  tagsSearch: string;
   tagsFilter: string;
   tagsEmpty: string;
   /** "Show all (N)" — reveal the full tag list past the preview cap. */
   tagsShowAll: (count: number) => string;
-  tagsSelected: (count: number) => string;
   tagsMatchAny: string;
   tagsMatchAll: string;
-  tagsMatchHelp: string;
   tagsSortAscTitle: string;
   tagsSortDescTitle: string;
   tagsSortDefaultTitle: string;
@@ -54,17 +50,13 @@ export const enFilterSidebarMessages: FilterSidebarMessages = {
   showTombstoneHint: "tombstoned repos",
   languages: (count) => `Languages${count > 0 ? ` · ${count}` : ""}`,
   languagesSearch: "Filter languages…",
-  languagesSelected: (count) => `${count} selected`,
   languagesEmpty: "No languages match.",
   tags: (count) => `Tags (${count})`,
-  tagsSearch: "Filter tags…",
   tagsFilter: "Search tags…",
   tagsEmpty: "No tags match.",
   tagsShowAll: (count) => `Show all ${count}`,
-  tagsSelected: (count) => `${count} selected`,
   tagsMatchAny: "Any",
   tagsMatchAll: "All",
-  tagsMatchHelp: "match any / all selected tags",
   tagsSortAscTitle: "Sort tags A to Z",
   tagsSortDescTitle: "Sort tags Z to A",
   tagsSortDefaultTitle: "Restore original tag order",
@@ -98,17 +90,13 @@ export const zhFilterSidebarMessages: FilterSidebarMessages = {
   showTombstoneHint: "已取消 Star 的仓库",
   languages: (count) => `Languages${count > 0 ? ` · ${count}` : ""}`,
   languagesSearch: "筛选语言…",
-  languagesSelected: (count) => `已选 ${count} 个`,
   languagesEmpty: "没有匹配的语言。",
   tags: (count) => `Tags (${count})`,
-  tagsSearch: "筛选标签…",
   tagsFilter: "搜索标签…",
   tagsEmpty: "没有匹配的标签。",
   tagsShowAll: (count) => `显示全部 ${count} 个`,
-  tagsSelected: (count) => `已选 ${count} 个`,
   tagsMatchAny: "任一",
   tagsMatchAll: "全部",
-  tagsMatchHelp: "匹配 任一 / 全部 所选标签",
   tagsSortAscTitle: "按标签自然升序排序",
   tagsSortDescTitle: "按标签自然降序排序",
   tagsSortDefaultTitle: "恢复标签原始顺序",

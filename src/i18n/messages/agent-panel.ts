@@ -82,12 +82,9 @@ export type AgentPanelMessages = {
   sessionLoadRetry: string;
   loadEarlierMessages: string;
   loadingEarlierMessages: string;
-  hideWhileRunning: string;
   runContinuesWhileHidden: string;
   confirmScopeHeader: string;
   analyzingHeader: (processed: number, total: number) => string;
-  analyzingTitle: string;
-  analyzingMeta: (processed: number, remaining: number, batches: number) => string;
   frozenScopeNote: (count: number) => string;
   pendingConfirmationNote: (count: number) => string;
   hideAgent: string;
@@ -95,19 +92,10 @@ export type AgentPanelMessages = {
   pause: string;
   cancel: string;
   applyingHeader: (done: number, total: number) => string;
-  applyingTitle: string;
   applyingSubtitle: string;
-  applyingMeta: (done: number, total: number) => string;
-  applyingButton: string;
   applyingStopbar: string;
   composerPausedApplying: string;
-  budgetExhaustedHeader: string;
-  budgetExhaustedTitle: (reason: string) => string;
-  budgetExhaustedSubtitle: (processed: number, total: number) => string;
-  budgetExhaustedBody: string;
-  continueRemainingCount: (count: number) => string;
   nothingToAnalyzeHeader: string;
-  nothingToAnalyzeTitle: string;
   nothingToAnalyzeBody: string;
   emptyScopeCount: string;
   handoffHeader: string;
@@ -115,14 +103,11 @@ export type AgentPanelMessages = {
   handoffSubtitle: (count: number) => string;
   handoffBody: string;
   handoffAsk: (count: number) => string;
-  handoffOrganize: (count: number) => string;
   handoffAmbiguous: string;
   handoffExamples: string;
   handoffScopeNote: (count: number) => string;
   partialReceiptHeader: string;
   resolvingScopeHeader: string;
-  resolvingScopeBody: string;
-  resolvingScopeMeta: string;
   scopeNotFrozenYet: string;
   reviewFollowUpNote: string;
   reviewFollowUpPlaceholder: string;
@@ -145,8 +130,6 @@ export type AgentPanelMessages = {
   completedNoChangesTitle: string;
   completedNoChangesSubtitle: (inspected: number) => string;
   completedNoChangesBody: string;
-  unknownOutcomeComposer: string;
-  applyTerminalUnknownComposer: string;
   agentQueued: string;
   agentCompacting: string;
   agentStarting: string;
@@ -162,57 +145,30 @@ export type AgentPanelMessages = {
   agentToolRunning: string;
   agentToolCompleted: string;
   agentToolFailed: string;
-  agentToolDone: string;
   codeSearchStatus: (status: string, count: number) => string;
   codeSearchUntrusted: string;
   repositoryCodeReadOnly: string;
   codeSearchOpenSource: string;
   resumeConversationFollow: string;
-  reasoningAgentTurn: string;
   toolResult: string;
   emptyAgentMessage: string;
-  chatSuggestionsReady: (count: number) => string;
-  chatNoSuggestions: string;
-  chatLimitedCapability: string;
-  reasoningSuggestTags: string;
-  reasoningStreaming: string;
-  reasoningDone: (duration: number) => string;
-  reviewTitle: string;
   send: string;
-  noSuggestionsReady: string;
-  readySummary: (add: number, remove: number, deleteCount: number) => string;
-  refreshTitle: string;
   closeTitle: string;
   suggestTags: string;
   agentSettings: string;
-  cleanupTags: string;
-  selectAllPage: string;
-  selectedOnPage: (count: number) => string;
-  nothingToApply: string;
   loadingSuggestions: string;
   emptyTitle: string;
   emptyBody: string;
   applied: (count: number) => string;
   loadFailed: string;
   created: (count: number) => string;
-  noneFound: string;
-  createFailed: string;
-  groupAdd: string;
-  groupRemove: string;
-  groupDelete: string;
-  groupSelection: (selected: number, total: number) => string;
-  addTitle: (fullName: string) => string;
-  removeTitle: (fullName: string) => string;
-  deleteTitle: (tag: string) => string;
   more: (count: number) => string;
   range: (start: number, end: number, total: number) => string;
-  zeroSuggestions: string;
   toolbarApplying: string;
   toolbarReview: string;
   toolbarInterrupted: string;
   scopeReady: string;
   runStateLabel: (value: string) => string;
-  needsReviewFollowUp: string;
   needsReviewSelected: (count: number) => string;
   appliedTagChanges: (count: number) => string;
   followUpAboutScope: string;
@@ -325,14 +281,9 @@ export const enAgentPanelMessages: AgentPanelMessages = {
   sessionLoadRetry: "Try again",
   loadEarlierMessages: "Load earlier messages",
   loadingEarlierMessages: "Loading earlier messages…",
-  hideWhileRunning: "Hide Cubby",
   runContinuesWhileHidden: "You can hide this panel; the turn continues.",
   confirmScopeHeader: "Confirm scope",
   analyzingHeader: (processed, total) => `Analyzing · ${processed}/${total}`,
-  analyzingTitle: "Analyzing locked scope",
-  analyzingMeta: (processed, remaining, batches) => (
-    `${processed} processed · ${remaining} remaining · ${batches} batch${batches === 1 ? '' : 'es'}`
-  ),
   frozenScopeNote: (count) => (
     count === 1
       ? "Locked scope · 1 repository"
@@ -348,19 +299,10 @@ export const enAgentPanelMessages: AgentPanelMessages = {
   pause: "Pause",
   cancel: "Cancel",
   applyingHeader: (done, total) => `Applying · ${done}/${total}`,
-  applyingTitle: "Applying selected changes",
   applyingSubtitle: "Manual tags · scope remains locked",
-  applyingMeta: (done, total) => `${done} of ${total} changes applied · selection locked`,
-  applyingButton: "Applying…",
   applyingStopbar: "Pause after the current repository finishes.",
   composerPausedApplying: "Composer paused while applying",
-  budgetExhaustedHeader: "Run limit reached",
-  budgetExhaustedTitle: (reason) => `Run limit reached · ${reason}`,
-  budgetExhaustedSubtitle: (processed, total) => `Processed ${processed} / ${total} · remaining were not auto-continued`,
-  budgetExhaustedBody: "Remaining repositories were not processed automatically. Continue to start a new analysis for them.",
-  continueRemainingCount: (count) => `Continue remaining ${count}`,
   nothingToAnalyzeHeader: "Nothing to analyze",
-  nothingToAnalyzeTitle: "Nothing to analyze",
   nothingToAnalyzeBody: "Either every visible repo already has tags, or the active filters hide the candidates. Change filters or broaden scope, then ask again.",
   emptyScopeCount: "0 repositories match this scope.",
   handoffHeader: "Handoff · still untagged",
@@ -368,7 +310,6 @@ export const enAgentPanelMessages: AgentPanelMessages = {
   handoffSubtitle: (count) => `Auto Tags finished · ${count} still untagged`,
   handoffBody: "Auto Tags added local tags from GitHub topics. Cubby will review only the remaining untagged repositories and won't overwrite those results unless you apply manual tags.",
   handoffAsk: (count) => `Auto Tags left ${count} repositories untagged. I can take a closer look and suggest careful manual tags. Want me to?`,
-  handoffOrganize: (count) => `Organize these ${count}`,
   handoffAmbiguous: "Only show the ambiguous ones",
   handoffExamples: "Explain a few examples first",
   handoffScopeNote: (count) => (
@@ -378,8 +319,6 @@ export const enAgentPanelMessages: AgentPanelMessages = {
   ),
   partialReceiptHeader: "Applied with conflicts",
   resolvingScopeHeader: "Resolving scope…",
-  resolvingScopeBody: "I'm locking the repository selection so later filter changes won't affect this analysis.",
-  resolvingScopeMeta: "No tags change during this step",
   scopeNotFrozenYet: "Scope is not locked yet",
   reviewFollowUpNote: "Review still open · follow-ups allowed",
   reviewFollowUpPlaceholder: "Ask about these suggestions…",
@@ -404,8 +343,6 @@ export const enAgentPanelMessages: AgentPanelMessages = {
   completedNoChangesTitle: "Completed · no changes",
   completedNoChangesSubtitle: (inspected) => `No tag changes suggested · ${inspected} inspected`,
   completedNoChangesBody: "Everything already has a clear place, or there wasn't enough evidence for a safe manual tag. Nothing to apply.",
-  unknownOutcomeComposer: "Couldn't confirm the result · you can continue chatting",
-  applyTerminalUnknownComposer: "Couldn't confirm the result · you can continue chatting",
   agentQueued: "Getting your request ready…",
   agentCompacting: "Tidying up our conversation…",
   agentStarting: "Gathering context…",
@@ -421,7 +358,6 @@ export const enAgentPanelMessages: AgentPanelMessages = {
   agentToolRunning: "Running",
   agentToolCompleted: "Completed",
   agentToolFailed: "Failed",
-  agentToolDone: "Done",
   codeSearchStatus: (status, count) => (
     status === 'complete'
       ? `${count} indexed code match${count === 1 ? '' : 'es'}`
@@ -433,55 +369,20 @@ export const enAgentPanelMessages: AgentPanelMessages = {
   repositoryCodeReadOnly: "This conversation is now read-only; start a new conversation to change tags.",
   codeSearchOpenSource: "Open pinned source",
   resumeConversationFollow: "Jump to latest",
-  reasoningAgentTurn:
-    "I'll use your configured AI service and only the tools allowed for this request.",
   toolResult: "Tool result",
   emptyAgentMessage: "No response returned.",
-  chatSuggestionsReady: (count) => `I found ${count} tag suggestions. Review them below before applying.`,
-  chatNoSuggestions: "I couldn't find any new tag suggestions in the current local data.",
-  chatLimitedCapability:
-    "I'm here to help organize your stars with the configured AI service.",
-  reasoningSuggestTags:
-    "I'll inspect local repository topics and existing tags, skip excluded tags, and prepare conservative tag suggestions.",
-  reasoningStreaming: "Cubby is looking into it…",
-  reasoningDone: (duration) => `Checked local tags in ${duration}s`,
-  reviewTitle: "Review tag suggestions",
   send: "Send",
-  noSuggestionsReady: "No suggestions ready",
-  readySummary: (add, remove, deleteCount) => {
-    const parts = [
-      add > 0 ? `${add} add` : null,
-      remove > 0 ? `${remove} remove` : null,
-      deleteCount > 0 ? `${deleteCount} delete` : null,
-    ].filter((part): part is string => part !== null);
-    return parts.length === 0 ? "No suggestions ready" : parts.join(" · ");
-  },
-  refreshTitle: "Refresh suggestions",
   closeTitle: "Close Cubby",
   suggestTags: "Organize untagged here",
   agentSettings: "Cubby settings",
-  cleanupTags: "Clean up tags",
-  selectAllPage: "Select all suggestions on this page",
-  selectedOnPage: (count) => `${count} selected on this page`,
-  nothingToApply: "Nothing to apply",
   loadingSuggestions: "Loading suggestions",
   emptyTitle: "No suggestions yet.",
   emptyBody: "Suggestions will appear here.",
   applied: (count) => `${count} suggestions applied.`,
   loadFailed: "Could not load suggestions.",
   created: (count) => `${count} suggestions ready.`,
-  noneFound: "No new suggestions found.",
-  createFailed: "Could not create suggestions.",
-  groupAdd: "Add tags",
-  groupRemove: "Remove tags from repos",
-  groupDelete: "Delete tags",
-  groupSelection: (selected, total) => `${selected}/${total}`,
-  addTitle: (fullName) => `Add tags to ${fullName}`,
-  removeTitle: (fullName) => `Remove tags from ${fullName}`,
-  deleteTitle: (tag) => `Delete ${tag}`,
   more: (count) => `+${count} more`,
   range: (start, end, total) => `${start}-${end} of ${total}`,
-  zeroSuggestions: "0 suggestions",
   toolbarApplying: "Applying",
   toolbarReview: "Ready for review",
   toolbarInterrupted: "Interrupted",
@@ -517,7 +418,6 @@ export const enAgentPanelMessages: AgentPanelMessages = {
     skipped: "Skipped",
     unchanged: "Unchanged",
   }[value] ?? value.replaceAll("_", " ")),
-  needsReviewFollowUp: "Needs review · answering follow-up",
   needsReviewSelected: (count) => `Needs review · ${count} selected`,
   appliedTagChanges: (count) => `Applied ${count} tag ${count === 1 ? "change" : "changes"}`,
   followUpAboutScope: "Ask a follow-up about this scope",
@@ -630,14 +530,9 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
   sessionLoadRetry: "重试",
   loadEarlierMessages: "加载更早的消息",
   loadingEarlierMessages: "正在加载更早的消息…",
-  hideWhileRunning: "隐藏 Cubby",
   runContinuesWhileHidden: "可以隐藏面板；本轮会继续。",
   confirmScopeHeader: "确认范围",
   analyzingHeader: (processed, total) => `分析中 · ${processed}/${total}`,
-  analyzingTitle: "正在分析锁定范围",
-  analyzingMeta: (processed, remaining, batches) => (
-    `已处理 ${processed} · 剩余 ${remaining} · ${batches} 批`
-  ),
   frozenScopeNote: (count) => (
     count === 1
       ? "范围已锁定 · 1 个仓库"
@@ -653,19 +548,10 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
   pause: "暂停",
   cancel: "取消",
   applyingHeader: (done, total) => `应用中 · ${done}/${total}`,
-  applyingTitle: "正在应用选中变更",
   applyingSubtitle: "手动标签 · 范围仍保持锁定",
-  applyingMeta: (done, total) => `已应用 ${done}/${total} 项变更 · 选择已锁定`,
-  applyingButton: "应用中…",
   applyingStopbar: "当前仓库处理完成后暂停。",
   composerPausedApplying: "应用期间暂停输入",
-  budgetExhaustedHeader: "已达到本轮上限",
-  budgetExhaustedTitle: (reason) => `已达到本轮上限 · ${reason}`,
-  budgetExhaustedSubtitle: (processed, total) => `已处理 ${processed} / ${total} · 剩余不会自动继续`,
-  budgetExhaustedBody: "剩余仓库不会被自动处理。继续即可为它们开始新的分析。",
-  continueRemainingCount: (count) => `继续剩余 ${count}`,
   nothingToAnalyzeHeader: "没有可分析内容",
-  nothingToAnalyzeTitle: "没有可分析内容",
   nothingToAnalyzeBody: "可见仓库可能都已有标签，或当前筛选隐藏了候选。请调整筛选或扩大范围后再问。",
   emptyScopeCount: "此范围匹配 0 个仓库。",
   handoffHeader: "交接 · 仍未标注",
@@ -673,7 +559,6 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
   handoffSubtitle: (count) => `Auto Tags 已完成 · 仍有 ${count} 个未标注`,
   handoffBody: "Auto Tags 已根据 GitHub 主题添加本地标签。Cubby 只会检查剩余未标注仓库，除非你应用手动标签，否则不会覆盖这些结果。",
   handoffAsk: (count) => `Auto Tags 留下了 ${count} 个未标注仓库。我可以再仔细看看，并建议合适的手动标签。要继续吗？`,
-  handoffOrganize: (count) => `整理这 ${count} 个`,
   handoffAmbiguous: "只看不明确的",
   handoffExamples: "先解释几个例子",
   handoffScopeNote: (count) => (
@@ -683,8 +568,6 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
   ),
   partialReceiptHeader: "已应用，但有冲突",
   resolvingScopeHeader: "正在解析范围…",
-  resolvingScopeBody: "我会锁定所选仓库，之后的筛选变化不会影响本次分析。",
-  resolvingScopeMeta: "此步骤不会修改标签",
   scopeNotFrozenYet: "范围尚未锁定",
   reviewFollowUpNote: "审阅仍打开 · 可继续追问",
   reviewFollowUpPlaceholder: "询问这些标签建议…",
@@ -709,8 +592,6 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
   completedNoChangesTitle: "已完成 · 无变更",
   completedNoChangesSubtitle: (inspected) => `未建议标签变更 · 已检查 ${inspected}`,
   completedNoChangesBody: "这些仓库已有清晰分类，或证据不足以安全建议手动标签。无需应用。",
-  unknownOutcomeComposer: "无法确认结果 · 可以继续对话",
-  applyTerminalUnknownComposer: "无法确认结果 · 可以继续对话",
   agentQueued: "正在准备你的请求…",
   agentCompacting: "正在整理这段对话…",
   agentStarting: "正在收集上下文…",
@@ -726,7 +607,6 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
   agentToolRunning: "执行中",
   agentToolCompleted: "已完成",
   agentToolFailed: "失败",
-  agentToolDone: "完成",
   codeSearchStatus: (status, count) => (
     status === 'complete'
       ? `${count} 条索引代码匹配`
@@ -738,55 +618,20 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
   repositoryCodeReadOnly: "本对话现已保持只读；如需修改标签，请开始新对话。",
   codeSearchOpenSource: "打开固定版本源码",
   resumeConversationFollow: "跳到最新消息",
-  reasoningAgentTurn:
-    "我会使用你配置的 AI 服务，以及本次请求允许的工具。",
   toolResult: "工具结果",
   emptyAgentMessage: "未返回回复。",
-  chatSuggestionsReady: (count) => `我找到了 ${count} 条标签建议。应用前可以先在下面确认。`,
-  chatNoSuggestions: "按当前本地数据，我没有找到新的标签建议。",
-  chatLimitedCapability:
-    "我可以用你配置的 AI 服务帮你整理星标仓库。",
-  reasoningSuggestTags:
-    "我会查看本地仓库的 GitHub 主题和现有标签，跳过已排除的标签，并准备谨慎的标签建议。",
-  reasoningStreaming: "Cubby 正在仔细查看…",
-  reasoningDone: (duration) => `已检查本地标签，用时 ${duration}s`,
-  reviewTitle: "确认标签建议",
   send: "发送",
-  noSuggestionsReady: "暂无建议",
-  readySummary: (add, remove, deleteCount) => {
-    const parts = [
-      add > 0 ? `${add} 个添加` : null,
-      remove > 0 ? `${remove} 个移除` : null,
-      deleteCount > 0 ? `${deleteCount} 个删除` : null,
-    ].filter((part): part is string => part !== null);
-    return parts.length === 0 ? "暂无建议" : parts.join(" · ");
-  },
-  refreshTitle: "刷新建议",
   closeTitle: "关闭 Cubby",
   suggestTags: "整理这里的未标注",
   agentSettings: "Cubby 设置",
-  cleanupTags: "整理标签",
-  selectAllPage: "选择当前页全部建议",
-  selectedOnPage: (count) => `当前页已选 ${count} 个`,
-  nothingToApply: "暂无可应用内容",
   loadingSuggestions: "正在加载建议",
   emptyTitle: "还没有建议。",
   emptyBody: "建议会显示在这里。",
   applied: (count) => `已应用 ${count} 条建议。`,
   loadFailed: "无法加载建议。",
   created: (count) => `已准备 ${count} 条建议。`,
-  noneFound: "没有找到新的建议。",
-  createFailed: "无法生成建议。",
-  groupAdd: "添加标签",
-  groupRemove: "从仓库移除标签",
-  groupDelete: "删除标签",
-  groupSelection: (selected, total) => `${selected}/${total}`,
-  addTitle: (fullName) => `为 ${fullName} 添加标签`,
-  removeTitle: (fullName) => `从 ${fullName} 移除标签`,
-  deleteTitle: (tag) => `删除 ${tag}`,
   more: (count) => `还有 ${count} 个`,
   range: (start, end, total) => `${start}-${end} / ${total}`,
-  zeroSuggestions: "0 条建议",
   toolbarApplying: "正在应用",
   toolbarReview: "待审阅",
   toolbarInterrupted: "已中断",
@@ -822,7 +667,6 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
     skipped: "已跳过",
     unchanged: "未变化",
   }[value] ?? value.replaceAll("_", " ")),
-  needsReviewFollowUp: "待审阅 · 正在回答追问",
   needsReviewSelected: (count) => `待审阅 · 已选择 ${count} 条`,
   appliedTagChanges: (count) => `已应用 ${count} 项标签变更`,
   followUpAboutScope: "继续询问此范围",

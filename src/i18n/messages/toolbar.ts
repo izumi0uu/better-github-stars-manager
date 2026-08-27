@@ -20,7 +20,6 @@ export type ToolbarMessages = {
   starRepoTitle: string;
   autoAssignTitle: string;
   autoAssignButton: string;
-  agentTitle: string;
   agentButton: string;
   gistTitle: string;
   gistButton: string;
@@ -31,7 +30,6 @@ export type ToolbarMessages = {
   gistPullTitle: string;
   gistPullButton: string;
   gistLinkTitle: string;
-  moreTitle: string;
   shownTotal: (shown: number, total: number) => string;
   noToken: string;
   accountTitle: (username: string) => string;
@@ -101,7 +99,6 @@ export const enToolbarMessages: ToolbarMessages = {
   autoAssignTitle:
     "Add local tags from synced GitHub topics",
   autoAssignButton: "Auto Tags",
-  agentTitle: "Open Cubby, your AI library assistant",
   agentButton: "Cubby",
   gistTitle: "Gist backup actions",
   gistButton: "Gist",
@@ -112,7 +109,6 @@ export const enToolbarMessages: ToolbarMessages = {
   gistPullTitle: "Pull tags from your Gist backup",
   gistPullButton: "Pull",
   gistLinkTitle: "Open your tag-sync Gist on github.com",
-  moreTitle: "More actions",
   shownTotal: (shown, total) => `${shown} shown / ${total} total`,
   noToken: "No token configured",
   accountTitle: (username) => `Signed in as @${username}`,
@@ -181,7 +177,6 @@ export const zhToolbarMessages: ToolbarMessages = {
   starRepoTitle: "打开项目仓库",
   autoAssignTitle: "根据已同步的 GitHub 主题在本地添加标签",
   autoAssignButton: "Auto Tags",
-  agentTitle: "打开 Cubby，你的 AI 仓库整理助手",
   agentButton: "Cubby",
   gistTitle: "Gist 备份操作",
   gistButton: "Gist",
@@ -192,7 +187,6 @@ export const zhToolbarMessages: ToolbarMessages = {
   gistPullTitle: "从你的 Gist 备份拉取标签",
   gistPullButton: "Pull",
   gistLinkTitle: "在 github.com 打开你的标签同步 Gist",
-  moreTitle: "更多操作",
   shownTotal: (shown, total) => `${shown} 已显示 / ${total} 总计`,
   noToken: "未配置 token",
   accountTitle: (username) => `已登录为 @${username}`,

@@ -34,15 +34,11 @@ export type WatchMessages = {
   openOptions: string;
   configureMainToken: string;
   configureNotificationsToken: string;
-  scopeNeverLoaded: string;
   inboxNeverLoaded: string;
   queryFailed: string;
   refreshFailed: string;
   retry: string;
-  scopePermissionDenied: string;
   inboxPermissionDenied: string;
-  scopeUnavailable: string;
-  noWatchedRepositories: string;
   noUnreadThreads: string;
   noThreads: string;
   noMatchingThreads: string;
@@ -69,17 +65,13 @@ export type WatchMessages = {
   loadOlderFailed: string;
   historyComplete: (count: number) => string;
   staleSnapshot: string;
-  credentialStaleSnapshot: string;
   scopeFailed: string;
   inboxFailed: string;
   cooldownUntil: (time: string) => string;
-  watchedRepositoryCount: (count: number) => string;
   threadCount: (count: number) => string;
   snapshotAt: (time: string) => string;
   manageOnGitHub: string;
-  watchedOnGitHub: string;
   repositoryUnreadCount: (count: number) => string;
-  openOnGitHub: string;
   unreadSnapshot: string;
   expandRepository: (repository: string) => string;
   collapseRepository: (repository: string) => string;
@@ -146,21 +138,14 @@ export const enWatchMessages: WatchMessages = {
   openOptions: "Open options",
   configureMainToken: "Update the GitHub Classic PAT to load Watch data.",
   configureNotificationsToken: "Open Options and verify the Classic PAT has the notifications scope.",
-  scopeNeverLoaded: "Watched-repository membership has not been loaded from GitHub yet.",
   inboxNeverLoaded: "Refresh to scan your complete GitHub Notifications inbox.",
   queryFailed: "The Watch snapshot could not be loaded.",
   refreshFailed: "The latest Watch refresh failed; the previous snapshot remains available.",
   retry: "Retry",
-  scopePermissionDenied:
-    "GitHub could not enumerate watched-repository membership. Inbox coverage is unaffected.",
   inboxPermissionDenied:
     "The GitHub Classic PAT cannot read Notifications. Add the notifications scope; other features still work.",
-  scopeUnavailable: "Watched-repository membership is unavailable; Inbox coverage is unaffected.",
-  noWatchedRepositories: "GitHub returned no watched-repository membership for the current Stars.",
   noUnreadThreads: "No unread threads in the currently saved Inbox.",
   noThreads: "No notification threads are currently saved.",
-  credentialStaleSnapshot:
-    "The GitHub Classic PAT was rejected or is unavailable, so the last successful Watch snapshot is shown.",
   noMatchingThreads: "No threads match the current Watch search and reason filters.",
   statusFresh: (unread, watched) => `${unread} unread · currently watching ${watched} ${watched === 1 ? "repository" : "repositories"}`,
   statusRefreshingSaved: "Refreshing Inbox · showing saved rows",
@@ -194,13 +179,10 @@ export const enWatchMessages: WatchMessages = {
   scopeFailed: "Watched-repository membership could not be refreshed; Inbox coverage is unaffected.",
   inboxFailed: "The full Inbox scan could not continue.",
   cooldownUntil: (time) => `Background polling resumes at ${time}; manual refresh remains available.`,
-  watchedRepositoryCount: (count) => `${count} confirmed watched ${count === 1 ? "Star" : "Stars"}`,
   threadCount: (count) => `${count} ${count === 1 ? "thread" : "threads"}`,
   snapshotAt: (time) => `Snapshot checked ${time}`,
   manageOnGitHub: "Manage Watch settings on GitHub",
-  watchedOnGitHub: "confirmed watched on GitHub",
   repositoryUnreadCount: (count) => `${count} unread`,
-  openOnGitHub: "Open on GitHub",
   unreadSnapshot: "Unread at the time of this snapshot",
   markAsRead: "Mark as read",
   markAsDone: "Mark as done",
@@ -267,20 +249,13 @@ export const zhWatchMessages: WatchMessages = {
   openOptions: "打开选项页",
   configureMainToken: "请更新 GitHub Classic PAT，以加载 Watch 数据。",
   configureNotificationsToken: "请在选项页确认 Classic PAT 已包含 notifications scope。",
-  scopeNeverLoaded: "尚未从 GitHub 加载已 Watch 仓库成员关系。",
   inboxNeverLoaded: "刷新后将完整扫描 GitHub 通知收件箱。",
   queryFailed: "无法加载 Watch 通知。",
   refreshFailed: "最近一次 Watch 刷新失败，仍可查看已有通知。",
   retry: "重试",
-  scopePermissionDenied:
-    "GitHub 无法列出已 Watch 仓库成员关系；不影响收件箱覆盖范围。",
   inboxPermissionDenied:
     "GitHub Classic PAT 无法读取通知，请添加 notifications scope；其他功能仍可使用。",
-  scopeUnavailable: "已 Watch 仓库成员关系不可用；不影响收件箱覆盖范围。",
-  noWatchedRepositories: "GitHub 没有返回当前 Stars 的已 Watch 仓库成员关系。",
   noUnreadThreads: "当前已保存的收件箱中没有未读通知。",
-  credentialStaleSnapshot:
-    "GitHub Classic PAT 已被拒绝或暂时不可用，现显示上一次成功获取的通知。",
   noThreads: "当前没有已保存的通知。",
   noMatchingThreads: "没有通知匹配当前 Watch 搜索和通知原因筛选。",
   statusFresh: (unread, watched) => `未读 ${unread} · 当前 Watch 了 ${watched} 个仓库`,
@@ -315,13 +290,10 @@ export const zhWatchMessages: WatchMessages = {
   scopeFailed: "无法刷新已 Watch 仓库成员关系；不影响 Inbox 覆盖范围。",
   inboxFailed: "无法继续完整扫描收件箱。",
   cooldownUntil: (time) => `后台轮询将在 ${time} 恢复；仍可手动刷新。`,
-  watchedRepositoryCount: (count) => `${count} 个已确认 Watch 的 Star 仓库`,
   threadCount: (count) => `${count} 条通知`,
   snapshotAt: (time) => `更新于 ${time}`,
   manageOnGitHub: "在 GitHub 管理 Watch 设置",
-  watchedOnGitHub: "已确认在 GitHub Watch",
   repositoryUnreadCount: (count) => `${count} 个未读`,
-  openOnGitHub: "在 GitHub 打开",
   unreadSnapshot: "未读状态来自本次同步",
   markAsRead: "标记为已读",
   markAsDone: "标记为完成",

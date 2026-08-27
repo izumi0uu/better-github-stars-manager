@@ -9,7 +9,6 @@ export type PopupMessages = {
   gistPull: string;
   gistPush: string;
   testConnection: string;
-  debugState: string;
   openStars: string;
   options: string;
   /** Tooltip for the popup header star-repo link. */
@@ -37,7 +36,6 @@ export const enPopupMessages: PopupMessages = {
   gistPull: "Pull tags from Gist",
   gistPush: "Push tags to Gist",
   testConnection: "Test Classic PAT",
-  debugState: "Debug extension state",
   openStars: "Open my stars page",
   options: "Options…",
   starRepoTitle: "Like the project? Leave a star:)",
@@ -65,7 +63,6 @@ export const zhPopupMessages: PopupMessages = {
   gistPull: "从 Gist 拉取标签",
   gistPush: "推送标签到 Gist",
   testConnection: "测试 Classic PAT",
-  debugState: "调试扩展状态",
   openStars: "打开我的 stars 页面",
   options: "选项…",
   starRepoTitle: "点个Star~",
