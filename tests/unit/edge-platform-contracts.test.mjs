@@ -213,9 +213,9 @@ test('uses one full-product manifest across Edge, Chrome, and Firefox', () => {
 
 test('uses an exact Edge worker baseline with the full-product identity shape', () => {
   assert.deepEqual(EDGE_RELEASE_WORKER_BASELINE, {
-    relativePath: 'assets/index.ts-BpdUArVM.js',
-    bytes: 748_582,
-    sha256: '22478177c6493c22ae09fa730d24d0d72cd221b4c48fc543fc99b7e0ba457642',
+    relativePath: 'assets/index.ts-BlPycEBq.js',
+    bytes: 778_162,
+    sha256: '4989563e1fc5bc9fb24bbd8a45930d16739ca474b6212f86846c01c09b386613',
   });
   assert.deepEqual(Object.keys(EDGE_RELEASE_WORKER_BASELINE).sort(), ['bytes', 'relativePath', 'sha256']);
   const worker = {
