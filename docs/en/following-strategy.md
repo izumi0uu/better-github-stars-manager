@@ -60,7 +60,7 @@ Each step's limits:
 
 Three boundaries pause a step without losing progress: the request budget, the step deadline, and the quota reserve. A pause is not a failure. The stored cursor, the fetched rows, and the accumulated coverage gaps all survive, and the next compatible refresh continues from that cursor rather than restarting at the newest page.
 
-When quota is healthy, consecutive steps run inside the same wake, so a large following graph converges in minutes rather than across many hourly alarms. The chain stops as soon as another full step would spend below the quota reserve, so an interrupted scan never starves Stars sync, Watch, or Cubby of GitHub quota. Only a request-budget pause may chain at all: a deadline pause means the wake is already slow, and a quota pause is a hard wait until GitHub's reset time. Chaining also stops whenever the remaining quota or the step's request cost is unknown, because an unmeasured step could spend past the reserve.
+When quota is healthy, consecutive steps run inside the same wake, so a large following graph converges in minutes rather than across many hourly alarms. The chain stops as soon as another full step would take the remaining quota below the reserve, so a scan never spends the share held back for Stars sync, Watch, and Cubby. Only a request-budget pause may chain at all: a deadline pause means the wake is already slow, and a quota pause is a hard wait until GitHub's reset time. Chaining also stops whenever the remaining quota or the step's request cost is unknown, because an unmeasured step could spend past the reserve.
 
 The cutoff is frozen when the epoch starts. A resume hours later still covers the window the scan promised, so rows never shift under a partially completed scan.
 
