@@ -465,6 +465,34 @@ describe('GitHub Radar source', () => {
     expect(snapshot.partialReasons).toEqual(['following_scan_truncated']);
   });
 
+  it('reports the product cap rather than truncation when a full scan hits it', async () => {
+    // The 200-account cap is a stable product boundary the UI can explain, while a
+    // GitHub-side gap is transient. A full scan must distinguish them the same way
+    // a resumable step does, or a permanent condition looks recoverable.
+    const cappedLogins = Array.from({ length: RADAR_MAX_FOLLOWING }, (_, index) => `actor${index}`);
+    let request = 0;
+    const fetchImpl = vi.fn(async () => {
+      request += 1;
+      if (request === 1) {
+        return jsonResponse(followingEnvelope({
+          logins: cappedLogins,
+          totalCount: RADAR_MAX_FOLLOWING + 40,
+          hasNextPage: true,
+          endCursor: 'never-read',
+        }));
+      }
+      return jsonResponse(activityEnvelope(
+        cappedLogins.slice((request - 2) * 5, (request - 1) * 5).map((login) => ({ login, edges: [] })),
+      ));
+    }) as typeof fetch;
+
+    const snapshot = await fetchGitHubRadar({ token: 'token', fetchImpl, now: () => NOW });
+
+    expect(snapshot.partialReasons).toEqual(['following_cap_reached']);
+    expect(snapshot.followingCount).toBe(RADAR_MAX_FOLLOWING + 40);
+    expect(snapshot.scannedFollowingCount).toBe(RADAR_MAX_FOLLOWING);
+  });
+
   it('splits the default 30-edge activity query into five-actor batches', async () => {
     const logins = ['one', 'two', 'three', 'four', 'five', 'six'];
     const activityBatchSizes: number[] = [];
