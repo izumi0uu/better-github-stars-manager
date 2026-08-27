@@ -18,8 +18,11 @@ import { resolvePackagedServiceWorker } from './extension-runtime-targets.mjs';
 
 const EXPECTED_PERMISSIONS = Object.freeze(['alarms', 'storage']);
 const EXPECTED_HOST_PERMISSIONS = Object.freeze([
+  'https://api.anthropic.com/*',
   'https://api.github.com/*',
+  'https://api.openai.com/*',
   'https://github.com/*',
+  'https://openrouter.ai/*',
 ]);
 const EXPECTED_OPTIONAL_HOST_PERMISSIONS = Object.freeze([
   'http://127.0.0.1/*',

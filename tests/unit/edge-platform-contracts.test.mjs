@@ -275,7 +275,7 @@ test('validates the full Edge output and exact Provider permissions', () => with
     { optional_permissions: [] },
     { optional_host_permissions: [] },
     { optional_host_permissions: undefined },
-    { host_permissions: ['https://api.github.com/*'] },
+    { host_permissions: ['https://api.github.com/*', 'https://github.com/*'] },
     { permissions: ['storage'] },
   ]) {
     assert.throws(

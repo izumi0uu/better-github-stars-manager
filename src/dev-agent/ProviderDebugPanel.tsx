@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Activity, Plug, RefreshCw, ShieldCheck, Square } from 'lucide-react';
 import { authStore } from '@/auth/auth-store';
 import {
+  getAgentProviderHostAccess,
   hasAgentProviderHostPermission,
   requestAgentProviderHostPermission,
 } from '@/agent-harness/provider-access';
@@ -59,13 +60,17 @@ export function ProviderDebugPanel() {
     try {
       const nextConfig = (await authStore.getConfig()).agentProvider;
       const nextSnapshot = createProviderDebugSnapshot(nextConfig);
+      const access = getAgentProviderHostAccess(
+        nextConfig.provider,
+        nextConfig.baseUrl,
+      );
       setConfig(nextConfig);
       setSnapshot(nextSnapshot);
-      setHostAccess(
-        await hasAgentProviderHostPermission(nextConfig.provider, nextConfig.baseUrl)
+      setHostAccess(access.kind === 'required'
+        ? 'built-in'
+        : await hasAgentProviderHostPermission(nextConfig.provider, nextConfig.baseUrl)
           ? 'granted'
-          : 'required',
-      );
+          : 'required');
     } catch (error) {
       setConfig(null);
       setSnapshot(null);

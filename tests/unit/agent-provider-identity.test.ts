@@ -293,9 +293,9 @@ describe('agent provider endpoint and credential identities', () => {
 });
 
 describe('agent provider host access', () => {
-  it('treats every provider origin as optional, built-in included', () => {
+  it('keeps built-in hosts required and custom hosts optional', () => {
     expect(getAgentProviderHostAccess('openai', null)).toEqual({
-      kind: 'optional',
+      kind: 'required',
       canonicalOrigin: 'https://api.openai.com',
       permissionPattern: 'https://api.openai.com/*',
     });
@@ -309,33 +309,32 @@ describe('agent provider host access', () => {
     });
   });
 
-  it.each([
-    ['custom', 'custom-openai-compatible' as const, 'https://relay.example.com:8443/v1', 'https://relay.example.com/*'],
-    ['built-in', 'openai' as const, null, 'https://api.openai.com/*'],
-  ])('requests %s host permission explicitly and fails closed on denial', async (
-    _label,
-    provider,
-    baseUrl,
-    origin,
-  ) => {
+  it('requests custom permission explicitly and fails closed on denial', async () => {
     const permissions = {
       contains: vi.fn(async () => false),
       request: vi.fn(async () => false),
     };
 
-    await expect(requestAgentProviderHostPermission(provider, baseUrl, permissions))
-      .rejects.toThrow('AGENT_HOST_PERMISSION_DENIED');
-    expect(permissions.request).toHaveBeenCalledWith({ origins: [origin] });
+    await expect(requestAgentProviderHostPermission(
+      'custom-openai-compatible',
+      'https://relay.example.com:8443/v1',
+      permissions,
+    )).rejects.toThrow('AGENT_HOST_PERMISSION_DENIED');
+    expect(permissions.request).toHaveBeenCalledWith({
+      origins: ['https://relay.example.com/*'],
+    });
+    expect(permissions.contains).not.toHaveBeenCalled();
   });
 
-  it('does not re-prompt when the origin is already granted', async () => {
+  it('never requests optional permission for built-in providers', async () => {
     const permissions = {
-      contains: vi.fn(async () => true),
+      contains: vi.fn(async () => false),
       request: vi.fn(async () => false),
     };
-
-    await expect(requestAgentProviderHostPermission('openai', null, permissions))
-      .resolves.toBeUndefined();
+    await expect(requestAgentProviderHostPermission(
+      'openai', null, permissions,
+    )).resolves.toBeUndefined();
+    expect(permissions.contains).not.toHaveBeenCalled();
     expect(permissions.request).not.toHaveBeenCalled();
   });
 
@@ -355,17 +354,13 @@ describe('agent provider host access', () => {
     )).toThrow('AGENT_BASE_URL_INVALID');
   });
 
-  it('requires only GitHub hosts and leaves every provider origin optional', () => {
+  it('keeps provider registry host modes conformant with the source manifest', () => {
     const manifest = manifestConfig as chrome.runtime.ManifestV3;
-    expect(manifest.host_permissions).toEqual([
-      'https://api.github.com/*',
-      'https://github.com/*',
-    ]);
-    for (const provider of ['openai', 'openrouter', 'anthropic'] as const) {
-      expect(manifest.host_permissions).not.toContain(
-        getAgentProviderHostAccess(provider, null).permissionPattern,
-      );
-    }
+    expect(manifest.host_permissions).toEqual(expect.arrayContaining([
+      getAgentProviderHostAccess('openai', null).permissionPattern,
+      getAgentProviderHostAccess('openrouter', null).permissionPattern,
+      getAgentProviderHostAccess('anthropic', null).permissionPattern,
+    ]));
     expect(manifest.optional_host_permissions).toEqual(expect.arrayContaining([
       'https://*/*',
       'http://localhost/*',

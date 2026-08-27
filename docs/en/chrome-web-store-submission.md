@@ -114,19 +114,23 @@ Mounts the manager on GitHub stars and repository pages. Manifest match patterns
 
 Authenticates the provided token, fetches starred and watched repositories, fetches Notifications only after Watch Inbox is enabled, performs requested bounded public-code search, and syncs annotations through the user's own secret Gist.
 
-### Optional AI-service hosts
+### `https://api.openai.com/*`
 
-No AI-service origin is a required host permission. The manifest declares
-`https://*/*`, `http://localhost/*`, and `http://127.0.0.1/*` as optional host
-permissions, and Options requests access only after an explicit **Allow access**
-action for the exact origin the user configured. This applies to the built-in
-OpenAI, OpenRouter, and Anthropic services as well as a custom compatible
-origin, so installing the extension never asks for AI-service access and a user
-who never configures Cubby is never prompted.
+Allows a user who configures OpenAI to test the connection and run Cubby directly against OpenAI.
 
-Chrome's permission pattern may cover every port for a scheme and hostname. The
-extension separately binds the credential and request to the exact canonical
-origin, including its port. Denied optional access makes no Provider request.
+### `https://openrouter.ai/*`
+
+Allows a user who configures OpenRouter to test the connection and run Cubby directly against OpenRouter.
+
+### `https://api.anthropic.com/*`
+
+Allows a user who configures Anthropic to test the connection and run Cubby directly against Anthropic.
+
+### Optional custom AI-service hosts
+
+The manifest declares `https://*/*`, `http://localhost/*`, and `http://127.0.0.1/*` as optional host permissions because a custom compatible origin is not known at install time. The broad HTTPS pattern lets the extension connect to an arbitrary HTTPS-compatible service configured by the user. Options requests access only after an explicit **Allow access** action.
+
+Chrome's permission pattern may cover every port for a scheme and hostname. The extension separately binds the credential and request to the exact canonical origin, including its port. Denied optional access makes no Provider request.
 
 Google explains required and optional host access in [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions). The Dashboard justification must explicitly explain the `https://*/*` scope, and the final ZIP manifest must match these documented patterns.
 

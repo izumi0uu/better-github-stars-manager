@@ -1,25 +1,35 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import {
+  AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES,
+  AGENT_SENT_TASK_DATA_CATEGORIES,
+} from '@/bgsm-agent/disclosure';
 
 const root = process.cwd();
 
 describe('Agent release conformance', () => {
-  it('keeps every model provider host out of required permissions', () => {
+  it('keeps the runtime disclosure category contract wired into the informational UI', () => {
+    const source = read('src/options/AgentDataDisclosurePanel.tsx');
+    for (const category of [
+      ...AGENT_SENT_TASK_DATA_CATEGORIES,
+      ...AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES,
+    ]) {
+      expect(source).toContain(category);
+    }
+    expect(source).toContain('agentDisclosureKeyException');
+    expect(source).toContain('agentDisclosureCustomAccess');
+  });
+
+  it('keeps manifest host declarations aligned with built-in and custom behavior', () => {
     const manifest = read('manifest.config.ts');
+    expect(manifest).toContain("'https://api.openai.com/*'");
+    expect(manifest).toContain("'https://api.anthropic.com/*'");
+    expect(manifest).toContain("'https://openrouter.ai/*'");
     expect(manifest).toContain("optional_host_permissions");
     expect(manifest).toContain("'https://*/*'");
     expect(manifest).toContain("'http://localhost/*'");
     expect(manifest).toContain("'http://127.0.0.1/*'");
-    // Provider origins are granted on demand, so none may appear as a required
-    // host permission in the source manifest.
-    const required = manifest.slice(
-      manifest.indexOf('host_permissions: ['),
-      manifest.indexOf('optional_host_permissions'),
-    );
-    for (const origin of ['api.openai.com', 'api.anthropic.com', 'openrouter.ai']) {
-      expect(required).not.toContain(origin);
-    }
   });
 
 

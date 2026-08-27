@@ -709,9 +709,7 @@ describe('Options preferences', () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
     authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
-    // Provider hosts are optional for every provider now, so a save-and-test flow
-    // only reaches the network once the origin is already granted.
-    vi.mocked(chrome.permissions.contains).mockImplementation(() => Promise.resolve(true) as never);
+
     await renderOptions();
 
     const modelInput = document.querySelector<HTMLInputElement>('#agent-model');
@@ -758,7 +756,6 @@ describe('Options preferences', () => {
     authMocks.getConfig.mockResolvedValue(config());
     authMocks.hasToken.mockResolvedValue(true);
     authMocks.updateAgentProviderConfig.mockResolvedValue(undefined);
-    vi.mocked(chrome.permissions.contains).mockImplementation(() => Promise.resolve(true) as never);
     vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: unknown) => {
       const request = (message ?? {}) as { type?: string };
       if (request.type === 'getAgentStorageUsage') return agentStorageResponse();
@@ -1241,22 +1238,9 @@ describe('Options preferences', () => {
       },
     }));
     authMocks.hasToken.mockResolvedValue(true);
-    // Built-in providers now consult `contains` too, so key the mock on the
-    // origin rather than on call order: the relay is granted until the failed
-    // test re-checks it.
-    let relayGranted = true;
-    vi.mocked(chrome.permissions.contains).mockImplementation(((details: unknown) => {
-      const origins = details
-        && typeof details === 'object'
-        && 'origins' in details
-        && Array.isArray(details.origins)
-        ? details.origins
-        : [];
-      if (!origins.includes('https://relay.example.com/*')) return Promise.resolve(true);
-      const granted = relayGranted;
-      relayGranted = false;
-      return Promise.resolve(granted);
-    }) as never);
+    vi.mocked(chrome.permissions.contains)
+      .mockImplementationOnce(() => Promise.resolve(true) as never)
+      .mockImplementation(() => Promise.resolve(false) as never);
     vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: unknown) => {
       const typedMessage = (message ?? {}) as { type?: string };
       if (typedMessage.type === 'getAgentStorageUsage') return agentStorageResponse();
@@ -1280,7 +1264,6 @@ describe('Options preferences', () => {
   it('tests Cubby connection with the current form values', async () => {
     authMocks.getConfig.mockResolvedValue(config({ agentDataDisclosureAcceptance: null }));
     authMocks.hasToken.mockResolvedValue(true);
-    vi.mocked(chrome.permissions.contains).mockImplementation(() => Promise.resolve(true) as never);
     vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: unknown) => {
       const typedMessage = (message ?? {}) as {
         type?: string;

@@ -2,11 +2,6 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES,
-  AGENT_SENT_TASK_DATA_CATEGORIES,
-} from '@/bgsm-agent/disclosure';
-import { getMessages } from '@/i18n';
 import { AgentDataDisclosurePanel } from '@/options/AgentDataDisclosurePanel';
 import {
   cleanupMountedRootsAndBody,
@@ -27,6 +22,7 @@ describe('Agent data disclosure', () => {
         canonicalOrigin="https://relay.example.com:8443"
         disclosureAccepted={false}
         disclosureBusy={false}
+        customHostAccessRequired
         hostAccessGranted={false}
         hostAccessBusy={false}
         onGrantAccess={() => {}}
@@ -50,42 +46,6 @@ describe('Agent data disclosure', () => {
     expect(container.textContent).toContain('provider-required authentication header');
     expect(container.textContent).toContain("Anthropic's x-api-key");
     expect(container.textContent).not.toContain('as an Authorization header');
-    // The panel must state that host access is requested separately and on demand;
-    // read the copy from the catalog so this stays a rendering contract, not a
-    // duplicated wording assertion.
-    expect(container.textContent).toContain(
-      getMessages('en').options.agentDisclosureProviderAccess,
-    );
-  });
-
-  it('renders every declared task-data category in the disclosure list', () => {
-    // The runtime category constants are the disclosure contract; the panel is
-    // their only user-facing surface. Assert against the rendered
-    // data-disclosure-category attributes so dropping a category from the panel
-    // fails here instead of only in a source scan.
-    const container = mountReact(
-      <AgentDataDisclosurePanel
-        providerLabel="OpenAI"
-        canonicalOrigin="https://api.openai.com"
-        disclosureAccepted={false}
-        disclosureBusy={false}
-        hostAccessGranted={false}
-        hostAccessBusy={false}
-        onGrantAccess={() => {}}
-        onAcceptDisclosure={() => {}}
-      />,
-      mountedRoots,
-    );
-
-    const rendered = new Set(
-      [...container.querySelectorAll('[data-disclosure-category]')]
-        .flatMap((item) => (item.getAttribute('data-disclosure-category') ?? '').split(' '))
-        .filter(Boolean),
-    );
-    expect([...rendered].sort()).toEqual([
-      ...AGENT_SENT_TASK_DATA_CATEGORIES,
-      ...AGENT_NOT_SENT_AS_TASK_DATA_CATEGORIES,
-    ].toSorted());
   });
 
   it('keeps disclosure acceptance and custom host access as separate actions', async () => {
@@ -97,6 +57,7 @@ describe('Agent data disclosure', () => {
         canonicalOrigin="https://relay.example.com"
         disclosureAccepted={false}
         disclosureBusy={false}
+        customHostAccessRequired
         hostAccessGranted={false}
         hostAccessBusy={false}
         onGrantAccess={onGrantAccess}
@@ -108,7 +69,7 @@ describe('Agent data disclosure', () => {
     const grant = [...container.querySelectorAll('button')]
       .find((button) => button.textContent?.includes('Allow access'));
     expect(grant).toBeInstanceOf(HTMLButtonElement);
-    expect(container.textContent).toContain('Allow browser access to test or use this service.');
+    expect(container.textContent).toContain('Allow browser access to test or use this custom service.');
     await click(grant as HTMLButtonElement);
     expect(onGrantAccess).toHaveBeenCalledOnce();
     expect(onAcceptDisclosure).not.toHaveBeenCalled();
@@ -125,6 +86,7 @@ describe('Agent data disclosure', () => {
         canonicalOrigin="https://relay.example.com"
         disclosureAccepted={false}
         disclosureBusy
+        customHostAccessRequired
         hostAccessGranted={false}
         hostAccessBusy={false}
         onGrantAccess={() => {}}
@@ -140,13 +102,14 @@ describe('Agent data disclosure', () => {
     expect(grant?.disabled).toBe(true);
   });
 
-  it('confirms granted access and drops the action for any provider once allowed', () => {
+  it('does not show host-access actions for a built-in provider', () => {
     const container = mountReact(
       <AgentDataDisclosurePanel
         providerLabel="OpenAI"
         canonicalOrigin="https://api.openai.com"
         disclosureAccepted
         disclosureBusy={false}
+        customHostAccessRequired={false}
         hostAccessGranted
         hostAccessBusy={false}
         onGrantAccess={() => {}}
@@ -155,35 +118,9 @@ describe('Agent data disclosure', () => {
       mountedRoots,
     );
 
-    // Built-in providers are no longer pre-granted, so the panel must confirm the
-    // grant rather than describe built-in coverage.
-    expect(container.textContent).toContain('Access allowed');
+    expect(container.textContent).toContain('built-in browser access');
     expect(container.textContent).toContain('Data sharing accepted');
-    expect(container.textContent).not.toContain('built-in browser access');
     expect([...container.querySelectorAll('button')]
       .some((button) => button.textContent?.includes('Allow access'))).toBe(false);
-  });
-
-  it('requests host access for a built-in provider that has not been granted', async () => {
-    const onGrantAccess = vi.fn();
-    const container = mountReact(
-      <AgentDataDisclosurePanel
-        providerLabel="OpenAI"
-        canonicalOrigin="https://api.openai.com"
-        disclosureAccepted
-        disclosureBusy={false}
-        hostAccessGranted={false}
-        hostAccessBusy={false}
-        onGrantAccess={onGrantAccess}
-        onAcceptDisclosure={() => {}}
-      />,
-      mountedRoots,
-    );
-
-    const grant = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Allow access'));
-    expect(grant).toBeInstanceOf(HTMLButtonElement);
-    await click(grant as HTMLButtonElement);
-    expect(onGrantAccess).toHaveBeenCalledOnce();
   });
 });

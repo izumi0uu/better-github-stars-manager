@@ -114,9 +114,21 @@ Dashboard 中的素材是否存在、顺序、locale 分配、审核状态和公
 
 验证用户提供的 Token，获取 Star 和 Watch 仓库；只有启用 Watch Inbox 后才获取 Notifications；按请求执行有界的公开代码搜索；通过用户自己的 Secret Gist 同步批注。
 
-### 可选的 AI 服务主机
+### `https://api.openai.com/*`
 
-没有任何 AI 服务地址是必需主机权限。manifest 将 `https://*/*`、`http://localhost/*` 和 `http://127.0.0.1/*` 声明为可选主机权限，Options 只有在用户针对其配置的精确地址明确点击 **Allow access** 后才会请求访问。内建的 OpenAI、OpenRouter、Anthropic 与自定义兼容服务都走同一条路径，因此安装扩展时不会请求任何 AI 服务访问权限，从不配置 Cubby 的用户也永远不会看到该请求。
+当用户配置 OpenAI 后，用于测试连接，并让 Cubby 直接连接 OpenAI 运行。
+
+### `https://openrouter.ai/*`
+
+当用户配置 OpenRouter 后，用于测试连接，并让 Cubby 直接连接 OpenRouter 运行。
+
+### `https://api.anthropic.com/*`
+
+当用户配置 Anthropic 后，用于测试连接，并让 Cubby 直接连接 Anthropic 运行。
+
+### 可选的自定义 AI 服务主机
+
+由于安装时不知道自定义兼容服务的地址，manifest 将 `https://*/*`、`http://localhost/*` 和 `http://127.0.0.1/*` 声明为可选主机权限。其中 `https://*/*` 用于连接用户配置的任意 HTTPS 兼容服务。Options 只有在用户明确点击 **Allow access** 后才会请求访问。
 
 Chrome 的权限匹配模式可能覆盖某个协议和主机名下的所有端口。扩展会另外把凭据和请求绑定到精确的规范化地址，包括端口。拒绝可选访问后，扩展不会发起 Provider 请求。
 

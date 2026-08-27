@@ -21,12 +21,17 @@ export function createProductManifest() {
     128: 'icons/icon-128.png',
   },
   permissions: ['storage', 'alarms'],
-  // Only GitHub is required. Every model provider origin, built-in or custom,
-  // is granted on demand through `optional_host_permissions` when the user
-  // configures Cubby, so installing the extension never asks for provider hosts.
+  // Built-in provider origins stay required because a driven browser cannot complete
+  // `chrome.permissions.request` for an optional host: the Chrome prompt is native UI
+  // with no CDP target, and Firefox rejects the call outside a user input handler.
+  // Making them optional therefore breaks the packaged Cubby release gates. Only the
+  // custom origin is optional, covered by `optional_host_permissions` below.
   host_permissions: [
     'https://api.github.com/*',
+    'https://api.openai.com/*',
+    'https://api.anthropic.com/*',
     'https://github.com/*',
+    'https://openrouter.ai/*',
   ],
   optional_host_permissions: [
     'https://*/*',

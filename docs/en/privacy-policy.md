@@ -107,11 +107,10 @@ Depending on the features you choose, the extension connects directly to:
 
 - `https://github.com/*`
 - `https://api.github.com/*`
-- the AI-service origin you select and explicitly allow, which may be OpenAI, OpenRouter, Anthropic, a custom OpenAI-compatible HTTPS origin, or an HTTP loopback origin
-
-Only the two GitHub origins are required host permissions. Every AI-service
-origin, built-in ones included, is requested on demand when you set that service
-up, so the extension has no AI-service access until you grant it.
+- `https://api.openai.com/*` when OpenAI is selected
+- `https://openrouter.ai/*` when OpenRouter is selected
+- `https://api.anthropic.com/*` when Anthropic is selected
+- a custom OpenAI-compatible HTTPS origin, or HTTP loopback origin, that you enter and explicitly allow
 
 Provider and GitHub requests do not pass through a developer-operated proxy.
 
@@ -152,7 +151,7 @@ No analytics software development kit, ad network, tracking service, developer p
 
 ## Host permissions
 
-The manifest requires only the GitHub page and API hosts. Every AI-service origin, built-in and custom alike, is an optional host permission requested on demand when you set that service up.
+The manifest requires GitHub page and API hosts plus the OpenAI, OpenRouter, and Anthropic hosts. Custom compatible services use optional host permissions.
 
 A host match pattern may cover every port for a scheme and hostname. The extension separately binds credentials and requests to the exact configured canonical origin, including its port. Chromium-based browsers document the required and optional access distinction in [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions); Firefox exposes the same distinction through its optional-permissions API.
 

@@ -31,6 +31,7 @@ import {
   trustedAgentModelContextCapability,
 } from "@/agent-harness/models";
 import {
+  getAgentProviderHostAccess,
   hasAgentProviderHostPermission,
   requestAgentProviderHostPermission,
 } from "@/agent-harness/provider-access";
@@ -211,6 +212,11 @@ export function OptionsAgentSettings({
   useLayoutEffect(() => {
     agentDisclosureTargetRef.current = agentDisclosureTarget;
   }, [agentDisclosureTarget]);
+  const customAgentHostAccessRequired = !!agentDisclosureTarget &&
+    getAgentProviderHostAccess(
+      agentDisclosureTarget.provider,
+      agentDisclosureTarget.canonicalBaseUrl,
+    ).kind === "optional";
   const canTestAgentConnection =
     !!(agentApiKey.trim() || hasEligibleSavedAgentApiKey) &&
     agentBaseUrlReady &&
@@ -687,6 +693,7 @@ export function OptionsAgentSettings({
             canonicalOrigin={agentDisclosureTarget.canonicalOrigin}
             disclosureAccepted={agentDisclosureAccepted}
             disclosureBusy={agentDisclosureBusy}
+            customHostAccessRequired={customAgentHostAccessRequired}
             hostAccessGranted={agentHostAccessGranted}
             hostAccessBusy={
               agentHostAccessBusy || agentDisclosureBusy || agentSaveBusy || agentTestBusy

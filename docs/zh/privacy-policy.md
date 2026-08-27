@@ -110,9 +110,10 @@ Cubby 在本地 IndexedDB 中最多保留一条最近完成或取消的 Organize
 
 - `https://github.com/*`；
 - `https://api.github.com/*`；
-- 你选择并明确允许的 AI 服务地址，可以是 OpenAI、OpenRouter、Anthropic、自定义 OpenAI 兼容 HTTPS 地址或 HTTP loopback 地址。
-
-只有上述两个 GitHub 地址是必需主机权限。所有 AI 服务地址（含内建服务）都在你配置该服务时按需请求，在你授权之前扩展没有任何 AI 服务访问权限。
+- 选择 OpenAI 时的 `https://api.openai.com/*`；
+- `https://openrouter.ai/*`；
+- `https://api.anthropic.com/*`；
+- 你输入并明确允许的自定义 OpenAI 兼容 HTTPS 地址，或 HTTP loopback 地址。
 
 Provider 请求和 GitHub 请求不会经过开发者运营的代理。
 
@@ -153,7 +154,7 @@ GitHub 只会收到请求功能所需的数据：
 
 ## 主机权限
 
-manifest 只需要 GitHub 页面和 API 主机。所有 AI 服务地址（内建与自定义一视同仁）都是可选主机权限，在你配置该服务时按需请求。
+manifest 需要 GitHub 页面和 API 主机，以及 OpenAI、OpenRouter 和 Anthropic 主机。自定义兼容服务使用可选主机权限。
 
 主机匹配模式可能覆盖某个协议和主机名下的所有端口。扩展会另外把凭据和请求绑定到精确的规范化服务地址，包括端口。基于 Chromium 的浏览器对必需和可选访问权限的区分见 [Declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions)；Firefox 通过其可选权限 API 提供同样的区分。
 

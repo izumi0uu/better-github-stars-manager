@@ -6,7 +6,7 @@ import type { AgentProviderId } from '@/types';
 import { resolveAgentProviderEndpoint } from './models';
 
 export type AgentProviderHostAccess = Readonly<{
-  kind: 'optional';
+  kind: 'required' | 'optional';
   canonicalOrigin: string;
   permissionPattern: string;
 }>;
@@ -17,9 +17,10 @@ export type AgentHostPermissions = {
 };
 
 /**
- * Every provider origin is optional. Only GitHub is a required host permission,
- * so a user who never configures Cubby is never asked to grant a model provider
- * — including the built-in ones.
+ * Built-in provider origins are required host permissions; only a custom origin is
+ * optional, because it is unknown at install time. Automation cannot complete
+ * `chrome.permissions.request` for an optional host, so making the built-ins optional
+ * would leave the packaged Cubby release gates unverifiable.
  */
 export function getAgentProviderHostAccess(
   provider: AgentProviderId,
@@ -28,7 +29,7 @@ export function getAgentProviderHostAccess(
   const endpoint = resolveAgentProviderEndpoint(provider, baseUrl);
   const originUrl = new URL(endpoint.canonicalOrigin);
   return Object.freeze({
-    kind: 'optional',
+    kind: provider === 'custom-openai-compatible' ? 'optional' : 'required',
     canonicalOrigin: endpoint.canonicalOrigin,
     permissionPattern: `${originUrl.protocol}//${originUrl.hostname}/*`,
   });
@@ -40,9 +41,8 @@ export async function hasAgentProviderHostPermission(
   permissions?: Pick<AgentHostPermissions, 'contains'>,
 ): Promise<boolean> {
   const access = getAgentProviderHostAccess(provider, baseUrl);
-  return (permissions ?? chrome.permissions)
-    .contains({ origins: [access.permissionPattern] })
-    .catch(() => false);
+  if (access.kind === 'required') return true;
+  return (permissions ?? chrome.permissions).contains({ origins: [access.permissionPattern] }).catch(() => false);
 }
 
 export async function requestAgentProviderHostPermission(
@@ -51,7 +51,7 @@ export async function requestAgentProviderHostPermission(
   permissions: AgentHostPermissions = chrome.permissions,
 ): Promise<void> {
   const access = getAgentProviderHostAccess(provider, baseUrl);
-  if (await permissions.contains({ origins: [access.permissionPattern] })) return;
+  if (access.kind === 'required') return;
   if (!await permissions.request({ origins: [access.permissionPattern] })) {
     throw new Error(AGENT_HOST_PERMISSION_DENIED);
   }

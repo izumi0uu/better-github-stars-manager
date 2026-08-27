@@ -122,7 +122,7 @@ ZIP 根目录必须直接包含 `manifest.json`。schema version 4 临时证据�
 - `manifest_version: 3`；
 - 模块化 `background.service_worker`；
 - `permissions` 中只能有 `storage` 和 `alarms`；
-- 必需 `host_permissions`：`https://github.com/*`、`https://api.github.com/*`；
+- 必需 `host_permissions`：`https://github.com/*`、`https://api.github.com/*`、`https://api.openai.com/*`、`https://openrouter.ai/*`、`https://api.anthropic.com/*`；
 - `optional_host_permissions`：`https://*/*`、`http://localhost/*`、`http://127.0.0.1/*`；
 - ZIP 内可解析的 popup、Options、content script、图标和 web accessible resource 路径；
 - 不包含 `update_url` 和远程可执行代码。
@@ -191,7 +191,8 @@ EDGE_EXECUTABLE="/Microsoft Edge/的完整路径" pnpm test:smoke:edge
 - `alarms`：让持久化的全库 Organize 分析和已批准的 Apply 操作跨越 MV3 service worker 挂起继续调度恢复工作。
 - `https://github.com/*`：在 GitHub 页面挂载 Stars 管理器和仓库标签 chip。
 - `https://api.github.com/*`：验证 Classic PAT，并提供 Stars、Watch、Notifications、Following、有界公开代码搜索和 Gist 同步路径。
-- 可选的 AI 服务主机（`https://*/*`、`http://localhost/*`、`http://127.0.0.1/*`）：连接用户配置的 AI 服务，内建或自定义均适用，因为没有任何 Provider 地址是必需权限。Options 只有在用户明确点击 **Allow access** 后才会请求访问，凭据和请求都绑定到精确配置的规范化地址（包括端口）。拒绝可选访问后，扩展不会发起 Provider 请求。
+- `https://api.openai.com/*`、`https://openrouter.ai/*`、`https://api.anthropic.com/*`：允许配置了对应 Provider 的用户测试连接，并让 Cubby 直接连接该服务运行。
+- 可选的自定义 AI 服务主机（`https://*/*`、`http://localhost/*`、`http://127.0.0.1/*`）：连接安装时未知的自定义兼容地址。Options 只有在用户明确点击 **Allow access** 后才会请求访问，凭据和请求都绑定到精确配置的规范化地址（包括端口）。拒绝可选访问后，扩展不会发起 Provider 请求。
 
 ### 远程代码
 
