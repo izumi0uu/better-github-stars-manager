@@ -110,10 +110,9 @@ Cubby 在本地 IndexedDB 中最多保留一条最近完成或取消的 Organize
 
 - `https://github.com/*`；
 - `https://api.github.com/*`；
-- 选择 OpenAI 时的 `https://api.openai.com/*`；
-- `https://openrouter.ai/*`；
-- `https://api.anthropic.com/*`；
-- 你输入并明确允许的自定义 OpenAI 兼容 HTTPS 地址，或 HTTP loopback 地址。
+- 你选择并明确允许的 AI 服务地址，可以是 OpenAI、OpenRouter、Anthropic、自定义 OpenAI 兼容 HTTPS 地址或 HTTP loopback 地址。
+
+只有上述两个 GitHub 地址是必需主机权限。所有 AI 服务地址（含内建服务）都在你配置该服务时按需请求，在你授权之前扩展没有任何 AI 服务访问权限。
 
 Provider 请求和 GitHub 请求不会经过开发者运营的代理。
 

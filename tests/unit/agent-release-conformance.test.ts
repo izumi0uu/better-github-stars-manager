@@ -18,18 +18,24 @@ describe('Agent release conformance', () => {
       expect(source).toContain(category);
     }
     expect(source).toContain('agentDisclosureKeyException');
-    expect(source).toContain('agentDisclosureCustomAccess');
+    expect(source).toContain('agentDisclosureProviderAccess');
   });
 
-  it('keeps manifest host declarations aligned with built-in and custom behavior', () => {
+  it('keeps every model provider host out of required permissions', () => {
     const manifest = read('manifest.config.ts');
-    expect(manifest).toContain("'https://api.openai.com/*'");
-    expect(manifest).toContain("'https://api.anthropic.com/*'");
-    expect(manifest).toContain("'https://openrouter.ai/*'");
     expect(manifest).toContain("optional_host_permissions");
     expect(manifest).toContain("'https://*/*'");
     expect(manifest).toContain("'http://localhost/*'");
     expect(manifest).toContain("'http://127.0.0.1/*'");
+    // Provider origins are granted on demand, so none may appear as a required
+    // host permission in the source manifest.
+    const required = manifest.slice(
+      manifest.indexOf('host_permissions: ['),
+      manifest.indexOf('optional_host_permissions'),
+    );
+    for (const origin of ['api.openai.com', 'api.anthropic.com', 'openrouter.ai']) {
+      expect(required).not.toContain(origin);
+    }
   });
 
 

@@ -6,7 +6,7 @@ import type { AgentProviderId } from '@/types';
 import { resolveAgentProviderEndpoint } from './models';
 
 export type AgentProviderHostAccess = Readonly<{
-  kind: 'required' | 'optional';
+  kind: 'optional';
   canonicalOrigin: string;
   permissionPattern: string;
 }>;
@@ -16,6 +16,11 @@ export type AgentHostPermissions = {
   request(details: { origins: string[] }): Promise<boolean>;
 };
 
+/**
+ * Every provider origin is optional. Only GitHub is a required host permission,
+ * so a user who never configures Cubby is never asked to grant a model provider
+ * — including the built-in ones.
+ */
 export function getAgentProviderHostAccess(
   provider: AgentProviderId,
   baseUrl: string | null | undefined,
@@ -23,7 +28,7 @@ export function getAgentProviderHostAccess(
   const endpoint = resolveAgentProviderEndpoint(provider, baseUrl);
   const originUrl = new URL(endpoint.canonicalOrigin);
   return Object.freeze({
-    kind: provider === 'custom-openai-compatible' ? 'optional' : 'required',
+    kind: 'optional',
     canonicalOrigin: endpoint.canonicalOrigin,
     permissionPattern: `${originUrl.protocol}//${originUrl.hostname}/*`,
   });
@@ -35,8 +40,9 @@ export async function hasAgentProviderHostPermission(
   permissions?: Pick<AgentHostPermissions, 'contains'>,
 ): Promise<boolean> {
   const access = getAgentProviderHostAccess(provider, baseUrl);
-  if (access.kind === 'required') return true;
-  return (permissions ?? chrome.permissions).contains({ origins: [access.permissionPattern] }).catch(() => false);
+  return (permissions ?? chrome.permissions)
+    .contains({ origins: [access.permissionPattern] })
+    .catch(() => false);
 }
 
 export async function requestAgentProviderHostPermission(
@@ -45,7 +51,7 @@ export async function requestAgentProviderHostPermission(
   permissions: AgentHostPermissions = chrome.permissions,
 ): Promise<void> {
   const access = getAgentProviderHostAccess(provider, baseUrl);
-  if (access.kind === 'required') return;
+  if (await permissions.contains({ origins: [access.permissionPattern] })) return;
   if (!await permissions.request({ origins: [access.permissionPattern] })) {
     throw new Error(AGENT_HOST_PERMISSION_DENIED);
   }

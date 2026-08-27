@@ -122,7 +122,7 @@ The packaged manifest must equal the Chrome manifest:
 - `manifest_version: 3`
 - a module `background.service_worker`
 - `permissions`: exactly `storage` and `alarms`
-- required `host_permissions`: `https://github.com/*`, `https://api.github.com/*`, `https://api.openai.com/*`, `https://openrouter.ai/*`, `https://api.anthropic.com/*`
+- required `host_permissions`: `https://github.com/*`, `https://api.github.com/*`
 - `optional_host_permissions`: `https://*/*`, `http://localhost/*`, `http://127.0.0.1/*`
 - popup, Options, content-script, icon, and web-accessible-resource paths that resolve inside the ZIP
 - no `update_url` and no remote executable code
@@ -191,8 +191,7 @@ Organize GitHub starred repositories inside GitHub with local search, filters, t
 - `alarms`: schedules recovery work for durable full-library Organize analysis and approved Apply operations across MV3 service-worker suspension.
 - `https://github.com/*`: mounts the Stars manager and repository tag chip on GitHub pages.
 - `https://api.github.com/*`: verifies the Classic PAT and serves Stars, Watch, Notifications, Following, bounded public-code search, and Gist sync paths.
-- `https://api.openai.com/*`, `https://openrouter.ai/*`, `https://api.anthropic.com/*`: allow a user who configures the corresponding Provider to test the connection and run Cubby directly against that service.
-- Optional custom AI-service hosts (`https://*/*`, `http://localhost/*`, `http://127.0.0.1/*`): connect to a custom compatible origin that is not known at install time. Options requests access only after an explicit **Allow access** action, and the credential and request remain bound to the exact configured canonical origin, including its port. Denied optional access makes no Provider request.
+- Optional AI-service hosts (`https://*/*`, `http://localhost/*`, `http://127.0.0.1/*`): connect to the AI service the user configures, whether built-in or custom, because no provider origin is a required permission. Options requests access only after an explicit **Allow access** action, and the credential and request remain bound to the exact configured canonical origin, including its port. Denied optional access makes no Provider request.
 
 ### Remote code
 

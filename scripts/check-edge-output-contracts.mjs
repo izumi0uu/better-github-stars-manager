@@ -8,10 +8,7 @@ import { EDGE_DIST_DIR } from './build-edge-extension.mjs';
 export const EDGE_REQUIRED_PERMISSIONS = Object.freeze(['storage', 'alarms']);
 export const EDGE_REQUIRED_HOST_PERMISSIONS = Object.freeze([
   'https://api.github.com/*',
-  'https://api.openai.com/*',
-  'https://api.anthropic.com/*',
   'https://github.com/*',
-  'https://openrouter.ai/*',
 ]);
 export const EDGE_OPTIONAL_HOST_PERMISSIONS = Object.freeze([
   'https://*/*',

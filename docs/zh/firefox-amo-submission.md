@@ -69,7 +69,7 @@ Firefox 生产输出从当前 Chrome 生产清单精确推导而来，只修改�
 - `browser_specific_settings.gecko.id`：`{5aeb7340-40e6-428d-9566-f3cacbe06352}`——永久附加组件 ID；不要更改，也不要将其复用到其他附加组件；
 - `browser_specific_settings.gecko.strict_min_version`：`140.0`；
 - 必需权限：`storage`、`alarms`；
-- 必需主机权限：`https://github.com/*`、`https://api.github.com/*`、`https://api.openai.com/*`、`https://openrouter.ai/*`、`https://api.anthropic.com/*`；
+- 必需主机权限：`https://github.com/*`、`https://api.github.com/*`；
 - 可选主机权限：`https://*/*`、`http://localhost/*`、`http://127.0.0.1/*`；
 - 必需数据收集权限：`authenticationInfo`、`websiteActivity`、`websiteContent`；
 - 可选数据收集权限：`personalCommunications`；
@@ -209,13 +209,9 @@ runtime verifier 会运行完整 Vitest 与 regression、Firefox 生产构建、
 
 验证用户提供的 Token，获取 Star 和 Watch 仓库；只有启用 Watch Inbox 后才获取 Notifications；按请求执行有界的公开代码搜索；通过用户自己的 Secret Gist 同步批注。
 
-### `https://api.openai.com/*`、`https://openrouter.ai/*`、`https://api.anthropic.com/*`
+### 可选的 AI 服务主机
 
-当用户配置 OpenAI、OpenRouter 或 Anthropic 后，用于测试连接，并让 Cubby 直接连接对应服务运行。
-
-### 可选的自定义 AI 服务主机
-
-由于安装时不知道自定义兼容服务的地址，manifest 将 `https://*/*`、`http://localhost/*` 和 `http://127.0.0.1/*` 声明为可选主机权限。Options 只有在用户明确点击 **Allow access** 后才会请求访问，并且凭据和请求仍绑定到精确的规范化服务地址，包括端口。拒绝可选访问后，扩展不会发起 Provider 请求。
+由于安装时没有任何 AI 服务地址是必需权限，manifest 将 `https://*/*`、`http://localhost/*` 和 `http://127.0.0.1/*` 声明为可选主机权限，覆盖内建与自定义服务。Options 只有在用户明确点击 **Allow access** 后才会请求访问，并且凭据和请求仍绑定到精确的规范化服务地址，包括端口。拒绝可选访问后，扩展不会发起 Provider 请求。
 
 ### 数据收集权限
 

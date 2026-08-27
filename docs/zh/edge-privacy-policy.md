@@ -85,10 +85,9 @@ Edge 构建只请求上面列出的 scopes。不使用对应可选功能时，�
 
 - `https://github.com/*`；
 - `https://api.github.com/*`；
-- 选择 OpenAI 时的 `https://api.openai.com/*`；
-- 选择 OpenRouter 时的 `https://openrouter.ai/*`；
-- 选择 Anthropic 时的 `https://api.anthropic.com/*`；
-- 你输入并明确允许的自定义 OpenAI 兼容 HTTPS 地址，或 HTTP loopback 地址。
+- 你选择并明确允许的 AI 服务地址，可以是 OpenAI、OpenRouter、Anthropic、自定义 OpenAI 兼容 HTTPS 地址或 HTTP loopback 地址。
+
+只有上述两个 GitHub 地址是必需主机权限；所有 AI 服务地址（含内建服务）都在你配置该服务时按需请求。
 
 GitHub 和 Provider 请求从 Microsoft Edge 直接发送到这些服务，不经过开发者代理。分析 SDK、广告网络、跟踪服务、开发者代理和开发者服务器都不会收到扩展数据。
 
@@ -117,8 +116,7 @@ Edge 安装包使用：
 - `alarms`：让持久化的全库 Organize 分析和已批准的 Apply 操作跨越 MV3 service worker 挂起继续调度恢复工作；
 - `https://github.com/*`：在 GitHub 页面挂载产品界面；
 - `https://api.github.com/*`：提供需要认证的 GitHub 功能；
-- `https://api.openai.com/*`、`https://openrouter.ai/*`、`https://api.anthropic.com/*`：用于用户配置的内建 Provider；
-- `https://*/*`、`http://localhost/*`、`http://127.0.0.1/*`：作为可选主机权限，用于用户配置的自定义兼容地址；Options 只有在用户明确点击 **Allow access** 后才会请求访问，凭据和请求都绑定到精确的规范化服务地址（包括端口）。
+- `https://*/*`、`http://localhost/*`、`http://127.0.0.1/*`：作为可选主机权限，用于用户配置的任意 AI 服务（内建或自定义）；Options 只有在用户明确点击 **Allow access** 后才会请求访问，凭据和请求都绑定到精确的规范化服务地址（包括端口）。
 
 拒绝可选访问后，扩展不会发起 Provider 请求。
 

@@ -91,10 +91,7 @@ function createDist(root, manifestOverrides = {}) {
     permissions: ['storage', 'alarms'],
     host_permissions: [
       'https://api.github.com/*',
-      'https://api.openai.com/*',
-      'https://api.anthropic.com/*',
       'https://github.com/*',
-      'https://openrouter.ai/*',
     ],
     optional_host_permissions: ['https://*/*', 'http://localhost/*', 'http://127.0.0.1/*'],
     background: { service_worker: 'service-worker-loader.js', type: 'module' },

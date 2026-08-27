@@ -910,8 +910,7 @@ export interface MessageCatalog {
     agentDisclosureNotSentSecrets: string;
     agentDisclosureKeyException: string;
     agentDisclosureLocalHistory: string;
-    agentDisclosureBuiltInAccess: string;
-    agentDisclosureCustomAccess: string;
+    agentDisclosureProviderAccess: string;
     agentDisclosureAccept: string;
     agentDisclosureAccepting: string;
     agentDisclosureAccepted: string;
@@ -2191,10 +2190,8 @@ const messages: Record<Locale, MessageCatalog> = {
         "The AI service API key is sent only to the exact address above in the provider-required authentication header, including Anthropic's x-api-key. It is never included in prompts or logs.",
       agentDisclosureLocalHistory:
         "Committed conversation history, recent attempt rows that include the admitted prompt, bounded continuation-recovery projections, and paged artifacts may be stored unencrypted in this browser's extension storage. They are not synced, exported, or included in release diagnostics. Deleting a conversation removes its transcript, attempt and recovery data, and conversation-owned artifacts; re-fetchable tool cache can also be cleared separately. Unpacked development builds disclose raw capture separately before it can be enabled.",
-      agentDisclosureBuiltInAccess:
-        "This service is covered by the extension's built-in browser access.",
-      agentDisclosureCustomAccess:
-        "Custom services also require separate browser access.",
+      agentDisclosureProviderAccess:
+        "Browser access to this exact address is requested separately, and only when you set up this service.",
       agentDisclosureAccept: "Accept data sharing",
       agentDisclosureAccepting: "Requesting permission…",
       agentDisclosureAccepted: "Data sharing accepted",
@@ -2202,7 +2199,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "Accept this disclosure before testing or using Cubby. Required browser permission will be requested when applicable.",
       agentGrantAccess: "Allow access",
       agentAccessGranted: "Access allowed",
-      agentHostAccessRequired: "Allow browser access to test or use this custom service.",
+      agentHostAccessRequired: "Allow browser access to test or use this service.",
       agentStorageHeading: "Local Cubby storage & tool cache",
       agentStorageIntro:
         "Tracks locally saved Cubby conversation transcripts, recovery state, saved artifacts, and re-fetchable tool cache on this device. It does not represent all extension storage.",
@@ -3530,10 +3527,8 @@ const messages: Record<Locale, MessageCatalog> = {
         "AI 服务 API 密钥只会通过服务商要求的认证请求头发送到上方准确地址（Anthropic 使用 x-api-key），绝不会写入提示词或日志。",
       agentDisclosureLocalHistory:
         "已提交的对话历史、近期尝试记录、恢复状态及会话工件会保存在本机浏览器的扩展存储中，不会同步、导出或进入发布版诊断。删除对话会彻底移除对应对话记录、尝试与恢复数据及相关工件；工具临时缓存也可随时单独清理。解压加载的开发版会在启用原始捕获前另行披露风险。",
-      agentDisclosureBuiltInAccess:
-        "此服务已包含在扩展内置的浏览器访问范围中。",
-      agentDisclosureCustomAccess:
-        "自定义服务还需要单独允许浏览器访问。",
+      agentDisclosureProviderAccess:
+        "浏览器对上方准确地址的访问权限会单独请求，且只在你配置该服务时请求。",
       agentDisclosureAccept: "接受数据共享",
       agentDisclosureAccepting: "正在请求权限…",
       agentDisclosureAccepted: "已接受数据共享",
@@ -3541,7 +3536,7 @@ const messages: Record<Locale, MessageCatalog> = {
         "测试或使用 Cubby 前，请先接受此说明；如适用，浏览器会同时请求所需权限。",
       agentGrantAccess: "允许访问",
       agentAccessGranted: "已允许访问",
-      agentHostAccessRequired: "测试或使用此自定义服务前，请先允许浏览器访问。",
+      agentHostAccessRequired: "测试或使用此服务前，请先允许浏览器访问。",
       agentStorageHeading: "本机 Cubby 存储与缓存",
       agentStorageIntro:
         "统计本机保存的 Cubby 对话记录、恢复状态、已保存工件与可重新获取的工具缓存；不代表扩展的全部存储。",

@@ -107,10 +107,11 @@ Depending on the features you choose, the extension connects directly to:
 
 - `https://github.com/*`
 - `https://api.github.com/*`
-- `https://api.openai.com/*` when OpenAI is selected
-- `https://openrouter.ai/*` when OpenRouter is selected
-- `https://api.anthropic.com/*` when Anthropic is selected
-- a custom OpenAI-compatible HTTPS origin, or HTTP loopback origin, that you enter and explicitly allow
+- the AI-service origin you select and explicitly allow, which may be OpenAI, OpenRouter, Anthropic, a custom OpenAI-compatible HTTPS origin, or an HTTP loopback origin
+
+Only the two GitHub origins are required host permissions. Every AI-service
+origin, built-in ones included, is requested on demand when you set that service
+up, so the extension has no AI-service access until you grant it.
 
 Provider and GitHub requests do not pass through a developer-operated proxy.
 

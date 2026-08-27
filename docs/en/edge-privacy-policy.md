@@ -85,10 +85,9 @@ The packaged Edge manifest permits only:
 
 - `https://github.com/*`
 - `https://api.github.com/*`
-- `https://api.openai.com/*` when OpenAI is selected
-- `https://openrouter.ai/*` when OpenRouter is selected
-- `https://api.anthropic.com/*` when Anthropic is selected
-- a custom OpenAI-compatible HTTPS origin, or HTTP loopback origin, that you enter and explicitly allow
+- the AI-service origin you select and explicitly allow, which may be OpenAI, OpenRouter, Anthropic, a custom OpenAI-compatible HTTPS origin, or an HTTP loopback origin
+
+Only the two GitHub origins are required host permissions. Every AI-service origin, built-in ones included, is requested on demand when you set that service up.
 
 GitHub and Provider requests go directly from Microsoft Edge to those services. They do not pass through a developer proxy. No analytics SDK, advertising network, tracking service, developer proxy, or developer server receives extension data.
 
@@ -117,8 +116,7 @@ The Edge package uses:
 - `alarms` for recovery scheduling of durable full-library Organize analysis and approved Apply operations across MV3 service-worker suspension
 - `https://github.com/*` to mount product surfaces on GitHub pages
 - `https://api.github.com/*` for authenticated GitHub features
-- `https://api.openai.com/*`, `https://openrouter.ai/*`, and `https://api.anthropic.com/*` for user-configured built-in Providers
-- `https://*/*`, `http://localhost/*`, and `http://127.0.0.1/*` as optional host permissions for a user-configured custom compatible origin; Options requests access only after an explicit **Allow access** action, and credentials and requests remain bound to the exact canonical origin, including its port
+- `https://*/*`, `http://localhost/*`, and `http://127.0.0.1/*` as optional host permissions for whichever AI service the user configures, built-in or custom; Options requests access only after an explicit **Allow access** action, and credentials and requests remain bound to the exact canonical origin, including its port
 
 Denied optional access makes no Provider request.
 

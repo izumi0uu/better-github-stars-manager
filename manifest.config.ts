@@ -21,12 +21,12 @@ export function createProductManifest() {
     128: 'icons/icon-128.png',
   },
   permissions: ['storage', 'alarms'],
+  // Only GitHub is required. Every model provider origin, built-in or custom,
+  // is granted on demand through `optional_host_permissions` when the user
+  // configures Cubby, so installing the extension never asks for provider hosts.
   host_permissions: [
     'https://api.github.com/*',
-    'https://api.openai.com/*',
-    'https://api.anthropic.com/*',
     'https://github.com/*',
-    'https://openrouter.ai/*',
   ],
   optional_host_permissions: [
     'https://*/*',

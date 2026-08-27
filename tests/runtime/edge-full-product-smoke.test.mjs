@@ -13,10 +13,7 @@ const fullProductManifest = Object.freeze({
   permissions: ['storage', 'alarms'],
   host_permissions: [
     'https://api.github.com/*',
-    'https://api.openai.com/*',
-    'https://api.anthropic.com/*',
     'https://github.com/*',
-    'https://openrouter.ai/*',
   ],
   optional_host_permissions: [
     'https://*/*',
@@ -55,11 +52,8 @@ test('Edge manifest projects the exact full Chrome permission surface', () => {
   assert.deepEqual(evidence.permissions, ['alarms', 'storage']);
   assert.deepEqual(evidence.optionalPermissions, []);
   assert.deepEqual(evidence.hostPermissions, [
-    'https://api.anthropic.com/*',
     'https://api.github.com/*',
-    'https://api.openai.com/*',
     'https://github.com/*',
-    'https://openrouter.ai/*',
   ]);
   assert.deepEqual(evidence.optionalHostPermissions, [
     'http://127.0.0.1/*',
@@ -71,7 +65,7 @@ test('Edge manifest projects the exact full Chrome permission surface', () => {
     () => assertFullProductEdgeManifest({
       ...fullProductManifest,
       host_permissions: fullProductManifest.host_permissions.filter(
-        (permission) => permission !== 'https://api.openai.com/*',
+        (permission) => permission !== 'https://api.github.com/*',
       ),
     }),
     /manifest\.host_permissions is not the full-product Edge set/u,

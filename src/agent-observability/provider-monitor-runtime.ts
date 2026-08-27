@@ -5,10 +5,7 @@ import {
   type AgentProviderConnectionFailureDetails,
   type AgentProviderConnectionResult,
 } from '@/agent-harness';
-import {
-  getAgentProviderHostAccess,
-  hasAgentProviderHostPermission,
-} from '@/agent-harness/provider-access';
+import { hasAgentProviderHostPermission } from '@/agent-harness/provider-access';
 import { VERSION_HASH } from '@/dev';
 import {
   createProviderDebugSnapshot,
@@ -36,12 +33,9 @@ export function createProviderDiagnosticsRuntime(): ProviderDiagnosticsRuntime {
   const createCurrentReport = async (probe: ProviderDebugProbeState) => {
     const config = (await authStore.getConfig()).agentProvider;
     const snapshot = createProviderDebugSnapshot(config);
-    const access = getAgentProviderHostAccess(config.provider, config.baseUrl);
-    const hostAccess = access.kind === 'required'
-      ? 'built-in'
-      : await hasAgentProviderHostPermission(config.provider, config.baseUrl)
-        ? 'granted'
-        : 'required';
+    const hostAccess = await hasAgentProviderHostPermission(config.provider, config.baseUrl)
+      ? 'granted'
+      : 'required';
     return createProviderDiagnosticsShare({
       snapshot,
       hostAccess,

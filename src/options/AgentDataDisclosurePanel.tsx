@@ -8,7 +8,6 @@ export function AgentDataDisclosurePanel({
   canonicalOrigin,
   disclosureAccepted,
   disclosureBusy,
-  customHostAccessRequired,
   hostAccessGranted,
   hostAccessBusy,
   onAcceptDisclosure,
@@ -18,7 +17,6 @@ export function AgentDataDisclosurePanel({
   canonicalOrigin: string;
   disclosureAccepted: boolean;
   disclosureBusy: boolean;
-  customHostAccessRequired: boolean;
   hostAccessGranted: boolean;
   hostAccessBusy: boolean;
   onAcceptDisclosure: () => void;
@@ -78,11 +76,7 @@ export function AgentDataDisclosurePanel({
 
           <p className="gsm-body-note">{m.options.agentDisclosureKeyException}</p>
           <p className="gsm-body-note">{m.options.agentDisclosureLocalHistory}</p>
-          <p className="gsm-body-note">
-            {customHostAccessRequired
-              ? m.options.agentDisclosureCustomAccess
-              : m.options.agentDisclosureBuiltInAccess}
-          </p>
+          <p className="gsm-body-note">{m.options.agentDisclosureProviderAccess}</p>
         </div>
       </details>
 
@@ -113,30 +107,28 @@ export function AgentDataDisclosurePanel({
         )}
       </div>
 
-      {customHostAccessRequired && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2.5">
-          {hostAccessGranted ? (
-            <span className="inline-flex items-center gap-1.5 text-xs text-success" role="status">
-              <Check className="size-4" />
-              {m.options.agentAccessGranted}
-            </span>
-          ) : (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onGrantAccess}
-              disabled={disclosureBusy || hostAccessBusy}
-            >
-              {hostAccessBusy && <Spinner data-icon="inline-start" />}
-              {m.options.agentGrantAccess}
-            </Button>
-          )}
-          {!hostAccessGranted && (
-            <p className="text-xs text-warning">{m.options.agentHostAccessRequired}</p>
-          )}
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2.5">
+        {hostAccessGranted ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-success" role="status">
+            <Check className="size-4" />
+            {m.options.agentAccessGranted}
+          </span>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onGrantAccess}
+            disabled={disclosureBusy || hostAccessBusy}
+          >
+            {hostAccessBusy && <Spinner data-icon="inline-start" />}
+            {m.options.agentGrantAccess}
+          </Button>
+        )}
+        {!hostAccessGranted && (
+          <p className="text-xs text-warning">{m.options.agentHostAccessRequired}</p>
+        )}
+      </div>
     </section>
   );
 }

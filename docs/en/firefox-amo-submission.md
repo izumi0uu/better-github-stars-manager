@@ -69,7 +69,7 @@ The Firefox production output is derived from the exact current Chrome productio
 - `browser_specific_settings.gecko.id`: `{5aeb7340-40e6-428d-9566-f3cacbe06352}` — permanent add-on ID; never change it and never reuse it for a different add-on
 - `browser_specific_settings.gecko.strict_min_version`: `140.0`
 - required permissions: `storage`, `alarms`
-- required host permissions: `https://github.com/*`, `https://api.github.com/*`, `https://api.openai.com/*`, `https://openrouter.ai/*`, `https://api.anthropic.com/*`
+- required host permissions: `https://github.com/*`, `https://api.github.com/*`
 - optional host permissions: `https://*/*`, `http://localhost/*`, `http://127.0.0.1/*`
 - required data-collection permissions: `authenticationInfo`, `websiteActivity`, `websiteContent`
 - optional data-collection permission: `personalCommunications`
@@ -209,13 +209,9 @@ Mounts the manager on GitHub stars and repository pages. Manifest match patterns
 
 Authenticates the provided token, fetches starred and watched repositories, fetches Notifications only after Watch Inbox is enabled, performs requested bounded public-code search, and syncs annotations through the user's own secret Gist.
 
-### `https://api.openai.com/*`, `https://openrouter.ai/*`, `https://api.anthropic.com/*`
+### Optional AI-service hosts
 
-Allow a user who configures OpenAI, OpenRouter, or Anthropic to test the connection and run Cubby directly against that service.
-
-### Optional custom AI-service hosts
-
-`https://*/*`, `http://localhost/*`, and `http://127.0.0.1/*` are optional host permissions because a custom compatible origin is not known at install time. Options requests access only after an explicit **Allow access** action, and the credential and request remain bound to the exact configured canonical origin, including its port. Denied optional access makes no Provider request.
+`https://*/*`, `http://localhost/*`, and `http://127.0.0.1/*` are optional host permissions covering every AI service, built-in or custom, because no provider origin is required at install time. Options requests access only after an explicit **Allow access** action, and the credential and request remain bound to the exact configured canonical origin, including its port. Denied optional access makes no Provider request.
 
 ### Data-collection permissions
 

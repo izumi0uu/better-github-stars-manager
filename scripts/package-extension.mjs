@@ -77,11 +77,8 @@ const reviewedPermissions = Object.freeze({
   permissions: Object.freeze(['alarms', 'storage']),
   optionalPermissions: Object.freeze([]),
   hostPermissions: Object.freeze([
-    'https://api.anthropic.com/*',
     'https://api.github.com/*',
-    'https://api.openai.com/*',
     'https://github.com/*',
-    'https://openrouter.ai/*',
   ]),
   optionalHostPermissions: Object.freeze([
     'http://127.0.0.1/*',

@@ -14,10 +14,7 @@ import {
 const REQUIRED_PERMISSIONS = Object.freeze(['storage', 'alarms']);
 const REQUIRED_HOST_PERMISSIONS = Object.freeze([
   'https://api.github.com/*',
-  'https://api.openai.com/*',
-  'https://api.anthropic.com/*',
   'https://github.com/*',
-  'https://openrouter.ai/*',
 ]);
 const OPTIONAL_HOST_PERMISSIONS = Object.freeze([
   'https://*/*',
