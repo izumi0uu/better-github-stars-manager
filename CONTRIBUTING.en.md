@@ -162,7 +162,7 @@ pnpm build
 pnpm test
 ```
 
-Continuous integration (CI) runs `pnpm typecheck`, `pnpm build`, and `pnpm test` for each Pull Request. CI also runs a credential-free Chrome extension smoke check.
+Continuous integration (CI) runs `pnpm typecheck`, `pnpm build`, and `pnpm test` for each Pull Request. It also builds the Edge and public Demo targets, checks their output contracts, and runs the credential-free Chrome extension smoke check and the public Demo browser smoke. A separate Edge workflow resolves the runner's Microsoft Edge binary and runs `pnpm test:smoke:edge` against it.
 
 ## Use the repository's commit format
 

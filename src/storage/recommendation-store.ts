@@ -13,6 +13,7 @@ import {
 import { normalizeRepositoryFullName } from '@/watch/watch-model';
 import { projectRecommendations } from '@/recommendations/recommendation-projector';
 import { db } from './db';
+import { readLibrarySnapshot } from './library-projection';
 
 const RECOMMENDATION_STATE_ID = 'singleton' as const;
 const RECOMMENDATION_STALE_AFTER_MS = 24 * 60 * 60 * 1_000;
@@ -251,15 +252,15 @@ export async function recordRecommendationFailure(
 /** Query cache rows for one account, excluding ignored and already-starred repositories. */
 export async function listRecommendations(accountLogin: string): Promise<RecommendationRecord[]> {
   const key = accountKey(accountLogin);
-  const [recommendations, stars, ignores] = await Promise.all([
+  const [recommendations, library, ignores] = await Promise.all([
     db.recommendations.where('accountLogin').equals(key).toArray(),
-    db.stars.toArray(),
+    readLibrarySnapshot(),
     db.recommendationIgnores.where('accountLogin').equals(key).toArray(),
   ]);
   return projectRecommendations({
     accountLogin: key,
     recommendations,
-    stars,
+    stars: library.stars,
     ignores,
   });
 }

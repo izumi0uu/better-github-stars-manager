@@ -245,6 +245,31 @@ describe('Radar snapshot storage', () => {
     expect(await countUnseenRadarActivities('viewer', nowMillis, 60)).toBe(1);
   });
 
+  it('bounds window reads at the cutoff and at now, inclusive', async () => {
+    const nowMillis = Date.parse(SECOND);
+    const day = 24 * 60 * 60 * 1_000;
+    const atCutoff = new Date(nowMillis - 60 * day).toISOString();
+    const justInside = new Date(nowMillis - 60 * day + 1_000).toISOString();
+    const justOutside = new Date(nowMillis - 60 * day - 1_000).toISOString();
+    const atNow = new Date(nowMillis).toISOString();
+    const future = new Date(nowMillis + 1_000).toISOString();
+    await commitRadarSnapshot(snapshot([
+      activity('at-cutoff', 'owner/at-cutoff', atCutoff),
+      activity('just-inside', 'owner/just-inside', justInside),
+      activity('just-outside', 'owner/just-outside', justOutside),
+      activity('at-now', 'owner/at-now', atNow),
+      activity('future', 'owner/future', future),
+    ], SECOND, 90));
+
+    const listed = (await listRadarActivities('viewer', nowMillis, 60))
+      .filter((row) => row.source === 'following')
+      .map((row) => row.id)
+      .sort();
+
+    expect(listed).toEqual(['at-cutoff', 'at-now', 'just-inside']);
+    expect(await countUnseenRadarActivities('viewer', nowMillis, 60)).toBe(3);
+  });
+
   it('projects recent live Stars as self activity without copying them into Radar storage', async () => {
     const expiredAt = new Date(Date.parse(SECOND) - 61 * 24 * 60 * 60 * 1_000).toISOString();
     await db.stars.bulkPut([
@@ -578,6 +603,7 @@ describe('Radar snapshot storage', () => {
         dismissedAt: null,
       })],
       complete: false,
+      hasCurrentRequestCost: false,
     };
     const firstCommit = await commitRadarReconciliationStep({
       accountLogin: 'viewer',
@@ -587,6 +613,11 @@ describe('Radar snapshot storage', () => {
     });
     expect(firstCommit.applied).toBe(true);
     expect(await getRadarReconciliation('viewer')).toEqual(activityCheckpoint);
+    expect(firstCommit.checkpoint).not.toHaveProperty('hasCurrentRequestCost');
+    expect(firstCommit.state).not.toHaveProperty('hasCurrentRequestCost');
+    const storedState = await db.radarState.get('singleton');
+    expect(storedState).not.toHaveProperty('hasCurrentRequestCost');
+    expect(storedState?.reconciliation).not.toHaveProperty('hasCurrentRequestCost');
     expect(await db.radarActivities.get('stale')).toBeDefined();
     expect(await db.radarActivities.get('existing')).toMatchObject({
       repositoryDescription: 'updated remote description',
@@ -617,6 +648,7 @@ describe('Radar snapshot storage', () => {
       checkpoint: terminalCheckpoint,
       activities: [],
       complete: true,
+      hasCurrentRequestCost: false,
     };
     await expect(commitRadarReconciliationStep({
       accountLogin: 'viewer',
@@ -696,6 +728,7 @@ describe('Radar snapshot storage', () => {
         checkpoint: terminal,
         activities: [activity('fresh', 'owner/fresh', THIRD)],
         complete: true,
+        hasCurrentRequestCost: false,
       },
     });
 
@@ -731,6 +764,7 @@ describe('Radar snapshot storage', () => {
         checkpoint,
         activities: [],
         complete: false,
+        hasCurrentRequestCost: false,
       },
     });
 
