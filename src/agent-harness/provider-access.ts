@@ -16,6 +16,12 @@ export type AgentHostPermissions = {
   request(details: { origins: string[] }): Promise<boolean>;
 };
 
+/**
+ * Built-in provider origins are required host permissions; only a custom origin is
+ * optional, because it is unknown at install time. Automation cannot complete
+ * `chrome.permissions.request` for an optional host, so making the built-ins optional
+ * would leave the packaged Cubby release gates unverifiable.
+ */
 export function getAgentProviderHostAccess(
   provider: AgentProviderId,
   baseUrl: string | null | undefined,
