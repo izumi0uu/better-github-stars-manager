@@ -138,7 +138,7 @@ export type OptionsMessages = {
 
 export const enOptionsMessages: OptionsMessages = {
   title: "Better GitHub Stars Manager — Options",
-  starRepoButton: "Like the project? Leave a star:)",
+  starRepoButton: "Like the project? Leave a star!",
   storeRatingHeading: "Store rating",
   storeRatingManualAction: (store) => `Rate in ${store}`,
   storeRatingManualHint: (store) =>
@@ -309,7 +309,7 @@ export const enOptionsMessages: OptionsMessages = {
 
 export const zhOptionsMessages: OptionsMessages = {
   title: "Better GitHub Stars Manager — 选项",
-  starRepoButton: "点个Star~",
+  starRepoButton: "点个 Star 吧",
   storeRatingHeading: "商店评分",
   storeRatingManualAction: (store) => `前往 ${store} 评分`,
   storeRatingManualHint: (store) =>

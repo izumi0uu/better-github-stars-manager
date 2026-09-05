@@ -77,7 +77,7 @@ export const zhOnboardingMessages: OnboardingMessages = {
   createPatLabel: "创建 GitHub Classic PAT",
   openOptions: "在选项页添加 Classic PAT",
   syncingBody: "正在拉取你的 stars…首次同步完成后列表会自动填充。",
-  syncFailedBody: "首次同步失败:",
+  syncFailedBody: "首次同步失败：",
   retry: "重试同步",
   gotIt: "知道了",
   tooltipSyncFirst:
@@ -102,5 +102,5 @@ export const zhOnboardingMessages: OnboardingMessages = {
   coachNext: "下一步",
   coachBack: "上一步",
   coachSkip: "跳过引导",
-  coachOf: (current, total) => `第 ${current} 步,共 ${total} 步`,
+  coachOf: (current, total) => `第 ${current} 步，共 ${total} 步`,
 };

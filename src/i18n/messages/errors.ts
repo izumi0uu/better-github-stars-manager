@@ -152,13 +152,13 @@ export const zhErrorMessages: ErrorMessages = {
   tokenGistProbeBadShape:
     "GitHub 已创建探针 Gist,但返回内容不符合预期。未保存 token,请重试。",
   tokenGistCleanupStatus: (status) =>
-    `GitHub 已创建探针 Gist,但清理失败(${status})。未保存 token,请重试。`,
+    `GitHub 已创建探针 Gist，但清理失败（${status}）。未保存 token，请重试。`,
   ghTokenRejected: "已保存的 GitHub Classic PAT 被拒绝或已过期，请在选项页更换。",
-  ghRateLimit: "已达到 GitHub 速率限制,请稍候重试。",
+  ghRateLimit: "已达到 GitHub 速率限制，请稍候重试。",
   ghNoToken: "应用需要 GitHub Classic PAT 鉴权，请在选项页添加。",
   ghForbidden:
     "GitHub 拒绝了请求 (403)。请在选项页检查 Classic PAT scopes 和仓库访问权限。",
-  ghTimeout: (page) => `GitHub 响应超时(第 ${page} 页),请稍后重试。`,
+  ghTimeout: (page) => `GitHub 响应超时（第 ${page} 页），请稍后重试。`,
   ghNetwork: (detail) => `无法连接 GitHub(${detail}),请检查网络。`,
   ghPageStatus: (status) =>
     `GitHub 返回 ${status}。请重试，或在选项页更换 Classic PAT。`,
@@ -166,14 +166,14 @@ export const zhErrorMessages: ErrorMessages = {
   tokenWatchingStatus: (status) => `检查 Notifications 访问权限时 GitHub 返回 ${status}。`,
   tokenWatchingNetwork: "Classic PAT 已保存，但暂时无法检查 Notifications 访问权限。",
   tokenWatchingBadShape: "GitHub 返回了非预期的 Notifications 响应。",
-  ghBadShape: "GitHub 返回了非预期的数据结构,可能需要全量重新同步。",
+  ghBadShape: "GitHub 返回了非预期的数据结构，可能需要全量重新同步。",
   gistNoToken: "Gist 同步需要带 gist scope 的 GitHub Classic PAT。",
   gistCreateFailed:
     "无法创建同步用 Gist，请确认 Classic PAT 具有 gist scope。",
   gistPushFailed:
     "无法写入同步用 Gist，请确认 Classic PAT 具有 gist scope。",
   gistPullFailed:
-    "无法读取同步用 Gist。它可能已被删除,或 token 缺少「Gists (read)」权限。",
+    "无法读取同步用 Gist。它可能已被删除，或 token 缺少「Gists (read)」权限。",
   agentApiKeyEmpty: "测试连接前请先填写 API 密钥。",
   agentModelEmpty: "测试连接前请先填写模型。",
   agentBaseUrlEmpty: "请先填写这个 AI 服务的 Base URL。",
@@ -198,5 +198,5 @@ export const zhErrorMessages: ErrorMessages = {
     "请先在高级设置中增大工作上下文窗口，再使用 Cubby。",
   agentArtifactCoverageStalled:
     "Cubby 无法完成对已存结果的完整校验，请重试该请求。",
-  unknown: (raw) => `出错了:${raw}`,
+  unknown: (raw) => `出错了：${raw}`,
 };

@@ -66,7 +66,7 @@ export const zhCommonMessages: CommonMessages = {
   next: "下一个",
   copyRepository: "复制仓库链接",
   copied: "已复制",
-  current: (value) => `当前: ${value}`,
+  current: (value) => `当前：${value}`,
   phase: (phase) =>
     ({
       idle: "空闲",
