@@ -46,6 +46,7 @@ export function createStarsSyncUsecase(dependencies: {
       await authStore.assertGitHubCredentialCurrent(credential);
       await dependencies.reconcileWatchScope();
       if (phase !== 'rescan') await finishOnboarding(credential, false);
+      await authStore.assertGitHubCredentialCurrent(credential);
       idle(complete(result, messages));
       return result;
     } catch (error) {

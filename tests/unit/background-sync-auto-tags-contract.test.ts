@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, describe, it, vi } from 'vitest';
 import { createChromeMock } from '../helpers/chrome-mock';
 import { installGitHubCredential } from '../helpers/github-credential';
 import { authStore } from '../../src/auth/auth-store';
+import { getMessages } from '../../src/i18n';
 import { db } from '../../src/storage/db';
 import { createStarsSyncUsecase } from '../../src/background/stars-sync-usecase';
 import { createGistSyncUsecase } from '../../src/background/gist-sync-usecase';
@@ -23,7 +24,7 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 afterAll(() => db.close());
 
-function fixture() {
+function fixture(reconcileWatchScope: () => Promise<void> = async () => {}) {
   const queue = createSerializedRunner();
   const progress: SyncProgress[] = [];
   const source: StarSource = {
@@ -33,7 +34,7 @@ function fixture() {
     syncOwnedPublicRepositories: vi.fn(async () => ({ added: 1, updated: 0 })),
     star: vi.fn(), unstar: vi.fn(), getUsername: vi.fn(),
   };
-  const stars = createStarsSyncUsecase({ queue, source, setProgress: (p) => progress.push(p), reconcileWatchScope: async () => {} });
+  const stars = createStarsSyncUsecase({ queue, source, setProgress: (p) => progress.push(p), reconcileWatchScope });
   return { queue, progress, source, stars };
 }
 
@@ -105,6 +106,32 @@ describe('Stars and Gist lifecycle ownership', () => {
     });
     await assert.rejects(stars.syncFull(), { message: 'GITHUB_CREDENTIAL_CHANGED' });
     assert.equal((await authStore.getConfig()).onboardingStage, 'awaiting_sync');
+  });
+
+  it.each([
+    ['syncFull', 'full'],
+    ['syncIncremental', 'incremental'],
+    ['syncRescan', 'rescan'],
+  ] as const)('rejects %s completion when Watch reconciliation replaces the account', async (method, phase) => {
+    const messages = getMessages(await authStore.getLocale());
+    const { stars, progress } = fixture(async () => {
+      await installGitHubCredential('github_pat_replacement', 'other-account');
+      await authStore.update({ onboardingStage: 'awaiting_sync', seenOnboarding: false });
+    });
+
+    await assert.rejects(stars[method](), { name: 'Error', message: 'GITHUB_CREDENTIAL_CHANGED' });
+
+    assert.equal(progress[0].phase, phase);
+    assert.deepEqual(progress.filter((entry) => entry.phase === 'idle'), [{
+      phase: 'idle',
+      done: 0,
+      total: null,
+      message: messages.errors.unknown('GITHUB_CREDENTIAL_CHANGED'),
+    }]);
+    const config = await authStore.getConfig();
+    assert.equal(config.username, 'other-account');
+    assert.equal(config.onboardingStage, 'awaiting_sync');
+    assert.equal(config.seenOnboarding, false);
   });
 
   it('Gist failure settles progress before queued work begins and preserves success result shape', async () => {
