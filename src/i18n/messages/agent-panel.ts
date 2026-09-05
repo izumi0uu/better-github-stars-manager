@@ -160,7 +160,6 @@ export type AgentPanelMessages = {
   emptyBody: string;
   applied: (count: number) => string;
   loadFailed: string;
-  created: (count: number) => string;
   range: (start: number, end: number, total: number) => string;
   toolbarApplying: string;
   toolbarReview: string;
@@ -377,7 +376,6 @@ export const enAgentPanelMessages: AgentPanelMessages = {
   emptyBody: "Suggestions will appear here.",
   applied: (count) => `${count} suggestions applied.`,
   loadFailed: "Could not load suggestions.",
-  created: (count) => `${count} suggestions ready.`,
   range: (start, end, total) => `${start}-${end} of ${total}`,
   toolbarApplying: "Applying",
   toolbarReview: "Ready for review",
@@ -624,7 +622,6 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
   emptyBody: "建议会显示在这里。",
   applied: (count) => `已应用 ${count} 条建议。`,
   loadFailed: "无法加载建议。",
-  created: (count) => `已准备 ${count} 条建议。`,
   range: (start, end, total) => `${start}-${end} / ${total}`,
   toolbarApplying: "正在应用",
   toolbarReview: "待审阅",

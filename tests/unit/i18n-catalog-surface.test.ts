@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { describe, it } from 'vitest';
+import ts from 'typescript';
+import { beforeAll, describe, it } from 'vitest';
 import { messages } from '@/i18n/messages';
 
 /**
@@ -18,25 +19,23 @@ import { messages } from '@/i18n/messages';
  *
  * - Only product source counts. Scanning `tests` would let a test satisfy the
  *   contract for a key no shipped surface reads.
- * - Only member access counts. Reads reach the catalog through `m.surface.key`,
- *   a typed surface alias such as `MessageCatalog['agentPanel']`, or a hand-written
- *   label interface that copies a subset of keys, so the shape they share is
- *   `.key`. A bare identifier of the same name — a local variable, a parameter, a
- *   comment word — is not a read.
+ * - Only parsed member-access expressions count: `.key`, `?.key`, and computed
+ *   string or no-substitution template names. Bare identifiers, type references,
+ *   comments, and literal text are not reads; expressions inside JSX and template
+ *   substitutions are scanned normally.
  *
- * Known bound: matching `.key` without its namespace means a key can be credited
- * to an unrelated member of the same name, so this catches abandoned keys rather
- * than proving each individual read. Requiring the full `surface.key` path would
- * flag about 10% of the catalog falsely, because label objects are threaded
- * through props and hand-written interfaces that drop the surface name. Tightening
- * this needs a type-aware pass, not a stricter regex.
+ * Known bound: matching member names without their namespace means a key can be
+ * credited to an unrelated member of the same name, so this catches abandoned
+ * keys rather than proving each individual read. Label objects are threaded
+ * through typed aliases, props, and hand-written interfaces that drop the surface
+ * name. Resolving those namespaces or dynamic computed names needs a type-aware
+ * pass, not just syntax.
  */
 
 const ROOT = process.cwd();
 const PRODUCT_ROOT = 'src';
 const CATALOG_DIR = path.join('src', 'i18n');
 const SCANNED_EXTENSIONS = new Set(['.ts', '.tsx']);
-const MEMBER_ACCESS = /\.([A-Za-z_$][A-Za-z0-9_$]*)/g;
 
 function leafKeys(value: unknown, trail: readonly string[] = []): readonly string[][] {
   if (!value || typeof value !== 'object') return trail.length > 0 ? [[...trail]] : [];
@@ -57,18 +56,106 @@ function productFiles(directory: string = PRODUCT_ROOT): readonly string[] {
   });
 }
 
-function readMemberNames(): ReadonlySet<string> {
+function collectMemberNames(
+  source: string,
+  file: string,
+  accessed: Set<string> = new Set<string>(),
+): ReadonlySet<string> {
+  const sourceFile = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    path.extname(file) === '.tsx' ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  function visit(node: ts.Node): void {
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.name)) {
+      accessed.add(node.name.text);
+    } else if (ts.isElementAccessExpression(node)) {
+      const argument = node.argumentExpression;
+      if (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) {
+        accessed.add(argument.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return accessed;
+}
+
+function readMemberNames(files: readonly string[]): ReadonlySet<string> {
   const accessed = new Set<string>();
-  for (const file of productFiles()) {
+  for (const file of files) {
     const source = readFileSync(path.join(ROOT, file), 'utf8');
-    for (const match of source.matchAll(MEMBER_ACCESS)) accessed.add(match[1]!);
+    collectMemberNames(source, file, accessed);
   }
   return accessed;
 }
 
+describe('catalog member-access detection', () => {
+  it.each(['sample.ts', 'sample.tsx'])('collects real static member names in %s', (file) => {
+    const source = [
+      'labels.title;',
+      'labels?.subtitle;',
+      'labels["caption"];',
+      "labels['description'];",
+      'labels[`summary`];',
+      'labels?.["hint"];',
+      'labels?.[`tooltip`];',
+      'labels.title;',
+    ].join('\n');
+
+    assert.deepEqual(
+      [...collectMemberNames(source, file)].sort(),
+      ['caption', 'description', 'hint', 'subtitle', 'summary', 'title', 'tooltip'],
+    );
+  });
+
+  it('parses TypeScript assertions as expressions rather than JSX', () => {
+    assert.deepEqual(
+      [...collectMemberNames('(<Labels>labels).heading;', 'sample.ts')],
+      ['heading'],
+    );
+  });
+
+  it('collects expressions within JSX and template substitutions, not their literal text', () => {
+    const source = [
+      'const view = <span title="labels.attributeText" aria-label={labels.accessibleName}>',
+      '  labels.childText {labels.visibleName}',
+      '</span>;',
+      'const text = `labels.templateHead ${labels.interpolatedName} labels.templateTail`;',
+    ].join('\n');
+
+    assert.deepEqual(
+      [...collectMemberNames(source, 'sample.tsx')].sort(),
+      ['accessibleName', 'interpolatedName', 'visibleName'],
+    );
+  });
+
+  it.each([
+    ['line comments', '// labels.commentName'],
+    ['block comments', '/* labels.commentName */'],
+    ['single-quoted strings', "const text = 'labels.quotedName';"],
+    ['double-quoted strings', 'const text = "labels.quotedName";'],
+    ['template text', 'const text = `labels.templateName`;'],
+    ['regular expressions', 'const pattern = /labels.regexName/;'],
+    ['type references', 'type Label = Labels.typeName;'],
+    ['dynamic computed names', 'labels[key]; labels[`prefix${key}`];'],
+  ])('does not credit %s as member reads', (_kind, source) => {
+    assert.deepEqual([...collectMemberNames(source, 'sample.ts')], []);
+  });
+});
+
 describe('i18n catalog surface', () => {
+  let files: readonly string[];
+  let accessed: ReadonlySet<string>;
+
+  beforeAll(() => {
+    files = productFiles();
+    accessed = readMemberNames(files);
+  });
+
   it('has no leaf message key that no product surface reads', () => {
-    const accessed = readMemberNames();
     const unread = leafKeys(messages.en)
       .filter((trail) => !accessed.has(trail[trail.length - 1]!))
       .map((trail) => trail.join('.'))
@@ -87,11 +174,9 @@ describe('i18n catalog surface', () => {
     // Guards the scan itself. A broken walk, a wrong extension filter, or a scope
     // that leaked into tests would make the contract above vacuously true, so
     // assert on a name the product reads and one only this file mentions.
-    const files = productFiles();
     assert.ok(files.length > 200, `expected a populated product tree, found ${files.length} files`);
     assert.ok(files.every((file) => !file.startsWith('tests')), 'test sources must not count as reads');
 
-    const accessed = readMemberNames();
     assert.ok(accessed.has('agentPanel'), 'product catalog reads were not scanned');
     assert.ok(
       !accessed.has('gsmCatalogSurfaceProbeOnlyInThisTest'),

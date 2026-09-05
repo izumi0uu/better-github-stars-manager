@@ -9,8 +9,6 @@ export type FilterSidebarMessages = {
   onlyUntaggedHint: string;
   onlyArchivedLabel: string;
   onlyArchivedHint: string;
-  showTombstoneLabel: string;
-  showTombstoneHint: string;
   languages: (count: number) => string;
   languagesSearch: string;
   languagesEmpty: string;
@@ -46,8 +44,6 @@ export const enFilterSidebarMessages: FilterSidebarMessages = {
   onlyUntaggedHint: "",
   onlyArchivedLabel: "Archived",
   onlyArchivedHint: "",
-  showTombstoneLabel: "Show unstarred",
-  showTombstoneHint: "tombstoned repos",
   languages: (count) => `Languages${count > 0 ? ` · ${count}` : ""}`,
   languagesSearch: "Filter languages…",
   languagesEmpty: "No languages match.",
@@ -86,8 +82,6 @@ export const zhFilterSidebarMessages: FilterSidebarMessages = {
   onlyUntaggedHint: "",
   onlyArchivedLabel: "已归档",
   onlyArchivedHint: "",
-  showTombstoneLabel: "显示已取消 Star",
-  showTombstoneHint: "已取消 Star 的仓库",
   languages: (count) => `Languages${count > 0 ? ` · ${count}` : ""}`,
   languagesSearch: "筛选语言…",
   languagesEmpty: "没有匹配的语言。",
