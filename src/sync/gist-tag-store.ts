@@ -1,7 +1,7 @@
 import type { GistPayload, GistPayloadV1, GistPayloadV2, Tag, TagMeta } from '@/types';
 import type { CountProgressCallback } from '@/api/tag-store';
 import { db } from '@/storage/db';
-import { authStore } from '@/auth/auth-store';
+import { authStore, type GitHubCredentialSnapshot } from '@/auth/auth-store';
 import {
   clearDirty,
   clearTagDirtyOutbox,
@@ -25,25 +25,24 @@ import { canonicalTagKey, preferredCanonicalTagMeta } from '@/tags/tag-model';
 const GIST_FILENAME = 'better-github-stars-manager-tags.json';
 const GIST_DESC = 'Better GitHub Stars Manager — tag sync (do not edit)';
 
-function gistHeaders(): Promise<HeadersInit> {
-  return authStore.getToken().then((token) => {
-    if (!token) throw new Error(GIST_NO_TOKEN);
-    return {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-    };
-  });
+async function gistHeaders(credential: GitHubCredentialSnapshot): Promise<HeadersInit> {
+  if (!credential.mainToken) throw new Error(GIST_NO_TOKEN);
+  await authStore.assertGitHubCredentialCurrent(credential);
+  return {
+    Authorization: `Bearer ${credential.mainToken}`,
+    Accept: 'application/vnd.github+json',
+    'Content-Type': 'application/json',
+  };
 }
 
-async function clearBoundGist(): Promise<void> {
-  await authStore.update({ gistId: null, gistSyncCursor: null });
+async function clearBoundGist(credential: GitHubCredentialSnapshot): Promise<void> {
+  await authStore.updateForGitHubCredential(credential, { gistId: null, gistSyncCursor: null });
 }
 
-async function createGist(): Promise<string> {
+async function createGist(credential: GitHubCredentialSnapshot): Promise<string> {
   const res = await fetch('https://api.github.com/gists', {
     method: 'POST',
-    headers: await gistHeaders(),
+    headers: await gistHeaders(credential),
     body: JSON.stringify({
       description: GIST_DESC,
       public: false,
@@ -52,29 +51,30 @@ async function createGist(): Promise<string> {
   });
   if (!res.ok) throw new Error(GIST_CREATE_FAILED);
   const body = (await res.json()) as { id: string };
-  await authStore.update({ gistId: body.id });
+  await authStore.updateForGitHubCredential(credential, { gistId: body.id });
   return body.id;
 }
 
-async function ensureWritableGist(): Promise<{ id: string; recreated: boolean }> {
-  const cfg = await authStore.getConfig();
-  if (cfg.gistId) {
-    const res = await fetch(`https://api.github.com/gists/${cfg.gistId}`, {
-      headers: await gistHeaders(),
+async function ensureWritableGist(credential: GitHubCredentialSnapshot, gistId: string | null): Promise<{ id: string; recreated: boolean }> {
+  if (gistId) {
+    const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+      headers: await gistHeaders(credential),
     });
-    if (res.ok) return { id: cfg.gistId, recreated: false };
+    await authStore.assertGitHubCredentialCurrent(credential);
+    if (res.ok) return { id: gistId, recreated: false };
     if (res.status !== 404) throw new Error(GIST_PUSH_FAILED);
-    await clearBoundGist();
+    await clearBoundGist(credential);
   }
-  return { id: await createGist(), recreated: true };
+  return { id: await createGist(credential), recreated: true };
 }
 
-async function readGist(id: string): Promise<{ payload: GistPayload | null; missing: boolean }> {
-  const res = await fetch(`https://api.github.com/gists/${id}`, { headers: await gistHeaders() });
+async function readGist(credential: GitHubCredentialSnapshot, id: string): Promise<{ payload: GistPayload | null; missing: boolean }> {
+  const res = await fetch(`https://api.github.com/gists/${id}`, { headers: await gistHeaders(credential) });
+  await authStore.assertGitHubCredentialCurrent(credential);
   // 404 = the gist was deleted; 401/403 = token lost Gist access. Surface these
   // instead of silently returning null (which used to look like "0 merged" on Pull).
   if (res.status === 404) {
-    await clearBoundGist();
+    await clearBoundGist(credential);
     return { payload: null, missing: true };
   }
   if (!res.ok) throw new Error(GIST_PULL_FAILED);
@@ -143,6 +143,8 @@ export const gistTagStore = {
     dirtySnapshot: DirtySnapshot,
     onProgress?: CountProgressCallback,
   ): Promise<{ pushed: number; snapshot: number; recreated: boolean }> {
+    const credential = await authStore.getGitHubCredentialSnapshot();
+    const { gistId } = await authStore.getConfig();
     const durableSnapshot = await snapshotTagDirtyOutbox();
     const pushedNames = new Set([
       ...dirtySnapshot.names.map(({ name }) => name),
@@ -152,7 +154,7 @@ export const gistTagStore = {
       || durableSnapshot.some((row) => row.kind === 'meta');
     const hasLocalChanges = pushedNames.size > 0 || pushingMeta;
     const pushed = pushedNames.size + (pushingMeta ? 1 : 0);
-    const { id, recreated } = await ensureWritableGist();
+    const { id, recreated } = await ensureWritableGist(credential, gistId);
     // Explicit Push still creates/binds a gist when none exists, even if the
     // local snapshot hasn't changed since the last sync. Only skip work when
     // we're already bound to a live gist and there is nothing new to upload.
@@ -161,16 +163,18 @@ export const gistTagStore = {
     const { payload, total } = await buildPayload(onProgress);
     const res = await fetch(`https://api.github.com/gists/${id}`, {
       method: 'PATCH',
-      headers: await gistHeaders(),
+      headers: await gistHeaders(credential),
       body: JSON.stringify({
         description: GIST_DESC,
         files: { [GIST_FILENAME]: { content: JSON.stringify(payload) } },
       }),
     });
     if (!res.ok) throw new Error(GIST_PUSH_FAILED);
-    clearDirty(dirtySnapshot);
-    await clearTagDirtyOutbox(durableSnapshot);
-    await authStore.update({ gistSyncCursor: payload.exportedAt });
+    await authStore.withGitHubCredential(credential, async () => {
+      await clearTagDirtyOutbox(durableSnapshot);
+      clearDirty(dirtySnapshot);
+    });
+    await authStore.updateForGitHubCredential(credential, { gistSyncCursor: payload.exportedAt });
     onProgress?.(total, total);
     return { pushed, snapshot: total, recreated };
   },
@@ -180,12 +184,13 @@ export const gistTagStore = {
    * favorite, and gh_list_id keep row-level mtime conflict resolution.
    */
   async pull(onProgress?: CountProgressCallback): Promise<PullResult> {
+    const credential = await authStore.getGitHubCredentialSnapshot();
     const cfg = await authStore.getConfig();
     if (!cfg.gistId) {
       // No gist yet — nothing to pull. (First device to sync pushes first.)
       return { merged: 0, total: 0, missing: false };
     }
-    const { payload: remote, missing } = await readGist(cfg.gistId);
+    const { payload: remote, missing } = await readGist(credential, cfg.gistId);
     if (!remote) return { merged: 0, total: 0, missing };
     const total = Object.keys(remote.tags).length + Object.keys(remote.tagMeta).length;
 
@@ -221,7 +226,9 @@ export const gistTagStore = {
       done++;
       if (done === total || done % 50 === 0) tick();
     }
-    if (mergedTags.length > 0) await db.tags.bulkPut(mergedTags);
+    if (mergedTags.length > 0) {
+      await authStore.withGitHubCredential(credential, () => db.tags.bulkPut(mergedTags));
+    }
 
     // Merge metadata aliases as one identity. This keeps an older spelling from
     // reappearing beside a newer delete tombstone after cross-device sync.
@@ -229,7 +236,7 @@ export const gistTagStore = {
       Object.entries(remote.tagMeta).map(([name, meta]) => ({ name, ...meta })),
     );
     const localMetaGroups = groupTagMeta(await db.tagMeta.toArray());
-    await db.transaction('rw', db.tagMeta, async () => {
+    await authStore.withGitHubCredential(credential, () => db.transaction('rw', db.tagMeta, async () => {
       for (const [key, remoteAliases] of remoteMetaGroups) {
         const localAliases = localMetaGroups.get(key) ?? [];
         const local = localAliases.length > 0 ? selectTagMeta(localAliases) : undefined;
@@ -247,7 +254,7 @@ export const gistTagStore = {
         done += remoteAliases.length;
         if (done === total || done % 50 === 0) tick();
       }
-    });
+    }));
 
     tick();
     return { merged, total, missing: false };

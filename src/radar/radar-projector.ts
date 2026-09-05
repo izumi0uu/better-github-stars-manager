@@ -9,7 +9,7 @@ import {
   type RadarActivityRecord,
 } from '@/radar/radar-model';
 import { normalizeRepositoryFullName } from '@/watch/watch-model';
-import { canonicalTagKey, excludedCanonicalTagKeys, visibleTagNames } from '@/tags/tag-model';
+import { excludedCanonicalTagKeys, visibleTagNames, withoutExcludedTagNames } from '@/tags/tag-model';
 
 export type RadarProjectionSource = Readonly<{
   accountLogin: string;
@@ -64,10 +64,8 @@ function ownStarPresentation(
       seen: true,
       viewerHasStarred: true,
       favorite: tag?.favorite === true,
-      tags: tag ? visibleTagNames(tag) : [],
-      suggestedTags: activity.repositoryTopics.filter(
-        (topic) => !excludedTagKeys.has(canonicalTagKey(topic)),
-      ),
+      tags: visibleTagNames(tag, excludedTagKeys),
+      suggestedTags: withoutExcludedTagNames(activity.repositoryTopics, excludedTagKeys),
       displayedStargazerCount: star.stargazers_count,
     };
   } catch {
@@ -131,10 +129,8 @@ export function projectRadarActivities(source: RadarProjectionSource): RadarActi
       repositoryTopics,
       viewerHasStarred: star ? hasLiveStar : activity.viewerHadStarred,
       favorite: tag?.favorite === true,
-      tags: tag ? visibleTagNames(tag) : [],
-      suggestedTags: repositoryTopics.filter(
-        (topic) => !excludedTagKeys.has(canonicalTagKey(topic)),
-      ),
+      tags: visibleTagNames(tag, excludedTagKeys),
+      suggestedTags: withoutExcludedTagNames(repositoryTopics, excludedTagKeys),
       displayedStargazerCount: star?.stargazers_count ?? activity.repositoryStargazerCount,
     };
   });

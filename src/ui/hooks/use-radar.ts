@@ -126,19 +126,28 @@ export function useRadar({
     fullName: string,
     favorite: boolean,
   ) => {
+    if (!mountedRef.current || mutatingRef.current) return null;
+    setRecommendationFavorites((current) => ({ ...current, [repositoryKey]: favorite }));
     const result = await mutate(
       { kind: 'favorite', repositoryKey },
-      () => runtime.setFavorite(fullName, favorite),
+      async () => {
+        try {
+          return await runtime.setFavorite(fullName, favorite);
+        } finally {
+          await recommendation.reload(true);
+        }
+      },
       true,
     );
-    if (result !== null && mountedRef.current) {
-      setRecommendationFavorites((current) => ({
-        ...current,
-        [repositoryKey]: favorite,
-      }));
+    if (mountedRef.current) {
+      setRecommendationFavorites((current) => {
+        const next = { ...current };
+        delete next[repositoryKey];
+        return next;
+      });
     }
     return result;
-  }, [mutate, runtime]);
+  }, [mutate, recommendation.reload, runtime]);
 
   const addTag = useCallback((repositoryKey: string, fullName: string, tag: string) => mutate(
     { kind: 'tag', repositoryKey },

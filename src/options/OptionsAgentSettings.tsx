@@ -42,7 +42,6 @@ import type {
   AgentProviderId,
 } from "@/types";
 import type {
-  AgentStorageCleanupResult,
   AgentStorageUsageSnapshot,
 } from "@/storage/agent-storage-store";
 import { AgentDataDisclosurePanel } from "./AgentDataDisclosurePanel";
@@ -76,12 +75,6 @@ export const DEFAULT_OPTIONS_AGENT_SETTINGS_SNAPSHOT: OptionsAgentSettingsSnapsh
   },
 };
 
-type AgentConnectionResult = {
-  providerLabel: string;
-  model: string;
-  latencyMs: number;
-  preview: string;
-};
 
 type AgentMessage = { kind: "ok" | "warn" | "err"; text: string };
 
@@ -155,7 +148,7 @@ export function OptionsAgentSettings({
     setAgentStorageLoading(true);
     setAgentStorageError(null);
     try {
-      const usage = await bgCall<AgentStorageUsageSnapshot>("getAgentStorageUsage");
+      const usage = await bgCall("getAgentStorageUsage");
       setAgentStorageUsage(usage);
     } catch (error) {
       const message = error instanceof BackgroundCallError
@@ -271,7 +264,7 @@ export function OptionsAgentSettings({
     };
   }, [agentDisclosureTarget?.canonicalOrigin, agentDisclosureTarget?.provider]);
 
-  const requestAgentConnectionTest = (apiKey?: string) => bgCall<AgentConnectionResult>(
+  const requestAgentConnectionTest = (apiKey?: string) => bgCall(
     "testAgentProviderConnection",
     {
       provider: agentProvider,
@@ -355,7 +348,7 @@ export function OptionsAgentSettings({
     setAgentStorageError(null);
     setAgentStorageNotice(null);
     try {
-      const result = await bgCall<AgentStorageCleanupResult>("clearAgentToolCache");
+      const result = await bgCall("clearAgentToolCache");
       setAgentStorageUsage(result.usage);
       setAgentStorageNotice(m.options.agentStorageCacheCleared(
         result.deletedArtifacts,

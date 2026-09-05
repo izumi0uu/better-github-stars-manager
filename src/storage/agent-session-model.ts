@@ -174,6 +174,7 @@ export type AgentSessionCommitResult = Readonly<{
 
 export type AgentSessionTurnAdmission = Readonly<
   | { kind: 'acquired' }
+  | { kind: 'stop_pending' }
   | { kind: 'replay'; commit: AgentSessionCommitResult }
 >;
 

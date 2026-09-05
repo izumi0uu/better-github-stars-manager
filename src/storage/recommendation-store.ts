@@ -11,7 +11,7 @@ import {
   type RecommendationStatus,
 } from '@/recommendations/recommendation-model';
 import { normalizeRepositoryFullName } from '@/watch/watch-model';
-import { projectRecommendations } from '@/recommendations/recommendation-projector';
+import { projectRecommendations, type RecommendationPresentation } from '@/recommendations/recommendation-projector';
 import { db } from './db';
 import { readLibrarySnapshot } from './library-projection';
 
@@ -250,7 +250,7 @@ export async function recordRecommendationFailure(
 }
 
 /** Query cache rows for one account, excluding ignored and already-starred repositories. */
-export async function listRecommendations(accountLogin: string): Promise<RecommendationRecord[]> {
+export async function listRecommendations(accountLogin: string): Promise<RecommendationPresentation[]> {
   const key = accountKey(accountLogin);
   const [recommendations, library, ignores] = await Promise.all([
     db.recommendations.where('accountLogin').equals(key).toArray(),
@@ -261,6 +261,7 @@ export async function listRecommendations(accountLogin: string): Promise<Recomme
     accountLogin: key,
     recommendations,
     stars: library.stars,
+    tags: library.tags,
     ignores,
   });
 }

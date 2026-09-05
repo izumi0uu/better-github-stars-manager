@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it } from 'vitest';
-import { invalidateCache, queryStars } from '../../../src/background/query';
+import { queryStars, queryAllMatchingStarIds, resolveLiveLaunchCandidate } from '../../../src/background/query';
 import { db } from '../../../src/storage/db';
 import { visibleTagNames } from '../../../src/tags/tag-model';
 import type { Star, Tag, TagMeta } from '../../../src/types';
@@ -72,7 +72,6 @@ function filter() {
 async function resetDb() {
   await db.delete();
   await db.open();
-  invalidateCache();
 }
 
 async function putFixtures({
@@ -87,7 +86,6 @@ async function putFixtures({
   if (stars.length) await db.stars.bulkPut(stars);
   if (tags.length) await db.tags.bulkPut(tags);
   if (tagMeta.length) await db.tagMeta.bulkPut(tagMeta);
-  invalidateCache();
 }
 
 beforeEach(async () => {
@@ -99,7 +97,7 @@ afterAll(async () => {
 });
 
 describe('Query cache and semantics regressions', () => {
-  it('keeps direct DB mutations stale until the query cache is invalidated', async () => {
+  it('observes direct DB commits without an explicit invalidation', async () => {
     await putFixtures({
       stars: [
         star({
@@ -120,11 +118,6 @@ describe('Query cache and semantics regressions', () => {
       language: 'Rust',
     }));
 
-    const withoutInvalidation = await queryStars({ filter: filter(), offset: 0, limit: 20 });
-    assert.deepEqual(withoutInvalidation.rows.map((row) => row.full_name), ['a/original']);
-    assert.equal(withoutInvalidation.grandTotal, 1);
-
-    invalidateCache();
     const afterInvalidation = await queryStars({ filter: filter(), offset: 0, limit: 20 });
     assert.deepEqual(afterInvalidation.rows.map((row) => row.full_name), ['a/original', 'b/direct-insert']);
     assert.equal(afterInvalidation.grandTotal, 2);
@@ -136,7 +129,6 @@ describe('Query cache and semantics regressions', () => {
       starred_at: '2026-01-01T00:00:00Z',
       language: 'TypeScript',
     } as unknown as Star);
-    invalidateCache();
 
     const result = await queryStars({ filter: filter(), offset: 0, limit: 20 });
     assert.equal(result.rows.length, 1);
@@ -340,4 +332,62 @@ describe('Query cache and semantics regressions', () => {
     assert.deepEqual(result.rows.map((row) => row.full_name), ['a/re-added-tag']);
     assert.deepEqual(result.tagTree, [{ name: 'UI', count: 1 }]);
   });
+  it('retains committed chunks when a later chunk fails, including Agent scopes and facets', async () => {
+    await putFixtures({ stars: [
+      star({ full_name: 'owner/original', starred_at: '2026-01-01T00:00:00Z' }),
+    ] });
+    await queryStars({ filter: filter(), offset: 0, limit: 20 });
+    await db.transaction('rw', [db.stars, db.tags, db.tagMeta], async () => {
+      await db.stars.put(star({
+        full_name: 'owner/committed', starred_at: '2026-01-02T00:00:00Z', language: 'Rust',
+      }));
+      await db.tags.put(tag('owner/original', ['Organized']));
+    });
+    await assert.rejects(db.transaction('rw', [db.stars, db.tags, db.tagMeta], async () => {
+      await db.stars.put(star({ full_name: 'owner/aborted', starred_at: '2026-01-03T00:00:00Z' }));
+      await db.tags.put(tag('owner/committed', ['Uncommitted']));
+      await queryStars({ filter: filter(), offset: 0, limit: 20 });
+      throw new Error('later chunk failed');
+    }), /later chunk failed/);
+
+    const result = await queryStars({ filter: filter(), offset: 0, limit: 20 });
+    assert.deepEqual(result.rows.map((row) => row.full_name), ['owner/committed', 'owner/original']);
+    assert.deepEqual(result.languages, [['Rust', 1]]);
+    assert.deepEqual(result.tagTree, [{ name: 'Organized', count: 1 }]);
+    assert.deepEqual(await queryAllMatchingStarIds({ ...filter(), onlyUntagged: true }), ['owner/committed']);
+    assert.deepEqual(
+      (await resolveLiveLaunchCandidate({ kind: 'still_untagged_after_auto_tags' })).repositoryIds,
+      ['owner/committed'],
+    );
+  });
+
+  it('preserves starred and owned-public narrowing across warm query and Agent reads', async () => {
+    await putFixtures({ stars: [
+      star({ full_name: 'other/starred', starred_at: '2026-01-01T00:00:00Z', language: 'Rust' }),
+      star({ full_name: 'viewer/owned', starred_at: '2026-01-01T00:00:00Z', viewer_has_starred: false, language: 'Go' }),
+      star({ full_name: 'viewer/deleted', starred_at: '2026-01-01T00:00:00Z', tombstone: true }),
+    ] });
+    const regular = await queryStars({ filter: filter(), offset: 0, limit: 20 });
+    assert.equal(regular.grandTotal, 2);
+    assert.deepEqual(regular.rows.map((row) => row.full_name), ['other/starred']);
+    assert.deepEqual(regular.languages, [['Rust', 1]]);
+    const ownedFilter = { ...filter(), onlyOwned: true };
+    const owned = await queryStars({ filter: ownedFilter, accountLogin: 'viewer', offset: 0, limit: 20 });
+    assert.equal(owned.grandTotal, 3);
+    assert.deepEqual(owned.rows.map((row) => row.full_name), ['viewer/owned']);
+    assert.deepEqual(await queryAllMatchingStarIds(ownedFilter, 'viewer'), ['viewer/owned']);
+    assert.deepEqual(
+      (await resolveLiveLaunchCandidate({ kind: 'selected_repository', selectedRepositoryIdHint: 'viewer/owned' })).repositoryIds,
+      ['viewer/owned'],
+    );
+    assert.deepEqual(
+      (await resolveLiveLaunchCandidate({ kind: 'all_live_stars' })).repositoryIds,
+      ['other/starred'],
+    );
+    assert.deepEqual(
+      (await queryStars({ filter: filter(), offset: 0, limit: 20 })).rows.map((row) => row.full_name),
+      ['other/starred'],
+    );
+  });
 });
+

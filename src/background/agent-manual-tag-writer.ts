@@ -86,6 +86,9 @@ function runQueuedAgentTagMutation<TResult>(
         'Cubby tag writes are unavailable while full-library tag changes are being applied.',
       );
     }
+    if (context.signal?.aborted) {
+      throw context.signal.reason ?? new DOMException('Operation aborted.', 'AbortError');
+    }
     context.markWriteStarted?.();
     return write();
   }, { signal: context.signal });

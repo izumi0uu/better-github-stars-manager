@@ -30,10 +30,13 @@ import { createDevAgentTurnTraceFactory } from '@/agent-observability/agent-turn
 import { createDevRawCaptureCoordinator } from '@/agent-observability/raw-capture';
 import {
   queryStars,
-  invalidateCache,
   resolveLiveLaunchCandidate,
 } from "./query";
-import type { StarsQueryParams, StarsQueryResult } from '@/stars/stars-query';
+import type { BackgroundCommand, BackgroundRequest, BackgroundResult, BackgroundSuccess, BackgroundFailure } from '@/runtime/background-command';
+import { invalidateLibrarySnapshot, subscribeLibraryChanges } from '@/storage/library-projection';
+import { broadcastManagerMessage } from './manager-event-transport';
+import { createStarsSyncUsecase } from './stars-sync-usecase';
+import { createGistSyncUsecase } from './gist-sync-usecase';
 import {
   AGENT_DATA_DISCLOSURE_REQUIRED,
   AGENT_PERSONAL_COMMUNICATIONS_PERMISSION_REQUIRED,
@@ -69,7 +72,6 @@ import {
   parseWatchAccountLogin,
   parseWatchThreadId,
   parseWatchThreadIds,
-  type WatchStatus,
 } from '@/watch/watch-contract';
 import { RADAR_MAX_FOLLOWING } from '@/radar/radar-model';
 import { assertBgsmAgentContextCapabilityFeasible } from "@/bgsm-agent";
@@ -84,15 +86,11 @@ import {
   type ProviderDiagnosticsRuntime,
 } from '@/agent-observability/provider-monitor-runtime';
 import type {
-  AgentCustomProviderProtocol,
-  AgentProviderId,
-  OnboardingStage,
   Star,
   SyncProgress,
 } from "@/types";
 import {
   normalizeOnboardingStage,
-  resolveOnboardingStageAfterSync,
   stageMarksOnboardingSeen,
 } from "@/onboarding/state";
 import { createAgentProviderGate } from "./agent-provider-gate";
@@ -120,86 +118,17 @@ import { createOrganizeJobHost } from './organize-job-host';
  * IDB directly (content scripts would hit the page's origin DB instead).
  */
 
-type Req = BgsmAgentSessionRequest
-  | { type: "syncOwnedPublicRepositories" }
-  | { type: "syncIncremental" }
-  | { type: "syncFull"; includeOwnedPublic?: unknown }
-  | { type: "syncRescan" }
-  | { type: "autoAssignTags" }
-  | { type: "gistPush" }
-  | { type: "gistPull" }
-  | { type: "getStatus" }
-  | { type: "queryManagerSurfaceBadges" }
-  | { type: "getWatchStatus" }
-  | { type: "queryWatchInbox"; unreadOnly?: unknown }
-  | { type: "getWatchSubjectDetail"; threadId?: unknown }
-  | { type: "getWatchRepositoryDetail"; fullName?: unknown }
-  | { type: "refreshWatchInbox" }
-  | { type: "loadOlderWatchInbox" }
-  | { type: "markWatchInboxLoaded" }
-  | { type: "markWatchThreadsRead"; accountLogin?: unknown; threadIds?: unknown }
-  | { type: "markWatchThreadsDone"; accountLogin?: unknown; threadIds?: unknown }
-  | { type: "disconnectWatchInbox" }
-  | { type: "clearWatchData" }
-  | { type: 'getRecommendationStatus' }
-  | { type: 'queryRecommendations' }
-  | { type: 'refreshRecommendations' }
-  | { type: 'ignoreRecommendation'; repositoryKey?: unknown; repositoryFullName?: unknown }
-  | { type: 'restoreIgnoredRecommendation'; repositoryKey?: unknown }
-  | { type: 'refreshRecommendationsOnEntry' }
-  | { type: 'clearRecommendations' }
-  | { type: "getRadarStatus" }
-  | { type: "queryRadar" }
-  | { type: "refreshRadar" }
-  | { type: "fullReconcileRadar" }
-  | { type: "dismissRadarActivities"; activityIds?: unknown }
-  | { type: "markRadarActivitiesSeen"; activityIds?: unknown }
-  | { type: "radarStarRepository"; fullName?: unknown }
-  | { type: "radarAddTag"; fullName?: unknown; tag?: unknown }
-  | { type: "getUsername" }
-  | { type: "getAccount" }
-  | { type: "fetchAccount" }
-  | { type: "query"; params: StarsQueryParams }
-  | { type: "setTags"; full_name: string; tags: string[] }
-  | { type: "setNotes"; full_name: string; notes: string }
-  | { type: "setFavorite"; full_name: string; favorite: boolean }
-  | { type: "markUnstarred"; full_name: string }
-  | { type: "removeVisibleTag"; full_name: string; name: string }
-  | { type: "deleteTag"; name: string }
-  | { type: "deleteAllTags" }
-  | { type: "acceptSuggestions"; full_name: string; toAdd: string[] }
-  | {
-      type: "acceptSuggestionsBatch";
-      items: { full_name: string; toAdd: string[] }[];
-    }
-  | { type: "suggestTags"; full_name: string }
-  | { type: "getTag"; full_name: string }
-  | { type: "listExcluded" }
-  | { type: "markOnboardingSeen" }
-  | { type: "setOnboardingStage"; stage: OnboardingStage }
-  | { type: "markTooltipSeen"; bit: number }
-  | { type: "testConnection" }
-  | {
-      type: "testAgentProviderConnection";
-      provider?: AgentProviderId;
-      protocol?: AgentCustomProviderProtocol | null;
-      baseUrl?: string | null;
-      model?: string;
-      declaredContextWindow?: number | null;
-      workingContextWindow?: number | null;
-      apiKey?: string;
-    }
-  | { type: "openOptions"; section?: 'github' | 'watch' }
-  | { type: "devClearLocalData" }
-  | { type: "runBackfill"; id: string }
-  | { type: "deferBackfill"; id: string };
+type Req = BackgroundRequest | BgsmAgentSessionRequest;
+type Res = { ok: true; data?: unknown } | BackgroundFailure;
 
-type Res = { ok: true; data?: unknown } | {
-  ok: false;
-  error: string;
-  code?: string;
-  details?: unknown;
-};
+function success<C extends BackgroundCommand>(
+  _command: C,
+  ...args: BackgroundResult<NoInfer<C>> extends void
+    ? [data?: BackgroundResult<NoInfer<C>>]
+    : [data: BackgroundResult<NoInfer<C>>]
+): BackgroundSuccess<C> {
+  return { ok: true, ...(args.length ? { data: args[0] } : {}) } as BackgroundSuccess<C>;
+}
 
 const jobQueue = createSerializedRunner();
 const watchRefreshCoordinator = createWatchRefreshCoordinator({
@@ -418,7 +347,6 @@ if (DEV) {
 }
 const organizeJobHost = createOrganizeJobHost({
   jobQueue,
-  broadcastDataChanged,
   createRuntimeProvider: () => agentProviderGate.createRuntimeProvider(),
   observeExecutionEvent: providerDiagnosticsRuntime
     ? (rootOperationId, event) => {
@@ -448,25 +376,6 @@ function scheduleProgressPersist(prev: SyncProgress, next: SyncProgress) {
   }, delay);
 }
 
-type ManagerBroadcastMessage =
-  | { type: 'progress'; progress: SyncProgress }
-  | { type: 'watchChanged' | 'watchStatusChanged'; status?: WatchStatus }
-  | { type: 'dataChanged' | 'recommendationsChanged' | 'radarChanged' };
-
-function broadcastManagerMessage(message: ManagerBroadcastMessage): void {
-  void chrome.runtime.sendMessage(message).catch(() => {});
-  if (message.type !== 'watchChanged' && message.type !== 'watchStatusChanged') return;
-
-  // The Watch UI is a content script, so tab messaging exposes committed scan
-  // progress before the original refresh request sends its final response.
-  if (!chrome.tabs?.query || !chrome.tabs.sendMessage) return;
-  void chrome.tabs.query({ url: 'https://github.com/*' }).then((tabs) => {
-    for (const tab of tabs) {
-      if (tab.id === undefined) continue;
-      void chrome.tabs.sendMessage(tab.id, message).catch(() => {});
-    }
-  }).catch(() => {});
-}
 
 function setProgress(p: SyncProgress) {
   const prev = lastProgress;
@@ -480,9 +389,14 @@ function setIdleMessage(message: string) {
 }
 
 function broadcastDataChanged() {
-  invalidateCache();
   broadcastManagerMessage({ type: "dataChanged" });
 }
+
+// Library commit hooks already invalidated the snapshot. Never invalidate again here.
+subscribeLibraryChanges(() => {
+  broadcastManagerMessage({ type: 'dataChanged' });
+  broadcastManagerMessage({ type: 'recommendationsChanged' });
+});
 
 let watchBroadcastTail: Promise<void> = Promise.resolve();
 
@@ -506,10 +420,6 @@ function broadcastRecommendationChanged() {
   broadcastManagerMessage({ type: 'recommendationsChanged' });
 }
 
-function broadcastDataAndRecommendationsChanged() {
-  broadcastDataChanged();
-  broadcastRecommendationChanged();
-}
 function broadcastRadarChanged() {
   broadcastManagerMessage({ type: 'radarChanged' });
 }
@@ -559,7 +469,7 @@ async function clearLocalDataForDev() {
   await db.delete();
   await db.open();
   await chrome.storage.local.clear();
-  invalidateCache();
+  invalidateLibrarySnapshot();
   broadcastDataChanged();
   return {
     cleared: ["IndexedDB:better-github-stars-manager", "chrome.storage.local"],
@@ -632,32 +542,18 @@ async function getStatusPayload() {
   };
 }
 
-async function performFullSyncJob(includeOwnedPublic = true) {
-  const m = await getLocaleMessages();
-  setProgress({
-    phase: "full",
-    done: 0,
-    total: null,
-    message: m.background.fetchingPages(1),
-  });
-  const result = includeOwnedPublic
-    ? await githubStarSource.syncFull((p) => setProgress(p))
-    : await githubStarSource.syncFull((p) => setProgress(p), { includeOwnedPublic: false });
-  await reconcileWatchScopeAfterStarsChange();
-  broadcastDataAndRecommendationsChanged();
-  await finalizeTrackedOnboardingSync();
-  setIdleMessage(m.background.fullDone(result.added));
-  return result;
-}
-
-async function performFullSync(includeOwnedPublic = true) {
-  return run(() => performFullSyncJob(includeOwnedPublic), { kind: "stars-sync" });
-}
+const starsSync = createStarsSyncUsecase({
+  queue: jobQueue,
+  source: githubStarSource,
+  setProgress,
+  reconcileWatchScope: reconcileWatchScopeAfterStarsChange,
+});
+const gistSync = createGistSyncUsecase({ queue: jobQueue, tags: idbTagStore, setProgress });
 
 const backfillExecutor = createBackfillExecutor({
   jobQueue,
   setBackfillState: backfillConfig.setBackfillState,
-  performFullSyncJob,
+  performFullSyncJob: starsSync.performFullSyncJob,
 });
 
 /**
@@ -697,8 +593,6 @@ async function migrateLanguageTags(): Promise<void> {
       if (++changed % 200 === 0) await Promise.resolve();
     }
     await authStore.update({ langTagMigrationDone: true });
-    invalidateCache();
-    broadcastDataChanged();
   } catch (e) {
     // Flag stays false → retries next SW wakeup. Never throw: must not block SW.
     console.error(
@@ -708,35 +602,6 @@ async function migrateLanguageTags(): Promise<void> {
   }
 }
 
-async function setStoredOnboardingStage(stage: OnboardingStage): Promise<void> {
-  await authStore.update({
-    onboardingStage: stage,
-    seenOnboarding: stageMarksOnboardingSeen(stage),
-  });
-}
-
-async function finalizeTrackedOnboardingSync(): Promise<void> {
-  const config = await authStore.getConfig();
-  if (config.onboardingStage !== "syncing") return;
-  const [hasToken, grandTotal] = await Promise.all([
-    authStore.hasToken(),
-    db.stars.count(),
-  ]);
-  await setStoredOnboardingStage(resolveOnboardingStageAfterSync(hasToken, grandTotal));
-}
-
-async function failTrackedOnboardingSync(): Promise<void> {
-  try {
-    const config = await authStore.getConfig();
-    if (config.onboardingStage !== "syncing") return;
-    await setStoredOnboardingStage("sync_failed");
-  } catch (error) {
-    console.error(
-      "[GSM] failed to persist onboarding sync failure:",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-}
 
 function recordProviderProbeStarted(requestId: string, startedAt: number): Promise<void> {
   return Promise.resolve(providerDiagnosticsRuntime?.recordProbeStarted(requestId, startedAt))
@@ -768,76 +633,22 @@ async function handle(req: Req): Promise<Res> {
       return { ok: true, data: await bgsmAgentRuntime.sessionRpc.handle(agentSessionRequest) };
     }
     switch (req.type) {
-      case "syncOwnedPublicRepositories": {
-        if (!(await authStore.hasToken())) {
-          return { ok: false, error: (await getLocaleMessages()).background.noToken };
-        }
-        const result = await run(async () => {
-          const syncResult = await githubStarSource.syncOwnedPublicRepositories();
-          broadcastDataAndRecommendationsChanged();
-          return syncResult;
-        }, { kind: "stars-sync" });
-        return { ok: true, data: result };
-      }
-
-      case "syncIncremental": {
-        const m = await getLocaleMessages();
-        if (!(await authStore.hasToken())) {
-          await failTrackedOnboardingSync();
-          return { ok: false, error: m.background.noToken };
-        }
-        const result = await run(async () => {
-          setProgress({
-            phase: "incremental",
-            done: 0,
-            total: null,
-            message: m.background.incrementalSyncing,
-          });
-          const syncResult = await githubStarSource.syncIncremental();
-          await reconcileWatchScopeAfterStarsChange();
-          broadcastDataAndRecommendationsChanged();
-          await finalizeTrackedOnboardingSync();
-          setIdleMessage(m.background.incrementalDone(syncResult.added));
-          return syncResult;
-        }, { kind: "stars-sync" });
-        return { ok: true, data: { ...result, tagged: 0 } };
-      }
+      case "syncOwnedPublicRepositories":
+        return success(req.type, await starsSync.syncOwnedPublicRepositories());
+      case "syncIncremental":
+        return success(req.type, { ...await starsSync.syncIncremental(), tagged: 0 });
       case "syncFull": {
-        const m = await getLocaleMessages();
-        if (!(await authStore.hasToken())) {
-          await failTrackedOnboardingSync();
-          return { ok: false, error: m.background.noToken };
-        }
         if (req.includeOwnedPublic !== undefined && typeof req.includeOwnedPublic !== "boolean") {
           return { ok: false, error: "Invalid full-sync options" };
         }
-        const result = await performFullSync(req.includeOwnedPublic ?? true);
-        return { ok: true, data: { ...result, tagged: 0 } };
+        return success(req.type, { ...await starsSync.syncFull(req.includeOwnedPublic ?? true), tagged: 0 });
       }
-      case "syncRescan": {
-        const m = await getLocaleMessages();
-        if (!(await authStore.hasToken()))
-          return { ok: false, error: m.background.noToken };
-        const result = await run(async () => {
-          setProgress({
-            phase: "rescan",
-            done: 0,
-            total: null,
-            message: m.background.rescanningPages(1),
-          });
-          const syncResult = await githubStarSource.syncRescan((p) => setProgress(p));
-          await reconcileWatchScopeAfterStarsChange();
-          broadcastDataAndRecommendationsChanged();
-          setIdleMessage(
-            m.background.rescanDone(syncResult.tombstoned, syncResult.revived),
-          );
-          return syncResult;
-        }, { kind: "stars-sync" });
-        return { ok: true, data: result };
-      }
+      case "syncRescan":
+        return success(req.type, await starsSync.syncRescan());
       case "autoAssignTags": {
         const m = await getLocaleMessages();
         const t = await run(async () => {
+          try {
           setProgress({
             phase: "incremental",
             done: 0,
@@ -849,70 +660,27 @@ async function handle(req: Req): Promise<Res> {
             (p) => setProgress(p),
             "incremental",
           );
-          broadcastDataChanged();
           setIdleMessage(m.background.autoAssignDone(result.tagged));
           return result;
+          } catch (error) {
+            setIdleMessage(translateError(error, m));
+            throw error;
+          }
         }, { kind: "progress" });
-        return { ok: true, data: t };
+        return success(req.type, t);
       }
-      case "gistPush": {
-        const m = await getLocaleMessages();
-        const r = await run(async () => {
-          setProgress({
-            phase: "gist",
-            done: 0,
-            total: null,
-            message: m.background.pushingTags,
-          });
-          const result = await idbTagStore.syncPush((done, total) => {
-            setProgress({
-              phase: "gist",
-              done,
-              total,
-              message: m.background.pushingTags,
-            });
-          });
-          if (result.pushed > 0)
-            setIdleMessage(m.background.gistPushDone(result.pushed));
-          else if (result.recreated)
-            setIdleMessage(m.background.gistPushRecreated);
-          else setIdleMessage(m.background.gistPushNoChanges);
-          return result;
-        }, { kind: "progress" });
-        return { ok: true, data: r };
-      }
-      case "gistPull": {
-        const m = await getLocaleMessages();
-        const r = await run(async () => {
-          setProgress({
-            phase: "gist",
-            done: 0,
-            total: null,
-            message: m.background.pullingTags,
-          });
-          const result = await idbTagStore.syncPull((done, total) => {
-            setProgress({
-              phase: "gist",
-              done,
-              total,
-              message: m.background.pullingTags,
-            });
-          });
-          broadcastDataChanged();
-          if (result.missing) setIdleMessage(m.background.gistPullMissing);
-          else setIdleMessage(m.background.gistPullDone(result.merged, result.total));
-          return result;
-        }, { kind: "progress" });
-        return { ok: true, data: r };
-      }
+      case "gistPush":
+        return success(req.type, await gistSync.push());
+      case "gistPull":
+        return success(req.type, await gistSync.pull());
       case "getStatus":
-        return { ok: true, data: await getStatusPayload() };
+        return success(req.type, await getStatusPayload());
       case "queryManagerSurfaceBadges":
-        return { ok: true, data: await queryManagerSurfaceBadgeCounts() };
+        return success(req.type, await queryManagerSurfaceBadgeCounts());
       case 'getWatchStatus': {
         const m = await getLocaleMessages();
         try {
-          return { ok: true, data: await watchRefreshCoordinator.getStatus() };
+          return success(req.type, await watchRefreshCoordinator.getStatus());
         } catch {
           return { ok: false, error: m.background.watchStatusUnavailable };
         }
@@ -924,7 +692,7 @@ async function handle(req: Req): Promise<Res> {
         }
         const unreadOnly = req.unreadOnly ?? true;
         try {
-          return { ok: true, data: await watchRefreshCoordinator.queryInbox(unreadOnly) };
+          return success(req.type, await watchRefreshCoordinator.queryInbox(unreadOnly));
         } catch {
           return { ok: false, error: m.background.watchInboxUnavailable };
         }
@@ -934,7 +702,7 @@ async function handle(req: Req): Promise<Res> {
         const threadId = parseWatchThreadId(req.threadId);
         if (!threadId) return { ok: false, error: m.background.watchSubjectDetailInvalid };
         try {
-          return { ok: true, data: await watchRefreshCoordinator.getSubjectDetail(threadId) };
+          return success(req.type, await watchRefreshCoordinator.getSubjectDetail(threadId));
         } catch (error) {
           const code = error instanceof GitHubWatchError ? error.code : 'invalid_response';
           return {
@@ -955,13 +723,10 @@ async function handle(req: Req): Promise<Res> {
           const star = await db.stars
             .filter((row) => !row.tombstone && row.full_name.toLowerCase() === fullName)
             .first();
-          return {
-            ok: true,
-            data: {
-              star: star ?? null,
-              tag: star ? (await idbTagStore.get(star.full_name)) ?? null : null,
-            },
-          };
+          return success(req.type, {
+            star: star ?? null,
+            tag: star ? (await idbTagStore.get(star.full_name)) ?? null : null,
+          });
         } catch {
           return { ok: false, error: m.background.watchRepositoryDetailUnavailable };
         }
@@ -969,7 +734,7 @@ async function handle(req: Req): Promise<Res> {
       case 'refreshWatchInbox': {
         const m = await getLocaleMessages();
         try {
-          return { ok: true, data: await watchRefreshCoordinator.refresh() };
+          return success(req.type, await watchRefreshCoordinator.refresh());
         } catch {
           return { ok: false, error: m.background.watchRefreshFailed };
         }
@@ -977,7 +742,7 @@ async function handle(req: Req): Promise<Res> {
       case 'loadOlderWatchInbox': {
         const m = await getLocaleMessages();
         try {
-          return { ok: true, data: await watchRefreshCoordinator.loadOlder() };
+          return success(req.type, await watchRefreshCoordinator.loadOlder());
         } catch {
           return { ok: false, error: m.background.watchRefreshFailed };
         }
@@ -985,7 +750,7 @@ async function handle(req: Req): Promise<Res> {
       case 'markWatchInboxLoaded': {
         const m = await getLocaleMessages();
         try {
-          return { ok: true, data: await watchRefreshCoordinator.markLoaded() };
+          return success(req.type, await watchRefreshCoordinator.markLoaded());
         } catch {
           return { ok: false, error: m.background.watchInboxUnavailable };
         }
@@ -1001,12 +766,9 @@ async function handle(req: Req): Promise<Res> {
         }
         const mutation = { accountLogin, threadIds };
         try {
-          return {
-            ok: true,
-            data: req.type === 'markWatchThreadsRead'
-              ? await watchRefreshCoordinator.markThreadsRead(mutation)
-              : await watchRefreshCoordinator.markThreadsDone(mutation),
-          };
+          return success(req.type, req.type === 'markWatchThreadsRead'
+            ? await watchRefreshCoordinator.markThreadsRead(mutation)
+            : await watchRefreshCoordinator.markThreadsDone(mutation));
         } catch {
           return { ok: false, error: m.background.watchThreadActionFailed };
         }
@@ -1014,7 +776,7 @@ async function handle(req: Req): Promise<Res> {
       case 'disconnectWatchInbox': {
         const m = await getLocaleMessages();
         try {
-          return { ok: true, data: await watchRefreshCoordinator.disconnectInbox() };
+          return success(req.type, await watchRefreshCoordinator.disconnectInbox());
         } catch {
           return { ok: false, error: m.background.watchDisconnectFailed };
         }
@@ -1022,30 +784,30 @@ async function handle(req: Req): Promise<Res> {
       case 'clearWatchData': {
         const m = await getLocaleMessages();
         try {
-          return { ok: true, data: await watchRefreshCoordinator.clearData() };
+          return success(req.type, await watchRefreshCoordinator.clearData());
         } catch {
           return { ok: false, error: m.background.watchDataClearFailed };
         }
       }
       case 'getRecommendationStatus':
-        return { ok: true, data: await recommendationRefreshCoordinator.getStatus() };
+        return success(req.type, await recommendationRefreshCoordinator.getStatus());
       case 'queryRecommendations':
-        return { ok: true, data: await recommendationRefreshCoordinator.query() };
+        return success(req.type, await recommendationRefreshCoordinator.query());
       case 'refreshRecommendations': {
         const result = await recommendationRefreshCoordinator.refresh();
         await ensureScheduledRefreshes();
-        return { ok: true, data: result };
+        return success(req.type, result);
       }
       case 'refreshRecommendationsOnEntry': {
         const first = await recommendationRefreshCoordinator.refreshFirstEligible();
         const result = first ?? await recommendationRefreshCoordinator.refreshIfDue();
         if (result?.published) await ensureScheduledRefreshes();
-        return { ok: true, data: result };
+        return success(req.type, result);
       }
       case 'clearRecommendations': {
         const result = await recommendationRefreshCoordinator.clear();
         await ensureScheduledRefreshes();
-        return { ok: true, data: result };
+        return success(req.type, result);
       }
       case 'ignoreRecommendation': {
         const repositoryKey = canonicalRepositoryFullName(req.repositoryKey);
@@ -1055,22 +817,22 @@ async function handle(req: Req): Promise<Res> {
           ? req.repositoryFullName
           : undefined;
         await recommendationRefreshCoordinator.ignoreRepository(repositoryKey, repositoryFullName);
-        return { ok: true, data: null };
+        return success(req.type, null);
       }
       case 'restoreIgnoredRecommendation': {
         const repositoryKey = canonicalRepositoryFullName(req.repositoryKey);
         if (!repositoryKey) return { ok: false, error: 'Invalid recommendation repository.' };
         await recommendationRefreshCoordinator.restoreIgnored(repositoryKey);
-        return { ok: true, data: null };
+        return success(req.type, null);
       }
       case 'getRadarStatus':
-        return { ok: true, data: await radarRefreshCoordinator.getStatus() };
+        return success(req.type, await radarRefreshCoordinator.getStatus());
       case 'queryRadar':
-        return { ok: true, data: await radarRefreshCoordinator.query() };
+        return success(req.type, await radarRefreshCoordinator.query());
       case 'refreshRadar':
-        return { ok: true, data: await radarRefreshCoordinator.refresh('auto') };
+        return success(req.type, await radarRefreshCoordinator.refresh('auto'));
       case 'fullReconcileRadar':
-        return { ok: true, data: await radarRefreshCoordinator.fullReconcile() };
+        return success(req.type, await radarRefreshCoordinator.fullReconcile());
       case 'dismissRadarActivities': {
         if (
           !Array.isArray(req.activityIds)
@@ -1078,10 +840,7 @@ async function handle(req: Req): Promise<Res> {
           || req.activityIds.length > RADAR_MAX_FOLLOWING
           || req.activityIds.some((id) => typeof id !== 'string' || !id || id.length > 512)
         ) return { ok: false, error: 'Invalid Radar dismissal request.' };
-        return {
-          ok: true,
-          data: await radarRefreshCoordinator.dismiss(req.activityIds as string[]),
-        };
+        return success(req.type, await radarRefreshCoordinator.dismiss(req.activityIds as string[]));
       }
       case 'markRadarActivitiesSeen': {
         if (
@@ -1090,10 +849,7 @@ async function handle(req: Req): Promise<Res> {
           || req.activityIds.length > RADAR_MAX_FOLLOWING
           || req.activityIds.some((id) => typeof id !== 'string' || !id || id.length > 512)
         ) return { ok: false, error: 'Invalid Radar seen request.' };
-        return {
-          ok: true,
-          data: await radarRefreshCoordinator.markSeen(req.activityIds as string[]),
-        };
+        return success(req.type, await radarRefreshCoordinator.markSeen(req.activityIds as string[]));
       }
       case 'radarStarRepository': {
         const repository = canonicalRepositoryFullName(req.fullName);
@@ -1105,9 +861,8 @@ async function handle(req: Req): Promise<Res> {
           await reconcileWatchScopeAfterStarsChange();
           return created;
         });
-        broadcastDataAndRecommendationsChanged();
         broadcastRadarChanged();
-        return { ok: true, data: star };
+        return success(req.type, star);
       }
       case 'radarAddTag': {
         const repository = canonicalRepositoryFullName(req.fullName);
@@ -1124,18 +879,17 @@ async function handle(req: Req): Promise<Res> {
           await idbTagStore.setTags(star.full_name, tags);
           return { star, tags };
         });
-        broadcastDataChanged();
         broadcastRadarChanged();
-        return { ok: true, data: result };
+        return success(req.type, result);
       }
       case "getUsername":
-        return { ok: true, data: { username: await authStore.getUsername() } };
+        return success(req.type, { username: await authStore.getUsername() });
       case "getAccount":
-        return { ok: true, data: await authStore.getAccount() };
+        return success(req.type, await authStore.getAccount());
       case "fetchAccount": {
         // Backfill avatar/displayName; no-op without token.
         const token = await authStore.getToken();
-        if (!token) return { ok: true, data: await authStore.getAccount() };
+        if (!token) return success(req.type, await authStore.getAccount());
         try {
           const res = await fetch("https://api.github.com/user", {
             headers: {
@@ -1144,7 +898,7 @@ async function handle(req: Req): Promise<Res> {
             },
             cache: "no-store",
           });
-          if (!res.ok) return { ok: true, data: await authStore.getAccount() };
+          if (!res.ok) return success(req.type, await authStore.getAccount());
           const body = (await res.json()) as {
             login?: string;
             avatar_url?: string;
@@ -1155,19 +909,16 @@ async function handle(req: Req): Promise<Res> {
             avatarUrl: body.avatar_url ?? null,
             displayName: body.name ?? null,
           });
-          return { ok: true, data: await authStore.getAccount() };
+          return success(req.type, await authStore.getAccount());
         } catch {
-          return { ok: true, data: await authStore.getAccount() };
+          return success(req.type, await authStore.getAccount());
         }
       }
       case "query":
-        return {
-          ok: true,
-          data: (await queryStars({
-            ...req.params,
-            accountLogin: await authStore.getUsername(),
-          })) as StarsQueryResult,
-        };
+        return success(req.type, await queryStars({
+          ...req.params,
+          accountLogin: await authStore.getUsername(),
+        }));
       case "runBackfill": {
         const m = await getLocaleMessages();
         const task = getBackfillTask(req.id);
@@ -1180,9 +931,8 @@ async function handle(req: Req): Promise<Res> {
           };
         if (!(await authStore.hasToken()))
           return { ok: false, error: m.background.noToken };
-        return await backfillExecutor.runBackfill(task, (error) =>
-          translateError(error, m),
-        );
+        const result = await backfillExecutor.runBackfill(task, (error) => translateError(error, m));
+        return success(req.type, result.data);
       }
       case "deferBackfill": {
         const m = await getLocaleMessages();
@@ -1199,20 +949,17 @@ async function handle(req: Req): Promise<Res> {
             error: current?.error ?? null,
           };
         });
-        return { ok: true, data: { id: task.id } };
+        return success(req.type, { id: task.id });
       }
       case "setTags":
         await run(() => idbTagStore.setTags(req.full_name, req.tags));
-        broadcastDataChanged();
-        return { ok: true };
+        return success(req.type);
       case "setNotes":
         await run(() => idbTagStore.setNotes(req.full_name, req.notes));
-        broadcastDataChanged();
-        return { ok: true };
+        return success(req.type);
       case "setFavorite":
         await run(() => idbTagStore.setFavorite(req.full_name, req.favorite));
-        broadcastDataChanged();
-        return { ok: true, data: { favorite: req.favorite } };
+        return success(req.type, { favorite: req.favorite });
       case "markUnstarred": {
         const result = await run(async () => {
           const star = await db.stars.get(req.full_name);
@@ -1224,24 +971,20 @@ async function handle(req: Req): Promise<Res> {
         });
         if (!result)
           return { ok: false, error: `Unknown repo: ${req.full_name}` };
-        broadcastDataAndRecommendationsChanged();
-        return { ok: true, data: result };
+        return success(req.type, result);
       }
       case "removeVisibleTag": {
         const r = await run(() => idbTagStore.removeVisibleTag(req.full_name, req.name));
-        broadcastDataChanged();
-        return { ok: true, data: r };
+        return success(req.type, r);
       }
       case "deleteTag": {
         // Remove this tag from every repo that has it and leave a tombstone.
         const r = await run(() => idbTagStore.deleteTag(req.name));
-        broadcastDataChanged();
-        return { ok: true, data: r };
+        return success(req.type, r);
       }
       case "deleteAllTags": {
         const r = await run(() => idbTagStore.deleteAllTags());
-        broadcastDataChanged();
-        return { ok: true, data: r };
+        return success(req.type, r);
       }
       case "acceptSuggestions": {
         const tags = await run(async () => {
@@ -1257,14 +1000,10 @@ async function handle(req: Req): Promise<Res> {
           await idbTagStore.setTags(req.full_name, merged);
           return visibleTagNames(await idbTagStore.get(req.full_name));
         });
-        broadcastDataChanged();
-        return {
-          ok: true,
-          data: { tags },
-        };
+        return success(req.type, { tags });
       }
       case "suggestTags": {
-        return { ok: true };
+        return success(req.type);
       }
       case "testConnection": {
         // Diagnostic: pull one page of /user/starred, return raw status+headers, never throws.
@@ -1286,18 +1025,15 @@ async function handle(req: Req): Promise<Res> {
             },
           );
           const body = res.status === 200 ? await res.json() : null;
-          return {
-            ok: true,
-            data: {
-              status: res.status,
-              statusText: res.statusText,
-              remaining: res.headers.get("x-ratelimit-remaining"),
-              limit: res.headers.get("x-ratelimit-limit"),
-              scopes: res.headers.get("x-oauth-scopes"),
-              itemCount: Array.isArray(body) ? body.length : 0,
-              sample: Array.isArray(body) && body[0] ? body[0].full_name : null,
-            },
-          };
+          return success(req.type, {
+            status: res.status,
+            statusText: res.statusText,
+            remaining: res.headers.get("x-ratelimit-remaining"),
+            limit: res.headers.get("x-ratelimit-limit"),
+            scopes: res.headers.get("x-oauth-scopes"),
+            itemCount: Array.isArray(body) ? body.length : 0,
+            sample: Array.isArray(body) && body[0] ? body[0].full_name : null,
+          });
         } catch (e) {
           return {
             ok: false,
@@ -1316,7 +1052,7 @@ async function handle(req: Req): Promise<Res> {
             probeStartedAt,
             result,
           ));
-          return { ok: true, data: result };
+          return success(req.type, result);
         } catch (error) {
           void probeStartObserved.then(() => recordProviderProbeFailure(
             probeRequestId,
@@ -1352,30 +1088,27 @@ async function handle(req: Req): Promise<Res> {
           await writeOptionsIntent(req.section);
         }
         await chrome.runtime.openOptionsPage();
-        return { ok: true };
+        return success(req.type);
       }
       case "devClearLocalData": {
         const result = await run(clearLocalDataForDev);
-        return { ok: true, data: result };
+        return success(req.type, result);
       }
       case "getTag": {
-        return {
-          ok: true,
-          data: { tag: (await idbTagStore.get(req.full_name)) ?? null },
-        };
+        return success(req.type, { tag: (await idbTagStore.get(req.full_name)) ?? null });
       }
       case "listExcluded":
-        return { ok: true, data: await idbTagStore.listExcluded() };
+        return success(req.type, await idbTagStore.listExcluded());
       case "markOnboardingSeen":
-        await setStoredOnboardingStage("done");
-        return { ok: true };
+        await starsSync.setOnboardingStage("done");
+        return success(req.type);
       case "setOnboardingStage":
-        await setStoredOnboardingStage(req.stage);
-        return { ok: true };
+        await starsSync.setOnboardingStage(req.stage);
+        return success(req.type);
       case "markTooltipSeen": {
         const cur = (await authStore.getConfig()).seenTooltips;
         await authStore.update({ seenTooltips: cur | req.bit });
-        return { ok: true, data: { seenTooltips: cur | req.bit } };
+        return success(req.type, { seenTooltips: cur | req.bit });
       }
       case "acceptSuggestionsBatch": {
         const n = await run(async () => {
@@ -1398,20 +1131,13 @@ async function handle(req: Req): Promise<Res> {
           }
           return updated;
         });
-        broadcastDataChanged();
-        return { ok: true, data: { count: n } };
+        return success(req.type, { count: n });
       }
     }
     return { ok: false, error: 'Unsupported background request.' };
   } catch (e) {
-    if (req.type === "syncIncremental" || req.type === "syncFull") {
-      await failTrackedOnboardingSync();
-    }
     const msg = translateError(e, await getLocaleMessages());
     const agentSessionFailure = bgsmAgentRuntime.sessionRpc.describeFailure(e);
-    if (!agentSessionRequest) {
-      setProgress({ phase: "idle", done: 0, total: null, message: `${msg}` });
-    }
     return {
       ok: false,
       error: msg,

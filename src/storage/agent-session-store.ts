@@ -328,6 +328,7 @@ function validateAgentAttemptRow(
   if (
     attempt.artifactContinuationControl !== null
     && attempt.state !== 'running'
+    && attempt.state !== 'stop_pending'
   ) throw new TypeError('Settled Agent attempts cannot retain continuation control.');
   validateLaunchDigest(attempt.admittedLaunchDigest);
   if (
@@ -372,6 +373,11 @@ function validateAgentAttemptRow(
   if (attempt.state === 'running') {
     if (!attempt.admittedLaunch || !attempt.lease || attempt.receipt !== null) {
       throw new TypeError('Running Agent attempt is incomplete.');
+    }
+  }
+  if (attempt.state === 'stop_pending') {
+    if (!attempt.lease || attempt.receipt !== null || attempt.retryKind !== 'stopped') {
+      throw new TypeError('Stop-pending Agent attempt is incomplete.');
     }
   }
   if (attempt.state === 'retryable') {
@@ -984,7 +990,8 @@ export async function readAgentSessionRetryDraftCandidate(
     for (const attempt of attempts) {
       const draft = retryDraftFromAttemptRow(attempt);
       if (!draft) continue;
-      await assertNoAgentAttemptRecovery(attempt);
+      if (attempt.state === 'stop_pending') await loadAgentAttemptContinuation(attempt);
+      else await assertNoAgentAttemptRecovery(attempt);
       drafts.push({ draft });
     }
     return drafts
@@ -1069,6 +1076,17 @@ export async function admitAgentSessionTurn(input: Readonly<{
               true,
             ),
           };
+        }
+        if (
+          existing.state === 'stop_pending'
+          && existing.lease?.executionEpochId === input.executionEpochId
+          && existing.lease.baseRevision === input.baseRevision
+          && existing.lease.launchDigest === input.launchDigest
+          && record.revision === input.baseRevision
+        ) {
+          // A recovered runner can receive Stop before its admission read.
+          // It may settle the owned lease, but must never execute the launch.
+          return { kind: 'stop_pending' };
         }
         if (existing.state !== 'running') {
           throw new AgentSessionAttemptConflictError(record.id, input.turnAttemptId);
@@ -1456,6 +1474,53 @@ export async function acquireAgentSessionTurnLease(input: Readonly<{
       },
       updatedAt: Math.max(acquiredAt, attempt.updatedAt),
     }, acquiredAt);
+  });
+}
+
+/** Records Stop before cancellation is accepted, without claiming a write outcome. */
+export async function requestAgentSessionTurnStop(input: Readonly<{
+  sessionId: string;
+  turnAttemptId: string;
+  baseRevision: number;
+  launchDigest: AgentSessionLaunchDigest;
+  executionEpochId: string;
+}>): Promise<boolean> {
+  assertAgentTurnTransportIdentifier(input.sessionId, 'Agent session ID');
+  assertAgentTurnTransportIdentifier(input.turnAttemptId, 'Agent turn attempt ID');
+  assertAgentTurnTransportIdentifier(input.executionEpochId, 'Agent worker execution epoch');
+  assertNonnegativeSafeInteger(input.baseRevision, 'Agent turn base revision');
+  validateLaunchDigest(input.launchDigest);
+  await ensureAgentStorageUsage();
+  return db.transaction('rw', [
+    db.agentSessions, db.agentAttempts, db.agentAttemptRecoveries, db.agentStorageUsage,
+  ], async () => {
+    const record = await db.agentSessions.get(input.sessionId);
+    if (!record) return false;
+    validateAgentSessionRecord(record);
+    const attempt = await readAgentAttempt(input.sessionId, input.turnAttemptId);
+    if (!attempt) return false;
+    await validateSessionAttemptRows(input.sessionId, [attempt]);
+    if (
+      attempt.receipt
+      || (attempt.state !== 'running' && attempt.state !== 'stop_pending')
+      || record.revision !== input.baseRevision
+      || attempt.admittedLaunch.baseRevision !== input.baseRevision
+      || attempt.admittedLaunchDigest !== input.launchDigest
+      || !attempt.lease
+      || attempt.lease.executionEpochId !== input.executionEpochId
+      || attempt.lease.turnAttemptId !== input.turnAttemptId
+      || attempt.lease.baseRevision !== input.baseRevision
+      || attempt.lease.launchDigest !== input.launchDigest
+    ) return false;
+    if (attempt.state === 'stop_pending') return true;
+    const now = Date.now();
+    await putAgentAttempt(attempt, {
+      ...attempt,
+      state: 'stop_pending',
+      retryKind: 'stopped',
+      updatedAt: Math.max(now, attempt.updatedAt),
+    }, now);
+    return true;
   });
 }
 

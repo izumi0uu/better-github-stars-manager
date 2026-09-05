@@ -79,6 +79,10 @@ describe('background Agent runtime composition', () => {
 
     const coordinator: AgentAttemptCoordinator = {
       async admit() { throw new Error('not called by runtime construction'); },
+      async requestStop(input) {
+        assert.deepEqual(input, launch);
+        return true;
+      },
       async commit() { throw new Error('not called by runtime construction'); },
       async checkpointArtifactEnvelope() { throw new Error('not called by runtime construction'); },
       async markArtifactRepromptUsed() { throw new Error('not called by runtime construction'); },
@@ -123,7 +127,7 @@ describe('background Agent runtime composition', () => {
     const turnService: BgsmAgentTurnService = {
       async run(input, options) {
         turnRuns.push(input);
-        options.onDurableLeaseAcquired();
+        await options.onDurableLeaseAcquired();
         return terminalResult(input);
       },
     };
@@ -326,6 +330,8 @@ describe('background Agent runtime composition', () => {
     assert.deepEqual(result, terminalResult(launch));
     assert.deepEqual(turnRuns, [launch]);
     assert.equal(durableAdmissionObserved, true);
+    assert.ok(registryDependencies.requestTurnStop);
+    assert.equal(await registryDependencies.requestTurnStop(launch), true);
     const releaseTurnLease = registryDependencies.releaseTurnLease;
     assert.ok(releaseTurnLease, 'runtime must wire the coordinator lease release');
     await releaseTurnLease({

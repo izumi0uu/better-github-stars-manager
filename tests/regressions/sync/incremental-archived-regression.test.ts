@@ -2,10 +2,11 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, afterEach, describe, it } from 'vitest';
 import { createChromeMock } from '../../helpers/chrome-mock';
+import { installGitHubCredential } from '../../helpers/github-credential';
 import { db } from '../../../src/storage/db';
-import { authStore, CONFIG_STORAGE_KEY } from '../../../src/auth/auth-store';
+import { CONFIG_STORAGE_KEY } from '../../../src/auth/auth-store';
 import { githubStarSource } from '../../../src/api/github-star-source';
-import { invalidateCache, queryStars } from '../../../src/background/query';
+import { queryStars } from '../../../src/background/query';
 import type { Star } from '../../../src/types';
 
 (globalThis as { chrome?: unknown }).chrome = createChromeMock().api;
@@ -116,37 +117,27 @@ describe('Incremental archived regressions', () => {
       });
     }) as typeof fetch;
 
-    const originalGetToken = authStore.getToken;
-    const originalGetUsername = authStore.getUsername;
-    authStore.getToken = async () => 'github_pat_test';
-    authStore.getUsername = async () => 'octocat';
-
-    try {
-      const result = await githubStarSource.syncIncremental();
-      assert.deepEqual(result, { added: 1 });
-      invalidateCache();
-      const rows = await queryStars({
-        filter: {
-          query: '',
-          languages: [],
-          tags: [],
-          tagMode: 'any',
-          showTombstone: false,
-          onlyFavorite: false,
-          onlyUntagged: false,
-          onlyArchived: true,
-          onlyOwned: false,
-          sortKey: 'starred_at',
-          sortDir: 'desc',
-        },
-        offset: 0,
-        limit: 100,
-      });
-      assert.deepEqual(rows.rows.map((s) => s.full_name), ['old/repo']);
-      assert.equal(rows.rows[0]?.archived, true);
-    } finally {
-      authStore.getToken = originalGetToken;
-      authStore.getUsername = originalGetUsername;
-    }
+    await installGitHubCredential();
+    const result = await githubStarSource.syncIncremental();
+    assert.deepEqual(result, { added: 1 });
+    const rows = await queryStars({
+      filter: {
+        query: '',
+        languages: [],
+        tags: [],
+        tagMode: 'any',
+        showTombstone: false,
+        onlyFavorite: false,
+        onlyUntagged: false,
+        onlyArchived: true,
+        onlyOwned: false,
+        sortKey: 'starred_at',
+        sortDir: 'desc',
+      },
+      offset: 0,
+      limit: 100,
+    });
+    assert.deepEqual(rows.rows.map((s) => s.full_name), ['old/repo']);
+    assert.equal(rows.rows[0]?.archived, true);
   });
 });

@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
   type RefObject,
 } from 'react';
 import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
@@ -27,7 +26,8 @@ import { useStoreRatingPrompt } from '@/ui/hooks/use-store-rating-prompt';
 import {
   ManagerWorkspace,
   type ManagerWorkspaceExtension,
-  type ManagerWorkspaceSnapshot,
+  type ManagerWorkspaceActivity,
+  type ManagerWorkspaceCommands,
 } from '@/ui/ManagerWorkspace';
 import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import { getLockedAnchorProps, getLockedRegionProps } from '@/ui/interaction-lock';
@@ -60,13 +60,12 @@ export function ManagerPanel() {
 
 function ExtensionManagerPanel() {
   const { m } = useI18n();
-  const refreshStarsRef = useRef<() => void>(() => {});
-  const [snapshot, setSnapshot] = useState<ManagerWorkspaceSnapshot | null>(null);
-  const handleSnapshotChange = useCallback((next: ManagerWorkspaceSnapshot) => {
-    refreshStarsRef.current = next.refreshStars;
-    setSnapshot(next);
+  const workspaceCommandsRef = useRef<ManagerWorkspaceCommands | null>(null);
+  const [workspaceActivity, setWorkspaceActivity] = useState<ManagerWorkspaceActivity | null>(null);
+  const bindWorkspaceCommands = useCallback((commands: ManagerWorkspaceCommands | null) => {
+    workspaceCommandsRef.current = commands;
   }, []);
-  const refreshStars = useCallback(() => refreshStarsRef.current(), []);
+  const refreshStars = useCallback(() => workspaceCommandsRef.current?.refreshStars(), []);
   const {
     status,
     statusLoaded,
@@ -104,7 +103,7 @@ function ExtensionManagerPanel() {
     };
     void refreshAccount().then((current) => {
       if (!current?.username || current.avatarUrl) return;
-      void bgCall<ExtensionAccount>('fetchAccount')
+      void bgCall('fetchAccount')
         .then((next) => {
           if (!cancelled) setAccount(next);
         })
@@ -151,33 +150,26 @@ function ExtensionManagerPanel() {
   });
 
   useEffect(() => {
-    if (snapshot?.starsSurface !== false) return;
+    if (workspaceActivity?.starsSurface !== false) return;
     setAgentPanelOpen(false);
     autoTagAgentPrompt.dismiss();
-  }, [autoTagAgentPrompt.dismiss, snapshot?.starsSurface]);
+  }, [autoTagAgentPrompt.dismiss, workspaceActivity?.starsSurface]);
 
-  const managerIdleForStoreRating = !!snapshot
+  const managerIdleForStoreRating = workspaceActivity?.idle === true
     && !!statusLoaded
     && !!status
     && status.hasToken
     && status.onboardingStage === 'done'
-    && !snapshot.loading
-    && snapshot.phase === 'idle'
     && !busy
     && !pendingAction
     && coachStep === null
-    && !snapshot.interactionLocked
-    && !snapshot.columnMenuOpen
-    && !snapshot.selectedDetailOpen
-    && !snapshot.unstarPopoverOpen
     && !autoTagAgentPrompt.open
     && !agentPanelOpen
     && !agentPresentation.active
-    && !info
-    && !snapshot.infoOpen;
+    && !info;
   const storeRatingPrompt = useStoreRatingPrompt({
     onboardingComplete: statusLoaded && status?.onboardingStage === 'done',
-    onMainManager: snapshot?.starsSurface === true,
+    onMainManager: workspaceActivity?.starsSurface === true,
     managerIdle: managerIdleForStoreRating,
   });
   const recordMeaningfulAction = useCallback(() => {
@@ -190,63 +182,40 @@ function ExtensionManagerPanel() {
     }
   }, [recordMeaningfulAction, successAction]);
 
-  const agentCandidate = useMemo(() => snapshot?.starsSurface && snapshot.selectedFullName
-    ? {
-        kind: 'selected_repository' as const,
-        selectedRepositoryIdHint: snapshot.selectedFullName,
-      }
-    : {
-        kind: 'current_view' as const,
-        filter: snapshot ? {
-          ...snapshot.filter,
-          languages: [...snapshot.filter.languages],
-          tags: [...snapshot.filter.tags],
-        } : {
-          query: '',
-          languages: [],
-          tags: [],
-          tagMode: 'any' as const,
-          showTombstone: false,
-          onlyFavorite: false,
-          onlyUntagged: false,
-          onlyArchived: false,
-          onlyOwned: false,
-          sortKey: 'starred_at' as const,
-          sortDir: 'desc' as const,
-        },
-      }, [snapshot]);
 
   const activeBackfillId = status?.activeBackfillId ?? null;
   const activeBackfillState = activeBackfillId ? status?.backfills[activeBackfillId] ?? null : null;
-  let starsContentOverride: ReactNode | undefined;
-  if (!statusLoaded || !status) {
-    starsContentOverride = (
+  const renderStarsContent: NonNullable<ManagerWorkspaceExtension['renderStarsContent']> = ({ interactionLocked }) => {
+    if (!statusLoaded || !status) {
+      return (
       <div className="p-10 text-center text-sm text-muted-foreground">{m.common.loading}</div>
     );
   } else if (isOnboardingCardStage(status.onboardingStage) && coachStep === null) {
-    starsContentOverride = (
+    return (
       <OnboardingCard
         stage={status.onboardingStage}
         failedInfo={info}
-        interactionLocked={snapshot?.interactionLocked ?? false}
+        interactionLocked={interactionLocked}
         onOpenOptions={() => { void bgCall('openOptions').catch(() => {}); }}
         onRetry={() => { void doSync('syncFull', m.popup.syncFull); }}
       />
     );
   } else if (status.hasToken && activeBackfillId && activeBackfillState && coachStep === null) {
-    starsContentOverride = (
+    return (
       <BackfillCard
         state={activeBackfillState}
         progress={status.progress}
         actionBusy={busy || !!pendingAction}
-        interactionLocked={snapshot?.interactionLocked ?? false}
+        interactionLocked={interactionLocked}
         onRun={() => { void runBackfill(activeBackfillId); }}
         onDefer={() => { void deferBackfill(activeBackfillId); }}
       />
     );
   }
+    return undefined;
+  };
 
-  const starsBanner = statusLoaded
+  const renderStarsBanner: NonNullable<ManagerWorkspaceExtension['renderStarsBanner']> = ({ interactionLocked }) => statusLoaded
     && status
     && !status.hasToken
     && status.onboardingStage === 'done' ? (
@@ -255,7 +224,7 @@ function ExtensionManagerPanel() {
         <span>{m.manager.noTokenBanner}</span>
         <Button
           size="sm"
-          disabled={snapshot?.interactionLocked}
+          disabled={interactionLocked}
           onClick={() => { void bgCall('openOptions').catch(() => {}); }}
         >
           {m.manager.addPat}
@@ -263,7 +232,7 @@ function ExtensionManagerPanel() {
       </div>
     ) : undefined;
 
-  const extension = useMemo<ManagerWorkspaceExtension>(() => ({
+  const extension: ManagerWorkspaceExtension = {
     toolbar: {
       account: account ? {
         ...account,
@@ -284,7 +253,7 @@ function ExtensionManagerPanel() {
       agentActive: agentPresentation.active,
       onTooltipSeen: (bit) => {
         applyStatusPatch({ seenTooltips: (status?.seenTooltips ?? 0) | bit });
-        void bgCall<{ seenTooltips: number }>('markTooltipSeen', { bit })
+        void bgCall('markTooltipSeen', { bit })
           .then((data) => applyStatusPatch({ seenTooltips: data.seenTooltips }))
           .catch(() => {});
       },
@@ -293,31 +262,31 @@ function ExtensionManagerPanel() {
     },
     info,
     onClearInfo: () => setInfo(null),
-    starsBanner,
-    starsContentOverride,
+    renderStarsBanner,
+    renderStarsContent,
     onOpenOptions: (section) => {
       void bgCall('openOptions', section ? { section } : undefined).catch(() => {});
     },
     onClearLocalData: async () => {
       await bgCall('devClearLocalData');
     },
-    renderOverlays: (rootRef) => (
+    renderOverlays: ({ rootRef, starsSurface, agentCandidate, scopeCount, refreshStars: refreshWorkspaceStars }) => (
       <>
-        {snapshot?.starsSurface && agentHostMounted && (
+        {starsSurface && agentHostMounted && (
           <Suspense fallback={null}>
             <LazyAgentHost
               open={agentPanelOpen}
               onHide={() => setAgentPanelOpen(false)}
               onOpenOptions={() => { void bgCall('openOptions').catch(() => {}); }}
-              onDataChanged={refreshStars}
+              onDataChanged={refreshWorkspaceStars}
               onPresentationChange={setAgentPresentation}
               defaultCandidate={agentCandidate}
               chatCandidate={agentCandidate}
-              scopeCount={agentCandidate.kind === 'selected_repository' ? 1 : snapshot.visibleTotal}
+              scopeCount={scopeCount}
             />
           </Suspense>
         )}
-        {snapshot?.starsSurface && (
+        {starsSurface && (
           <AutoTagAgentPrompt
             open={autoTagAgentPrompt.open}
             onChooseAgent={autoTagAgentPrompt.chooseAgent}
@@ -325,7 +294,7 @@ function ExtensionManagerPanel() {
             onDismiss={autoTagAgentPrompt.dismiss}
           />
         )}
-        {snapshot?.starsSurface && statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
+        {starsSurface && statusLoaded && status?.onboardingStage === 'coach' && coachStep !== null && (
           <CoachOverlay
             step={coachStep}
             total={COACH_TARGETS.length}
@@ -350,44 +319,14 @@ function ExtensionManagerPanel() {
         )}
       </>
     ),
-  }), [
-    account,
-    activeBackfillId,
-    agentCandidate,
-    agentHostMounted,
-    agentPanelOpen,
-    agentPresentation.active,
-    agentPresentation.status,
-    agentPresentation.statusKind,
-    applyStatusPatch,
-    autoTagAgentPrompt.chooseAgent,
-    autoTagAgentPrompt.chooseAutoTags,
-    autoTagAgentPrompt.dismiss,
-    autoTagAgentPrompt.open,
-    autoTagAgentPrompt.requestAutoTags,
-    busy,
-    coachStep,
-    dismissOnboarding,
-    doSync,
-    info,
-    openAgentPanel,
-    pendingAction,
-    refreshStars,
-    snapshot,
-    setInfo,
-    starsBanner,
-    starsContentOverride,
-    status,
-    statusLoaded,
-    storeRatingPrompt,
-    successAction,
-  ]);
+  };
 
   return (
     <ManagerWorkspace
       extension={extension}
       onMeaningfulAction={recordMeaningfulAction}
-      onSnapshotChange={handleSnapshotChange}
+      onCommandsChange={bindWorkspaceCommands}
+      onActivityChange={setWorkspaceActivity}
     />
   );
 }

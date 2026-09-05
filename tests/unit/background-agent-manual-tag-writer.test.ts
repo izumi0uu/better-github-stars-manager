@@ -7,6 +7,48 @@ import {
 } from '@/background/agent-manual-tag-writer';
 import { createSerializedRunner } from '@/background/serialized-runner';
 
+describe('Agent cancellation during the asynchronous Apply gate', () => {
+  for (const mutation of ['add', 'remove', 'delete'] as const) {
+    it(`does not start ${mutation} after Stop while the gate is pending`, async () => {
+      const runner = createSerializedRunner();
+      const controller = new AbortController();
+      let releaseGate!: (blocked: boolean) => void;
+      let enteredGate!: () => void;
+      const entered = new Promise<void>((resolve) => { enteredGate = resolve; });
+      const gate = new Promise<boolean>((resolve) => { releaseGate = resolve; });
+      const markWriteStarted = vi.fn();
+      const write = vi.fn(async () => {
+        throw new Error('Cancelled mutation reached storage.');
+      });
+      const dependencies = {
+        runSerialized: runner.run,
+        isBlocked: () => { enteredGate(); return gate; },
+        write,
+      };
+      const context = {
+        sessionId: 'session-gate',
+        callId: 'call-gate',
+        signal: controller.signal,
+        markWriteStarted,
+      };
+      const pending = mutation === 'add'
+        ? createQueuedAgentManualTagWriter(dependencies)('owner/repo', ['tag'], context)
+        : mutation === 'remove'
+          ? createQueuedAgentVisibleTagRemovalWriter(dependencies)(
+              [{ full_name: 'owner/repo', tags: ['tag'] }], context,
+            )
+          : createQueuedAgentGlobalTagDeletionWriter(dependencies)(['tag'], context);
+      await entered;
+      controller.abort();
+      releaseGate(false);
+      await assert.rejects(pending, { name: 'AbortError' });
+      assert.equal(markWriteStarted.mock.calls.length, 0);
+      assert.equal(write.mock.calls.length, 0);
+      assert.equal(await runner.run(async () => 'queue released'), 'queue released');
+    });
+  }
+});
+
 describe('background Agent manual-tag writer', () => {
   it('runs a previously authorized write only after an active Apply completes', async () => {
     const runner = createSerializedRunner();

@@ -13,8 +13,8 @@ import {
 } from '@/radar/radar-model';
 import type {
   RecommendationQueryResponse,
-  RecommendationRecord,
 } from '@/recommendations/recommendation-model';
+import type { RecommendationPresentation } from '@/recommendations/recommendation-projector';
 import { cleanupMountedRootsAndBody, setInputValue } from './test-utils';
 import { TooltipProvider } from '@/ui/shadcn/tooltip';
 
@@ -107,9 +107,10 @@ function radarResult(statusOverrides: Partial<RadarStatus> = {}): RadarQueryResp
   };
 }
 
-function recommendation(): RecommendationRecord {
+function recommendation(): RecommendationPresentation {
   return {
     id: 'candidate/tool',
+    favorite: false,
     accountLogin: 'viewer',
     repositoryKey: 'candidate/tool',
     repositoryFullName: 'Candidate/Tool',
@@ -217,6 +218,26 @@ function surfaceProps(
     ...overrides,
   };
 }
+
+it('reads persisted recommendation favorites and toggles the committed value after remount', async () => {
+  const onSetFavorite = vi.fn(noOp);
+  const onStar = vi.fn(noOp);
+  const props = surfaceProps({
+    discoverView: 'for-you',
+    recommendations: recommendationResult({}, [], [{ ...recommendation(), favorite: true }]),
+    onSetFavorite,
+    onStar,
+  });
+  const first = mount(<Radar {...props} />);
+  expect(first.querySelector('[data-recommendation-action="favorite"]')?.getAttribute('aria-pressed')).toBe('true');
+  act(() => mountedRoots[0].unmount());
+  mountedRoots.splice(0, 1);
+  const remounted = mount(<Radar {...props} />);
+  const favorite = remounted.querySelector<HTMLButtonElement>('[data-recommendation-action="favorite"]');
+  await act(async () => favorite?.click());
+  expect(onSetFavorite).toHaveBeenCalledWith('candidate/tool', 'Candidate/Tool', false);
+  expect(onStar).not.toHaveBeenCalled();
+});
 
 afterEach(() => {
   cleanupMountedRootsAndBody(mountedRoots);

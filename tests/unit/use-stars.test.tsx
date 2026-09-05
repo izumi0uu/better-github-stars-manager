@@ -16,6 +16,8 @@ import { ManagerRuntimeProvider } from '@/ui/manager-runtime-context';
 import { useStars } from '@/ui/use-stars';
 import {
   cleanupMountedRootsAndBody,
+  click,
+  fakeStar,
   mountReact,
   type MountedRoot,
 } from './test-utils';
@@ -119,8 +121,13 @@ function createRuntime(onlyOwned: boolean) {
 }
 
 function Harness() {
-  useStars();
-  return null;
+  const stars = useStars();
+  return (
+    <div data-phase={stars.phase} data-loading={stars.loading} data-error={stars.error ?? ''}>
+      {stars.rows.map((row) => <span key={row.full_name}>{row.full_name}</span>)}
+      <button type="button" onClick={stars.refresh}>Retry</button>
+    </div>
+  );
 }
 
 async function flushEffects() {
@@ -135,6 +142,7 @@ async function flushTimer() {
   });
 }
 afterEach(() => {
+  vi.useRealTimers();
   cleanupMountedRootsAndBody(roots);
   useFilterStore.setState({
     query: '',
@@ -201,5 +209,58 @@ describe('useStars owned-repository loading', () => {
 
     expect(manager.queryStars).toHaveBeenCalledTimes(2);
     expect(manager.queryStars.mock.calls[1]?.[0].filter.onlyOwned).toBe(true);
+  });
+});
+
+describe('Stars query terminal ownership', () => {
+  it('retains committed rows, exits fading-out on failure, and retries the current query', async () => {
+    vi.useFakeTimers();
+    const manager = createRuntime(false);
+    const committed = { ...emptyStarsResult, rows: [fakeStar()], total: 1, grandTotal: 1 };
+    manager.queryStars.mockResolvedValueOnce(committed);
+    const container = mountReact(
+      <ManagerRuntimeProvider runtime={manager.runtime}><Harness /></ManagerRuntimeProvider>, roots,
+    );
+    await flushEffects();
+    manager.queryStars.mockRejectedValueOnce(new Error('QUERY_UNAVAILABLE'));
+    act(() => useFilterStore.getState().setQuery('new query'));
+    expect(container.firstElementChild?.getAttribute('data-phase')).toBe('fading-out');
+    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+    expect(container.firstElementChild?.getAttribute('data-phase')).toBe('idle');
+    expect(container.firstElementChild?.getAttribute('data-loading')).toBe('false');
+    expect(container.firstElementChild?.getAttribute('data-error')).toBe('query');
+    expect(container.textContent).toContain('owner/repo');
+
+    manager.queryStars.mockResolvedValueOnce({ ...emptyStarsResult, rows: [fakeStar({ full_name: 'owner/new' })] });
+    await click(container.querySelector('button')!);
+    expect(container.firstElementChild?.getAttribute('data-error')).toBe('');
+    expect(container.firstElementChild?.getAttribute('data-phase')).toBe('idle');
+    expect(container.textContent).toContain('owner/new');
+    expect(manager.queryStars.mock.lastCall?.[0].filter.query).toBe('new query');
+  });
+
+  it.each(['success', 'failure'] as const)('ignores a stale %s after a newer query commits', async (settlement) => {
+    vi.useFakeTimers();
+    const manager = createRuntime(false);
+    const container = mountReact(
+      <ManagerRuntimeProvider runtime={manager.runtime}><Harness /></ManagerRuntimeProvider>, roots,
+    );
+    await flushEffects();
+    const { promise, resolve, reject } = Promise.withResolvers<StarsQueryResult>();
+    manager.queryStars.mockReturnValueOnce(promise);
+    act(() => useFilterStore.getState().setQuery('old'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+    manager.queryStars.mockResolvedValueOnce({ ...emptyStarsResult, rows: [fakeStar({ full_name: 'owner/current' })] });
+    act(() => useFilterStore.getState().setQuery('current'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(280); });
+    await act(async () => {
+      if (settlement === 'failure') reject(new Error('OLD_QUERY_FAILED'));
+      else resolve({ ...emptyStarsResult, rows: [fakeStar({ full_name: 'owner/stale' })] });
+      await Promise.resolve();
+    });
+    expect(container.firstElementChild?.getAttribute('data-phase')).toBe('idle');
+    expect(container.firstElementChild?.getAttribute('data-error')).toBe('');
+    expect(container.textContent).toContain('owner/current');
+    expect(container.textContent).not.toContain('owner/stale');
   });
 });

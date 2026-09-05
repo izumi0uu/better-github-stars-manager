@@ -78,7 +78,7 @@ type BgsmAgentConversationResolver = Parameters<
 export type BgsmAgentTurnRunOptions = Readonly<{
   emit?: (event: AgentEvent) => void;
   signal?: AbortSignal;
-  onDurableLeaseAcquired(): void;
+  onDurableLeaseAcquired(): void | Promise<void>;
   bind?: (binding: BgsmAgentConversationBinding) => void;
   trace?: AgentExecutionTraceSink;
   contentCapture?: AgentContentCaptureSink;
@@ -167,7 +167,6 @@ export function createBgsmAgentTurnService(
       recoveryClass,
     );
     if (admission.kind === 'replay') return resultFromCommit(launch, admission.commit);
-    options.onDurableLeaseAcquired();
     let changed = false;
     let changedCount = 0;
     let executionLedger: AgentExecutionLedger | null = null;
@@ -235,6 +234,10 @@ export function createBgsmAgentTurnService(
           commit: null,
         };
       };
+      await options.onDurableLeaseAcquired();
+      if (admission.kind === 'stop_pending' || liveness.signal.aborted) {
+        return settleWithoutTransition(terminalAfterAbort());
+      }
       if (canonicalSession.revision !== baseRevision) {
         throw new TypeError('Cubby durable session changed after turn admission.');
       }
