@@ -1,7 +1,7 @@
 import type { Star, SyncProgress } from '@/types';
 import type { StarSource } from './star-source';
 import { db } from '@/storage/db';
-import { authStore } from '@/auth/auth-store';
+import { authStore, type GitHubCredentialSnapshot } from '@/auth/auth-store';
 import { getMessages } from '@/i18n';
 import { GH_NO_TOKEN, GH_TOKEN_REJECTED, GH_RATE_LIMIT, GH_FORBIDDEN, GH_TIMEOUT, GH_NETWORK, GH_PAGE_STATUS, GH_BAD_SHAPE } from './errors';
 
@@ -140,6 +140,23 @@ async function withMainCredential<T>(attempt: (token: string) => Promise<T>): Pr
   if (!token) throw new Error(GH_NO_TOKEN);
   return attempt(token);
 }
+
+async function syncCredential(captured?: GitHubCredentialSnapshot): Promise<GitHubCredentialSnapshot> {
+  const snapshot = captured ?? await authStore.getGitHubCredentialSnapshot();
+  if (!snapshot.mainToken) throw new Error(GH_NO_TOKEN);
+  await authStore.assertGitHubCredentialCurrent(snapshot);
+  return snapshot;
+}
+
+async function withSyncCredential<T>(
+  snapshot: GitHubCredentialSnapshot,
+  attempt: (token: string) => Promise<T>,
+): Promise<T> {
+  await authStore.assertGitHubCredentialCurrent(snapshot);
+  const result = await attempt(snapshot.mainToken!);
+  await authStore.assertGitHubCredentialCurrent(snapshot);
+  return result;
+}
 async function getLocaleMessages() {
   return getMessages(await authStore.getLocale());
 }
@@ -181,8 +198,8 @@ function withTimeout(ms: number): { signal: AbortSignal; cancel: () => void } {
   return { signal: ctrl.signal, cancel: () => clearTimeout(t) };
 }
 
-async function fetchPage(page: number): Promise<{ items: StarredRepoPayload[]; link: string | null }> {
-  return withMainCredential(async (token) => {
+async function fetchPage(snapshot: GitHubCredentialSnapshot, page: number): Promise<{ items: StarredRepoPayload[]; link: string | null }> {
+  return withSyncCredential(snapshot, async (token) => {
     const { signal, cancel } = withTimeout(30_000);
     let res: Response;
     try {
@@ -211,11 +228,12 @@ async function fetchPage(page: number): Promise<{ items: StarredRepoPayload[]; l
   });
 }
 async function fetchOwnedPublicPage(
+  snapshot: GitHubCredentialSnapshot,
   username: string,
   page: number,
 ): Promise<{ items: RepositoryPayload[]; hasNext: boolean }> {
   const url = `${API}/users/${encodeURIComponent(username)}/repos?type=owner&sort=full_name&direction=asc&per_page=${PER_PAGE}&page=${page}`;
-  const res = await withMainCredential(async (token) => {
+  const res = await withSyncCredential(snapshot, async (token) => {
     const response = await fetchWithTimeout(url, {
       headers: tokenHeaders(token, 'application/vnd.github+json'),
       cache: 'no-store',
@@ -247,10 +265,10 @@ async function fetchOwnedPublicPage(
   return { items, hasNext: hasNextPage(res.headers.get('link')) };
 }
 
-async function fetchAllOwnedPublicRepositories(username: string): Promise<RepositoryPayload[]> {
+async function fetchAllOwnedPublicRepositories(snapshot: GitHubCredentialSnapshot, username: string): Promise<RepositoryPayload[]> {
   const items: RepositoryPayload[] = [];
   for (let page = 1; ; page++) {
-    const current = await fetchOwnedPublicPage(username, page);
+    const current = await fetchOwnedPublicPage(snapshot, username, page);
     items.push(...current.items);
     if (!current.hasNext) return items;
   }
@@ -355,13 +373,14 @@ function retryableErrorCode(raw: string): boolean {
 }
 
 async function fetchPageWithRetry(
+  snapshot: GitHubCredentialSnapshot,
   page: number,
   onRetry?: (attempt: number) => void,
   maxAttempts = 3,
 ): Promise<{ items: StarredRepoPayload[]; link: string | null }> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await fetchPage(page);
+      return await fetchPage(snapshot, page);
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
       if (!retryableErrorCode(raw) || attempt === maxAttempts) throw e;
@@ -436,6 +455,7 @@ function mergeOwnedPublicRepositoryMetadata(
 
 /** Concurrently fetch a range of pages; returns in page-number order, not completion order. */
 async function fetchPages(
+  snapshot: GitHubCredentialSnapshot,
   pages: number[],
   onPageDone?: () => void,
   onPageRetry?: (page: number, attempt: number) => void,
@@ -448,24 +468,28 @@ async function fetchPages(
       const my = pages[idx];
       const slot = idx;
       idx++;
-      const { items } = await fetchPageWithRetry(my, (attempt) => onPageRetry?.(my, attempt));
+      const { items } = await fetchPageWithRetry(snapshot, my, (attempt) => onPageRetry?.(my, attempt));
       out[slot] = items; // place by input index, not push-by-completion
       onPageDone?.();
     }
   });
-  await Promise.all(workers);
+  // Do not let sibling page callbacks outlive the job's failure terminal.
+  const settled = await Promise.allSettled(workers);
+  for (const result of settled) {
+    if (result.status === 'rejected') throw result.reason;
+  }
   return out;
 }
 
-async function bulkPutStars(stars: Star[]): Promise<void> {
+async function bulkPutStars(snapshot: GitHubCredentialSnapshot, stars: Star[]): Promise<void> {
   for (let i = 0; i < stars.length; i += WRITE_CHUNK) {
-    await db.stars.bulkPut(stars.slice(i, i + WRITE_CHUNK));
+    await authStore.withGitHubCredential(snapshot, () => db.stars.bulkPut(stars.slice(i, i + WRITE_CHUNK)));
     if (i + WRITE_CHUNK < stars.length) await Promise.resolve();
   }
 }
 
-async function refreshOwnedPublicRepositories(username: string): Promise<{ added: number; updated: number }> {
-  const ownedPublic = await fetchAllOwnedPublicRepositories(username);
+async function refreshOwnedPublicRepositories(snapshot: GitHubCredentialSnapshot, username: string): Promise<{ added: number; updated: number }> {
+  const ownedPublic = await fetchAllOwnedPublicRepositories(snapshot, username);
   if (ownedPublic.length === 0) return { added: 0, updated: 0 };
   const existingOwned = await db.stars.bulkGet(ownedPublic.map((repo) => repo.full_name));
   const updates: Star[] = [];
@@ -481,19 +505,20 @@ async function refreshOwnedPublicRepositories(username: string): Promise<{ added
     if (!existing || existing.tombstone) added++;
     else updated++;
   }
-  await bulkPutStars(updates);
+  await bulkPutStars(snapshot, updates);
   return { added, updated };
 }
 
 type ProgressReporter = ((progress: SyncProgress) => void) | undefined;
 
 async function fetchAllStarredPages(
+  snapshot: GitHubCredentialSnapshot,
   phase: Extract<SyncProgress['phase'], 'full' | 'rescan'>,
   progressMessage: (total: number) => string,
   onProgress: ProgressReporter,
   retryMessage: (page: number, attempt: number) => string,
 ): Promise<{ items: StarredRepoPayload[]; total: number }> {
-  const first = await fetchPageWithRetry(1, (attempt) => {
+  const first = await fetchPageWithRetry(snapshot, 1, (attempt) => {
     onProgress?.({ phase, done: 0, total: null, message: retryMessage(1, attempt) });
   });
   const total = lastPage(first.link) ?? 1;
@@ -502,6 +527,7 @@ async function fetchAllStarredPages(
   const restPages = total > 1 ? Array.from({ length: total - 1 }, (_, i) => i + 2) : [];
   let fetched = 1;
   const rest = await fetchPages(
+    snapshot,
     restPages,
     () => {
       fetched++;
@@ -523,23 +549,29 @@ export const githubStarSource: StarSource = {
   },
 
   async syncFull(onProgress, options) {
+    const snapshot = await syncCredential(options?.credential);
     const m = await getLocaleMessages();
     const includeOwnedPublic = options?.includeOwnedPublic !== false;
-    const username = includeOwnedPublic ? await authStore.getUsername() : null;
+    const username = includeOwnedPublic ? snapshot.accountLogin : null;
     if (includeOwnedPublic && !username) {
       throw new Error('Username unknown — re-add the token in options.');
     }
-    const [starredPageSet, ownedPublic] = await Promise.all([
+    const [starredResult, ownedResult] = await Promise.allSettled([
       fetchAllStarredPages(
+        snapshot,
         'full',
         (pageTotal) => m.background.fetchingPages(pageTotal),
         onProgress,
         (page, attempt) => m.background.fetchingPageRetry(page, attempt),
       ),
       includeOwnedPublic && username
-        ? fetchAllOwnedPublicRepositories(username)
+        ? fetchAllOwnedPublicRepositories(snapshot, username)
         : Promise.resolve<RepositoryPayload[]>([]),
     ]);
+    if (starredResult.status === 'rejected') throw starredResult.reason;
+    if (ownedResult.status === 'rejected') throw ownedResult.reason;
+    const starredPageSet = starredResult.value;
+    const ownedPublic = ownedResult.value;
     const existingOwned = ownedPublic.length > 0
       ? await db.stars.bulkGet(ownedPublic.map((repo) => repo.full_name))
       : [];
@@ -550,11 +582,11 @@ export const githubStarSource: StarSource = {
         ? []
         : [toOwnedPublicRepository(repository, existingOwned[index])]
     ));
-    await bulkPutStars([...ownedOnly, ...starred]);
+    await bulkPutStars(snapshot, [...ownedOnly, ...starred]);
 
     // Advance the incremental cursor from the authoritative starred payload.
     const newest = starredPageSet.items[0]?.starred_at ?? new Date().toISOString();
-    await authStore.update({ lastSyncStarredAt: newest });
+    await authStore.updateForGitHubCredential(snapshot, { lastSyncStarredAt: newest });
 
     onProgress?.({
       phase: 'full',
@@ -568,13 +600,15 @@ export const githubStarSource: StarSource = {
     };
   },
 
-  async syncOwnedPublicRepositories() {
-    const username = await authStore.getUsername();
+  async syncOwnedPublicRepositories(options) {
+    const snapshot = await syncCredential(options?.credential);
+    const username = snapshot.accountLogin;
     if (!username) throw new Error('Username unknown — re-add the token in options.');
-    return refreshOwnedPublicRepositories(username);
+    return refreshOwnedPublicRepositories(snapshot, username);
   },
 
-  async syncIncremental() {
+  async syncIncremental(options) {
+    const snapshot = await syncCredential(options?.credential);
     const cursor = (await authStore.getConfig()).lastSyncStarredAt;
     let added = 0;
     let page = 1;
@@ -583,13 +617,13 @@ export const githubStarSource: StarSource = {
     let newestStarredAt: string | null = null;
     // Walk pages in starred_at-desc order; page 1 holds the newest (captured as the next cursor). Cap at 5 pages.
     while (!stop && page <= 5) {
-      const { items } = await fetchPageWithRetry(page);
+      const { items } = await fetchPageWithRetry(snapshot, page);
       if (items.length === 0) break;
       if (page === 1) newestStarredAt = items[0]?.starred_at ?? newestStarredAt;
       const fresh = cursor ? items.filter((it) => it.starred_at > cursor) : items;
       // Upsert every repo we touch so repo metadata like `archived` stays fresh
       // even for rows that are older than the incremental cursor.
-      await bulkPutStars(items.map(toStar));
+      await bulkPutStars(snapshot, items.map(toStar));
       added += fresh.length;
       if (fresh.length < items.length) {
         crossedCursor = true;
@@ -601,7 +635,7 @@ export const githubStarSource: StarSource = {
     // Advance the cursor only after proving every newer item was covered.
     // If the page cap is hit first, a later full sync/rescan can still recover
     // the skipped window because the old cursor remains in place.
-    if (newestStarredAt && crossedCursor) await authStore.update({ lastSyncStarredAt: newestStarredAt });
+    if (newestStarredAt && crossedCursor) await authStore.updateForGitHubCredential(snapshot, { lastSyncStarredAt: newestStarredAt });
     return { added };
   },
 
@@ -613,13 +647,15 @@ export const githubStarSource: StarSource = {
     return putStar(fullName);
   },
 
-  async syncRescan(onProgress) {
+  async syncRescan(onProgress, options) {
+    const snapshot = await syncCredential(options?.credential);
     const m = await getLocaleMessages();
     const previouslyTombstoned = new Set<string>();
     await db.stars.each((s) => {
       if (s.tombstone) previouslyTombstoned.add(s.full_name);
     });
     const { items: all, total } = await fetchAllStarredPages(
+      snapshot,
       'rescan',
       (pageTotal) => m.background.rescanningPages(pageTotal),
       onProgress,
@@ -628,7 +664,7 @@ export const githubStarSource: StarSource = {
     const apiNames = new Set(all.map((it) => it.repo.full_name.toLocaleLowerCase('en-US')));
 
     // Refresh every starred row before reconciling prior star state.
-    await bulkPutStars(all.map(toStar));
+    await bulkPutStars(snapshot, all.map(toStar));
 
     // Tombstone any local repo absent from the API (B2 soft delete). Preserve tags/notes.
     let tombstoned = 0;
@@ -652,7 +688,8 @@ export const githubStarSource: StarSource = {
         onProgress?.({ phase: 'rescan', done: total, total, message: m.background.reconcilingLocal(scanned) });
       }
     });
-    if (changed.length > 0) await bulkPutStars(changed);
+    if (changed.length > 0) await bulkPutStars(snapshot, changed);
+    await authStore.assertGitHubCredentialCurrent(snapshot);
 
     onProgress?.({ phase: 'rescan', done: total, total, message: m.background.rescanSummary(tombstoned, revived) });
     return { tombstoned, revived };

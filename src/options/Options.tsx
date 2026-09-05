@@ -135,7 +135,7 @@ export function Options() {
     const [c, hasToken, status] = await Promise.all([
       authStore.getConfig(),
       authStore.hasToken(),
-      bgCall<SyncStatus>("getStatus").catch(() => null),
+      bgCall("getStatus").catch(() => null),
     ]);
     if (generation !== refreshGeneration.current) return;
     setUsername(c.username);

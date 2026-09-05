@@ -72,6 +72,7 @@ export function createBgsmAgentRuntime(
     executionEpochId,
     runTurn: (launch, options) => turnService.run(launch, options),
     releaseTurnLease: (input) => attemptCoordinator.release(input),
+    requestTurnStop: (launch) => attemptCoordinator.requestStop(launch),
     fenceRestoredTurnFailure: (launch) => attemptCoordinator.rollbackRecoveryClaim(launch),
     translateError: dependencies.translateError,
     ...(dependencies.traceFactory ? { traceFactory: dependencies.traceFactory } : {}),

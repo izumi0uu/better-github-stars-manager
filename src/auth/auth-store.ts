@@ -166,6 +166,16 @@ export type GitHubCredentialSnapshot = Readonly<{
   notificationsIdentity: string;
 }>;
 
+export const GITHUB_CREDENTIAL_CHANGED = 'GITHUB_CREDENTIAL_CHANGED';
+
+function assertMainCredential(config: Config, snapshot: GitHubCredentialSnapshot): void {
+  if (
+    !snapshot.mainToken || !hasUsableMainCredential(config) ||
+    normalizedAccountLogin(config.username) !== snapshot.accountLogin ||
+    mainCredentialIdentity(config) !== snapshot.mainIdentity
+  ) throw new Error(GITHUB_CREDENTIAL_CHANGED);
+}
+
 const CONFIG_OPERATION_LOCK = 'better-github-stars-manager:config:v1';
 
 let cache: Config | null = null;
@@ -735,9 +745,34 @@ export const authStore = {
     return readDecryptedToken();
   },
 
-  /** A single account-bound credential view for background Watch operations. */
+  /** One account-bound credential view for a complete remote operation. */
   async getGitHubCredentialSnapshot(): Promise<GitHubCredentialSnapshot> {
     return readGitHubCredentialSnapshot();
+  },
+
+  async assertGitHubCredentialCurrent(snapshot: GitHubCredentialSnapshot): Promise<void> {
+    assertMainCredential(await readStoredConfig(), snapshot);
+  },
+
+  /** Keep credential replacement serialized with a local commit, never a network request. */
+  async withGitHubCredential<T>(
+    snapshot: GitHubCredentialSnapshot,
+    commit: () => Promise<T>,
+  ): Promise<T> {
+    return runConfigExclusive(async () => {
+      assertMainCredential(await readStoredConfig(), snapshot);
+      return commit();
+    });
+  },
+
+  async updateForGitHubCredential(
+    snapshot: GitHubCredentialSnapshot,
+    patch: Partial<Pick<Config, 'lastSyncStarredAt' | 'gistId' | 'gistSyncCursor' | 'onboardingStage' | 'seenOnboarding'>>,
+  ): Promise<Config> {
+    return mutateStoredConfig((current) => {
+      assertMainCredential(current, snapshot);
+      return { ...current, ...patch };
+    });
   },
 
 

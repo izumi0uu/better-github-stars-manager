@@ -715,11 +715,12 @@ class DemoManagerRuntime implements ManagerRuntime {
     return this.state.recommendationBatches.flat();
   }
 
-  private projectRecommendations(): RecommendationRecord[] {
+  private projectRecommendations() {
     return projectRecommendations({
       accountLogin: this.accountLogin(),
       recommendations: this.activeRecommendationBatch(),
       stars: this.state.stars,
+      tags: this.state.tags,
       ignores: this.state.recommendationIgnores,
     });
   }

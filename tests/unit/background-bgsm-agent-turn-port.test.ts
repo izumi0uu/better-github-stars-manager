@@ -11,6 +11,7 @@ import {
   createBgsmAgentTurnRegistry,
 } from '@/background/bgsm-agent-turn-port';
 import { createAgentAttemptCoordinator } from '@/background/agent-attempt-coordinator';
+import { createBgsmAgentTurnService } from '@/background/bgsm-agent-turn-service';
 import type {
   BgsmAgentTurnAckDisposition,
   BgsmAgentTurnLaunch,
@@ -114,6 +115,171 @@ function fakePort() {
 }
 
 describe('Cubby turn Port ownership', () => {
+  for (const restoredStop of [false, true]) {
+    it(`settles ${restoredStop ? 'restored' : 'admission-gated'} Stop in the real turn service before provider preparation`, async () => {
+      await db.delete();
+      await db.open();
+      try {
+        const created = await createAgentSession({ idFactory: () => 'session-service-stop' });
+        const launch: BgsmAgentTurnLaunch = {
+          sessionId: created.session.id, turnAttemptId: 'attempt-service-stop',
+          baseRevision: 0, prompt: 'Read repositories.',
+        };
+        const coordinator = createAgentAttemptCoordinator('worker-service-stop');
+        if (restoredStop) {
+          await coordinator.admit(launch, 'statically_read_only');
+          await coordinator.requestStop(launch);
+        }
+        let providerCalls = 0;
+        const unexpected = () => { throw new Error('Stopped turn reached execution dependencies.'); };
+        const service = createBgsmAgentTurnService({
+          attemptCoordinator: coordinator,
+          prepareRuntimeProvider: () => { providerCalls += 1; return unexpected(); },
+          invalidateProviderCapability: unexpected,
+          resolveLiveCandidate: unexpected,
+          getActiveOrganizeJob: unexpected,
+          isOrganizeApplyBlockingWrites: unexpected,
+          createTagAssignmentPolicy: unexpected,
+          assignManualTags: unexpected,
+          removeVisibleTags: unexpected,
+          deleteTagsEverywhere: unexpected,
+          broadcastDataChanged: unexpected,
+          providerTraceIdentity: unexpected,
+        });
+        const controller = new AbortController();
+        const result = await service.run(launch, {
+          signal: controller.signal,
+          async onDurableLeaseAcquired() {
+            assert.equal(await coordinator.requestStop(launch), true);
+            if (!restoredStop) controller.abort();
+          },
+        });
+        assert.equal(result.reason, 'aborted');
+        assert.equal(result.commit, null);
+        assert.equal(providerCalls, 0);
+        const stored = (await db.agentAttempts.toArray())[0]!;
+        assert.equal(stored.state, 'retryable');
+        assert.equal(stored.retryKind, 'stopped');
+        assert.equal(stored.writeSettlement, 'none');
+        assert.equal(stored.lease, null);
+      } finally {
+        await db.delete();
+      }
+    });
+  }
+
+  for (const stopBeforeAdmission of [false, true]) {
+    it(`persists Stop before aborting ${stopBeforeAdmission ? 'admitting' : 'running'} work and fences replacement`, async () => {
+      await db.delete();
+      await db.open();
+      try {
+        const created = await createAgentSession({ idFactory: () => 'session-port-durable-stop' });
+        const launch: BgsmAgentTurnLaunch = {
+          sessionId: created.session.id, turnAttemptId: 'attempt-port-durable-stop',
+          baseRevision: 0, prompt: 'Read the scoped repositories.',
+        };
+        const coordinator = createAgentAttemptCoordinator('worker-port-stop');
+        let releaseAdmission!: () => void;
+        const admissionGate = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+        let releaseStop!: () => void;
+        const stopGate = new Promise<void>((resolve) => { releaseStop = resolve; });
+        let stopCalls = 0;
+        let providerCalls = 0;
+        let admitted = false;
+        let aborted = false;
+        const registry = createBgsmAgentTurnRegistry({
+          executionEpochId: 'worker-port-stop',
+          translateError: async () => 'failed',
+          requestTurnStop: async (input) => {
+            stopCalls += 1;
+            await stopGate;
+            return coordinator.requestStop(input);
+          },
+          runTurn: async (input, options) => {
+            options.signal.addEventListener('abort', () => { aborted = true; });
+            if (stopBeforeAdmission) await admissionGate;
+            await coordinator.admit(input, 'statically_read_only');
+            admitted = true;
+            await options.onDurableLeaseAcquired();
+            if (!options.signal.aborted) providerCalls += 1;
+            // Simulate worker loss after Stop, before terminal settlement.
+            return new Promise<BgsmAgentTurnResult>(() => {});
+          },
+        });
+        const transport = fakePort();
+        registry.attach(transport.port);
+        transport.start(launch);
+        if (!stopBeforeAdmission) await waitUntil(() => providerCalls === 1);
+        const stop = {
+          type: 'stopBgsmAgentTurn', executionEpochId: registry.executionEpochId,
+          sessionId: launch.sessionId, turnAttemptId: launch.turnAttemptId,
+          baseRevision: launch.baseRevision,
+        };
+        transport.deliver({ ...stop, executionEpochId: 'worker-stale' });
+        transport.deliver({ ...stop, sessionId: 'session-stale' });
+        assert.equal(stopCalls, 0);
+        transport.deliver(stop);
+        transport.deliver(stop);
+        if (stopBeforeAdmission) {
+          assert.equal(stopCalls, 0);
+          releaseAdmission();
+        }
+        await waitUntil(() => admitted && stopCalls === 1);
+        assert.equal(aborted, false);
+        assert.equal((await db.agentAttempts.toArray())[0]?.state, 'running');
+        releaseStop();
+        await waitUntil(() => aborted);
+        assert.equal(stopCalls, 1);
+        assert.equal(providerCalls, stopBeforeAdmission ? 0 : 1);
+        assert.equal((await db.agentAttempts.toArray())[0]?.state, 'stop_pending');
+        transport.deliver(stop);
+        assert.equal(stopCalls, 1);
+        assert.equal(await createAgentAttemptCoordinator('worker-port-replacement')
+          .inspectActive(launch.sessionId), null);
+        assert.equal((await db.agentAttempts.toArray())[0]?.state, 'state_uncertain');
+        assert.equal(providerCalls, stopBeforeAdmission ? 0 : 1);
+        transport.port.disconnect();
+      } finally {
+        await db.delete();
+      }
+    });
+  }
+
+  it('does not turn a rejected Stop into an aborted terminal or retry acceptance', async () => {
+    const transport = fakePort();
+    let signal!: AbortSignal;
+    let finish!: (result: BgsmAgentTurnResult) => void;
+    const registry = createBgsmAgentTurnRegistry({
+      executionEpochId: 'worker-stop-rejected',
+      translateError: async () => 'failed',
+      requestTurnStop: async () => false,
+      runTurn: async (_input, options) => {
+        signal = options.signal;
+        await options.onDurableLeaseAcquired();
+        return new Promise<BgsmAgentTurnResult>((resolve) => { finish = resolve; });
+      },
+    });
+    const launch = {
+      sessionId: 'session-stop-rejected', turnAttemptId: 'attempt-stop-rejected',
+      baseRevision: 0, prompt: 'Read repositories.',
+    };
+    registry.attach(transport.port);
+    transport.start(launch);
+    await waitUntil(() => !!finish);
+    transport.deliver({
+      type: 'stopBgsmAgentTurn', executionEpochId: registry.executionEpochId,
+      sessionId: launch.sessionId, turnAttemptId: launch.turnAttemptId, baseRevision: 0,
+    });
+    await Promise.resolve();
+    assert.equal(signal.aborted, false);
+    finish({
+      sessionId: launch.sessionId, turnAttemptId: launch.turnAttemptId, baseRevision: 0,
+      reason: 'final_answer', changed: false, changedCount: 0, commit: null,
+    });
+    await waitUntil(() => messagesOfType(transport.posted, 'bgsmAgentTurnResult').length === 1);
+    assert.equal(messagesOfType(transport.posted, 'bgsmAgentTurnResult')[0]!.result.reason, 'final_answer');
+  });
+
   it('restores one coordinator-approved runner across concurrent inspection subscribers', () => {
     let runCount = 0;
     const registry = createBgsmAgentTurnRegistry({

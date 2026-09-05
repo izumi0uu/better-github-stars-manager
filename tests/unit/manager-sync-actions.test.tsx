@@ -213,6 +213,46 @@ describe('useManagerSyncActions', () => {
     expect(sendMessage).not.toHaveBeenCalledWith({ type: 'setOnboardingStage', stage: 'coach' });
   });
 
+  it('selects initial incremental sync for an existing library without full-sync options', async () => {
+    const refreshStars = vi.fn();
+    let onboardingStage: SyncStatus['onboardingStage'] = 'awaiting_sync';
+    sendMessage.mockImplementation((message: { type: string; stage?: SyncStatus['onboardingStage'] }) => {
+      if (message.type === 'getStatus') {
+        return ok(baseStatus({
+          hasToken: true,
+          onboardingStage,
+          starsSyncInFlight: false,
+        }));
+      }
+      if (message.type === 'query') return ok({ grandTotal: 1 });
+      if (message.type === 'setOnboardingStage') {
+        onboardingStage = message.stage ?? onboardingStage;
+        return ok();
+      }
+      if (message.type === 'syncIncremental') {
+        onboardingStage = 'coach';
+        return ok();
+      }
+      throw new Error(`Unexpected message: ${message.type}`);
+    });
+
+    const hook = mountHook(refreshStars);
+
+    await waitFor(() => {
+      expect(refreshStars).toHaveBeenCalledTimes(1);
+      expect(hook.current.status?.onboardingStage).toBe('coach');
+      expect(hook.current.pendingAction).toBeNull();
+      expect(hook.current.info).toBeNull();
+      expect(hook.current.busy).toBe(false);
+    });
+
+    expect(sendMessage.mock.calls.filter(([message]) => message.type === 'syncIncremental'))
+      .toStrictEqual([[{ type: 'syncIncremental' }]]);
+    expect(sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'syncFull' }));
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'setOnboardingStage', stage: 'syncing' });
+    expect(sendMessage).not.toHaveBeenCalledWith({ type: 'setOnboardingStage', stage: 'coach' });
+  });
+
   it('keeps sync failure visible and marks onboarding as failed', async () => {
     sendMessage.mockImplementation((message: { type: string }) => {
       if (message.type === 'getStatus') {

@@ -22,7 +22,7 @@ import type {
   RecommendationRefreshResult,
 } from '@/recommendations/recommendation-model';
 import type { StarsQueryParams, StarsQueryResult } from '@/stars/stars-query';
-import type { Config, Star } from '@/types';
+import type { Config } from '@/types';
 import type {
   WatchInboxQueryResponse,
   WatchLoadOlderResult,
@@ -175,19 +175,19 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
   }
 
   queryStars(params: StarsQueryParams): Promise<StarsQueryResult> {
-    return bgCall<StarsQueryResult>('query', { params });
+    return bgCall('query', { params });
   }
 
   loadOwnedPublicRepositories(): Promise<OwnedPublicRepositoryLoadResult> {
-    return bgCall<OwnedPublicRepositoryLoadResult>('syncOwnedPublicRepositories');
+    return bgCall('syncOwnedPublicRepositories');
   }
 
   querySurfaceBadges(): Promise<ManagerSurfaceBadgeCounts> {
-    return bgCall<ManagerSurfaceBadgeCounts>('queryManagerSurfaceBadges');
+    return bgCall('queryManagerSurfaceBadges');
   }
 
   listExcludedTags() {
-    return bgCall<string[]>('listExcluded');
+    return bgCall('listExcluded');
   }
 
   async setTags(fullName: string, tags: readonly string[]): Promise<void> {
@@ -207,55 +207,55 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
   }
 
   removeVisibleTag(fullName: string, name: string) {
-    return bgCall<{ removed: boolean }>('removeVisibleTag', { full_name: fullName, name });
+    return bgCall('removeVisibleTag', { full_name: fullName, name });
   }
 
   deleteTag(name: string) {
-    return bgCall<{ removed: number }>('deleteTag', { name });
+    return bgCall('deleteTag', { name });
   }
 
   deleteAllTags(): Promise<DeleteAllTagsResult> {
-    return bgCall<DeleteAllTagsResult>('deleteAllTags');
+    return bgCall('deleteAllTags');
   }
 
   queryWatchInbox(options: Readonly<{ unreadOnly: boolean }>): Promise<WatchInboxQueryResponse> {
-    return bgCall<WatchInboxQueryResponse>('queryWatchInbox', options);
+    return bgCall('queryWatchInbox', options);
   }
 
   getWatchRepositoryDetail(fullName: string): Promise<WatchRepositoryDetail> {
-    return bgCall<WatchRepositoryDetail>(
+    return bgCall(
       'getWatchRepositoryDetail',
       { fullName },
     );
   }
 
   getWatchSubjectDetail(threadId: string): Promise<WatchSubjectDetail> {
-    return bgCall<WatchSubjectDetail>('getWatchSubjectDetail', {
+    return bgCall('getWatchSubjectDetail', {
       threadId,
     });
   }
 
   refreshWatch(): Promise<WatchRefreshResult> {
-    return bgCall<WatchRefreshResult>('refreshWatchInbox');
+    return bgCall('refreshWatchInbox');
   }
 
   loadOlderWatch(): Promise<WatchLoadOlderResult> {
-    return bgCall<WatchLoadOlderResult>('loadOlderWatchInbox');
+    return bgCall('loadOlderWatchInbox');
   }
 
   markWatchLoaded(): Promise<string | null> {
-    return bgCall<string | null>('markWatchInboxLoaded');
+    return bgCall('markWatchInboxLoaded');
   }
 
   markWatchThreadsRead(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult> {
-    return bgCall<WatchThreadMutationResult>('markWatchThreadsRead', {
+    return bgCall('markWatchThreadsRead', {
       accountLogin: input.accountLogin,
       threadIds: [...input.threadIds],
     });
   }
 
   markWatchThreadsDone(input: WatchThreadMutationInput): Promise<WatchThreadMutationResult> {
-    return bgCall<WatchThreadMutationResult>('markWatchThreadsDone', {
+    return bgCall('markWatchThreadsDone', {
       accountLogin: input.accountLogin,
       threadIds: [...input.threadIds],
     });
@@ -266,36 +266,36 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
   }
 
   queryRadar(): Promise<RadarQueryResponse> {
-    return bgCall<RadarQueryResponse>('queryRadar');
+    return bgCall('queryRadar');
   }
 
   refreshRadar(): Promise<RadarRefreshResult> {
-    return bgCall<RadarRefreshResult>('refreshRadar');
+    return bgCall('refreshRadar');
   }
   fullReconcileRadar(): Promise<RadarRefreshResult> {
-    return bgCall<RadarRefreshResult>('fullReconcileRadar');
+    return bgCall('fullReconcileRadar');
   }
 
   markRadarActivitiesSeen(activityIds: readonly string[]): Promise<RadarStatus> {
-    return bgCall<RadarStatus>(
+    return bgCall(
       'markRadarActivitiesSeen',
       { activityIds: [...activityIds] },
     );
   }
 
   dismissRadarActivities(activityIds: readonly string[]): Promise<RadarStatus> {
-    return bgCall<RadarStatus>(
+    return bgCall(
       'dismissRadarActivities',
       { activityIds: [...activityIds] },
     );
   }
 
   queryRecommendations(): Promise<RecommendationQueryResponse> {
-    return bgCall<RecommendationQueryResponse>('queryRecommendations');
+    return bgCall('queryRecommendations');
   }
 
   refreshRecommendations(): Promise<RecommendationRefreshResult> {
-    return bgCall<RecommendationRefreshResult>('refreshRecommendations');
+    return bgCall('refreshRecommendations');
   }
 
   async ignoreRecommendation(repositoryKey: string, repositoryFullName: string): Promise<void> {
@@ -307,7 +307,7 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
   }
 
   starRepository(fullName: string) {
-    return bgCall<Star>('radarStarRepository', { fullName });
+    return bgCall('radarStarRepository', { fullName });
   }
 
   async addRepositoryTag(fullName: string, tag: string): Promise<void> {

@@ -151,8 +151,6 @@ import {
 export type OrganizeJobHostDeps = Readonly<{
   /** Shared serialized job queue; Apply chunks must not race a Stars sync. */
   jobQueue: SerializedRunner;
-  /** Invalidates the library projection after Apply commits tag writes. */
-  broadcastDataChanged: () => void;
   /** Gated provider factory; enforces disclosure and host permission per run. */
   createRuntimeProvider: () => Promise<GatedAgentRuntimeProvider<ModelProvider>>;
   /** DEV-only execution observer; null in release builds. */
@@ -167,7 +165,7 @@ export type OrganizeJobHost = Readonly<{
 }>;
 
 export function createOrganizeJobHost(deps: OrganizeJobHostDeps): OrganizeJobHost {
-  const { jobQueue, broadcastDataChanged } = deps;
+  const { jobQueue } = deps;
 
   const organizeApplyPump = createOrganizeApplyPump({
     runSerialized: (fn) => jobQueue.run(fn),
@@ -190,7 +188,6 @@ export function createOrganizeJobHost(deps: OrganizeJobHostDeps): OrganizeJobHos
     },
     onProgress: (jobId) => publishOrganizeJobState(jobId),
     onComplete: () => {
-      broadcastDataChanged();
       void organizeApplyRecovery.reconcile();
     },
     onFailure: recoverOrganizeApplyPumpFailure,

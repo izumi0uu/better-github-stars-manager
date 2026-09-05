@@ -2,44 +2,12 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, afterEach, describe, it } from 'vitest';
 import { db } from '../../../src/storage/db';
-import { authStore, CONFIG_STORAGE_KEY } from '../../../src/auth/auth-store';
+import { CONFIG_STORAGE_KEY } from '../../../src/auth/auth-store';
 import { githubStarSource } from '../../../src/api/github-star-source';
 import type { Star } from '../../../src/types';
+import { installGitHubCredential } from '../../helpers/github-credential';
+import { createChromeMock } from '../../helpers/chrome-mock';
 
-function createChromeMock() {
-  const state: Record<string, unknown> = {};
-  const listeners = new Set<
-    (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void
-  >();
-  return {
-    api: {
-      storage: {
-        local: {
-          async get(key: string | string[]) {
-            const keys = Array.isArray(key) ? key : [key];
-            return Object.fromEntries(keys.map((item) => [item, state[item]]));
-          },
-          async set(next: Record<string, unknown>) {
-            const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
-            for (const [key, value] of Object.entries(next)) {
-              changes[key] = { oldValue: state[key], newValue: value };
-              state[key] = value;
-            }
-            for (const listener of listeners) listener(changes, 'local');
-          },
-        },
-        onChanged: {
-          addListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.add(listener);
-          },
-          removeListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.delete(listener);
-          },
-        },
-      },
-    },
-  };
-}
 
 (globalThis as { chrome?: unknown }).chrome = createChromeMock().api;
 
@@ -140,10 +108,7 @@ describe('Rescan regressions', () => {
       });
     }) as typeof fetch;
 
-    const originalGetToken = authStore.getToken;
-    authStore.getToken = async () => 'github_pat_test';
-
-    try {
+    await installGitHubCredential();
       const result = await githubStarSource.syncRescan();
       assert.deepEqual(result, { tombstoned: 1, revived: 1 });
       assert.equal((await db.stars.get('a/live'))?.tombstone, false);
@@ -151,8 +116,5 @@ describe('Rescan regressions', () => {
       assert.equal((await db.stars.get('c/revived'))?.tombstone, false);
       assert.equal((await db.stars.get('a/live'))?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/10?v=4');
       assert.equal((await db.stars.get('c/revived'))?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/7?v=4');
-    } finally {
-      authStore.getToken = originalGetToken;
-    }
   });
 });

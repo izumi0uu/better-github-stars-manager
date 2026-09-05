@@ -4,7 +4,6 @@ import { afterAll, beforeEach, describe, it } from 'vitest';
 import { db } from '../../src/storage/db';
 import {
   queryStars,
-  invalidateCache,
   resolveLiveLaunchCandidate,
 } from '../../src/background/query';
 import type { Star, Tag, TagMeta } from '../../src/types';
@@ -84,7 +83,6 @@ beforeEach(async () => {
   await db.tagMeta.bulkPut([
     { name: 'ai', dimension: '领域', color: null, mtime: '2026-06-22T10:00:00Z' },
   ] as TagMeta[]);
-  invalidateCache();
 });
 
 function tagRow(full_name: string, manualTags: string[], overrides: Partial<Tag> = {}): Tag {
@@ -287,7 +285,6 @@ describe('Integration (real query engine + Dexie)', () => {
         starred_at: '2028-01-01',
       },
     ] as Star[]);
-    invalidateCache();
 
     const r = await queryStars({
       filter: { ...defaultFilter(), query: 'abc', sortKey: 'starred_at', sortDir: 'desc' },
@@ -310,7 +307,6 @@ describe('Integration (real query engine + Dexie)', () => {
       { ...base, full_name: 'foo/bar-utils' },
       { ...base, full_name: 'other/foobar-utils' },
     ] as Star[]);
-    invalidateCache();
 
     const r = await queryStars({
       filter: { ...defaultFilter(), query: 'foo/bar', sortKey: 'name', sortDir: 'asc' },
@@ -426,7 +422,6 @@ describe('Integration (real query engine + Dexie)', () => {
       pushed_at: '2026-06-23',
       created_at: undefined,
     } as unknown as Star);
-    invalidateCache();
     const r = await queryStars({
       filter: { ...defaultFilter(), showTombstone: true, sortKey: 'created_at', sortDir: 'desc' },
       offset: 0,
@@ -476,7 +471,6 @@ describe('Integration (real query engine + Dexie)', () => {
       stargazers_count: 1,
       pushed_at: '2026-06-23',
     } as Star);
-    invalidateCache();
     const r = await queryStars({ filter: defaultFilter(), offset: 0, limit: 100 });
     assert.equal(r.grandTotal, 4);
   });

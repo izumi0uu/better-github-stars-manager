@@ -1,15 +1,15 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, vi } from 'vitest';
-import type { Star, Tag, TagMeta } from '../../src/types';
+import type { Star, SyncProgress, Tag, TagMeta } from '../../src/types';
 import { authStore } from '../../src/auth/auth-store';
 import { githubStarSource } from '../../src/api/github-star-source';
 import { db } from '../../src/storage/db';
 import '../../src/background/index';
+import { installGitHubCredential } from '../helpers/github-credential';
+import * as backgroundQueries from '../../src/background/query';
+import type { BackgroundRequest, BackgroundResponse } from '../../src/runtime/background-command';
 
-type BackgroundResponse =
-  | { ok: true; data?: unknown }
-  | { ok: false; error: string };
 
 type BackgroundListener = (
   req: unknown,
@@ -44,6 +44,16 @@ const chromeHarness = vi.hoisted(() => {
           for (const [key, value] of Object.entries(next)) {
             changes[key] = { oldValue: storageState[key], newValue: value };
             storageState[key] = value;
+          }
+          for (const listener of storageListeners) listener(changes, 'local');
+        },
+        async remove(key: string | string[]) {
+          const keys = Array.isArray(key) ? key : [key];
+          const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
+          for (const item of keys) {
+            if (!Object.prototype.hasOwnProperty.call(storageState, item)) continue;
+            changes[item] = { oldValue: storageState[item], newValue: undefined };
+            delete storageState[item];
           }
           for (const listener of storageListeners) listener(changes, 'local');
         },
@@ -161,7 +171,7 @@ function tagMetaRow(): TagMeta {
   };
 }
 
-async function sendBackground(req: unknown): Promise<BackgroundResponse> {
+async function sendBackground(req: BackgroundRequest): Promise<BackgroundResponse> {
   const listener = chromeHarness.messageListeners.at(-1);
   assert.ok(listener, 'background onMessage listener should be registered');
 
@@ -173,7 +183,7 @@ async function sendBackground(req: unknown): Promise<BackgroundResponse> {
   return responses[0];
 }
 
-describe('background markUnstarred contract', () => {
+describe('background library mutation contract', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
     chromeHarness.reset();
@@ -187,6 +197,132 @@ describe('background markUnstarred contract', () => {
     vi.restoreAllMocks();
     chromeHarness.reset();
     await db.delete();
+  });
+
+  it('clears tag assignments through the dispatcher and publishes committed annotations', async () => {
+    await db.tags.bulkPut([tagRow('octo/first'), tagRow('octo/second')]);
+    await db.tagMeta.put(tagMetaRow());
+    const committedReads: Promise<Tag[]>[] = [];
+    chromeHarness.setSendObserver((message) => {
+      if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'dataChanged') {
+        committedReads.push(db.tags.toArray());
+      }
+    });
+
+    assert.deepEqual(await sendBackground({ type: 'deleteAllTags' }), {
+      ok: true,
+      data: { assignmentsRemoved: 4, distinctTagsRemoved: 2 },
+    });
+    await vi.waitFor(() => assert.equal(committedReads.length, 1));
+    const rows = await committedReads[0];
+    assert.equal(rows.length, 2);
+    for (const row of rows) {
+      assert.deepEqual(row.manualTags, []);
+      assert.deepEqual(row.autoTags, []);
+      assert.deepEqual(row.dismissedAutoTags, []);
+      assert.equal(row.notes, 'preserve me');
+      assert.equal(row.favorite, true);
+    }
+    assert.deepEqual(await db.tagMeta.get('keeper'), tagMetaRow());
+    assert.equal(await db.tagDirtyOutbox.count(), 2);
+  });
+
+  it('deduplicates single-repository suggestions without reviving excluded tags', async () => {
+    await db.tags.put({ ...tagRow(), manualTags: ['keeper', 'BLOCKED'] });
+    const excluded: TagMeta = { ...tagMetaRow(), name: 'blocked', excluded: true };
+    await db.tagMeta.put(excluded);
+    const committedReads: Promise<Tag | undefined>[] = [];
+    chromeHarness.setSendObserver((message) => {
+      if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'dataChanged') {
+        committedReads.push(db.tags.get('octo/repo'));
+      }
+    });
+
+    const response = await sendBackground({
+      type: 'acceptSuggestions',
+      full_name: 'octo/repo',
+      toAdd: ['Keeper', 'fresh', 'FRESH', ' blocked '],
+    });
+    assert.deepEqual(response, { ok: true, data: { tags: ['keeper', 'fresh', 'topic'] } });
+    await vi.waitFor(() => assert.equal(committedReads.length, 1));
+    const row = await committedReads[0];
+    assert.deepEqual(row?.manualTags, ['keeper', 'fresh']);
+    assert.equal(row?.notes, 'preserve me');
+    assert.equal(row?.favorite, true);
+    assert.deepEqual(await db.tagMeta.get('blocked'), excluded);
+  });
+
+  it('counts only batch rows receiving new non-excluded suggestions', async () => {
+    const unchanged = tagRow('octo/unchanged');
+    const empty = tagRow('octo/empty');
+    await db.tags.bulkPut([tagRow('octo/changed'), unchanged, empty]);
+    const excluded: TagMeta = { ...tagMetaRow(), name: 'blocked', excluded: true };
+    await db.tagMeta.put(excluded);
+    chromeHarness.reset();
+
+    assert.deepEqual(await sendBackground({
+      type: 'acceptSuggestionsBatch',
+      items: [
+        { full_name: 'octo/changed', toAdd: ['fresh', 'FRESH', 'BLOCKED'] },
+        { full_name: 'octo/unchanged', toAdd: ['KEEPER', 'blocked'] },
+        { full_name: 'octo/empty', toAdd: [] },
+      ],
+    }), { ok: true, data: { count: 1 } });
+    assert.deepEqual((await db.tags.get('octo/changed'))?.manualTags, ['keeper', 'fresh']);
+    assert.deepEqual(await db.tags.get('octo/unchanged'), unchanged);
+    assert.deepEqual(await db.tags.get('octo/empty'), empty);
+    assert.deepEqual(await db.tagMeta.get('blocked'), excluded);
+    assert.equal(await db.tagDirtyOutbox.count(), 1);
+    assert.equal(chromeHarness.messages.filter((message) => (
+      typeof message === 'object' && message !== null && 'type' in message && message.type === 'dataChanged'
+    )).length, 1);
+  });
+
+  it('keeps another Stars job active when an ordinary query fails', async () => {
+    await installGitHubCredential();
+    await authStore.update({ onboardingStage: 'done', seenOnboarding: true });
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    vi.spyOn(githubStarSource, 'syncIncremental').mockImplementation(async () => {
+      entered();
+      await gate;
+      return { added: 1 };
+    });
+    vi.spyOn(backgroundQueries, 'queryStars').mockRejectedValue(new Error('query unavailable'));
+    const progress: SyncProgress[] = [];
+    chromeHarness.setSendObserver((message) => {
+      if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'progress' && 'progress' in message) {
+        progress.push(message.progress as SyncProgress);
+      }
+    });
+    const sync = sendBackground({ type: 'syncIncremental' });
+    await started;
+    try {
+      assert.equal(progress.at(-1)?.phase, 'incremental');
+      const count = progress.length;
+      const failed = await sendBackground({
+        type: 'query',
+        params: {
+          filter: {
+            query: '', languages: [], tags: [], tagMode: 'any', showTombstone: false,
+            onlyFavorite: false, onlyUntagged: false, onlyArchived: false, onlyOwned: false,
+            sortKey: 'starred_at', sortDir: 'desc',
+          },
+          offset: 0,
+          limit: 25,
+        },
+      });
+      assert.equal(failed.ok, false);
+      if (!failed.ok) assert.match(failed.error, /query unavailable/);
+      assert.equal(progress.length, count);
+      assert.equal(progress.at(-1)?.phase, 'incremental');
+    } finally {
+      release();
+    }
+    assert.deepEqual(await sync, { ok: true, data: { added: 1, tagged: 0 } });
+    assert.equal(progress.at(-1)?.phase, 'idle');
   });
 
   it('handles markUnstarred as a first-class background request for unknown repos', async () => {
@@ -284,7 +420,7 @@ describe('background markUnstarred contract', () => {
 
     await db.stars.put(starRow(fullName));
 
-    vi.spyOn(authStore, 'hasToken').mockResolvedValue(true);
+    await installGitHubCredential();
     vi.spyOn(githubStarSource, 'syncIncremental').mockImplementation(async () => {
       events.push('sync-start');
       await syncMayWrite;

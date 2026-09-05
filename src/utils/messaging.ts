@@ -63,6 +63,12 @@ import {
   type PreflightToken,
 } from '@/bgsm-agent/scope';
 import type { BackfillId, BackfillMap, OnboardingStage, OrganizeJobStatus } from '@/types';
+import type {
+  BackgroundCallPayloadArgs,
+  BackgroundCallCommand,
+  BackgroundCallResult,
+  BackgroundFailure,
+} from '@/runtime/background-command';
 
 export interface SyncStatus {
   progress: {
@@ -91,10 +97,6 @@ export interface SyncStatus {
   organizeJobActive: boolean;
 }
 
-export interface ManagerSurfaceBadgeCounts {
-  watchUnreadCount: number;
-  radarUnseenCount: number;
-}
 
 
 export type BgsmAgentTurnHandlers = {
@@ -1493,12 +1495,15 @@ export class BackgroundCallError extends Error {
   }
 }
 
-export async function bgCall<T = unknown>(type: string, extra?: Record<string, unknown>): Promise<T> {
+export async function bgCall<C extends BackgroundCallCommand>(
+  type: C,
+  ...[extra]: BackgroundCallPayloadArgs<NoInfer<C>>
+): Promise<BackgroundCallResult<C>> {
   const res = (await chrome.runtime.sendMessage({ type, ...extra })) as
-    | { ok: true; data?: T }
-    | { ok: false; error: string; code?: string; details?: unknown };
+    | { ok: true; data?: BackgroundCallResult<C> }
+    | BackgroundFailure;
   if (!res.ok) throw new BackgroundCallError(res.error, res.details, res.code ?? null);
-  return (res.data ?? (undefined as unknown)) as T;
+  return res.data as BackgroundCallResult<C>;
 }
 
 export function inspectBgsmAgentSessionCatalog(): Promise<AgentSessionCatalogInspection> {
@@ -1538,7 +1543,7 @@ export function loadDurableBgsmAgentSessionCommittedTurn(input: Readonly<{
 export async function readDurableAgentRetryDraftCandidate(
   sessionId: string,
 ): Promise<AgentRetryDraft | null> {
-  return bgCall<AgentRetryDraft | null>('readAgentRetryDraftCandidate', { sessionId });
+  return bgCall('readAgentRetryDraftCandidate', { sessionId });
 }
 
 export function dismissDurableAgentSessionRetry(input: Readonly<{
@@ -1567,7 +1572,7 @@ export function loadDurableBgsmAgentSessionTranscriptPage(
 }
 
 export async function deleteDurableBgsmAgentSession(sessionId: string): Promise<boolean> {
-  const result = await bgCall<{ deleted: boolean }>('deleteAgentSession', { sessionId });
+  const result = await bgCall('deleteAgentSession', { sessionId });
   return result.deleted;
 }
 

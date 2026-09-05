@@ -1,7 +1,7 @@
 import { authStore } from '@/auth/auth-store';
 import * as radarStore from '@/storage/radar-store';
 import * as watchStore from '@/storage/watch-store';
-import type { ManagerSurfaceBadgeCounts } from '@/utils/messaging';
+import type { ManagerSurfaceBadgeCounts } from '@/runtime/manager-runtime';
 
 const EMPTY_MANAGER_SURFACE_BADGE_COUNTS: ManagerSurfaceBadgeCounts = Object.freeze({
   watchUnreadCount: 0,

@@ -88,8 +88,20 @@ export function dismissedAutoTagNames(tagLike: TagLayerLike | undefined | null):
   return normalizeTagNames(tagLike?.dismissedAutoTags);
 }
 
-export function visibleTagNames(tagLike: TagLayerLike | undefined | null): string[] {
-  return normalizeTagNames([...manualTagNames(tagLike), ...autoTagNames(tagLike)]);
+/** Apply global tombstones with the same canonical identity as explicit re-adds. */
+export function withoutExcludedTagNames(
+  names: readonly string[],
+  excludedKeys: ReadonlySet<string>,
+): string[] {
+  return names.filter((name) => !excludedKeys.has(canonicalTagKey(name)));
+}
+
+export function visibleTagNames(
+  tagLike: TagLayerLike | undefined | null,
+  excludedKeys?: ReadonlySet<string>,
+): string[] {
+  const names = normalizeTagNames([...manualTagNames(tagLike), ...autoTagNames(tagLike)]);
+  return excludedKeys ? withoutExcludedTagNames(names, excludedKeys) : names;
 }
 
 export function sameTagNames(a: string[], b: string[]): boolean {

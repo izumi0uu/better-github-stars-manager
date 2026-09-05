@@ -6,7 +6,6 @@ import {
   hasAgentProviderHostPermission,
   requestAgentProviderHostPermission,
 } from '@/agent-harness/provider-access';
-import type { AgentProviderConnectionResult } from '@/agent-harness/provider-registry';
 import { VERSION_HASH } from '@/dev';
 import {
   DEV_TRACE_CONTROL_PORT,
@@ -115,7 +114,7 @@ export function ProviderDebugPanel() {
     const startedAt = Date.now();
     setProbeState({ kind: 'running', startedAt });
     try {
-      const result = await bgCall<AgentProviderConnectionResult>(
+      const result = await bgCall(
         'testAgentProviderConnection',
         createSavedProviderProbeRequest(config),
       );

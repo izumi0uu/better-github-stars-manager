@@ -202,7 +202,6 @@ describe('Agent release conformance', () => {
     expect(background).toContain('bgsmAgentRuntime.sessionRpc.handle(agentSessionRequest)');
     expect(background).toContain('bgsmAgentRuntime.sessionRpc.describeFailure(e)');
     expect(background).toContain('attachBgsmAgentTurnPort(port, bgsmAgentRuntime.turnRegistry)');
-    expect(background).toContain('if (!agentSessionRequest)');
     expect(background).toContain('chrome.runtime.onMessage.addListener');
     expect(background).toContain('chrome.runtime.onConnect.addListener');
 

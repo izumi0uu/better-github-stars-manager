@@ -8,6 +8,7 @@ import { REPO_URL } from '@/lib/links';
 import brandMarkUrl from '@/assets/bgsm-brand-mark.svg?url';
 import type { FilterState } from '@/ui/filter-store';
 import type { SyncProgress } from '@/types';
+import type { BackgroundSyncCommand } from '@/runtime/background-command';
 import { presentGistAction, presentSyncProgress } from '@/ui/toolbar-presentation';
 import { Button } from '@/ui/shadcn/button';
 import { Input } from '@/ui/shadcn/input';
@@ -77,6 +78,24 @@ type Account = {
   displayName: string | null;
   gistId?: string | null;
   gistUrl?: string | null;
+};
+
+export type ToolbarHostProps = {
+  account?: Account | null;
+  status?: ToolbarStatus | null;
+  busy?: boolean;
+  pendingAction?: string | null;
+  successAction?: string | null;
+  onSync?: (type: BackgroundSyncCommand, label: string) => void;
+  onAutoAssignTags?: () => void;
+  onOpenAgent?: () => void;
+  agentStatus?: string | null;
+  agentStatusKind?: ToolbarAgentStatusKind | null;
+  agentActive?: boolean;
+  agentIcon?: ReactNode;
+  onTooltipSeen?: (bit: number) => void;
+  onTogglePanel?: () => void;
+  showGitHubHome?: boolean;
 };
 
 /**
@@ -249,27 +268,12 @@ export function Toolbar({
   watchUnreadCount = 0,
   radarUnseenCount = 0,
 }: {
-  account?: Account | null;
   f: FilterState;
-  status?: ToolbarStatus | null;
   loading: boolean;
   listPhase: 'idle' | 'fading-out' | 'fading-in';
   total: number;
   grandTotal: number;
-  busy?: boolean;
-  pendingAction?: string | null;
-  successAction?: string | null;
-  onSync?: (type: string, label: string) => void;
-  onAutoAssignTags?: () => void;
-  onOpenAgent?: () => void;
-  agentStatus?: string | null;
-  agentStatusKind?: ToolbarAgentStatusKind | null;
-  agentActive?: boolean;
-  agentIcon?: ReactNode;
-  onTooltipSeen?: (bit: number) => void;
   onToggleTheme: () => void;
-  onTogglePanel?: () => void;
-  showGitHubHome?: boolean;
   theme: 'dark' | 'light';
   searchRef: React.MutableRefObject<HTMLInputElement | null>;
   layoutMode: 'default' | 'custom';
@@ -287,7 +291,7 @@ export function Toolbar({
   onSurfaceChange?: (surface: ManagerSurface) => void;
   watchUnreadCount?: number;
   radarUnseenCount?: number;
-}) {
+} & ToolbarHostProps) {
   const accountAvatarUrl = useManagerImage({
     kind: 'actor-avatar',
     identity: account?.username ?? '',
@@ -350,7 +354,7 @@ export function Toolbar({
 
   const seenTooltips = status?.seenTooltips ?? 0;
 
-  const runSync = (type: string, label: string) => {
+  const runSync = (type: BackgroundSyncCommand, label: string) => {
     setSyncMenuOpen(false);
     onSync?.(type, label);
   };

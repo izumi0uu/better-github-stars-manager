@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { authStore, CONFIG_STORAGE_KEY } from '@/auth/auth-store';
-import { bgCall, type SyncStatus } from '@/utils/messaging';
+import { bgCall } from '@/utils/messaging';
 import {
   CURRENT_EXTENSION_STORE_LISTING,
   evaluateStoreRatingPromptEligibility,
@@ -147,7 +147,7 @@ export function useStoreRatingPrompt({
     let retryTimer: number | undefined;
     const terminalDecisionGeneration = terminalDecisionGenerationRef.current;
     const checkAuthoritativeStatus = () => {
-      void bgCall<SyncStatus>('getStatus')
+      void bgCall('getStatus')
         .then((latest) => {
           if (
             cancelled

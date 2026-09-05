@@ -16,6 +16,7 @@ import {
   type RecommendationSourceSnapshot,
   type RecommendationStateRecord,
 } from '@/recommendations/recommendation-model';
+import type { RecommendationPresentation } from '@/recommendations/recommendation-projector';
 
 const NOW = new Date(2026, 7, 13, 12, 0, 0, 0).getTime();
 
@@ -106,7 +107,7 @@ function makeCoordinator(input: {
       currentState = state({ errorCode: code, nextAllowedAt: options.nextAllowedAt ?? null });
       return currentState;
     }),
-    listRecommendations: vi.fn(async () => [record]),
+    listRecommendations: vi.fn(async (): Promise<RecommendationPresentation[]> => [{ ...record, favorite: false }]),
     ignoreRepository: vi.fn(async () => { events.push('ignore'); }),
     listIgnored: vi.fn(async (): Promise<RecommendationIgnoreRecord[]> => []),
     restoreIgnored: vi.fn(async () => { events.push('restore'); }),
