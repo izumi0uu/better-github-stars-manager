@@ -824,6 +824,7 @@ describe('GitHub Radar source', () => {
     expect(step.checkpoint.partialReasons).toEqual([]);
     expect(step.checkpoint.scannedFollowingCount).toBe(2);
     expect(step.checkpoint.maxRequestCost).toBe(7);
+    expect(step.hasCurrentRequestCost).toBe(true);
     expect(step.checkpoint.cursor).toMatchObject({
       phase: 'activity',
       followingCount: 2,
@@ -963,6 +964,7 @@ describe('GitHub Radar source', () => {
       const result = await pending;
 
       expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(result.hasCurrentRequestCost).toBe(false);
       expect(result.complete).toBe(false);
       expect(result.activities).toEqual([]);
       expect(result.checkpoint).toMatchObject({
@@ -1023,6 +1025,7 @@ describe('GitHub Radar source', () => {
 
       expect(fetchImpl).toHaveBeenCalledTimes(earlierSuccess ? 2 : 1);
       expect(result.complete).toBe(false);
+      expect(result.hasCurrentRequestCost).toBe(false);
       expect(result.checkpoint).toMatchObject({
         pauseReason: 'request_budget',
         rateLimitRemaining: null,
@@ -1042,6 +1045,78 @@ describe('GitHub Radar source', () => {
         .toEqual(earlierSuccess ? ['owner/saved'] : []);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { label: 'missing', cost: undefined },
+    { label: 'null', cost: null },
+    { label: 'negative', cost: -1 },
+    { label: 'fractional', cost: 1.5 },
+    { label: 'string', cost: '1' },
+  ])('retains the maximum diagnostic but clears current evidence after a $label cost', async ({ cost }) => {
+    for (const phase of ['following', 'activity'] as const) {
+      const checkpoint = activityCheckpoint();
+      if (phase === 'following') {
+        checkpoint.cursor = {
+          phase: 'following',
+          nextCursor: null,
+          seenCursors: [],
+          logins: [],
+          totalCount: null,
+        };
+      }
+      let requests = 0;
+      const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          query: string;
+          variables: Record<string, unknown>;
+        };
+        requests += 1;
+        const first = requests === 1;
+        expect(body.query).toContain(phase === 'following' ? 'query RadarFollowing' : 'query RadarActivityBatch');
+        expect(body.variables).toEqual(phase === 'following'
+          ? { cursor: first ? null : 'following-next' }
+          : { login0: 'alice', cursor0: first ? 'actor-next' : 'actor-after' });
+        const envelope = phase === 'following'
+          ? followingEnvelope({
+            logins: first ? ['alice'] : [],
+            totalCount: 1,
+            hasNextPage: true,
+            endCursor: first ? 'following-next' : 'following-after',
+          })
+          : activityEnvelope([{
+            login: 'alice',
+            edges: [{ starredAt: NOW.toISOString(), node: repository(`owner/page-${requests}`) }],
+            hasNextPage: true,
+            endCursor: first ? 'actor-after' : 'actor-final',
+          }]);
+        return jsonResponse({
+          data: {
+            ...envelope.data,
+            rateLimit: { remaining: first ? 63 : 61, cost: first ? 1 : cost },
+          },
+        });
+      });
+
+      const result = await fetchGitHubRadarReconciliationStep({
+        token: 'token',
+        checkpoint,
+        fetchImpl,
+        now: () => NOW,
+        maxRequests: 2,
+      });
+
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(result.complete).toBe(false);
+      expect(result.hasCurrentRequestCost).toBe(false);
+      expect(result.checkpoint).toMatchObject({
+        pauseReason: 'request_budget',
+        rateLimitRemaining: 61,
+        maxRequestCost: 1,
+        partialReasons: [],
+      });
+      expect(result.checkpoint).not.toHaveProperty('hasCurrentRequestCost');
     }
   });
 
@@ -1075,6 +1150,7 @@ describe('GitHub Radar source', () => {
 
       expect(fetchImpl).toHaveBeenCalledTimes(2);
       expect(result.complete).toBe(false);
+      expect(result.hasCurrentRequestCost).toBe(true);
       expect(result.checkpoint).toMatchObject({
         pauseReason: 'request_budget',
         rateLimitRemaining: 89,

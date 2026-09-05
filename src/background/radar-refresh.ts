@@ -57,9 +57,8 @@ const RADAR_MAX_CHAINED_STEPS = Math.ceil(
 );
 
 /**
- * Whether one more step fits above the quota reserve. GitHub reports the cost of
- * the most expensive request in the epoch, so a full step is priced at that cost
- * times the per-step request ceiling. An unknown balance or cost never chains.
+ * Price another full step using the epoch's highest reported request cost.
+ * The caller separately requires current-request cost evidence before chaining.
  */
 function affordsAnotherStep(checkpoint: RadarReconciliationCheckpoint): boolean {
   const remaining = checkpoint.rateLimitRemaining;
@@ -361,7 +360,10 @@ function createReconciliationId(attemptedAt: number): string {
           return { outcome: { published: false }, next: null };
         }
         dependencies.broadcastChanged();
-        return { outcome: { published: true }, next: committed.checkpoint };
+        return {
+          outcome: { published: true },
+          next: step.hasCurrentRequestCost ? committed.checkpoint : null,
+        };
       };
 
       /**

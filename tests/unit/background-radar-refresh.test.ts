@@ -124,6 +124,7 @@ function terminalStep(
     },
     activities: [],
     complete: true,
+    hasCurrentRequestCost: false,
   };
 }
 
@@ -156,6 +157,7 @@ function budgetPausedStep(
     },
     activities: [],
     complete: false,
+    hasCurrentRequestCost: true,
   };
 }
 
@@ -419,6 +421,7 @@ describe('Radar refresh coordinator', () => {
           checkpoint: nextCheckpoint,
           activities: [],
           complete: false,
+          hasCurrentRequestCost: false,
         };
       });
     const h = makeCoordinator({ fetchReconciliationStep: fetchStep });
@@ -467,6 +470,7 @@ describe('Radar refresh coordinator', () => {
         checkpoint: nextCheckpoint,
         activities: [],
         complete: false,
+        hasCurrentRequestCost: false,
       }));
     const h = makeCoordinator({
       reconciliation: checkpoint,
@@ -604,6 +608,7 @@ describe('Radar refresh coordinator', () => {
       });
       return {
         ...paused,
+        hasCurrentRequestCost: false,
         checkpoint: { ...paused.checkpoint, rateLimitRemaining: null, maxRequestCost: null },
       };
     });
@@ -615,6 +620,57 @@ describe('Radar refresh coordinator', () => {
     await h.coordinator.refresh();
 
     expect(fetchStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits partial progress but does not chain using only a historical request cost', async () => {
+    const checkpoint = {
+      ...createRadarReconciliationCheckpoint({
+        reconciliationId: 'radar-reconcile:unknown-current-cost',
+        accountLogin: 'viewer',
+        credentialIdentity: JSON.stringify(['viewer', 'identity-a', true]),
+        windowDays: 60,
+        startedAt: new Date(NOW - 1_000).toISOString(),
+      }),
+      maxRequestCost: 1,
+      rateLimitRemaining: 4_000,
+    };
+    const paused = {
+      ...budgetPausedStep(checkpoint, {
+        actors: 80,
+        complete: 50,
+        remaining: 3_980,
+        cost: 1,
+      }),
+      activities: [activity],
+      hasCurrentRequestCost: false,
+    };
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => (
+      options.checkpoint.revision === checkpoint.revision
+        ? paused
+        : terminalStep(options.checkpoint)
+    ));
+    const h = makeCoordinator({
+      reconciliation: checkpoint,
+      fetchReconciliationStep: fetchStep,
+    });
+
+    const result = await h.coordinator.refresh();
+
+    expect(fetchStep).toHaveBeenCalledTimes(1);
+    expect(h.store.commitReconciliationStep).toHaveBeenCalledTimes(1);
+    expect(h.store.commitReconciliationStep).toHaveBeenCalledWith(expect.objectContaining({
+      step: paused,
+    }));
+    expect(await h.store.getReconciliation()).toEqual(paused.checkpoint);
+    expect(result.published).toBe(true);
+    expect(result.status.reconciliation).toMatchObject({
+      phase: 'activity',
+      completedCount: 50,
+      totalCount: 80,
+      pauseReason: 'request_budget',
+    });
+    expect(result.status.reconciliation).not.toHaveProperty('hasCurrentRequestCost');
+    expect(h.dependencies.broadcastChanged).toHaveBeenCalledTimes(1);
   });
 
   it('abandons an epoch whose own fence keeps rejecting its step', async () => {

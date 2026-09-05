@@ -35,7 +35,7 @@ const AUTH: GitHubCredentialSnapshot = {
 };
 const CREDENTIAL_IDENTITY = JSON.stringify(['viewer', AUTH.mainIdentity, true]);
 
-async function seedActivityCheckpoint() {
+async function seedActivityCheckpoint(remaining: number) {
   const checkpoint = createRadarReconciliationCheckpoint({
     reconciliationId: 'radar-reconcile:continuation',
     accountLogin: 'viewer',
@@ -53,10 +53,11 @@ async function seedActivityCheckpoint() {
       expectedRevision: checkpoint.revision,
       complete: false,
       activities: [],
+      hasCurrentRequestCost: true,
       checkpoint: {
         ...checkpoint,
         revision: 1,
-        rateLimitRemaining: 4_000,
+        rateLimitRemaining: remaining,
         maxRequestCost: 1,
         pauseReason: 'request_budget',
         cursor: {
@@ -75,7 +76,7 @@ async function seedActivityCheckpoint() {
   expect(seeded.applied).toBe(true);
 }
 
-function activityEnvelope(logins: string[], remaining: number) {
+function activityEnvelope(logins: string[], remaining: number, cost: number | undefined) {
   return {
     data: {
       ...Object.fromEntries(logins.map((login, index) => [`follower${index}`, {
@@ -98,12 +99,18 @@ function activityEnvelope(logins: string[], remaining: number) {
           pageInfo: { hasNextPage: false, endCursor: null },
         },
       }])),
-      rateLimit: { remaining, cost: 1, resetAt: RESET_AT },
+      rateLimit: { remaining, ...(cost === undefined ? {} : { cost }), resetAt: RESET_AT },
     },
   };
 }
 
-async function makeHarness(boundary: 'reserve' | 'deadline' | 'healthy') {
+async function makeHarness(boundary: 'reserve' | 'deadline' | 'healthy' | 'missing-cost' | 'invalid-cost') {
+  const costBoundary = boundary === 'missing-cost' || boundary === 'invalid-cost';
+  const quota = {
+    remaining: costBoundary ? 81 : 4_000,
+    cost: boundary === 'missing-cost' ? undefined : boundary === 'invalid-cost' ? -1 : 1,
+  };
+  await seedActivityCheckpoint(quota.remaining);
   const clock = { now: NOW };
   vi.spyOn(Date, 'now').mockImplementation(() => clock.now);
   const requests: string[][] = [];
@@ -133,8 +140,11 @@ async function makeHarness(boundary: 'reserve' | 'deadline' | 'healthy') {
         },
       });
     }
-    const remaining = boundary === 'reserve' && requestNumber < 10 ? 70 - requestNumber : 4_000;
-    const envelope = activityEnvelope(logins, remaining);
+    if (costBoundary) quota.remaining -= 2;
+    const remaining = costBoundary
+      ? quota.remaining
+      : boundary === 'reserve' && requestNumber < 10 ? 70 - requestNumber : 4_000;
+    const envelope = activityEnvelope(logins, remaining, quota.cost);
     completedActors += logins.length;
     const response = new Response(JSON.stringify(envelope), {
       headers: { 'content-type': 'application/json' },
@@ -175,7 +185,7 @@ async function makeHarness(boundary: 'reserve' | 'deadline' | 'healthy') {
     now: () => clock.now,
     broadcastChanged: vi.fn(),
   });
-  return { clock, requests, fetchImpl, createCoordinator };
+  return { clock, quota, requests, fetchImpl, createCoordinator };
 }
 
 describe('Radar continuation boundaries', () => {
@@ -183,7 +193,6 @@ describe('Radar continuation boundaries', () => {
     vi.stubGlobal('chrome', createChromeMock().api);
     await db.delete();
     await db.open();
-    await seedActivityCheckpoint();
   });
 
   afterEach(() => {
@@ -273,6 +282,87 @@ describe('Radar continuation boundaries', () => {
       errorCode: null,
     });
   });
+
+  it.each(['missing-cost', 'invalid-cost'] as const)(
+    'commits ten requests without spending the reserve on a historical estimate after %s responses',
+    async (boundary) => {
+      const h = await makeHarness(boundary);
+      const coordinator = h.createCoordinator();
+      const result = await coordinator.refresh();
+
+      expect(result.published).toBe(true);
+      expect(h.fetchImpl).toHaveBeenCalledTimes(10);
+      expect(h.quota.remaining).toBe(61);
+      expect(h.requests.flat()).toEqual(ACTORS.slice(0, 50));
+      const checkpoint = await getRadarReconciliation('viewer');
+      expect(checkpoint).toMatchObject({
+        revision: 2,
+        pauseReason: 'request_budget',
+        rateLimitRemaining: 61,
+        maxRequestCost: 1,
+        nextAllowedAt: null,
+        scannedFollowingCount: 50,
+        batchCount: 10,
+        partialReasons: [],
+      });
+      expect(checkpoint?.cursor).toEqual({
+        phase: 'activity',
+        followingCount: 80,
+        actors: ACTORS.map((login, index) => ({
+          login,
+          nextCursor: index < 50 ? null : `saved-${login}`,
+          seenCursors: [`saved-${login}`],
+          complete: index < 50,
+        })),
+      });
+      expect(await db.radarActivities.count()).toBe(50);
+      expect(await getRadarState('viewer')).toMatchObject({
+        lastFullReconciledAt: null,
+        lastSuccessfulAt: null,
+        credentialIdentity: null,
+        rateLimitRemaining: 61,
+        maxRequestCost: 1,
+        errorCode: null,
+      });
+      expect(checkpoint).not.toHaveProperty('hasCurrentRequestCost');
+      const storedState = await db.radarState.get('singleton');
+      expect(storedState).not.toHaveProperty('hasCurrentRequestCost');
+      expect(storedState?.reconciliation).not.toHaveProperty('hasCurrentRequestCost');
+      expect(result.status).not.toHaveProperty('hasCurrentRequestCost');
+      expect(result.status.state).not.toHaveProperty('hasCurrentRequestCost');
+      expect(result.status.reconciliation).not.toHaveProperty('hasCurrentRequestCost');
+      expect(result.status.reconciliation).toMatchObject({
+        completedCount: 50,
+        totalCount: 80,
+        pauseReason: 'request_budget',
+      });
+
+      await db.close();
+      await db.open();
+      h.clock.now = Date.parse(RESET_AT) + 1;
+      h.quota.remaining = 4_000;
+      h.quota.cost = 2;
+      const resumed = await h.createCoordinator().refresh();
+
+      expect(resumed.published).toBe(true);
+      expect(h.fetchImpl).toHaveBeenCalledTimes(16);
+      expect(h.quota.remaining).toBe(3_988);
+      expect(h.requests.slice(10).flat()).toEqual(ACTORS.slice(50));
+      expect(await getRadarReconciliation('viewer')).toBeNull();
+      expect(await db.radarActivities.count()).toBe(80);
+      expect(await getRadarState('viewer')).toMatchObject({
+        lastFullReconciledAt: new Date(h.clock.now).toISOString(),
+        credentialIdentity: CREDENTIAL_IDENTITY,
+        maxRequestCost: 2,
+        scannedFollowingCount: 80,
+        batchCount: 16,
+        partialReasons: [],
+        errorCode: null,
+      });
+      expect(await db.radarState.get('singleton')).not.toHaveProperty('hasCurrentRequestCost');
+      expect(resumed.status.state).not.toHaveProperty('hasCurrentRequestCost');
+    },
+  );
 
   it('chains affordable request-budget steps to terminal coverage in one wake', async () => {
     const h = await makeHarness('healthy');

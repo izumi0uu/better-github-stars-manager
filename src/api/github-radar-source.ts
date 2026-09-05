@@ -818,6 +818,7 @@ export async function fetchGitHubRadarReconciliationStep(
     requestCount += 1;
     // A dispatched request can spend quota even when no successful body follows.
     hasCurrentBalance = false;
+    hasCurrentRequestCost = false;
     const response = await fetchImpl(input, init);
     if (!response.ok) absorbRate(headerRateLimit(response));
     return response;
@@ -837,6 +838,7 @@ export async function fetchGitHubRadarReconciliationStep(
   // minimum observed inside this slice describes the current quota.
   let observedRemaining: number | null = null;
   let hasCurrentBalance = false;
+  let hasCurrentRequestCost = false;
   let rateLimitResetAt = checkpoint.rateLimitResetAt;
   let maxRequestCost = checkpoint.maxRequestCost;
   let pauseReason: RadarReconciliationPauseReason | null = null;
@@ -844,6 +846,7 @@ export async function fetchGitHubRadarReconciliationStep(
 
   const absorbRate = (rate: GraphqlRateLimit) => {
     hasCurrentBalance = rate.remaining !== null;
+    hasCurrentRequestCost = rate.cost !== null;
     observedRemaining = minNullable(observedRemaining, rate.remaining);
     rateLimitResetAt = rate.resetAt ?? rateLimitResetAt;
     maxRequestCost = maxNullable(maxRequestCost, rate.cost);
@@ -1006,5 +1009,6 @@ export async function fetchGitHubRadarReconciliationStep(
     },
     activities,
     complete,
+    hasCurrentRequestCost,
   };
 }

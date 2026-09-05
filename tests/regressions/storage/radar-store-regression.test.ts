@@ -578,6 +578,7 @@ describe('Radar snapshot storage', () => {
         dismissedAt: null,
       })],
       complete: false,
+      hasCurrentRequestCost: false,
     };
     const firstCommit = await commitRadarReconciliationStep({
       accountLogin: 'viewer',
@@ -587,6 +588,11 @@ describe('Radar snapshot storage', () => {
     });
     expect(firstCommit.applied).toBe(true);
     expect(await getRadarReconciliation('viewer')).toEqual(activityCheckpoint);
+    expect(firstCommit.checkpoint).not.toHaveProperty('hasCurrentRequestCost');
+    expect(firstCommit.state).not.toHaveProperty('hasCurrentRequestCost');
+    const storedState = await db.radarState.get('singleton');
+    expect(storedState).not.toHaveProperty('hasCurrentRequestCost');
+    expect(storedState?.reconciliation).not.toHaveProperty('hasCurrentRequestCost');
     expect(await db.radarActivities.get('stale')).toBeDefined();
     expect(await db.radarActivities.get('existing')).toMatchObject({
       repositoryDescription: 'updated remote description',
@@ -617,6 +623,7 @@ describe('Radar snapshot storage', () => {
       checkpoint: terminalCheckpoint,
       activities: [],
       complete: true,
+      hasCurrentRequestCost: false,
     };
     await expect(commitRadarReconciliationStep({
       accountLogin: 'viewer',
@@ -696,6 +703,7 @@ describe('Radar snapshot storage', () => {
         checkpoint: terminal,
         activities: [activity('fresh', 'owner/fresh', THIRD)],
         complete: true,
+        hasCurrentRequestCost: false,
       },
     });
 
@@ -731,6 +739,7 @@ describe('Radar snapshot storage', () => {
         checkpoint,
         activities: [],
         complete: false,
+        hasCurrentRequestCost: false,
       },
     });
 
