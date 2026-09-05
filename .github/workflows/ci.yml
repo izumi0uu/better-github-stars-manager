@@ -68,6 +68,20 @@ jobs:
       - name: Check full-product Edge output
         run: pnpm check:edge-output
 
+      - name: Build public Demo bundle
+        run: pnpm build:demo
+
+      - name: Verify Demo and extension artifact isolation
+        run: pnpm verify:artifact-isolation
+
+      - name: Install Chrome for Testing
+        run: pnpm exec puppeteer browsers install chrome
+
+      - name: Run public Demo browser smoke
+        env:
+          CI: 'true'
+        run: pnpm test:demo:browser
+
       - name: Run test suite
         run: pnpm test
 
@@ -84,5 +98,13 @@ jobs:
         with:
           name: dist-edge-${{ github.sha }}
           path: dist-edge
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload public Demo dist artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dist-demo-${{ github.sha }}
+          path: dist-demo
           if-no-files-found: error
           retention-days: 7
