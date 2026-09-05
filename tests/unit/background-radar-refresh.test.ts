@@ -124,6 +124,40 @@ function terminalStep(
     },
     activities: [],
     complete: true,
+    hasCurrentRequestCost: false,
+  };
+}
+
+/** One applied step that pauses on its request budget with the given quota left. */
+function budgetPausedStep(
+  checkpoint: RadarReconciliationCheckpoint,
+  input: Readonly<{ actors: number; complete: number; remaining: number; cost: number }>,
+): RadarReconciliationSourceStep {
+  return {
+    expectedReconciliationId: checkpoint.reconciliationId,
+    expectedRevision: checkpoint.revision,
+    checkpoint: {
+      ...checkpoint,
+      revision: checkpoint.revision + 1,
+      cursor: {
+        phase: 'activity',
+        followingCount: input.actors,
+        actors: Array.from({ length: input.actors }, (_, index) => ({
+          login: `actor-${index}`,
+          nextCursor: null,
+          seenCursors: [],
+          complete: index < input.complete,
+        })),
+      },
+      scannedFollowingCount: input.complete,
+      rateLimitRemaining: input.remaining,
+      maxRequestCost: input.cost,
+      pauseReason: 'request_budget',
+      nextAllowedAt: null,
+    },
+    activities: [],
+    complete: false,
+    hasCurrentRequestCost: true,
   };
 }
 
@@ -387,6 +421,7 @@ describe('Radar refresh coordinator', () => {
           checkpoint: nextCheckpoint,
           activities: [],
           complete: false,
+          hasCurrentRequestCost: false,
         };
       });
     const h = makeCoordinator({ fetchReconciliationStep: fetchStep });
@@ -435,6 +470,7 @@ describe('Radar refresh coordinator', () => {
         checkpoint: nextCheckpoint,
         activities: [],
         complete: false,
+        hasCurrentRequestCost: false,
       }));
     const h = makeCoordinator({
       reconciliation: checkpoint,
@@ -460,6 +496,181 @@ describe('Radar refresh coordinator', () => {
       totalCount: null,
       pauseReason: 'interrupted',
     });
+  });
+
+  it('chains budget-paused steps within one wake until the epoch completes', async () => {
+    const checkpoint = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:chain',
+      accountLogin: 'viewer',
+      credentialIdentity: JSON.stringify(['viewer', 'identity-a', true]),
+      windowDays: 60,
+      startedAt: new Date(NOW - 1_000).toISOString(),
+    });
+    let calls = 0;
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => {
+      calls += 1;
+      if (calls < 3) {
+        return budgetPausedStep(options.checkpoint, {
+          actors: 150,
+          complete: calls * 50,
+          remaining: 4_000,
+          cost: 9,
+        });
+      }
+      return terminalStep(options.checkpoint);
+    });
+    const h = makeCoordinator({
+      reconciliation: checkpoint,
+      fetchReconciliationStep: fetchStep,
+    });
+
+    const result = await h.coordinator.refresh();
+
+    expect(fetchStep).toHaveBeenCalledTimes(3);
+    expect(result.published).toBe(true);
+    expect(result.status.reconciliation).toBeNull();
+    // Each applied step publishes, so the surface advances instead of waiting
+    // for the whole chain.
+    expect(h.dependencies.broadcastChanged).toHaveBeenCalledTimes(3);
+  });
+
+  it('stops chaining when another step would breach the quota reserve', async () => {
+    const checkpoint = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:reserve-stop',
+      accountLogin: 'viewer',
+      credentialIdentity: JSON.stringify(['viewer', 'identity-a', true]),
+      windowDays: 60,
+      startedAt: new Date(NOW - 1_000).toISOString(),
+    });
+    // 10 requests priced at the observed 9-point cost would leave 50 or less.
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => budgetPausedStep(
+      options.checkpoint,
+      { actors: 150, complete: 50, remaining: 140, cost: 9 },
+    ));
+    const h = makeCoordinator({
+      reconciliation: checkpoint,
+      fetchReconciliationStep: fetchStep,
+    });
+
+    const result = await h.coordinator.refresh();
+
+    expect(fetchStep).toHaveBeenCalledTimes(1);
+    expect(result.published).toBe(true);
+    expect(result.status.reconciliation).toMatchObject({ pauseReason: 'request_budget' });
+  });
+
+  it('does not chain past a deadline or quota pause', async () => {
+    const checkpoint = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:pause-stop',
+      accountLogin: 'viewer',
+      credentialIdentity: JSON.stringify(['viewer', 'identity-a', true]),
+      windowDays: 60,
+      startedAt: new Date(NOW - 1_000).toISOString(),
+    });
+    for (const pauseReason of ['deadline', 'rate_reserve'] as const) {
+      const fetchStep = vi.fn(async (options: FetchStepOptions) => {
+        const paused = budgetPausedStep(options.checkpoint, {
+          actors: 150,
+          complete: 50,
+          remaining: 4_000,
+          cost: 9,
+        });
+        return {
+          ...paused,
+          checkpoint: { ...paused.checkpoint, pauseReason },
+        };
+      });
+      const h = makeCoordinator({
+        reconciliation: checkpoint,
+        fetchReconciliationStep: fetchStep,
+      });
+
+      await h.coordinator.refresh();
+
+      expect(fetchStep).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('does not chain when GitHub reported no usable quota metadata', async () => {
+    const checkpoint = createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:unknown-quota',
+      accountLogin: 'viewer',
+      credentialIdentity: JSON.stringify(['viewer', 'identity-a', true]),
+      windowDays: 60,
+      startedAt: new Date(NOW - 1_000).toISOString(),
+    });
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => {
+      const paused = budgetPausedStep(options.checkpoint, {
+        actors: 150,
+        complete: 50,
+        remaining: 4_000,
+        cost: 9,
+      });
+      return {
+        ...paused,
+        hasCurrentRequestCost: false,
+        checkpoint: { ...paused.checkpoint, rateLimitRemaining: null, maxRequestCost: null },
+      };
+    });
+    const h = makeCoordinator({
+      reconciliation: checkpoint,
+      fetchReconciliationStep: fetchStep,
+    });
+
+    await h.coordinator.refresh();
+
+    expect(fetchStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits partial progress but does not chain using only a historical request cost', async () => {
+    const checkpoint = {
+      ...createRadarReconciliationCheckpoint({
+        reconciliationId: 'radar-reconcile:unknown-current-cost',
+        accountLogin: 'viewer',
+        credentialIdentity: JSON.stringify(['viewer', 'identity-a', true]),
+        windowDays: 60,
+        startedAt: new Date(NOW - 1_000).toISOString(),
+      }),
+      maxRequestCost: 1,
+      rateLimitRemaining: 4_000,
+    };
+    const paused = {
+      ...budgetPausedStep(checkpoint, {
+        actors: 80,
+        complete: 50,
+        remaining: 3_980,
+        cost: 1,
+      }),
+      activities: [activity],
+      hasCurrentRequestCost: false,
+    };
+    const fetchStep = vi.fn(async (options: FetchStepOptions) => (
+      options.checkpoint.revision === checkpoint.revision
+        ? paused
+        : terminalStep(options.checkpoint)
+    ));
+    const h = makeCoordinator({
+      reconciliation: checkpoint,
+      fetchReconciliationStep: fetchStep,
+    });
+
+    const result = await h.coordinator.refresh();
+
+    expect(fetchStep).toHaveBeenCalledTimes(1);
+    expect(h.store.commitReconciliationStep).toHaveBeenCalledTimes(1);
+    expect(h.store.commitReconciliationStep).toHaveBeenCalledWith(expect.objectContaining({
+      step: paused,
+    }));
+    expect(await h.store.getReconciliation()).toEqual(paused.checkpoint);
+    expect(result.published).toBe(true);
+    expect(result.status.reconciliation).toMatchObject({
+      phase: 'activity',
+      completedCount: 50,
+      totalCount: 80,
+      pauseReason: 'request_budget',
+    });
+    expect(result.status.reconciliation).not.toHaveProperty('hasCurrentRequestCost');
+    expect(h.dependencies.broadcastChanged).toHaveBeenCalledTimes(1);
   });
 
   it('abandons an epoch whose own fence keeps rejecting its step', async () => {

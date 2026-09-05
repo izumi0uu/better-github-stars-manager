@@ -7,7 +7,10 @@ import { fitRadarProjectAvatarStack } from '@/ui/components/RadarActivityRows';
 import { RadarCommandBarActions } from '@/ui/components/RadarCommandBar';
 import { RadarStatusRibbon } from '@/ui/components/RadarStatusRibbon';
 import type { RadarQueryResponse, RadarStatus } from '@/radar/radar-contract';
-import type { RadarActivityPresentation } from '@/radar/radar-model';
+import {
+  RADAR_MAX_FOLLOWING,
+  type RadarActivityPresentation,
+} from '@/radar/radar-model';
 import type {
   RecommendationQueryResponse,
   RecommendationRecord,
@@ -875,6 +878,23 @@ describe('Radar', () => {
 
     await act(async () => { dismiss?.click(); });
     expect(container.querySelector('[data-radar-partial-banner]')).toBeNull();
+  });
+
+  it('explains the followed-account cap in the Following partial notice', () => {
+    const cappedResult = radarResult();
+    cappedResult.status = status({
+      snapshotStatus: 'partial',
+      state: {
+        ...status().state!,
+        followingCount: RADAR_MAX_FOLLOWING + 40,
+        partialReasons: ['following_cap_reached'],
+      },
+    });
+    const container = mount(<Radar {...surfaceProps({ result: cappedResult })} />);
+    const banner = container.querySelector('[data-radar-partial-banner]');
+
+    expect(banner?.textContent).toContain(String(RADAR_MAX_FOLLOWING));
+    expect(banner?.textContent).not.toContain('Not every followed account could be scanned');
   });
 
   it('runs New batch from the command bar and keeps saved rows visible while refreshing', async () => {
