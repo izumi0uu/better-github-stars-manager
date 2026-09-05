@@ -118,6 +118,41 @@ function activityEnvelope(followers: Array<{
   };
 }
 
+function activityCheckpoint(): RadarReconciliationCheckpoint {
+  return {
+    ...createRadarReconciliationCheckpoint({
+      reconciliationId: 'radar-reconcile:activity',
+      accountLogin: 'viewer',
+      credentialIdentity: 'viewer:identity:true',
+      windowDays: 30,
+      startedAt: NOW.toISOString(),
+    }),
+    rateLimitRemaining: 4_000,
+    maxRequestCost: 1,
+    cursor: {
+      phase: 'activity',
+      followingCount: 1,
+      actors: [{
+        login: 'alice',
+        nextCursor: 'actor-next',
+        seenCursors: ['actor-next'],
+        complete: false,
+      }],
+    },
+  };
+}
+
+function activityRequest(input: string | URL | Request, init?: RequestInit) {
+  expect(String(input)).toBe('https://api.github.com/graphql');
+  expect(init?.method).toBe('POST');
+  const body = JSON.parse(String(init?.body)) as {
+    query: string;
+    variables: Record<string, unknown>;
+  };
+  expect(body.query).toContain('query RadarActivityBatch');
+  return body.variables;
+}
+
 describe('GitHub Radar source', () => {
   it('scans followed accounts, omits private activity, and publishes one normalized flat feed', async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown>; init: RequestInit }> = [];
@@ -895,6 +930,211 @@ describe('GitHub Radar source', () => {
       phase: 'activity',
       actors: [{ login: 'alice', nextCursor: 'actor-next', complete: false }],
     });
+  });
+
+  it.each([
+    { status: 502, remaining: 50 },
+    { status: 504, remaining: 49 },
+  ])('pauses before retrying HTTP $status at a reported reserve of $remaining', async ({
+    status,
+    remaining,
+  }) => {
+    vi.useFakeTimers();
+    try {
+      const resetAt = '2026-08-10T14:00:00.000Z';
+      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        expect(activityRequest(input, init)).toEqual({ login0: 'alice', cursor0: 'actor-next' });
+        return new Response(null, {
+          status,
+          headers: {
+            'x-ratelimit-remaining': String(remaining),
+            'x-ratelimit-reset': String(Date.parse(resetAt) / 1_000),
+          },
+        });
+      });
+      const pending = fetchGitHubRadarReconciliationStep({
+        token: 'token',
+        checkpoint: activityCheckpoint(),
+        fetchImpl,
+        now: () => NOW,
+        maxRequests: 2,
+      });
+      await vi.advanceTimersByTimeAsync(1_500);
+      const result = await pending;
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(result.complete).toBe(false);
+      expect(result.activities).toEqual([]);
+      expect(result.checkpoint).toMatchObject({
+        pauseReason: 'rate_reserve',
+        rateLimitRemaining: remaining,
+        rateLimitResetAt: resetAt,
+        nextAllowedAt: resetAt,
+        partialReasons: [],
+        cursor: activityCheckpoint().cursor,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { failure: 'missing quota', earlierSuccess: false },
+    { failure: 'invalid quota', earlierSuccess: false },
+    { failure: 'network', earlierSuccess: false },
+    { failure: 'network', earlierSuccess: true },
+  ])('forgets stale quota after a final $failure request (prior page: $earlierSuccess)', async ({
+    failure,
+    earlierSuccess,
+  }) => {
+    vi.useFakeTimers();
+    try {
+      let requests = 0;
+      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const variables = activityRequest(input, init);
+        requests += 1;
+        expect(variables).toEqual({
+          login0: 'alice',
+          cursor0: earlierSuccess && requests > 1 ? 'actor-after' : 'actor-next',
+        });
+        if (earlierSuccess && requests === 1) {
+          return jsonResponse(activityEnvelope([{
+            login: 'alice',
+            edges: [{ starredAt: NOW.toISOString(), node: repository('owner/saved') }],
+            hasNextPage: true,
+            endCursor: 'actor-after',
+          }], 61, 1));
+        }
+        if (failure === 'network') throw new TypeError('synthetic network failure');
+        return new Response(null, {
+          status: 504,
+          headers: failure === 'invalid quota' ? { 'x-ratelimit-remaining': 'unknown' } : {},
+        });
+      });
+      const pending = fetchGitHubRadarReconciliationStep({
+        token: 'token',
+        checkpoint: activityCheckpoint(),
+        fetchImpl,
+        now: () => NOW,
+        maxRequests: earlierSuccess ? 2 : 1,
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      const result = await pending;
+
+      expect(fetchImpl).toHaveBeenCalledTimes(earlierSuccess ? 2 : 1);
+      expect(result.complete).toBe(false);
+      expect(result.checkpoint).toMatchObject({
+        pauseReason: 'request_budget',
+        rateLimitRemaining: null,
+        maxRequestCost: 1,
+        nextAllowedAt: null,
+        partialReasons: [],
+        cursor: {
+          phase: 'activity',
+          actors: [{
+            login: 'alice',
+            nextCursor: earlierSuccess ? 'actor-after' : 'actor-next',
+            complete: false,
+          }],
+        },
+      });
+      expect(result.activities.map((row) => row.repositoryKey))
+        .toEqual(earlierSuccess ? ['owner/saved'] : []);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers a transient activity request without losing quota or the continuation cursor', async () => {
+    vi.useFakeTimers();
+    try {
+      let requests = 0;
+      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        expect(activityRequest(input, init)).toEqual({ login0: 'alice', cursor0: 'actor-next' });
+        requests += 1;
+        if (requests === 1) {
+          return new Response(null, { status: 502, headers: { 'x-ratelimit-remaining': '90' } });
+        }
+        expect(requests).toBe(2);
+        return jsonResponse(activityEnvelope([{
+          login: 'alice',
+          edges: [{ starredAt: NOW.toISOString(), node: repository('owner/recovered') }],
+          hasNextPage: true,
+          endCursor: 'actor-after',
+        }], 89, 1));
+      });
+      const pending = fetchGitHubRadarReconciliationStep({
+        token: 'token',
+        checkpoint: activityCheckpoint(),
+        fetchImpl,
+        now: () => NOW,
+        maxRequests: 2,
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      const result = await pending;
+
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(result.complete).toBe(false);
+      expect(result.checkpoint).toMatchObject({
+        pauseReason: 'request_budget',
+        rateLimitRemaining: 89,
+        rateLimitResetAt: '2026-08-10T13:00:00.000Z',
+        maxRequestCost: 1,
+        partialReasons: [],
+        cursor: {
+          phase: 'activity',
+          actors: [{ login: 'alice', nextCursor: 'actor-after', complete: false }],
+        },
+      });
+      expect(result.activities.map((row) => row.repositoryKey)).toEqual(['owner/recovered']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('prefers a body-completion deadline over an exhausted request budget', async () => {
+    let clock = NOW.getTime();
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        expect(activityRequest(input, init)).toEqual({ login0: 'alice', cursor0: 'actor-next' });
+        const envelope = activityEnvelope([{
+          login: 'alice',
+          edges: [{ starredAt: NOW.toISOString(), node: repository('owner/last-page') }],
+          hasNextPage: true,
+          endCursor: 'actor-after',
+        }], 4_000, 1);
+        const response = jsonResponse(envelope);
+        vi.spyOn(response, 'json').mockImplementation(async () => {
+          clock = NOW.getTime() + 120_001;
+          return envelope;
+        });
+        return response;
+      });
+      const result = await fetchGitHubRadarReconciliationStep({
+        token: 'token',
+        checkpoint: activityCheckpoint(),
+        fetchImpl,
+        now: () => NOW,
+        maxRequests: 1,
+      });
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(result.complete).toBe(false);
+      expect(result.checkpoint).toMatchObject({
+        pauseReason: 'deadline',
+        rateLimitRemaining: 4_000,
+        nextAllowedAt: null,
+        partialReasons: [],
+        cursor: {
+          phase: 'activity',
+          actors: [{ login: 'alice', nextCursor: 'actor-after', complete: false }],
+        },
+      });
+      expect(result.activities.map((row) => row.repositoryKey)).toEqual(['owner/last-page']);
+    } finally {
+      dateNow.mockRestore();
+    }
   });
 
   it('reports the product cap separately from a GitHub-side Following gap', async () => {

@@ -37,9 +37,9 @@ export const RADAR_RATE_LIMIT_RESERVE = 50;
 export const RADAR_STEP_MAX_REQUESTS = 10;
 
 class RadarStepPause extends Error {
-  readonly reason: 'request_budget' | 'deadline';
+  readonly reason: RadarReconciliationPauseReason;
 
-  constructor(reason: 'request_budget' | 'deadline') {
+  constructor(reason: RadarReconciliationPauseReason) {
     super(reason);
     this.name = 'RadarStepPause';
     this.reason = reason;
@@ -813,9 +813,14 @@ export async function fetchGitHubRadarReconciliationStep(
 
   let requestCount = 0;
   const countedFetch: FetchLike = async (input, init) => {
-    if (requestCount >= maxRequests) throw new RadarStepPause('request_budget');
+    const pause = boundaryPause(hasCurrentBalance ? observedRemaining : null);
+    if (pause !== null) throw new RadarStepPause(pause);
     requestCount += 1;
-    return fetchImpl(input, init);
+    // A dispatched request can spend quota even when no successful body follows.
+    hasCurrentBalance = false;
+    const response = await fetchImpl(input, init);
+    if (!response.ok) absorbRate(headerRateLimit(response));
+    return response;
   };
   const requestOptions = () => {
     const remainingMs = deadlineAt - Date.now();
@@ -831,20 +836,22 @@ export async function fetchGitHubRadarReconciliationStep(
   // A remaining balance recovers after each GitHub reset window, so only the
   // minimum observed inside this slice describes the current quota.
   let observedRemaining: number | null = null;
+  let hasCurrentBalance = false;
   let rateLimitResetAt = checkpoint.rateLimitResetAt;
   let maxRequestCost = checkpoint.maxRequestCost;
   let pauseReason: RadarReconciliationPauseReason | null = null;
   let complete = false;
 
   const absorbRate = (rate: GraphqlRateLimit) => {
+    hasCurrentBalance = rate.remaining !== null;
     observedRemaining = minNullable(observedRemaining, rate.remaining);
     rateLimitResetAt = rate.resetAt ?? rateLimitResetAt;
     maxRequestCost = maxNullable(maxRequestCost, rate.cost);
   };
   const boundaryPause = (remaining: number | null): RadarReconciliationPauseReason | null => {
     if (remaining !== null && remaining <= rateLimitLowWater) return 'rate_reserve';
-    if (requestCount >= maxRequests) return 'request_budget';
     if (Date.now() >= deadlineAt) return 'deadline';
+    if (requestCount >= maxRequests) return 'request_budget';
     return null;
   };
 
@@ -991,7 +998,7 @@ export async function fetchGitHubRadarReconciliationStep(
       partialReasons: stepReasons(checkpoint.partialReasons, additions),
       scannedFollowingCount,
       batchCount,
-      rateLimitRemaining: observedRemaining ?? checkpoint.rateLimitRemaining,
+      rateLimitRemaining: hasCurrentBalance ? observedRemaining : null,
       rateLimitResetAt,
       maxRequestCost,
       pauseReason,
