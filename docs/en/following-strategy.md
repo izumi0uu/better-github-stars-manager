@@ -26,7 +26,7 @@ The history window is a preference: 30, 60, or 90 days. Changing it invalidates 
 
 ## Which accounts are scanned
 
-Following scans **up to 200 accounts**, ordered by GitHub's own following pagination, which returns most recently followed first. Accounts beyond that cap are never scanned.
+Following scans **up to 200 accounts**, selected from GitHub's following pagination. The API does not guarantee a most-recently-followed order. Accounts beyond that cap are never scanned.
 
 The cap is a product boundary, not a GitHub limit. It bounds worst-case quota spend for a surface that refreshes hourly in the background. When it applies, the snapshot records a distinct reason and the interface says how many accounts are covered, so a partial result is never presented as a complete one.
 
@@ -115,7 +115,7 @@ Private repository activity is omitted rather than shown, and that omission is r
 
 | Area | Supported now | Not supported |
 |---|---|---|
-| Scanned accounts | Up to 200 most recently followed | The complete following graph beyond that cap |
+| Scanned accounts | Up to 200 followed accounts | The complete following graph beyond that cap |
 | Activity kinds | Public star events | Commits, releases, issues, follows, or forks |
 | History | 30, 60, or 90 rolling days | Arbitrary ranges or complete history |
 | Convergence | Resumable steps, chained while quota allows | An atomic point-in-time snapshot of GitHub |

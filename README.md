@@ -163,7 +163,7 @@ Following 与 For You 帮助你发现更多项目：
 
 For You 会排除你已 Star 的仓库、Archived 仓库和 Fork。它使用 GitHub 支持的公开接口，不复刻 GitHub Explore 的私有推荐系统。候选来源、评分和每日刷新规则见 [For You 推荐如何工作](docs/zh/for-you-recommendation-strategy.md)。
 
-Following 最多扫描你最近关注的 200 个账号，并需要可选 `read:user` scope。缺少该 scope 不影响 Stars、Gist 或 Watch。扫描边界、可恢复的全量同步和覆盖规则见 [Following 的工作方式](docs/zh/following-strategy.md)。
+Following 最多扫描你关注的 200 个账号，并需要可选 `read:user` scope。缺少该 scope 不影响 Stars、Gist 或 Watch。扫描边界、可恢复的全量同步和覆盖规则见 [Following 的工作方式](docs/zh/following-strategy.md)。
 
 ![Following 项目视图](store-assets/screenshots/readme-following-projects.webp)
 
