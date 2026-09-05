@@ -1,0 +1,80 @@
+name: E2E Edge Verification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 1'
+
+concurrency:
+  group: e2e-edge-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify-edge-stable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 10.33.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The runner image ships Microsoft Edge stable. Release identity proof needs the real
+      # Edge binary, so resolve it instead of substituting Chrome or Chromium.
+      - name: Resolve Microsoft Edge executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          edge_executable=''
+          for candidate in microsoft-edge microsoft-edge-stable; do
+            if resolved="$(command -v "$candidate" 2>/dev/null)"; then
+              edge_executable="$resolved"
+              break
+            fi
+          done
+          test -n "$edge_executable"
+          test -x "$edge_executable"
+          "$edge_executable" --version
+          printf 'EDGE_EXECUTABLE=%s\n' "$edge_executable" >> "$GITHUB_ENV"
+
+      - name: Build full-product Edge extension
+        run: pnpm build:edge
+
+      - name: Check full-product Edge output
+        run: pnpm check:edge-output
+
+      - name: Run Microsoft Edge full-product smoke
+        env:
+          CI: 'true'
+          PUPPETEER_HEADLESS: 'false'
+        run: xvfb-run -a pnpm test:smoke:edge
+
+      - name: Upload full-product Edge diagnostic artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dist-edge-smoke-${{ github.sha }}
+          path: dist-edge
+          if-no-files-found: error
+          retention-days: 7

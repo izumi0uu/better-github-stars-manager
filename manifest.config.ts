@@ -21,6 +21,11 @@ export function createProductManifest() {
     128: 'icons/icon-128.png',
   },
   permissions: ['storage', 'alarms'],
+  // Built-in provider origins stay required because a driven browser cannot complete
+  // `chrome.permissions.request` for an optional host: the Chrome prompt is native UI
+  // with no CDP target, and Firefox rejects the call outside a user input handler.
+  // Making them optional therefore breaks the packaged Cubby release gates. Only the
+  // custom origin is optional, covered by `optional_host_permissions` below.
   host_permissions: [
     'https://api.github.com/*',
     'https://api.openai.com/*',
