@@ -154,7 +154,6 @@ export type AgentPanelMessages = {
   emptyAgentMessage: string;
   send: string;
   closeTitle: string;
-  suggestTags: string;
   agentSettings: string;
   loadingSuggestions: string;
   emptyTitle: string;
@@ -162,7 +161,6 @@ export type AgentPanelMessages = {
   applied: (count: number) => string;
   loadFailed: string;
   created: (count: number) => string;
-  more: (count: number) => string;
   range: (start: number, end: number, total: number) => string;
   toolbarApplying: string;
   toolbarReview: string;
@@ -373,7 +371,6 @@ export const enAgentPanelMessages: AgentPanelMessages = {
   emptyAgentMessage: "No response returned.",
   send: "Send",
   closeTitle: "Close Cubby",
-  suggestTags: "Organize untagged here",
   agentSettings: "Cubby settings",
   loadingSuggestions: "Loading suggestions",
   emptyTitle: "No suggestions yet.",
@@ -381,7 +378,6 @@ export const enAgentPanelMessages: AgentPanelMessages = {
   applied: (count) => `${count} suggestions applied.`,
   loadFailed: "Could not load suggestions.",
   created: (count) => `${count} suggestions ready.`,
-  more: (count) => `+${count} more`,
   range: (start, end, total) => `${start}-${end} of ${total}`,
   toolbarApplying: "Applying",
   toolbarReview: "Ready for review",
@@ -622,7 +618,6 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
   emptyAgentMessage: "未返回回复。",
   send: "发送",
   closeTitle: "关闭 Cubby",
-  suggestTags: "整理这里的未标注",
   agentSettings: "Cubby 设置",
   loadingSuggestions: "正在加载建议",
   emptyTitle: "还没有建议。",
@@ -630,7 +625,6 @@ export const zhAgentPanelMessages: AgentPanelMessages = {
   applied: (count) => `已应用 ${count} 条建议。`,
   loadFailed: "无法加载建议。",
   created: (count) => `已准备 ${count} 条建议。`,
-  more: (count) => `还有 ${count} 个`,
   range: (start, end, total) => `${start}-${end} / ${total}`,
   toolbarApplying: "正在应用",
   toolbarReview: "待审阅",

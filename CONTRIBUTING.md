@@ -162,7 +162,7 @@ pnpm build
 pnpm test
 ```
 
-持续集成会在 Pull Request 上运行 `pnpm typecheck`、`pnpm build` 和 `pnpm test`，并执行无凭据的 Chrome 扩展 smoke check。
+持续集成会在 Pull Request 上运行 `pnpm typecheck`、`pnpm build` 和 `pnpm test`，同时构建 Edge 和公开 Demo 目标、检查它们的产物契约，并执行无凭据的 Chrome 扩展 smoke check 与公开 Demo 浏览器 smoke。另有独立的 Edge 工作流会解析 runner 上的 Microsoft Edge 可执行文件并对其运行 `pnpm test:smoke:edge`。
 
 ## 使用仓库的 commit 格式
 

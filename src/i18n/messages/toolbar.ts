@@ -56,7 +56,6 @@ export type ToolbarMessages = {
   showRepositoryAvatar: string;
   hiddenColumns: (count: number) => string;
   hiddenColumnsTip: string;
-  hideColumn: (label: string) => string;
   restoreColumn: (label: string) => string;
   dragColumnTitle: (label: string) => string;
   dragColumnHint: string;
@@ -135,7 +134,6 @@ export const enToolbarMessages: ToolbarMessages = {
   showRepositoryAvatar: "Show repository avatar",
   hiddenColumns: (count) => `${count} hidden`,
   hiddenColumnsTip: "Click to restore · drag into the header to place",
-  hideColumn: (label) => `Hide ${label}`,
   restoreColumn: (label) => `Restore ${label}`,
   dragColumnTitle: (label) => `Drag ${label} to reorder; drop into tray to hide`,
   dragColumnHint: "Horizontal drag reorders · drop into tray hides",
@@ -213,7 +211,6 @@ export const zhToolbarMessages: ToolbarMessages = {
   showRepositoryAvatar: "显示仓库头像",
   hiddenColumns: (count) => `已隐藏 ${count}`,
   hiddenColumnsTip: "点击恢复 · 拖回表头可插入位置",
-  hideColumn: (label) => `隐藏「${label}」`,
   restoreColumn: (label) => `恢复「${label}」`,
   dragColumnTitle: (label) => `拖动「${label}」排序；拖到托盘隐藏`,
   dragColumnHint: "水平拖动排序 · 拖到托盘隐藏",

@@ -27,7 +27,6 @@ export type AgentWorkbenchMessages = {
   runProgressLabel: string;
   processed: string;
   remaining: string;
-  batches: string;
   providerAttempts: string;
   analysisBlockedTitle: string;
   analysisCoverage: (processed: number, total: number) => string;
@@ -141,7 +140,6 @@ export const enAgentWorkbenchMessages: AgentWorkbenchMessages = {
   runProgressLabel: "Analysis progress",
   processed: "Processed",
   remaining: "Remaining",
-  batches: "Batches",
   providerAttempts: "AI requests",
   analysisBlockedTitle: "Analysis paused before completion",
   analysisCoverage: (processed, total) => `${processed} of ${total} repositories analyzed`,
@@ -257,7 +255,6 @@ export const zhAgentWorkbenchMessages: AgentWorkbenchMessages = {
   runProgressLabel: "分析进度",
   processed: "已处理",
   remaining: "剩余",
-  batches: "批次",
   providerAttempts: "AI 请求",
   analysisBlockedTitle: "分析未完成，已暂停",
   analysisCoverage: (processed, total) => `已分析 ${processed} / ${total} 个仓库`,

@@ -164,7 +164,7 @@ Following and For You offer two discovery paths:
 
 For You excludes repositories you currently star, archived repositories, and forks. It uses supported GitHub APIs and does not reproduce GitHub Explore's private recommendation system. See [How For You recommendations work](docs/en/for-you-recommendation-strategy.md) for candidate sources, scoring, and daily refresh behavior.
 
-Following requires the optional `read:user` scope. Without it, Stars, Gist, and Watch continue to work.
+Following scans up to 200 of your most recently followed accounts and requires the optional `read:user` scope. Without it, Stars, Gist, and Watch continue to work. See [How Following works](docs/en/following-strategy.md) for the scan boundary, resumable full reconciliation, and coverage rules.
 
 ![Following projects](store-assets/screenshots/readme-following-projects.webp)
 
@@ -254,6 +254,7 @@ pnpm test:smoke
 
 - [GitHub token permissions](docs/en/github-token-permissions.md)
 - [How Watch works](docs/en/watch-strategy.md)
+- [How Following works](docs/en/following-strategy.md)
 - [How For You recommendations work](docs/en/for-you-recommendation-strategy.md)
 - [Cubby Agent technical reference](docs/en/cubby-agent.md)
 - [Privacy policy](docs/en/privacy-policy.md)

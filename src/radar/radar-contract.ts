@@ -77,4 +77,6 @@ export interface RadarReconciliationSourceStep {
   checkpoint: RadarReconciliationCheckpoint;
   activities: RadarActivityRecord[];
   complete: boolean;
+  /** Latest-request cost evidence, separate from the persisted maximum diagnostic. */
+  hasCurrentRequestCost: boolean;
 }

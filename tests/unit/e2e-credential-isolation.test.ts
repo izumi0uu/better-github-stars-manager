@@ -100,6 +100,16 @@ describe('E2E credential isolation', () => {
       /pnpm test:runtime:(?:agent-[A-Za-z0-9-]+|organize-job-[A-Za-z0-9-]+)/g,
     ) ?? [];
     expect(packagedHostCommands).toEqual(['pnpm test:runtime:agent-session']);
+
+    expectInOrder(ciJob, [
+      'pnpm build:edge',
+      'pnpm check:edge-output',
+      'pnpm build:demo',
+      'pnpm verify:artifact-isolation',
+      'pnpm exec puppeteer browsers install chrome',
+      'pnpm test:demo:browser',
+      'pnpm test',
+    ]);
   });
 
   it('keeps Firefox verification credential-free and event-scoped', () => {
@@ -213,6 +223,56 @@ describe('E2E credential isolation', () => {
     expect(versionsJob).toMatch(
       /^[ \t]*FIREFOX_140_EXECUTABLE:[ \t]*\$\{\{ steps\.firefox-paths\.outputs\.minimum \}\}[ \t]*$/m,
     );
+  });
+
+  it('proves Microsoft Edge verification uses a real Edge binary without credentials', () => {
+    const workflow = read('.github/workflows/e2e-edge.yml');
+    expect(workflow).toMatch(/^name: E2E Edge Verification[ \t]*$/m);
+    expect(workflow).toMatch(/^permissions:\r?\n  contents: read[ \t]*$/m);
+    expect(workflow).toMatch(
+      /^concurrency:\r?\n  group: e2e-edge-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\r?\n  cancel-in-progress: true[ \t]*$/m,
+    );
+
+    expect(workflow).not.toMatch(/\bsecrets\./);
+    expect(workflow).not.toMatch(/\$\{\{\s*github\.token\s*\}\}/);
+    expect(workflow).not.toMatch(
+      /\b(?:GH_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|AI_INPUT_API_KEY|CUBBY_API_KEY)\b/,
+    );
+
+    const job = jobBlock(workflow, 'verify-edge-stable');
+    expectCheckoutCredentialPersistenceDisabled(job);
+    expectActionsPinned(workflow, [
+      'actions/checkout',
+      'pnpm/action-setup',
+      'actions/setup-node',
+      'actions/upload-artifact',
+    ]);
+
+    expectInOrder(job, [
+      'pnpm install --frozen-lockfile',
+      "printf 'EDGE_EXECUTABLE=%s\\n'",
+      'pnpm build:edge',
+      'pnpm check:edge-output',
+      'xvfb-run -a pnpm test:smoke:edge',
+      'uses: actions/upload-artifact@',
+    ]);
+    expect(job).toMatch(/^[ \t]*path:[ \t]*dist-edge[ \t]*$/m);
+
+    // The Edge smoke drives a headed browser under xvfb. Both variables must live in
+    // the step's `env:` mapping: inside a `run:` heredoc they would never reach the
+    // smoke process, and CI would silently fall back to a headless or non-CI launch
+    // profile that no longer reproduces the packaged runtime.
+    const smokeEnv = stepEnvBlock(job, 'Run Microsoft Edge full-product smoke');
+    expect(smokeEnv).toMatch(/^[ \t]*CI:[ \t]*'true'[ \t]*$/m);
+    expect(smokeEnv).toMatch(/^[ \t]*PUPPETEER_HEADLESS:[ \t]*'false'[ \t]*$/m);
+
+    // Release identity proof requires the real Edge binary; substituting Chrome or Chromium
+    // downgrades the evidence to test-only scope, so the resolver must never fall back.
+    const resolveStep = stepBlock(job, 'Resolve Microsoft Edge executable');
+    expect(resolveStep).toContain('set -euo pipefail');
+    expect(resolveStep).toContain('microsoft-edge-stable');
+    expect(resolveStep).not.toMatch(/\bchrom(?:e|ium)\b/i);
+    expect(job).not.toContain('allowNonEdgeExecutableForLocalTest');
   });
 });
 
@@ -363,6 +423,27 @@ function stepBlock(job: string, name: string): string {
   );
 
   return followingStep === -1 ? remainder : remainder.slice(0, followingStep);
+}
+
+/**
+ * Returns only the `env:` mapping of a step, so an assertion cannot be satisfied
+ * by the same text appearing inside `run:`. GitHub Actions passes environment
+ * variables to the process from this mapping alone.
+ */
+function stepEnvBlock(job: string, name: string): string {
+  const step = stepBlock(job, name);
+  const heading = /^([ \t]*)env:[ \t]*\r?$/m.exec(step);
+  if (!heading) {
+    throw new Error(`Workflow step has no env mapping: ${name}`);
+  }
+
+  const contentStart = heading.index + heading[0].length;
+  const remainder = step.slice(contentStart);
+  const followingKey = remainder.search(
+    new RegExp(String.raw`^${heading[1]}[A-Za-z0-9_-]+:`, 'm'),
+  );
+
+  return followingKey === -1 ? remainder : remainder.slice(0, followingKey);
 }
 
 function expectInOrder(source: string, values: readonly string[]): void {
