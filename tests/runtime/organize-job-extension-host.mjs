@@ -1188,6 +1188,7 @@ function githubWorkerFixture({ route, method }) {
     return json(repositories, 'github_starred');
   }
   const routes = {
+    'POST github-graphql': json({ message: 'Resource not accessible by personal access token' }, 'github_graphql_forbidden', 403),
     'GET github-user': json(
       { login: 'runtime-user', avatar_url: null, name: 'Runtime User' },
       'github_token_user',
@@ -1223,6 +1224,7 @@ function classifyRuntimeRoute(value) {
     const url = new URL(value);
     if (url.origin === 'https://api.openai.com' && url.pathname === '/v1/responses') return 'responses';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user') return 'github-user';
+    if (url.origin === 'https://api.github.com' && url.pathname === '/graphql') return 'github-graphql';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user/starred') return 'github-starred';
     if (url.origin === 'https://api.github.com' && /^\/users\/[^/]+\/repos$/u.test(url.pathname)) return 'github-owned-repos';
     if (url.origin === 'https://api.github.com' && url.pathname === '/search/repositories') return 'github-repository-search';

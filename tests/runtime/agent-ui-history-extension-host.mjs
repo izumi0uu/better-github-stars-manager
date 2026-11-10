@@ -195,6 +195,12 @@ async function run() {
     await saveProvider(optionsPage);
     runtime.configStep = 'provider-saved';
     await seedRuntimeRepository(optionsPage);
+    if (TAG_DELETION_REVIEW_ONLY) {
+      await optionsPage.evaluate(async () => {
+        const response = await chrome.runtime.sendMessage({ type: 'markOnboardingSeen' });
+        if (!response?.ok) throw new Error('Could not finish fixture onboarding');
+      });
+    }
     assert.deepEqual(await readSafeConfig(optionsPage), {
       username: 'runtime-user',
       provider: 'custom-openai-compatible',
@@ -702,15 +708,21 @@ async function run() {
 }
 
 async function verifyTagDeletionReviews() {
+  await pageA.bringToFront();
   const rpc = (request) => optionsPage.evaluate(async (value) => {
     const response = await chrome.runtime.sendMessage(value);
     if (!response?.ok) throw new Error(response?.error ?? 'Review RPC failed');
     return response.data;
   }, request);
   await rpc({ type: 'setTags', full_name: 'runtime-user/runtime-repo', tags: ['review-tag'] });
+  await waitUntil(() => pageA.evaluate(() => !!document.getElementById('gsm-manager-host')?.shadowRoot
+    ?.querySelector('[data-testid="bulk-unstar-toolbar"] button:not([disabled])')), SETUP_TIMEOUT_MS, 'Batch selection did not become ready');
   await clickShadow(pageA, '[data-testid="bulk-unstar-toolbar"] button');
+  await waitUntil(() => pageA.evaluate(() => !!document.getElementById('gsm-manager-host')?.shadowRoot
+    ?.querySelector('[data-layout-row-grid] input[type="checkbox"]:not([disabled])')), SETUP_TIMEOUT_MS, 'Batch selection did not appear');
   const checkbox = await shadowElement(pageA, '[data-layout-row-grid] input[type="checkbox"]:not([disabled])');
-  await checkbox.click();
+  await checkbox.focus();
+  await pageA.keyboard.press('Space');
   await checkbox.dispose();
   await clickShadow(pageA, '[data-testid="bulk-unstar-toolbar"] > div > button:nth-of-type(2)');
   assert.equal(await pageA.evaluate(() => document.getElementById('gsm-manager-host')?.shadowRoot
@@ -724,7 +736,11 @@ async function verifyTagDeletionReviews() {
     runtime.mode = 'tag-deletion';
     runtime.deletionStep = 0;
     runtime.deletionRun = approved ? 'confirmed' : 'rejected';
-    await fillShadowComposer(pageA, 'Delete the review-tag tag after showing me the proposed changes.');
+    await fillShadowComposer(pageA, approved
+      ? 'Please show a new review to delete review-tag; I will confirm this request.'
+      : 'Delete the review-tag tag after showing me the proposed changes.');
+    await waitUntil(() => pageA.evaluate(() => !!document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('aside[role="dialog"] button[type="submit"]:not([disabled])')), TURN_TIMEOUT_MS, 'Deletion prompt did not become sendable');
     await submitShadowComposer(pageA);
     await waitUntil(() => pageA.evaluate(() => !!document.getElementById('gsm-manager-host')?.shadowRoot
       ?.querySelector('[data-testid="agent-tag-deletion-review"]')), TURN_TIMEOUT_MS, 'Deletion review did not appear');
@@ -734,6 +750,8 @@ async function verifyTagDeletionReviews() {
     assert.equal(await pageA.evaluate(() => document.getElementById('gsm-manager-host')?.shadowRoot
       ?.querySelector('[data-testid="agent-tag-deletion-review"] li')?.textContent), 'review-tag');
     await clickShadow(pageA, `[data-testid="agent-tag-deletion-review"] button:nth-child(${approved ? 2 : 1})`);
+    await waitUntil(async () => !(await readUi(pageA)).running,
+      TURN_TIMEOUT_MS, 'Deletion turn did not finish after review');
     await waitForAgentReady(pageA);
     const after = await rpc({ type: 'getTag', full_name: 'runtime-user/runtime-repo' });
     assert.deepEqual(after.tag.manualTags, approved ? [] : ['review-tag']);
@@ -806,6 +824,7 @@ function githubWorkerFixture({ route, method }) {
     kind,
   });
   const routes = {
+    'POST github-graphql': json({ message: 'Resource not accessible by personal access token' }, 'github-graphql-forbidden', 403),
     'GET github-user': json(
       { login: 'runtime-user', avatar_url: null, name: 'Runtime User' },
       'github-token-user',

@@ -358,6 +358,8 @@ test('passes only allowlisted ambient and runner-owned values to release childre
     PATH: '/safe/bin',
     HOME: '/safe/home',
     CI: 'true',
+    DISPLAY: ':99',
+    XAUTHORITY: '/tmp/test-xauthority',
     PUPPETEER_HEADLESS: 'new',
     OPENAI_API_KEY: 'private-openai-key',
     GITHUB_TOKEN: 'private-github-token',
@@ -374,6 +376,8 @@ test('passes only allowlisted ambient and runner-owned values to release childre
 
   assert.deepEqual(environment, {
     CI: 'true',
+    DISPLAY: ':99',
+    XAUTHORITY: '/tmp/test-xauthority',
     HOME: '/safe/home',
     PATH: '/safe/bin',
     PUPPETEER_HEADLESS: 'new',

@@ -757,6 +757,9 @@ function handleReadOnly(request) {
 
 function repositoryWorkerFixture({ route, method }) {
   const json = (body, kind) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body), kind });
+  if (method === 'POST' && route === 'github-graphql') {
+    return { ...json({ message: 'Resource not accessible by personal access token' }, 'github-graphql-forbidden'), status: 403 };
+  }
   if (method !== 'GET') return null;
   if (route === 'github-starred') return json([], 'github-token-stars');
   if (route === 'github-repository') {
@@ -793,6 +796,7 @@ function optionsGithubFixture({ route, method }) {
     status, contentType: 'application/json', headers, body: JSON.stringify(body), kind,
   });
   const routes = {
+    'POST github-graphql': json({ message: 'Resource not accessible by personal access token' }, 'github-graphql-forbidden', 403),
     'GET github-user': json({ login: 'runtime-user', avatar_url: null, name: 'Runtime User' }, 'github-user', 200, { 'x-oauth-scopes': 'public_repo, gist' }),
     'GET github-starred': json([], 'github-starred'),
     'GET github-watch-scope': json([], 'github-watch-scope'),
