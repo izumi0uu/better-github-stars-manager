@@ -121,6 +121,51 @@ describe('background Agent artifact coverage coordinator', () => {
   });
 
   afterAll(() => db.close());
+  it('retains pending coverage through Stop and cleans it without replay on replacement', async () => {
+    const sessionId = 'session-coverage-stop';
+    const artifactId = 'artifact-coverage-stop';
+    await createAgentSession({ idFactory: () => sessionId });
+    const coordinator = createAgentAttemptCoordinator('worker-coverage-stop');
+    const messages = sourceMessages('one', 'call-stop', artifactId);
+    const candidateTransition = transition(sessionId, 0, messages);
+    const launch = {
+      sessionId, baseRevision: 0, turnAttemptId: 'attempt-coverage-stop',
+      prompt: messages[0]!.content,
+      candidateContract: candidateTransition.binding!.candidateContract,
+    };
+    const admission = await coordinator.admit(launch, 'statically_read_only');
+    const artifact = await storeAgentArtifact({
+      artifactId, sessionId, turnAttemptId: launch.turnAttemptId,
+      toolCallId: 'call-stop', toolName: 'read_repository',
+      storageClass: 'cache', content: 'pending coverage evidence',
+    });
+    const coverage = await createAgentArtifactCoverage({
+      artifactId, sourceToolCallId: 'call-stop',
+      expectedBytes: artifact.byteLength, artifactSha256: artifact.sha256,
+      integrityManifestSha256: artifact.integrity!.manifestSha256,
+    });
+    const checkpoint = await coordinator.checkpointArtifactEnvelope({
+      sessionId, turnAttemptId: launch.turnAttemptId, launchDigest: admission.launchDigest,
+      proposals: [{ kind: 'start', record: coverage }],
+      continuation: continuation([coverage], messages.slice(0, 3), 11),
+    });
+    assert.equal(await coordinator.requestStop(launch), true);
+    const stopped = (await db.agentAttempts.toArray())[0]!;
+    assert.equal(stopped.state, 'stop_pending');
+    assert.deepEqual(stopped.artifactCoverage, checkpoint.artifactCoverage);
+    assert.ok(stopped.artifactContinuationControl);
+    assert.equal(await db.agentAttemptRecoveries.count(), 1);
+    assert.equal(await createAgentAttemptCoordinator('worker-coverage-replacement')
+      .inspectActive(sessionId), null);
+    const uncertain = (await db.agentAttempts.toArray())[0]!;
+    assert.equal(uncertain.state, 'state_uncertain');
+    assert.equal(uncertain.artifactCoverage[0]?.state, 'incomplete');
+    assert.equal(uncertain.artifactContinuationControl, null);
+    assert.equal(await db.agentAttemptRecoveries.count(), 0);
+    assert.equal(await db.agentArtifacts.get(artifactId), undefined);
+    assert.equal(await db.agentMessages.count(), 0);
+  });
+
 
   it('fences commit, attaches an exact receipt, reloads it, and preserves canonical ownership', async () => {
     const sessionId = 'session-coverage-commit';

@@ -1,7 +1,4 @@
-import {
-  invalidateLibrarySnapshot,
-  readLibrarySnapshot,
-} from '@/storage/library-projection';
+import { readLibrarySnapshot } from '@/storage/library-projection';
 import {
   validateLaunchCandidateContract,
   type LaunchCandidateContract,
@@ -31,39 +28,15 @@ export type ResultSubsetResolver = (
   generation: number,
 ) => readonly string[] | null;
 
-let cache: {
-  source: StarsQuerySource;
-  version: number;
-  includesOwnedPublic: boolean;
-} | null = null;
-let cacheVersion = 0;
-
-/** Invalidate the in-memory cache (called after any sync/write). */
-export function invalidateCache() {
-  cacheVersion++;
-  cache = null;
-  invalidateLibrarySnapshot();
-}
-
-async function ensureCache(includesOwnedPublic: boolean) {
-  if (
-    cache
-    && cache.version === cacheVersion
-    && cache.includesOwnedPublic === includesOwnedPublic
-  ) return cache;
-  // The shared library snapshot serves every surface. This layer keeps its own
-  // entry because it additionally caches the owned-public narrowing, which only
-  // the Stars query needs.
+async function readSource(includesOwnedPublic: boolean): Promise<StarsQuerySource> {
   const library = await readLibrarySnapshot();
-  const stars = includesOwnedPublic
-    ? library.stars
-    : library.stars.filter((star) => star.viewer_has_starred !== false);
-  cache = {
-    source: { stars, tags: library.tags, tagMeta: library.tagMeta },
-    version: cacheVersion,
-    includesOwnedPublic,
-  };
-  return cache;
+  return includesOwnedPublic
+    ? library
+    : {
+      stars: library.stars.filter((star) => star.viewer_has_starred !== false),
+      tags: library.tags,
+      tagMeta: library.tagMeta,
+    };
 }
 
 /** Resolves every matching repository ID using the same authoritative filter/sort semantics as queryStars. */
@@ -71,7 +44,7 @@ export async function queryAllMatchingStarIds(
   filter: StarsQueryParams['filter'],
   accountLogin: string | null = null,
 ): Promise<string[]> {
-  const { source } = await ensureCache(filter.onlyOwned);
+  const source = await readSource(filter.onlyOwned);
   return projectMatchingStars(source, filter, accountLogin).map((star) => star.full_name);
 }
 
@@ -81,7 +54,7 @@ export async function resolveLaunchCandidate(
   accountLogin: string | null = null,
 ): Promise<ResolvedLaunchCandidate> {
   validateLaunchCandidateContract(contract);
-  const { source } = await ensureCache(
+  const source = await readSource(
     contract.kind === 'current_view'
       ? contract.filter.onlyOwned
       : contract.kind === 'selected_repository',
@@ -148,7 +121,7 @@ export async function resolveLiveLaunchCandidate(
   accountLogin: string | null = null,
 ): Promise<ResolvedLaunchCandidate> {
   const resolved = await resolveLaunchCandidate(contract, resolveResultSubset, accountLogin);
-  const { source } = await ensureCache(
+  const source = await readSource(
     contract.kind === 'selected_repository'
       || (contract.kind === 'current_view' && contract.filter.onlyOwned),
   );
@@ -164,6 +137,6 @@ export async function resolveLiveLaunchCandidate(
 }
 
 export async function queryStars(params: StarsQueryParams): Promise<StarsQueryResult> {
-  const { source } = await ensureCache(params.filter.onlyOwned);
+  const source = await readSource(params.filter.onlyOwned);
   return projectStarsQuery(source, params);
 }

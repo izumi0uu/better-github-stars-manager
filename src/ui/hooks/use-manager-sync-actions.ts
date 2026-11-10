@@ -6,8 +6,10 @@ import { isOnboardingCardStage, shouldTrackOnboardingSync } from '@/onboarding/s
 import { pickInitialSyncAction } from '@/ui/initial-sync';
 import { ACTION_SUCCESS_FEEDBACK_MS } from '@/ui/ui-feedback-constants';
 import { bgCall, mergeProgressStatus, mergeStatusPatch, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
+import type { BackgroundResult, BackgroundSyncCommand } from '@/runtime/background-command';
+import type { StarsQueryParams } from '@/stars/stars-query';
 
-function emptyFilter() {
+function emptyFilter(): StarsQueryParams['filter'] {
   return {
     query: '',
     languages: [],
@@ -38,7 +40,7 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshStatus = async () => {
-    const next = await bgCall<SyncStatus>('getStatus').catch(() => null);
+    const next = await bgCall('getStatus').catch(() => null);
     setStatus((current) => mergeStatusSnapshot(current, next));
     return next;
   };
@@ -58,7 +60,7 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
     successTimer.current = setTimeout(() => setSuccessAction(null), ACTION_SUCCESS_FEEDBACK_MS);
   };
 
-  const doSync = async (type: string, label: string) => {
+  const doSync = async (type: BackgroundSyncCommand, label: string) => {
     setBusy(true);
     setPendingAction(type);
     setSuccessAction(null);
@@ -69,10 +71,10 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
       shouldTrackOnboardingSync(status.onboardingStage);
     try {
       if (tracksOnboarding) await setOnboardingStage('syncing');
-      const result = await bgCall<{ missing?: boolean }>(type);
+      const result = await bgCall(type);
       refreshStars();
       await refreshStatus();
-      if (type === 'gistPull' && result?.missing) {
+      if (type === 'gistPull' && result && 'missing' in result && result.missing) {
         setInfo(m.background.gistPullMissing);
       } else {
         flashSuccess(type);
@@ -86,13 +88,13 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
     }
   };
 
-  const autoAssignTags = async (): Promise<{ tagged: number; remainingUntagged: number } | null> => {
+  const autoAssignTags = async (): Promise<BackgroundResult<'autoAssignTags'> | null> => {
     setBusy(true);
     setPendingAction('autoAssignTags');
     setSuccessAction(null);
     setInfo(null);
     try {
-      const result = await bgCall<{ tagged: number; remainingUntagged: number }>('autoAssignTags');
+      const result = await bgCall('autoAssignTags');
       refreshStars();
       await refreshStatus();
       flashSuccess('autoAssignTags');
@@ -137,7 +139,7 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
       const st = await refreshStatus();
       setStatusLoaded(true);
       if (!st?.hasToken) return;
-      const q = await bgCall<{ grandTotal: number }>('query', {
+      const q = await bgCall('query', {
         params: { filter: emptyFilter(), offset: 0, limit: 1 },
       }).catch(() => null);
       const syncType = pickInitialSyncAction(st, q?.grandTotal ?? 0);
@@ -146,7 +148,10 @@ export function useManagerSyncActions({ refreshStars }: { refreshStars: () => vo
       const tracksOnboarding = shouldTrackOnboardingSync(st.onboardingStage);
       setPendingAction(syncType);
       if (tracksOnboarding) await setOnboardingStage('syncing');
-      bgCall(syncType, syncType === 'syncFull' ? { includeOwnedPublic: false } : undefined)
+      const sync = syncType === 'syncFull'
+        ? bgCall('syncFull', { includeOwnedPublic: false })
+        : bgCall('syncIncremental');
+      sync
         .then(async () => {
           refreshStars();
           await refreshStatus();

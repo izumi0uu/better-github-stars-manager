@@ -163,7 +163,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run integrated Agent runtime verification
-        run: xvfb-run -a pnpm verify:agent-runtime
+        run: dbus-run-session -- xvfb-run -a pnpm verify:agent-runtime
 
       - name: Check Firefox output
         run: pnpm check:firefox-output

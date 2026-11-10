@@ -2,6 +2,8 @@
 
 [English](../en/chrome-web-store-submission.md)
 
+Stars 支持批量选择并取消最多 100 个 Star，确认前会列出具体仓库，标签和笔记会保留。Cubby 移除标签也需要确认具体仓库和标签；回复不会自动加载 Markdown 远程图片。
+
 这份文档记录商店文案、根据 manifest 整理的权限说明、审核员测试步骤以及 Chrome Web Store 的外部工作。它不表示某个安装包已经可以发布、已经上传、正在审核或已经上线。
 
 ## 证据边界

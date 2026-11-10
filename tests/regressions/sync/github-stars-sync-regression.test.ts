@@ -8,6 +8,7 @@ import {
 } from '../../../src/preferences';
 import type { Config } from '../../../src/types';
 import { createChromeMock } from '../../helpers/chrome-mock';
+import { installGitHubCredential } from '../../helpers/github-credential';
 
 const chromeMock = createChromeMock();
 Object.defineProperty(globalThis, 'chrome', { value: chromeMock.api, configurable: true });
@@ -17,8 +18,6 @@ const { authStore, CONFIG_STORAGE_KEY } = await import('../../../src/auth/auth-s
 const { githubStarSource, toStar } = await import('../../../src/api/github-star-source');
 
 const originalFetch = globalThis.fetch;
-const originalGetToken = authStore.getToken;
-const originalGetUsername = authStore.getUsername;
 
 function configWithCursor(lastSyncStarredAt: string | null): Config {
   return {
@@ -79,8 +78,7 @@ async function resetState(lastSyncStarredAt: string | null) {
   await db.open();
   await chrome.storage.local.clear();
   await chrome.storage.local.set({ [CONFIG_STORAGE_KEY]: configWithCursor(lastSyncStarredAt) });
-  authStore.getToken = async () => 'github_pat_synthetic';
-  authStore.getUsername = async () => 'octocat';
+  await installGitHubCredential();
 }
 
 function starredRepo(
@@ -129,15 +127,11 @@ function urlFrom(input: string | URL | Request): string {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  authStore.getToken = originalGetToken;
-  authStore.getUsername = originalGetUsername;
   vi.useRealTimers();
 });
 
 afterAll(async () => {
   globalThis.fetch = originalFetch;
-  authStore.getToken = originalGetToken;
-  authStore.getUsername = originalGetUsername;
   await db.close();
 });
 
@@ -403,7 +397,8 @@ describe('GitHub stars sync regressions', () => {
     };
     globalThis.fetch = fetchMock;
 
-    vi.useFakeTimers();
+    // Freeze only the cursor clock; IndexedDB still needs its real task scheduler.
+    vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2030-01-02T03:04:05.000Z'));
     const result = await githubStarSource.syncFull((p) => {
       progress.push({ phase: p.phase, done: p.done, total: p.total });

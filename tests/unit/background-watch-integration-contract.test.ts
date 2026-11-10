@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import {
   consumeOptionsIntent,
   OPTIONS_INTENT_STORAGE_KEY,
@@ -8,6 +8,8 @@ import {
   writeOptionsIntent,
 } from '@/utils/options-intent';
 import { backgroundSource, caseBlock } from '../helpers/background-case-block';
+import type { BackgroundPayload } from '@/runtime/background-command';
+import type { WatchThreadMutationInput } from '@/watch/watch-contract';
 
 const optionsSource = readFileSync(
   new URL('../../src/options/Options.tsx', import.meta.url),
@@ -56,18 +58,6 @@ describe('Watch background integration contract', () => {
     );
     assert.match(backgroundSource, /broadcastChanged: broadcastWatchChanged/);
     assert.match(backgroundSource, /broadcastStatusChanged: broadcastWatchStatusChanged/);
-
-    const managerBroadcast = extract(
-      backgroundSource,
-      /function broadcastManagerMessage\(message: ManagerBroadcastMessage\): void \{([\s\S]*?)\n\}\n\nfunction setProgress/,
-    );
-    assert.match(managerBroadcast, /chrome\.runtime\.sendMessage\(message\)/);
-    assert.match(
-      managerBroadcast,
-      /message\.type !== 'watchChanged' && message\.type !== 'watchStatusChanged'/,
-    );
-    assert.match(managerBroadcast, /chrome\.tabs\.query\(\{ url: 'https:\/\/github\.com\/\*' \}\)/);
-    assert.match(managerBroadcast, /chrome\.tabs\.sendMessage\(tab\.id, message\)/);
 
     const queue = extract(
       backgroundSource,
@@ -123,8 +113,8 @@ describe('Watch background integration contract', () => {
   });
 
   it('validates Watch notification mutations and keeps them inside the Watch queue', () => {
-    assert.match(backgroundSource, /type: ["']markWatchThreadsRead["']; accountLogin\?: unknown; threadIds\?: unknown/);
-    assert.match(backgroundSource, /type: ["']markWatchThreadsDone["']; accountLogin\?: unknown; threadIds\?: unknown/);
+    expectTypeOf<BackgroundPayload<'markWatchThreadsRead'>>().toEqualTypeOf<WatchThreadMutationInput>();
+    expectTypeOf<BackgroundPayload<'markWatchThreadsDone'>>().toEqualTypeOf<WatchThreadMutationInput>();
     const block = caseBlock('markWatchThreadsDone', 'disconnectWatchInbox');
     assert.match(block, /const accountLogin = parseWatchAccountLogin\(req\.accountLogin\)/);
     assert.match(block, /const threadIds = parseWatchThreadIds\(req\.threadIds\)/);
@@ -200,12 +190,6 @@ describe('Watch background integration contract', () => {
   });
 
   it('accepts ordinary and targeted openOptions without broadening the request', () => {
-    assert.match(
-      backgroundSource,
-      /\|\s*\{\s*type:\s*["']openOptions["'];\s*section\?:\s*["']github["']\s*\|\s*["']watch["']\s*\}/,
-    );
-    assert.doesNotMatch(backgroundSource, /type:\s*["']openOptions["'];\s*section\?:\s*(?:string|unknown)/);
-
     const block = caseBlock('openOptions', 'devClearLocalData');
     assert.match(block, /req\.section !== ['"]github['"]/);
     assert.match(block, /req\.section !== ['"]watch['"]/);

@@ -5,6 +5,12 @@ import {
 } from './agent-workbench';
 
 export type AgentPanelMessages = {
+  deletionTitle: string;
+  deletionRepositories: string;
+  deletionGlobal: string;
+  deletionConfirm: string;
+  deletionExpired: string;
+
   title: string;
   chatInputLabel: string;
   chatIntro: string;
@@ -176,6 +182,12 @@ export type AgentPanelMessages = {
 };
 
 export const enAgentPanelMessages: AgentPanelMessages = {
+  deletionTitle: "Review tag deletion",
+  deletionRepositories: "Remove the following tags from these repositories? Tags change only after you confirm.",
+  deletionGlobal: "Delete these tags from every repository? Auto Tags will also stop adding them.",
+  deletionConfirm: "Confirm deletion",
+  deletionExpired: "This deletion request has expired. No approval was sent.",
+
   title: "Cubby",
   chatInputLabel: "Ask Cubby",
   chatIntro:
@@ -422,6 +434,12 @@ export const enAgentPanelMessages: AgentPanelMessages = {
 };
 
 export const zhAgentPanelMessages: AgentPanelMessages = {
+  deletionTitle: "确认删除标签",
+  deletionRepositories: "从以下仓库移除这些标签？确认后才会执行。",
+  deletionGlobal: "从所有仓库删除以下标签？Auto Tags 也将不再自动添加它们。",
+  deletionConfirm: "确认删除",
+  deletionExpired: "删除请求已失效，未发送批准。",
+
   title: "Cubby",
   chatInputLabel: "问问 Cubby",
   chatIntro:

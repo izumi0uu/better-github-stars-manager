@@ -236,8 +236,8 @@ describe('Cubby current-prompt authorization', () => {
     }
   });
 
-  it('allows model-facing removal and global deletion after current-turn evidence', async () => {
-    const removeAuth = createBgsmTurnAuthorization();
+  it('allows confirmed removal and global deletion after current-turn evidence', async () => {
+    const removeAuth = createBgsmTurnAuthorization({ confirmTagDeletion: async () => true });
     await executeRead(removeAuth, readTool('inspect_tag', {
       tag: 'legacy',
       repos: [{ full_name: 'owner/repo', tags: ['legacy'] }],
@@ -249,7 +249,7 @@ describe('Cubby current-prompt authorization', () => {
       context(),
     )).type, 'allow');
 
-    const deleteAuth = createBgsmTurnAuthorization();
+    const deleteAuth = createBgsmTurnAuthorization({ confirmTagDeletion: async () => true });
     await executeRead(deleteAuth, readTool('list_tags', {
       tags: [{ name: 'obsolete', repos: 2 }], nextCursor: null,
     }));
@@ -261,7 +261,7 @@ describe('Cubby current-prompt authorization', () => {
   });
 
   it('matches read evidence across NFKC-equivalent tag spellings', async () => {
-    const authorization = createBgsmTurnAuthorization();
+    const authorization = createBgsmTurnAuthorization({ confirmTagDeletion: async () => true });
     await executeRead(authorization, readTool('list_stars', {
       stars: [{ full_name: 'owner/repo', tags: ['ＵＩ'] }],
       nextCursor: null,
@@ -284,7 +284,7 @@ describe('Cubby current-prompt authorization', () => {
   });
 
   it('requires evidence for every item in a batch removal or global deletion', async () => {
-    const authorization = createBgsmTurnAuthorization();
+    const authorization = createBgsmTurnAuthorization({ confirmTagDeletion: async () => true });
     await executeRead(authorization, readTool('list_stars', {
       stars: [
         { full_name: 'owner/one', tags: ['legacy', 'unused'] },
@@ -368,7 +368,7 @@ describe('Cubby current-prompt authorization', () => {
       writes.delete,
       { tags: ['obsolete'] },
       context(),
-    )).type, 'allow');
+    )).type, 'deny');
   });
 
   it('keeps code-search conversations read-only even after other read evidence', async () => {

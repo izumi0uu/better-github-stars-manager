@@ -28,6 +28,9 @@ const useIsomorphicLayoutEffect =
 
 export type StarRowProps = {
   star: Star;
+  bulkSelected?: boolean;
+  onBulkToggle?: (fullName: string) => void;
+  bulkBusy?: boolean;
   matchRepositoryName?: (fullName: string) => RepositorySearchMatch;
   showRepositoryOwner?: boolean;
   showRepositoryAvatar?: boolean;
@@ -52,6 +55,9 @@ export type StarRowProps = {
 
 export const StarRow = memo(function StarRow({
   star,
+  bulkSelected,
+  onBulkToggle,
+  bulkBusy = false,
   matchRepositoryName,
   showRepositoryOwner = true,
   showRepositoryAvatar = true,
@@ -173,6 +179,14 @@ export const StarRow = memo(function StarRow({
           case 'repository':
             return (
               <div key={column} data-row-col={column} className={cn('flex min-w-0 items-center gap-1 overflow-hidden rounded-sm', { 'gsm-flash-col': flashedColumn === column })}>
+                {onBulkToggle && <input type="checkbox"
+                  checked={bulkSelected ?? false}
+                  disabled={interactionLocked || bulkBusy || star.tombstone || star.viewer_has_starred === false}
+                  aria-label={m.manager.selectRepository(star.full_name)}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={() => onBulkToggle(star.full_name)}
+                  className="mr-1 size-4 shrink-0 accent-primary"
+                />}
                 {showRepositoryAvatar ? <RepositoryOwnerAvatar fullName={star.full_name} url={star.owner_avatar_url} /> : null}
                 <span
                   className="min-w-0 flex-1 truncate text-primary"

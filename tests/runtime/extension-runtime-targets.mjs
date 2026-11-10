@@ -507,6 +507,7 @@ function classifySafeHttpRoute(value) {
     const url = new URL(String(value));
     if (url.origin === 'https://api.openai.com' && url.pathname === '/v1/responses') return 'responses';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user') return 'github-user';
+    if (url.origin === 'https://api.github.com' && url.pathname === '/graphql') return 'github-graphql';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user/starred') return 'github-starred';
     if (url.origin === 'https://api.github.com' && url.pathname === '/user/subscriptions') return 'github-watch-scope';
     if (url.origin === 'https://api.github.com' && url.pathname === '/notifications') return 'github-notifications';

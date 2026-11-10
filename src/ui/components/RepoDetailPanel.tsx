@@ -68,6 +68,7 @@ export function RepoDetailPanel({
 
   return (
     <div
+      data-repository-detail={star.full_name}
       className={cn(
         "gsm-scrollbar-stable flex h-full w-[340px] flex-col overflow-auto border-l border-border bg-card max-[640px]:w-full",
         {

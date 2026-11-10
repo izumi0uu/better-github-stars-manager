@@ -133,7 +133,7 @@ function buildChip(
         const tags = draft.split(',').map((t) => t.trim()).filter(Boolean);
         await bgCall('setTags', { full_name, tags });
         editing = false;
-        const got = await bgCall<{ tag: Tag | null }>('getTag', { full_name });
+        const got = await bgCall('getTag', { full_name });
         const ts = new Date().toISOString();
         tag = got.tag ?? {
           full_name,
@@ -166,7 +166,7 @@ function buildChip(
           c.title = m.repoChip.filterByTag(t);
           c.onclick = async () => {
             // Open the management page filtered by this tag.
-            const u = await bgCall<{ username: string | null }>('getUsername');
+            const u = await bgCall('getUsername');
             const url = u.username
               ? `https://github.com/${u.username}?tab=stars#gsm-tag=${encodeURIComponent(t)}`
               : `https://github.com/stars#gsm-tag=${encodeURIComponent(t)}`;
@@ -270,7 +270,7 @@ export function installRepoChipRuntime(pageWindow: Window): void {
 
     const m = messageFor(await authStore.getLocale());
     if (!targetIsCurrent(generation, url, repository, anchor.host)) return;
-    const got = await bgCall<{ tag: Tag | null }>('getTag', { full_name: anchor.full_name });
+    const got = await bgCall('getTag', { full_name: anchor.full_name });
     if (!targetIsCurrent(generation, url, repository, anchor.host)) return;
 
     const el = buildChip(document, window, anchor.full_name, got.tag ?? undefined, m);

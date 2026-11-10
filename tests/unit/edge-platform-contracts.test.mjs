@@ -213,9 +213,9 @@ test('uses one full-product manifest across Edge, Chrome, and Firefox', () => {
 
 test('uses an exact Edge worker baseline with the full-product identity shape', () => {
   assert.deepEqual(EDGE_RELEASE_WORKER_BASELINE, {
-    relativePath: 'assets/index.ts-BlPycEBq.js',
-    bytes: 778_162,
-    sha256: '4989563e1fc5bc9fb24bbd8a45930d16739ca474b6212f86846c01c09b386613',
+    relativePath: 'assets/index.ts-Bx1MkOGn.js',
+    bytes: 786_333,
+    sha256: '89b57cc3232ce820adff120bae66657de12b07532d01c9a3069ff80a45710058',
   });
   assert.deepEqual(Object.keys(EDGE_RELEASE_WORKER_BASELINE).sort(), ['bytes', 'relativePath', 'sha256']);
   const worker = {
@@ -268,7 +268,7 @@ test('isolates the Edge build environment and invokes typecheck before Vite', ()
 });
 
 test('validates the full Edge output and exact Provider permissions', () => withFixture((root) => {
-  const result = assertEdgeOutputContract({ root, expectedVersion: VERSION });
+  const result = assertEdgeOutputContract({ root, distDir: 'dist-edge', expectedVersion: VERSION });
   assert.equal(result.distDir, path.join(root, 'dist-edge'));
 
   for (const overrides of [

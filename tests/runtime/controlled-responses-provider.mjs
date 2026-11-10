@@ -907,6 +907,7 @@ function classifyHttpRoute(control, value) {
     const url = new URL(String(value));
     if (url.origin !== 'https://api.github.com') return 'unknown-http-route';
     if (url.pathname === '/user') return 'github-user';
+    if (url.pathname === '/graphql') return 'github-graphql';
     if (/^\/repos\/[^/]+\/[^/]+$/u.test(url.pathname)) return 'github-repository';
     if (/^\/repos\/[^/]+\/[^/]+\/git\/ref\/heads\/.+$/u.test(url.pathname)) return 'github-branch-ref';
     if (/^\/repos\/[^/]+\/[^/]+\/contents$/u.test(url.pathname)) return 'github-contents';

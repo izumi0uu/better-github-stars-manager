@@ -48,6 +48,116 @@ describe('durable Agent attempt authority', () => {
     db.close();
   });
 
+  it('persists an exact lease-fenced Stop idempotently and retains safe same-worker retry', async () => {
+    const created = await createAgentSession({ idFactory: () => 'session-durable-stop' });
+    const launch = attemptLaunch(created.session.id, 'attempt-durable-stop');
+    const coordinator = createAgentAttemptCoordinator('worker-stop');
+    const { launchDigest } = await coordinator.admit(launch, 'statically_read_only');
+    const running = await attemptRow(launch.sessionId, launch.turnAttemptId);
+    assert.equal(await createAgentAttemptCoordinator('worker-stale').requestStop(launch), false);
+    for (const stale of [
+      { ...launch, turnAttemptId: 'attempt-other' },
+      { ...launch, sessionId: 'session-other' },
+      { ...launch, baseRevision: 1 },
+      { ...launch, prompt: 'A different immutable prompt.' },
+    ]) assert.equal(await coordinator.requestStop(stale), false);
+    assert.deepEqual(await attemptRow(launch.sessionId, launch.turnAttemptId), running);
+
+    assert.equal(await coordinator.requestStop(launch), true);
+    const stopped = await attemptRow(launch.sessionId, launch.turnAttemptId);
+    assert.equal(stopped?.state, 'stop_pending');
+    assert.equal(stopped?.writeSettlement, null);
+    assert.deepEqual(stopped?.lease, running?.lease);
+    assert.equal(await coordinator.requestStop(launch), true);
+    assert.deepEqual(await attemptRow(launch.sessionId, launch.turnAttemptId), stopped);
+    assert.equal((await readAgentSessionRetryDraftCandidate(launch.sessionId))?.settlement, 'stop_pending');
+
+    await coordinator.settleWithoutTransition({
+      sessionId: launch.sessionId, turnAttemptId: launch.turnAttemptId,
+      launchDigest, outcome: terminalOutcome('aborted'),
+    });
+    const settled = await attemptRow(launch.sessionId, launch.turnAttemptId);
+    assert.equal(settled?.state, 'retryable');
+    assert.equal(settled?.retryKind, 'stopped');
+    assert.equal(settled?.lease, null);
+    assert.equal(await coordinator.requestStop(launch), false);
+    assert.deepEqual(await attemptRow(launch.sessionId, launch.turnAttemptId), settled);
+  });
+  it('rolls back failed Stop persistence without changing lease or storage accounting', async () => {
+    const created = await createAgentSession({ idFactory: () => 'session-stop-rollback' });
+    const launch = attemptLaunch(created.session.id, 'attempt-stop-rollback');
+    const coordinator = createAgentAttemptCoordinator('worker-stop-rollback');
+    await coordinator.admit(launch, 'statically_read_only');
+    const before = await attemptRow(launch.sessionId, launch.turnAttemptId);
+    const usage = await getAgentStorageUsage();
+    const put = vi.spyOn(db.agentAttempts, 'put').mockRejectedValueOnce(new Error('stop write failed'));
+    try {
+      await assert.rejects(() => coordinator.requestStop(launch), /stop write failed/u);
+    } finally {
+      put.mockRestore();
+    }
+    assert.deepEqual(await attemptRow(launch.sessionId, launch.turnAttemptId), before);
+    assert.deepEqual(await getAgentStorageUsage(), usage);
+  });
+
+  it('never turns a started unsafe write into retry authority when Stop settles', async () => {
+    const created = await createAgentSession({ idFactory: () => 'session-stop-unsafe' });
+    const launch = attemptLaunch(created.session.id, 'attempt-stop-unsafe');
+    const coordinator = createAgentAttemptCoordinator('worker-stop-unsafe');
+    const { launchDigest } = await coordinator.admit(launch, 'write_capable_or_unknown');
+    assert.equal(await coordinator.requestStop(launch), true);
+    await coordinator.settleWithoutTransition({
+      sessionId: launch.sessionId, turnAttemptId: launch.turnAttemptId, launchDigest,
+      outcome: { reason: 'aborted', changed: true, changedCount: 1, writeSettlement: 'unsafe' },
+    });
+    const settled = await attemptRow(launch.sessionId, launch.turnAttemptId);
+    assert.equal(settled?.state, 'terminal_non_retryable');
+    assert.equal(settled?.writeSettlement, 'unsafe');
+    assert.equal(await readAgentSessionRetryDraftCandidate(launch.sessionId), null);
+  });
+
+
+  for (const recoveryClass of ['statically_read_only', 'write_capable_or_unknown'] as const) {
+    it(`never resumes stopped ${recoveryClass} authority after worker replacement`, async () => {
+      const created = await createAgentSession({ idFactory: () => `session-stop-${recoveryClass}` });
+      const launch = attemptLaunch(created.session.id, `attempt-stop-${recoveryClass}`);
+      const original = createAgentAttemptCoordinator('worker-original');
+      const { launchDigest } = await original.admit(launch, recoveryClass);
+      assert.equal(await original.requestStop(launch), true);
+      const replacement = createAgentAttemptCoordinator('worker-replacement');
+      assert.equal(await replacement.inspectActive(launch.sessionId), null);
+      const uncertain = await attemptRow(launch.sessionId, launch.turnAttemptId);
+      assert.equal(uncertain?.state, 'state_uncertain');
+      assert.equal(uncertain?.terminalReason, 'attempt_state_lost');
+      assert.equal(uncertain?.writeSettlement, 'unsafe');
+      assert.equal(uncertain?.lease, null);
+      assert.equal(await readAgentSessionRetryDraftCandidate(launch.sessionId), null);
+      assert.equal(await original.requestStop(launch), false);
+      await original.settleWithoutTransition({
+        sessionId: launch.sessionId, turnAttemptId: launch.turnAttemptId,
+        launchDigest, outcome: terminalOutcome('aborted'),
+      });
+      assert.deepEqual(await attemptRow(launch.sessionId, launch.turnAttemptId), uncertain);
+      await assert.rejects(
+        () => replacement.admit(launch, recoveryClass),
+        { name: 'AgentSessionAttemptConflictError' },
+      );
+    });
+  }
+
+  it('rejects Stop from the old epoch after an unstopped read-only recovery transfers the lease', async () => {
+    const created = await createAgentSession({ idFactory: () => 'session-stop-stale-epoch' });
+    const launch = attemptLaunch(created.session.id, 'attempt-stop-stale-epoch');
+    const original = createAgentAttemptCoordinator('worker-original');
+    await original.admit(launch, 'statically_read_only');
+    const replacement = createAgentAttemptCoordinator('worker-replacement');
+    assert.deepEqual((await replacement.inspectActive(launch.sessionId))?.launch, launch);
+    const recovered = await attemptRow(launch.sessionId, launch.turnAttemptId);
+    assert.equal(await original.requestStop(launch), false);
+    assert.deepEqual(await attemptRow(launch.sessionId, launch.turnAttemptId), recovered);
+    assert.equal(await replacement.requestStop(launch), true);
+  });
+
   it('derives retry projection from a settled attempt without rewriting its admitted launch', async () => {
     const created = await createAgentSession({ idFactory: () => 'session-attempt-projection' });
     const launch = attemptLaunch(created.session.id, 'attempt-projection');

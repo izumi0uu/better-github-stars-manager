@@ -25,6 +25,7 @@ export function useStars(allowHashTagOverride = true) {
   // rows brightening back up. 'idle' = fully visible.
   const [phase, setPhase] = useState<'idle' | 'fading-out' | 'fading-in'>('idle');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<'query' | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastQueriedFilterKey, setLastQueriedFilterKey] = useState<string | null>(null);
   const ownedPublicLoadRequestedRef = useRef(false);
@@ -65,6 +66,7 @@ export function useStars(allowHashTagOverride = true) {
     setLastQueriedFilterKey(filterKey);
 
     setLoading(true);
+    setError(null);
     if (shouldFade) setPhase('fading-out');
     let ownedLoadStart: ReturnType<typeof setTimeout> | undefined;
     const requestOwnedPublicRepositories = () => {
@@ -97,7 +99,8 @@ export function useStars(allowHashTagOverride = true) {
         .catch(() => {
           if (!cancelled) {
             setLoading(false);
-            if (!shouldFade) setPhase('idle');
+            setPhase('idle');
+            setError('query');
           }
         });
     };
@@ -141,6 +144,7 @@ export function useStars(allowHashTagOverride = true) {
     total: committed?.total ?? 0,
     grandTotal: committed?.grandTotal ?? 0,
     loading,
+    error,
     phase,
     languages: committed?.languages ?? [],
     tagTree: { tags: committed?.tagTree ?? [], total: committed?.tagTotal ?? 0 },

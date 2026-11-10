@@ -64,6 +64,8 @@ type AgentTurnAttempt = {
   acknowledgementRecorded: boolean;
   resumeExisting: boolean;
   durableLeaseAuthorityAcquired: boolean;
+  stopRequested: boolean;
+  stopPersistence: Promise<void> | null;
   trace?: AgentTurnTrace;
   contentCapture?: AgentContentCaptureSink;
 };
@@ -102,7 +104,7 @@ export type BgsmAgentTurnRunner = (
   options: Readonly<{
     signal: AbortSignal;
     emit(event: AgentEvent): void;
-    onDurableLeaseAcquired(): void;
+    onDurableLeaseAcquired(): void | Promise<void>;
     bind(binding: BgsmAgentConversationBinding): void;
     trace?: AgentExecutionTraceSink;
     contentCapture?: AgentContentCaptureSink;
@@ -125,6 +127,7 @@ export function createBgsmAgentTurnRegistry(
       executionEpochId: string;
     }>) => Promise<boolean | void> | boolean | void;
     fenceRestoredTurnFailure?: (input: BgsmAgentTurnLaunch) => Promise<boolean>;
+    requestTurnStop?: (launch: BgsmAgentTurnLaunch) => Promise<boolean>;
     contentCaptureFactory?: (input: Readonly<{
       rootOperationId: string;
       sessionId: string;
@@ -397,12 +400,42 @@ export function createBgsmAgentTurnRegistry(
       acknowledgementRecorded: false,
       resumeExisting,
       durableLeaseAuthorityAcquired: resumeExisting,
+      stopRequested: false,
+      stopPersistence: null,
       ...(trace ? { trace } : {}),
       ...(contentCapture ? { contentCapture } : {}),
     };
     attempts.set(input.turnAttemptId, attempt);
     activeAttemptBySession.set(input.sessionId, input.turnAttemptId);
     return attempt;
+  };
+
+  const requestStop = (attempt: AgentTurnAttempt): Promise<void> => {
+    if (attempt.terminal) return Promise.resolve();
+    attempt.stopRequested = true;
+    if (attempt.stopPersistence) return attempt.stopPersistence;
+    // A fresh runner can still be awaiting admission. Its admission callback
+    // must persist Stop before allowing any provider or tool work to begin.
+    if (!attempt.durableLeaseAuthorityAcquired && dependencies.requestTurnStop) {
+      return Promise.resolve();
+    }
+    const persist = async () => {
+      if (dependencies.requestTurnStop && !await dependencies.requestTurnStop(attempt.input)) return;
+      if (attempt.terminal) return;
+      observeTrace(() => attempt.trace?.recordCancellation('user'));
+      attempt.controller.abort();
+    };
+    attempt.stopPersistence = persist();
+    return attempt.stopPersistence;
+  };
+
+  const stopFromPort = (attempt: AgentTurnAttempt) => {
+    void requestStop(attempt).catch(async (error) => {
+      // Persistence failure is not an accepted Stop. Fence local execution and
+      // expose the failure rather than publishing a synthetic aborted receipt.
+      await failAttempt(attempt, error);
+      attempt.controller.abort(error);
+    });
   };
 
   const start = (
@@ -418,6 +451,7 @@ export function createBgsmAgentTurnRegistry(
       signal: attempt.controller.signal,
       onDurableLeaseAcquired: () => {
         attempt.durableLeaseAuthorityAcquired = true;
+        if (attempt.stopRequested) return requestStop(attempt);
       },
       trace: attempt.trace
         ? {
@@ -699,10 +733,12 @@ export function createBgsmAgentTurnRegistry(
             connectionState.stopRequested = true;
           }
           const attempt = attempts.get(message.turnAttemptId);
-          if (attempt && sameTurnIdentity(attempt.input, message)) {
-            observeTrace(() => attempt.trace?.recordCancellation('user'));
-            attempt.controller.abort();
-          }
+          if (
+            attempt
+            && connectionState.attachmentMode !== 'rejected'
+            && connectionState.attachedAttemptId === message.turnAttemptId
+            && sameTurnIdentity(attempt.input, message)
+          ) stopFromPort(attempt);
           return;
         }
         if (connectionState.attachedAttemptId) return;
@@ -851,9 +887,7 @@ export function createBgsmAgentTurnRegistry(
           } else {
             attempt ??= start(parsed);
             if (connectionState.stopRequested && !attempt.terminal) {
-              const runningAttempt = attempt;
-              observeTrace(() => runningAttempt.trace?.recordCancellation('user'));
-              runningAttempt.controller.abort();
+              stopFromPort(attempt);
             }
           }
           connectionState.pendingLaunch = null;

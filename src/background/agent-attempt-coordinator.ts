@@ -17,6 +17,7 @@ import {
   markAgentSessionArtifactRepromptUsed,
   releaseAgentSessionTurnLease,
   rollbackClaimedAgentSessionTurnRecovery,
+  requestAgentSessionTurnStop,
   settleAgentSessionAttemptWithoutTransition,
   type AgentSessionCommitResult,
   type AgentSessionTerminalOutcome,
@@ -34,6 +35,7 @@ export type AgentAttemptCoordinator = Readonly<{
     launchDigest: AgentSessionLaunchDigest;
     admission: Awaited<ReturnType<typeof admitAgentSessionTurn>>;
   }>>;
+  requestStop: (launch: BgsmAgentTurnLaunch) => Promise<boolean>;
   commit: (input: Readonly<{
     turnAttemptId: string;
     transition: BgsmAgentSessionTransition;
@@ -103,6 +105,15 @@ export function createAgentAttemptCoordinator(
         recoveryClass,
       });
       return { launchDigest, admission };
+    },
+    async requestStop(launch) {
+      return requestAgentSessionTurnStop({
+        sessionId: launch.sessionId,
+        turnAttemptId: launch.turnAttemptId,
+        baseRevision: launch.baseRevision,
+        launchDigest: await digestAgentSessionLaunch(launch),
+        executionEpochId,
+      });
     },
     commit(input) {
       return commitLeasedAgentSessionTurn({ ...input, executionEpochId }, sessionCache);

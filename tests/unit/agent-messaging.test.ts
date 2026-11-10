@@ -281,7 +281,7 @@ describe('Cubby messaging', () => {
       },
     });
 
-    const error = await bgCall('deleteAgentSession').catch((failure) => failure);
+    const error = await bgCall('deleteAgentSession', { sessionId: 'session-a' }).catch((failure) => failure);
     expect(error).toBeInstanceOf(BackgroundCallError);
     expect(error).toMatchObject({
       message: 'Finish the active workflow first.',

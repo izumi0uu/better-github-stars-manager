@@ -4,41 +4,9 @@ import { afterAll, afterEach, describe, it } from 'vitest';
 import { db } from '../../../src/storage/db';
 import { authStore, CONFIG_STORAGE_KEY } from '../../../src/auth/auth-store';
 import { githubStarSource } from '../../../src/api/github-star-source';
+import { installGitHubCredential } from '../../helpers/github-credential';
+import { createChromeMock } from '../../helpers/chrome-mock';
 
-function createChromeMock() {
-  const state: Record<string, unknown> = {};
-  const listeners = new Set<
-    (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void
-  >();
-  return {
-    api: {
-      storage: {
-        local: {
-          async get(key: string | string[]) {
-            const keys = Array.isArray(key) ? key : [key];
-            return Object.fromEntries(keys.map((item) => [item, state[item]]));
-          },
-          async set(next: Record<string, unknown>) {
-            const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
-            for (const [key, value] of Object.entries(next)) {
-              changes[key] = { oldValue: state[key], newValue: value };
-              state[key] = value;
-            }
-            for (const listener of listeners) listener(changes, 'local');
-          },
-        },
-        onChanged: {
-          addListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.add(listener);
-          },
-          removeListener(listener: (changes: Record<string, { oldValue: unknown; newValue: unknown }>, areaName: string) => void) {
-            listeners.delete(listener);
-          },
-        },
-      },
-    },
-  };
-}
 
 (globalThis as { chrome?: unknown }).chrome = createChromeMock().api;
 
@@ -135,19 +103,14 @@ describe('Full sync repo-created-time regressions', () => {
       throw new Error(`unexpected fetch: ${url} ${(init?.method ?? 'GET')}`);
     }) as typeof fetch;
 
-    const originalGetUsername = authStore.getUsername;
-    const originalGetToken = authStore.getToken;
-    authStore.getToken = async () => 'github_pat_test';
-    authStore.getUsername = async () => 'octocat';
-
-    try {
+    await installGitHubCredential();
       const result = await githubStarSource.syncFull();
       assert.deepEqual(result, { added: 2, updated: 2 });
-      assert.deepEqual(seenUrls, [
+      assert.deepEqual([...seenUrls].sort(), [
         'https://api.github.com/user/starred?per_page=100&page=1',
         'https://api.github.com/users/octocat/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1',
         'https://api.github.com/user/starred?per_page=100&page=2',
-      ]);
+      ].sort());
 
       const oldRepo = await db.stars.get('a/old-repo');
       assert.equal(oldRepo?.created_at, '2020-01-02T12:00:00Z');
@@ -160,9 +123,5 @@ describe('Full sync repo-created-time regressions', () => {
       assert.equal(archivedRepo?.archived, true);
       assert.equal(archivedRepo?.owner_avatar_url, 'https://avatars.githubusercontent.com/u/11?v=4');
       assert.equal((await authStore.getConfig()).lastSyncStarredAt, '2026-06-28T10:00:00Z');
-    } finally {
-      authStore.getUsername = originalGetUsername;
-      authStore.getToken = originalGetToken;
-    }
   });
 });

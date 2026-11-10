@@ -264,6 +264,16 @@ class DemoManagerRuntime implements ManagerRuntime {
     this.publish('data');
   }
 
+  async bulkUnstar(input: import('@/stars/bulk-unstar').BulkUnstarInput) {
+    this.assertWatchAccount(input.accountLogin);
+    const { bulkUnstarRepositories } = await import('@/stars/bulk-unstar');
+    return bulkUnstarRepositories(input.fullNames, {
+      assertCurrent: async () => this.assertWatchAccount(input.accountLogin),
+      unstar: (fullName) => this.markUnstarred(fullName),
+      commit: async () => {},
+    });
+  }
+
   async removeVisibleTag(fullName: string, name: string): Promise<{ removed: boolean }> {
     const repositoryKey = canonicalRepository(fullName);
     const tag = this.state.tags.find((row) => canonicalRepository(row.full_name) === repositoryKey);
@@ -715,11 +725,12 @@ class DemoManagerRuntime implements ManagerRuntime {
     return this.state.recommendationBatches.flat();
   }
 
-  private projectRecommendations(): RecommendationRecord[] {
+  private projectRecommendations() {
     return projectRecommendations({
       accountLogin: this.accountLogin(),
       recommendations: this.activeRecommendationBatch(),
       stars: this.state.stars,
+      tags: this.state.tags,
       ignores: this.state.recommendationIgnores,
     });
   }

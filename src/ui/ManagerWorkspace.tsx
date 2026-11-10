@@ -1,3 +1,5 @@
+import { useBulkUnstar } from '@/ui/hooks/use-bulk-unstar';
+import { BulkUnstarToolbar } from '@/ui/components/BulkUnstarToolbar';
 import {
   useCallback,
   useEffect,
@@ -5,11 +7,10 @@ import {
   useMemo,
   useRef,
   useState,
-  type ComponentProps,
   type ReactNode,
   type RefObject,
 } from 'react';
-import { X } from 'lucide-react';
+import { RefreshCw, X } from 'lucide-react';
 import { useI18n, type MessageCatalog } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { Star, Tag } from '@/types';
@@ -23,7 +24,7 @@ import { Radar } from '@/ui/components/Radar';
 import { RadarStatusRibbon } from '@/ui/components/RadarStatusRibbon';
 import { RepoDetailPanel } from '@/ui/components/RepoDetailPanel';
 import { StarsTable } from '@/ui/components/StarsTable';
-import { Toolbar } from '@/ui/components/Toolbar';
+import { Toolbar, type ToolbarHostProps } from '@/ui/components/Toolbar';
 import { WatchInbox } from '@/ui/components/WatchInbox';
 import { WatchStatusRibbon } from '@/ui/components/WatchStatusRibbon';
 import { useColumnLayoutEditor } from '@/ui/hooks/use-column-layout-editor';
@@ -47,71 +48,46 @@ import { TooltipProvider } from '@/ui/shadcn/tooltip';
 import { useFilterStore } from '@/ui/filter-store';
 import { useManagerRuntime } from '@/ui/manager-runtime-context';
 import { useStars } from '@/ui/use-stars';
+import type { BgsmAgentConversationCandidate } from '@/bgsm-agent/conversation-binding';
+import { Button } from '@/ui/shadcn/button';
 
 export { layoutViewportFromMeasurements };
 
-type ToolbarProps = ComponentProps<typeof Toolbar>;
+export type ManagerWorkspaceCommands = Readonly<{
+  refreshStars: () => void;
+}>;
+
+export type ManagerWorkspaceActivity = Readonly<{
+  starsSurface: boolean;
+  idle: boolean;
+}>;
+
+type StarsSlotContext = Readonly<{ interactionLocked: boolean }>;
+type OverlaySlotContext = Readonly<{
+  rootRef: RefObject<HTMLDivElement>;
+  starsSurface: boolean;
+  agentCandidate: BgsmAgentConversationCandidate;
+  scopeCount: number;
+  refreshStars: () => void;
+}>;
 
 export type ManagerWorkspaceExtension = Readonly<{
-  toolbar?: Partial<Pick<
-    ToolbarProps,
-    | 'status'
-    | 'busy'
-    | 'pendingAction'
-    | 'successAction'
-    | 'onSync'
-    | 'onAutoAssignTags'
-    | 'onOpenAgent'
-    | 'agentStatus'
-    | 'agentStatusKind'
-    | 'agentActive'
-    | 'agentIcon'
-    | 'onTooltipSeen'
-    | 'onTogglePanel'
-    | 'showGitHubHome'
-  >> & { account?: ToolbarProps['account'] };
-  starsBanner?: ReactNode;
-  starsContentOverride?: ReactNode;
+  toolbar?: ToolbarHostProps;
+  renderStarsBanner?: (context: StarsSlotContext) => ReactNode;
+  renderStarsContent?: (context: StarsSlotContext) => ReactNode;
   info?: string | null;
   onClearInfo?: () => void;
   onClearLocalData?: () => Promise<void>;
   onOpenOptions?: (section?: 'github' | 'watch') => void;
-  renderOverlays?: (rootRef: RefObject<HTMLDivElement>) => ReactNode;
-}>;
-
-export type ManagerWorkspaceSnapshot = Readonly<{
-  surface: ManagerSurface;
-  starsSurface: boolean;
-  loading: boolean;
-  phase: 'idle' | 'fading-out' | 'fading-in';
-  interactionLocked: boolean;
-  selectedFullName: string | null;
-  visibleTotal: number;
-  filter: Readonly<{
-    query: string;
-    languages: readonly string[];
-    tags: readonly string[];
-    tagMode: 'any' | 'all';
-    showTombstone: boolean;
-    onlyFavorite: boolean;
-    onlyUntagged: boolean;
-    onlyArchived: boolean;
-    onlyOwned: boolean;
-    sortKey: ToolbarProps['f']['sortKey'];
-    sortDir: ToolbarProps['f']['sortDir'];
-  }>;
-  columnMenuOpen: boolean;
-  refreshStars: () => void;
-  selectedDetailOpen: boolean;
-  unstarPopoverOpen: boolean;
-  infoOpen: boolean;
+  renderOverlays?: (context: OverlaySlotContext) => ReactNode;
 }>;
 
 type ManagerWorkspaceProps = {
   extension?: ManagerWorkspaceExtension;
   allowHashTagOverride?: boolean;
   onMeaningfulAction?: () => void;
-  onSnapshotChange?: (snapshot: ManagerWorkspaceSnapshot) => void;
+  onCommandsChange?: (commands: ManagerWorkspaceCommands | null) => void;
+  onActivityChange?: (activity: ManagerWorkspaceActivity) => void;
 };
 
 const REPO_MARKER = '__GSM_REPO__';
@@ -186,7 +162,8 @@ export function ManagerWorkspace({
   extension,
   allowHashTagOverride = true,
   onMeaningfulAction,
-  onSnapshotChange,
+  onCommandsChange,
+  onActivityChange,
 }: ManagerWorkspaceProps = {}) {
   const runtime = useManagerRuntime();
   const {
@@ -195,6 +172,7 @@ export function ManagerWorkspace({
     grandTotal,
     loading,
     phase,
+    error: starsError,
     languages,
     tagTree,
     tagsByFullName,
@@ -306,6 +284,8 @@ export function ManagerWorkspace({
     };
   }, [runtime]);
 
+  const batchUnstar = useBulkUnstar(rows, account?.username ?? null);
+
   const handleUnstarred = useCallback((fullName: string) => {
     setSelected((current) => (current === fullName ? null : current));
   }, []);
@@ -336,6 +316,7 @@ export function ManagerWorkspace({
 
   useLayoutEffect(() => {
     if (!editingLayout) return;
+    watchDetailGeneration.current++;
     setSelected(null);
     closeUnstarPopover();
   }, [closeUnstarPopover, editingLayout]);
@@ -393,7 +374,7 @@ export function ManagerWorkspace({
   const handleWatchRepositorySelect = useCallback(async (fullName: string) => {
     const requestGeneration = ++watchDetailGeneration.current;
     setSelected(fullName);
-    setWatchDetail(null);
+    setWatchDetail((current) => current?.star?.full_name === fullName ? current : null);
     try {
       const detail = await runtime.getWatchRepositoryDetail(fullName);
       if (watchDetailGeneration.current !== requestGeneration) return;
@@ -404,7 +385,8 @@ export function ManagerWorkspace({
       setSelected(detail.star.full_name);
       setWatchDetail(detail);
     } catch {
-      if (watchDetailGeneration.current === requestGeneration) setSelected(null);
+      if (watchDetailGeneration.current !== requestGeneration) return;
+      setWatchDetail((current) => current?.star?.full_name === fullName ? current : null);
     }
   }, [runtime]);
 
@@ -414,6 +396,12 @@ export function ManagerWorkspace({
       void handleWatchRepositorySelect(selectedStar.full_name);
     }
   }, [handleWatchRepositorySelect, refreshStars, selectedStar, watchSurface]);
+
+  useEffect(() => runtime.subscribe((event) => {
+    if (watchSurface && selected && (event.kind === 'data' || event.kind === 'watch')) {
+      void handleWatchRepositorySelect(selected);
+    }
+  }), [handleWatchRepositorySelect, runtime, selected, watchSurface]);
 
   const handleManualTagMutationSuccess = useCallback(() => {
     refreshStars();
@@ -427,61 +415,40 @@ export function ManagerWorkspace({
     || f.onlyArchived
     || f.onlyOwned;
 
-  const snapshot = useMemo<ManagerWorkspaceSnapshot>(() => ({
-    surface,
-    starsSurface,
-    loading,
-    phase,
-    interactionLocked,
-    selectedFullName: selected,
-    visibleTotal: total,
-    filter: {
-      query: f.query,
-      languages: f.languages,
-      tags: f.tags,
-      tagMode: f.tagMode,
-      showTombstone: f.showTombstone,
-      onlyFavorite: f.onlyFavorite,
-      onlyUntagged: f.onlyUntagged,
-      onlyArchived: f.onlyArchived,
-      onlyOwned: f.onlyOwned,
-      sortKey: f.sortKey,
-      sortDir: f.sortDir,
-    },
-    refreshStars,
-    selectedDetailOpen: !!selectedStar,
-    unstarPopoverOpen: !!openUnstarFullName,
-    infoOpen: !!displayedInfo || !!unstarFeedback,
-    columnMenuOpen,
-  }), [
-    f.languages,
-    f.onlyArchived,
-    f.onlyFavorite,
-    f.onlyOwned,
-    f.onlyUntagged,
-    f.query,
-    f.showTombstone,
-    f.sortDir,
-    f.sortKey,
-    f.tagMode,
-    f.tags,
-    displayedInfo,
-    columnMenuOpen,
-    interactionLocked,
-    loading,
-    openUnstarFullName,
-    phase,
-    refreshStars,
-    selected,
-    selectedStar,
-    starsSurface,
-    surface,
-    total,
-    unstarFeedback,
-  ]);
+  const workspaceIdle = !loading && phase === 'idle' && !interactionLocked
+    && !columnMenuOpen && !selectedStar && !openUnstarFullName
+    && !displayedInfo && !unstarFeedback && !starsError;
   useEffect(() => {
-    onSnapshotChange?.(snapshot);
-  }, [onSnapshotChange, snapshot]);
+    onActivityChange?.({ starsSurface, idle: workspaceIdle });
+  }, [onActivityChange, starsSurface, workspaceIdle]);
+  useEffect(() => {
+    onCommandsChange?.({ refreshStars });
+    return () => onCommandsChange?.(null);
+  }, [onCommandsChange, refreshStars]);
+
+  const agentCandidate = useMemo<BgsmAgentConversationCandidate>(() => starsSurface && selected
+    ? { kind: 'selected_repository', selectedRepositoryIdHint: selected }
+    : {
+        kind: 'current_view',
+        filter: {
+          query: f.query,
+          languages: [...f.languages],
+          tags: [...f.tags],
+          tagMode: f.tagMode,
+          showTombstone: f.showTombstone,
+          onlyFavorite: f.onlyFavorite,
+          onlyUntagged: f.onlyUntagged,
+          onlyArchived: f.onlyArchived,
+          onlyOwned: f.onlyOwned,
+          sortKey: f.sortKey,
+          sortDir: f.sortDir,
+        },
+      }, [
+    starsSurface, selected, f.query, f.languages, f.tags, f.tagMode,
+    f.showTombstone, f.onlyFavorite, f.onlyUntagged, f.onlyArchived,
+    f.onlyOwned, f.sortKey, f.sortDir,
+  ]);
+  const starsContent = extension?.renderStarsContent?.({ interactionLocked });
 
   const layoutColumnMenu = (
     <LayoutColumnMenu
@@ -547,6 +514,9 @@ export function ManagerWorkspace({
       favoriteOverrides={favoriteOverrides}
       selectedTags={f.tags}
       selectedFullName={selected}
+      bulkSelection={batchUnstar.enabled ? batchUnstar.selected : undefined}
+      onBulkToggle={batchUnstar.toggle}
+      bulkBusy={batchUnstar.busy}
       visibleColumns={visibleColumns}
       gridTemplateColumns={gridTemplateColumns}
       tableMinWidth={tableMinWidth}
@@ -634,7 +604,22 @@ export function ManagerWorkspace({
             />
           )}
           {starsSurface && layoutColumnMenu}
-          {starsSurface && extension?.starsBanner}
+          {starsSurface && extension?.renderStarsBanner?.({ interactionLocked })}
+          {starsSurface && starsError && (
+            <div role="alert" data-stars-query-error className="flex items-center gap-2 border-b border-border bg-card px-3 py-2 text-xs text-destructive">
+              <span>{m.radar.statusLabel('error')}</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={interactionLocked || loading}
+                onClick={refreshStars}
+              >
+                <RefreshCw className="size-3.5" aria-hidden="true" />
+                {m.radar.retry}
+              </Button>
+            </div>
+          )}
           {starsSurface && (
             <div
               className={cn('gsm-active-filter-row', { open: hasActiveFilter })}
@@ -646,6 +631,7 @@ export function ManagerWorkspace({
               </div>
             </div>
           )}
+          {starsSurface && <BulkUnstarToolbar batch={batchUnstar} disabled={interactionLocked || !account?.username} />}
           {starsSurface && (displayedInfo || unstarFeedback) && (
             <div className="gsm-helper-text flex items-center gap-1 border-b border-border bg-card px-3 py-1">
               <span key={helperInfoKey(displayedInfo, unstarFeedback)} className="gsm-helper-text-update inline-block min-w-0 rounded-sm px-1 transition-[background-color,opacity,transform] duration-150">
@@ -749,9 +735,7 @@ export function ManagerWorkspace({
                   onDismiss={radar.dismiss}
                   onMarkSeen={radar.markSeen}
                 />
-              ) : extension?.starsContentOverride !== undefined ? (
-                extension.starsContentOverride
-              ) : starsTable}
+              ) : starsContent !== undefined ? starsContent : starsTable}
             </div>
             {selectedStar && (
               <button
@@ -797,7 +781,13 @@ export function ManagerWorkspace({
             onClearLocalData={extension?.onClearLocalData}
           />
           <LayoutDragGhost ghost={dragGhost} />
-          {extension?.renderOverlays?.(rootRef)}
+          {extension?.renderOverlays?.({
+            rootRef,
+            starsSurface,
+            agentCandidate,
+            scopeCount: agentCandidate.kind === 'selected_repository' ? 1 : total,
+            refreshStars,
+          })}
         </div>
       </TooltipProvider>
     </PortalProvider>

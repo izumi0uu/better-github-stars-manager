@@ -23,6 +23,7 @@ import type {
   RecommendationQueryResponse,
   RecommendationRecord,
 } from '@/recommendations/recommendation-model';
+import type { RecommendationPresentation } from '@/recommendations/recommendation-projector';
 import type {
   RadarActionError,
   RadarDiscoverView,
@@ -98,7 +99,7 @@ function RecommendationRow({
   onSetFavorite,
   onAddTag,
 }: {
-  recommendation: RecommendationRecord;
+  recommendation: RecommendationPresentation;
   favorite: boolean;
   pendingAction: RadarPendingAction | null;
   actionError: RadarActionError | null;
@@ -563,7 +564,7 @@ export function RadarRecommendations({
           <RecommendationRow
             key={recommendation.id}
             recommendation={recommendation}
-            favorite={recommendationFavorites[recommendation.repositoryKey] ?? false}
+            favorite={recommendationFavorites[recommendation.repositoryKey] ?? recommendation.favorite}
             pendingAction={pendingAction}
             actionError={actionError}
             onStar={onStar}

@@ -340,6 +340,7 @@ export async function runExtensionBrowserSmoke(options = {}) {
       radarBadgeCount: 1,
       recommendationCount: 1,
       recommendationExcludedFromStars: true,
+      starsCount: 244,
     });
     await ownStars.bringToFront();
     await ownStars.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
@@ -1150,9 +1151,7 @@ async function seedWatchAndRadarFixture(extId) {
     const databaseVersion = database.version / 10;
     database.close();
 
-    // Direct fixture writes bypass the background publication boundary. Touch
-    // the authoritative same-account credential record after commit so an
-    // already-open Manager exercises its real credential invalidation path.
+    // Finish same-account profile metadata without changing credential identity.
     const finalizedCredentials = {
       ...credentials,
       avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
@@ -1166,7 +1165,45 @@ async function seedWatchAndRadarFixture(extId) {
       [CREDENTIALS_KEY]: finalizedCredentials,
     });
     const resetTags = await chrome.runtime.sendMessage({ type: 'deleteAllTags' });
-    if (!resetTags?.ok) throw new Error(resetTags?.error ?? 'failed to publish seeded Stars fixture');
+    if (!resetTags?.ok) throw new Error(resetTags?.error ?? 'failed to clear fixture tags');
+    // Native fixture writes bypass background dbcore hooks, and deleting absent
+    // tags commits no mutation. Initialize the fixture's empty manual annotation
+    // through the real writer so its commit publishes the seeded library.
+    const fixtureTags = await chrome.runtime.sendMessage({
+      type: 'setTags',
+      full_name: 'smoke-user/smoke-repo',
+      tags: [],
+    });
+    if (!fixtureTags?.ok) throw new Error(fixtureTags?.error ?? 'failed to initialize fixture annotation');
+    const starsQuery = await chrome.runtime.sendMessage({
+      type: 'query',
+      params: {
+        filter: {
+          query: '',
+          languages: [],
+          tags: [],
+          tagMode: 'any',
+          showTombstone: false,
+          onlyFavorite: false,
+          onlyUntagged: false,
+          onlyArchived: false,
+          onlyOwned: false,
+          sortKey: 'starred_at',
+          sortDir: 'desc',
+        },
+        accountLogin: 'smoke-user',
+        offset: 0,
+        limit: 1,
+      },
+    });
+    if (
+      !starsQuery?.ok
+      || starsQuery.data?.total !== 244
+      || starsQuery.data?.grandTotal !== 244
+      || starsQuery.data?.rows?.[0]?.full_name !== 'fallback/missing-avatar'
+    ) {
+      throw new Error(starsQuery?.error ?? `seeded Stars query was unavailable: ${JSON.stringify(starsQuery?.data ?? null)}`);
+    }
     const radarQuery = await chrome.runtime.sendMessage({ type: 'queryRadar' });
     if (
       !radarQuery?.ok
@@ -1232,6 +1269,7 @@ async function seedWatchAndRadarFixture(extId) {
       radarUnseenCount: radarQuery.data.unseenCount,
       recommendationCount: recommendationQuery.data.recommendations.length,
       recommendationExcludedFromStars: storedStars === undefined,
+      starsCount: starsQuery.data.total,
     };
   });
   await page.close();

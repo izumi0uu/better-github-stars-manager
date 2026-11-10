@@ -41,6 +41,7 @@ import {
   loadCommittedAgentSessionTurn,
   readAgentSessionRetryDraftCandidate,
   releaseAgentSessionTurnLease,
+  requestAgentSessionTurnStop,
   type AgentSessionTerminalOutcome,
   type AgentSessionTransitionCommitInput,
   type AgentAttemptRecoveryRecord,
@@ -980,6 +981,8 @@ describe('durable Agent session store', () => {
       .first();
     assert.equal(storedAttempt?.lease, null);
     assert.deepEqual(storedAttempt?.admittedLaunch, launch);
+    assert.equal(await requestAgentSessionTurnStop(admission), false);
+    assert.deepEqual(await db.agentAttempts.get(storedAttempt!.id), storedAttempt);
 
     const replay = await admitAgentSessionTurn({
       ...admission,

@@ -62,6 +62,7 @@ function createRuntime(resources: ManagerRuntime['resources'] = {
     setTags: async () => {},
     setNotes,
     setFavorite: async () => {},
+    bulkUnstar: async () => ({ succeeded: [], failed: [], notAttempted: [] }),
     markUnstarred: async () => {},
     removeVisibleTag: unused,
     deleteTag: unused,

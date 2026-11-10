@@ -2,7 +2,7 @@
 /** End-to-end verification outside the Chrome runtime. */
 import 'fake-indexeddb/auto';
 import { db } from '../../../src/storage/db';
-import { queryStars, invalidateCache } from '../../../src/background/query';
+import { queryStars } from '../../../src/background/query';
 
 const storageBacking: Record<string, unknown> = {};
 (globalThis as any).chrome = {
@@ -73,7 +73,6 @@ const syncResult = await githubStarSource.syncFull((p) => {
 const dbCount = await db.stars.count();
 console.log(`   ✓ syncFull returned ${JSON.stringify(syncResult)} | DB now holds ${dbCount} stars`);
 
-invalidateCache();
 const result = await queryStars({
   filter: { query: '', languages: [], tags: [], tagMode: 'any', showTombstone: false, onlyFavorite: false, onlyUntagged: false, onlyArchived: false, onlyOwned: false, sortKey: 'starred_at', sortDir: 'desc' },
   offset: 0,

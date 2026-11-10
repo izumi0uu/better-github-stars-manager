@@ -211,7 +211,7 @@ describe('Radar snapshot storage', () => {
     await dismissRadarActivities('viewer', ['dismissed']);
     await markRadarActivitiesSeen('viewer', ['seen'], FIRST);
 
-    expect(await countUnseenRadarActivities('VIEWER')).toBe(1);
+    expect(await countUnseenRadarActivities('VIEWER', Date.parse(SECOND))).toBe(1);
     expect(await countUnseenRadarActivities('another-account')).toBe(0);
 
     await markRadarActivitiesSeen('viewer', ['unseen'], SECOND);

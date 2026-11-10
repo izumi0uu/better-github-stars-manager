@@ -96,7 +96,7 @@ describe('Agent release conformance', () => {
     expect(packageFirefox).toContain('GSM_DIST_DIR: dist-firefox');
     expect(packageFirefox).toContain('GSM_ARTIFACTS_DIR: artifacts/firefox');
     expect(packageFirefox).toContain("PUPPETEER_HEADLESS: 'false'");
-    expect(packageFirefox).toContain('xvfb-run -a pnpm verify:agent-runtime');
+    expect(packageFirefox).toContain('dbus-run-session -- xvfb-run -a pnpm verify:agent-runtime');
     expect(packageFirefox).toContain('pnpm exec puppeteer browsers install chrome');
     expect(packageFirefox).toContain('pnpm exec puppeteer browsers install firefox');
     expect(packageFirefox).toContain('pnpm exec puppeteer browsers install firefox@stable_140.0.4');
@@ -202,7 +202,6 @@ describe('Agent release conformance', () => {
     expect(background).toContain('bgsmAgentRuntime.sessionRpc.handle(agentSessionRequest)');
     expect(background).toContain('bgsmAgentRuntime.sessionRpc.describeFailure(e)');
     expect(background).toContain('attachBgsmAgentTurnPort(port, bgsmAgentRuntime.turnRegistry)');
-    expect(background).toContain('if (!agentSessionRequest)');
     expect(background).toContain('chrome.runtime.onMessage.addListener');
     expect(background).toContain('chrome.runtime.onConnect.addListener');
 

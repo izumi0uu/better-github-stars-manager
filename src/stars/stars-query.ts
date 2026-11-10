@@ -4,6 +4,7 @@ import {
   canonicalTagKey,
   excludedCanonicalTagKeys,
   visibleTagNames,
+  withoutExcludedTagNames,
 } from '@/tags/tag-model';
 import { normalizeStoredTag, type LegacyTagRow } from '@/storage/tag-shape';
 import { createRepositorySearchMatcher } from '@/search/repository-search';
@@ -120,14 +121,13 @@ function prepareSource(source: StarsQuerySource) {
     const normalized = normalizeStoredTag(row as LegacyTagRow);
     tags.set(normalized.full_name, {
       ...normalized,
-      manualTags: normalized.manualTags.filter((name) => !excluded.has(canonicalTagKey(name))),
-      autoTags: normalized.autoTags.filter((name) => !excluded.has(canonicalTagKey(name))),
+      manualTags: withoutExcludedTagNames(normalized.manualTags, excluded),
+      autoTags: withoutExcludedTagNames(normalized.autoTags, excluded),
     });
   }
   return {
     stars: source.stars.map(normalizeStarForQuery),
     tags,
-    excluded,
   };
 }
 
@@ -193,7 +193,7 @@ export function projectStarsQuery(
   source: StarsQuerySource,
   params: StarsQueryParams,
 ): StarsQueryResult {
-  const { stars, tags, excluded } = prepareSource(source);
+  const { stars, tags } = prepareSource(source);
   const filtered = filterAndSortRows(stars, tags, params.filter, params.accountLogin ?? null);
 
   const languageCounts = new Map<string, number>();
@@ -208,7 +208,6 @@ export function projectStarsQuery(
   for (const tag of tags.values()) {
     for (const name of visibleTagNames(tag)) {
       const key = canonicalTagKey(name);
-      if (excluded.has(key)) continue;
       const current = tagCounts.get(key);
       tagCounts.set(key, {
         name: current?.name ?? name,

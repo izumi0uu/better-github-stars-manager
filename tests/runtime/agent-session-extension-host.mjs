@@ -752,6 +752,7 @@ function githubWorkerFixture({ route, method }) {
     kind,
   });
   const routes = {
+    'POST github-graphql': json({ message: 'Resource not accessible by personal access token' }, 'github-graphql-forbidden', 403),
     'GET github-user': json(
       { login: 'runtime-user', avatar_url: null, name: 'Runtime User' },
       'github-token-user',

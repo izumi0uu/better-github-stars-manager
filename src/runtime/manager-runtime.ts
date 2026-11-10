@@ -1,4 +1,5 @@
 import type { Config, Star, Tag } from '@/types';
+import type { BulkUnstarInput, BulkUnstarResult } from '@/stars/bulk-unstar';
 import type { StarsQueryParams, StarsQueryResult } from '@/stars/stars-query';
 import type {
   WatchInboxQueryResponse,
@@ -106,6 +107,7 @@ export interface ManagerRuntime {
   setNotes(fullName: string, notes: string): Promise<void>;
   setFavorite(fullName: string, favorite: boolean): Promise<void>;
   markUnstarred(fullName: string): Promise<void>;
+  bulkUnstar(input: BulkUnstarInput): Promise<BulkUnstarResult>;
   removeVisibleTag(fullName: string, name: string): Promise<{ removed: boolean }>;
   deleteTag(name: string): Promise<{ removed: number }>;
   deleteAllTags(): Promise<DeleteAllTagsResult>;

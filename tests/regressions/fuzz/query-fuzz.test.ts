@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { afterAll, beforeEach, describe, it } from 'vitest';
-import { queryStars, invalidateCache } from '@/background/query';
+import { queryStars } from '@/background/query';
 import {
   compareNullableDate,
   type StarsQueryParams,
@@ -27,7 +27,6 @@ const sortKeys: SortKey[] = ['starred_at', 'pushed_at', 'created_at', 'stargazer
 beforeEach(async () => {
   await db.delete();
   await db.open();
-  invalidateCache();
 });
 
 afterAll(async () => {
@@ -42,7 +41,6 @@ describe('query seeded fuzz', () => {
       await db.stars.bulkPut(generated.stars);
       await db.tags.bulkPut(generated.tags);
       await db.tagMeta.bulkPut(generated.tagMeta);
-      invalidateCache();
 
       const actual = await queryStars(generated.params);
       const expected = referenceQuery(generated);
@@ -54,34 +52,17 @@ describe('query seeded fuzz', () => {
     });
   }
 
-  it('keeps direct DB mutations stale until the query cache is invalidated', async () => {
+  it('observes committed DB mutations without an explicit cache reset', async () => {
     const rng = createRng(CASES.seed, CASES.singleCase ?? 0);
     const generated = generateQueryCase(rng, { forceStars: 3 });
     await db.stars.bulkPut(generated.stars);
     await db.tags.bulkPut(generated.tags);
     await db.tagMeta.bulkPut(generated.tagMeta);
-    invalidateCache();
 
-    const first = await queryStars(generated.params);
+    await queryStars(generated.params);
     const injected = makeStar('cache/injected', 999, rng, { language: 'TypeScript' });
     await db.stars.put(injected);
 
-    const stale = await queryStars(generated.params);
-    assert.deepEqual(
-      stale.rows.map((row) => row.full_name),
-      first.rows.map((row) => row.full_name),
-      fuzzFailure({
-        suite: SUITE,
-        prefix: PREFIX,
-        seed: CASES.seed,
-        caseIndex: CASES.singleCase ?? 0,
-        file: FILE,
-        invariant: 'direct DB mutation is stale before invalidateCache',
-        trace: summarizeCase(generated),
-      }),
-    );
-
-    invalidateCache();
     const refreshed = await queryStars(generated.params);
     assert.equal(
       refreshed.grandTotal,
@@ -92,7 +73,7 @@ describe('query seeded fuzz', () => {
         seed: CASES.seed,
         caseIndex: CASES.singleCase ?? 0,
         file: FILE,
-        invariant: 'invalidateCache observes direct DB mutation',
+        invariant: 'query observes committed direct DB mutation',
         expected: generated.stars.length + 1,
         actual: refreshed.grandTotal,
       }),

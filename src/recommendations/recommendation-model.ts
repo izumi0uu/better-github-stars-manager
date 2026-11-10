@@ -1,3 +1,5 @@
+import type { RecommendationPresentation } from './recommendation-projector';
+
 export const RECOMMENDATION_MAX_SEEDS = 12;
 export const RECOMMENDATION_MAX_QUERIES = 6;
 export const RECOMMENDATION_RESULTS_PER_QUERY = 100;
@@ -138,7 +140,7 @@ export interface RecommendationStatus {
 }
 
 export interface RecommendationQueryResponse {
-  recommendations: RecommendationRecord[];
+  recommendations: RecommendationPresentation[];
   ignored: RecommendationIgnoreRecord[];
   status: RecommendationStatus;
 }

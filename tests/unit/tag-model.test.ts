@@ -8,6 +8,8 @@ import {
   normalizeTagNames,
   preferredCanonicalTagMeta,
   withoutTagName,
+  visibleTagNames,
+  withoutExcludedTagNames,
 } from '@/tags/tag-model';
 
 describe('tag model canonical identity', () => {
@@ -106,5 +108,16 @@ describe('tag model canonical identity', () => {
     for (const order of orders) {
       assert.deepEqual(canonicalTagMetaWinners(order).get('ui'), metas[2]);
     }
+  });
+  it('applies canonical exclusion to manual, automatic and suggested names without mutating annotations', () => {
+    const tag = { manualTags: ['ＵＩ', 'Keep'], autoTags: ['ui', 'Auto'] };
+    const excluded = excludedCanonicalTagKeys([
+      { name: 'UI', dimension: null, color: null, excluded: true, mtime: '2026-01-02T00:00:00Z' },
+      { name: 'ｕｉ', dimension: null, color: null, excluded: false, mtime: '2026-01-01T00:00:00Z' },
+    ]);
+    assert.deepEqual(visibleTagNames(tag, excluded), ['Keep', 'Auto']);
+    assert.deepEqual(withoutExcludedTagNames(['ui', 'Topic'], excluded), ['Topic']);
+    assert.deepEqual(tag.manualTags, ['ＵＩ', 'Keep']);
+    assert.deepEqual(visibleTagNames(tag, new Set()), ['ＵＩ', 'Keep', 'Auto']);
   });
 });

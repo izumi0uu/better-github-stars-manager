@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Star, Plug, FlaskConical } from 'lucide-react';
 import { bgCall, mergeProgressStatus, mergeStatusSnapshot, onProgress, type SyncStatus } from '@/utils/messaging';
+import type { BackgroundSyncCommand } from '@/runtime/background-command';
 import { DEV } from '@/dev';
 import { Button } from '@/ui/shadcn/button';
 import { Progress } from '@/ui/shadcn/progress';
@@ -10,15 +11,6 @@ import { REPO_URL } from '@/lib/links';
 import { useI18n } from '@/i18n';
 import { getAgentDiagnosticsMessages } from '@/dev-agent/messages';
 
-interface ConnResult {
-  status: number;
-  statusText: string;
-  remaining: string | null;
-  limit: string | null;
-  scopes: string | null;
-  itemCount: number;
-  sample: string | null;
-}
 
 export function Popup() {
   const [status, setStatus] = useState<SyncStatus | null>(null);
@@ -28,7 +20,7 @@ export function Popup() {
   const { locale, m } = useI18n();
 
   const refresh = () =>
-    bgCall<SyncStatus>('getStatus')
+    bgCall('getStatus')
       .then((next) => setStatus((current) => mergeStatusSnapshot(current, next)))
       .catch(() => {});
 
@@ -40,7 +32,10 @@ export function Popup() {
     return off;
   }, []);
 
-  const run = async (type: string, label: string) => {
+  const run = async (
+    type: BackgroundSyncCommand,
+    label: string,
+  ) => {
     setPendingAction(type);
     setErr(null);
     try {
@@ -54,7 +49,7 @@ export function Popup() {
   };
 
   const openStars = async () => {
-    const u = await bgCall<{ username: string | null }>('getUsername');
+    const u = await bgCall('getUsername');
     chrome.tabs.create({ url: u.username ? `https://github.com/${u.username}?tab=stars` : 'https://github.com/stars' });
   };
 
@@ -64,7 +59,7 @@ export function Popup() {
     setPendingAction('testConnection');
     setConnResult(m.popup.testing);
     try {
-      const r = await bgCall<ConnResult>('testConnection');
+      const r = await bgCall('testConnection');
       let text =
         `HTTP ${r.status} ${r.statusText}\n` +
         `${m.popup.rate(r.remaining, r.limit)}\n` +

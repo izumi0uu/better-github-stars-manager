@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { invalidateCache, queryStars } from '@/background/query';
+import { queryStars } from '@/background/query';
 import {
   projectMatchingStars,
   projectStarsQuery,
@@ -18,6 +18,7 @@ import type {
 } from '@/recommendations/recommendation-model';
 import { listRadarActivities } from '@/storage/radar-store';
 import { listRecommendations } from '@/storage/recommendation-store';
+import { idbTagStore, resetDirtyForDev } from '@/storage/idb-tag-store';
 import { db } from '@/storage/db';
 import { visibleTagNames } from '@/tags/tag-model';
 import type { Star, Tag, TagMeta } from '@/types';
@@ -132,7 +133,7 @@ function recommendation(
 beforeEach(async () => {
   await db.delete();
   await db.open();
-  invalidateCache();
+  resetDirtyForDev();
 });
 
 afterAll(() => {
@@ -165,7 +166,6 @@ describe('storage-neutral projector parity', () => {
       db.tags.bulkPut(tags),
       db.tagMeta.bulkPut(tagMeta),
     ]);
-    invalidateCache();
 
     const params: StarsQueryParams = {
       filter: {
@@ -311,6 +311,7 @@ describe('storage-neutral projector parity', () => {
       accountLogin: ' VIEWER ',
       recommendations: await db.recommendations.where('accountLogin').equals('viewer').toArray(),
       stars: await db.stars.toArray(),
+      tags: await db.tags.toArray(),
       ignores: await db.recommendationIgnores.where('accountLogin').equals('viewer').toArray(),
     };
     const projected = projectRecommendations(source);
@@ -324,5 +325,65 @@ describe('storage-neutral projector parity', () => {
       'tombstone/repo',
       'unstarred/repo',
     ]);
+  });
+  it('shares canonical tombstones and explicit re-adds across Stars and both Radar sources', async () => {
+    await db.stars.put(star('owner/repo', { topics: ['ＵＩ', 'safe'] }));
+    await db.tags.put(tag('owner/repo', {
+      manualTags: ['ＵＩ', 'manual'],
+      autoTags: ['ui', 'automatic'],
+    }));
+    await db.tagMeta.bulkPut([
+      { name: 'UI', dimension: null, color: null, excluded: false, mtime: OLDER },
+      { name: 'ui', dimension: null, color: null, excluded: true, mtime: RECENT },
+    ]);
+    await db.radarActivities.put(radarActivity('followed', 'owner/repo', NOW));
+
+    const stars = await queryStars({ filter: DEFAULT_FILTER, offset: 0, limit: 20 });
+    expect(visibleTagNames(stars.tagsForRows['owner/repo'])).toEqual(['manual', 'automatic']);
+    const radar = await listRadarActivities('viewer', Date.parse(NOW));
+    expect(radar.map((row) => row.source).sort()).toEqual(['following', 'self']);
+    for (const row of radar) {
+      expect(row.tags).toEqual(['manual', 'automatic']);
+      expect(row.suggestedTags).toEqual(['safe']);
+    }
+    await idbTagStore.setTags('owner/repo', ['UI', 'manual']);
+    const restoredStars = await queryStars({
+      filter: { ...DEFAULT_FILTER, tags: ['ｕｉ'] }, offset: 0, limit: 20,
+    });
+    expect(restoredStars.rows.map((row) => row.full_name)).toEqual(['owner/repo']);
+    const restoredRadar = await listRadarActivities('viewer', Date.parse(NOW));
+    for (const row of restoredRadar) {
+      expect(row.tags).toContain('UI');
+      expect(row.suggestedTags).toContain('ｕｉ');
+    }
+  });
+
+  it('projects committed favorites without changing ranking, star state or stored candidates', async () => {
+    await db.recommendations.bulkPut([
+      recommendation('owner/first', 20, 100),
+      recommendation('owner/second', 10, 200),
+    ]);
+    expect((await listRecommendations('viewer')).map((row) => row.favorite)).toEqual([false, false]);
+
+    await idbTagStore.setFavorite('Owner/Second', true);
+    const favorite = await listRecommendations('viewer');
+    expect(favorite.map((row) => [row.repositoryKey, row.favorite])).toEqual([
+      ['owner/first', false], ['owner/second', true],
+    ]);
+    expect(await db.stars.count()).toBe(0);
+    expect(await db.recommendations.get('owner/second')).not.toHaveProperty('favorite');
+    db.close();
+    await db.open();
+    expect((await listRecommendations('viewer'))[1]?.favorite).toBe(true);
+
+    await expect(db.transaction('rw', [db.tags, db.tagDirtyOutbox], async () => {
+      await idbTagStore.setFavorite('Owner/Second', false);
+      throw new Error('favorite write failed');
+    })).rejects.toThrow('favorite write failed');
+    expect((await listRecommendations('viewer'))[1]?.favorite).toBe(true);
+
+    await idbTagStore.setFavorite('Owner/Second', false);
+    expect((await listRecommendations('viewer')).map((row) => row.favorite)).toEqual([false, false]);
+    expect(await db.stars.count()).toBe(0);
   });
 });

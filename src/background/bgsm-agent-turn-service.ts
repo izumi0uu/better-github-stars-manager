@@ -1,4 +1,5 @@
 import { canonicalJson } from '@/agent-harness/canonical-json';
+import type { TagDeletionProposal } from '@/bgsm-agent/tag-deletion-review';
 import {
   AgentExecutionLedger,
   createAgentTurnLiveness,
@@ -78,7 +79,7 @@ type BgsmAgentConversationResolver = Parameters<
 export type BgsmAgentTurnRunOptions = Readonly<{
   emit?: (event: AgentEvent) => void;
   signal?: AbortSignal;
-  onDurableLeaseAcquired(): void;
+  onDurableLeaseAcquired(): void | Promise<void>;
   bind?: (binding: BgsmAgentConversationBinding) => void;
   trace?: AgentExecutionTraceSink;
   contentCapture?: AgentContentCaptureSink;
@@ -92,6 +93,7 @@ export type BgsmAgentTurnService = Readonly<{
 }>;
 
 export type BgsmAgentTurnServiceDependencies = Readonly<{
+  confirmTagDeletion?(sessionId: string, proposal: TagDeletionProposal, signal: AbortSignal): Promise<boolean>;
   attemptCoordinator: AgentAttemptCoordinator;
   sessionCache?: AgentCanonicalSessionCache;
   prepareRuntimeProvider(): Promise<PreparedGatedAgentRuntimeProvider>;
@@ -167,7 +169,6 @@ export function createBgsmAgentTurnService(
       recoveryClass,
     );
     if (admission.kind === 'replay') return resultFromCommit(launch, admission.commit);
-    options.onDurableLeaseAcquired();
     let changed = false;
     let changedCount = 0;
     let executionLedger: AgentExecutionLedger | null = null;
@@ -235,6 +236,10 @@ export function createBgsmAgentTurnService(
           commit: null,
         };
       };
+      await options.onDurableLeaseAcquired();
+      if (admission.kind === 'stop_pending' || liveness.signal.aborted) {
+        return settleWithoutTransition(terminalAfterAbort());
+      }
       if (canonicalSession.revision !== baseRevision) {
         throw new TypeError('Cubby durable session changed after turn admission.');
       }
@@ -267,7 +272,17 @@ export function createBgsmAgentTurnService(
       const repositoryCodeReadOnly = recoveryClass === 'statically_read_only';
       options.bind?.(conversation.binding);
       const runtimeProvider = await preparedRuntimeProvider.create();
-      const authorization = createBgsmTurnAuthorization({ repositoryCodeReadOnly });
+      const authorization = createBgsmTurnAuthorization({
+        repositoryCodeReadOnly,
+        confirmTagDeletion: async (proposal) => {
+          liveness.suspendAgentIdle();
+          try {
+            return await dependencies.confirmTagDeletion?.(sessionId, proposal, liveness.signal) ?? false;
+          } finally {
+            liveness.resumeAgentIdle();
+          }
+        },
+      });
       const repositoryScope = conversation.repositoryIds;
       const scopeLabel = conversation.binding.label;
       const scopeFingerprint = conversation.binding.scopeFingerprint;
