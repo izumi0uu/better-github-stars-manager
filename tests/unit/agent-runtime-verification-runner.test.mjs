@@ -359,6 +359,8 @@ test('passes only allowlisted ambient and runner-owned values to release childre
     HOME: '/safe/home',
     CI: 'true',
     DISPLAY: ':99',
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/tmp/test-session-bus',
+    XDG_RUNTIME_DIR: '/tmp/test-runtime',
     XAUTHORITY: '/tmp/test-xauthority',
     PUPPETEER_HEADLESS: 'new',
     OPENAI_API_KEY: 'private-openai-key',
@@ -377,6 +379,8 @@ test('passes only allowlisted ambient and runner-owned values to release childre
   assert.deepEqual(environment, {
     CI: 'true',
     DISPLAY: ':99',
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/tmp/test-session-bus',
+    XDG_RUNTIME_DIR: '/tmp/test-runtime',
     XAUTHORITY: '/tmp/test-xauthority',
     HOME: '/safe/home',
     PATH: '/safe/bin',
