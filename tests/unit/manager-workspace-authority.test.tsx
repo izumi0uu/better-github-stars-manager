@@ -84,6 +84,30 @@ afterEach(() => {
 });
 
 describe('workspace committed projections', () => {
+  it('requires a concrete batch review and removes selected stars only after confirmation', async () => {
+    const { runtime, container } = await mountWorkspace();
+    const bulk = vi.spyOn(runtime, 'bulkUnstar');
+    const toolbar = required<HTMLElement>(container, '[data-testid="bulk-unstar-toolbar"]');
+    const button = (text: string) => {
+      const found = [...toolbar.querySelectorAll<HTMLButtonElement>('button')].find((node) => node.textContent === text);
+      if (!found) throw new Error(`Missing batch action ${text}`);
+      return found;
+    };
+    await click(button('Select repositories'));
+    const checkbox = required<HTMLInputElement>(container, '[data-layout-row-grid] input[type="checkbox"]:not(:disabled)');
+    const name = checkbox.getAttribute('aria-label')!.replace('Select ', '');
+    await act(async () => checkbox.click());
+    await click(button('Unstar selected'));
+    expect(bulk).not.toHaveBeenCalled();
+    const review = required<HTMLElement>(toolbar, 'section');
+    expect(review.querySelector('li')?.textContent).toBe(name);
+    await click(required<HTMLButtonElement>(review, 'button'));
+    expect(bulk).toHaveBeenCalledTimes(1);
+    expect(bulk.mock.calls[0][0].fullNames).toEqual([name]);
+    await act(async () => { await bulk.mock.results[0].value; });
+    expect(container.querySelector<HTMLInputElement>(`input[aria-label="Select ${name}"]`)?.checked ?? false).toBe(false);
+  });
+
   it.each(['success', 'failure'] as const)('keeps both real Watch editors mounted through independent saves and a reload %s', async (settlement) => {
     const { runtime, container, fullName, onCommandsChange, onActivityChange } = await mountWorkspace();
     await openWatchRepository(container, fullName);

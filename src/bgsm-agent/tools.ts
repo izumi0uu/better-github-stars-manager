@@ -1020,7 +1020,7 @@ function removeRepoTagsTool(
   return {
     name: BGSM_AGENT_TOOL_NAMES.removeRepoTags,
     description:
-      'Remove visible tags from one or more repositories only when the user asks for those repository-level removals. Pass changes as an array of {full_name, tags}; one call is one atomic local batch. Inspect every requested repository/tag assignment in the current turn first. This does not delete a tag globally.',
+      'Remove visible tags from one or more repositories only when the user asks for those repository-level removals. Pass changes as an array of {full_name, tags}; one call is one atomic local batch after the user confirms its review. Inspect every requested repository/tag assignment in the current turn first. This does not delete a tag globally.',
     risk: 'write',
     parameters: {
       type: 'object',
@@ -1111,7 +1111,7 @@ function deleteTagsEverywhereTool(
   return {
     name: BGSM_AGENT_TOOL_NAMES.deleteTagsEverywhere,
     description:
-      'Delete one or more tag names from every local repository and prevent automatic re-adding. Pass tags as an array; one call is one atomic local batch. Use only when the user explicitly asks for global deletion, after inspecting each tag in the current turn. For selected repositories only, use remove_repo_tags instead.',
+      'Delete one or more tag names from every local repository and prevent automatic re-adding. Pass tags as an array; one call is one atomic local batch after the user confirms its review. Use only when the user explicitly asks for global deletion, after inspecting each tag in the current turn. For selected repositories only, use remove_repo_tags instead.',
     risk: 'write',
     parameters: {
       type: 'object',

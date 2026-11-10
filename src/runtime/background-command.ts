@@ -1,4 +1,6 @@
 import type { AgentProviderConnectionResult } from '@/agent-harness/provider-registry';
+import type { BulkUnstarInput, BulkUnstarResult } from '@/stars/bulk-unstar';
+import type { TagDeletionReview } from '@/bgsm-agent/tag-deletion-review';
 import type { AgentProviderConnectionRequest } from '@/background/agent-provider-gate';
 import type { BgsmAgentSessionRequest } from '@/background/bgsm-agent-session-rpc';
 import type { BgsmAgentActiveTurn } from '@/bgsm-agent/turn-protocol';
@@ -38,6 +40,8 @@ import type { WatchSubjectDetail } from '@/watch/watch-model';
 
 /** Ordinary product commands only; Agent session parsing and streaming retain their own owners. */
 export interface BackgroundCommandMap {
+  listAgentTagDeletionReviews: { payload: { sessionId: string }; result: TagDeletionReview[] };
+  decideAgentTagDeletion: { payload: { sessionId: string; id: string; approved: boolean }; result: boolean };
   syncOwnedPublicRepositories: { payload: undefined; result: OwnedPublicRepositoryLoadResult };
   syncIncremental: { payload: undefined; result: { added: number; tagged: number } };
   syncFull: { payload: { includeOwnedPublic?: boolean }; result: OwnedPublicRepositoryLoadResult & { tagged: number } };
@@ -81,6 +85,7 @@ export interface BackgroundCommandMap {
   setNotes: { payload: { full_name: string; notes: string }; result: void };
   setFavorite: { payload: { full_name: string; favorite: boolean }; result: { favorite: boolean } };
   markUnstarred: { payload: { full_name: string }; result: { full_name: string; tombstone: boolean } };
+  bulkUnstar: { payload: BulkUnstarInput; result: BulkUnstarResult };
   removeVisibleTag: { payload: { full_name: string; name: string }; result: { removed: boolean } };
   deleteTag: { payload: { name: string }; result: { removed: number } };
   deleteAllTags: { payload: undefined; result: DeleteAllTagsResult };

@@ -52,6 +52,9 @@ export function StarsTable({
   favoriteOverrides = EMPTY_FAVORITE_OVERRIDES,
   selectedTags,
   selectedFullName,
+  bulkSelection,
+  onBulkToggle,
+  bulkBusy = false,
   visibleColumns,
   gridTemplateColumns,
   tableMinWidth,
@@ -84,6 +87,9 @@ export function StarsTable({
   favoriteOverrides?: Record<string, FavoriteOverrideState>;
   selectedTags: string[];
   selectedFullName: string | null;
+  bulkSelection?: ReadonlySet<string>;
+  onBulkToggle?: (fullName: string) => void;
+  bulkBusy?: boolean;
   visibleColumns: ColumnId[];
   gridTemplateColumns: string;
   tableMinWidth?: number;
@@ -397,6 +403,9 @@ export function StarsTable({
               >
                 <StarRow
                   star={star}
+                  bulkSelected={bulkSelection?.has(star.full_name)}
+                  onBulkToggle={bulkSelection ? onBulkToggle : undefined}
+                  bulkBusy={bulkBusy}
                   matchRepositoryName={matchRepositoryName}
                   showRepositoryOwner={showRepositoryOwner}
                   showRepositoryAvatar={showRepositoryAvatar}

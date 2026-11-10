@@ -1,3 +1,5 @@
+import { useBulkUnstar } from '@/ui/hooks/use-bulk-unstar';
+import { BulkUnstarToolbar } from '@/ui/components/BulkUnstarToolbar';
 import {
   useCallback,
   useEffect,
@@ -282,6 +284,8 @@ export function ManagerWorkspace({
     };
   }, [runtime]);
 
+  const batchUnstar = useBulkUnstar(rows, account?.username ?? null);
+
   const handleUnstarred = useCallback((fullName: string) => {
     setSelected((current) => (current === fullName ? null : current));
   }, []);
@@ -510,6 +514,9 @@ export function ManagerWorkspace({
       favoriteOverrides={favoriteOverrides}
       selectedTags={f.tags}
       selectedFullName={selected}
+      bulkSelection={batchUnstar.enabled ? batchUnstar.selected : undefined}
+      onBulkToggle={batchUnstar.toggle}
+      bulkBusy={batchUnstar.busy}
       visibleColumns={visibleColumns}
       gridTemplateColumns={gridTemplateColumns}
       tableMinWidth={tableMinWidth}
@@ -624,6 +631,7 @@ export function ManagerWorkspace({
               </div>
             </div>
           )}
+          {starsSurface && <BulkUnstarToolbar batch={batchUnstar} disabled={interactionLocked || !account?.username} />}
           {starsSurface && (displayedInfo || unstarFeedback) && (
             <div className="gsm-helper-text flex items-center gap-1 border-b border-border bg-card px-3 py-1">
               <span key={helperInfoKey(displayedInfo, unstarFeedback)} className="gsm-helper-text-update inline-block min-w-0 rounded-sm px-1 transition-[background-color,opacity,transform] duration-150">

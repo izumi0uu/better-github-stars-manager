@@ -83,6 +83,7 @@ function createRuntime(onlyOwned: boolean) {
     setTags: unused,
     setNotes: unused,
     setFavorite: unused,
+    bulkUnstar: async () => ({ succeeded: [], failed: [], notAttempted: [] }),
     markUnstarred: unused,
     removeVisibleTag: unused,
     deleteTag: unused,

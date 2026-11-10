@@ -2,6 +2,8 @@
 
 [English](../en/firefox-amo-submission.md)
 
+Stars 支持批量选择并取消最多 100 个 Star，确认前会列出具体仓库，标签和笔记会保留。Cubby 移除标签也需要确认具体仓库和标签；回复不会自动加载 Markdown 远程图片。
+
 这份文档记录 Better GitHub Stars Manager 的 Firefox Add-ons（AMO）商店文案、打包后的 Firefox manifest 契约、数据收集申报、审核员构建说明和本地发布证据。它不表示某个安装包已经上传、已签名、正在审核、已经批准或已经发布。
 
 ## 证据边界

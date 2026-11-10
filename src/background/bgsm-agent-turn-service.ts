@@ -1,4 +1,5 @@
 import { canonicalJson } from '@/agent-harness/canonical-json';
+import type { TagDeletionProposal } from '@/bgsm-agent/tag-deletion-review';
 import {
   AgentExecutionLedger,
   createAgentTurnLiveness,
@@ -92,6 +93,7 @@ export type BgsmAgentTurnService = Readonly<{
 }>;
 
 export type BgsmAgentTurnServiceDependencies = Readonly<{
+  confirmTagDeletion?(sessionId: string, proposal: TagDeletionProposal, signal: AbortSignal): Promise<boolean>;
   attemptCoordinator: AgentAttemptCoordinator;
   sessionCache?: AgentCanonicalSessionCache;
   prepareRuntimeProvider(): Promise<PreparedGatedAgentRuntimeProvider>;
@@ -270,7 +272,17 @@ export function createBgsmAgentTurnService(
       const repositoryCodeReadOnly = recoveryClass === 'statically_read_only';
       options.bind?.(conversation.binding);
       const runtimeProvider = await preparedRuntimeProvider.create();
-      const authorization = createBgsmTurnAuthorization({ repositoryCodeReadOnly });
+      const authorization = createBgsmTurnAuthorization({
+        repositoryCodeReadOnly,
+        confirmTagDeletion: async (proposal) => {
+          liveness.suspendAgentIdle();
+          try {
+            return await dependencies.confirmTagDeletion?.(sessionId, proposal, liveness.signal) ?? false;
+          } finally {
+            liveness.resumeAgentIdle();
+          }
+        },
+      });
       const repositoryScope = conversation.repositoryIds;
       const scopeLabel = conversation.binding.label;
       const scopeFingerprint = conversation.binding.scopeFingerprint;

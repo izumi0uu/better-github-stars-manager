@@ -2,6 +2,8 @@
 
 [简体中文](../zh/firefox-amo-submission.md)
 
+Select repositories in Stars to unstar up to 100 at a time. Review the exact list before confirming; tags and notes are retained. Cubby tag removal also requires confirmation of the proposed repositories and tags. Replies do not load remote Markdown images automatically.
+
 This reference collects the Firefox Add-ons (AMO) listing copy, the packaged Firefox manifest contract, data-collection answers, reviewer build instructions, and the local release evidence for Better GitHub Stars Manager. It does not claim that a package is uploaded, signed, under review, approved, or published.
 
 ## Evidence limits

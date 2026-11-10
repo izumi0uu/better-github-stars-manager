@@ -1,4 +1,14 @@
 export type ManagerMessages = {
+  batchAccountChanged: string;
+  batchRepositoryChanged: string;
+  batchSelect: string;
+  selectShown: string;
+  selectRepository: (name: string) => string;
+  selectedCount: (count: number) => string;
+  batchUnstar: string;
+  batchUnstarConfirm: (count: number) => string;
+  batchUnstarResult: (done: number, remaining: number) => string;
+
   surfaceNavigation: string;
   syncFailed: (label: string, error: string) => string;
   autoAssignDone: (count: number) => string;
@@ -28,6 +38,16 @@ export type ManagerMessages = {
 };
 
 export const enManagerMessages: ManagerMessages = {
+  batchAccountChanged: "Your GitHub account or token changed. Refresh your library before trying again.",
+  batchRepositoryChanged: "This repository is no longer in the current starred list. Refresh your library before trying again.",
+  batchSelect: "Select repositories",
+  selectShown: "Select shown (up to 100)",
+  selectRepository: (name) => `Select ${name}`,
+  selectedCount: (count) => `${count} selected`,
+  batchUnstar: "Unstar selected",
+  batchUnstarConfirm: (count) => `Remove these ${count} stars from GitHub? Your tags and notes will be kept.`,
+  batchUnstarResult: (done, remaining) => `${done} unstarred; ${remaining} remaining.`,
+
   surfaceNavigation: "Manager surfaces",
   syncFailed: (label, error) => `${label}: ${error}`,
   autoAssignDone: (count) =>
@@ -62,6 +82,16 @@ export const enManagerMessages: ManagerMessages = {
 };
 
 export const zhManagerMessages: ManagerMessages = {
+  batchAccountChanged: "GitHub 账号或 Token 已变更，请刷新资料库后重试。",
+  batchRepositoryChanged: "此仓库已不在当前 Star 列表中，请刷新资料库后重试。",
+  batchSelect: "批量选择",
+  selectShown: "选择当前列表（最多 100 个）",
+  selectRepository: (name) => `选择 ${name}`,
+  selectedCount: (count) => `已选 ${count} 个`,
+  batchUnstar: "取消所选 Star",
+  batchUnstarConfirm: (count) => `确定在 GitHub 取消这 ${count} 个 Star？标签和笔记会保留。`,
+  batchUnstarResult: (done, remaining) => `已取消 ${done} 个 Star，剩余 ${remaining} 个。`,
+
   surfaceNavigation: "管理器页面",
   syncFailed: (label, error) => `${label}: ${error}`,
   autoAssignDone: (count) =>

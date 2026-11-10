@@ -2,6 +2,8 @@
 
 [简体中文](../zh/chrome-web-store-submission.md)
 
+Select repositories in Stars to unstar up to 100 at a time. Review the exact list before confirming; tags and notes are retained. Cubby tag removal also requires confirmation of the proposed repositories and tags. Replies do not load remote Markdown images automatically.
+
 This reference collects Store listing copy, manifest-derived permission justifications, reviewer steps, and external Chrome Web Store work. It does not claim that a package is release-ready, uploaded, under review, or published.
 
 ## Evidence boundaries

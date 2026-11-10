@@ -57,6 +57,7 @@ const HISTORY_TURNS = 50;
 const SETUP_TIMEOUT_MS = 60_000;
 const TURN_TIMEOUT_MS = 90_000;
 const HISTORY_TIMEOUT_MS = 45_000;
+const TAG_DELETION_REVIEW_ONLY = process.env.GSM_TAG_DELETION_REVIEW_ONLY === '1';
 const RUN_EVIDENCE_SELF_TEST = process.env.GSM_UI_HISTORY_EVIDENCE_SELF_TEST === '1';
 const AGENT_STORES = Object.freeze(['agentSessions', 'agentAttempts', 'agentAttemptRecoveries', 'agentMessages']);
 
@@ -126,6 +127,10 @@ async function main() {
     return;
   }
 
+  if (TAG_DELETION_REVIEW_ONLY) {
+    console.log(JSON.stringify({ status: 'passed', proofScope: 'packaged_tag_deletion_review', confirmed: true, rejected: true, remoteImagesBlocked: true }));
+    return;
+  }
   try {
     publishEvidence(buildEvidence());
   } catch (error) {
@@ -222,6 +227,13 @@ async function run() {
     assert.equal(await pageB.title(), 'Runtime Stars B');
     await Promise.all([waitForAgentEntry(pageA), waitForAgentEntry(pageB)]);
   });
+
+  if (TAG_DELETION_REVIEW_ONLY) {
+    await verifyTagDeletionReviews();
+    await assertControlledProviderHealthy(provider);
+    assert.equal(pageIssues.length, 0);
+    return;
+  }
 
   await stage('atomic', async () => {
     runtime.configStep = 'atomic-click';
@@ -689,6 +701,47 @@ async function run() {
   });
 }
 
+async function verifyTagDeletionReviews() {
+  const rpc = (request) => optionsPage.evaluate(async (value) => {
+    const response = await chrome.runtime.sendMessage(value);
+    if (!response?.ok) throw new Error(response?.error ?? 'Review RPC failed');
+    return response.data;
+  }, request);
+  await rpc({ type: 'setTags', full_name: 'runtime-user/runtime-repo', tags: ['review-tag'] });
+  await clickShadow(pageA, '[data-testid="bulk-unstar-toolbar"] button');
+  const checkbox = await shadowElement(pageA, '[data-layout-row-grid] input[type="checkbox"]:not([disabled])');
+  await checkbox.click();
+  await checkbox.dispose();
+  await clickShadow(pageA, '[data-testid="bulk-unstar-toolbar"] > div > button:nth-of-type(2)');
+  assert.equal(await pageA.evaluate(() => document.getElementById('gsm-manager-host')?.shadowRoot
+    ?.querySelector('[data-testid="bulk-unstar-toolbar"] section li')?.textContent), 'runtime-user/runtime-repo');
+  await pageA.screenshot({ path: path.join(os.tmpdir(), 'bgsm-bulk-unstar-review.png') });
+  await clickShadow(pageA, '[data-testid="bulk-unstar-toolbar"] section button:nth-of-type(2)');
+  await clickShadow(pageA, '[data-testid="bulk-unstar-toolbar"] > div > button:nth-of-type(3)');
+  await clickShadow(pageA, '[data-coach-target="agent"]');
+  await waitForAgentReady(pageA);
+  for (const approved of [false, true]) {
+    runtime.mode = 'tag-deletion';
+    runtime.deletionStep = 0;
+    runtime.deletionRun = approved ? 'confirmed' : 'rejected';
+    await fillShadowComposer(pageA, 'Delete the review-tag tag after showing me the proposed changes.');
+    await submitShadowComposer(pageA);
+    await waitUntil(() => pageA.evaluate(() => !!document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('[data-testid="agent-tag-deletion-review"]')), TURN_TIMEOUT_MS, 'Deletion review did not appear');
+    await pageA.screenshot({ path: path.join(os.tmpdir(), 'bgsm-tag-deletion-review.png') });
+    const before = await rpc({ type: 'getTag', full_name: 'runtime-user/runtime-repo' });
+    assert.deepEqual(before.tag.manualTags, ['review-tag']);
+    assert.equal(await pageA.evaluate(() => document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelector('[data-testid="agent-tag-deletion-review"] li')?.textContent), 'review-tag');
+    await clickShadow(pageA, `[data-testid="agent-tag-deletion-review"] button:nth-child(${approved ? 2 : 1})`);
+    await waitForAgentReady(pageA);
+    const after = await rpc({ type: 'getTag', full_name: 'runtime-user/runtime-repo' });
+    assert.deepEqual(after.tag.manualTags, approved ? [] : ['review-tag']);
+    assert.equal(await pageA.evaluate(() => document.getElementById('gsm-manager-host')?.shadowRoot
+      ?.querySelectorAll('img[src^="https://example.invalid/reply-image"]').length), 0);
+  }
+}
+
 async function stage(name, operation) {
   runtime.stage = name;
   const value = await operation();
@@ -704,6 +757,12 @@ async function controlledProviderHandler(request) {
   if (request.latestToolResult?.name === 'bgsm_connection_probe') {
     runtime.configStep = 'provider-handler-connection-complete';
     return textCompletion('runtime provider ready', 'connection-probe-complete');
+  }
+  if (runtime.mode === 'tag-deletion') {
+    runtime.deletionStep = (runtime.deletionStep ?? 0) + 1;
+    if (runtime.deletionStep === 1) return toolCall(`read-tags-${runtime.deletionRun}`, 'list_tags', {}, 'deletion-read');
+    if (runtime.deletionStep === 2) return toolCall(`delete-tags-${runtime.deletionRun}`, 'delete_tags_everywhere', { tags: ['review-tag'] }, 'deletion-proposal');
+    return textCompletion('Deletion request settled. ![image](https://example.invalid/reply-image)', 'deletion-complete');
   }
   if (runtime.mode === 'held') {
     runtime.configStep = 'provider-handler-held';

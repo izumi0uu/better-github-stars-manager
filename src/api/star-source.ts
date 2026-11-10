@@ -25,7 +25,7 @@ export interface StarSource {
   syncRescan(onProgress?: (p: SyncProgress) => void, options?: StarSyncOptions): Promise<{ tombstoned: number; revived: number }>;
 
   /** Remote unstar: DELETE the GitHub star, then callers may tombstone local annotations-preserving rows. */
-  unstar(fullName: string): Promise<void>;
+  unstar(fullName: string, options?: StarSyncOptions): Promise<void>;
   /** Remote star followed by a canonical local metadata row for annotations. */
   star(fullName: string): Promise<Star>;
 

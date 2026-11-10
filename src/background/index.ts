@@ -1,3 +1,5 @@
+import { createAgentTagDeletionReviews } from './agent-tag-deletion-review';
+import { bulkUnstarRepositories } from '@/stars/bulk-unstar';
 import {
   authStore,
   CONFIG_STORAGE_KEY,
@@ -633,6 +635,10 @@ async function handle(req: Req): Promise<Res> {
       return { ok: true, data: await bgsmAgentRuntime.sessionRpc.handle(agentSessionRequest) };
     }
     switch (req.type) {
+      case "listAgentTagDeletionReviews":
+        return success(req.type, tagDeletionReviews.list(req.sessionId));
+      case "decideAgentTagDeletion":
+        return success(req.type, tagDeletionReviews.decide(req.sessionId, req.id, req.approved));
       case "syncOwnedPublicRepositories":
         return success(req.type, await starsSync.syncOwnedPublicRepositories());
       case "syncIncremental":
@@ -960,6 +966,31 @@ async function handle(req: Req): Promise<Res> {
       case "setFavorite":
         await run(() => idbTagStore.setFavorite(req.full_name, req.favorite));
         return success(req.type, { favorite: req.favorite });
+      case "bulkUnstar": {
+        const credential = await authStore.getGitHubCredentialSnapshot();
+        if (typeof req.accountLogin !== 'string'
+          || credential.accountLogin !== req.accountLogin.trim().toLowerCase()) {
+          throw new Error('GITHUB_CREDENTIAL_CHANGED');
+        }
+        const result = await run(async () => {
+          const outcome = await bulkUnstarRepositories(req.fullNames, {
+            assertCurrent: () => authStore.assertGitHubCredentialCurrent(credential),
+            unstar: async (fullName) => {
+              const star = await db.stars.get(fullName);
+              if (!star || star.tombstone || star.viewer_has_starred === false) {
+                throw new Error('REPOSITORY_NOT_STARRED');
+              }
+              await githubStarSource.unstar(fullName, { credential });
+            },
+            commit: (fullName) => authStore.withGitHubCredential(credential, async () => {
+              await db.stars.update(fullName, { tombstone: true, viewer_has_starred: false });
+            }),
+          });
+          if (outcome.succeeded.length) await reconcileWatchScopeAfterStarsChange();
+          return outcome;
+        });
+        return success(req.type, result);
+      }
       case "markUnstarred": {
         const result = await run(async () => {
           const star = await db.stars.get(req.full_name);
@@ -1150,7 +1181,10 @@ async function handle(req: Req): Promise<Res> {
 
 
 
+const tagDeletionReviews = createAgentTagDeletionReviews();
+
 const bgsmAgentRuntime = createBgsmAgentRuntime({
+  confirmTagDeletion: (sessionId, proposal, signal) => tagDeletionReviews.request(sessionId, proposal, signal),
   prepareRuntimeProvider: () => agentProviderGate.prepareRuntimeProvider(),
   invalidateProviderCapability: (fingerprint) => authStore.invalidateAgentProviderCapability(fingerprint),
   resolveLiveCandidate: (contract) => authStore.getUsername()

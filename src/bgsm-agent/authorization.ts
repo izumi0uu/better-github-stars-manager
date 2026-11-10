@@ -7,6 +7,7 @@ import {
   getBgsmAgentToolDefinition,
   isBgsmAgentToolCapability,
 } from './tool-catalog';
+import type { TagDeletionProposal } from './tag-deletion-review';
 
 type ReadEvidence = {
   repositories: Set<string>;
@@ -18,6 +19,7 @@ const DIRECT_ASSIGNMENT_WRITE_CALL_LIMIT = 8;
 
 export type BgsmTurnAuthorizationOptions = Readonly<{
   repositoryCodeReadOnly?: boolean;
+  confirmTagDeletion?: (proposal: TagDeletionProposal) => Promise<boolean>;
 }>;
 
 export function hasSuccessfulRepositoryCodeToolHistory(
@@ -89,7 +91,10 @@ export function createBgsmTurnAuthorization(
               || tags.some((tag) => !evidence.repositoryTags.has(pair(repository, tag)));
           })
         ) return denyCurrentAuthorization();
-        return { type: 'allow' };
+        return confirmDeletion({ kind: 'repository', changes: changes.map((rawChange) => {
+          const change = objectArgs(rawChange);
+          return { full_name: stringArg(change, 'full_name'), tags: stringArrayArg(change, 'tags') };
+        }) });
       }
       if (definition?.writePolicy === 'delete_tags') {
         const tags = stringArrayArg(value, 'tags');
@@ -97,11 +102,17 @@ export function createBgsmTurnAuthorization(
           tags.length === 0
           || tags.some((tag) => !evidence.tags.has(normalize(tag)))
         ) return denyCurrentAuthorization();
-        return { type: 'allow' };
+        return confirmDeletion({ kind: 'global', tags });
       }
       return denyCurrentAuthorization();
     },
   };
+
+  async function confirmDeletion(proposal: TagDeletionProposal) {
+    return await options.confirmTagDeletion?.(proposal) && !repositoryCodeReadOnly
+      ? { type: 'allow' as const }
+      : { type: 'deny' as const, reason: 'Tag deletion was not confirmed by the user.' };
+  }
 }
 
 function wrapReadTool(

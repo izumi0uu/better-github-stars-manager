@@ -199,6 +199,32 @@ describe('background library mutation contract', () => {
     await db.delete();
   });
 
+  it('bulk unstars confirmed rows and preserves annotations after a partial failure', async () => {
+    await installGitHubCredential();
+    await db.stars.bulkPut([starRow('octocat/one'), starRow('octocat/two'), starRow('octocat/three')]);
+    await db.tags.put(tagRow('octocat/one'));
+    const unstar = vi.spyOn(githubStarSource, 'unstar')
+      .mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('GH_RATE_LIMIT'));
+    const response = await sendBackground({ type: 'bulkUnstar', accountLogin: 'octocat', fullNames: ['octocat/one', 'octocat/two', 'octocat/three'] });
+    assert.deepEqual(response, { ok: true, data: {
+      succeeded: ['octocat/one'], failed: [{ fullName: 'octocat/two', error: 'GH_RATE_LIMIT' }], notAttempted: ['octocat/three'],
+    } });
+    assert.equal(unstar.mock.calls.length, 2);
+    assert.equal(unstar.mock.calls[0][1]?.credential?.accountLogin, 'octocat');
+    assert.equal((await db.stars.get('octocat/one'))?.tombstone, true);
+    assert.equal((await db.stars.get('octocat/one'))?.viewer_has_starred, false);
+    assert.equal((await db.stars.get('octocat/two'))?.tombstone, false);
+    assert.deepEqual(await db.tags.get('octocat/one'), tagRow('octocat/one'));
+  });
+
+  it('rejects a batch selected under a different account without touching GitHub', async () => {
+    await installGitHubCredential();
+    const unstar = vi.spyOn(githubStarSource, 'unstar');
+    const response = await sendBackground({ type: 'bulkUnstar', accountLogin: 'another-account', fullNames: ['octocat/one'] });
+    assert.equal(response.ok, false);
+    assert.equal(unstar.mock.calls.length, 0);
+  });
+
   it('clears tag assignments through the dispatcher and publishes committed annotations', async () => {
     await db.tags.bulkPut([tagRow('octo/first'), tagRow('octo/second')]);
     await db.tagMeta.put(tagMetaRow());
@@ -472,7 +498,7 @@ describe('githubStarSource unstar contract', () => {
 
   it('deletes the authenticated GitHub star resource for the selected repo', async () => {
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
-    vi.spyOn(authStore, 'getToken').mockResolvedValue('github_pat_synthetic');
+    await installGitHubCredential('github_pat_synthetic');
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       requests.push({ url: String(input), init });
       return new Response(null, { status: 204 });
@@ -491,7 +517,7 @@ describe('githubStarSource unstar contract', () => {
 
   it('accepts delete 404 only after confirming the repo is accessible', async () => {
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
-    vi.spyOn(authStore, 'getToken').mockResolvedValue('github_pat_synthetic');
+    await installGitHubCredential('github_pat_synthetic');
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       requests.push({ url: String(input), init });
       return new Response(null, { status: requests.length === 1 ? 404 : 200 });
@@ -507,7 +533,7 @@ describe('githubStarSource unstar contract', () => {
   });
 
   it('rejects delete 404 when the repo cannot be verified as accessible', async () => {
-    vi.spyOn(authStore, 'getToken').mockResolvedValue('github_pat_synthetic');
+    await installGitHubCredential('github_pat_synthetic');
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
 
     await assert.rejects(

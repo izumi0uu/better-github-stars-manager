@@ -206,6 +206,10 @@ export class ExtensionManagerRuntime implements ManagerRuntime {
     await bgCall('markUnstarred', { full_name: fullName });
   }
 
+  bulkUnstar(input: import('@/stars/bulk-unstar').BulkUnstarInput) {
+    return bgCall('bulkUnstar', input);
+  }
+
   removeVisibleTag(fullName: string, name: string) {
     return bgCall('removeVisibleTag', { full_name: fullName, name });
   }

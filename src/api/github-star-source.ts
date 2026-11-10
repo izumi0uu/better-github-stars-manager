@@ -312,9 +312,10 @@ async function assertRepoAccessible(owner: string, repo: string, headers: Header
   throw new Error(`${GH_PAGE_STATUS}${res.status}`);
 }
 
-async function deleteStar(fullName: string): Promise<void> {
+async function deleteStar(fullName: string, snapshot?: GitHubCredentialSnapshot): Promise<void> {
   const { owner, repo } = splitFullName(fullName);
-  await withMainCredential(async (token) => {
+  const credential = await syncCredential(snapshot);
+  await withSyncCredential(credential, async (token) => {
     const headers = tokenHeaders(token, 'application/vnd.github+json');
     const res = await fetchWithTimeout(`${API}/user/starred/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
       method: 'DELETE', headers, cache: 'no-store',
@@ -639,8 +640,8 @@ export const githubStarSource: StarSource = {
     return { added };
   },
 
-  async unstar(fullName: string) {
-    await deleteStar(fullName);
+  async unstar(fullName: string, options) {
+    await deleteStar(fullName, options?.credential);
   },
 
   async star(fullName: string) {

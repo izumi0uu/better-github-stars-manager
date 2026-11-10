@@ -82,6 +82,8 @@ The runtime still enforces hard boundaries. Repository reads stay inside the bou
 
 Tag writes commit through extension-owned storage code, not provider output. The terminal receipt records the outcome and change count, but it is not the data authority for individual tag rows.
 
+Repository-level tag removal and global tag deletion also require an explicit review in the Cubby panel. The review lists the exact repositories and tags, or identifies a deletion from every repository. A confirmation applies once to that waiting call. Cancelling, stopping the turn, or losing the background worker cannot grant approval. Replies display text and links without automatically loading remote Markdown images.
+
 ## Durable state and MV3 recovery
 
 Chrome Manifest V3 (MV3) can replace the background service worker between messages. Cubby therefore treats worker memory and session caches as disposable.

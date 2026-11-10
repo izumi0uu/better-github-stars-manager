@@ -1,3 +1,4 @@
+import { AgentTagDeletionReview } from './AgentTagDeletionReview';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Activity,
@@ -536,6 +537,7 @@ export function AgentPanel({
         </div>
 
         <>
+            <AgentTagDeletionReview sessionId={activeSessionId} active={open && running} />
             <AgentConversationBody
               open={open}
               agent={agent}
